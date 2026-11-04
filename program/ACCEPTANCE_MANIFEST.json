@@ -161,9 +161,9 @@
         },
         {
           "id": "II-13",
-          "text": "Packaged-shell hardening beyond what is tested: asar packaging with OnlyLoadAppFromAsar and embedded integrity validation, a signed and notarised build, a signed update path, and the same attack suite on the Tauri candidate. Tested on Electron without packaging: II-13a, II-13b.",
+          "text": "Remaining packaged-shell work: Developer ID signing and notarisation, a signed update path (no updater exists), and the same attack suite on the Tauri candidate. Done and tested on Electron: II-13a (attack suite), II-13b (fuses), II-13c (asar packaging with integrity validation).",
           "kind": "pending",
-          "evidence_needed": "packaged and signed build, update-path tests, Tauri attack suite"
+          "evidence_needed": "Developer ID certificate (owner), update-path tests, Tauri attack suite"
         },
         {
           "id": "II-09a",
@@ -261,6 +261,13 @@
           "kind": "machine",
           "command": "cargo test -p kk-tui tu18",
           "expect": "test result: ok. 1 passed"
+        },
+        {
+          "id": "II-13c",
+          "text": "Packaged Electron app: one asar with its header hash in Info.plist, load-only-from-asar and integrity fuses, Node and inspector doors closed; tampered header or contents do not run; a planted loose app folder is ignored",
+          "kind": "machine",
+          "command": "node tests/e2e/desktop_packaged.mjs",
+          "expect": "packaged-app checks passed"
         }
       ]
     },
