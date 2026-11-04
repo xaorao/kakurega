@@ -102,9 +102,9 @@
         },
         {
           "id": "II-04",
-          "text": "Shell comparison measured: size, start time, memory for Electron versus Tauri, decision recorded",
-          "kind": "pending",
-          "evidence_needed": "numbers in docs/engineering-decisions/desktop-shell.md"
+          "text": "Electron chosen with measurements; Tauri not measured (recorded). Reviewer accepts or asks for a Tauri measurement",
+          "kind": "human",
+          "evidence_needed": "Prateek accepts the Electron decision or asks for a Tauri build and measurement"
         }
       ]
     },

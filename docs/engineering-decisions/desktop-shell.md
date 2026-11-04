@@ -25,7 +25,16 @@ Leaning Tauri v2, but the strongest reference being Electron (MIT, forkable patt
 Risks to test before committing: LocalAuthentication from a Tauri app without a Developer ID, webview differences across macOS, Linux (WebKitGTK) and Windows, window-overlay and screen-capture protection for the approval window, auto-update signing.
 Fallback if the spike fails: Electron 42+ with the native approval module, same kernel as a child process.
 
-## Spike acceptance (before this is called decided)
+## DECISION (final for now): Electron
+Measured on this Mac (3 runs, Electron 45.2.2, `/tmp` harness, process tree incl. the companion): app bundle 253 MB; time from launch to the usable workspace 0.73 s, 0.95 s and one cold 3.7 s; memory about 454 MB across 5 processes.
+Why Electron over Tauri (reasons that are verified, not guesses):
+1. Our whole quality standard is real-UI testing with Playwright, axe and screenshots; Playwright drives Electron natively (13 desktop checks already run this way) and cannot drive a macOS WKWebView shell, so Tauri would leave the desktop UI less testable.
+2. The strongest reference shell (OpenCode, MIT) is Electron and its hardening patterns are adoptable with credit.
+3. Electron 42+ has a Touch ID platform authenticator and `systemPreferences.promptTouchID` is what the shell uses today; the native approval is working in the real window (stubbed OS prompt; real Touch ID is II-03).
+4. One Chromium everywhere: no WebKitGTK versus WKWebView differences to test on Linux and Windows.
+Cost accepted: 253 MB bundle and about 450 MB memory. Tauri was NOT built or measured (disk and time spent on the working path), so the claim that Tauri would be smaller is a reference-based expectation, not our measurement. Revisit if size or memory becomes a user complaint.
+
+## Spike acceptance (all met except real Touch ID and the Tauri measurement, see above) (before this is called decided)
 1. A Tauri window opens the web app from a loopback companion started by the shell, with pairing automatic and no URL typed.
 2. A native approval window shows the exact file list and digest and requires Touch ID; a page script cannot trigger, hide or answer it (hostile test).
 3. The shell survives kernel restart and shows recovery state.
