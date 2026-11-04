@@ -35,6 +35,8 @@ export interface Config {
   signer: string;
   signer_public: string;
 }
+export interface ReadinessCheck { id: string; label: string; ok: boolean; detail: string; fix: string }
+export interface Readiness { ready: boolean; checks: ReadinessCheck[] }
 export interface Withheld { path: string; notes: string[] }
 export interface Summary {
   imported: number;
@@ -83,6 +85,7 @@ export const api = {
   session: () => request<{ paired: boolean; csrf: string }>("GET", "/api/session"),
   logout: () => request<void>("POST", "/api/logout"),
   config: () => request<Config>("GET", "/api/config"),
+  readiness: () => request<Readiness>("GET", "/api/readiness"),
   fs: (path?: string) => request<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>("GET", `/api/fs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   startJob: (repo: string, recipient: string) => request<{ id: string }>("POST", "/api/jobs", { repo, recipient }),
   jobs: () => request<{ jobs: Job[] }>("GET", "/api/jobs"),

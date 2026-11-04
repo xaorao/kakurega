@@ -28,6 +28,9 @@ pub trait JobRunner: Send + Sync {
         progress: &dyn Fn(&str, &str),
     ) -> JobReport;
     fn route_info(&self) -> Value;
+    fn readiness(&self) -> Vec<Value> {
+        Vec::new()
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -395,6 +398,15 @@ async fn config(axum::Extension(svc): Svc) -> Json<Value> {
         "signer": kk_evidence::keys::KeyId::of(&svc.signer_public()).as_str(),
         "signer_public": kk_evidence::b64::encode(&svc.signer_public()),
     }))
+}
+
+async fn readiness(axum::Extension(svc): Svc) -> Json<Value> {
+    let svc2 = svc.clone();
+    let checks = tokio::task::spawn_blocking(move || svc2.runner.readiness())
+        .await
+        .unwrap_or_default();
+    let ready = checks.iter().all(|c| c["ok"] == true);
+    Json(json!({"ready": ready, "checks": checks}))
 }
 
 async fn fs_list(axum::Extension(svc): Svc, Query(q): Query<PathQuery>) -> Response {
@@ -916,6 +928,7 @@ impl Extension for Routes {
     fn routes(&self, _state: AppState) -> Router<AppState> {
         Router::new()
             .route("/api/config", get(config))
+            .route("/api/readiness", get(readiness))
             .route("/api/fs", get(fs_list))
             .route("/api/jobs", get(list).post(start))
             .route("/api/jobs/{id}", get(get_job))

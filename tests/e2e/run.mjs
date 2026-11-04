@@ -56,6 +56,8 @@ try {
   await page.goto(link);
   await page.getByRole("heading", { name: "Review a project" }).waitFor({ timeout: 15000 });
   check("pairing link signs the browser in and clears the code from the address bar", !page.url().includes("pair="));
+  await page.getByRole("heading", { name: "Ready to review" }).waitFor({ timeout: 20000 });
+  check("a correctly set up machine says Ready to review and lists every check as ready", (await page.getByRole("region", { name: "Setup check" }).innerText()).split("Needs attention").length === 1);
   await page.screenshot({ path: join(shots, "01-new-review.png") });
   await axeCheck(page, "new review");
 

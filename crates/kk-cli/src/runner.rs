@@ -81,6 +81,137 @@ impl JobRunner for ReviewRunner {
         }
     }
 
+    fn readiness(&self) -> Vec<Value> {
+        let check = |id: &str, label: &str, ok: bool, detail: String, fix: &str| json!({"id": id, "label": label, "ok": ok, "detail": detail, "fix": if ok { "" } else { fix }});
+        let mut out = Vec::new();
+        if self.scripted.is_some() {
+            out.push(check(
+                "model",
+                "Model",
+                true,
+                "scripted test model (test mode)".into(),
+                "",
+            ));
+        } else {
+            let agent: ureq::Agent = ureq::Agent::config_builder()
+                .timeout_global(Some(std::time::Duration::from_secs(2)))
+                .build()
+                .into();
+            match agent
+                .get(&format!("{}/api/tags", self.ollama.trim_end_matches('/')))
+                .call()
+            {
+                Ok(mut r) => {
+                    let v: Value = r.body_mut().read_json().unwrap_or(Value::Null);
+                    out.push(check(
+                        "ollama",
+                        "Local model service (Ollama)",
+                        true,
+                        format!("running at {}", self.ollama),
+                        "",
+                    ));
+                    let has = v["models"].as_array().is_some_and(|m| {
+                        m.iter().any(|x| {
+                            let n = x["name"].as_str().unwrap_or("");
+                            n == self.model
+                                || n.strip_suffix(":latest") == Some(self.model.as_str())
+                        })
+                    });
+                    out.push(check(
+                        "model",
+                        "Model",
+                        has,
+                        if has {
+                            format!("{} is installed", self.model)
+                        } else {
+                            format!("{} is not installed", self.model)
+                        },
+                        &format!("Run in a terminal: ollama pull {}", self.model),
+                    ));
+                }
+                Err(_) => {
+                    out.push(check(
+                        "ollama",
+                        "Local model service (Ollama)",
+                        false,
+                        format!("nothing answered at {}", self.ollama),
+                        "Start it with: ollama serve",
+                    ));
+                }
+            }
+        }
+        let worker_fix = "Build it: cargo build -p kk-worker (for the virtual machine, scripts/e2e builds it there)";
+        match &self.transport {
+            Transport::Local => {
+                out.push(check(
+                    "worker",
+                    "Review worker",
+                    self.worker_binary.exists(),
+                    self.worker_binary.display().to_string(),
+                    worker_fix,
+                ));
+                let ok = std::process::Command::new("bwrap")
+                    .arg("--version")
+                    .output()
+                    .is_ok_and(|o| o.status.success());
+                out.push(check(
+                    "sandbox",
+                    "Sandbox (bubblewrap)",
+                    ok,
+                    if ok {
+                        "available".into()
+                    } else {
+                        "bwrap not found".into()
+                    },
+                    "Install bubblewrap with your package manager",
+                ));
+            }
+            Transport::Lima { vm, .. } => {
+                let status = std::process::Command::new("limactl")
+                    .args(["list", vm, "--format", "{{.Status}}"])
+                    .output()
+                    .ok()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_default();
+                let running = status == "Running";
+                out.push(check(
+                    "sandbox",
+                    "Sandbox virtual machine",
+                    running,
+                    if status.is_empty() {
+                        format!("{vm}: not found")
+                    } else {
+                        format!("{vm}: {status}")
+                    },
+                    &format!("Start it with: limactl start {vm}"),
+                ));
+                if running {
+                    let present = std::process::Command::new("limactl")
+                        .args(["shell", vm, "--", "test", "-x"])
+                        .arg(&self.worker_binary)
+                        .status()
+                        .is_ok_and(|s| s.success());
+                    out.push(check(
+                        "worker",
+                        "Review worker",
+                        present,
+                        self.worker_binary.display().to_string(),
+                        worker_fix,
+                    ));
+                } else {
+                    out.push(check(
+                        "worker",
+                        "Review worker",
+                        false,
+                        "not checked: the virtual machine is not running".into(),
+                        worker_fix,
+                    ));
+                }
+            }
+        }
+        out
+    }
+
     fn route_info(&self) -> Value {
         json!({"id": format!("ollama:{}", self.model), "class": "device_only", "model": if self.scripted.is_some() { "scripted test model".to_string() } else { self.model.clone() }, "simulated": self.scripted.is_some(), "endpoint": self.ollama,
                "transport": match &self.transport { Transport::Local => "local sandbox".to_string(), Transport::Lima { vm, .. } => format!("sandbox in the {vm} virtual machine") }})

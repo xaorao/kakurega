@@ -62,7 +62,10 @@ fn serve(args: &[String]) -> Result<(), String> {
         ),
         "lima" => {
             let vm = crate::flag(args, "--vm").unwrap_or_else(|| "kak".into());
-            let vh = vm_home(&vm)?;
+            let vh = vm_home(&vm).unwrap_or_else(|e| {
+                eprintln!("warning: {e}; the setup check in the app will say what to fix");
+                "/vm-not-available".to_string()
+            });
             (
                 Transport::Lima {
                     vm: vm.clone(),

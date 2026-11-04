@@ -1,5 +1,5 @@
 import { createResource, createSignal, For, Show } from "solid-js";
-import { api, ApiError, type Config } from "../api";
+import { api, ApiError, type Config, type Readiness } from "../api";
 
 export function NewReview(props: { config: Config; onStarted: (id: string) => void }) {
   const [dir, setDir] = createSignal<string | undefined>(undefined);
@@ -8,6 +8,8 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
   const [error, setError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const chosen = () => listing()?.path ?? "";
+  const [ready, { refetch }] = createResource<Readiness | null>(() => api.readiness().catch(() => null));
+  const blocked = () => ready()?.ready === false;
 
   const start = async () => {
     setBusy(true);
@@ -28,6 +30,26 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
       <p class="lead">
         An agent reads the project inside a sealed sandbox and looks for real defects. Secrets are withheld from it. Only findings that the kernel can reproduce on a small extract are put in the release, and nothing leaves until you approve the exact files.
       </p>
+      <Show when={ready()}>
+        {(r) => (
+          <div class="card stack" role="region" aria-label="Setup check">
+            <h2>{r().ready ? "Ready to review" : "Finish setup first"}</h2>
+            <ul class="checks">
+              <For each={r().checks}>
+                {(c) => (
+                  <li>
+                    <span class={c.ok ? "ok-text" : "bad"}>{c.ok ? "Ready" : "Needs attention"}</span> <strong>{c.label}</strong>: {c.detail}
+                    <Show when={c.fix}><div class="fix"><code>{c.fix}</code></div></Show>
+                  </li>
+                )}
+              </For>
+            </ul>
+            <Show when={!r().ready}>
+              <div class="actions"><button onClick={() => refetch()}>Check again</button></div>
+            </Show>
+          </div>
+        )}
+      </Show>
       <div class="card stack">
         <h2>1. Choose the project folder</h2>
         <p class="path" aria-live="polite">{chosen() || "Loading…"}</p>
@@ -47,7 +69,7 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
         <p class="muted">The release and the signed capsule are bound to this name. A capsule made for one recipient is rejected for another.</p>
       </div>
       <div class="actions">
-        <button class="primary" disabled={busy() || !chosen() || recipient().trim().length === 0} onClick={start}>Start review</button>
+        <button class="primary" disabled={busy() || blocked() || !chosen() || recipient().trim().length === 0} onClick={start}>Start review</button>
         <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
       </div>
       <p class="muted">Model: <strong>{props.config.route.model ?? props.config.route.id}</strong>{props.config.route.simulated ? " (scripted, test mode)" : " (runs on this computer)"}. Small local models find fewer defects than hosted ones; the kernel will not release a finding it cannot reproduce.</p>

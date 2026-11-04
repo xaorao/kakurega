@@ -108,9 +108,10 @@
         },
         {
           "id": "II-05",
-          "text": "Readiness screen: first launch checks Ollama, model and sandbox and offers fixes; a stranger reaches a first review",
-          "kind": "pending",
-          "evidence_needed": "browser and desktop journeys on a clean data dir, screenshots, I-07 tester"
+          "text": "Readiness screen tells the truth when model service and sandbox are missing (names the exact fix, blocks Start, axe clean); a correct setup says Ready (in the browser journey). A stranger completing it unaided is I-07.",
+          "kind": "machine",
+          "command": "node tests/e2e/readiness.mjs",
+          "expect": "readiness checks passed"
         },
         {
           "id": "II-06",
