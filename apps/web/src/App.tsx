@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { api, ApiError, setCsrf, type Config, type Job } from "./api";
 void ApiError;
 import { NewReview } from "./screens/NewReview";
@@ -11,6 +11,47 @@ function useHash() {
   window.addEventListener("hashchange", on);
   onCleanup(() => window.removeEventListener("hashchange", on));
   return hash;
+}
+
+type Theme = "system" | "light" | "dark";
+
+function applyTheme(t: Theme) {
+  if (t === "system") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", t);
+}
+
+function storedTheme(): Theme {
+  try {
+    const v = localStorage.getItem("kk-theme");
+    return v === "light" || v === "dark" ? v : "system";
+  } catch {
+    return "system";
+  }
+}
+
+function ThemePicker() {
+  const [theme, setTheme] = createSignal<Theme>(storedTheme());
+  onMount(() => applyTheme(theme()));
+  const choose = (t: Theme) => {
+    setTheme(t);
+    applyTheme(t);
+    try {
+      if (t === "system") localStorage.removeItem("kk-theme");
+      else localStorage.setItem("kk-theme", t);
+    } catch {
+      /* the choice still applies for this visit */
+    }
+  };
+  return (
+    <label class="theme">
+      <span class="sr">Theme</span>
+      <select value={theme()} onChange={(e) => choose(e.currentTarget.value as Theme)}>
+        <option value="system">Match system</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+    </label>
+  );
 }
 
 function Pair(props: { onDone: () => void }) {
@@ -76,6 +117,22 @@ export function App() {
   const [paired, setPaired] = createSignal<boolean | null>(null);
   const [config, setConfig] = createSignal<Config | null>(null);
   const [jobs, setJobs] = createSignal<Job[]>([]);
+  const [query, setQuery] = createSignal("");
+  let searchBox: HTMLInputElement | undefined;
+  const shown = createMemo(() => {
+    const q = query().trim().toLowerCase();
+    if (!q) return jobs();
+    return jobs().filter((j) => `${j.repo} ${j.recipient} ${j.state.replace(/_/g, " ")}`.toLowerCase().includes(q));
+  });
+  const onKey = (e: KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      searchBox?.focus();
+      searchBox?.select();
+    }
+  };
+  window.addEventListener("keydown", onKey);
+  onCleanup(() => window.removeEventListener("keydown", onKey));
 
   const load = async () => {
     try {
@@ -115,6 +172,7 @@ export function App() {
           <header class="top">
             <a class="brand" href="#/">kakurega</a>
             <Show when={config()}>{(c) => <Badge config={c()} />}</Show>
+            <ThemePicker />
             <button class="link" onClick={async () => { await api.logout(); setPaired(false); }}>Sign out</button>
           </header>
           <Show when={config()?.test_mode}>
@@ -123,9 +181,19 @@ export function App() {
           <div class="body">
             <nav class="side" aria-label="Reviews">
               <a class="primary" href="#/">New review</a>
+              <label class="sr" for="search">Search reviews</label>
+              <input
+                id="search"
+                type="search"
+                placeholder="Search reviews (Cmd+K)"
+                ref={searchBox}
+                value={query()}
+                onInput={(e) => setQuery(e.currentTarget.value)}
+                onKeyDown={(e) => { if (e.key === "Escape") { setQuery(""); e.currentTarget.blur(); } }}
+              />
               <h2>Reviews</h2>
               <ul class="list">
-                <For each={jobs()} fallback={<li class="muted">None yet.</li>}>
+                <For each={shown()} fallback={<li class="muted">{jobs().length === 0 ? "None yet." : "No review matches."}</li>}>
                   {(j) => (
                     <li>
                       <a href={`#/job/${j.id}`} class={jobId() === j.id ? "active" : ""}>

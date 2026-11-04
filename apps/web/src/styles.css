@@ -178,3 +178,9 @@ pre.cmd { font-size: 15px; }
 .checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .checks .fix { margin-top: 4px; }
 .ok-text { color: var(--cipher-text); font-weight: 600; }
+
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.theme select { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--paper); color: var(--ink); }
+input[type="search"] { font: inherit; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--paper); color: var(--ink); width: 100%; box-sizing: border-box; }
+input[type="search"]:focus { border-color: var(--ink); }
+.greeting { margin: -4px 0 0; color: var(--graphite); font-size: 16px; }

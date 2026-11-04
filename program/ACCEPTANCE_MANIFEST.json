@@ -115,9 +115,10 @@
         },
         {
           "id": "II-06",
-          "text": "History with search (Cmd+K), theme choice and greeting in the web UI",
-          "kind": "pending",
-          "evidence_needed": "journeys, axe, screenshots light and dark"
+          "text": "History search (Cmd+K), theme choice persisted across reload, framing line; axe clean in dark (journey checks)",
+          "kind": "machine",
+          "command": "scripts/e2e",
+          "expect": "checks passed"
         },
         {
           "id": "II-07",

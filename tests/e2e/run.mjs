@@ -123,6 +123,26 @@ try {
   await page.getByRole("button", { name: "Sign and deliver the capsule" }).waitFor({ timeout: 15000 });
   await page.getByRole("button", { name: "Sign and deliver the capsule" }).click();
   await page.getByText("Delivered.").waitFor();
+
+  // history search, Cmd+K, theme choice
+  await page.keyboard.press("Meta+k");
+  check("Cmd+K focuses the review search", await page.evaluate(() => document.activeElement?.id === "search"));
+  await page.keyboard.type("acme");
+  check("searching by recipient keeps the matching review", (await page.locator(".list li a").count()) === 1);
+  await page.fill("#search", "nothing-like-this");
+  check("a search with no match says so", await page.getByText("No review matches.").isVisible());
+  await page.keyboard.press("Escape");
+  check("Escape clears the search and shows the list again", (await page.inputValue("#search")) === "" && (await page.locator(".list li a").count()) === 1);
+  await page.getByLabel("Theme").selectOption("dark");
+  check("choosing Dark sets the theme", (await page.evaluate(() => document.documentElement.getAttribute("data-theme"))) === "dark");
+  await page.reload();
+  await page.getByLabel("Theme").waitFor();
+  check("the theme choice survives a reload", (await page.evaluate(() => document.documentElement.getAttribute("data-theme"))) === "dark");
+  await new Promise((r) => setTimeout(r, 400));
+  await page.screenshot({ path: join(shots, "09-dark-review.png") });
+  await axeCheck(page, "review release tab, dark theme");
+  await page.getByLabel("Theme").selectOption("system");
+  check("Match system removes the override", (await page.evaluate(() => document.documentElement.getAttribute("data-theme"))) === null);
   await page.screenshot({ path: join(shots, "06-delivered.png"), fullPage: true });
   const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("link", { name: "Download the capsule" }).click()]);
   const capsulePath = join(work, "review.kkg");

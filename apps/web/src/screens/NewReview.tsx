@@ -27,6 +27,7 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
   return (
     <section class="stack wide" aria-labelledby="h-new">
       <h1 id="h-new">Review a project</h1>
+      <p class="greeting">Start with something that can be clearly finished: one project, one recipient.</p>
       <p class="lead">
         An agent reads the project inside a sealed sandbox and looks for real defects. Secrets are withheld from it. Only findings that the kernel can reproduce on a small extract are put in the release, and nothing leaves until you approve the exact files.
       </p>
