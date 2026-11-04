@@ -20,11 +20,14 @@ pub fn chosen(visual: Option<String>, editor: Option<String>) -> String {
 pub fn edit_with(command: &str, text: &str) -> Result<String, String> {
     let mut parts = command.split_whitespace();
     let program = parts.next().ok_or("no editor is set; set $EDITOR")?;
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
-    let dir = std::env::temp_dir().join(format!("kaku-edit-{}-{nanos}", std::process::id()));
+    // the counter makes two edits started in the same clock tick (the clock may only tick every microsecond) differ
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("kaku-edit-{}-{nanos}-{n}", std::process::id()));
     std::fs::DirBuilder::new()
         .mode(0o700)
         .create(&dir)
