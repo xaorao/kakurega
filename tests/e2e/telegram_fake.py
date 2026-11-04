@@ -122,6 +122,13 @@ try:
     say(111, "/status")
     time.sleep(2)
     check("the phone's command menu is set once to exactly the three commands the bridge answers", len(menus) >= 1 and [c["command"] for c in menus[0]["commands"]] == ["status", "reviews", "help"], str(menus)[:120])
+    st = data / "telegram-status.json"
+    for _ in range(100):
+        if st.exists(): break
+        time.sleep(0.2)
+    check("the bridge writes a status file readable only by the owner, without chat text or the token", st.exists() and (st.stat().st_mode & 0o077) == 0 and TOKEN not in st.read_text() and set(json.loads(st.read_text()).keys()) == {"updated", "paired", "last_poll_ok", "last_send_ok", "queued", "last_error"})
+    r = subprocess.run([kaku, "telegram", "status", "--data-dir", str(data)], capture_output=True, text=True)
+    check("`kaku telegram status` says the bridge is running", r.returncode == 0 and "The bridge is running" in r.stdout, r.stdout[:120])
     check("an unpaired chat and a group get no reply at all", not sent)
     say(111, "/pair 00000000")
     time.sleep(1.5)

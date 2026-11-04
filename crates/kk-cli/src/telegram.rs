@@ -315,6 +315,24 @@ pub fn run(args: &[String]) -> u8 {
         println!("Send this to your bot in a private chat within 5 minutes:\n  /pair {code}\nThen run `kaku telegram` to start the bridge. Any earlier pairing was removed.");
         return 0;
     }
+    if args.first().map(String::as_str) == Some("status") {
+        return match std::fs::read_to_string(dir.join("telegram-status.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        {
+            Some(v) => {
+                let text = describe_status(&v, unix_now());
+                println!("{text}");
+                u8::from(text.starts_with("The bridge is not running"))
+            }
+            None => {
+                println!(
+                    "The bridge has not run yet (no status file). Start it with: kaku telegram"
+                );
+                1
+            }
+        };
+    }
     if args.first().map(String::as_str) == Some("doctor") {
         return doctor(args, &dir);
     }
@@ -363,6 +381,8 @@ pub fn run(args: &[String]) -> u8 {
     let mut offset: i64 = 0;
     let mut outbox = Outbox::default();
     let mut last_poll = Instant::now() - Duration::from_secs(10);
+    let mut status = Status::default();
+    let mut status_written = Instant::now() - Duration::from_secs(60);
     loop {
         reload_code(&mut bridge);
         // A re-pair or an unpair removes the binding file: stop notifying the old chat at once.
@@ -371,10 +391,29 @@ pub fn run(args: &[String]) -> u8 {
             outbox = Outbox::default();
             eprintln!("the chat binding was removed: no further messages will be sent");
         }
-        outbox.flush(Instant::now(), &mut |o| send_once(&agent, &api, &token, o));
+        outbox.flush(Instant::now(), &mut |o| {
+            let r = send_once(&agent, &api, &token, o);
+            match &r {
+                SendOutcome::Delivered => status.last_send_ok = Some(unix_now()),
+                SendOutcome::RetryAfter(_) => {
+                    status.last_error = "Telegram asked the bridge to slow down".into()
+                }
+                SendOutcome::Retry => {
+                    status.last_error = "a message could not be delivered yet".into()
+                }
+                SendOutcome::Drop(_) => {
+                    status.last_error = "a message was refused by Telegram".into()
+                }
+            }
+            r
+        });
         let url = format!("{api}/bot{token}/getUpdates?timeout=2&offset={offset}&allowed_updates=%5B%22message%22%5D");
         match agent.get(&url).call() {
             Ok(mut r) if r.status().as_u16() == 200 => {
+                status.last_poll_ok = Some(unix_now());
+                if status.last_error == "Telegram is not reachable" {
+                    status.last_error.clear();
+                }
                 let v: Value = r.body_mut().read_json().unwrap_or(Value::Null);
                 for u in v["result"].as_array().cloned().unwrap_or_default() {
                     offset = offset.max(u["update_id"].as_i64().unwrap_or(0) + 1);
@@ -401,6 +440,7 @@ pub fn run(args: &[String]) -> u8 {
                 std::thread::sleep(Duration::from_secs(3));
             }
             Err(e) => {
+                status.last_error = "Telegram is not reachable".into();
                 eprintln!(
                     "telegram is not reachable: {}",
                     scrub(&e.to_string(), &token)
@@ -408,11 +448,83 @@ pub fn run(args: &[String]) -> u8 {
                 std::thread::sleep(Duration::from_secs(3));
             }
         }
+        if status_written.elapsed() >= Duration::from_secs(30) {
+            status_written = Instant::now();
+            status.updated = unix_now();
+            status.paired = bridge.bound_chat.is_some();
+            status.queued = outbox.depth();
+            write_status(&dir, &status);
+        }
         if last_poll.elapsed() >= Duration::from_secs(2) {
             last_poll = Instant::now();
             for o in bridge.poll_notifications(&mut admin) {
                 outbox.push(o);
             }
+        }
+    }
+}
+
+/// What the running bridge knows about itself, written to `telegram-status.json` (mode 0600) every thirty seconds. It holds
+/// no message text, no chat id and no token: only whether it is alive and what went wrong in plain classes.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Status {
+    pub updated: u64,
+    pub paired: bool,
+    pub last_poll_ok: Option<u64>,
+    pub last_send_ok: Option<u64>,
+    pub queued: usize,
+    pub last_error: String,
+}
+
+pub fn status_json(s: &Status) -> Value {
+    json!({"updated": s.updated, "paired": s.paired, "last_poll_ok": s.last_poll_ok, "last_send_ok": s.last_send_ok, "queued": s.queued, "last_error": s.last_error})
+}
+
+/// Plain words for the status command: alive, stale, or not running.
+pub fn describe_status(v: &Value, now: u64) -> String {
+    let updated = v["updated"].as_u64().unwrap_or(0);
+    let age = now.saturating_sub(updated);
+    if updated == 0 || age > 90 {
+        return format!("The bridge is not running (its last sign of life was {age} seconds ago). Start it with: kaku telegram");
+    }
+    let ago = |k: &str| {
+        v[k].as_u64().map_or("never".to_string(), |t| {
+            format!("{} s ago", now.saturating_sub(t))
+        })
+    };
+    format!(
+        "The bridge is running. Chat paired: {}. Last poll ok: {}. Last message delivered: {}. Waiting to send: {}.{}",
+        if v["paired"] == true { "yes" } else { "no" },
+        ago("last_poll_ok"),
+        ago("last_send_ok"),
+        v["queued"].as_u64().unwrap_or(0),
+        match v["last_error"].as_str().unwrap_or("") {
+            "" => String::new(),
+            e => format!(" Last problem: {}.", e.chars().filter(|c| !c.is_control()).take(80).collect::<String>()),
+        }
+    )
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn write_status(dir: &Path, s: &Status) {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let tmp = dir.join("telegram-status.json.tmp");
+    let _ = std::fs::remove_file(&tmp);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)
+    {
+        if f.write_all(status_json(s).to_string().as_bytes()).is_ok() {
+            let _ = std::fs::rename(&tmp, dir.join("telegram-status.json"));
         }
     }
 }
@@ -573,6 +685,10 @@ pub struct Outbox {
 }
 
 impl Outbox {
+    pub fn depth(&self) -> usize {
+        self.items.len()
+    }
+
     pub const MAX: usize = 50;
     pub const MAX_TRIES: u32 = 10;
 
@@ -1098,5 +1214,53 @@ mod tests {
         );
         assert!(token_file_problems(&d)[0].contains("not a regular file"));
         assert!(token_file_problems(&d.join("missing"))[0].contains("does not exist"));
+    }
+
+    #[test]
+    fn tg23_the_status_says_alive_stale_or_never_and_holds_no_chat_text_or_token() {
+        let s = Status {
+            updated: 1000,
+            paired: true,
+            last_poll_ok: Some(998),
+            last_send_ok: None,
+            queued: 2,
+            last_error: "Telegram is not reachable".into(),
+        };
+        let v = status_json(&s);
+        let text = describe_status(&v, 1010);
+        assert!(
+            text.starts_with("The bridge is running.")
+                && text.contains("Last poll ok: 12 s ago")
+                && text.contains("Last message delivered: never")
+                && text.contains("Waiting to send: 2")
+                && text.contains("Telegram is not reachable"),
+            "{text}"
+        );
+        assert!(
+            describe_status(&v, 1200).starts_with("The bridge is not running"),
+            "a status older than 90 seconds means it stopped"
+        );
+        assert!(describe_status(&json!({}), 5).starts_with("The bridge is not running"));
+        let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "last_error",
+                "last_poll_ok",
+                "last_send_ok",
+                "paired",
+                "queued",
+                "updated"
+            ],
+            "nothing else is ever written"
+        );
+        let mut o = Outbox::default();
+        assert_eq!(o.depth(), 0);
+        o.push(Out {
+            chat: 1,
+            text: "x".into(),
+        });
+        assert_eq!(o.depth(), 1);
     }
 }
