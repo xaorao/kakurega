@@ -1,0 +1,12 @@
+[package]
+name = "kk-kernel"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Kakurega kernel: kernel-computed taint, artifact handles and the broker session"
+
+[dependencies]
+kk-types = { path = "../kk-types" }
+
+[lints]
+workspace = true

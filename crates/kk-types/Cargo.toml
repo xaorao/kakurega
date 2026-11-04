@@ -7,3 +7,6 @@ description = "Shared value types used by every Kakurega layer"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+proptest = "1"

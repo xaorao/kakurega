@@ -1,3 +1,5 @@
+pub mod label;
+
 pub const PRODUCT: &str = "kakurega";
 
 #[cfg(test)]

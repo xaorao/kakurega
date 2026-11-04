@@ -3,6 +3,7 @@
   "layers": {
     "kk-types": 0,
     "kk-evidence": 1,
-    "kk-vault": 1
+    "kk-vault": 1,
+    "kk-kernel": 1
   }
 }
