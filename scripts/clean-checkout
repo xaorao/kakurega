@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+dir="$(mktemp -d "${TMPDIR:-/tmp}/kk-clean.XXXXXX")"
+git clone -q "$repo" "$dir/kakurega"
+cd "$dir/kakurega"
+scripts/setup
+scripts/test
+rm -rf "$dir"
