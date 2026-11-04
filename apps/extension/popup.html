@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kakurega</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <h1>Kakurega</h1>
+    <p id="state" role="status">Checking…</p>
+    <form id="pair" hidden>
+      <p class="hint">On this computer run <code>kaku extension pair</code> and enter the port and code it prints.</p>
+      <label for="port">Port</label>
+      <input id="port" inputmode="numeric" autocomplete="off" spellcheck="false">
+      <label for="code">One-time code</label>
+      <input id="code" autocomplete="off" spellcheck="false">
+      <button type="submit">Connect</button>
+    </form>
+    <div id="connected" hidden>
+      <p class="hint">Select text on a page, right-click, and choose “Send selection to Kakurega”. You review it in Kakurega before anything is saved.</p>
+      <button id="forget" type="button">Disconnect this browser</button>
+    </div>
+    <p id="error" role="alert"></p>
+  </main>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

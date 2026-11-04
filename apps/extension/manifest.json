@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Kakurega",
+  "version": "0.0.1",
+  "description": "Send a text selection to your private Kakurega workspace on this computer. Nothing is read from a page unless you choose Send.",
+  "minimum_chrome_version": "120",
+  "permissions": ["contextMenus", "storage"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "Kakurega" },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+  }
+}

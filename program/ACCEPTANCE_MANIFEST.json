@@ -194,9 +194,10 @@
         },
         {
           "id": "III-06",
-          "text": "Browser extension with minimum permissions and a reviewed content-script boundary",
-          "kind": "pending",
-          "evidence_needed": "permission review, hostile page tests, companion pairing tests"
+          "text": "Browser extension with minimum permissions (contextMenus, storage, loopback only), service channel narrowed to queueing untrusted suggestions, real Chrome test with a hostile page; see docs/engineering-decisions/browser-extension.md",
+          "kind": "machine",
+          "command": "node tests/e2e/extension.mjs",
+          "expect": "extension checks passed"
         },
         {
           "id": "III-07",
@@ -223,6 +224,20 @@
           "kind": "machine",
           "command": "python3 tests/e2e/mcp_live.py",
           "expect": "MCP checks passed"
+        },
+        {
+          "id": "III-06b",
+          "text": "Extension permission lint, pure logic and background wiring tests",
+          "kind": "machine",
+          "command": "cd apps/extension && node --test test/*.test.mjs",
+          "expect": "pass 10"
+        },
+        {
+          "id": "III-06c",
+          "text": "Extension channel service test: pairing, origin pin, token, cookies, lockout, validation, owner acceptance, restart, revoke",
+          "kind": "machine",
+          "command": "cargo test -p kk-service --test flow sv18",
+          "expect": "test result: ok. 1 passed"
         }
       ]
     }

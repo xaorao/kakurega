@@ -1,6 +1,7 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, type MemoryItem } from "../api";
 import { t, type Key } from "../i18n";
+import { Suggestions } from "./ReviewView";
 
 const LEVELS = ["public", "internal", "confidential", "restricted"] as const;
 
@@ -106,6 +107,7 @@ export function Memory() {
           <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
         </div>
       </form>
+      <Suggestions jobId="browser" heading="sug.browser.heading" lead="sug.browser.lead" onChange={() => void refetch()} />
       <div>
         <label class="sr" for="mem-search">{t("mem.search")}</label>
         <input id="mem-search" type="search" placeholder={t("mem.search")} value={query()} onInput={(e) => setQuery(e.currentTarget.value)} />

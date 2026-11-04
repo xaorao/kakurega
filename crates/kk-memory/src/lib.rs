@@ -586,6 +586,18 @@ impl Memories {
         why: &str,
         label: &Label,
     ) -> Result<Option<String>, MemoryError> {
+        self.propose_with_cap(now, job_id, text, why, label, MAX_PROPOSALS_PER_JOB)
+    }
+
+    pub fn propose_with_cap(
+        &self,
+        now: i64,
+        job_id: &str,
+        text: &str,
+        why: &str,
+        label: &Label,
+        cap: i64,
+    ) -> Result<Option<String>, MemoryError> {
         let why = if why.trim().is_empty() {
             "the review agent suggested it"
         } else {
@@ -632,7 +644,7 @@ impl Memories {
             params![job_id],
             |r| r.get(0),
         )?;
-        if blocked || count >= MAX_PROPOSALS_PER_JOB || secret::looks_secret(text).is_some() {
+        if blocked || count >= cap || secret::looks_secret(text).is_some() {
             return Ok(None);
         }
         let id = new_id();

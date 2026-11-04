@@ -128,6 +128,7 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
         .headers()
         .get("sec-fetch-site")
         .and_then(|h| h.to_str().ok())
+        .filter(|_| !req.uri().path().starts_with("/ext/"))
     {
         if !matches!(site, "same-origin" | "none") {
             return secure(error(
@@ -139,6 +140,22 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
     }
     let path = req.uri().path().to_string();
     let is_admin = path.starts_with("/admin/");
+    if path.starts_with("/ext/") {
+        let from_extension = origin.as_deref().is_some_and(|o| {
+            o.starts_with("chrome-extension://") || o.starts_with("moz-extension://")
+        });
+        if req.headers().contains_key(header::COOKIE)
+            || (origin.is_some() && !from_extension)
+            || (origin.is_none() && !safe_method)
+        {
+            return secure(error(
+                StatusCode::FORBIDDEN,
+                "EXTENSION_ONLY",
+                "this interface answers only the paired browser extension",
+            ));
+        }
+        return secure(next.run(req).await);
+    }
     if is_admin {
         if origin.is_some() || req.headers().contains_key(header::COOKIE) {
             return secure(error(

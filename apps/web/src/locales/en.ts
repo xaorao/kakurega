@@ -57,6 +57,8 @@ export const en = {
   "mem.error": "That did not work.",
   "sug.heading": "Suggested memories",
   "sug.lead": "The agent suggests keeping these. Nothing is saved unless you accept. They came from a review of untrusted files, so they stay marked as untrusted.",
+  "sug.browser.heading": "From the browser",
+  "sug.browser.lead": "Text you selected in your browser and sent to Kakurega. Nothing is saved unless you accept. It came from a web page, so it stays marked as untrusted.",
   "sug.accept": "Remember",
   "sug.dismiss": "Dismiss",
   "sug.why": "Agent's reason: {why}",

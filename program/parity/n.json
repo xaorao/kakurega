@@ -199,6 +199,10 @@
   "N69": {
    "status": "PARTIAL",
    "evidence": "kk-tui: full-screen workspace in the single kaku binary with slash commands, tab completion, history, live progress, an approval view that needs the typed digest, disclosure and not-established text, refusal recorded, output sanitised, secrets scrubbed: kk-tui tu01-tu15 (six deliberate breaks each failed a test), kk-service sv16 through the real service, tests/e2e/tui_pty.py in a real pseudo-terminal (18 checks incl. clean terminal restore and no orphan service). Not built: free-form chat, markdown rendering, mouse, command palette, themes, Windows, screen-reader testing"
+  },
+  "N67": {
+   "status": "PARTIAL",
+   "evidence": "minimum-permission extension (contextMenus, storage, loopback) with a narrow service channel that can only queue untrusted suggestions: kk-service sv18 (seven deliberate breaks failed it), apps/extension tests (10), tests/e2e/extension.mjs in real Chrome including a hostile page; docs/engineering-decisions/browser-extension.md. Not built: Firefox/Safari, store packaging, the context-menu click driven natively, page-content capture, reading answers back"
   }
  }
 }

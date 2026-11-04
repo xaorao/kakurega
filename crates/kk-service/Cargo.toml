@@ -13,6 +13,7 @@ kk-memory = { path = "../kk-memory" }
 kk-disclosure = { path = "../kk-disclosure" }
 kk-eventlog = { path = "../kk-eventlog" }
 sha2 = "0.10"
+subtle = "2"
 kk-effects = { path = "../kk-effects" }
 kk-review = { path = "../kk-review" }
 kk-route = { path = "../kk-route" }

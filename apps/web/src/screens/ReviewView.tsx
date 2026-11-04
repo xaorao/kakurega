@@ -130,19 +130,20 @@ function Source(props: { job: Job }) {
   );
 }
 
-function Suggestions(props: { job: Job }) {
-  const [items, { refetch }] = createResource(() => props.job.id, (id) => api.suggestions(id).then((r) => r.suggestions));
+export function Suggestions(props: { jobId: string; heading?: Key; lead?: Key; onChange?: () => void }) {
+  const [items, { refetch }] = createResource(() => props.jobId, (id) => api.suggestions(id).then((r) => r.suggestions));
   const [note, setNote] = createSignal("");
   const act = async (fn: () => Promise<unknown>, msg = "") => {
     await fn().catch(() => undefined);
     setNote(msg);
     await refetch();
+    props.onChange?.();
   };
   return (
     <Show when={(items() ?? []).length > 0}>
-      <div class="card stack" role="region" aria-label={t("sug.heading")}>
-        <h2>{t("sug.heading")}</h2>
-        <p class="muted">{t("sug.lead")}</p>
+      <div class="card stack" role="region" aria-label={t(props.heading ?? "sug.heading")}>
+        <h2>{t(props.heading ?? "sug.heading")}</h2>
+        <p class="muted">{t(props.lead ?? "sug.lead")}</p>
         <ul class="plain stack">
           <For each={items()}>
             {(sg) => (
@@ -150,8 +151,8 @@ function Suggestions(props: { job: Job }) {
                 <p class="mem-text">{sg.text}</p>
                 <p class="muted"><span class="chip warn">{t("mem.untrusted")}</span> {t("sug.why", { why: sg.why })}</p>
                 <div class="actions">
-                  <button class="primary" onClick={() => act(() => api.acceptSuggestion(props.job.id, sg.id), t("sug.accepted"))}>{t("sug.accept")}</button>
-                  <button onClick={() => act(() => api.dismissSuggestion(props.job.id, sg.id))}>{t("sug.dismiss")}</button>
+                  <button class="primary" onClick={() => act(() => api.acceptSuggestion(props.jobId, sg.id), t("sug.accepted"))}>{t("sug.accept")}</button>
+                  <button onClick={() => act(() => api.dismissSuggestion(props.jobId, sg.id))}>{t("sug.dismiss")}</button>
                 </div>
               </li>
             )}
@@ -167,7 +168,7 @@ function Findings(props: { job: Job }) {
   const [data] = createResource(() => props.job.id, (id) => api.findings(id));
   return (
     <div class="stack">
-      <Suggestions job={props.job} />
+      <Suggestions jobId={props.job.id} />
       <Show when={data()} fallback={<p class="muted">{t("review.loading")}</p>}>
         {(d) => (
           <>

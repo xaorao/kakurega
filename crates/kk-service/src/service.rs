@@ -138,6 +138,8 @@ pub struct Service {
     memory: Mutex<kk_memory::Memories>,
     disclosure: Mutex<kk_disclosure::Ledger>,
     log: kk_eventlog::EventLog,
+    ext_codes: Mutex<std::collections::HashMap<[u8; 32], std::time::Instant>>,
+    ext_fail: Mutex<(u32, Option<std::time::Instant>)>,
     pub test_mode: bool,
 }
 
@@ -152,7 +154,8 @@ fn init_store(v: &Vault) -> Result<(), String> {
     v.connection()
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, meta TEXT NOT NULL, snap TEXT);
-             CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY, body TEXT NOT NULL);",
+             CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY, body TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);",
         )
         .map_err(|e| e.to_string())
 }
@@ -348,6 +351,8 @@ impl Service {
             memory: Mutex::new(memory),
             disclosure: Mutex::new(disclosure),
             log,
+            ext_codes: Mutex::new(std::collections::HashMap::new()),
+            ext_fail: Mutex::new((0, None)),
             test_mode,
         }))
     }
@@ -963,6 +968,229 @@ async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
             Json(json!({"reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated}, "notes_used": used.len(), "untrusted_notes_used": untrusted_used, "notes_withheld": withheld})).into_response()
         }
         Err(m) => error(StatusCode::BAD_GATEWAY, "NO_MODEL", &m),
+    }
+}
+
+fn sha(text: &str) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.as_bytes()).into()
+}
+
+fn page_origin(page: &str) -> Option<String> {
+    let rest = page
+        .strip_prefix("https://")
+        .map(|r| ("https", r))
+        .or_else(|| page.strip_prefix("http://").map(|r| ("http", r)))?;
+    let authority = rest.1.split(['/', '?', '#']).next()?;
+    if authority.is_empty()
+        || authority.len() > 253
+        || authority.contains('@')
+        || !authority
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']'))
+    {
+        return None;
+    }
+    Some(format!("{}://{}", rest.0, authority.to_ascii_lowercase()))
+}
+
+impl Service {
+    fn ext_token_row(&self) -> Option<([u8; 32], String)> {
+        let store = self.store.lock().expect("lock");
+        store
+            .connection()
+            .query_row("SELECT hash, origin FROM ext_token WHERE id = 1", [], |r| {
+                Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, String>(1)?))
+            })
+            .ok()
+            .and_then(|(h, o)| <[u8; 32]>::try_from(h).ok().map(|h| (h, o)))
+    }
+
+    fn ext_authorized(&self, headers: &axum::http::HeaderMap) -> Result<String, Box<Response>> {
+        use subtle::ConstantTimeEq;
+        let presented = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|h| h.to_str().ok())
+            .and_then(|h| h.strip_prefix("Bearer "))
+            .unwrap_or("");
+        let Some((hash, origin)) = self.ext_token_row() else {
+            return Err(Box::new(error(
+                StatusCode::UNAUTHORIZED,
+                "EXT_AUTH",
+                "no extension is paired",
+            )));
+        };
+        let ok: bool = sha(presented).ct_eq(&hash).into();
+        if !ok {
+            return Err(Box::new(error(
+                StatusCode::UNAUTHORIZED,
+                "EXT_AUTH",
+                "the extension token is not valid",
+            )));
+        }
+        if let Some(o) = headers
+            .get(axum::http::header::ORIGIN)
+            .and_then(|h| h.to_str().ok())
+        {
+            if o != origin {
+                return Err(Box::new(error(
+                    StatusCode::FORBIDDEN,
+                    "EXT_ORIGIN",
+                    "this token belongs to another extension",
+                )));
+            }
+        }
+        Ok(origin)
+    }
+}
+
+async fn admin_ext_pairing(axum::Extension(svc): Svc) -> Response {
+    let mut b = [0u8; 6];
+    getrandom::fill(&mut b).expect("randomness");
+    let code: String = b.iter().map(|x| format!("{:02x}", x)).collect();
+    let mut codes = svc.ext_codes.lock().expect("lock");
+    codes.retain(|_, t| t.elapsed() < std::time::Duration::from_secs(300));
+    codes.insert(sha(&code), std::time::Instant::now());
+    Json(json!({"code": code, "ttl_seconds": 300})).into_response()
+}
+
+async fn admin_ext_revoke(axum::Extension(svc): Svc) -> Response {
+    let n = svc
+        .store
+        .lock()
+        .expect("lock")
+        .connection()
+        .execute("DELETE FROM ext_token", [])
+        .unwrap_or(0);
+    if n > 0 {
+        svc.log_event("extension.revoked", "browser", &[]);
+    }
+    Json(json!({"revoked": n > 0})).into_response()
+}
+
+async fn admin_ext_status(axum::Extension(svc): Svc) -> Response {
+    let row = svc.ext_token_row();
+    Json(json!({"paired": row.is_some(), "origin": row.map(|r| r.1)})).into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtPairBody {
+    code: String,
+}
+
+async fn ext_pair(
+    axum::Extension(svc): Svc,
+    headers: axum::http::HeaderMap,
+    Json(b): Json<ExtPairBody>,
+) -> Response {
+    let Some(origin) = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|h| h.to_str().ok())
+        .map(str::to_string)
+    else {
+        return error(
+            StatusCode::FORBIDDEN,
+            "EXTENSION_ONLY",
+            "pairing comes from the extension",
+        );
+    };
+    {
+        let mut f = svc.ext_fail.lock().expect("lock");
+        if let Some(t) = f.1 {
+            if t.elapsed() < std::time::Duration::from_secs(60) && f.0 >= 5 {
+                return error(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "LOCKED",
+                    "too many wrong codes; wait a minute",
+                );
+            }
+            if t.elapsed() >= std::time::Duration::from_secs(60) {
+                *f = (0, None);
+            }
+        }
+    }
+    let valid = {
+        let mut codes = svc.ext_codes.lock().expect("lock");
+        codes.retain(|_, t| t.elapsed() < std::time::Duration::from_secs(300));
+        codes.remove(&sha(b.code.trim())).is_some()
+    };
+    if !valid {
+        let mut f = svc.ext_fail.lock().expect("lock");
+        f.0 += 1;
+        f.1 = Some(std::time::Instant::now());
+        return error(
+            StatusCode::UNAUTHORIZED,
+            "BAD_CODE",
+            "that code is wrong, used or expired",
+        );
+    }
+    let mut raw = [0u8; 32];
+    getrandom::fill(&mut raw).expect("randomness");
+    let token = kk_evidence::b64::encode(&raw);
+    let store = svc.store.lock().expect("lock");
+    let _ = store.connection().execute(
+        "INSERT OR REPLACE INTO ext_token(id, hash, origin, created) VALUES (1, ?1, ?2, ?3)",
+        kk_vault::rusqlite::params![sha(&token).to_vec(), origin, now()],
+    );
+    drop(store);
+    svc.log_event("extension.paired", "browser", &[("origin", origin.into())]);
+    Json(json!({"token": token})).into_response()
+}
+
+async fn ext_status(axum::Extension(svc): Svc, headers: axum::http::HeaderMap) -> Response {
+    if let Err(r) = svc.ext_authorized(&headers) {
+        return *r;
+    }
+    let reviews = svc.inner.lock().expect("lock").jobs.len();
+    let pending = svc
+        .memory
+        .lock()
+        .expect("lock")
+        .pending_proposals("browser")
+        .map(|p| p.len())
+        .unwrap_or(0);
+    Json(json!({"paired": true, "reviews": reviews, "pending_captures": pending})).into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtCaptureBody {
+    text: String,
+    page: String,
+}
+
+async fn ext_capture(
+    axum::Extension(svc): Svc,
+    headers: axum::http::HeaderMap,
+    Json(b): Json<ExtCaptureBody>,
+) -> Response {
+    if let Err(r) = svc.ext_authorized(&headers) {
+        return *r;
+    }
+    let text = b.text.trim();
+    if text.is_empty() || text.chars().count() > 2000 || !chat_clean(text) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_TEXT",
+            "the selection must be 1 to 2000 characters without control characters",
+        );
+    }
+    let Some(origin) = page_origin(&b.page) else {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_PAGE",
+            "only pages on http or https can be captured",
+        );
+    };
+    let label = kk_types::label::Label::new(kk_types::label::Level::Internal).untrusted();
+    match svc.memory.lock().expect("lock").propose_with_cap(now(), "browser", text, &format!("you selected it on {origin}"), &label, 50) {
+        Ok(Some(id)) => {
+            svc.log_event("extension.capture", "browser", &[("origin", origin.into())]);
+            (StatusCode::ACCEPTED, Json(json!({"queued": true, "id": id}))).into_response()
+        }
+        Ok(None) => error(StatusCode::UNPROCESSABLE_ENTITY, "NOT_QUEUED", "that selection was not queued: it looks like a secret, it is already known or forgotten, or too many are waiting"),
+        Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "MEMORY_STORAGE", "the memory store failed"),
     }
 }
 
@@ -1639,6 +1867,12 @@ impl Extension for Routes {
             .route("/api/jobs/{id}/deliver", post(do_deliver))
             .route("/api/jobs/{id}/capsule", get(download))
             .route("/admin/log", get(log_export))
+            .route("/admin/extension", get(admin_ext_status))
+            .route("/admin/extension/pairing", post(admin_ext_pairing))
+            .route("/admin/extension/revoke", post(admin_ext_revoke))
+            .route("/ext/pair", post(ext_pair))
+            .route("/ext/status", get(ext_status))
+            .route("/ext/capture", post(ext_capture))
             .route("/admin/overview", get(admin_overview))
             .route("/admin/jobs", get(admin_jobs_list).post(admin_job_start))
             .route("/admin/jobs/{id}", get(admin_job_get))

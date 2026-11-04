@@ -1278,7 +1278,7 @@
     "public worker for research; restricted data never enters",
     "J18"
    ],
-   "evidence": null,
+   "evidence": "the extension does not control or relay the browser; only a selection capture exists (see N67)",
    "status": "NOT_BUILT",
    "surface_class": "EXTENSION",
    "title": "Browser relay (Chrome over CDP)",
@@ -2594,8 +2594,8 @@
     "same",
     "EXPANSION"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "minimum-permission extension (contextMenus, storage, loopback) with a narrow service channel that can only queue untrusted suggestions: kk-service sv18 (seven deliberate breaks failed it), apps/extension tests (10), tests/e2e/extension.mjs in real Chrome including a hostile page; docs/engineering-decisions/browser-extension.md. Not built: Firefox/Safari, store packaging, the context-menu click driven natively, page-content capture, reading answers back",
+   "status": "PARTIAL",
    "surface_class": "EXTENSION",
    "title": "Browser extension with narrow permissions, origin allowlist, content-script messaging rules and native messaging to the local companion; pag",
    "trust_reason": "No kernel in the extension; it talks to the local companion, every web page is untrusted, and it needs the narrowest permissions and an origin allowlist."

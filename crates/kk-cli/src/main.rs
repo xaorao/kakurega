@@ -1,4 +1,5 @@
 mod approve;
+mod extension;
 mod log;
 mod mcp;
 mod runner;
@@ -17,6 +18,7 @@ Usage:
   kaku pair                         print a new one-time pairing link for the browser
   kaku approve [APPROVAL-ID]        review the exact release in this terminal and approve it
   kaku mcp                          speak MCP on stdin and stdout for an agent client (cannot approve)
+  kaku extension pair|status|revoke  connect the browser extension (it can only queue suggestions)
   kaku log export [--out FILE]      save the signed event log
   kaku log verify FILE [--pin KEY] [--anchor COUNT:HEAD]   check a saved log offline
   kaku verify CAPSULE [--pin KEY]   check a capsule offline (KEY: base64url public key)
@@ -32,6 +34,7 @@ fn main() -> ExitCode {
         Some("verify") => verify::run(&args[1..]),
         Some("mcp") => mcp::run(&args[1..]),
         Some("log") => log::run(&args[1..]),
+        Some("extension") => extension::run(&args[1..]),
         Some("tui") => tui::run(&args[1..]),
         None if std::io::IsTerminal::is_terminal(&std::io::stdout())
             && std::io::IsTerminal::is_terminal(&std::io::stdin()) =>

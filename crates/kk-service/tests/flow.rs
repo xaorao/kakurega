@@ -1547,3 +1547,420 @@ fn sv17_chat_is_bounded_uses_notes_as_data_and_logs_no_text() {
         "{body}"
     );
 }
+
+fn raw(
+    base: &str,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: Option<Value>,
+) -> (u16, Value) {
+    let cfg = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build();
+    let agent: ureq::Agent = cfg.into();
+    let url = format!("{base}{path}");
+    let mut resp = if method == "GET" {
+        let mut r = agent.get(&url);
+        for (k, v) in headers {
+            r = r.header(*k, *v);
+        }
+        r.call().unwrap()
+    } else {
+        let mut r = agent.post(&url);
+        for (k, v) in headers {
+            r = r.header(*k, *v);
+        }
+        r.send_json(body.unwrap_or(json!({}))).unwrap()
+    };
+    (
+        resp.status().as_u16(),
+        resp.body_mut().read_json().unwrap_or(Value::Null),
+    )
+}
+
+#[test]
+fn sv18_the_browser_extension_channel_is_narrow_paired_origin_pinned_and_can_only_queue_untrusted_suggestions(
+) {
+    let (root, _repo) = repo_copy("ext");
+    let data = root.join("data");
+    let ext = "chrome-extension://abcdefghijklmnopabcdefghijklmnop";
+    let (token, base);
+    {
+        let svc = Service::new(
+            &data,
+            vec![root.clone()],
+            Arc::new(CannedRunner { confirm: true }),
+            true,
+        )
+        .unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        base = format!("http://127.0.0.1:{}", c.addr.port());
+        let admin_token = c.security.admin_token().to_string();
+        let bearer = format!("Bearer {admin_token}");
+        let code_of = || {
+            raw(
+                &base,
+                "POST",
+                "/admin/extension/pairing",
+                &[("Authorization", &bearer)],
+                Some(json!({})),
+            )
+            .1["code"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(
+            raw(&base, "GET", "/ext/status", &[], None).0,
+            401,
+            "no token"
+        );
+        let code = code_of();
+        assert_eq!(
+            raw(&base, "POST", "/ext/pair", &[], Some(json!({"code": code}))).0,
+            403,
+            "pairing without an extension origin"
+        );
+        assert_eq!(
+            raw(
+                &base,
+                "POST",
+                "/ext/pair",
+                &[("Origin", "http://evil.example")],
+                Some(json!({"code": code}))
+            )
+            .0,
+            403,
+            "a web page cannot pair"
+        );
+        assert_eq!(
+            raw(
+                &base,
+                "POST",
+                "/ext/pair",
+                &[("Origin", &base)],
+                Some(json!({"code": code}))
+            )
+            .0,
+            403,
+            "not even the workspace page itself"
+        );
+        assert_eq!(
+            raw(
+                &base,
+                "POST",
+                "/ext/pair",
+                &[("Origin", ext)],
+                Some(json!({"code": "000000000000"}))
+            )
+            .0,
+            401
+        );
+        let (st, paired) = raw(
+            &base,
+            "POST",
+            "/ext/pair",
+            &[("Origin", ext)],
+            Some(json!({"code": code})),
+        );
+        assert_eq!(st, 200, "{paired}");
+        token = paired["token"].as_str().unwrap().to_string();
+        assert_eq!(
+            raw(
+                &base,
+                "POST",
+                "/ext/pair",
+                &[("Origin", ext)],
+                Some(json!({"code": code}))
+            )
+            .0,
+            401,
+            "a code works once"
+        );
+        let auth = format!("Bearer {token}");
+        let h = [("Authorization", auth.as_str()), ("Origin", ext)];
+        assert_eq!(raw(&base, "GET", "/ext/status", &h, None).0, 200);
+        assert_eq!(
+            raw(
+                &base,
+                "GET",
+                "/ext/status",
+                &[("Authorization", "Bearer wrong")],
+                None
+            )
+            .0,
+            401
+        );
+        assert_eq!(
+            raw(
+                &base,
+                "GET",
+                "/ext/status",
+                &[
+                    ("Authorization", auth.as_str()),
+                    (
+                        "Origin",
+                        "chrome-extension://otherotherotherotherotherother12"
+                    )
+                ],
+                None
+            )
+            .0,
+            403,
+            "the token belongs to the paired extension only"
+        );
+        assert_eq!(
+            raw(
+                &base,
+                "GET",
+                "/ext/status",
+                &[("Authorization", auth.as_str()), ("Origin", &base)],
+                None
+            )
+            .0,
+            403,
+            "a web page holding the token still cannot use it"
+        );
+        assert_eq!(
+            raw(
+                &base,
+                "GET",
+                "/ext/status",
+                &[("Authorization", auth.as_str()), ("Cookie", "kk=1")],
+                None
+            )
+            .0,
+            403,
+            "cookies are refused on this interface"
+        );
+        assert_eq!(
+            raw(
+                &base,
+                "GET",
+                "/ext/status",
+                &[("Authorization", auth.as_str()), ("Host", "evil.example")],
+                None
+            )
+            .0 / 100,
+            4
+        );
+        let cap = |text: Value, page: &str| {
+            raw(
+                &base,
+                "POST",
+                "/ext/capture",
+                &h,
+                Some(json!({"text": text, "page": page})),
+            )
+        };
+        let (st, q) = cap(
+            json!("Acme's fiscal year ends in March"),
+            "https://Wiki.Example.com/page?q=1#x",
+        );
+        assert_eq!(st, 202, "{q}");
+        assert_eq!(
+            cap(
+                json!("Acme's fiscal year ends in March"),
+                "https://other.example/"
+            )
+            .0,
+            422,
+            "a duplicate is not queued twice"
+        );
+        for (text, page, why) in [
+            (json!(""), "https://a.example/", "empty"),
+            (json!("x".repeat(2001)), "https://a.example/", "too long"),
+            (
+                json!("bad \u{1b}[2J text"),
+                "https://a.example/",
+                "control characters",
+            ),
+            (json!("fine text"), "file:///etc/passwd", "file page"),
+            (json!("fine text"), "javascript:alert(1)", "script page"),
+            (json!("fine text"), "chrome://settings", "browser page"),
+            (
+                json!("fine text"),
+                "https://user:pw@evil.example/",
+                "credentials in the url",
+            ),
+            (json!("fine text"), "https:///nohost", "no host"),
+            (json!(42), "https://a.example/", "wrong type"),
+        ] {
+            let (st, body) = cap(text, page);
+            assert!(st == 400 || st == 422, "{why}: {st} {body}");
+        }
+        assert_eq!(
+            cap(
+                json!("the password is hunter2hunter2"),
+                "https://a.example/"
+            )
+            .0,
+            422,
+            "a secret is never queued"
+        );
+        assert_eq!(
+            raw(
+                &base,
+                "POST",
+                "/ext/capture",
+                &h,
+                Some(json!({"text": "x1", "page": "https://a.example/", "extra": 1}))
+            )
+            .0 / 100,
+            4,
+            "unknown fields are refused"
+        );
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        let (_, list) = w.get("/api/jobs/browser/memory-suggestions");
+        let items = list["suggestions"].as_array().unwrap();
+        assert_eq!(items.len(), 1, "{list}");
+        assert_eq!(items[0]["untrusted"], true);
+        assert!(
+            items[0]["why"]
+                .as_str()
+                .unwrap()
+                .contains("https://wiki.example.com")
+                && !items[0]["why"].as_str().unwrap().contains("page?q=1"),
+            "only the origin is kept, not the path or query: {}",
+            items[0]["why"]
+        );
+        assert_eq!(
+            w.get("/api/memories").1["memories"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0,
+            "a capture is never a memory until the owner accepts it"
+        );
+        let sid = items[0]["id"].as_str().unwrap().to_string();
+        assert_eq!(
+            w.post(
+                &format!("/api/jobs/browser/memory-suggestions/{sid}/accept"),
+                json!({})
+            )
+            .0,
+            200
+        );
+        let (_, mem) = w.get("/api/memories");
+        assert_eq!(mem["memories"][0]["untrusted"], true);
+        let log = log_text(&base, &admin_token);
+        assert!(
+            log.contains("extension.paired")
+                && log.contains("extension.capture")
+                && !log.contains("fiscal year"),
+            "the log has the origin, never the text"
+        );
+        let (_, s) = raw(&base, "GET", "/ext/status", &h, None);
+        assert_eq!(s["pending_captures"], 0);
+        let code2 = code_of();
+        let (_, second) = raw(
+            &base,
+            "POST",
+            "/ext/pair",
+            &[(
+                "Origin",
+                "chrome-extension://secondsecondsecondsecondsecond12",
+            )],
+            Some(json!({"code": code2})),
+        );
+        assert!(second["token"].is_string());
+        assert_eq!(
+            raw(&base, "GET", "/ext/status", &h, None).0,
+            401,
+            "pairing again replaces the old extension"
+        );
+        for _ in 0..5 {
+            raw(
+                &base,
+                "POST",
+                "/ext/pair",
+                &[("Origin", ext)],
+                Some(json!({"code": "ffffffffffff"})),
+            );
+        }
+        let code3 = code_of();
+        assert_eq!(
+            raw(
+                &base,
+                "POST",
+                "/ext/pair",
+                &[("Origin", ext)],
+                Some(json!({"code": code3}))
+            )
+            .0,
+            429,
+            "five wrong codes lock pairing for a minute even for the right code"
+        );
+    }
+    {
+        let svc = Service::new(
+            &data,
+            vec![root.clone()],
+            Arc::new(CannedRunner { confirm: true }),
+            true,
+        )
+        .unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let base2 = format!("http://127.0.0.1:{}", c.addr.port());
+        assert_eq!(
+            raw(
+                &base2,
+                "GET",
+                "/ext/status",
+                &[
+                    ("Authorization", &format!("Bearer {token}")),
+                    ("Origin", ext)
+                ],
+                None
+            )
+            .0,
+            401,
+            "the old token is gone"
+        );
+        let bearer = format!("Bearer {}", c.security.admin_token());
+        let (_, st) = raw(
+            &base2,
+            "GET",
+            "/admin/extension",
+            &[("Authorization", &bearer)],
+            None,
+        );
+        assert_eq!(
+            st["paired"], true,
+            "the second extension's pairing survived the restart"
+        );
+        assert_eq!(
+            raw(
+                &base2,
+                "POST",
+                "/admin/extension/revoke",
+                &[("Authorization", &bearer)],
+                Some(json!({}))
+            )
+            .1["revoked"],
+            true
+        );
+        assert_eq!(
+            raw(
+                &base2,
+                "GET",
+                "/admin/extension",
+                &[("Authorization", &bearer)],
+                None
+            )
+            .1["paired"],
+            false
+        );
+    }
+    let _ = base;
+}
