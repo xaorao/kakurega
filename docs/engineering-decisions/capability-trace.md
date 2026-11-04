@@ -1,0 +1,15 @@
+# Source-to-capability-to-implementation trace
+
+One row per recovered or decided capability. Reading depth is stated honestly: FULL = read in full by Claude along the capability's path, PART = partly read, MATRIX = taken from an investigator's matrix and not yet read by Claude. A row with MATRIX depth may not justify a design decision (CLAUDE.md, source-first rule).
+
+| Upstream and revision | Files examined (depth) | Capability | Decision | Kakurega location | Verification | Outstanding gap |
+|---|---|---|---|---|---|---|
+| Anamnesis (Apache-2.0), working copy in private-ai/ghast-ai | `crates/search/src/hybrid.rs` 1-560 (FULL for fusion, pool, modes); tests and store layer (NOT READ) | Hybrid recall: rank fusion, pool sizing, per-hit explanation | REBUILD from algorithm | `crates/kk-memory/src/fuse.rs`, `recall` in `crates/kk-memory/src/lib.rs` | fu01-fu05, me21-me23; label and wording mutations fail tests | Embedding vectors; recall quality benchmark |
+| Hermes Agent (MIT) 29a61cb7 | `tools/url_safety.py` 1-140 (PART), `tools/web_tools.py` 1-120 (PART) | Safe web fetch for research: address classes, redirects, credential parameters | REBUILD from behaviour | `crates/kk-fetch`, `/api/research/*` in `crates/kk-service/src/service.rs`, Chat web panel | fe01-fe06, sv26, browser e2e | Lines 140-650 of url_safety.py unread; search provider; non-text pages |
+| Ghast matrix E and G (investigators) | MATRIX | Query-relevant memory for reviews (GH-44, E M11) | BUILD | `memory_files` in `crates/kk-service/src/service.rs` | sv25 | Vector recall; file-list-based selection |
+| Ghast matrix E (investigators) | MATRIX | Coding checkpoints, guarded undo, test oracle (GH-32) | BUILD | `fix_undo`, `fix_snapshots`, `verify_fix_with_tests` | sv24, f03, f04, f05 (Linux VM) | Multi-hunk and multi-file fixes, non-unittest runners |
+| OpenCode, Hermes, Codex, OpenClaw matrices (investigators) | MATRIX | Web fixes: IME-safe Enter, unreachable state, error boundary, arrow-key tabs | BUILD | `apps/web/src` | e2e checks | Streaming, threads, palette, safe markdown, event stream |
+| rust-sdk, MCP matrix D (investigator) | MATRIX | MCP hardening | BUILD | `crates/kk-cli/src/mcp.rs` | mc04, mc05, live session | Official SDK adoption, resources, prompts, tiers |
+| gitleaks (MIT), detect-secrets (Apache), promptfoo, AgentDojo | formats and behaviour only | Shared secret detector | REBUILD | `crates/kk-secrets` | corpus tests | Recall comparison against gitleaks not run |
+
+Rows still to be created as capabilities are recovered: terminal sessions and picker, encrypted backup (companion-checkpoint, MIT), durable runs (companion-runtime, MIT), scheduler (companion-cron, MIT), MCP client governance, readiness report (companion-cli, MIT), memory import adapters (Anamnesis, Apache-2.0).
