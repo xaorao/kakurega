@@ -8,11 +8,18 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const work = join(repo, "target/packaged-test");
 rmSync(work, { recursive: true, force: true });
 mkdirSync(work, { recursive: true });
+// Tampered apps crash on purpose; macOS would show 'quit unexpectedly' for each. Hide those dialogs for the run only.
+const crashKey = "com.apple.CrashReporter";
+const before = spawnSync("defaults", ["read", crashKey, "DialogType"], { encoding: "utf8" });
+const hadValue = before.status === 0;
+spawnSync("defaults", ["write", crashKey, "DialogType", "none"]);
+const restoreCrashDialogs = () => (hadValue ? spawnSync("defaults", ["write", crashKey, "DialogType", before.stdout.trim()]) : spawnSync("defaults", ["delete", crashKey, "DialogType"]));
+process.on("exit", restoreCrashDialogs);
 const results = [];
 const check = (n, ok, d = "") => (results.push(ok), console.log(`${ok ? "PASS" : "FAIL"}  ${n}${d ? "  " + d : ""}`));
 
-const pkg = await packageApp(join(work, "pkg"));
-check("the app is packaged as one asar with its integrity hash in Info.plist, and the load-only-from-asar and integrity fuses on", pkg.fuses["4"] === 49 && pkg.fuses["5"] === 49 && pkg.fuses["0"] === 48 && pkg.fuses["2"] === 48 && pkg.fuses["3"] === 48, JSON.stringify(pkg.fuses));
+const pkg = await packageApp(join(work, "pkg"), { cookieEncryption: false });
+check("the app is packaged as one asar with its integrity hash in Info.plist, and the load-only-from-asar and integrity fuses on", pkg.fuses["1"] === 48 && pkg.fuses["4"] === 49 && pkg.fuses["5"] === 49 && pkg.fuses["0"] === 48 && pkg.fuses["2"] === 48 && pkg.fuses["3"] === 48, JSON.stringify(pkg.fuses));
 
 async function launch(label, extraEnv = {}) {
   const data = join(work, `data-${label}`);

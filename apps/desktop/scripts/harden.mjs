@@ -8,8 +8,8 @@ export const WANTED = {
   [FuseV1Options.GrantFileProtocolExtraPrivileges]: false,
 };
 
-export async function harden(electronBinary) {
-  await flipFuses(electronBinary, { version: FuseVersion.V1, resetAdHocDarwinSignature: true, ...WANTED });
+export async function harden(electronBinary, { cookieEncryption = true } = {}) {
+  await flipFuses(electronBinary, { version: FuseVersion.V1, resetAdHocDarwinSignature: true, ...WANTED, [FuseV1Options.EnableCookieEncryption]: cookieEncryption });
   return getCurrentFuseWire(electronBinary);
 }
 

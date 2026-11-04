@@ -20,8 +20,8 @@ const asNode = (bin) => spawnSync(bin, ["-e", "console.log('NODE-RAN')"], { env:
 const base = asNode(stock);
 check("control: the stock Electron can be turned into a plain Node interpreter by an environment variable", /NODE-RAN/.test(base.stdout), base.stdout.trim().slice(0, 40));
 
-const wire = await harden(hard);
-check("fuses flipped: RunAsNode off, NODE_OPTIONS off, --inspect off, file-protocol privileges off, cookie encryption on", wire && Object.keys(wire).length > 0, JSON.stringify(wire));
+const wire = await harden(hard, { cookieEncryption: false });
+check("fuses flipped: RunAsNode off, NODE_OPTIONS off, --inspect off, file-protocol privileges off (cookie encryption is left off in this unattended test: it makes macOS ask for the keychain password)", wire && Object.keys(wire).length > 0, JSON.stringify(wire));
 
 const h = asNode(hard);
 check("hardened: ELECTRON_RUN_AS_NODE no longer gives a Node interpreter", !/NODE-RAN/.test(h.stdout), (h.stdout + h.stderr).trim().slice(0, 60));
@@ -56,7 +56,7 @@ for (let i = 0; i < 80 && !served; i++) {
     try { const a = JSON.parse(readFileSync(join(data, "admin.json"), "utf8")); served = (await fetch(`http://127.0.0.1:${a.port}/`)).status === 200; } catch {}
   }
 }
-spawnSync("pkill", ["-f", "electron-hardened"]);
+spawnSync("pkill", ["-9", "-f", "electron-hardened"]);
 spawnSync("pkill", ["-f", "target/debug/kaku serve --data-dir " + data]);
 check("hardened: the app still starts and its companion serves the workspace", served);
 const bad = results.filter((r) => !r).length;

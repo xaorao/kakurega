@@ -34,7 +34,7 @@ const rawHttp = (port, { method = "GET", path = "/", headers = {}, body = null }
 
 const app = await electron.launch({
   executablePath: process.env.ELECTRON_BIN ?? join(repo, "apps/desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"),
-  args: [process.env.DESKTOP_APP_DIR ?? join(repo, "apps/desktop")],
+  args: [...(process.platform === "darwin" ? ["--use-mock-keychain"] : ["--password-store=basic"]), process.env.DESKTOP_APP_DIR ?? join(repo, "apps/desktop")],
   env: { ...process.env, KAKU_BIN: process.env.KAKU_BIN ?? join(repo, "target/debug/kaku"), KAKUREGA_DATA_DIR: data, KAKU_ARGS: `--root ${root} --scripted ${join(here, "script.json")} --ui-dir ${join(repo, "apps/web/dist")}` },
 });
 try {

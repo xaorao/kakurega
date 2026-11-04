@@ -26,7 +26,7 @@ const check = (name, ok, detail = "") => {
 
 const app = await electron.launch({
   executablePath: join(repo, "apps/desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"),
-  args: [join(repo, "apps/desktop")],
+  args: ["--use-mock-keychain", join(repo, "apps/desktop")],
   env: {
     ...process.env,
     KAKU_BIN: join(repo, "target/debug/kaku"),

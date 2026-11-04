@@ -23,7 +23,7 @@ const check = (n, ok, d = "") => (results.push(ok), console.log(`${ok ? "PASS" :
 
 const app = await electron.launch({
   executablePath: process.env.ELECTRON_BIN,
-  args: [process.env.DESKTOP_APP_DIR ?? join(repo, "apps/desktop")],
+  args: [...(process.platform === "darwin" ? ["--use-mock-keychain"] : ["--password-store=basic"]), process.env.DESKTOP_APP_DIR ?? join(repo, "apps/desktop")],
   env: { ...process.env, KAKU_BIN: kaku, KAKUREGA_DATA_DIR: data, KAKU_ARGS: `--root ${root} --scripted ${join(here, "script.json")} --ui-dir ${join(repo, "apps/web/dist")}` },
 });
 const problems = [];

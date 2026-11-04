@@ -13,7 +13,9 @@ const appDir = resolve(here, "..");
 
 // A packaged app is: the Electron runtime, our code in one asar whose header hash is written into Info.plist, and
 // fuses that make the runtime load only that asar, verify it, and refuse Node and inspector entry points.
-export async function packageApp(outDir) {
+// cookieEncryption stays on for real builds; unattended tests turn it off because it makes macOS ask for the login
+// keychain password, which blocks the run.
+export async function packageApp(outDir, { cookieEncryption = true } = {}) {
   const electronApp = join(appDir, "node_modules/electron/dist/Electron.app");
   const out = join(outDir, "Kakurega.app");
   rmSync(outDir, { recursive: true, force: true });
@@ -43,7 +45,7 @@ export async function packageApp(outDir) {
     version: FuseVersion.V1,
     resetAdHocDarwinSignature: true,
     [FuseV1Options.RunAsNode]: false,
-    [FuseV1Options.EnableCookieEncryption]: true,
+    [FuseV1Options.EnableCookieEncryption]: cookieEncryption,
     [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
     [FuseV1Options.EnableNodeCliInspectArguments]: false,
     [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
