@@ -88,6 +88,7 @@ struct StoredCheckpoint {
 pub struct Broker {
     pub kernel: Kernel,
     checkpoints: HashMap<JobKey, StoredCheckpoint>,
+    final_taints: HashMap<SessionId, kk_types::label::Label>,
     policy: Engine,
     routes: RouteSet,
     tools: BTreeMap<String, Box<dyn Tool>>,
@@ -147,6 +148,7 @@ impl Broker {
         Broker {
             kernel: Kernel::new(),
             checkpoints: HashMap::new(),
+            final_taints: HashMap::new(),
             policy,
             routes,
             tools,
@@ -157,6 +159,10 @@ impl Broker {
             release_drafts: Vec::new(),
             written: Vec::new(),
         }
+    }
+
+    pub fn tool_specs(&self) -> Vec<kk_route::ToolSpec> {
+        self.tools.values().map(|t| t.spec()).collect()
     }
 
     pub fn register_tool(&mut self, tool: Box<dyn Tool>) {
@@ -207,6 +213,11 @@ impl Broker {
 
     pub fn close_session(&mut self, id: SessionId) {
         if let Some(s) = self.sessions.get_mut(&id) {
+            if s.open {
+                if let Some(t) = self.kernel.taint(s.step) {
+                    self.final_taints.insert(id, t.clone());
+                }
+            }
             s.open = false;
             self.kernel.close_step(s.step);
         }
@@ -215,6 +226,10 @@ impl Broker {
     pub fn checkpoint_of(&self, id: SessionId) -> Option<&[u8]> {
         let job = &self.sessions.get(&id)?.job;
         self.checkpoints.get(job).map(|c| c.bytes.as_slice())
+    }
+
+    pub fn final_taint(&self, id: SessionId) -> Option<kk_types::label::Label> {
+        self.final_taints.get(&id).cloned()
     }
 
     pub fn taint_of(&self, id: SessionId) -> Option<kk_types::label::Label> {

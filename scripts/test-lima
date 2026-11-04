@@ -6,4 +6,4 @@ limactl start "$vm" >/dev/null 2>&1 || true
 vm_home="$(limactl shell "$vm" -- bash -lc 'echo $HOME' | tail -1)"
 limactl shell "$vm" -- bash -lc ". \$HOME/.cargo/env; cd '$repo' && export CARGO_TARGET_DIR=\$HOME/kk-target RUSTUP_TOOLCHAIN=1.94.1; cargo build --locked -p kk-worker -p kk-sandbox"
 KK_VM_HOME="$vm_home" cargo test -p kk-run --test lima_transport -- --ignored --test-threads=1
-KK_VM_HOME="$vm_home" cargo test -p kk-review --test check -- --ignored --test-threads=1
+KK_VM_HOME="$vm_home" cargo test -p kk-review --test check --test job -- --ignored --test-threads=1
