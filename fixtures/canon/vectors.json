@@ -1,0 +1,312 @@
+{
+  "accept": [
+    {
+      "name": "sorts keys",
+      "input": "{\"b\":1,\"a\":2}",
+      "canonical": "{\"a\":2,\"b\":1}",
+      "sha256": "d3626ac30a87e6f7a6428233b3c68299976865fa5508e4267c5415c76af7a772"
+    },
+    {
+      "name": "nested sorting",
+      "input": "{\"outer\":{\"z\":[3,{\"y\":1,\"x\":2}],\"a\":null}}",
+      "canonical": "{\"outer\":{\"a\":null,\"z\":[3,{\"x\":2,\"y\":1}]}}",
+      "sha256": "aca8b1d3255cbfde2c6d8eba6eebd41dda06b49a2f66b435ee1ec7fd313531d3"
+    },
+    {
+      "name": "empty members participate",
+      "input": "{\"e\":{},\"a\":[],\"n\":null,\"k\":1}",
+      "canonical": "{\"a\":[],\"e\":{},\"k\":1,\"n\":null}",
+      "sha256": "ea64f41f98c81d7a0321157d4733ac05b84964695c0da9cf675da21cad3b6164"
+    },
+    {
+      "name": "scalars at top level",
+      "input": "\"bare\"",
+      "canonical": "\"bare\"",
+      "sha256": "32885bd4bd6941950e592afa094030931e99b0a9106ec7d4c91f6da289476416"
+    },
+    {
+      "name": "true",
+      "input": "true",
+      "canonical": "true",
+      "sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+    },
+    {
+      "name": "false",
+      "input": "false",
+      "canonical": "false",
+      "sha256": "fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa"
+    },
+    {
+      "name": "null",
+      "input": "null",
+      "canonical": "null",
+      "sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+    },
+    {
+      "name": "empty array",
+      "input": "[]",
+      "canonical": "[]",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "whitespace ignored",
+      "input": " \n\t{ \"a\" : [ 1 , 2 ] ,\r\n \"b\" : { } } ",
+      "canonical": "{\"a\":[1,2],\"b\":{}}",
+      "sha256": "8c547cce7ccb1b89359479c0b71a0a4b62acfc54a2b2780fd34aaeb75f9e44b7"
+    },
+    {
+      "name": "zero",
+      "input": "0",
+      "canonical": "0",
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "name": "safe max",
+      "input": "9007199254740991",
+      "canonical": "9007199254740991",
+      "sha256": "f40b423c2dd95ff2b2f027e22208f438cf7242862e5e746860e697308c9add26"
+    },
+    {
+      "name": "safe min",
+      "input": "-9007199254740991",
+      "canonical": "-9007199254740991",
+      "sha256": "4c933a456bb8f2e9894b2d0b26480439cd72d52fb8a27cbf8fd7f323f22c7815"
+    },
+    {
+      "name": "negative int",
+      "input": "{\"n\":-17}",
+      "canonical": "{\"n\":-17}",
+      "sha256": "60db33bd69d3323b1cc7d84a1f669dee63229792da6cb9590e613e96b2b79fd2"
+    },
+    {
+      "name": "string escapes",
+      "input": "\"q\\\" b\\\\ s\\/ b\\b f\\f n\\n r\\r t\\t\"",
+      "canonical": "\"q\\\" b\\\\ s/ b\\b f\\f n\\n r\\r t\\t\"",
+      "sha256": "1c7cb0dab5d7b6b4594866623ae0560c23a930bd601fd2ccb6a568c6627c4ed6"
+    },
+    {
+      "name": "control chars use lowercase \\u",
+      "input": "\"\\u0001\\u001f\\u001F\"",
+      "canonical": "\"\\u0001\\u001f\\u001f\"",
+      "sha256": "dab52ce2c343a8fb5982bf4bb3d174d6b534748c93a60c62d616dc513457e7cb"
+    },
+    {
+      "name": "delete char is literal",
+      "input": "\"\\u007f\"",
+      "canonical": "\"\"",
+      "sha256": "6fe76740e12a93d5598fe685cb6ad3d3c94e44609065a56866b69647772026ec"
+    },
+    {
+      "name": "non ascii literal",
+      "input": "\"café 😀\"",
+      "canonical": "\"café 😀\"",
+      "sha256": "89fa4ccbaa53bc2ebec0726f73beccbe1618075d3ef9e740cf34ec284b07a66e"
+    },
+    {
+      "name": "surrogate pair escape equals literal",
+      "input": "\"\\ud83d\\ude00\"",
+      "canonical": "\"😀\"",
+      "sha256": "7a0c50b92434b015545fe93ab723db2d4b2cdd14a441405624a9ce8be29f1d5a"
+    },
+    {
+      "name": "key order astral before private use",
+      "input": "{\"\\ud83d\\ude00\":1,\"\\ue000\":2}",
+      "canonical": "{\"😀\":1,\"\":2}",
+      "sha256": "04208f6cdb854e2ab1b07dd3633a39dec854344fe72824cf7f2fdb4e2e33129e"
+    },
+    {
+      "name": "key order astral before U+FFFF",
+      "input": "{\"\\uffff\":1,\"\\ud800\\udc00\":2}",
+      "canonical": "{\"𐀀\":2,\"￿\":1}",
+      "sha256": "72406deb9e8efdb3b2d8b80c26ebd8d609a5338250baa8308cab44bbe7506499"
+    },
+    {
+      "name": "key order bmp mix",
+      "input": "{\"b\":1,\"B\":2,\"é\":3,\"a\":4,\"Z\":5}",
+      "canonical": "{\"B\":2,\"Z\":5,\"a\":4,\"b\":1,\"é\":3}",
+      "sha256": "381eed39c763331b84fc3a0e1e5760f57b592067ae0a1ba1c29d2ee103aa8135"
+    },
+    {
+      "name": "array order kept",
+      "input": "[3,1,2,[],{}]",
+      "canonical": "[3,1,2,[],{}]",
+      "sha256": "3a4e2c868f2f3d448700762a0896a8ef11f2c70b736d3478be4183bcf122de1b"
+    },
+    {
+      "name": "escaped key equals literal key",
+      "input": "{\"\\u0062\":1,\"a\":2}",
+      "canonical": "{\"a\":2,\"b\":1}",
+      "sha256": "d3626ac30a87e6f7a6428233b3c68299976865fa5508e4267c5415c76af7a772"
+    },
+    {
+      "name": "deep nesting",
+      "input": "{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":[[[[1]]]]}}}}}",
+      "canonical": "{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":[[[[1]]]]}}}}}",
+      "sha256": "b8d171a9a59f7cd43b2e8dbbc3f6ae7a9af2effd6efb24bccf930c9e66591db7"
+    },
+    {
+      "name": "number like strings stay strings",
+      "input": "{\"x\":\"1.0\",\"y\":\"1e5\"}",
+      "canonical": "{\"x\":\"1.0\",\"y\":\"1e5\"}",
+      "sha256": "26a15f272f040f5880fe15e26c69e592e78297c726f0b403674fde2ef3284149"
+    },
+    {
+      "name": "unicode normalisation is not applied",
+      "input": "{\"e\\u0301\":1,\"\\u00e9\":2}",
+      "canonical": "{\"é\":1,\"é\":2}",
+      "sha256": "c2635d7e15e25b90abc8b3543d92f0ffcee0644372d8b662a0775f88d43278e5"
+    }
+  ],
+  "reject": [
+    {
+      "name": "float",
+      "input": "1.5",
+      "code": "float_forbidden"
+    },
+    {
+      "name": "integral float",
+      "input": "1.0",
+      "code": "float_forbidden"
+    },
+    {
+      "name": "exponent",
+      "input": "1e2",
+      "code": "float_forbidden"
+    },
+    {
+      "name": "capital exponent",
+      "input": "1E2",
+      "code": "float_forbidden"
+    },
+    {
+      "name": "negative zero",
+      "input": "-0",
+      "code": "negative_zero"
+    },
+    {
+      "name": "unsafe integer",
+      "input": "9007199254740992",
+      "code": "unsafe_integer"
+    },
+    {
+      "name": "unsafe negative",
+      "input": "-9007199254740992",
+      "code": "unsafe_integer"
+    },
+    {
+      "name": "huge integer",
+      "input": "12345678901234567890123",
+      "code": "unsafe_integer"
+    },
+    {
+      "name": "duplicate key",
+      "input": "{\"a\":1,\"a\":2}",
+      "code": "duplicate_key"
+    },
+    {
+      "name": "duplicate key via escape",
+      "input": "{\"a\":1,\"\\u0061\":2}",
+      "code": "duplicate_key"
+    },
+    {
+      "name": "trailing comma object",
+      "input": "{\"a\":1,}",
+      "code": "syntax"
+    },
+    {
+      "name": "trailing comma array",
+      "input": "[1,]",
+      "code": "syntax"
+    },
+    {
+      "name": "single quotes",
+      "input": "{'a':1}",
+      "code": "syntax"
+    },
+    {
+      "name": "NaN",
+      "input": "NaN",
+      "code": "syntax"
+    },
+    {
+      "name": "leading zero",
+      "input": "01",
+      "code": "syntax"
+    },
+    {
+      "name": "plus sign",
+      "input": "+1",
+      "code": "syntax"
+    },
+    {
+      "name": "hex number",
+      "input": "0x10",
+      "code": "syntax"
+    },
+    {
+      "name": "lone high surrogate escape",
+      "input": "\"\\ud800\"",
+      "code": "lone_surrogate"
+    },
+    {
+      "name": "lone low surrogate escape",
+      "input": "\"\\udc00\"",
+      "code": "lone_surrogate"
+    },
+    {
+      "name": "trailing data",
+      "input": "{}x",
+      "code": "trailing_data"
+    },
+    {
+      "name": "two values",
+      "input": "1 2",
+      "code": "trailing_data"
+    },
+    {
+      "name": "byte order mark",
+      "input": "﻿{}",
+      "code": "syntax"
+    },
+    {
+      "name": "empty input",
+      "input": "",
+      "code": "syntax"
+    },
+    {
+      "name": "comment",
+      "input": "{\"a\":1}//x",
+      "code": "trailing_data"
+    },
+    {
+      "name": "raw newline in string",
+      "input": "\"a\nb\"",
+      "code": "syntax"
+    },
+    {
+      "name": "bad escape",
+      "input": "\"\\x41\"",
+      "code": "syntax"
+    },
+    {
+      "name": "unterminated string",
+      "input": "\"abc",
+      "code": "syntax"
+    },
+    {
+      "name": "unterminated object",
+      "input": "{\"a\":1",
+      "code": "syntax"
+    },
+    {
+      "name": "nesting beyond the limit",
+      "input": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+      "code": "too_deep"
+    },
+    {
+      "name": "invalid utf-8 bytes",
+      "input_hex": "7b2261223a22ff227d",
+      "code": "invalid_utf8"
+    }
+  ]
+}

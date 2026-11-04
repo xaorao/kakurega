@@ -9,4 +9,5 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 pnpm test
+N=1000 pnpm --filter @kakurega/canon run differential
 echo "ALL CHECKS PASSED"
