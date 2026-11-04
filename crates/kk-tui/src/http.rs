@@ -5,6 +5,7 @@ use std::path::Path;
 pub struct Http {
     agent: ureq::Agent,
     admin_agent: ureq::Agent,
+    stream_agent: ureq::Agent,
     base: String,
     token: String,
     csrf: String,
@@ -29,6 +30,11 @@ impl Http {
         let mut h = Http {
             agent: build_agent(),
             admin_agent: build_agent(),
+            stream_agent: ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .timeout_global(Some(std::time::Duration::from_secs(900)))
+                .build()
+                .into(),
             base: format!("http://127.0.0.1:{port}"),
             token,
             csrf: String::new(),
@@ -106,6 +112,80 @@ impl Http {
             .read_to_string()
             .map_err(|e| e.to_string())?;
         Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
+    }
+
+    /// Runs a streamed request: `on_delta` gets each piece as it arrives. Setting `cancel` closes the connection, which
+    /// stops the model. The result is the final object of the stream, `{"stopped": true}` after a cancel, or the error.
+    pub fn run_stream(
+        &self,
+        req: &Req,
+        cancel: &std::sync::atomic::AtomicBool,
+        on_delta: &mut dyn FnMut(&str),
+    ) -> Resp {
+        use std::io::BufRead;
+        use std::sync::atomic::Ordering;
+        let result = (|| -> Result<(u16, Value), String> {
+            let url = format!("{}{}", self.base, req.path);
+            let mut r = self
+                .stream_agent
+                .post(&url)
+                .header("Origin", &self.base)
+                .header("Sec-Fetch-Site", "same-origin")
+                .header("x-kk-csrf", &self.csrf)
+                .send_json(req.body.clone().unwrap_or(Value::Null))
+                .map_err(|e| e.to_string())?;
+            let status = r.status().as_u16();
+            if status != 200 {
+                let text = r.body_mut().read_to_string().map_err(|e| e.to_string())?;
+                return Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)));
+            }
+            // read on another thread so a cancel is noticed even while the model is silent; when the reader is dropped
+            // the connection closes and the model stops
+            let (tx, rx) = std::sync::mpsc::channel::<Result<String, String>>();
+            let reader = r.into_body().into_reader();
+            std::thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(reader);
+                loop {
+                    let mut line = String::new();
+                    match reader.read_line(&mut line) {
+                        Ok(0) => {
+                            let _ = tx.send(Err("the answer ended before it was finished".into()));
+                            return;
+                        }
+                        Ok(_) => {
+                            if tx.send(Ok(line)).is_err() {
+                                return;
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Err(e.to_string()));
+                            return;
+                        }
+                    }
+                }
+            });
+            loop {
+                if cancel.load(Ordering::SeqCst) {
+                    return Ok((200, serde_json::json!({"stopped": true})));
+                }
+                let line = match rx.recv_timeout(std::time::Duration::from_millis(80)) {
+                    Ok(l) => l?,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        return Err("the answer ended before it was finished".into())
+                    }
+                };
+                let v: Value = serde_json::from_str(line.trim()).map_err(|e| e.to_string())?;
+                if let Some(d) = v["delta"].as_str() {
+                    on_delta(d);
+                } else if v.get("error").is_some() {
+                    return Ok((502, v));
+                } else if v["done"] == true || v["stopped"] == true {
+                    return Ok((200, v));
+                }
+            }
+        })();
+        Resp { id: req.id, result }
     }
 
     pub fn run(&self, req: &Req) -> Resp {

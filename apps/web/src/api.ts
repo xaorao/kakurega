@@ -27,6 +27,43 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return data as T;
 }
 
+/** Streams a chat answer. `onDelta` receives each piece; aborting `signal` closes the connection, which stops the model. */
+export async function streamChat(body: unknown, onDelta: (t: string) => void, signal: AbortSignal): Promise<ChatReply | { stopped: true }> {
+  const res = await fetch("/api/chat/stream", { method: "POST", headers: { "content-type": "application/json", "x-kk-csrf": csrf }, credentials: "same-origin", body: JSON.stringify(body), signal });
+  if (!res.ok || !res.body) {
+    let data: any = null;
+    try {
+      data = JSON.parse(await res.text());
+    } catch {
+      data = null;
+    }
+    throw new ApiError(res.status, data?.error?.code ?? "ERROR", data?.error?.message ?? `request failed (${res.status})`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let last: ChatReply | { stopped: true } | null = null;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line) continue;
+      const v = JSON.parse(line);
+      if (typeof v.delta === "string") onDelta(v.delta);
+      else if (v.error) throw new ApiError(502, v.error.code ?? "ERROR", v.error.message ?? "the answer failed");
+      else if (v.stopped) last = { stopped: true };
+      else if (v.done) last = v as ChatReply;
+    }
+  }
+  // the body is read to its end so the browser sees a finished response, not an abandoned one
+  if (last) return last;
+  throw new ApiError(502, "ENDED", "the answer ended before it was finished");
+}
+
 export interface Config {
   version: string;
   route: { id: string; class: string; model?: string; simulated: boolean; transport?: string };

@@ -136,6 +136,7 @@ export const en = {
   "chat.forgetSure": "Press again to forget",
   "chat.saved": "Saved in the encrypted store",
   "chat.notSaved": "Not saved (this conversation is full)",
+  "chat.stop": "Stop",
   "chat.error": "The assistant could not answer.",
   "nav.docs": "Documents",
   "docs.title": "Ask your documents",

@@ -239,6 +239,107 @@ impl Route for OllamaRoute {
     }
 }
 
+impl OllamaRoute {
+    /// Streams a reply. `on_chunk` receives each piece of text as the model writes it and returns `false` to stop: the
+    /// connection is then dropped, which makes the model stop generating. Returns the text produced so far with
+    /// `stopped` set when `on_chunk` ended it early. No tools are offered in a streamed chat.
+    pub fn stream(
+        &self,
+        request: &CompletionRequest,
+        on_chunk: &mut dyn FnMut(&str) -> bool,
+    ) -> Result<Streamed, RouteError> {
+        use std::io::{BufRead, Read};
+        let messages: Vec<Value> = request
+            .messages
+            .iter()
+            .map(|m| json!({"role": m.role, "content": m.content}))
+            .collect();
+        let body = json!({
+            "model": self.model,
+            "stream": true,
+            "messages": messages,
+            "options": {"num_predict": request.max_tokens, "temperature": request.temperature},
+        });
+        let mut resp = self
+            .agent
+            .post(&format!("{}/api/chat", self.base))
+            .send_json(&body)
+            .map_err(|e| RouteError::Unreachable(e.to_string()))?;
+        if !resp.status().is_success() {
+            return Err(RouteError::BadResponse(format!("status {}", resp.status())));
+        }
+        let mut reader = std::io::BufReader::new(resp.body_mut().as_reader());
+        let mut text = String::new();
+        let (mut prompt_tokens, mut completion_tokens) = (0, 0);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let n = reader
+                .by_ref()
+                .take(1 << 20)
+                .read_line(&mut line)
+                .map_err(|e| RouteError::BadResponse(e.to_string()))?;
+            if n == 0 {
+                return Err(RouteError::BadResponse(
+                    "the model stopped answering before it finished".into(),
+                ));
+            }
+            if !line.ends_with('\n') && n >= (1 << 20) {
+                return Err(RouteError::BadResponse(
+                    "a streamed line was too long".into(),
+                ));
+            }
+            if line.trim().is_empty() {
+                continue;
+            }
+            let v: Value = serde_json::from_str(line.trim())
+                .map_err(|e| RouteError::BadResponse(format!("unreadable stream line: {e}")))?;
+            if let Some(err) = v["error"].as_str() {
+                return Err(RouteError::BadResponse(err.to_string()));
+            }
+            if let Some(piece) = v["message"]["content"].as_str() {
+                if !piece.is_empty() {
+                    text.push_str(piece);
+                    if text.len() > MAX_STREAMED_BYTES {
+                        return Err(RouteError::BadResponse(
+                            "the reply was longer than allowed".into(),
+                        ));
+                    }
+                    if !on_chunk(piece) {
+                        return Ok(Streamed {
+                            text,
+                            stopped: true,
+                            prompt_tokens,
+                            completion_tokens,
+                        });
+                    }
+                }
+            }
+            if v["done"].as_bool() == Some(true) {
+                prompt_tokens = v["prompt_eval_count"].as_u64().unwrap_or(0);
+                completion_tokens = v["eval_count"].as_u64().unwrap_or(0);
+                return Ok(Streamed {
+                    text,
+                    stopped: false,
+                    prompt_tokens,
+                    completion_tokens,
+                });
+            }
+        }
+    }
+}
+
+/// The most text one streamed reply may hold.
+pub const MAX_STREAMED_BYTES: usize = 256 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Streamed {
+    pub text: String,
+    pub stopped: bool,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+}
+
 pub struct ScriptedRoute {
     id: String,
     class: RouteClass,

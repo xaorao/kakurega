@@ -18,6 +18,8 @@ pub struct Req {
     pub method: Method,
     pub path: String,
     pub body: Option<Value>,
+    /// The response is a stream of JSON lines (`delta` pieces, then a final object) rather than one document.
+    pub stream: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +33,11 @@ pub enum Event {
     Key(KeyEvent),
     Paste(String),
     Resp(Resp),
+    /// A piece of a streamed answer for request `id`.
+    Delta {
+        id: u64,
+        text: String,
+    },
     Tick,
 }
 
@@ -136,6 +143,9 @@ pub struct App {
     inflight_polls: BTreeSet<String>,
     pub chat_history: Vec<(String, String)>,
     pub session: Option<String>,
+    /// Set by Esc while an answer is streaming; the network thread then closes the connection.
+    pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    live: Option<(usize, String)>,
     chat_waiting: bool,
     pub approver: Option<kk_evidence::approval::ApproverKey>,
     pub fixes_seen: Vec<(String, usize, String, bool)>,
@@ -195,6 +205,8 @@ impl App {
             inflight_polls: BTreeSet::new(),
             chat_history: Vec::new(),
             session: None,
+            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            live: None,
             chat_waiting: false,
             approver: None,
             fixes_seen: Vec::new(),
@@ -214,6 +226,7 @@ impl App {
         self.pending.insert(id, intent);
         Req {
             id,
+            stream: false,
             admin,
             method,
             path: path.to_string(),
@@ -288,6 +301,26 @@ impl App {
                 Vec::new()
             }
             Event::Resp(r) => self.on_resp(r),
+            Event::Delta { id, text } => {
+                if matches!(self.pending.get(&id), Some(Intent::Chat)) {
+                    let text = clean(&text);
+                    match &mut self.live {
+                        Some((i, acc)) => {
+                            acc.push_str(&text);
+                            let lines = text_lines(acc);
+                            if let Some(c) = self.cards.get_mut(*i) {
+                                c.lines = lines;
+                            }
+                        }
+                        None => {
+                            self.push(Kind::Info, Some("Assistant"), text_lines(&text));
+                            self.live = Some((self.cards.len() - 1, text));
+                        }
+                    }
+                    self.scroll_back = 0;
+                }
+                Vec::new()
+            }
             Event::Tick => {
                 let ids: Vec<String> = self
                     .watching
@@ -624,8 +657,12 @@ impl App {
                 }
             }
             KeyCode::Esc => {
-                self.input.clear();
-                self.cursor = 0;
+                if self.chat_waiting {
+                    self.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+                } else {
+                    self.input.clear();
+                    self.cursor = 0;
+                }
             }
             KeyCode::Enter => {
                 let line = std::mem::take(&mut self.input);
@@ -840,16 +877,21 @@ impl App {
             .collect();
         self.chat_history.push(("user".into(), message.to_string()));
         self.chat_waiting = true;
-        vec![self.req(
+        self.live = None;
+        self.cancel
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let mut req = self.req(
             Intent::Chat,
             false,
             Method::Post,
-            "/api/chat",
+            "/api/chat/stream",
             Some(match &self.session {
                 Some(id) => json!({"message": message, "history": history, "session": id}),
                 None => json!({"message": message, "history": history}),
             }),
-        )]
+        );
+        req.stream = true;
+        vec![req]
     }
 
     fn scrub_last_remember(&mut self) {
@@ -1506,9 +1548,28 @@ impl App {
             }
             Intent::Chat => {
                 self.chat_waiting = false;
-                if !ok {
+                let live = self.live.take();
+                if !ok || body["stopped"] == true {
                     self.chat_history.pop();
-                    self.say(Kind::Error, err_text(status, &body));
+                    if let Some((i, partial)) = live {
+                        if let Some(c) = self.cards.get_mut(i) {
+                            c.lines = text_lines(&partial);
+                            c.lines.push(String::new());
+                            c.lines.push(
+                                "Stopped. This partial answer is not kept in the conversation."
+                                    .into(),
+                            );
+                        }
+                    }
+                    if !ok {
+                        self.say(Kind::Error, err_text(status, &body));
+                    } else if self
+                        .cards
+                        .last()
+                        .is_none_or(|c| c.title.as_deref() != Some("Assistant"))
+                    {
+                        self.say(Kind::Info, "Stopped.");
+                    }
                     return Vec::new();
                 }
                 let reply = body["reply"].as_str().unwrap_or("").to_string();
@@ -1522,13 +1583,26 @@ impl App {
                     },
                     body["notes_used"]
                 )];
+                if self.session.is_some() {
+                    foot.push(if body["saved"] == true {
+                        "saved in the encrypted store".into()
+                    } else {
+                        "not saved (this conversation is full)".to_string()
+                    });
+                }
                 if body["notes_withheld"].as_u64().unwrap_or(0) > 0 {
                     foot.push(format!("{} note(s) were not given to the model because they look like instructions.", body["notes_withheld"]));
                 }
                 let mut lines = text_lines(&reply);
                 lines.push(String::new());
                 lines.extend(foot);
-                self.push(Kind::Info, Some("Assistant"), lines);
+                match live.and_then(|(i, _)| self.cards.get_mut(i)) {
+                    Some(c) => {
+                        c.lines = lines;
+                        self.scroll_back = 0;
+                    }
+                    None => self.push(Kind::Info, Some("Assistant"), lines),
+                }
                 Vec::new()
             }
             Intent::Keep => {
@@ -1574,6 +1648,7 @@ impl App {
                 }
                 self.chat_history.clear();
                 self.cards.clear();
+                self.live = None;
                 for t in body["turns"].as_array().into_iter().flatten() {
                     let (role, content) = (
                         t["role"].as_str().unwrap_or(""),

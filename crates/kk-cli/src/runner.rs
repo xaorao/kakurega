@@ -131,6 +131,55 @@ impl JobRunner for ReviewRunner {
         })
     }
 
+    fn chat_stream(
+        &self,
+        messages: Vec<kk_types::chat::ChatMessage>,
+        on_chunk: &mut dyn FnMut(&str) -> bool,
+    ) -> Result<kk_service::StreamedReply, String> {
+        if self.scripted.is_some() {
+            let reply = self.chat(messages)?;
+            let mut sent = String::new();
+            for word in reply.text.split_inclusive(' ') {
+                sent.push_str(word);
+                if !on_chunk(word) {
+                    return Ok(kk_service::StreamedReply {
+                        reply: kk_service::ChatReply {
+                            text: sent,
+                            ..reply
+                        },
+                        stopped: true,
+                    });
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            return Ok(kk_service::StreamedReply {
+                reply,
+                stopped: false,
+            });
+        }
+        let route = OllamaRoute::new(&self.ollama, &self.model).map_err(|e| e.to_string())?;
+        let done = route
+            .stream(
+                &kk_route::CompletionRequest {
+                    messages,
+                    tools: Vec::new(),
+                    max_tokens: 500,
+                    temperature: 0.2,
+                },
+                on_chunk,
+            )
+            .map_err(|e| format!("the local model did not answer: {e}"))?;
+        Ok(kk_service::StreamedReply {
+            reply: kk_service::ChatReply {
+                text: done.text,
+                route_id: route.id().to_string(),
+                class: "device_only".into(),
+                simulated: false,
+            },
+            stopped: done.stopped,
+        })
+    }
+
     fn readiness(&self) -> Vec<Value> {
         let check = |id: &str, label: &str, ok: bool, detail: String, fix: &str| json!({"id": id, "label": label, "ok": ok, "detail": detail, "fix": if ok { "" } else { fix }});
         let mut out = Vec::new();

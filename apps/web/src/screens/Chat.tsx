@@ -1,5 +1,5 @@
 import { createResource, createSignal, For, Show } from "solid-js";
-import { api, ApiError, type ChatTurn, type KeptChat, type ResearchPage, type ResearchProposal } from "../api";
+import { api, ApiError, streamChat, type ChatTurn, type KeptChat, type ResearchPage, type ResearchProposal } from "../api";
 import { t } from "../i18n";
 
 interface Shown extends ChatTurn {
@@ -10,6 +10,8 @@ export function Chat() {
   const [turns, setTurns] = createSignal<Shown[]>([]);
   const [text, setText] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  const [live, setLive] = createSignal("");
+  let abort: AbortController | null = null;
   const [error, setError] = createSignal("");
   const [session, setSession] = createSignal<string | null>(null);
   const [confirmForget, setConfirmForget] = createSignal<string | null>(null);
@@ -100,8 +102,15 @@ export function Chat() {
     setText("");
     setBusy(true);
     setError("");
+    setLive("");
+    abort = new AbortController();
     try {
-      const r = await api.chat(message, history, pages().filter((p) => p.page_id && !p.looks_like_instructions).map((p) => p.page_id as string), session() ?? undefined);
+      const r = await streamChat({ message, history, sources: pages().filter((p) => p.page_id && !p.looks_like_instructions).map((p) => p.page_id as string), ...(session() ? { session: session() } : {}) }, (d) => setLive((x) => x + d), abort.signal);
+      if ("stopped" in r) {
+        setTurns(turns().slice(0, -1));
+        setText(message);
+        return;
+      }
       const foot = [r.route.simulated ? t("chat.test") : t("chat.private"), t("chat.notesUsed", { n: r.notes_used })];
       if (session()) foot.push(r.saved ? t("chat.saved") : t("chat.notSaved"));
       if (r.web_sources_used > 0) foot.push(t("web.used", { n: r.web_sources_used }));
@@ -111,9 +120,11 @@ export function Chat() {
     } catch (err) {
       setTurns(turns().slice(0, -1));
       setText(message);
-      setError(err instanceof ApiError ? err.message : t("chat.error"));
+      if (!(err instanceof DOMException && err.name === "AbortError")) setError(err instanceof ApiError ? err.message : t("chat.error"));
     } finally {
       setBusy(false);
+      setLive("");
+      abort = null;
     }
   };
   return (
@@ -151,7 +162,8 @@ export function Chat() {
             </li>
           )}
         </For>
-        <Show when={busy()}><li class="muted" role="status">{t("chat.thinking")}</li></Show>
+        <Show when={busy() && live()}><li class="card stack msg assistant"><strong>{t("chat.assistant")}</strong><p class="mem-text">{live()}</p></li></Show>
+        <Show when={busy() && !live()}><li class="muted" role="status">{t("chat.thinking")}</li></Show>
       </ul>
       <details class="card stack" id="web-research">
         <summary>{t("web.title")}</summary>
@@ -210,6 +222,7 @@ export function Chat() {
         />
         <div class="actions">
           <button class="primary" type="submit" disabled={busy() || text().trim().length === 0}>{t("chat.send")}</button>
+          <Show when={busy()}><button type="button" onClick={() => abort?.abort()}>{t("chat.stop")}</button></Show>
           <button type="button" disabled={busy() || turns().length === 0} onClick={() => { setTurns([]); setError(""); }}>{t("chat.clear")}</button>
           <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
         </div>

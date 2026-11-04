@@ -177,3 +177,146 @@ fn live_local_model_answers_and_can_call_a_tool() {
     );
     assert_eq!(call.message.tool_calls[0].name, "read_file");
 }
+
+mod streaming {
+    use kk_route::{ChatMessage, CompletionRequest, OllamaRoute, RouteError};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    /// A one-shot fake model server. It writes `lines` one at a time with a short pause and reports whether the client
+    /// closed the connection before the last line.
+    fn serve(lines: Vec<String>) -> (String, Arc<AtomicBool>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let cut_short = Arc::new(AtomicBool::new(false));
+        let flag = cut_short.clone();
+        std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let mut got = Vec::new();
+            while !got.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = s.read(&mut buf).unwrap();
+                if n == 0 {
+                    return;
+                }
+                got.extend_from_slice(&buf[..n]);
+            }
+            let head = String::from_utf8_lossy(&got).to_lowercase();
+            let len: usize = head
+                .split("content-length: ")
+                .nth(1)
+                .and_then(|r| r.split("\r\n").next())
+                .and_then(|n| n.trim().parse().ok())
+                .unwrap_or(0);
+            let body_start = got.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+            let mut have = got.len() - body_start;
+            while have < len {
+                have += s.read(&mut buf).unwrap();
+            }
+            s.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/x-ndjson\r\nconnection: close\r\n\r\n").unwrap();
+            for l in lines {
+                if s.write_all(format!("{l}\n").as_bytes()).is_err() || s.flush().is_err() {
+                    flag.store(true, Ordering::SeqCst);
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(60));
+            }
+        });
+        (url, cut_short)
+    }
+
+    fn req() -> CompletionRequest {
+        CompletionRequest {
+            messages: vec![ChatMessage::new("user", "hi")],
+            tools: vec![],
+            max_tokens: 50,
+            temperature: 0.0,
+        }
+    }
+
+    fn chunk(t: &str) -> String {
+        format!(
+            "{{\"message\":{{\"role\":\"assistant\",\"content\":{}}},\"done\":false}}",
+            serde_json::to_string(t).unwrap()
+        )
+    }
+
+    const DONE: &str = "{\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"prompt_eval_count\":7,\"eval_count\":3}";
+
+    #[test]
+    fn st01_chunks_arrive_in_order_and_the_totals_come_from_the_final_line() {
+        let (url, _) = serve(vec![
+            chunk("Hel"),
+            chunk("lo "),
+            chunk("wörld"),
+            DONE.into(),
+        ]);
+        let route = OllamaRoute::new(&url, "m").unwrap();
+        let mut seen = Vec::new();
+        let out = route.stream(&req(), &mut |c| {
+            seen.push(c.to_string());
+            true
+        });
+        let out = out.unwrap();
+        assert_eq!(seen, ["Hel", "lo ", "wörld"]);
+        assert_eq!(
+            (
+                out.text.as_str(),
+                out.stopped,
+                out.prompt_tokens,
+                out.completion_tokens
+            ),
+            ("Hello wörld", false, 7, 3)
+        );
+    }
+
+    #[test]
+    fn st02_stopping_early_closes_the_connection_so_the_model_stops() {
+        let many: Vec<String> = (0..60).map(|i| chunk(&format!("w{i} "))).collect();
+        let (url, cut_short) = serve(many);
+        let route = OllamaRoute::new(&url, "m").unwrap();
+        let mut n = 0;
+        let out = route.stream(&req(), &mut |_| {
+            n += 1;
+            n < 3
+        });
+        let out = out.unwrap();
+        assert!(out.stopped && out.text == "w0 w1 w2 ", "{out:?}");
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        assert!(
+            cut_short.load(Ordering::SeqCst),
+            "the server saw the connection close long before it finished"
+        );
+    }
+
+    #[test]
+    fn st03_broken_streams_are_errors_not_partial_successes() {
+        for (label, lines) in [
+            ("ends without a final line", vec![chunk("a"), chunk("b")]),
+            ("not json", vec![chunk("a"), "this is not json".to_string()]),
+            (
+                "model error",
+                vec!["{\"error\":\"model not found\"}".to_string()],
+            ),
+        ] {
+            let (url, _) = serve(lines);
+            let route = OllamaRoute::new(&url, "m").unwrap();
+            let r = route.stream(&req(), &mut |_| true);
+            assert!(
+                matches!(r, Err(RouteError::BadResponse(_))),
+                "{label}: {r:?}"
+            );
+        }
+        let (url, _) = serve(vec![
+            chunk(&"x".repeat(200_000)),
+            chunk(&"y".repeat(200_000)),
+            DONE.into(),
+        ]);
+        let r = OllamaRoute::new(&url, "m")
+            .unwrap()
+            .stream(&req(), &mut |_| true);
+        assert!(matches!(r, Err(RouteError::BadResponse(m)) if m.contains("longer than allowed")));
+    }
+}

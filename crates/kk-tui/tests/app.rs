@@ -181,7 +181,7 @@ fn tu04_plain_text_is_a_chat_message_sent_with_bounded_history_and_never_as_a_co
     let mut app = booted();
     let r = enter(&mut app, "please summarise my notes");
     assert_eq!(r.len(), 1);
-    assert_eq!(r[0].path, "/api/chat");
+    assert_eq!(r[0].path, "/api/chat/stream");
     assert!(!r[0].admin);
     assert_eq!(
         r[0].body.as_ref().unwrap(),
@@ -1046,4 +1046,81 @@ fn tu23_the_picker_renders_in_small_and_large_terminals_without_losing_the_selec
         lines.join("\n").contains(&want),
         "the selected item {want} must be visible"
     );
+}
+
+fn delta(app: &mut App, id: u64, t: &str) {
+    app.handle(Event::Delta {
+        id,
+        text: t.to_string(),
+    });
+}
+
+#[test]
+fn tu24_a_streamed_answer_grows_in_one_card_is_replaced_by_the_final_text_and_can_be_stopped_with_esc(
+) {
+    let mut a = booted();
+    let r = enter(&mut a, "tell me about invoices");
+    assert!(r[0].stream && r[0].path == "/api/chat/stream");
+    let id = r[0].id;
+    assert!(
+        enter(&mut a, "second message while waiting").is_empty(),
+        "a second message waits for the first"
+    );
+    let before = a.cards.len();
+    delta(&mut a, id, "Invoices ");
+    delta(&mut a, id, "are paid ");
+    delta(&mut a, id, "monthly.");
+    assert_eq!(a.cards.len(), before + 1, "all pieces land in one card");
+    let live = a.cards.last().unwrap();
+    assert_eq!(
+        (live.title.as_deref(), live.lines.join("")),
+        (Some("Assistant"), "Invoices are paid monthly.".to_string())
+    );
+    // the final object replaces the live text with the full reply and the footer
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "Invoices are paid monthly.", "route": {"simulated": true}, "notes_used": 1, "saved": false})));
+    assert_eq!(a.cards.len(), before + 1, "still one card");
+    assert!(text(&a).contains("test model · 1 note(s) used"));
+    assert_eq!(
+        a.chat_history.last().unwrap(),
+        &(
+            "assistant".to_string(),
+            "Invoices are paid monthly.".to_string()
+        )
+    );
+    // control characters in a piece never reach the screen
+    let r = enter(&mut a, "again");
+    delta(&mut a, r[0].id, "ok\u{1b}[31mred\u{7}");
+    assert!(!text(&a).contains('\u{1b}') && !text(&a).contains('\u{7}'));
+    // Esc while waiting asks the network thread to stop, and does not clear the composer
+    typed(&mut a, "draft");
+    a.handle(key(KeyCode::Esc));
+    assert!(a.cancel.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(a.input, "draft");
+    a.handle(ok(&r[0], 200, json!({"stopped": true})));
+    assert!(text(&a).contains("Stopped. This partial answer is not kept"));
+    assert_eq!(
+        a.chat_history
+            .iter()
+            .filter(|(r, c)| r == "user" && c == "again")
+            .count(),
+        0,
+        "a stopped exchange leaves no half conversation"
+    );
+    // after that Esc clears the composer again, and the next message resets the cancel flag
+    a.handle(key(KeyCode::Esc));
+    assert!(a.input.is_empty());
+    let r = enter(&mut a, "next");
+    assert!(!a.cancel.load(std::sync::atomic::Ordering::SeqCst));
+    // an error from the stream is shown and does not leave the screen waiting forever
+    a.handle(ok(
+        &r[0],
+        502,
+        json!({"error": {"code": "NO_MODEL", "message": "the local model did not answer"}}),
+    ));
+    assert!(text(&a).contains("the local model did not answer"));
+    let again = enter(&mut a, "retry");
+    assert_eq!(again.len(), 1, "a new message can be sent after an error");
+    // deltas for another request are ignored
+    delta(&mut a, 9999, "stray");
+    assert!(!text(&a).contains("stray"));
 }

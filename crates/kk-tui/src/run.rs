@@ -51,9 +51,21 @@ fn event_loop(http: Http, data_dir: &Path) -> Result<(), String> {
     let (ev_tx, ev_rx) = mpsc::channel::<Event>();
     {
         let ev_tx = ev_tx.clone();
+        let cancel = app.cancel.clone();
         std::thread::spawn(move || {
             while let Ok(req) = req_rx.recv() {
-                let resp = http.run(&req);
+                let resp = if req.stream {
+                    let tx = ev_tx.clone();
+                    let id = req.id;
+                    http.run_stream(&req, &cancel, &mut |t| {
+                        let _ = tx.send(Event::Delta {
+                            id,
+                            text: t.to_string(),
+                        });
+                    })
+                } else {
+                    http.run(&req)
+                };
                 if ev_tx.send(Event::Resp(resp)).is_err() {
                     break;
                 }

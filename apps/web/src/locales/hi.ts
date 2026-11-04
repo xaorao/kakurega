@@ -138,6 +138,7 @@ export const hi: Record<keyof typeof en, string> = {
   "chat.forgetSure": "भूलने के लिए फिर दबाएँ",
   "chat.saved": "एन्क्रिप्टेड स्टोर में सहेजा गया",
   "chat.notSaved": "सहेजा नहीं गया (बातचीत भर चुकी है)",
+  "chat.stop": "रोकें",
   "chat.error": "सहायक उत्तर नहीं दे सका।",
   "nav.docs": "दस्तावेज़",
   "docs.title": "अपने दस्तावेज़ों से पूछें",

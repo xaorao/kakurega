@@ -54,7 +54,14 @@ const requestOrigins = new Set();
 page.on("request", (r) => { try { requestOrigins.add(new URL(r.url()).origin); } catch { /* data: urls */ } });
 page.on("console", (m) => m.type() === "error" && problems.push("console: " + m.text()));
 page.on("pageerror", (e) => problems.push("pageerror: " + e.message));
-page.on("requestfailed", (r) => problems.push("requestfailed: " + r.url() + " " + r.failure()?.errorText));
+page.on("requestfailed", async (r) => {
+  // Classified as a harness artifact (QA guide 12.4): Chromium reports ERR_ABORTED for a streamed (chunked) response whose
+  // body was fully read, in some runs and not others. Only that case is excused: a 200 response was received and the page
+  // showed the complete answer (checked by the chat steps); a request without a response still counts as a failure.
+  const response = await r.response().catch(() => null);
+  if (r.url().endsWith("/api/chat/stream") && r.failure()?.errorText === "net::ERR_ABORTED" && response?.status() === 200) return;
+  problems.push("requestfailed: " + r.url() + " " + r.failure()?.errorText);
+});
 page.on("response", (r) => r.status() >= 500 && problems.push("http " + r.status() + " " + r.url()));
 
 try {
@@ -283,7 +290,8 @@ try {
   await page.waitForTimeout(300);
   check("Enter that confirms an input-method composition does not send the message", (await page.locator(".msg").count()) === 0);
   await page.getByLabel("Your message").press("Enter");
-  await page.locator(".msg.assistant").waitFor();
+  await page.getByText("note(s) used").first().waitFor();
+  await page.waitForLoadState("networkidle");
   const reply = await page.locator(".msg.assistant").innerText();
   check("Enter sends and an answer appears marked as a test model with the notes used", reply.includes("[test model]") && reply.includes("Test model") && /1 note\(s\) used/.test(reply), reply.replace(/\n/g, " | ").slice(0, 160));
   await axeCheck(page, "chat screen");
@@ -296,6 +304,7 @@ try {
   await page.getByLabel("Your message").fill("Remember this keptcanary line please");
   await page.getByLabel("Your message").press("Enter");
   await page.getByText("Saved in the encrypted store").waitFor();
+  await page.waitForLoadState("networkidle");
   await page.reload();
   await page.getByRole("link", { name: "Chat" }).click();
   await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();

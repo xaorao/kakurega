@@ -1366,7 +1366,17 @@ fn sv16_the_terminal_workspace_drives_a_whole_review_through_the_real_service() 
         while !reqs.is_empty() {
             let mut next = Vec::new();
             for r in reqs {
-                let resp = http.run(&r);
+                let resp = if r.stream {
+                    let mut pieces: Vec<String> = Vec::new();
+                    let cancel = app.cancel.clone();
+                    let resp = http.run_stream(&r, &cancel, &mut |t| pieces.push(t.to_string()));
+                    for t in pieces {
+                        app.handle(Event::Delta { id: r.id, text: t });
+                    }
+                    resp
+                } else {
+                    http.run(&r)
+                };
                 next.extend(app.handle(Event::Resp(resp)));
             }
             reqs = next;
@@ -1427,6 +1437,7 @@ fn sv16_the_terminal_workspace_drives_a_whole_review_through_the_real_service() 
     let early = http.run(&Req {
         id: 9999,
         admin: false,
+        stream: false,
         method: kk_tui::app::Method::Post,
         path: "/api/jobs/job-1/deliver".into(),
         body: Some(json!({})),
@@ -3174,7 +3185,7 @@ fn sv26_live_research_shows_the_exact_addresses_first_binds_the_approval_and_tre
 #[test]
 fn sv27_a_backup_taken_while_running_restores_the_data_into_an_empty_folder_and_refuses_everything_else(
 ) {
-    let (root, repo) = repo_copy("backup");
+    let (root, repo) = repo_copy("data-backup-restore");
     let data = root.join("data");
     let svc = Service::new(
         &data,
@@ -3465,5 +3476,181 @@ fn sv28_kept_conversations_survive_a_restart_use_their_own_history_and_vanish_wh
     assert_eq!(
         w2.post("/api/sessions", json!({"title": "x".repeat(81)})).0,
         400
+    );
+}
+
+struct SlowRunner {
+    inner: CannedRunner,
+    delivered: std::sync::atomic::AtomicUsize,
+    stopped: std::sync::atomic::AtomicBool,
+}
+
+impl JobRunner for SlowRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        self.inner.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        self.inner.route_info()
+    }
+    fn chat(&self, m: Vec<kk_types::chat::ChatMessage>) -> Result<kk_service::ChatReply, String> {
+        self.inner.chat(m)
+    }
+    fn chat_stream(
+        &self,
+        _m: Vec<kk_types::chat::ChatMessage>,
+        on_chunk: &mut dyn FnMut(&str) -> bool,
+    ) -> Result<kk_service::StreamedReply, String> {
+        let mut text = String::new();
+        for i in 0..60 {
+            let piece = format!("w{i} ");
+            text.push_str(&piece);
+            self.delivered
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if !on_chunk(&piece) {
+                self.stopped
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                return Ok(kk_service::StreamedReply {
+                    reply: kk_service::ChatReply {
+                        text,
+                        route_id: "slow".into(),
+                        class: "device_only".into(),
+                        simulated: true,
+                    },
+                    stopped: true,
+                });
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+        Ok(kk_service::StreamedReply {
+            reply: kk_service::ChatReply {
+                text,
+                route_id: "slow".into(),
+                class: "device_only".into(),
+                simulated: true,
+            },
+            stopped: false,
+        })
+    }
+}
+
+#[test]
+fn sv29_streamed_chat_delivers_pieces_then_the_whole_reply_and_a_dropped_connection_stops_the_model_and_saves_nothing(
+) {
+    use std::io::{BufRead, BufReader};
+    use std::sync::atomic::Ordering;
+    let (root, _repo) = repo_copy("data-chat-stream");
+    let runner = Arc::new(SlowRunner {
+        inner: CannedRunner { confirm: true },
+        delivered: Default::default(),
+        stopped: Default::default(),
+    });
+    let svc = Service::new(&root.join("data"), vec![root.clone()], runner.clone(), true).unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (_, s) = w.post("/api/sessions", json!({"title": ""}));
+    let id = s["id"].as_str().unwrap().to_string();
+    // the same checks as the plain chat apply before any streaming starts
+    assert_eq!(
+        Web::new(c.addr)
+            .post("/api/chat/stream", json!({"message": "hi"}))
+            .0,
+        401
+    );
+    assert_eq!(w.post("/api/chat/stream", json!({"message": ""})).0, 400);
+    assert_eq!(
+        w.post(
+            "/api/chat/stream",
+            json!({"message": "hi", "session": "chat-none"})
+        )
+        .0,
+        404
+    );
+    let open = |body: Value| {
+        w.agent
+            .post(&format!("{}/api/chat/stream", w.base))
+            .header("Cookie", &w.cookie)
+            .header("Origin", &w.base)
+            .header("Sec-Fetch-Site", "same-origin")
+            .header("x-kk-csrf", &w.csrf)
+            .send_json(body)
+            .unwrap()
+    };
+    // a full reply: pieces first, then one final object with everything the plain endpoint returns
+    let mut r = open(json!({"message": "tell me", "session": id}));
+    assert_eq!(r.status().as_u16(), 200);
+    assert_eq!(
+        r.headers().get("content-type").unwrap(),
+        "application/x-ndjson"
+    );
+    let lines: Vec<Value> = BufReader::new(r.body_mut().as_reader())
+        .lines()
+        .map(|l| serde_json::from_str(&l.unwrap()).unwrap())
+        .collect();
+    let deltas = lines.iter().filter(|l| l.get("delta").is_some()).count();
+    assert_eq!(deltas, 60, "every piece arrived separately");
+    let last = lines.last().unwrap();
+    assert_eq!(last["done"], true);
+    assert!(
+        last["reply"].as_str().unwrap().starts_with("w0 w1 w2")
+            && last["reply"].as_str().unwrap().ends_with("w59 ")
+    );
+    assert_eq!(last["saved"], true);
+    assert_eq!(
+        w.get(&format!("/api/sessions/{id}")).1["turns"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    // dropping the connection part-way stops the model and saves nothing
+    runner.delivered.store(0, Ordering::SeqCst);
+    {
+        let mut r = open(json!({"message": "second question", "session": id}));
+        let mut reader = BufReader::new(r.body_mut().as_reader());
+        let mut first = String::new();
+        reader.read_line(&mut first).unwrap();
+        reader.read_line(&mut first).unwrap();
+        assert!(first.contains("delta"));
+    }
+    let t0 = std::time::Instant::now();
+    while !runner.stopped.load(Ordering::SeqCst) && t0.elapsed() < std::time::Duration::from_secs(5)
+    {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        runner.stopped.load(Ordering::SeqCst),
+        "the model was told to stop"
+    );
+    assert!(
+        runner.delivered.load(Ordering::SeqCst) < 50,
+        "it stopped well before the end"
+    );
+    assert_eq!(
+        w.get(&format!("/api/sessions/{id}")).1["turns"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2,
+        "a stopped reply is not saved"
+    );
+    let log = log_text(
+        &format!("http://127.0.0.1:{}", c.addr.port()),
+        c.security.admin_token(),
+    );
+    assert!(
+        log.contains("chat.stopped") && !log.contains("second question") && !log.contains("w1 w2")
     );
 }

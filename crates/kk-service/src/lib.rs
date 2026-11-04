@@ -5,4 +5,4 @@ pub mod service;
 pub mod snapshot;
 pub mod tenants;
 
-pub use service::{ChatReply, JobRunner, Routes, Service};
+pub use service::{ChatReply, JobRunner, Routes, Service, StreamedReply};
