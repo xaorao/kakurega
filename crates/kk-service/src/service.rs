@@ -858,6 +858,58 @@ async fn admin_deny(axum::Extension(svc): Svc, UrlPath(aid): UrlPath<String>) ->
     Json(json!({"state": "denied"})).into_response()
 }
 
+fn mcp_view(svc: &Service, j: &Job) -> Value {
+    let g = svc.inner.lock().expect("lock");
+    let snap = g.snaps.get(&j.id);
+    let (state, note) = match &j.state {
+        JobState::Running => ("running", String::new()),
+        JobState::Ready => ("ready", String::new()),
+        JobState::NothingToRelease(_) => ("nothing_to_release", String::new()),
+        JobState::Failed(m) => ("failed", m.clone()),
+    };
+    json!({
+        "id": j.id, "state": state, "note": note,
+        "stage": j.events.last().map(|e| e.stage.clone()),
+        "files_reviewed": snap.map(|s| s.files.len()),
+        "files_withheld": snap.map(|s| s.files.iter().filter(|f| f.withheld).count()),
+        "findings_reported": snap.map(|s| s.findings.len()),
+        "findings_confirmed": snap.map(|s| s.findings.iter().filter(|f| f.reproduced).count()),
+        "approval": j.approval.as_ref().and_then(|a| g.approvals.get(a)).map(|a| if a.denied { "denied".to_string() } else { a.state.clone() }),
+        "delivered": j.delivered.as_ref().map(|d| json!({"digest": d.digest, "signer": d.signer})),
+    })
+}
+
+async fn admin_jobs_list(axum::Extension(svc): Svc) -> Json<Value> {
+    let jobs: Vec<Job> = svc
+        .inner
+        .lock()
+        .expect("lock")
+        .jobs
+        .values()
+        .cloned()
+        .collect();
+    Json(json!({"jobs": jobs.iter().rev().map(|j| mcp_view(&svc, j)).collect::<Vec<_>>()}))
+}
+
+async fn admin_job_start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -> Response {
+    match svc.start_job(&b.repo, &b.recipient) {
+        Ok(id) => (StatusCode::ACCEPTED, Json(json!({"id": id}))).into_response(),
+        Err(m) => error(StatusCode::BAD_REQUEST, "BAD_JOB", &m),
+    }
+}
+
+async fn admin_job_get(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    let job = svc.inner.lock().expect("lock").jobs.get(&id).cloned();
+    match job {
+        Some(j) => Json(mcp_view(&svc, &j)).into_response(),
+        None => error(StatusCode::NOT_FOUND, "NO_JOB", "no such review"),
+    }
+}
+
+async fn admin_job_request_approval(svc: Svc, id: UrlPath<String>) -> Response {
+    request_approval(svc, id).await
+}
+
 pub struct Routes(pub Arc<Service>);
 
 impl Extension for Routes {
@@ -878,6 +930,12 @@ impl Extension for Routes {
             )
             .route("/api/jobs/{id}/deliver", post(do_deliver))
             .route("/api/jobs/{id}/capsule", get(download))
+            .route("/admin/jobs", get(admin_jobs_list).post(admin_job_start))
+            .route("/admin/jobs/{id}", get(admin_job_get))
+            .route(
+                "/admin/jobs/{id}/approval",
+                post(admin_job_request_approval),
+            )
             .route("/admin/approvals", get(admin_list))
             .route("/admin/approvals/{id}", get(admin_show))
             .route("/admin/approvals/{id}/approve", post(admin_approve))
