@@ -31,6 +31,8 @@ def main():
                 results.append({"id": item["id"], "status": "SKIPPED_BY_FLAG"})
                 continue
             results.append(run_item(item))
+        elif item["kind"] == "human_done":
+            results.append({"id": item["id"], "status": "PASS_OWNER_OBSERVED", "note": item["text"][:160]})
         elif item["kind"] == "human":
             results.append({"id": item["id"], "status": "NEEDS_HUMAN_REVIEW", "evidence_needed": item["evidence_needed"]})
         elif item["kind"] == "pending":
@@ -43,7 +45,7 @@ def main():
     if "FAIL" in statuses:
         print("GATE: FAIL")
         return 1
-    if statuses <= {"PASS"}:
+    if statuses <= {"PASS", "PASS_OWNER_OBSERVED"}:
         print("GATE: PASS")
         return 0
     if "PENDING" in statuses:
@@ -52,7 +54,7 @@ def main():
     if "SKIPPED_BY_FLAG" in statuses:
         print("GATE: INCOMPLETE (items skipped by flag)")
         return 3
-    print("GATE: CONDITIONAL PASS (all machine-checkable items pass; outstanding: " + ", ".join(sorted(statuses - {"PASS"})) + ")")
+    print("GATE: CONDITIONAL PASS (all machine-checkable items pass; outstanding: " + ", ".join(sorted(statuses - {"PASS", "PASS_OWNER_OBSERVED"})) + ")")
     return 0
 
 
