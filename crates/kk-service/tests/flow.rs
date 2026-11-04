@@ -2902,3 +2902,72 @@ fn sv24_an_applied_fix_can_be_undone_once_and_never_over_later_edits() {
     );
     assert!(log.contains("fix.undone") && !log.contains("cookie_jar"));
 }
+
+#[test]
+fn sv25_a_review_gets_the_notes_that_match_its_project_and_recipient_not_just_the_newest() {
+    let (root, repo) = repo_copy("memrel");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    // two relevant notes first (so they are the oldest), then sixty unrelated ones
+    for t in [
+        "Zebrafinch audit terms: invoices are due in 45 days",
+        "Zebrafinch contact is Dana at the finance desk",
+    ] {
+        assert_eq!(
+            w.post("/api/memories", json!({"text": t, "level": "internal"}))
+                .0,
+            201
+        );
+    }
+    for i in 0..60 {
+        assert_eq!(w.post("/api/memories", json!({"text": format!("Unrelated gardening note number {i} about tomatoes"), "level": "internal"})).0, 201);
+    }
+    let (_, s) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "zebrafinch-audit"}),
+    );
+    wait_for(
+        &w,
+        s["id"].as_str().unwrap(),
+        &["ready", "nothing_to_release"],
+    );
+    let seen = SEEN
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(r, _)| r == "zebrafinch-audit")
+        .cloned()
+        .expect("the runner ran");
+    let texts: Vec<&str> = seen.1.iter().map(|(_, _, t)| t.as_str()).collect();
+    assert!(texts.len() <= 25, "bounded: {}", texts.len());
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("invoices are due in 45 days"))
+            && texts.iter().any(|t| t.contains("Dana at the finance desk")),
+        "the older relevant notes were found behind sixty newer ones"
+    );
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("Included because: it matches \"zebrafinch\"")),
+        "a note says why it was included"
+    );
+    assert!(texts
+        .iter()
+        .any(|t| t.contains("Included because: it is one of your most recent notes")));
+    let total: usize = texts.iter().map(|t| t.len()).sum();
+    assert!(total <= 24 * 1024, "the byte budget holds: {total}");
+}

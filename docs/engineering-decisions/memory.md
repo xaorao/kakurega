@@ -16,3 +16,6 @@ Label gate (including unknown sensitivity as Restricted); time validity both dir
 
 ## Not covered by this component yet
 Semantic (vector) recall, memory import (G55), conflict alerts (G56), encrypted backup and recovery flow (G58, the vault has `backup_to`), automatic capture from reviews, UI.
+
+## Update (capability matrix E, M11): notes for a review
+A review no longer gets the 50 newest notes regardless of the task. It gets up to 25 notes within a 24 KiB budget: first the notes that match words from the project folder name and the recipient (recall per word, label-filtered in the query), then the most recent to fill the rest. Each note carries `Included because:` so the owner and the agent can see why it is there; labels and the kernel's clearance rules are unchanged. Test sv25 (mutation: matching switched off fails it). Not done: vector recall, hybrid ranking, and choosing notes from the actual file list (the list is only known inside the runner).

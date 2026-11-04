@@ -235,32 +235,73 @@ impl Service {
         }
     }
 
-    fn memory_files(&self) -> Vec<kk_review::import::ImportedFile> {
+    /// The remembered notes a review may see: the ones that match the project and the recipient first, then the most
+    /// recent, within a fixed budget. Every note keeps its own label; the kernel's clearance rules decide what the agent
+    /// can read. Each note says why it was included.
+    fn memory_files(&self, repo: &Path, recipient: &str) -> Vec<kk_review::import::ImportedFile> {
+        const MAX_NOTES: usize = 25;
+        const MAX_BYTES: usize = 24 * 1024;
         let mem = self.memory.lock().expect("lock");
         let Ok(clearance) = mem.owner_clearance() else {
             return Vec::new();
         };
-        let Ok(items) = mem.list(&clearance, now(), 50) else {
-            return Vec::new();
-        };
-        items
-            .into_iter()
-            .map(|r| {
-                let text = format!(
-                    "Remembered note (you asked Kakurega to keep this)\nWhy: {}\n\n{}\n",
-                    r.why, r.memory.text
-                );
-                let bytes = text.into_bytes();
-                let sha = kk_evidence::capsule::sha256_hex(&bytes);
-                kk_review::import::ImportedFile {
-                    path: format!("kakurega-memory/{}.txt", r.memory.id),
-                    bytes,
-                    label: r.memory.label,
-                    sha256: sha,
-                    notes: vec!["from Memory".to_string()],
+        let name = repo
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mut words: Vec<String> = Vec::new();
+        for w in format!("{name} {recipient}").split(|c: char| !c.is_alphanumeric()) {
+            let w = w.to_lowercase();
+            if w.chars().count() >= 3 && !words.contains(&w) {
+                words.push(w);
+            }
+        }
+        let mut chosen: Vec<(kk_memory::Recalled, String)> = Vec::new();
+        for w in &words {
+            if let Ok(hits) = mem.recall(w, &clearance, now(), 10) {
+                for h in hits {
+                    if chosen.len() < MAX_NOTES
+                        && !chosen.iter().any(|(c, _)| c.memory.id == h.memory.id)
+                    {
+                        chosen.push((
+                            h,
+                            format!("it matches \"{w}\" from the project or recipient name"),
+                        ));
+                    }
                 }
-            })
-            .collect()
+            }
+        }
+        if let Ok(recent) = mem.list(&clearance, now(), MAX_NOTES) {
+            for r in recent {
+                if chosen.len() < MAX_NOTES
+                    && !chosen.iter().any(|(c, _)| c.memory.id == r.memory.id)
+                {
+                    chosen.push((r, "it is one of your most recent notes".to_string()));
+                }
+            }
+        }
+        let mut used = 0usize;
+        let mut out = Vec::new();
+        for (r, why_included) in chosen {
+            let text = format!(
+                "Remembered note (you asked Kakurega to keep this)\nWhy: {}\nIncluded because: {}\n\n{}\n",
+                r.why, why_included, r.memory.text
+            );
+            let bytes = text.into_bytes();
+            if used + bytes.len() > MAX_BYTES {
+                continue;
+            }
+            used += bytes.len();
+            let sha = kk_evidence::capsule::sha256_hex(&bytes);
+            out.push(kk_review::import::ImportedFile {
+                path: format!("kakurega-memory/{}.txt", r.memory.id),
+                bytes,
+                label: r.memory.label,
+                sha256: sha,
+                notes: vec!["from Memory".to_string()],
+            });
+        }
+        out
     }
 
     pub fn new(
@@ -459,7 +500,7 @@ impl Service {
         self.log_event("job.started", &id, &[("recipient", recipient.into())]);
         let svc = self.clone();
         let (jid, rec) = (id.clone(), recipient.to_string());
-        let extra = self.memory_files();
+        let extra = self.memory_files(&dir, recipient);
         std::thread::spawn(move || {
             let svc2 = svc.clone();
             let jid2 = jid.clone();
