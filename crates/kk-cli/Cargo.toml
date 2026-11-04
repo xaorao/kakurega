@@ -22,5 +22,9 @@ kk-types = { path = "../kk-types" }
 serde_json = "1"
 ureq = { version = "3", default-features = false, features = ["json", "rustls"] }
 
+[dev-dependencies]
+rmcp = { version = "=3.8.0", default-features = false, features = ["client", "transport-child-process"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process"] }
+
 [lints]
 workspace = true
