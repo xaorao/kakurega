@@ -33,6 +33,8 @@ def main():
             results.append(run_item(item))
         elif item["kind"] == "human":
             results.append({"id": item["id"], "status": "NEEDS_HUMAN_REVIEW", "evidence_needed": item["evidence_needed"]})
+        elif item["kind"] == "pending":
+            results.append({"id": item["id"], "status": "PENDING", "evidence_needed": item["evidence_needed"]})
         else:
             results.append({"id": item["id"], "status": "BLOCKED_HUMAN", "blocked_on": item["blocked_on"], "evidence_needed": item["evidence_needed"]})
     rev = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
@@ -44,6 +46,9 @@ def main():
     if statuses <= {"PASS"}:
         print("GATE: PASS")
         return 0
+    if "PENDING" in statuses:
+        print("GATE: INCOMPLETE (work not yet done: " + ", ".join(r["id"] for r in results if r["status"] == "PENDING") + ")")
+        return 3
     if "SKIPPED_BY_FLAG" in statuses:
         print("GATE: INCOMPLETE (items skipped by flag)")
         return 3

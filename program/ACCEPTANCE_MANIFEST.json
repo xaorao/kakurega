@@ -6,19 +6,110 @@
     "I": {
       "title": "Real foundation and the first complete web workflow",
       "items": [
-        {"id": "I-01", "text": "Monorepo builds and every unit, integration and mutation-checked security test passes on the Mac", "kind": "machine", "command": "scripts/test", "expect": "ALL CHECKS PASSED"},
-        {"id": "I-02", "text": "Linux sandbox R-suite and the real worker run inside bubblewrap in the Linux VM", "kind": "machine", "command": "scripts/test-linux", "expect": "test result: ok"},
-        {"id": "I-03", "text": "Broker on the Mac host with the worker in the VM sandbox; importer, kernel reproducer check and the full review job run through Lima", "kind": "machine", "command": "scripts/test-lima", "expect": "test result: ok"},
-        {"id": "I-04", "text": "A real browser completes pairing, review, release, terminal approval, delivery, download and offline verification with accessibility audits and zero console errors", "kind": "machine", "command": "scripts/e2e", "expect": "checks passed"},
-        {"id": "I-05", "text": "Real NEAR model attestation verified and tamper-rejected (keyless)", "kind": "machine", "command": "cargo test -p kk-near -- --ignored", "expect": "test result: ok"},
-        {"id": "I-06", "text": "Live local model (Ollama) runs the review job end to end", "kind": "machine", "command": "scripts/live-local", "expect": "test result: ok"},
-        {"id": "I-07", "text": "A first-time external reviewer finishes the flow without developer help", "kind": "human", "evidence_needed": "one person who did not build it completes the journey on a clean machine while observed; notes recorded in TESTING.md"},
-        {"id": "I-08", "text": "NEAR completions, signatures and E2EE verified live", "kind": "blocked", "blocked_on": "NEAR AI Cloud credits and API key", "evidence_needed": "one real completion with its signature verified against the attested signer, one E2EE round trip, route report in a real capsule"},
-        {"id": "I-09", "text": "Model quality of the review on real models (bake-off)", "kind": "blocked", "blocked_on": "NEAR AI Cloud credits and API key", "evidence_needed": "published bake-off numbers, worst of three runs"},
-        {"id": "I-10", "text": "Clean checkout setup and test", "kind": "machine", "command": "scripts/clean-checkout", "expect": "ALL CHECKS PASSED"}
+        {
+          "id": "I-01",
+          "text": "Monorepo builds and every unit, integration and mutation-checked security test passes on the Mac",
+          "kind": "machine",
+          "command": "scripts/test",
+          "expect": "ALL CHECKS PASSED"
+        },
+        {
+          "id": "I-02",
+          "text": "Linux sandbox R-suite and the real worker run inside bubblewrap in the Linux VM",
+          "kind": "machine",
+          "command": "scripts/test-linux",
+          "expect": "test result: ok"
+        },
+        {
+          "id": "I-03",
+          "text": "Broker on the Mac host with the worker in the VM sandbox; importer, kernel reproducer check and the full review job run through Lima",
+          "kind": "machine",
+          "command": "scripts/test-lima",
+          "expect": "test result: ok"
+        },
+        {
+          "id": "I-04",
+          "text": "A real browser completes pairing, review, release, terminal approval, delivery, download and offline verification with accessibility audits and zero console errors",
+          "kind": "machine",
+          "command": "scripts/e2e",
+          "expect": "checks passed"
+        },
+        {
+          "id": "I-05",
+          "text": "Real NEAR model attestation verified and tamper-rejected (keyless)",
+          "kind": "machine",
+          "command": "cargo test -p kk-near -- --ignored",
+          "expect": "test result: ok"
+        },
+        {
+          "id": "I-06",
+          "text": "Live local model (Ollama) runs the review job end to end",
+          "kind": "machine",
+          "command": "scripts/live-local",
+          "expect": "test result: ok"
+        },
+        {
+          "id": "I-07",
+          "text": "A first-time external reviewer finishes the flow without developer help",
+          "kind": "human",
+          "evidence_needed": "one person who did not build it completes the journey on a clean machine while observed; notes recorded in TESTING.md"
+        },
+        {
+          "id": "I-08",
+          "text": "NEAR completions, signatures and E2EE verified live",
+          "kind": "blocked",
+          "blocked_on": "NEAR AI Cloud credits and API key",
+          "evidence_needed": "one real completion with its signature verified against the attested signer, one E2EE round trip, route report in a real capsule"
+        },
+        {
+          "id": "I-09",
+          "text": "Model quality of the review on real models (bake-off)",
+          "kind": "blocked",
+          "blocked_on": "NEAR AI Cloud credits and API key",
+          "evidence_needed": "published bake-off numbers, worst of three runs"
+        },
+        {
+          "id": "I-10",
+          "text": "Clean checkout setup and test",
+          "kind": "machine",
+          "command": "scripts/clean-checkout",
+          "expect": "ALL CHECKS PASSED"
+        }
       ]
     },
-    "II": {"title": "Full web platform and premium native desktop", "items": []},
-    "III": {"title": "Complete justified product, all surfaces, launch readiness", "items": []}
+    "II": {
+      "title": "Full web platform and premium native desktop",
+      "items": [
+        {
+          "id": "II-01",
+          "text": "Desktop shell policy and approval logic: origin allow-list, sandboxed window, approval needs human yes and OS proof, hostile ids",
+          "kind": "machine",
+          "command": "pnpm --filter @kakurega/desktop test",
+          "expect": "pass 6"
+        },
+        {
+          "id": "II-02",
+          "text": "Real desktop window starts the companion, pairs automatically and loads the workspace; a page script cannot reach or answer the native approval",
+          "kind": "pending",
+          "evidence_needed": "Playwright-driven Electron run with screenshots, console clean, hostile page test"
+        },
+        {
+          "id": "II-03",
+          "text": "Touch ID approval on a real Mac delivered a release end to end",
+          "kind": "human",
+          "evidence_needed": "Prateek touches the sensor once on an approval; the delivered capsule verifies"
+        },
+        {
+          "id": "II-04",
+          "text": "Shell comparison measured: size, start time, memory for Electron versus Tauri, decision recorded",
+          "kind": "pending",
+          "evidence_needed": "numbers in docs/engineering-decisions/desktop-shell.md"
+        }
+      ]
+    },
+    "III": {
+      "title": "Complete justified product, all surfaces, launch readiness",
+      "items": []
+    }
   }
 }
