@@ -4910,3 +4910,156 @@ fn sv42_search_shows_the_exact_words_and_site_first_binds_the_approval_and_retur
         409
     );
 }
+
+#[test]
+fn sv43_project_notes_reach_only_reviews_of_that_project_and_never_a_conversation() {
+    let (root, repo) = repo_copy("projscope");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let me = repo.file_name().unwrap().to_string_lossy().into_owned();
+    for (t, p) in [
+        ("Quokkamark rounding applies everywhere", None),
+        ("Quokkamark rounding here is half up", Some(me.as_str())),
+        (
+            "Quokkamark rounding elsewhere is half even",
+            Some("another-project"),
+        ),
+    ] {
+        let mut body = json!({"text": t, "level": "internal"});
+        if let Some(p) = p {
+            body["project"] = json!(p);
+        }
+        assert_eq!(w.post("/api/memories", body).0, 201, "{t}");
+    }
+    // the owner's own screen lists all three, each with its project
+    let (_, all) = w.get("/api/memories");
+    assert_eq!(all["memories"].as_array().unwrap().len(), 3);
+    assert!(all["memories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m["project"] == json!(me)));
+    let (_, found) = w.get("/api/memories?q=quokkamark");
+    assert_eq!(
+        found["memories"].as_array().unwrap().len(),
+        3,
+        "searching the Memory screen sees every project"
+    );
+    // a review of this folder sees the everywhere note and its own, not the other project's
+    let (_, s) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "quokkamark-audit"}),
+    );
+    wait_for(
+        &w,
+        s["id"].as_str().unwrap(),
+        &["ready", "nothing_to_release"],
+    );
+    let seen = SEEN
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(r, _)| r == "quokkamark-audit")
+        .cloned()
+        .expect("the runner ran");
+    let texts: Vec<&str> = seen.1.iter().map(|(_, _, t)| t.as_str()).collect();
+    assert!(
+        texts.iter().any(|t| t.contains("applies everywhere"))
+            && texts.iter().any(|t| t.contains("here is half up")),
+        "{texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|t| t.contains("elsewhere is half even")),
+        "another project's note never reaches this review"
+    );
+    // a conversation has no project, so it gets only what applies everywhere
+    let (st, r) = w.post("/api/chat", json!({"message": "Quokkamark rounding"}));
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["notes_used"], 1, "only the everywhere note: {r}");
+    // a fact suggested while reviewing this folder is saved for this folder
+    let (_, s) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "suggester"}),
+    );
+    let job = s["id"].as_str().unwrap().to_string();
+    wait_for(&w, &job, &["ready", "nothing_to_release"]);
+    let (_, listed) = w.get(&format!("/api/jobs/{job}/memory-suggestions"));
+    let good = listed["suggestions"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        w.post(
+            &format!("/api/jobs/{job}/memory-suggestions/{good}/accept"),
+            json!({})
+        )
+        .0,
+        200
+    );
+    let (_, after) = w.get("/api/memories?q=dictionary");
+    assert_eq!(after["memories"][0]["project"], json!(me), "{after}");
+    let (_, other) = w.post(
+        "/api/chat",
+        json!({"message": "Sessions are kept in a dictionary"}),
+    );
+    assert_eq!(
+        other["notes_used"], 0,
+        "the suggested note is not offered to a conversation"
+    );
+    // correcting it with an empty project makes it apply everywhere; keeping the project keeps the scope
+    let nid = after["memories"][0]["id"].as_str().unwrap().to_string();
+    let (st, kept) = w.post(
+        &format!("/api/memories/{nid}/correct"),
+        json!({"text": "Sessions are kept in a dictionary, in memory"}),
+    );
+    assert_eq!(st, 200, "{kept}");
+    assert_eq!(
+        w.get("/api/memories?q=dictionary").1["memories"][0]["project"],
+        json!(me),
+        "no project given keeps the scope"
+    );
+    let nid = w.get("/api/memories?q=dictionary").1["memories"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (st, moved) = w.post(
+        &format!("/api/memories/{nid}/correct"),
+        json!({"text": "Sessions are kept in a dictionary, in memory", "project": ""}),
+    );
+    assert_eq!(st, 200, "{moved}");
+    assert_eq!(
+        w.get("/api/memories?q=dictionary").1["memories"][0]["project"],
+        json!(null)
+    );
+    let (_, now_global) = w.post(
+        "/api/chat",
+        json!({"message": "Where are sessions kept in a dictionary"}),
+    );
+    assert_eq!(
+        now_global["notes_used"], 1,
+        "once it applies everywhere a conversation gets it: {now_global}"
+    );
+    let (_, exact) = w.post(
+        "/api/chat",
+        json!({"message": "Where are login sessions kept?"}),
+    );
+    assert_eq!(exact["notes_used"], 1, "{exact}");
+    // bad project names are refused
+    assert_eq!(
+        w.post(
+            "/api/memories",
+            json!({"text": "x note about y", "level": "internal", "project": "a/b"})
+        )
+        .0,
+        422
+    );
+}

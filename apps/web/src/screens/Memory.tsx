@@ -8,6 +8,7 @@ const LEVELS = ["public", "internal", "confidential", "restricted"] as const;
 function Item(props: { m: MemoryItem; onChange: (msg?: string) => void }) {
   const [editing, setEditing] = createSignal(false);
   const [draft, setDraft] = createSignal(props.m.text);
+  const [draftProject, setDraftProject] = createSignal(props.m.project ?? "");
   const [confirming, setConfirming] = createSignal(false);
   const [showHistory, setShowHistory] = createSignal(false);
   const [history] = createResource(showHistory, (on) => (on ? api.memoryHistory(props.m.id).then((r) => r.versions) : Promise.resolve([])));
@@ -27,9 +28,11 @@ function Item(props: { m: MemoryItem; onChange: (msg?: string) => void }) {
         <div class="stack">
           <label class="sr" for={`edit-${props.m.id}`}>{t("mem.correct")}</label>
           <textarea id={`edit-${props.m.id}`} rows="3" value={draft()} onInput={(e) => setDraft(e.currentTarget.value)} />
+          <label for={`edit-project-${props.m.id}`}>{t("mem.add.project")}</label>
+          <input id={`edit-project-${props.m.id}`} value={draftProject()} maxlength="80" placeholder={t("mem.add.projectHint")} onInput={(e) => setDraftProject(e.currentTarget.value)} />
           <div class="actions">
-            <button class="primary" onClick={() => run(() => api.correctMemory(props.m.id, { text: draft() }))}>{t("mem.save")}</button>
-            <button onClick={() => { setEditing(false); setDraft(props.m.text); }}>{t("mem.cancel")}</button>
+            <button class="primary" onClick={() => run(() => api.correctMemory(props.m.id, { text: draft(), project: draftProject().trim() }))}>{t("mem.save")}</button>
+            <button onClick={() => { setEditing(false); setDraft(props.m.text); setDraftProject(props.m.project ?? ""); }}>{t("mem.cancel")}</button>
           </div>
         </div>
       }>
@@ -37,6 +40,7 @@ function Item(props: { m: MemoryItem; onChange: (msg?: string) => void }) {
         <p class="muted">
           <span class="chip">{t(`mem.level.${props.m.level}` as Key)}</span>{" "}
           <Show when={props.m.untrusted}><span class="chip warn">{t("mem.untrusted")}</span>{" "}</Show>
+          <Show when={props.m.project}><span class="chip">{t("mem.project", { name: props.m.project ?? "" })}</span>{" "}</Show>
           {t("mem.why", { why: props.m.why })}
         </p>
         <div class="actions">
@@ -137,6 +141,7 @@ export function Memory() {
   const [text, setText] = createSignal("");
   const [level, setLevel] = createSignal<string>("internal");
   const [reason, setReason] = createSignal("");
+  const [project, setProject] = createSignal("");
   const [note, setNote] = createSignal("");
   const [error, setError] = createSignal("");
   const add = async (e: Event) => {
@@ -144,10 +149,11 @@ export function Memory() {
     setError("");
     setNote("");
     try {
-      const r = await api.addMemory({ text: text(), level: level(), reason: reason().trim() || undefined });
+      const r = await api.addMemory({ text: text(), level: level(), reason: reason().trim() || undefined, project: project().trim() || undefined });
       setNote(r.added ? t("mem.added") : t("mem.known"));
       setText("");
       setReason("");
+      setProject("");
       await refetch();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("mem.error"));
@@ -165,6 +171,8 @@ export function Memory() {
         <select id="mem-level" value={level()} onChange={(e) => setLevel(e.currentTarget.value)}>
           <For each={LEVELS}>{(l) => <option value={l}>{t(`mem.level.${l}` as Key)}</option>}</For>
         </select>
+        <label for="mem-project">{t("mem.add.project")}</label>
+        <input id="mem-project" value={project()} maxlength="80" placeholder={t("mem.add.projectHint")} onInput={(e) => setProject(e.currentTarget.value)} />
         <label for="mem-reason">{t("mem.add.reason")}</label>
         <input id="mem-reason" value={reason()} onInput={(e) => setReason(e.currentTarget.value)} />
         <div class="actions">

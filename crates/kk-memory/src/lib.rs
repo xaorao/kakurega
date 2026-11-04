@@ -43,6 +43,25 @@ fn refuse<T>(m: &str) -> Result<T, MemoryError> {
     Err(MemoryError::Refused(m.to_string()))
 }
 
+/// Which notes a lookup may see by project. `Global` is what applies everywhere; `Project` adds that project's notes;
+/// `All` is for the owner's own Memory screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope<'a> {
+    Global,
+    Project(&'a str),
+    All,
+}
+
+impl Scope<'_> {
+    fn params(self) -> (i64, Option<String>) {
+        match self {
+            Scope::Global => (0, None),
+            Scope::Project(p) => (0, Some(p.to_string())),
+            Scope::All => (1, None),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     User,
@@ -54,6 +73,9 @@ pub struct NewMemory {
     pub text: String,
     pub label: Label,
     pub subject: Option<String>,
+    /// The project folder this note is about. A project note is offered only when that project is in play; no project means
+    /// the note applies everywhere.
+    pub project: Option<String>,
     pub reason: String,
     pub source: Source,
     pub valid_from: Option<i64>,
@@ -66,6 +88,7 @@ pub struct Memory {
     pub text: String,
     pub label: Label,
     pub subject: Option<String>,
+    pub project: Option<String>,
     pub reason: String,
     pub source: Source,
     pub created_at: i64,
@@ -125,6 +148,7 @@ CREATE TABLE IF NOT EXISTS memories (
     untrusted INTEGER NOT NULL,
     unknown_sensitivity INTEGER NOT NULL,
     subject TEXT,
+    project TEXT,
     reason TEXT NOT NULL,
     source_kind TEXT NOT NULL,
     source_ref TEXT,
@@ -346,6 +370,7 @@ fn row_to_memory(r: &kk_vault::rusqlite::Row<'_>) -> kk_vault::rusqlite::Result<
             text: r.get("text")?,
             label,
             subject: r.get("subject")?,
+            project: r.get("project")?,
             reason: r.get("reason")?,
             source: if kind == "review" {
                 Source::Review(sref.unwrap_or_default())
@@ -368,6 +393,17 @@ fn row_to_memory(r: &kk_vault::rusqlite::Row<'_>) -> kk_vault::rusqlite::Result<
 impl Memories {
     pub fn open(vault: Vault, fingerprint_key: [u8; 32]) -> Result<Memories, MemoryError> {
         vault.connection().execute_batch(SCHEMA)?;
+        let has_project: bool = vault
+            .connection()
+            .prepare("PRAGMA table_info(memories)")?
+            .query_map([], |r| r.get::<_, String>(1))?
+            .flatten()
+            .any(|c| c == "project");
+        if !has_project {
+            vault
+                .connection()
+                .execute_batch("ALTER TABLE memories ADD COLUMN project TEXT;")?;
+        }
         vault.connection().execute_batch("CREATE TABLE IF NOT EXISTS memory_vectors(id TEXT PRIMARY KEY, model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL);")?;
         Ok(Memories {
             vault,
@@ -398,6 +434,21 @@ impl Memories {
             .expect("hmac accepts any key length");
         mac.update(normalise(text).as_bytes());
         mac.finalize().into_bytes().to_vec()
+    }
+
+    fn check_project(project: &Option<String>) -> Result<(), MemoryError> {
+        if let Some(p) = project {
+            if p.trim() != p
+                || p.is_empty()
+                || p.chars().count() > 80
+                || has_hidden_chars(p)
+                || p.contains('/')
+                || p.contains('\\')
+            {
+                return refuse("a project name is a folder name of 1 to 80 plain characters");
+            }
+        }
+        Ok(())
     }
 
     fn check(&self, text: &str, reason: &str, subject: &Option<String>) -> Result<(), MemoryError> {
@@ -448,15 +499,16 @@ impl Memories {
             Source::Review(r) => ("review", Some(r.clone())),
         };
         self.conn().execute(
-            "INSERT INTO memories(id, text, fingerprint, level, compartments, untrusted, unknown_sensitivity, subject, reason, source_kind, source_ref, created_at, valid_from, valid_to, status)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'active')",
-            params![id, m.text, fp, level_to_int(m.label.level), comps, (m.label.integrity == Integrity::Untrusted) as i64, m.label.sensitivity_unknown as i64, m.subject, m.reason, kind, sref, now, m.valid_from, m.valid_to],
+            "INSERT INTO memories(id, text, fingerprint, level, compartments, untrusted, unknown_sensitivity, subject, reason, source_kind, source_ref, created_at, valid_from, valid_to, status, project)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'active', ?15)",
+            params![id, m.text, fp, level_to_int(m.label.level), comps, (m.label.integrity == Integrity::Untrusted) as i64, m.label.sensitivity_unknown as i64, m.subject, m.reason, kind, sref, now, m.valid_from, m.valid_to, m.project],
         )?;
         Ok(())
     }
 
     pub fn remember(&self, now: i64, m: NewMemory) -> Result<Remembered, MemoryError> {
         self.check(&m.text, &m.reason, &m.subject)?;
+        Self::check_project(&m.project)?;
         if let (Some(a), Some(b)) = (m.valid_from, m.valid_to) {
             if b <= a {
                 return refuse("the end of validity must be after its start");
@@ -478,8 +530,8 @@ impl Memories {
         let existing: Option<String> = self
             .conn()
             .query_row(
-                "SELECT id FROM memories WHERE fingerprint = ?1 AND status = 'active'",
-                params![fp],
+                "SELECT id FROM memories WHERE fingerprint = ?1 AND status = 'active' AND project IS ?2",
+                params![fp, m.project],
                 |r| r.get(0),
             )
             .optional()?;
@@ -499,6 +551,7 @@ impl Memories {
         replacement: NewMemory,
     ) -> Result<String, MemoryError> {
         self.check(&replacement.text, &replacement.reason, &replacement.subject)?;
+        Self::check_project(&replacement.project)?;
         let old: Option<String> = self
             .conn()
             .query_row(
@@ -586,7 +639,7 @@ impl Memories {
                     params![fp],
                 )?;
                 self.conn().execute(
-                    "UPDATE memories SET text = '', subject = NULL, reason = '' WHERE id = ?1",
+                    "UPDATE memories SET text = '', subject = NULL, project = NULL, reason = '' WHERE id = ?1",
                     params![mid],
                 )?;
                 self.conn()
@@ -634,6 +687,20 @@ impl Memories {
         as_of: i64,
         limit: usize,
     ) -> Result<Vec<Recalled>, MemoryError> {
+        self.recall_scoped(query, clearance, as_of, limit, Scope::Global)
+    }
+
+    /// Like `recall`, for a given project scope. The plain `recall` sees only notes that apply everywhere, so a project's
+    /// notes can never reach a conversation or a review about something else by accident.
+    pub fn recall_scoped(
+        &self,
+        query: &str,
+        clearance: &Label,
+        as_of: i64,
+        limit: usize,
+        scope: Scope,
+    ) -> Result<Vec<Recalled>, MemoryError> {
+        let (all, proj) = scope.params();
         let limit = limit.clamp(1, 50);
         let pool = fuse::pool_for_limit(limit).max(512);
         let level = level_to_int(clearance.level);
@@ -644,10 +711,13 @@ impl Memories {
                 "SELECT m.* FROM memories_fts f JOIN memories m ON m.rowid = f.rowid
                  WHERE memories_fts MATCH ?1 AND m.status = 'active'
                    AND (m.valid_from IS NULL OR m.valid_from <= ?2) AND (m.valid_to IS NULL OR m.valid_to > ?2)
-                   AND m.level <= ?4
+                   AND m.level <= ?4 AND (?5 = 1 OR m.project IS NULL OR m.project = ?6)
                  ORDER BY bm25(memories_fts) LIMIT ?3",
             )?;
-            let rows = st.query_map(params![q, as_of, pool as i64, level], row_to_memory)?;
+            let rows = st.query_map(
+                params![q, as_of, pool as i64, level, all, proj],
+                row_to_memory,
+            )?;
             for r in rows {
                 let r = r?;
                 keyword.push(r.m.id.clone());
@@ -659,11 +729,11 @@ impl Memories {
                 "SELECT m.* FROM memories m
                  WHERE m.status = 'active'
                    AND (m.valid_from IS NULL OR m.valid_from <= ?1) AND (m.valid_to IS NULL OR m.valid_to > ?1)
-                   AND m.level <= ?2
+                   AND m.level <= ?2 AND (?3 = 1 OR m.project IS NULL OR m.project = ?4)
                  ORDER BY m.created_at DESC, m.id LIMIT 2000",
             )?;
             let rows: Vec<Row> = st
-                .query_map(params![as_of, level], row_to_memory)?
+                .query_map(params![as_of, level, all, proj], row_to_memory)?
                 .collect::<Result<_, _>>()?;
             let texts: Vec<(String, &str)> = rows
                 .iter()
@@ -678,7 +748,7 @@ impl Memories {
             }
             ranked
         };
-        let by_meaning = self.rank_by_meaning(query, as_of, level, pool, &mut by_id);
+        let by_meaning = self.rank_by_meaning(query, as_of, level, pool, scope, &mut by_id);
         let mut out = Vec::new();
         for f in fuse::fuse(&[keyword, similar, by_meaning]) {
             let Some(r) = by_id.remove(&f.id) else {
@@ -718,8 +788,10 @@ impl Memories {
         as_of: i64,
         level: i64,
         pool: usize,
+        scope: Scope,
         by_id: &mut std::collections::HashMap<String, Row>,
     ) -> Vec<String> {
+        let (all, proj) = scope.params();
         const MAKE_PER_RECALL: usize = 24;
         let Some(e) = &self.embedder else {
             return Vec::new();
@@ -729,10 +801,10 @@ impl Memories {
             "SELECT m.*, v.model AS vmodel, v.vec AS vvec FROM memories m LEFT JOIN memory_vectors v ON v.id = m.id
              WHERE m.status = 'active' AND m.text <> ''
                AND (m.valid_from IS NULL OR m.valid_from <= ?1) AND (m.valid_to IS NULL OR m.valid_to > ?1)
-               AND m.level <= ?2
+               AND m.level <= ?2 AND (?3 = 1 OR m.project IS NULL OR m.project = ?4)
              ORDER BY m.created_at DESC, m.id LIMIT 1000",
         ) else { return Vec::new() };
-        let Ok(rows) = st.query_map(params![as_of, level], |r| {
+        let Ok(rows) = st.query_map(params![as_of, level, all, proj], |r| {
             let row = row_to_memory(r)?;
             let vm: Option<String> = r.get("vmodel")?;
             let vv: Option<Vec<u8>> = r.get("vvec")?;
@@ -939,6 +1011,7 @@ impl Memories {
         now: i64,
         id: &str,
         job_id: &str,
+        project: Option<String>,
     ) -> Result<Remembered, MemoryError> {
         let p = self
             .pending_proposals(job_id)?
@@ -951,6 +1024,7 @@ impl Memories {
                 text: p.text.clone(),
                 label: p.label.clone(),
                 subject: None,
+                project,
                 reason: format!("suggested by review {job_id}: {}", p.why),
                 source: Source::Review(job_id.to_string()),
                 valid_from: None,
@@ -1006,12 +1080,24 @@ impl Memories {
         as_of: i64,
         limit: usize,
     ) -> Result<Vec<Recalled>, MemoryError> {
+        self.list_scoped(clearance, as_of, limit, Scope::Global)
+    }
+
+    pub fn list_scoped(
+        &self,
+        clearance: &Label,
+        as_of: i64,
+        limit: usize,
+        scope: Scope,
+    ) -> Result<Vec<Recalled>, MemoryError> {
+        let (all, proj) = scope.params();
         let mut st = self.conn().prepare(
             "SELECT * FROM memories WHERE status = 'active'
                AND (valid_from IS NULL OR valid_from <= ?1) AND (valid_to IS NULL OR valid_to > ?1)
+               AND (?2 = 1 OR project IS NULL OR project = ?3)
              ORDER BY created_at DESC, rowid DESC",
         )?;
-        let rows = st.query_map(params![as_of], row_to_memory)?;
+        let rows = st.query_map(params![as_of, all, proj], row_to_memory)?;
         let mut out = Vec::new();
         for r in rows {
             let r = r?;

@@ -1,4 +1,4 @@
-use kk_memory::{Memories, MemoryError, NewMemory, Remembered, Source, Status};
+use kk_memory::{Memories, MemoryError, NewMemory, Remembered, Scope, Source, Status};
 use kk_types::label::{Label, Level};
 use kk_vault::{Vault, VaultKey};
 use std::path::PathBuf;
@@ -29,6 +29,7 @@ fn nm(text: &str, label: Label) -> NewMemory {
         text: text.into(),
         label,
         subject: None,
+        project: None,
         reason: "you told me".into(),
         source: Source::User,
         valid_from: None,
@@ -565,13 +566,13 @@ fn me14_a_suggestion_never_becomes_a_memory_until_the_owner_accepts_and_keeps_it
     assert!(m.pending_proposals("job-2").unwrap().is_empty());
     assert!(
         matches!(
-            m.accept_proposal(6, &p, "job-2"),
+            m.accept_proposal(6, &p, "job-2", None),
             Err(MemoryError::NotFound)
         ),
         "only through the job it came from"
     );
     assert!(matches!(
-        m.accept_proposal(6, &p, "job-1"),
+        m.accept_proposal(6, &p, "job-1", None),
         Ok(Remembered::Added(_))
     ));
     let got = m.recall("Redis", &internal(), 9, 5).unwrap();
@@ -588,7 +589,7 @@ fn me14_a_suggestion_never_becomes_a_memory_until_the_owner_accepts_and_keeps_it
     assert!(m.pending_proposals("job-1").unwrap().is_empty());
     assert!(
         matches!(
-            m.accept_proposal(7, &p, "job-1"),
+            m.accept_proposal(7, &p, "job-1", None),
             Err(MemoryError::NotFound)
         ),
         "no double accept"
@@ -762,7 +763,7 @@ fn me19_forgetting_also_clears_the_review_suggestion_rows_that_held_the_same_tex
         .propose(2, "job-1", accepted_text, "seen in a review", &label)
         .unwrap()
         .unwrap();
-    let remembered = m.accept_proposal(3, &p2, "job-1").unwrap();
+    let remembered = m.accept_proposal(3, &p2, "job-1", None).unwrap();
     let c = m_conn(&m);
     let held = |c: &kk_vault::rusqlite::Connection| -> i64 {
         c.query_row("SELECT count(*) FROM proposals WHERE instr(lower(text), 'quokkaquarry') > 0 OR instr(lower(why), 'quokkaquarry') > 0", [], |r| r.get(0)).unwrap()
@@ -802,6 +803,7 @@ fn me20_recall_is_not_starved_by_notes_the_caller_may_not_see() {
                 ),
                 label: restricted.clone(),
                 subject: None,
+                project: None,
                 reason: "x".into(),
                 source: Source::User,
                 valid_from: None,
@@ -1274,4 +1276,212 @@ fn me29_a_suggestion_that_says_what_a_saved_note_or_another_suggestion_already_s
     // empty and very short texts never match everything
     assert!(m.propose(8, "job-4", "ok", "x", &lbl).unwrap().is_some());
     assert!(m.propose(9, "job-4", "no", "x", &lbl).unwrap().is_some());
+}
+
+fn project_note(text: &str, project: Option<&str>) -> NewMemory {
+    NewMemory {
+        project: project.map(String::from),
+        ..nm(text, internal())
+    }
+}
+
+#[test]
+fn me30_a_project_note_is_offered_only_where_that_project_is_in_play() {
+    let m = mem(&dir());
+    let c = Label::new(Level::Confidential);
+    m.remember(1, project_note("Invoices are issued in euros", None))
+        .unwrap();
+    m.remember(
+        2,
+        project_note(
+            "Payments service invoices are rounded half up",
+            Some("payments"),
+        ),
+    )
+    .unwrap();
+    m.remember(
+        3,
+        project_note(
+            "Billing service invoices are rounded half even",
+            Some("billing"),
+        ),
+    )
+    .unwrap();
+    let texts =
+        |v: Vec<kk_memory::Recalled>| v.into_iter().map(|r| r.memory.text).collect::<Vec<_>>();
+    // no project in play: only what applies everywhere
+    assert_eq!(
+        texts(m.recall("invoices", &c, 10, 10).unwrap()),
+        ["Invoices are issued in euros"]
+    );
+    assert_eq!(
+        texts(m.list(&c, 10, 10).unwrap()),
+        ["Invoices are issued in euros"]
+    );
+    // one project in play: everywhere-notes plus that project's, never another project's
+    let mut got = texts(
+        m.recall_scoped("invoices", &c, 10, 10, Scope::Project("payments"))
+            .unwrap(),
+    );
+    got.sort();
+    assert_eq!(
+        got,
+        [
+            "Invoices are issued in euros",
+            "Payments service invoices are rounded half up"
+        ]
+    );
+    assert_eq!(
+        m.list_scoped(&c, 10, 10, Scope::Project("billing"))
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(texts(
+        m.list_scoped(&c, 10, 10, Scope::Project("billing"))
+            .unwrap()
+    )
+    .iter()
+    .all(|t| !t.contains("Payments")));
+    assert_eq!(
+        m.list_scoped(&c, 10, 10, Scope::Project("other"))
+            .unwrap()
+            .len(),
+        1
+    );
+    // the owner's own screen sees everything
+    assert_eq!(m.list_scoped(&c, 10, 10, Scope::All).unwrap().len(), 3);
+    assert_eq!(
+        m.recall_scoped("invoices", &c, 10, 10, Scope::All)
+            .unwrap()
+            .len(),
+        3
+    );
+    // the same wording can be saved once for each project, and once for everywhere
+    assert!(matches!(
+        m.remember(
+            4,
+            project_note(
+                "Payments service invoices are rounded half up",
+                Some("billing")
+            )
+        )
+        .unwrap(),
+        Remembered::Added(_)
+    ));
+    assert!(matches!(
+        m.remember(
+            5,
+            project_note(
+                "Payments service invoices are rounded half up",
+                Some("payments")
+            )
+        )
+        .unwrap(),
+        Remembered::AlreadyKnown(_)
+    ));
+    // forgetting removes the project name along with the text
+    let id = m
+        .list_scoped(&c, 10, 10, Scope::All)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.memory.text.starts_with("Billing"))
+        .unwrap()
+        .memory
+        .id;
+    m.forget(6, &id, "no").unwrap();
+    let left: i64 = m
+        .connection_for_tests()
+        .query_row(
+            "SELECT count(*) FROM memories WHERE id = ?1 AND (project IS NOT NULL OR text <> '')",
+            [&id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(left, 0);
+}
+
+#[test]
+fn me31_project_names_are_plain_folder_names_and_replacements_keep_the_scope() {
+    let m = mem(&dir());
+    for bad in [
+        "",
+        " padded ",
+        "a/b",
+        "a\\b",
+        "evil\u{202e}name",
+        &"x".repeat(81),
+    ] {
+        assert!(
+            m.remember(1, project_note("some note about it", Some(bad)))
+                .is_err(),
+            "{bad:?}"
+        );
+    }
+    let id = id(m
+        .remember(
+            2,
+            project_note("Deploys use the blue pipeline", Some("payments")),
+        )
+        .unwrap());
+    let new = m
+        .correct(
+            3,
+            &id,
+            project_note("Deploys use the green pipeline", Some("payments")),
+        )
+        .unwrap();
+    let c = Label::new(Level::Confidential);
+    let now: Vec<_> = m
+        .list_scoped(&c, 10, 10, Scope::Project("payments"))
+        .unwrap();
+    assert!(now
+        .iter()
+        .any(|r| r.memory.id == new && r.memory.project.as_deref() == Some("payments")));
+    assert!(
+        m.list(&c, 10, 10).unwrap().is_empty(),
+        "still not offered outside the project"
+    );
+    assert!(m
+        .correct(
+            4,
+            &new,
+            project_note("Deploys use the red pipeline", Some("a/b"))
+        )
+        .is_err());
+}
+
+#[test]
+fn me32_a_vault_made_before_project_notes_existed_opens_and_keeps_its_notes() {
+    let d = dir();
+    {
+        let v = Vault::create(&d.join("m.db"), &key(7)).unwrap();
+        v.connection()
+            .execute_batch(
+                "CREATE TABLE memories (id TEXT PRIMARY KEY, text TEXT NOT NULL, fingerprint BLOB NOT NULL, level INTEGER NOT NULL, compartments TEXT NOT NULL, untrusted INTEGER NOT NULL, unknown_sensitivity INTEGER NOT NULL, subject TEXT, reason TEXT NOT NULL, source_kind TEXT NOT NULL, source_ref TEXT, created_at INTEGER NOT NULL, valid_from INTEGER, valid_to INTEGER, status TEXT NOT NULL, superseded_by TEXT);
+                 INSERT INTO memories VALUES ('old1', 'An older note about invoices', x'00', 1, '', 0, 0, NULL, 'kept', 'user', NULL, 1, NULL, NULL, 'active', NULL);",
+            )
+            .unwrap();
+    }
+    let m = Memories::open(Vault::open(&d.join("m.db"), &key(7)).unwrap(), [9; 32]).unwrap();
+    let c = Label::new(Level::Confidential);
+    let got = m.recall("invoices", &c, 10, 10).unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(
+        got[0].memory.project, None,
+        "an older note applies everywhere"
+    );
+    assert!(m
+        .remember(
+            2,
+            project_note("Invoices at payments are monthly", Some("payments"))
+        )
+        .is_ok());
+    drop(m);
+    let again = Memories::open(Vault::open(&d.join("m.db"), &key(7)).unwrap(), [9; 32]).unwrap();
+    assert_eq!(
+        again.list_scoped(&c, 10, 10, Scope::All).unwrap().len(),
+        2,
+        "opening twice does not break the column"
+    );
 }

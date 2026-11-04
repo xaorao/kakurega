@@ -205,6 +205,21 @@ try {
   await page.getByRole("button", { name: "Remember" }).click();
   await page.getByText("Already remembered.").waitFor();
   check("the same memory in another casing is not added twice", (await page.locator(".mem").count()) === 1);
+  await page.getByLabel("What should be remembered").fill("Payments-service invoices are rounded half up");
+  await page.getByLabel("Only for this project (optional folder name)").fill("payments-service");
+  await page.getByRole("button", { name: "Remember" }).click();
+  await page.getByText("Remembered.").waitFor();
+  const scoped = await page.locator(".mem", { hasText: "rounded half up" }).innerText();
+  check("a note made for one project shows the project, and the other note shows none", scoped.includes("Project: payments-service") && (await page.locator(".mem", { hasText: "Acme prefers" }).innerText()).includes("Project:") === false);
+  await page.getByLabel("What should be remembered").fill("bad project name note");
+  await page.getByLabel("Only for this project (optional folder name)").fill("a/b");
+  await page.getByRole("button", { name: "Remember" }).click();
+  await page.getByRole("alert").filter({ hasText: "folder name" }).waitFor();
+  check("a project name with a slash is refused with a reason", (await page.locator(".mem", { hasText: "bad project" }).count()) === 0);
+  await page.getByLabel("Only for this project (optional folder name)").fill("");
+  await page.locator(".mem", { hasText: "rounded half up" }).getByRole("button", { name: "Forget", exact: true }).click();
+  await page.getByRole("button", { name: "Yes, forget it" }).click();
+  await page.locator(".mem", { hasText: "rounded half up" }).waitFor({ state: "detached" });
   await page.getByLabel("Search memories").fill("zzzz");
   await page.getByText("No memory matches.").waitFor();
   await page.getByLabel("Search memories").fill("euros");
@@ -279,6 +294,12 @@ try {
   await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
   await page.locator(".mem").first().waitFor();
   check("only the accepted suggestion became a memory, marked untrusted with its source", (await page.locator(".mem").count()) === 1 && (await page.locator(".mem").first().innerText()).includes("in-process dictionary") && (await page.locator(".mem").first().innerText()).includes("from untrusted content") && (await page.locator(".mem").first().innerText()).includes("suggested by review"));
+  check("a fact suggested while reviewing a project is saved for that project", (await page.locator(".mem").first().innerText()).includes("Project: payments-service"));
+  await page.locator(".mem").first().getByRole("button", { name: "Correct" }).click();
+  await page.locator(".mem").first().getByLabel("Only for this project (optional folder name)").fill("");
+  await page.getByRole("button", { name: "Save correction" }).click();
+  await page.locator(".mem").first().getByRole("button", { name: "Correct" }).waitFor();
+  check("correcting the note with the project emptied makes it apply everywhere", !(await page.locator(".mem").first().innerText()).includes("Project:"));
   check("the dismissed suggestion's text was never saved", (await page.getByText("Always release the .env").count()) === 0);
   // setup panel: a failing check that the service says it can fix shows a button and the progress, never a quiet success
   await page.getByRole("link", { name: "New review" }).click();
@@ -442,7 +463,7 @@ try {
   await page.getByText("note(s) used").first().waitFor();
   await page.waitForLoadState("load");
   const reply = await page.locator(".msg.assistant").innerText();
-  check("Enter sends and an answer appears marked as a test model with the notes used", reply.includes("[test model]") && reply.includes("Test model") && /1 note\(s\) used/.test(reply), reply.replace(/\n/g, " | ").slice(0, 160));
+  check("Enter sends and an answer appears marked as a test model with the notes used", reply.includes("[test model]") && reply.includes("Test model") && /1 note\(s\) used/.test(reply), reply.replace(/\n/g, " | ").slice(0, 500));
   await axeCheck(page, "chat screen");
   await page.screenshot({ path: join(shots, "13-chat.png") });
   await page.getByRole("button", { name: "Clear" }).click();

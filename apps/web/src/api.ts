@@ -74,7 +74,7 @@ export interface Config {
 }
 export interface ReadinessCheck { id: string; label: string; ok: boolean; detail: string; fix: string; repairable?: boolean; repair?: { state: "running" | "done" | "failed"; detail: string } }
 export interface Readiness { ready: boolean; checks: ReadinessCheck[] }
-export interface MemoryItem { id: string; text: string; why: string; untrusted: boolean; level: string; compartments: string[]; created_at: number; valid_to: number | null; source: string }
+export interface MemoryItem { id: string; text: string; why: string; untrusted: boolean; level: string; compartments: string[]; created_at: number; valid_to: number | null; source: string; project?: string | null }
 export interface MemoryVersion { id: string; text: string; reason: string; created_at: number; current: boolean }
 export interface Suggestion { id: string; text: string; why: string; level: string; untrusted: boolean }
 export interface LogEntry { seq: number; at: number; kind: string; subject: string; data: Record<string, string | number> }
@@ -147,8 +147,8 @@ export const api = {
   logout: () => request<void>("POST", "/api/logout"),
   config: () => request<Config>("GET", "/api/config"),
   memories: (q?: string) => request<{ memories: MemoryItem[] }>("GET", `/api/memories${q ? `?q=${encodeURIComponent(q)}` : ""}`),
-  addMemory: (b: { text: string; level: string; reason?: string }) => request<{ id: string; added: boolean }>("POST", "/api/memories", b),
-  correctMemory: (id: string, b: { text: string; reason?: string }) => request<{ id: string }>("POST", `/api/memories/${id}/correct`, b),
+  addMemory: (b: { text: string; level: string; reason?: string; project?: string }) => request<{ id: string; added: boolean }>("POST", "/api/memories", b),
+  correctMemory: (id: string, b: { text: string; reason?: string; project?: string }) => request<{ id: string }>("POST", `/api/memories/${id}/correct`, b),
   forgetMemory: (id: string, reason?: string) => request<{ forgotten: boolean }>("POST", `/api/memories/${id}/forget`, { reason }),
   memoryHistory: (id: string) => request<{ versions: MemoryVersion[] }>("GET", `/api/memories/${id}/history`),
   fixes: (job: string) => request<{ fixes: Fix[] }>("GET", `/api/jobs/${job}/fixes`),

@@ -393,6 +393,11 @@ impl Service {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let scope = if name.is_empty() {
+            kk_memory::Scope::Global
+        } else {
+            kk_memory::Scope::Project(&name)
+        };
         let mut words: Vec<String> = Vec::new();
         for w in format!("{name} {recipient}").split(|c: char| !c.is_alphanumeric()) {
             let w = w.to_lowercase();
@@ -402,7 +407,7 @@ impl Service {
         }
         let mut chosen: Vec<(kk_memory::Recalled, String)> = Vec::new();
         for w in &words {
-            if let Ok(hits) = mem.recall(w, &clearance, now(), 10) {
+            if let Ok(hits) = mem.recall_scoped(w, &clearance, now(), 10, scope) {
                 for h in hits {
                     if chosen.len() < MAX_NOTES
                         && !chosen.iter().any(|(c, _)| c.memory.id == h.memory.id)
@@ -415,7 +420,7 @@ impl Service {
                 }
             }
         }
-        if let Ok(recent) = mem.list(&clearance, now(), MAX_NOTES) {
+        if let Ok(recent) = mem.list_scoped(&clearance, now(), MAX_NOTES, scope) {
             for r in recent {
                 if chosen.len() < MAX_NOTES
                     && !chosen.iter().any(|(c, _)| c.memory.id == r.memory.id)
@@ -964,7 +969,7 @@ fn memory_json(r: &kk_memory::Recalled) -> Value {
         "id": m.id, "text": m.text, "why": r.why, "untrusted": r.untrusted, "instruction_like": r.instruction_like(),
         "level": format!("{:?}", m.label.level).to_lowercase(),
         "compartments": m.label.compartments.iter().collect::<Vec<_>>(),
-        "subject": m.subject, "created_at": m.created_at,
+        "subject": m.subject, "project": m.project, "created_at": m.created_at,
         "valid_from": m.valid_from, "valid_to": m.valid_to,
         "source": match &m.source { kk_memory::Source::User => "you".to_string(), kk_memory::Source::Review(id) => format!("review {id}") },
     })
@@ -995,6 +1000,8 @@ struct MemoryQuery {
 #[serde(deny_unknown_fields)]
 struct MemoryBody {
     text: String,
+    #[serde(default)]
+    project: Option<String>,
     reason: Option<String>,
     level: Option<String>,
     valid_to: Option<i64>,
@@ -1021,8 +1028,8 @@ async fn memories_list(axum::Extension(svc): Svc, Query(q): Query<MemoryQuery>) 
     let mem = svc.memory.lock().expect("lock");
     let res = mem.owner_clearance().and_then(|c| {
         match q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            Some(text) => mem.recall(text, &c, now(), 50),
-            None => mem.list(&c, now(), 100),
+            Some(text) => mem.recall_scoped(text, &c, now(), 50, kk_memory::Scope::All),
+            None => mem.list_scoped(&c, now(), 100, kk_memory::Scope::All),
         }
     });
     match res {
@@ -1036,7 +1043,7 @@ async fn memories_export(axum::Extension(svc): Svc) -> Response {
     let mem = svc.memory.lock().expect("lock");
     let res = mem
         .owner_clearance()
-        .and_then(|c| mem.list(&c, now(), 100_000));
+        .and_then(|c| mem.list_scoped(&c, now(), 100_000, kk_memory::Scope::All));
     let items = match res {
         Ok(i) => i,
         Err(e) => return memory_error(e),
@@ -1049,7 +1056,7 @@ async fn memories_export(axum::Extension(svc): Svc) -> Response {
     );
     let body = json!({"kakurega_memory_backup": 1, "exported_at": now(), "memories": items.iter().map(|r| {
         let m = &r.memory;
-        json!({"text": m.text, "level": format!("{:?}", m.label.level).to_lowercase(), "valid_to": m.valid_to})
+        json!({"text": m.text, "level": format!("{:?}", m.label.level).to_lowercase(), "valid_to": m.valid_to, "project": m.project})
     }).collect::<Vec<_>>()});
     (
         [
@@ -1068,6 +1075,8 @@ async fn memories_export(axum::Extension(svc): Svc) -> Response {
 #[derive(Deserialize)]
 struct ImportItem {
     text: String,
+    #[serde(default)]
+    project: Option<String>,
     #[serde(default)]
     level: Option<String>,
     #[serde(default)]
@@ -1098,6 +1107,7 @@ async fn memories_import(axum::Extension(svc): Svc, Json(b): Json<ImportBody>) -
             text: it.text,
             label: kk_types::label::Label::new(level),
             subject: None,
+            project: it.project,
             reason: "restored from a backup".into(),
             source: kk_memory::Source::User,
             valid_from: None,
@@ -1177,6 +1187,7 @@ async fn memories_import_notes(axum::Extension(svc): Svc, Json(b): Json<NotesImp
             text,
             label: kk_types::label::Label::new(kk_types::label::Level::Internal).untrusted(),
             subject: None,
+            project: None,
             reason: format!(
                 "imported from {}{}{}",
                 b.source,
@@ -1225,6 +1236,10 @@ async fn memory_add(axum::Extension(svc): Svc, Json(b): Json<MemoryBody>) -> Res
         text: b.text,
         label: kk_types::label::Label::new(level),
         subject: None,
+        project: b
+            .project
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty()),
         reason: b
             .reason
             .unwrap_or_else(|| "you added it in the Memory screen".into()),
@@ -1276,6 +1291,12 @@ async fn memory_correct(
         text: b.text,
         label,
         subject: old.subject.clone(),
+        // no project given keeps the scope; an empty one makes the note apply everywhere; a name moves it to that project
+        project: match b.project.as_deref().map(str::trim) {
+            None => old.project.clone(),
+            Some("") => None,
+            Some(p) => Some(p.to_string()),
+        },
         reason: b.reason.unwrap_or_else(|| "you corrected it".into()),
         source: kk_memory::Source::User,
         valid_from: None,
@@ -1337,11 +1358,18 @@ async fn suggestion_accept(
     axum::Extension(svc): Svc,
     UrlPath((id, sid)): UrlPath<(String, String)>,
 ) -> Response {
+    // a fact suggested while reviewing one project belongs to that project, so it is not offered in unrelated work
+    let project = {
+        let g = svc.inner.lock().expect("lock");
+        g.jobs
+            .get(&id)
+            .and_then(|j| j.repo.file_name().map(|n| n.to_string_lossy().into_owned()))
+    };
     match svc
         .memory
         .lock()
         .expect("lock")
-        .accept_proposal(now(), &sid, &id)
+        .accept_proposal(now(), &sid, &id, project)
     {
         Ok(kk_memory::Remembered::Added(m)) => {
             svc.log_event(
