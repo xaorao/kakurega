@@ -120,7 +120,7 @@ export interface Job {
   delivered: { name: string; digest: string; signer: string } | null;
 }
 export interface FileEntry { path: string; bytes: number; level: string; compartments: string[]; withheld: boolean; notes: string[] }
-export interface Fix { index: number; title: string; file: string; explanation: string; status: string; tests?: string; verified: boolean; diff: string; applied: boolean }
+export interface Fix { index: number; title: string; file: string; files?: string[]; explanation: string; status: string; tests?: string; verified: boolean; diff: string; applied: boolean }
 export interface Finding { title: string; file: string; line: number; explanation: string; reproducer: string; status: string; output: string; sample: string[] }
 export interface AuditEntry { request: number; op: string; outcome: string; detail: string }
 export interface ReleaseFile { name: string; bytes: number; sha256: string; text: string | null }

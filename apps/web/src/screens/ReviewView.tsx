@@ -203,16 +203,16 @@ function Fixes(props: { jobId: string }) {
           <For each={items()}>
             {(f) => (
               <li class="stack">
-                <p><code>{f.file}</code> · {f.title}</p>
+                <p><code>{(f.files ?? [f.file]).join(", ")}</code> · {f.title}</p>
                 <p>{f.explanation}</p>
                 <details><summary>{t("fix.change")}</summary><DiffView diff={f.diff} label={t("fix.diffLabel", { file: f.file })} /></details>
                 <p><span class={`chip ${f.verified ? "ok" : "bad"}`}>{f.verified ? t("fix.ok") : t("fix.notAccepted")}</span></p>
                 <Show when={f.tests}><p class="muted wrap">{f.tests}</p></Show>
                 <Show when={!f.verified}><p class="muted wrap">{t("fix.why", { why: f.status.replace(/^[a-z_]+: ?/, "").replace(/\s+/g, " ").slice(0, 240) })}</p></Show>
                 <Show when={f.verified && !f.applied}>
-                  <Show when={asking() === f.index} fallback={<div class="actions"><button onClick={() => setAsking(f.index)}>{t("fix.apply", { file: f.file })}</button></div>}>
-                    <div class="stack" role="alertdialog" aria-label={t("fix.confirm", { file: f.file })}>
-                      <p>{t("fix.confirm", { file: f.file })}</p>
+                  <Show when={asking() === f.index} fallback={<div class="actions"><button onClick={() => setAsking(f.index)}>{t("fix.apply", { file: (f.files ?? [f.file]).length > 1 ? t("fix.nFiles", { n: (f.files ?? []).length }) : f.file })}</button></div>}>
+                    <div class="stack" role="alertdialog" aria-label={t("fix.confirm", { file: (f.files ?? [f.file]).length > 1 ? (f.files ?? []).join(", ") : f.file })}>
+                      <p>{t("fix.confirm", { file: (f.files ?? [f.file]).length > 1 ? (f.files ?? []).join(", ") : f.file })}</p>
                       <div class="actions">
                         <button class="primary" onClick={() => apply(f)}>{t("fix.yes")}</button>
                         <button onClick={() => setAsking(null)}>{t("fix.cancel")}</button>

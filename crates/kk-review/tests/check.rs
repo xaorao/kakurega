@@ -1,7 +1,8 @@
 use kk_review::check::{
-    apply_fix, clean_text, parse_finding, parse_fix, parse_unittest, python_closure,
-    run_project_tests, run_reproducer, unified_diff, verify_fix, verify_fix_with_tests, CheckEnv,
-    CheckStatus, ClosureError, Finding, Fix, FixStatus, TestRun,
+    apply_all, apply_fix, clean_text, parse_finding, parse_fix, parse_unittest, python_closure,
+    run_project_tests, run_reproducer, unified_diff, unified_diff_all, verify_fix,
+    verify_fix_with_tests, CheckEnv, CheckStatus, ClosureError, Edit, Finding, Fix, FixStatus,
+    TestRun,
 };
 use kk_review::import::{scan_tree, ImportedFile};
 use kk_sandbox::Transport;
@@ -206,6 +207,7 @@ fn fix(old: &str, new: &str) -> Fix {
         file: "payments/auth/session.py".into(),
         old_text: old.into(),
         new_text: new.into(),
+        also: vec![],
         explanation: String::new(),
     }
 }
@@ -245,6 +247,7 @@ fn f01_fixes_are_parsed_strictly_and_applied_only_as_one_exact_replacement() {
         file: "a.py".into(),
         old_text: "x = 1".into(),
         new_text: "x = 2".into(),
+        also: vec![],
         explanation: String::new(),
     };
     assert_eq!(apply_fix(b"a\nx = 1\nb\n", &f).unwrap(), b"a\nx = 2\nb\n");
@@ -379,6 +382,7 @@ fn f03_the_diff_shows_context_a_header_and_correct_counts() {
         file: "a.py".into(),
         old_text: "old a\nold b\n".into(),
         new_text: "new\n".into(),
+        also: vec![],
         explanation: String::new(),
     };
     let d = unified_diff(original, &fix);
@@ -401,6 +405,7 @@ fn f03_the_diff_shows_context_a_header_and_correct_counts() {
             file: "b".into(),
             old_text: "x\n".into(),
             new_text: "z\n".into(),
+            also: vec![],
             explanation: String::new(),
         },
     );
@@ -501,4 +506,134 @@ fn f05_a_fix_that_stops_the_reproducer_but_breaks_the_projects_passing_tests_is_
     let (status, note) = verify_fix_with_tests(&f, &bbefore, &sledgehammer, &bidx, &env);
     assert_eq!(status, FixStatus::FixesTheReproducer, "{note}");
     assert!(note.contains("before the change: tests failed"), "{note}");
+}
+
+#[test]
+fn f06_a_fix_may_carry_up_to_three_more_changes_in_other_files_and_nothing_odd() {
+    let known: BTreeSet<String> = ["a.py", "b.py", "c.py", "d.py", "e.py"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let edit =
+        |file: &str| serde_json::json!({"file": file, "old_text": "x = 1", "new_text": "x = 2"});
+    let doc = |also: serde_json::Value| {
+        serde_json::json!({"title": "t", "file": "a.py", "old_text": "x = 1", "new_text": "x = 2", "also": also}).to_string()
+    };
+    let ok = parse_fix(
+        doc(serde_json::json!([edit("b.py"), edit("c.py")])).as_bytes(),
+        &known,
+    )
+    .expect("two more files");
+    assert_eq!(
+        ok.edits()
+            .iter()
+            .map(|e| e.file.as_str())
+            .collect::<Vec<_>>(),
+        ["a.py", "b.py", "c.py"]
+    );
+    assert!(
+        parse_fix(
+            doc(serde_json::json!([
+                edit("b.py"),
+                edit("c.py"),
+                edit("d.py")
+            ]))
+            .as_bytes(),
+            &known
+        )
+        .is_some(),
+        "three more is the limit"
+    );
+    for (label, bad) in [
+        (
+            "four more",
+            serde_json::json!([edit("b.py"), edit("c.py"), edit("d.py"), edit("e.py")]),
+        ),
+        (
+            "the same file as the first",
+            serde_json::json!([edit("a.py")]),
+        ),
+        (
+            "the same file twice",
+            serde_json::json!([edit("b.py"), edit("b.py")]),
+        ),
+        ("an unknown file", serde_json::json!([edit("zzz.py")])),
+        ("not a list", serde_json::json!({"file": "b.py"})),
+        (
+            "an extra key",
+            serde_json::json!([{"file": "b.py", "old_text": "x = 1", "new_text": "x = 2", "extra": 1}]),
+        ),
+        (
+            "a no-op change",
+            serde_json::json!([{"file": "b.py", "old_text": "x = 1", "new_text": "x = 1"}]),
+        ),
+        (
+            "a hidden character",
+            serde_json::json!([{"file": "b.py", "old_text": "x = 1", "new_text": "x = 2\u{202e}"}]),
+        ),
+        (
+            "a path outside the project",
+            serde_json::json!([edit("../outside.py")]),
+        ),
+    ] {
+        assert!(parse_fix(doc(bad).as_bytes(), &known).is_none(), "{label}");
+    }
+}
+
+fn imported(path: &str, text: &str) -> ImportedFile {
+    let bytes = text.as_bytes().to_vec();
+    ImportedFile {
+        path: path.into(),
+        sha256: kk_evidence::capsule::sha256_hex(&bytes),
+        bytes,
+        label: kk_types::label::Label::new(Level::Internal),
+        notes: vec![],
+    }
+}
+
+#[test]
+fn f07_every_change_applies_or_none_does_and_the_diff_names_every_file_with_whole_lines() {
+    let (a, b) = (
+        imported("a.py", "keep\nvalue = 1\nend\n"),
+        imported("b.py", "name = old_name\nother\n"),
+    );
+    let files: BTreeMap<String, &ImportedFile> =
+        [("a.py".to_string(), &a), ("b.py".to_string(), &b)].into();
+    let fix = Fix {
+        title: "t".into(),
+        file: "a.py".into(),
+        old_text: "value = 1".into(),
+        new_text: "value = 2".into(),
+        also: vec![Edit {
+            file: "b.py".into(),
+            old_text: "old_name".into(),
+            new_text: "new_name".into(),
+        }],
+        explanation: String::new(),
+    };
+    let done = apply_all(&files, &fix).expect("both apply");
+    assert_eq!(done["a.py"], b"keep\nvalue = 2\nend\n");
+    assert_eq!(done["b.py"], b"name = new_name\nother\n");
+    let diff = unified_diff_all(&files, &fix);
+    assert!(
+        diff.contains("--- a/a.py") && diff.contains("--- a/b.py"),
+        "{diff}"
+    );
+    assert!(
+        diff.contains("-value = 1\n+value = 2\n")
+            && diff.contains("-name = old_name\n+name = new_name\n"),
+        "a change inside a line is shown as the whole line:\n{diff}"
+    );
+    let mut broken = fix.clone();
+    broken.also[0].old_text = "not there".into();
+    assert!(
+        apply_all(&files, &broken).is_none(),
+        "one change that cannot apply means no change applies"
+    );
+    let mut ambiguous = fix.clone();
+    ambiguous.old_text = "e".into();
+    assert!(
+        apply_all(&files, &ambiguous).is_none(),
+        "text that appears more than once is not a fix"
+    );
 }

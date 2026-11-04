@@ -107,6 +107,7 @@ impl JobRunner for CannedRunner {
                     file: "payments/auth/session.py".into(),
                     old_text: old.into(),
                     new_text: new.into(),
+                    also: vec![],
                     explanation: "remove the server-side entry".into(),
                 };
                 kk_review::job::ProposedFix {
@@ -116,6 +117,7 @@ impl JobRunner for CannedRunner {
                     fix,
                     status,
                     tests: String::new(),
+                    also_sha256: vec![],
                 }
             };
             vec![
@@ -132,6 +134,41 @@ impl JobRunner for CannedRunner {
                     ),
                 ),
             ]
+        } else if recipient == "multifixer" {
+            let sess = index["payments/auth/session.py"];
+            let tok = index["payments/auth/tokens.py"];
+            let fix = kk_review::check::Fix {
+                title: "Token not revoked".into(),
+                file: "payments/auth/session.py".into(),
+                old_text:
+                    "    cookie_jar = {\"session\": token}\n    cookie_jar.pop(\"session\", None)\n"
+                        .into(),
+                new_text: "    ACTIVE_TOKENS.pop(token, None)\n".into(),
+                also: vec![kk_review::check::Edit {
+                    file: "payments/auth/tokens.py".into(),
+                    old_text:
+                        "    mac = hmac.new(_SECRET, payload, hashlib.sha256).hexdigest()[:32]\n"
+                            .into(),
+                    new_text:
+                        "    mac = hmac.new(_SECRET, payload, hashlib.sha256).hexdigest()[:40]\n"
+                            .into(),
+                }],
+                explanation: "revoke on the server and lengthen the signature".into(),
+            };
+            let all: BTreeMap<String, &kk_review::import::ImportedFile> = [
+                ("payments/auth/session.py".to_string(), sess),
+                ("payments/auth/tokens.py".to_string(), tok),
+            ]
+            .into();
+            vec![kk_review::job::ProposedFix {
+                finding_title: "Token not revoked".into(),
+                diff: kk_review::check::unified_diff_all(&all, &fix),
+                file_sha256: sess.sha256.clone(),
+                also_sha256: vec![("payments/auth/tokens.py".into(), tok.sha256.clone())],
+                fix,
+                status: kk_review::check::FixStatus::FixesTheReproducer,
+                tests: String::new(),
+            }]
         } else {
             Vec::new()
         };
@@ -4589,4 +4626,115 @@ fn sv40_a_long_kept_conversation_reports_how_many_older_turns_were_not_sent() {
     );
     let (_, plain) = w.post("/api/chat", json!({"message": "unkept"}));
     assert_eq!(plain["usage"]["history_turns_dropped"], 0);
+}
+
+#[test]
+fn sv41_a_fix_that_touches_two_files_applies_and_undoes_as_one_and_refuses_if_either_file_changed()
+{
+    let (root, repo) = repo_copy("data-multifix");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (sess, tok) = (
+        repo.join("payments/auth/session.py"),
+        repo.join("payments/auth/tokens.py"),
+    );
+    let (sess0, tok0) = (std::fs::read(&sess).unwrap(), std::fs::read(&tok).unwrap());
+    let begin = |w: &Web| -> String {
+        let (_, s) = w.post(
+            "/api/jobs",
+            json!({"repo": repo.to_string_lossy(), "recipient": "multifixer"}),
+        );
+        let job = s["id"].as_str().unwrap().to_string();
+        wait_for(w, &job, &["ready"]);
+        job
+    };
+    let file = json!({"file": "payments/auth/session.py"});
+    let job = begin(&w);
+    let fixes = w.get(&format!("/api/jobs/{job}/fixes")).1;
+    assert_eq!(
+        fixes["fixes"][0]["files"],
+        json!(["payments/auth/session.py", "payments/auth/tokens.py"])
+    );
+    let diff = fixes["fixes"][0]["diff"].as_str().unwrap();
+    assert!(
+        diff.contains("--- a/payments/auth/session.py")
+            && diff.contains("--- a/payments/auth/tokens.py")
+            && diff
+                .contains("+    mac = hmac.new(_SECRET, payload, hashlib.sha256).hexdigest()[:40]"),
+        "{diff}"
+    );
+    // one of the two files edited since the review: nothing at all is written
+    std::fs::write(&tok, [tok0.clone(), b"# edited\n".to_vec()].concat()).unwrap();
+    let (st, r) = w.post(&format!("/api/jobs/{job}/fixes/0/apply"), file.clone());
+    assert_eq!(
+        (st, r["error"]["code"].as_str()),
+        (409, Some("CHANGED_SINCE_REVIEW")),
+        "{r}"
+    );
+    assert_eq!(
+        std::fs::read(&sess).unwrap(),
+        sess0,
+        "the first file was not touched either"
+    );
+    std::fs::write(&tok, &tok0).unwrap();
+    // both as reviewed: both change
+    let (st, r) = w.post(&format!("/api/jobs/{job}/fixes/0/apply"), file.clone());
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(
+        r["files"],
+        json!(["payments/auth/session.py", "payments/auth/tokens.py"])
+    );
+    assert_ne!(std::fs::read(&sess).unwrap(), sess0);
+    assert!(String::from_utf8(std::fs::read(&tok).unwrap())
+        .unwrap()
+        .contains("payload, hashlib.sha256).hexdigest()[:40]"));
+    // undo refuses if either file was edited since, and restores both exactly otherwise
+    let mut later = std::fs::read(&tok).unwrap();
+    later.extend_from_slice(b"# mine\n");
+    std::fs::write(&tok, &later).unwrap();
+    let (st, r) = w.post(&format!("/api/jobs/{job}/fixes/0/undo"), file.clone());
+    assert_eq!(
+        (st, r["error"]["code"].as_str()),
+        (409, Some("CHANGED_SINCE_APPLY")),
+        "{r}"
+    );
+    assert_ne!(
+        std::fs::read(&sess).unwrap(),
+        sess0,
+        "the other file was not rolled back either"
+    );
+    later.truncate(later.len() - b"# mine\n".len());
+    std::fs::write(&tok, &later).unwrap();
+    assert_eq!(
+        w.post(&format!("/api/jobs/{job}/fixes/0/undo"), file.clone())
+            .0,
+        200
+    );
+    assert_eq!(
+        (std::fs::read(&sess).unwrap(), std::fs::read(&tok).unwrap()),
+        (sess0.clone(), tok0.clone()),
+        "both files are back byte for byte"
+    );
+    // a failure while writing the second file puts the first back
+    let job2 = begin(&w);
+    std::fs::remove_file(&tok).unwrap();
+    std::fs::create_dir(&tok).unwrap();
+    let (st, _) = w.post(&format!("/api/jobs/{job2}/fixes/0/apply"), file.clone());
+    assert!(
+        [403, 409].contains(&st),
+        "a second file that is not a plain file refuses the whole fix: {st}"
+    );
+    assert_eq!(std::fs::read(&sess).unwrap(), sess0);
 }

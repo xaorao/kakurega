@@ -209,6 +209,7 @@ export const hi: Record<keyof typeof en, string> = {
   "sched.error": "समय-सारणी नहीं जोड़ी जा सकी।",
   "chat.context": "लगभग {n} टोकन का संदर्भ भेजा गया",
   "chat.dropped": "बातचीत लंबी होने से {n} पुराने संदेश नहीं भेजे गए",
+  "fix.nFiles": "{n} फ़ाइलें",
   "chat.error": "सहायक उत्तर नहीं दे सका।",
   "nav.docs": "दस्तावेज़",
   "docs.title": "अपने दस्तावेज़ों से पूछें",

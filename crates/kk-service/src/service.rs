@@ -266,6 +266,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, meta TEXT NOT NULL, snap TEXT);
              CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY, body TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS fix_files(job TEXT NOT NULL, n INTEGER NOT NULL, file TEXT NOT NULL, orig BLOB NOT NULL, sha_after TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (job, n, file));
              CREATE TABLE IF NOT EXISTS fix_snapshots(job TEXT NOT NULL, n INTEGER NOT NULL, file TEXT NOT NULL, orig BLOB NOT NULL, sha_after TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (job, n));
              CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, title TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS session_turns(session TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (session, seq));
@@ -3023,7 +3024,7 @@ async fn fixes_list(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> 
         Err(r) => r,
         Ok(s) => Json(json!({"fixes": s.fixes.iter().enumerate().map(|(i, f)| json!({
             "index": i, "title": f.title, "file": f.file, "explanation": f.explanation, "status": f.status,
-            "verified": f.verified, "diff": f.diff, "applied": fix_applied(&svc, &id, i),
+            "files": fix_edits(f).iter().map(|e| e.0.clone()).collect::<Vec<_>>(), "verified": f.verified, "diff": f.diff, "applied": fix_applied(&svc, &id, i),
             "tests": f.tests,
             "established": if f.tests.contains("passed before and after") { "That the finding's reproducer stops reproducing after this change and that the project's own unittest tests, which passed before, still pass. The change is not proven correct or complete." } else { "Only that the finding's reproducer stops reproducing after this change. The project's own tests were not run, or could not be, and the change is not proven correct or complete." },
         })).collect::<Vec<_>>()}))
@@ -3035,6 +3036,86 @@ async fn fixes_list(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> 
 #[serde(deny_unknown_fields)]
 struct ApplyFixBody {
     file: String,
+}
+
+/// Every change of a stored fix: file, text to replace, new text, and the checksum of the version it was checked against.
+fn fix_edits(f: &crate::snapshot::SnapFix) -> Vec<(String, String, String, String)> {
+    let mut v = vec![(
+        f.file.clone(),
+        f.old_text.clone(),
+        f.new_text.clone(),
+        f.file_sha256.clone(),
+    )];
+    v.extend(f.also.iter().map(|e| {
+        (
+            e.file.clone(),
+            e.old_text.clone(),
+            e.new_text.clone(),
+            e.file_sha256.clone(),
+        )
+    }));
+    v
+}
+
+/// A plain file inside the project folder, or the reason it is not one.
+#[allow(clippy::result_large_err)]
+fn plain_file(repo: &Path, file: &str) -> Result<(PathBuf, std::fs::Metadata), Response> {
+    if Path::new(file)
+        .components()
+        .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "BAD_PATH",
+            "the file path is not allowed",
+        ));
+    }
+    let full = repo.join(file);
+    let Ok(meta) = std::fs::symlink_metadata(&full) else {
+        return Err(error(
+            StatusCode::CONFLICT,
+            "FILE_MISSING",
+            "a file of this fix is no longer there",
+        ));
+    };
+    if !meta.is_file()
+        || meta.file_type().is_symlink()
+        || !full.canonicalize().is_ok_and(|c| c.starts_with(repo))
+    {
+        return Err(error(
+            StatusCode::FORBIDDEN,
+            "BAD_PATH",
+            "a file of this fix is not a plain file inside the project",
+        ));
+    }
+    Ok((full, meta))
+}
+
+/// Writes every (path, bytes) or none: each goes through a temporary file and a rename, and if a later one fails the
+/// earlier ones are put back from the bytes held in memory.
+fn write_all_or_none(items: &[(PathBuf, Vec<u8>, std::fs::Permissions, Vec<u8>)]) -> bool {
+    let mut done: Vec<usize> = Vec::new();
+    for (i, (full, bytes, perms, _)) in items.iter().enumerate() {
+        let tmp = full.with_file_name(format!(".kakurega-fix-{}-{i}.tmp", std::process::id()));
+        let ok = std::fs::write(&tmp, bytes)
+            .and_then(|_| std::fs::set_permissions(&tmp, perms.clone()))
+            .and_then(|_| std::fs::rename(&tmp, full));
+        if ok.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+            for j in done {
+                let (path, _, p, before) = &items[j];
+                let tmp =
+                    path.with_file_name(format!(".kakurega-fix-{}-undo.tmp", std::process::id()));
+                let _ = std::fs::write(&tmp, before)
+                    .and_then(|_| std::fs::set_permissions(&tmp, p.clone()))
+                    .and_then(|_| std::fs::rename(&tmp, path));
+                let _ = std::fs::remove_file(&tmp);
+            }
+            return false;
+        }
+        done.push(i);
+    }
+    true
 }
 
 async fn fix_undo(
@@ -3074,87 +3155,52 @@ async fn fix_undo(
             "the project folder is no longer available",
         );
     };
-    let snap: Option<(Vec<u8>, String)> = {
-        let store = svc.store.lock().expect("lock");
-        store
-            .connection()
-            .query_row(
-                "SELECT orig, sha_after FROM fix_snapshots WHERE job = ?1 AND n = ?2",
-                kk_vault::rusqlite::params![id, n as i64],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .ok()
-    };
-    let Some((orig, sha_after)) = snap else {
-        return error(
-            StatusCode::CONFLICT,
-            "NO_SNAPSHOT",
-            "the original copy is not available",
-        );
-    };
-    if Path::new(&f.file)
-        .components()
-        .any(|c| !matches!(c, std::path::Component::Normal(_)))
-    {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "BAD_PATH",
-            "the file path is not allowed",
-        );
+    let mut items = Vec::new();
+    for (file, ..) in fix_edits(f) {
+        let snap: Option<(Vec<u8>, String)> = {
+            let store = svc.store.lock().expect("lock");
+            store
+                .connection()
+                .query_row(
+                    "SELECT orig, sha_after FROM fix_files WHERE job = ?1 AND n = ?2 AND file = ?3",
+                    kk_vault::rusqlite::params![id, n as i64, file],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .ok()
+        };
+        let Some((orig, sha_after)) = snap else {
+            return error(
+                StatusCode::CONFLICT,
+                "NO_SNAPSHOT",
+                "the original copy is not available",
+            );
+        };
+        let (full, meta) = match plain_file(&repo, &file) {
+            Ok(x) => x,
+            Err(r) => return r,
+        };
+        let Ok(current) = std::fs::read(&full) else {
+            return error(
+                StatusCode::CONFLICT,
+                "FILE_MISSING",
+                "a file could not be read",
+            );
+        };
+        if kk_evidence::capsule::sha256_hex(&current) != sha_after {
+            return error(StatusCode::CONFLICT, "CHANGED_SINCE_APPLY", "a file has been edited since the fix was applied, so restoring the original would erase those edits; restore it by hand");
+        }
+        items.push((full, orig, meta.permissions(), current));
     }
-    let full = repo.join(&f.file);
-    let Ok(meta) = std::fs::symlink_metadata(&full) else {
-        return error(
-            StatusCode::CONFLICT,
-            "FILE_MISSING",
-            "the file is no longer there",
-        );
-    };
-    if !meta.is_file()
-        || meta.file_type().is_symlink()
-        || !full.canonicalize().is_ok_and(|c| c.starts_with(&repo))
-    {
-        return error(
-            StatusCode::FORBIDDEN,
-            "BAD_PATH",
-            "the file is not a plain file inside the project",
-        );
-    }
-    let Ok(current) = std::fs::read(&full) else {
-        return error(
-            StatusCode::CONFLICT,
-            "FILE_MISSING",
-            "the file could not be read",
-        );
-    };
-    if kk_evidence::capsule::sha256_hex(&current) != sha_after {
-        return error(StatusCode::CONFLICT, "CHANGED_SINCE_APPLY", "the file has been edited since the fix was applied, so restoring the original would erase those edits; restore it by hand");
-    }
-    let tmp = full.with_file_name(format!(".kakurega-undo-{}.tmp", std::process::id()));
-    let written = std::fs::write(&tmp, &orig)
-        .and_then(|_| std::fs::set_permissions(&tmp, meta.permissions()))
-        .and_then(|_| std::fs::rename(&tmp, &full));
-    if written.is_err() {
-        let _ = std::fs::remove_file(&tmp);
+    if !write_all_or_none(&items) {
         return error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "WRITE_FAILED",
-            "the file could not be written; nothing was changed",
+            "a file could not be written; nothing was changed",
         );
     }
     svc.push_event(&id, "fix_undone", &n.to_string());
-    svc.log_event(
-        "fix.undone",
-        &id,
-        &[
-            ("file", f.file.clone().into()),
-            (
-                "sha256_restored",
-                kk_evidence::capsule::sha256_hex(&orig).into(),
-            ),
-        ],
-    );
-    Json(json!({"undone": true, "file": f.file})).into_response()
+    svc.log_event("fix.undone", &id, &[("files", items.len().into())]);
+    Json(json!({"undone": true, "file": f.file, "files": fix_edits(f).iter().map(|e| e.0.clone()).collect::<Vec<_>>()})).into_response()
 }
 
 async fn fix_apply(
@@ -3194,34 +3240,6 @@ async fn fix_apply(
             "the project folder is no longer available",
         );
     };
-    if Path::new(&f.file)
-        .components()
-        .any(|c| !matches!(c, std::path::Component::Normal(_)))
-    {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "BAD_PATH",
-            "the file path is not allowed",
-        );
-    }
-    let full = repo.join(&f.file);
-    let Ok(meta) = std::fs::symlink_metadata(&full) else {
-        return error(
-            StatusCode::CONFLICT,
-            "FILE_MISSING",
-            "the file is no longer there",
-        );
-    };
-    if !meta.is_file()
-        || meta.file_type().is_symlink()
-        || !full.canonicalize().is_ok_and(|c| c.starts_with(&repo))
-    {
-        return error(
-            StatusCode::FORBIDDEN,
-            "BAD_PATH",
-            "the file is not a plain file inside the project",
-        );
-    }
     if fix_applied(&svc, &id, n) {
         return error(
             StatusCode::CONFLICT,
@@ -3229,67 +3247,79 @@ async fn fix_apply(
             "this fix was already applied",
         );
     }
-    let Ok(current) = std::fs::read(&full) else {
-        return error(
-            StatusCode::CONFLICT,
-            "FILE_MISSING",
-            "the file could not be read",
-        );
-    };
-    if kk_evidence::capsule::sha256_hex(&current) != f.file_sha256 {
-        return error(StatusCode::CONFLICT, "CHANGED_SINCE_REVIEW", "the file has changed since the review, so the checked fix no longer applies; review again");
+    // check every file first; nothing is written unless all of them are as they were when the fix was checked
+    let mut plan = Vec::new();
+    for (file, old_text, new_text, sha) in fix_edits(f) {
+        let (full, meta) = match plain_file(&repo, &file) {
+            Ok(x) => x,
+            Err(r) => return r,
+        };
+        let Ok(current) = std::fs::read(&full) else {
+            return error(
+                StatusCode::CONFLICT,
+                "FILE_MISSING",
+                "a file could not be read",
+            );
+        };
+        if kk_evidence::capsule::sha256_hex(&current) != sha {
+            return error(StatusCode::CONFLICT, "CHANGED_SINCE_REVIEW", "a file has changed since the review, so the checked fix no longer applies; review again");
+        }
+        let single = kk_review::check::Fix {
+            title: f.title.clone(),
+            file: file.clone(),
+            old_text,
+            new_text,
+            also: vec![],
+            explanation: String::new(),
+        };
+        let Some(updated) = kk_review::check::apply_fix(&current, &single) else {
+            return error(
+                StatusCode::CONFLICT,
+                "CANNOT_APPLY",
+                &format!("the text to replace is no longer there exactly once in {file}"),
+            );
+        };
+        plan.push((file, full, updated, meta.permissions(), current));
     }
-    let fix = kk_review::check::Fix {
-        title: f.title.clone(),
-        file: f.file.clone(),
-        old_text: f.old_text.clone(),
-        new_text: f.new_text.clone(),
-        explanation: String::new(),
-    };
-    let Some(updated) = kk_review::check::apply_fix(&current, &fix) else {
-        return error(
-            StatusCode::CONFLICT,
-            "CANNOT_APPLY",
-            "the text to replace is no longer there exactly once",
-        );
-    };
-    let after = kk_evidence::capsule::sha256_hex(&updated);
     {
         let store = svc.store.lock().expect("lock");
-        let saved = store.connection().execute(
-            "INSERT OR REPLACE INTO fix_snapshots(job, n, file, orig, sha_after, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            kk_vault::rusqlite::params![id, n as i64, f.file, current, after, now()],
-        );
-        if saved.is_err() {
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "SNAPSHOT_FAILED",
-                "could not keep a copy of the original, so nothing was changed",
-            );
+        let c = store.connection();
+        for (file, _, updated, _, current) in &plan {
+            let after = kk_evidence::capsule::sha256_hex(updated);
+            if c.execute("INSERT OR REPLACE INTO fix_files(job, n, file, orig, sha_after, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", kk_vault::rusqlite::params![id, n as i64, file, current, after, now()]).is_err() {
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "SNAPSHOT_FAILED", "could not keep a copy of the original, so nothing was changed");
+            }
         }
     }
-    let tmp = full.with_file_name(format!(".kakurega-fix-{}.tmp", std::process::id()));
-    let written = std::fs::write(&tmp, &updated)
-        .and_then(|_| std::fs::set_permissions(&tmp, meta.permissions()))
-        .and_then(|_| std::fs::rename(&tmp, &full));
-    if written.is_err() {
-        let _ = std::fs::remove_file(&tmp);
+    let items: Vec<_> = plan
+        .iter()
+        .map(|(_, full, updated, perms, current)| {
+            (
+                full.clone(),
+                updated.clone(),
+                perms.clone(),
+                current.clone(),
+            )
+        })
+        .collect();
+    if !write_all_or_none(&items) {
         return error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "WRITE_FAILED",
-            "the file could not be written; nothing was changed",
+            "a file could not be written; nothing was changed",
         );
     }
     svc.push_event(&id, "fix_applied", &n.to_string());
+    let after_first = kk_evidence::capsule::sha256_hex(&plan[0].2);
     svc.log_event(
         "fix.applied",
         &id,
         &[
-            ("file", f.file.clone().into()),
-            ("sha256_after", after.clone().into()),
+            ("files", plan.len().into()),
+            ("sha256_after", after_first.clone().into()),
         ],
     );
-    Json(json!({"applied": true, "file": f.file, "sha256_after": after})).into_response()
+    Json(json!({"applied": true, "file": f.file, "files": plan.iter().map(|p| p.0.clone()).collect::<Vec<_>>(), "sha256_after": after_first})).into_response()
 }
 
 fn draft_json(s: &Snapshot) -> Value {
@@ -4125,5 +4155,58 @@ impl Extension for Routes {
             .route("/admin/approvals/{id}/approve", post(admin_approve))
             .route("/admin/approvals/{id}/deny", post(admin_deny))
             .layer(axum::Extension(self.0.clone()))
+    }
+}
+
+#[cfg(test)]
+mod multi_write_tests {
+    use super::write_all_or_none;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn mw01_a_failed_second_write_puts_the_first_file_back() {
+        let d = std::env::temp_dir().join(format!("kk-mw-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("a")).unwrap();
+        std::fs::create_dir_all(d.join("b")).unwrap();
+        let (fa, fb) = (d.join("a/one.txt"), d.join("b/two.txt"));
+        std::fs::write(&fa, b"one before").unwrap();
+        std::fs::write(&fb, b"two before").unwrap();
+        let perms = std::fs::metadata(&fa).unwrap().permissions();
+        std::fs::set_permissions(d.join("b"), std::fs::Permissions::from_mode(0o555)).unwrap();
+        let items = vec![
+            (
+                fa.clone(),
+                b"one after".to_vec(),
+                perms.clone(),
+                b"one before".to_vec(),
+            ),
+            (
+                fb.clone(),
+                b"two after".to_vec(),
+                perms.clone(),
+                b"two before".to_vec(),
+            ),
+        ];
+        let ok = write_all_or_none(&items);
+        std::fs::set_permissions(d.join("b"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        if std::process::id() == 0 {
+            return; // root ignores directory permissions; nothing to prove then
+        }
+        assert!(!ok, "the second file could not be written");
+        assert_eq!(
+            std::fs::read(&fa).unwrap(),
+            b"one before",
+            "the first file was restored"
+        );
+        assert_eq!(std::fs::read(&fb).unwrap(), b"two before");
+        assert!(
+            write_all_or_none(&items),
+            "with permissions back both are written"
+        );
+        assert_eq!(
+            (std::fs::read(&fa).unwrap(), std::fs::read(&fb).unwrap()),
+            (b"one after".to_vec(), b"two after".to_vec())
+        );
     }
 }

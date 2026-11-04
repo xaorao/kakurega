@@ -321,27 +321,44 @@ pub const MAX_FIX_TEXT: usize = 8_000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fix {
     pub title: String,
+    /// The first change. A fix may carry up to three more in other files (`also`); all of them apply or none does.
     pub file: String,
     pub old_text: String,
     pub new_text: String,
+    pub also: Vec<Edit>,
     pub explanation: String,
 }
 
-pub fn parse_fix(bytes: &[u8], known_files: &BTreeSet<String>) -> Option<Fix> {
-    let v: Value = serde_json::from_slice(bytes).ok()?;
-    let o = v.as_object()?;
-    if o.keys()
-        .any(|k| !["title", "file", "old_text", "new_text", "explanation"].contains(&k.as_str()))
-    {
-        return None;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Edit {
+    pub file: String,
+    pub old_text: String,
+    pub new_text: String,
+}
+
+pub const MAX_ALSO: usize = 3;
+
+impl Fix {
+    /// Every change in this fix, the first one first.
+    pub fn edits(&self) -> Vec<Edit> {
+        let mut v = vec![Edit {
+            file: self.file.clone(),
+            old_text: self.old_text.clone(),
+            new_text: self.new_text.clone(),
+        }];
+        v.extend(self.also.iter().cloned());
+        v
     }
-    let file = o.get("file")?.as_str()?.to_string();
-    if !known_files.contains(&file) {
-        return None;
-    }
-    let old_text = o.get("old_text")?.as_str()?.to_string();
-    let new_text = o.get("new_text")?.as_str()?.to_string();
-    if old_text.is_empty()
+}
+
+fn clean_edit(
+    file: &str,
+    old_text: &str,
+    new_text: &str,
+    known: &BTreeSet<String>,
+) -> Option<Edit> {
+    if !known.contains(file)
+        || old_text.is_empty()
         || old_text == new_text
         || old_text.len() > MAX_FIX_TEXT
         || new_text.len() > MAX_FIX_TEXT
@@ -354,11 +371,67 @@ pub fn parse_fix(bytes: &[u8], known_files: &BTreeSet<String>) -> Option<Fix> {
     }) {
         return None;
     }
+    Some(Edit {
+        file: file.to_string(),
+        old_text: old_text.to_string(),
+        new_text: new_text.to_string(),
+    })
+}
+
+pub fn parse_fix(bytes: &[u8], known_files: &BTreeSet<String>) -> Option<Fix> {
+    let v: Value = serde_json::from_slice(bytes).ok()?;
+    let o = v.as_object()?;
+    if o.keys().any(|k| {
+        ![
+            "title",
+            "file",
+            "old_text",
+            "new_text",
+            "explanation",
+            "also",
+        ]
+        .contains(&k.as_str())
+    }) {
+        return None;
+    }
+    let first = clean_edit(
+        o.get("file")?.as_str()?,
+        o.get("old_text")?.as_str()?,
+        o.get("new_text")?.as_str()?,
+        known_files,
+    )?;
+    let mut also = Vec::new();
+    if let Some(list) = o.get("also") {
+        let list = list.as_array()?;
+        if list.len() > MAX_ALSO {
+            return None;
+        }
+        for item in list {
+            let m = item.as_object()?;
+            if m.keys()
+                .any(|k| !["file", "old_text", "new_text"].contains(&k.as_str()))
+            {
+                return None;
+            }
+            let e = clean_edit(
+                m.get("file")?.as_str()?,
+                m.get("old_text")?.as_str()?,
+                m.get("new_text")?.as_str()?,
+                known_files,
+            )?;
+            // one change per file keeps every change independent and every diff and undo exact
+            if e.file == first.file || also.iter().any(|x: &Edit| x.file == e.file) {
+                return None;
+            }
+            also.push(e);
+        }
+    }
     Some(Fix {
         title: clean_text(o.get("title")?.as_str()?, MAX_TITLE),
-        file,
-        old_text,
-        new_text,
+        file: first.file,
+        old_text: first.old_text,
+        new_text: first.new_text,
+        also,
         explanation: clean_text(
             o.get("explanation").and_then(Value::as_str).unwrap_or(""),
             MAX_EXPLANATION,
@@ -374,6 +447,47 @@ pub fn apply_fix(original: &[u8], fix: &Fix) -> Option<Vec<u8>> {
     }
     let out = text.replacen(fix.old_text.as_str(), &fix.new_text, 1);
     (out.len() <= original.len() + MAX_FIX_TEXT).then(|| out.into_bytes())
+}
+
+/// Applies every change of a fix to the files it names. All of them apply or the result is `None`.
+pub fn apply_all(
+    files: &BTreeMap<String, &ImportedFile>,
+    fix: &Fix,
+) -> Option<BTreeMap<String, Vec<u8>>> {
+    let mut out = BTreeMap::new();
+    for e in fix.edits() {
+        let orig = files.get(&e.file)?;
+        let single = Fix {
+            title: String::new(),
+            file: e.file.clone(),
+            old_text: e.old_text,
+            new_text: e.new_text,
+            also: vec![],
+            explanation: String::new(),
+        };
+        out.insert(e.file, apply_fix(&orig.bytes, &single)?);
+    }
+    Some(out)
+}
+
+/// The unified diff of every change in a fix, one file after another.
+pub fn unified_diff_all(files: &BTreeMap<String, &ImportedFile>, fix: &Fix) -> String {
+    let mut out = String::new();
+    for e in fix.edits() {
+        let Some(orig) = files.get(&e.file) else {
+            continue;
+        };
+        let single = Fix {
+            title: String::new(),
+            file: e.file.clone(),
+            old_text: e.old_text,
+            new_text: e.new_text,
+            also: vec![],
+            explanation: String::new(),
+        };
+        out.push_str(&unified_diff(&orig.bytes, &single));
+    }
+    out
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -513,16 +627,21 @@ pub fn verify_fix_with_tests(
             format!("before the change: {}", before_tests.describe()),
         );
     };
-    let Some(orig) = files.get(&fix.file) else {
+    let Some(new_bytes) = apply_all(files, fix) else {
         return (status, String::new());
     };
-    let Some(bytes) = apply_fix(&orig.bytes, fix) else {
-        return (status, String::new());
-    };
-    let mut patched = (*orig).clone();
-    patched.bytes = bytes;
+    let patched: Vec<ImportedFile> = new_bytes
+        .into_iter()
+        .map(|(f, bytes)| {
+            let mut p = (*files[&f]).clone();
+            p.bytes = bytes;
+            p
+        })
+        .collect();
     let mut map = files.clone();
-    map.insert(fix.file.clone(), &patched);
+    for p in &patched {
+        map.insert(p.path.clone(), p);
+    }
     let after_tests = run_project_tests(&map, env);
     match after_tests {
         TestRun::Passed(n) => (
@@ -549,18 +668,26 @@ pub fn verify_fix(
     if before.status != CheckStatus::Reproduced {
         return FixStatus::NotChecked("the finding it belongs to was not reproduced".into());
     }
-    let Some(orig) = files.get(&fix.file) else {
-        return FixStatus::CouldNotApply("the file is not in the project".into());
-    };
-    let Some(patched_bytes) = apply_fix(&orig.bytes, fix) else {
+    if fix.edits().iter().any(|e| !files.contains_key(&e.file)) {
+        return FixStatus::CouldNotApply("a file the fix names is not in the project".into());
+    }
+    let Some(new_bytes) = apply_all(files, fix) else {
         return FixStatus::CouldNotApply(
-            "the text to replace must appear exactly once in the file".into(),
+            "the text to replace must appear exactly once in each file".into(),
         );
     };
-    let mut patched = (*orig).clone();
-    patched.bytes = patched_bytes;
+    let patched: Vec<ImportedFile> = new_bytes
+        .into_iter()
+        .map(|(f, bytes)| {
+            let mut p = (*files[&f]).clone();
+            p.bytes = bytes;
+            p
+        })
+        .collect();
     let mut map: BTreeMap<String, &ImportedFile> = files.clone();
-    map.insert(fix.file.clone(), &patched);
+    for p in &patched {
+        map.insert(p.path.clone(), p);
+    }
     let after = run_reproducer(finding, &map, env);
     let control_after = after.stdout.lines().any(|l| l.trim() == "CONTROL_OK");
     match after.status {
@@ -577,7 +704,27 @@ pub fn verify_fix(
 /// uses `apply_fix`, never this text.
 pub fn unified_diff(original: &[u8], fix: &Fix) -> String {
     let text = String::from_utf8_lossy(original);
+    // A change inside a line is shown as the whole line before and after, the way a code review shows it.
     let at = text.find(fix.old_text.as_str()).unwrap_or(0);
+    let end = (at + fix.old_text.len()).min(text.len());
+    let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = if end > 0 && text.as_bytes()[end - 1] == b'\n' {
+        end
+    } else {
+        text[end..].find('\n').map_or(text.len(), |i| end + i + 1)
+    };
+    let whole = Fix {
+        old_text: text[line_start..line_end].to_string(),
+        new_text: format!(
+            "{}{}{}",
+            &text[line_start..at],
+            fix.new_text,
+            &text[end..line_end]
+        ),
+        ..fix.clone()
+    };
+    let fix = &whole;
+    let at = line_start;
     let body = text.strip_suffix('\n').unwrap_or(&text);
     let lines: Vec<&str> = body.split('\n').collect();
     let first = text[..at].matches('\n').count();

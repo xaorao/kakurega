@@ -53,6 +53,17 @@ pub struct SnapFix {
     pub verified: bool,
     pub diff: String,
     pub file_sha256: String,
+    /// The further changes of a multi-file fix, each with the version of its file that was checked.
+    #[serde(default)]
+    pub also: Vec<SnapEdit>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SnapEdit {
+    pub file: String,
+    pub old_text: String,
+    pub new_text: String,
+    pub file_sha256: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -196,6 +207,22 @@ impl Snapshot {
                     verified: f.status == kk_review::check::FixStatus::FixesTheReproducer,
                     diff: f.diff.clone(),
                     file_sha256: f.file_sha256.clone(),
+                    also: f
+                        .fix
+                        .also
+                        .iter()
+                        .map(|e| SnapEdit {
+                            file: e.file.clone(),
+                            old_text: e.old_text.clone(),
+                            new_text: e.new_text.clone(),
+                            file_sha256: f
+                                .also_sha256
+                                .iter()
+                                .find(|(p, _)| *p == e.file)
+                                .map(|(_, h)| h.clone())
+                                .unwrap_or_default(),
+                        })
+                        .collect(),
                 })
                 .collect(),
             unparsed: r.unparsed_findings,

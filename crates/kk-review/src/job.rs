@@ -52,6 +52,8 @@ pub struct ProposedFix {
     pub tests: String,
     pub diff: String,
     pub file_sha256: String,
+    /// For each further file of a multi-file fix: its path and the SHA-256 of the version the fix was checked against.
+    pub also_sha256: Vec<(String, String)>,
 }
 
 pub const MAX_FIXES: usize = 10;
@@ -228,12 +230,20 @@ pub fn run_job(
         };
         let (status, tests) =
             crate::check::verify_fix_with_tests(&finding, &before, &fix, &index, &env);
-        let orig = index
+        let diff = crate::check::unified_diff_all(&index, &fix);
+        let file_sha256 = index
             .get(&fix.file)
-            .map(|f| (f.bytes.clone(), f.sha256.clone()));
-        let (diff, file_sha256) = orig
-            .map(|(b, h)| (crate::check::unified_diff(&b, &fix), h))
+            .map(|f| f.sha256.clone())
             .unwrap_or_default();
+        let also_sha256 = fix
+            .also
+            .iter()
+            .filter_map(|e| {
+                index
+                    .get(&e.file)
+                    .map(|f| (e.file.clone(), f.sha256.clone()))
+            })
+            .collect();
         report.fixes.push(ProposedFix {
             finding_title: finding.title.clone(),
             fix,
@@ -241,6 +251,7 @@ pub fn run_job(
             tests,
             diff,
             file_sha256,
+            also_sha256,
         });
     }
     let suggestions: Vec<_> = broker

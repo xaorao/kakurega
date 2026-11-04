@@ -160,7 +160,12 @@ pub fn fix_tool() -> ToolSpec {
                 "file": {"type": "string"},
                 "old_text": {"type": "string"},
                 "new_text": {"type": "string"},
-                "explanation": {"type": "string"}
+                "explanation": {"type": "string"},
+                "also": {
+                    "type": "array",
+                    "description": "Further changes that belong to the same fix, in other files (at most three). Each has file, old_text and new_text, and old_text must appear exactly once in that file.",
+                    "items": {"type": "object", "properties": {"file": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["file", "old_text", "new_text"]}
+                }
             },
             "required": ["title", "file", "old_text", "new_text"]
         }),
@@ -255,8 +260,11 @@ fn run_local_tool(link: &mut dyn Link, call: &ToolCall) -> Result<Value, WorkerE
                     json!({"error": "propose_fix needs title, file, old_text and new_text"}),
                 );
             };
-            let bytes = serde_json::to_vec(&json!({"title": title, "file": file, "old_text": old, "new_text": new, "explanation": a["explanation"].as_str().unwrap_or("")}))
-                .map_err(|e| WorkerError::Link(e.to_string()))?;
+            let mut doc = json!({"title": title, "file": file, "old_text": old, "new_text": new, "explanation": a["explanation"].as_str().unwrap_or("")});
+            if let Some(also) = a.get("also").filter(|v| v.is_array()) {
+                doc["also"] = also.clone();
+            }
+            let bytes = serde_json::to_vec(&doc).map_err(|e| WorkerError::Link(e.to_string()))?;
             let r = ok_result(link.call(
                 json!({"op": "write.artifact", "bytes_b64": b64::encode(&bytes), "kind": "fix"}),
             )?)?;

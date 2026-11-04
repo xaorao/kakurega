@@ -1721,6 +1721,15 @@ impl App {
                 for (i, f) in list.iter().enumerate() {
                     let n = i + 1;
                     let file = clean(f["file"].as_str().unwrap_or("?"));
+                    let shown = match f["files"].as_array() {
+                        Some(all) if all.len() > 1 => all
+                            .iter()
+                            .filter_map(|x| x.as_str())
+                            .map(clean)
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        _ => file.clone(),
+                    };
                     let verified = f["verified"] == true;
                     self.fixes_seen.push((
                         job.clone(),
@@ -1729,7 +1738,7 @@ impl App {
                         verified && f["applied"] != true,
                     ));
                     let mut lines = vec![format!(
-                        "{file}: {}",
+                        "{shown}: {}",
                         clean(f["title"].as_str().unwrap_or(""))
                     )];
                     lines.extend(text_lines(&clean(f["explanation"].as_str().unwrap_or(""))));
