@@ -16,6 +16,9 @@ use std::time::Duration;
 
 const REPRO: &str = "from payments.auth import session\nt = session.login('alice')\nassert session.validate(t)\nsession.logout(t)\nprint('REPRODUCED' if session.validate(t) else 'NOT REPRODUCED')\n";
 
+type Seen = Vec<(String, Vec<(String, String, String)>)>;
+static SEEN: std::sync::Mutex<Seen> = std::sync::Mutex::new(Vec::new());
+
 struct CannedRunner {
     confirm: bool,
 }
@@ -27,8 +30,22 @@ impl JobRunner for CannedRunner {
         recipient: &str,
         _job: &str,
         now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
         progress: &dyn Fn(&str, &str),
     ) -> JobReport {
+        SEEN.lock().unwrap().push((
+            recipient.to_string(),
+            extra
+                .iter()
+                .map(|f| {
+                    (
+                        f.path.clone(),
+                        format!("{:?}", f.label.level),
+                        String::from_utf8_lossy(&f.bytes).to_string(),
+                    )
+                })
+                .collect(),
+        ));
         progress("import", "reading the project");
         let imp = scan_tree(repo, Level::Internal);
         let man = manifest(&imp.files);
@@ -776,4 +793,64 @@ fn sv11_memory_needs_a_session_validates_input_and_survives_a_restart_including_
         let (st, _) = w.post("/api/memories", json!({"text": "tabs not spaces"}));
         assert_eq!(st, 422, "the decision to forget survived the restart");
     }
+}
+
+#[test]
+fn sv12_a_review_receives_the_remembered_notes_with_their_labels() {
+    let (root, repo) = repo_copy("memnotes");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    w.post(
+        "/api/memories",
+        json!({"text": "Acme pays on the 20th", "level": "internal"}),
+    );
+    w.post(
+        "/api/memories",
+        json!({"text": "Board vote is planned for May", "level": "restricted"}),
+    );
+    let (_, started) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "memspy"}),
+    );
+    wait_for(
+        &w,
+        started["id"].as_str().unwrap(),
+        &["ready", "nothing_to_release"],
+    );
+    let seen = SEEN
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(r, _)| r == "memspy")
+        .cloned()
+        .expect("the runner ran");
+    assert_eq!(seen.1.len(), 2, "{:?}", seen.1);
+    assert!(seen
+        .1
+        .iter()
+        .all(|(p, _, _)| p.starts_with("kakurega-memory/") && p.ends_with(".txt")));
+    let levels: std::collections::BTreeSet<&str> =
+        seen.1.iter().map(|(_, l, _)| l.as_str()).collect();
+    assert_eq!(
+        levels,
+        ["Internal", "Restricted"].into_iter().collect(),
+        "each note keeps its own label"
+    );
+    assert!(seen
+        .1
+        .iter()
+        .any(|(_, _, t)| t.contains("Why: you asked to remember it")
+            && t.contains("Acme pays on the 20th")));
 }

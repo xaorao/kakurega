@@ -34,6 +34,7 @@ pub struct JobConfig {
     pub policy_version: String,
     pub commitment_key: [u8; 32],
     pub job_name: String,
+    pub extra_files: Vec<crate::import::ImportedFile>,
 }
 
 pub struct JobReport {
@@ -62,7 +63,8 @@ pub fn run_job(
     progress: &dyn Fn(&str, &str),
 ) -> JobReport {
     progress("import", "reading the project");
-    let Imported { files, skipped } = scan_tree(&cfg.repo, cfg.default_level);
+    let Imported { mut files, skipped } = scan_tree(&cfg.repo, cfg.default_level);
+    files.extend(cfg.extra_files.iter().cloned());
     let man = manifest(&files);
     let commitment = keyed_commitment(&cfg.commitment_key, &man);
     let withheld: Vec<(String, Vec<String>)> = files

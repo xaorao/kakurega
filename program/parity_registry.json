@@ -630,7 +630,7 @@
     "per-compartment stores",
     "0G Memory (comparison)"
    ],
-   "evidence": "labels enforced at recall (me02, me13); the Memory screen lists with the owner clearance; per-project scoping and route-clearance recall inside review jobs not wired",
+   "evidence": "labels enforced at recall (me02, me13); remembered notes enter every review as labelled files, so the existing label and taint rules apply: kk-service sv12 (labels kept), kk-review j06 in the sandbox VM (Internal note readable; Confidential and Restricted look absent; mutation-checked); per-project scoping and the agent writing memory back are not built",
    "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Private project memories",

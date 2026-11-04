@@ -24,6 +24,7 @@ impl JobRunner for ReviewRunner {
         recipient: &str,
         job_name: &str,
         now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
         progress: &dyn Fn(&str, &str),
     ) -> JobReport {
         let cfg = JobConfig {
@@ -40,6 +41,7 @@ impl JobRunner for ReviewRunner {
             policy_version: "policy-1".into(),
             commitment_key: self.commitment_key,
             job_name: job_name.to_string(),
+            extra_files: extra,
         };
         if let Some(path) = &self.scripted {
             let script: Vec<ChatMessage> = match std::fs::read_to_string(path)

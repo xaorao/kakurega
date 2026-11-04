@@ -25,6 +25,7 @@ pub trait JobRunner: Send + Sync {
         recipient: &str,
         job_name: &str,
         now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
         progress: &dyn Fn(&str, &str),
     ) -> JobReport;
     fn route_info(&self) -> Value;
@@ -144,6 +145,34 @@ fn init_store(v: &Vault) -> Result<(), String> {
 }
 
 impl Service {
+    fn memory_files(&self) -> Vec<kk_review::import::ImportedFile> {
+        let mem = self.memory.lock().expect("lock");
+        let Ok(clearance) = mem.owner_clearance() else {
+            return Vec::new();
+        };
+        let Ok(items) = mem.list(&clearance, now(), 50) else {
+            return Vec::new();
+        };
+        items
+            .into_iter()
+            .map(|r| {
+                let text = format!(
+                    "Remembered note (you asked Kakurega to keep this)\nWhy: {}\n\n{}\n",
+                    r.why, r.memory.text
+                );
+                let bytes = text.into_bytes();
+                let sha = kk_evidence::capsule::sha256_hex(&bytes);
+                kk_review::import::ImportedFile {
+                    path: format!("kakurega-memory/{}.txt", r.memory.id),
+                    bytes,
+                    label: r.memory.label,
+                    sha256: sha,
+                    notes: vec!["from Memory".to_string()],
+                }
+            })
+            .collect()
+    }
+
     pub fn new(
         data_dir: &Path,
         roots: Vec<PathBuf>,
@@ -322,12 +351,13 @@ impl Service {
         self.persist_job(&first, None);
         let svc = self.clone();
         let (jid, rec) = (id.clone(), recipient.to_string());
+        let extra = self.memory_files();
         std::thread::spawn(move || {
             let svc2 = svc.clone();
             let jid2 = jid.clone();
             let report = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 svc.runner
-                    .run(&dir, &rec, &jid, now(), &move |stage, detail| {
+                    .run(&dir, &rec, &jid, now(), extra, &move |stage, detail| {
                         svc2.push_event(&jid2, stage, detail)
                     })
             }));

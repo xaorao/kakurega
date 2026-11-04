@@ -88,6 +88,7 @@ fn config(name: &str) -> JobConfig {
         ttl_secs: 86_400,
         policy_version: "policy-1".into(),
         commitment_key: [9u8; 32],
+        extra_files: Vec::new(),
         job_name: name.into(),
     }
 }
@@ -294,5 +295,80 @@ fn j03_live_local_model_reviews_the_synthetic_repository() {
             .iter()
             .any(|e| e.op == "model.complete" && e.outcome == "ok"),
         "the real model must have been called"
+    );
+}
+
+fn note(name: &str, text: &str, label: kk_types::label::Label) -> kk_review::import::ImportedFile {
+    let bytes = text.as_bytes().to_vec();
+    kk_review::import::ImportedFile {
+        path: format!("kakurega-memory/{name}.txt"),
+        sha256: kk_evidence::capsule::sha256_hex(&bytes),
+        bytes,
+        label,
+        notes: vec!["from Memory".into()],
+    }
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn j06_remembered_notes_reach_the_agent_only_up_to_its_clearance() {
+    use kk_types::label::Label;
+    let mut cfg = config("j06");
+    cfg.extra_files = vec![
+        note("fine", "Acme pays on the 20th", Label::new(Level::Internal)),
+        note(
+            "conf",
+            "Board vote is planned for May",
+            Label::new(Level::Confidential),
+        ),
+        note(
+            "top",
+            "Restricted layoff list is in the HR folder",
+            Label::new(Level::Restricted),
+        ),
+    ];
+    let (routes, ev) = scripted(vec![
+        calls(vec![("list_files", json!({}))]),
+        calls(vec![(
+            "read_file",
+            json!({"path": "kakurega-memory/fine.txt"}),
+        )]),
+        calls(vec![(
+            "read_file",
+            json!({"path": "kakurega-memory/conf.txt"}),
+        )]),
+        calls(vec![(
+            "read_file",
+            json!({"path": "kakurega-memory/top.txt"}),
+        )]),
+        ChatMessage::new("assistant", "done"),
+    ]);
+    let report = run_job(&cfg, routes, ev, &|_, _| {});
+    assert_eq!(report.error, None);
+    assert!(
+        report
+            .files
+            .iter()
+            .any(|f| f.path == "kakurega-memory/fine.txt"),
+        "notes are part of the manifest"
+    );
+    assert!(
+        report
+            .withheld
+            .iter()
+            .any(|w| w.0 == "kakurega-memory/top.txt"),
+        "a restricted note is reported as withheld"
+    );
+    let tools: Vec<&str> = report
+        .audit
+        .iter()
+        .filter(|e| e.op == "tool.call")
+        .map(|e| e.outcome.as_str())
+        .collect();
+    assert_eq!(
+        tools,
+        vec!["ok", "ok", "UnknownHandle", "UnknownHandle"],
+        "list and the Internal note work; Confidential and Restricted notes look absent to the agent: {:?}",
+        report.audit
     );
 }
