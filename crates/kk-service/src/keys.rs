@@ -8,6 +8,7 @@ use std::path::Path;
 pub struct Keys {
     pub signer: Signer,
     pub commitment_key: [u8; 32],
+    pub log_seed: [u8; 32],
 }
 
 fn random32() -> [u8; 32] {
@@ -89,8 +90,10 @@ pub fn load_keys(data_dir: &Path) -> Result<Keys, String> {
     };
     let seed = ensure("signing_seed")?;
     let commitment_key = ensure("commitment_key")?;
+    let log_seed = ensure("log_signing_seed")?;
     Ok(Keys {
         signer: Signer::from_seed(seed),
         commitment_key,
+        log_seed,
     })
 }

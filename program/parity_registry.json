@@ -1686,7 +1686,7 @@
     "6.6",
     "V01-V15"
    ],
-   "evidence": "DSSE signed envelopes and capsule: kk-evidence tests; hash-chained Merkle event log not built",
+   "evidence": "kk-eventlog: every consequential action is appended to a hash-chained log whose every entry has a signed head (separate log key): el01-el12 (edit, delete, reorder, forged head, full-chain rewrite, key-holder with broken link, truncation with and without an anchor, concurrency, limits, malformed input; seven verification steps each mutation-checked); service sv15 (ordered events, no memory text or file paths, restart continues the chain, tampering detected); scripts/e2e: Activity screen, download, offline `kaku log verify`, tampered file INVALID. NOT built: Merkle inclusion proofs, hiding commitments, publishing the head outside the device (so tail truncation is only detectable with an anchor you kept), a JavaScript verifier, events for every possible action (sandbox requests are in the job audit, not this log)",
    "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Signed hash-chained event log (DSSE + Merkle), hiding commitments",
@@ -2473,8 +2473,8 @@
     "NEAR's stated plan for private programmatic compliance",
     "EXPANSION"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "the Activity screen and signed log show which action happened to which review or memory; code and route per labelled datum is not recorded",
+   "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Compliance evidence view: which code and route processed which labelled data, for which purpose, exported from the log; mapped to GDPR purpo",
    "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."

@@ -39,6 +39,19 @@ impl Admin {
         ))
     }
 
+    pub fn get_text(&self, path: &str) -> Result<(u16, String), String> {
+        let mut r = self
+            .agent
+            .get(&format!("{}{path}", self.base))
+            .header("Authorization", &format!("Bearer {}", self.token))
+            .call()
+            .map_err(|e| e.to_string())?;
+        Ok((
+            r.status().as_u16(),
+            r.body_mut().read_to_string().map_err(|e| e.to_string())?,
+        ))
+    }
+
     pub fn post(&self, path: &str, body: Value) -> Result<(u16, Value), String> {
         let mut r = self
             .agent

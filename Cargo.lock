@@ -2398,6 +2398,7 @@ name = "kk-cli"
 version = "0.0.1"
 dependencies = [
  "kk-companion",
+ "kk-eventlog",
  "kk-evidence",
  "kk-review",
  "kk-route",
@@ -2440,6 +2441,14 @@ dependencies = [
  "getrandom 0.3.4",
  "kk-effects",
  "kk-types",
+ "kk-vault",
+]
+
+[[package]]
+name = "kk-eventlog"
+version = "0.0.1"
+dependencies = [
+ "kk-evidence",
  "kk-vault",
 ]
 
@@ -2551,6 +2560,7 @@ dependencies = [
  "kk-companion",
  "kk-disclosure",
  "kk-effects",
+ "kk-eventlog",
  "kk-evidence",
  "kk-memory",
  "kk-review",

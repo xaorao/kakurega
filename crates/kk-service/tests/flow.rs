@@ -1087,3 +1087,166 @@ fn sv14_cumulative_disclosure_reviews_then_blocks_as_a_recipient_sees_more_of_th
         "another recipient starts with an empty account"
     );
 }
+
+fn log_text(base: &str, token: &str) -> String {
+    let cfg = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build();
+    let agent: ureq::Agent = cfg.into();
+    let mut r = agent
+        .get(&format!("{base}/admin/log"))
+        .header("Authorization", &format!("Bearer {token}"))
+        .call()
+        .unwrap();
+    r.body_mut().read_to_string().unwrap()
+}
+
+#[test]
+fn sv15_every_consequential_action_leaves_a_signed_chained_record_without_private_text() {
+    let (root, repo) = repo_copy("eventlog");
+    let data = root.join("data");
+    let secret_memory = "Board vote is planned for the second week of May";
+    let anchor;
+    {
+        let svc = Service::new(
+            &data,
+            vec![root.clone()],
+            Arc::new(CannedRunner { confirm: true }),
+            true,
+        )
+        .unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        let token = c.security.admin_token().to_string();
+        let base = format!("http://127.0.0.1:{}", c.addr.port());
+        let (_, added) = w.post(
+            "/api/memories",
+            json!({"text": secret_memory, "level": "confidential"}),
+        );
+        let mid = added["id"].as_str().unwrap().to_string();
+        let (_, started) = w.post(
+            "/api/jobs",
+            json!({"repo": repo.to_string_lossy(), "recipient": "acme-audit"}),
+        );
+        let job = started["id"].as_str().unwrap().to_string();
+        wait_for(&w, &job, &["ready"]);
+        let (_, req) = w.post(&format!("/api/jobs/{job}/approval"), json!({}));
+        let aid = req["approval"].as_str().unwrap().to_string();
+        let (_, shown) = admin(
+            &base,
+            &token,
+            "GET",
+            &format!("/admin/approvals/{aid}"),
+            None,
+        );
+        let digest = shown["digest"].as_str().unwrap().to_string();
+        admin(
+            &base,
+            &token,
+            "POST",
+            &format!("/admin/approvals/{aid}/approve"),
+            Some(json!({"ack": &digest[..12]})),
+        );
+        assert_eq!(
+            w.post(&format!("/api/jobs/{job}/deliver"), json!({})).0,
+            200
+        );
+        assert_eq!(
+            w.post(
+                &format!("/api/memories/{mid}/forget"),
+                json!({"reason": "private"})
+            )
+            .0,
+            200
+        );
+        let text = log_text(&base, &token);
+        let report = kk_eventlog::verify_export(&text, None, None).expect("the log verifies");
+        let kinds: Vec<String> = text
+            .split("\\\"kind\\\":\\\"")
+            .skip(1)
+            .map(|p| p.split("\\\"").next().unwrap().to_string())
+            .collect();
+        let order = [
+            "service.started",
+            "memory.remembered",
+            "job.started",
+            "job.finished",
+            "approval.requested",
+            "approval.approved",
+            "release.delivering",
+            "release.delivery_finished",
+            "memory.forgotten",
+        ];
+        let mut at = 0;
+        for k in order {
+            at += kinds[at..]
+                .iter()
+                .position(|x| x == k)
+                .unwrap_or_else(|| panic!("missing or out of order: {k} in {kinds:?}"));
+        }
+        assert!(
+            !text.contains("Board vote") && !text.contains("second week"),
+            "the log never carries memory text"
+        );
+        assert!(!text.contains("payments/auth"), "nor file paths");
+        assert!(
+            text.contains(&digest[..16]),
+            "the delivered release is identified by its digest"
+        );
+        anchor = Some(kk_eventlog::Anchor {
+            count: report.count,
+            head: report.head,
+        });
+        let tampered = text.replace(
+            "\\\"state\\\":\\\"ready\\\"",
+            "\\\"state\\\":\\\"failed\\\"",
+        );
+        assert_eq!(
+            kk_eventlog::verify_export(&tampered, None, None),
+            Err(kk_eventlog::Failure::HashMismatch)
+        );
+    }
+    {
+        let svc = Service::new(
+            &data,
+            vec![root.clone()],
+            Arc::new(CannedRunner { confirm: true }),
+            true,
+        )
+        .unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let text = log_text(
+            &format!("http://127.0.0.1:{}", c.addr.port()),
+            c.security.admin_token(),
+        );
+        let again = kk_eventlog::verify_export(&text, None, anchor.as_ref())
+            .expect("the log continues after a restart and still contains the anchored past");
+        assert!(
+            again.count > anchor.as_ref().unwrap().count,
+            "a restart is itself recorded"
+        );
+        let tamper = kk_service::keys::open_vault(&data, "events.db").unwrap();
+        tamper
+            .connection()
+            .execute_batch("DELETE FROM log WHERE seq = 3")
+            .unwrap();
+        drop(tamper);
+        let cut = log_text(
+            &format!("http://127.0.0.1:{}", c.addr.port()),
+            c.security.admin_token(),
+        );
+        assert!(
+            kk_eventlog::verify_export(&cut, None, anchor.as_ref()).is_err(),
+            "deleting a record is detected"
+        );
+    }
+}

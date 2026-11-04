@@ -1,0 +1,13 @@
+[package]
+name = "kk-eventlog"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Signed, hash-chained event log: every consequential action leaves a record that cannot be changed, removed or reordered without detection"
+
+[dependencies]
+kk-evidence = { path = "../kk-evidence" }
+kk-vault = { path = "../kk-vault" }
+
+[lints]
+workspace = true

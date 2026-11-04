@@ -223,6 +223,24 @@ try {
   await page.locator(".mem").first().waitFor();
   check("only the accepted suggestion became a memory, marked untrusted with its source", (await page.locator(".mem").count()) === 1 && (await page.locator(".mem").first().innerText()).includes("in-process dictionary") && (await page.locator(".mem").first().innerText()).includes("from untrusted content") && (await page.locator(".mem").first().innerText()).includes("suggested by review"));
   check("the dismissed suggestion's text was never saved", (await page.getByText("Always release the .env").count()) === 0);
+  // activity: the signed log lists what happened, downloads, and verifies offline with the CLI
+  await page.getByRole("link", { name: "Activity" }).click();
+  await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();
+  await page.getByRole("cell", { name: "Delivery finished" }).first().waitFor();
+  const rows = await page.locator("tbody tr").allInnerTexts();
+  check("the activity list shows approvals, delivery and memory changes in plain words", ["Release approved", "Delivery finished", "Memory forgotten", "Review finished", "Suggestion accepted"].every((w) => rows.join("\n").includes(w)));
+  check("the activity page never shows memory text or file contents", !rows.join("\n").includes("in-process dictionary") && !rows.join("\n").includes("euros"));
+  await axeCheck(page, "activity screen");
+  await page.screenshot({ path: join(shots, "12-activity.png") });
+  const [logDl] = await Promise.all([page.waitForEvent("download"), page.getByRole("link", { name: "Download the signed log" }).click()]);
+  const logPath = join(work, "event-log.json");
+  await logDl.saveAs(logPath);
+  const ok = spawnSync(kaku, ["log", "verify", logPath], { encoding: "utf8" });
+  check("the downloaded log verifies offline with kaku log verify", ok.status === 0 && /VALID: \d+ entries/.test(ok.stdout), ok.stdout.slice(0, 120));
+  const logText = readFileSync(logPath, "utf8");
+  writeFileSync(logPath + ".bad", logText.replace("job.finished", "job.finishes"));
+  const bad = spawnSync(kaku, ["log", "verify", logPath + ".bad"], { encoding: "utf8" });
+  check("a changed log is reported INVALID by the CLI", bad.status === 1 && /INVALID/.test(bad.stdout), bad.stdout.slice(0, 120));
   await page.locator('.list a[href^="#/job/"]').first().click();
   await page.getByRole("tab", { name: "Release" }).click();
   await page.screenshot({ path: join(shots, "06-delivered.png"), fullPage: true });

@@ -126,6 +126,7 @@ pub struct Service {
     ledger: Mutex<Ledger<SystemClock>>,
     memory: Mutex<kk_memory::Memories>,
     disclosure: Mutex<kk_disclosure::Ledger>,
+    log: kk_eventlog::EventLog,
     pub test_mode: bool,
 }
 
@@ -146,6 +147,10 @@ fn init_store(v: &Vault) -> Result<(), String> {
 }
 
 impl Service {
+    fn log_event(&self, kind: &str, subject: &str, data: &[(&str, kk_eventlog::Datum)]) -> bool {
+        self.log.append(now(), kind, subject, data).is_ok()
+    }
+
     fn plan_for(repo: &std::path::Path, recipient: &str, s: &Snapshot) -> kk_disclosure::Plan {
         let mut paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for f in s.findings.iter().filter(|f| f.reproduced) {
@@ -234,6 +239,8 @@ impl Service {
             .map_err(|e| e.to_string())?;
         let store = open_vault(data_dir, "jobs.db")?;
         init_store(&store)?;
+        let log = kk_eventlog::EventLog::open(open_vault(data_dir, "events.db")?, keys.log_seed)
+            .map_err(|e| e.to_string())?;
         let disclosure = kk_disclosure::Ledger::open(
             open_vault(data_dir, "disclosure.db")?,
             kk_disclosure::Policy::default(),
@@ -313,6 +320,12 @@ impl Service {
             .into_iter()
             .filter_map(|r| r.canonicalize().ok())
             .collect();
+        let _ = log.append(
+            now(),
+            "service.started",
+            "kakurega",
+            &[("version", env!("CARGO_PKG_VERSION").into())],
+        );
         Ok(Arc::new(Service {
             data_dir: data_dir.to_path_buf(),
             roots,
@@ -323,6 +336,7 @@ impl Service {
             ledger: Mutex::new(ledger),
             memory: Mutex::new(memory),
             disclosure: Mutex::new(disclosure),
+            log,
             test_mode,
         }))
     }
@@ -403,6 +417,7 @@ impl Service {
             (id, job)
         };
         self.persist_job(&first, None);
+        self.log_event("job.started", &id, &[("recipient", recipient.into())]);
         let svc = self.clone();
         let (jid, rec) = (id.clone(), recipient.to_string());
         let extra = self.memory_files();
@@ -455,6 +470,30 @@ impl Service {
                 (job, snap_out)
             };
             svc.persist_job(&job, snap.as_deref());
+            let state = match &job.state {
+                JobState::Running => "running",
+                JobState::Ready => "ready",
+                JobState::NothingToRelease(_) => "nothing_to_release",
+                JobState::Failed(_) => "failed",
+            };
+            svc.log_event(
+                "job.finished",
+                &job.id,
+                &[
+                    ("state", state.into()),
+                    (
+                        "findings",
+                        snap.as_ref().map(|s| s.findings.len()).unwrap_or(0).into(),
+                    ),
+                    (
+                        "confirmed",
+                        snap.as_ref()
+                            .map(|s| s.findings.iter().filter(|f| f.reproduced).count())
+                            .unwrap_or(0)
+                            .into(),
+                    ),
+                ],
+            );
         });
         Ok(id)
     }
@@ -605,6 +644,7 @@ async fn memory_add(axum::Extension(svc): Svc, Json(b): Json<MemoryBody>) -> Res
     };
     match svc.memory.lock().expect("lock").remember(now(), m) {
         Ok(kk_memory::Remembered::Added(id)) => {
+            svc.log_event("memory.remembered", &id, &[("source", "user".into())]);
             (StatusCode::CREATED, Json(json!({"id": id, "added": true}))).into_response()
         }
         Ok(kk_memory::Remembered::AlreadyKnown(id)) => {
@@ -652,7 +692,14 @@ async fn memory_correct(
         valid_to: b.valid_to.or(old.valid_to),
     };
     match mem.correct(now(), &id, m) {
-        Ok(new) => Json(json!({"id": new})).into_response(),
+        Ok(new) => {
+            svc.log_event(
+                "memory.corrected",
+                &id,
+                &[("replaced_by", new.clone().into())],
+            );
+            Json(json!({"id": new})).into_response()
+        }
         Err(e) => memory_error(e),
     }
 }
@@ -667,7 +714,10 @@ async fn memory_forget(
         &id,
         &b.reason.unwrap_or_else(|| "you asked to forget it".into()),
     ) {
-        Ok(()) => Json(json!({"forgotten": true})).into_response(),
+        Ok(()) => {
+            svc.log_event("memory.forgotten", &id, &[]);
+            Json(json!({"forgotten": true})).into_response()
+        }
         Err(e) => memory_error(e),
     }
 }
@@ -704,6 +754,14 @@ async fn suggestion_accept(
         .accept_proposal(now(), &sid, &id)
     {
         Ok(kk_memory::Remembered::Added(m)) => {
+            svc.log_event(
+                "memory.suggestion_accepted",
+                &id,
+                &[
+                    ("memory", m.clone().into()),
+                    ("suggestion", sid.clone().into()),
+                ],
+            );
             Json(json!({"id": m, "added": true})).into_response()
         }
         Ok(kk_memory::Remembered::AlreadyKnown(m)) => {
@@ -723,8 +781,54 @@ async fn suggestion_dismiss(
         .expect("lock")
         .dismiss_proposal(now(), &sid, &id)
     {
-        Ok(()) => Json(json!({"dismissed": true})).into_response(),
+        Ok(()) => {
+            svc.log_event(
+                "memory.suggestion_dismissed",
+                &id,
+                &[("suggestion", sid.clone().into())],
+            );
+            Json(json!({"dismissed": true})).into_response()
+        }
         Err(e) => memory_error(e),
+    }
+}
+
+async fn log_summary(axum::Extension(svc): Svc) -> Response {
+    let head = svc.log.head().ok().flatten();
+    let recent: Vec<Value> = svc
+        .log
+        .recent(50)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|e| serde_json::from_str::<Value>(e).ok())
+        .collect();
+    Json(json!({
+        "count": head.as_ref().map(|h| h.0).unwrap_or(0),
+        "head": head.map(|h| h.1),
+        "public_key": kk_evidence::b64::encode(&svc.log.public_key()),
+        "recent": recent,
+    }))
+    .into_response()
+}
+
+async fn log_export(axum::Extension(svc): Svc) -> Response {
+    match svc.log.export() {
+        Ok(text) => (
+            [
+                (axum::http::header::CONTENT_TYPE, "application/json"),
+                (
+                    axum::http::header::CONTENT_DISPOSITION,
+                    "attachment; filename=\"kakurega-event-log.json\"",
+                ),
+            ],
+            text,
+        )
+            .into_response(),
+        Err(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "LOG_UNAVAILABLE",
+            "the event log could not be read",
+        ),
     }
 }
 
@@ -924,6 +1028,21 @@ async fn request_approval(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String
         (aid, rec, job)
     };
     svc.persist_approval(&aid, &rec);
+    svc.log_event(
+        "approval.requested",
+        &id,
+        &[
+            ("approval", aid.clone().into()),
+            (
+                "digest",
+                draft.digest.chars().take(16).collect::<String>().into(),
+            ),
+            (
+                "disclosure",
+                dj["verdict"].as_str().unwrap_or("none").into(),
+            ),
+        ],
+    );
     if let Some(j) = job {
         svc.persist_job(&j, None);
     }
@@ -957,6 +1076,20 @@ async fn do_deliver(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> 
     };
     if svc.disclosure_json(&id, &s).1 == kk_disclosure::Verdict::Block {
         return error(StatusCode::CONFLICT, "DISCLOSURE_BLOCKED", "other releases to this recipient since the approval put the total over the disclosure limit; nothing was sent");
+    }
+    if !svc.log_event(
+        "release.delivering",
+        &id,
+        &[(
+            "digest",
+            draft.digest.chars().take(16).collect::<String>().into(),
+        )],
+    ) {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "LOG_UNAVAILABLE",
+            "the event log could not be written, so nothing was sent",
+        );
     }
     let (aid, digest) = {
         let mut g = svc.inner.lock().expect("lock");
@@ -1084,6 +1217,17 @@ async fn do_deliver(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> 
         (response.0, response.1, job_out)
     };
     svc.persist_approval(&aid, &rec);
+    svc.log_event(
+        "release.delivery_finished",
+        &rec.job,
+        &[
+            ("state", rec.state.clone().into()),
+            (
+                "digest",
+                rec.digest.chars().take(16).collect::<String>().into(),
+            ),
+        ],
+    );
     if let Some(j) = job {
         svc.persist_job(&j, None);
     }
@@ -1191,6 +1335,17 @@ async fn admin_approve(
         }
     };
     svc.persist_approval(&aid, &rec);
+    svc.log_event(
+        "approval.approved",
+        &rec.job,
+        &[
+            ("approval", aid.clone().into()),
+            (
+                "digest",
+                rec.digest.chars().take(16).collect::<String>().into(),
+            ),
+        ],
+    );
     resp
 }
 
@@ -1209,6 +1364,17 @@ async fn admin_deny(axum::Extension(svc): Svc, UrlPath(aid): UrlPath<String>) ->
         }
     };
     svc.persist_approval(&aid, &rec);
+    svc.log_event(
+        "approval.denied",
+        &rec.job,
+        &[
+            ("approval", aid.clone().into()),
+            (
+                "digest",
+                rec.digest.chars().take(16).collect::<String>().into(),
+            ),
+        ],
+    );
     Json(json!({"state": "denied"})).into_response()
 }
 
@@ -1271,6 +1437,8 @@ impl Extension for Routes {
         Router::new()
             .route("/api/config", get(config))
             .route("/api/readiness", get(readiness))
+            .route("/api/log", get(log_summary))
+            .route("/api/log/export", get(log_export))
             .route("/api/memories", get(memories_list).post(memory_add))
             .route("/api/memories/{id}/correct", post(memory_correct))
             .route("/api/memories/{id}/forget", post(memory_forget))
@@ -1298,6 +1466,7 @@ impl Extension for Routes {
             )
             .route("/api/jobs/{id}/deliver", post(do_deliver))
             .route("/api/jobs/{id}/capsule", get(download))
+            .route("/admin/log", get(log_export))
             .route("/admin/jobs", get(admin_jobs_list).post(admin_job_start))
             .route("/admin/jobs/{id}", get(admin_job_get))
             .route(
