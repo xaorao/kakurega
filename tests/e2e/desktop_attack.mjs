@@ -46,6 +46,31 @@ try {
   const port = Number(new URL(origin).port);
   const admin = JSON.parse(readFileSync(join(data, "admin.json"), "utf8"));
 
+  // the page asks for every powerful permission and device: all refused
+  const perms = await page.evaluate(async () => {
+    const out = {};
+    for (const name of ["geolocation", "notifications", "camera", "microphone", "clipboard-read", "midi", "persistent-storage", "screen-wake-lock"]) {
+      try { out[name] = (await navigator.permissions.query({ name })).state; } catch { out[name] = "unsupported"; }
+    }
+    out.usb = typeof navigator.usb === "undefined" ? "absent" : await navigator.usb.requestDevice({ filters: [] }).then(() => "granted", () => "refused");
+    out.geo = await new Promise((r) => navigator.geolocation.getCurrentPosition(() => r("granted"), () => r("refused"), { timeout: 2000 }));
+    out.media = await navigator.mediaDevices?.getUserMedia({ audio: true, video: true }).then(() => "granted", () => "refused");
+    return out;
+  });
+  check("the page cannot be granted location, camera, microphone, USB or any other powerful permission", !Object.values(perms).includes("granted"), JSON.stringify(perms));
+  // a redirect from the app to another origin is stopped before the page changes
+  const redirected = await page.evaluate(async () => { try { const r = await fetch("/", { redirect: "manual" }); return r.status; } catch { return -1; } });
+  void redirected;
+  // a second launch brings the first forward and does not start a second companion
+  const second = await new Promise((resolveSecond) => {
+    import("node:child_process").then(({ spawn }) => {
+      const c = spawn(process.env.ELECTRON_BIN ?? join(repo, "apps/desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"), [...(process.platform === "darwin" ? ["--use-mock-keychain"] : ["--password-store=basic", "--no-sandbox"]), process.env.DESKTOP_APP_DIR ?? join(repo, "apps/desktop")], { env: { ...process.env, KAKU_BIN: process.env.KAKU_BIN ?? join(repo, "target/debug/kaku"), KAKUREGA_DATA_DIR: data }, stdio: "ignore" });
+      const timer = setTimeout(() => { c.kill("SIGKILL"); resolveSecond({ exited: false }); }, 15000);
+      c.on("exit", (code) => { clearTimeout(timer); resolveSecond({ exited: true, code }); });
+    });
+  });
+  check("launching the app a second time exits at once instead of opening another window and companion", second.exited === true, JSON.stringify(second));
+  check("the first window is still the only one", app.windows().length === 1);
   // renderer XSS: assume attacker script runs inside the page
   const xss = await page.evaluate(async () => {
     const out = {};

@@ -207,3 +207,11 @@ fn sk05_variants_cover_the_transformations_a_leak_can_take() {
         "{p:?}"
     );
 }
+
+#[test]
+fn the_extension_carries_the_same_format_table_as_this_crate() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/extension/formats.js");
+    let have = std::fs::read_to_string(&path).unwrap_or_default();
+    assert_eq!(have, kk_secrets::formats_js(), "regenerate with: cargo run -p kk-secrets --example export_formats > apps/extension/formats.js");
+}

@@ -76,3 +76,9 @@ Both shells were run through the same renderer-compromise script (session cookie
 - Difference found: Electron let a page navigate to `about:blank` (fixed with a did-navigate guard); Tauri's `on_navigation` refused it by default.
 - Not equal yet: Electron has asar integrity validation, fuses and a tested tamper response (II-13b, II-13c). Tauri has no counterpart built or tested (code signing of the binary, integrity of the frontend, update path). That gap, not the attack surface of the page, is what remains to compare.
 - The decision (II-04) is still the owner's.
+
+## Update (retrospective audit, matrix F E2/E4/E9, extension X2)
+- Re-read `main.mjs`: the matrix said the permission check handler was missing, but it was already set; what was missing is the device handler. Now `setDevicePermissionHandler` refuses, `will-redirect` is stopped for off-origin targets, and a single-instance lock makes a second launch exit while the first window comes forward.
+- Evidence (Linux VM, real Electron): the page cannot be granted location, camera, microphone, USB, MIDI, clipboard or notifications; a second launch exits at once (removing the lock makes that check fail). Attack suite 23/23, no-Touch-ID flow 7/7.
+- Extension: the selection is checked against the same provider table as the service (`formats.js` generated from `kk-secrets`, drift test in the Rust crate) before anything is sent to localhost. Tests xs01-xs03; mutations of the scanner and of the generated table fail tests.
+- Still open from matrix F: signing and notarisation (needs an Apple Developer ID, deferred by the owner), auto-update with a verified publisher, renderer crash recovery, per-launch secret for the loopback origin, mandatory approver key in packaged builds.

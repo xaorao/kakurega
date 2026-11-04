@@ -83,6 +83,7 @@ async function start() {
 
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(allowPermission()));
   session.defaultSession.setPermissionCheckHandler(() => allowPermission());
+  session.defaultSession.setDevicePermissionHandler(() => false);
 
   window = new BrowserWindow(windowOptions());
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -93,6 +94,9 @@ async function start() {
     if (isAppUrl(url, admin.origin)) return;
     event.preventDefault();
     if (mayOpenExternally(url)) shell.openExternal(url);
+  });
+  window.webContents.on("will-redirect", (event, url) => {
+    if (!isAppUrl(url, admin.origin)) event.preventDefault();
   });
   window.webContents.on("will-frame-navigate", (event) => {
     if (!isAppUrl(event.url, admin.origin)) event.preventDefault();
@@ -115,7 +119,20 @@ async function start() {
   setInterval(() => pollOnce().catch(() => {}), 1000);
 }
 
-app.whenReady().then(start).catch((e) => {
+// One window, one companion: a second launch only brings the first one forward.
+if (!app.requestSingleInstanceLock()) {
+  app.isQuitting = true;
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (window) {
+      if (window.isMinimized()) window.restore();
+      window.focus();
+    }
+  });
+}
+
+app.whenReady().then(() => (app.isQuitting ? undefined : start())).catch((e) => {
   dialog.showErrorBox("Kakurega could not start", String(e.message ?? e));
   app.quit();
 });

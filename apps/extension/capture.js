@@ -1,4 +1,5 @@
 import { call, cleanSelection, describeFailure, pageOf } from "./lib.js";
+import { findSecrets } from "./secrets.js";
 
 export async function loadConfig(storage = chrome.storage.local) {
   const { port, token } = await storage.get(["port", "token"]);
@@ -11,6 +12,8 @@ export async function captureSelection(info, deps = {}) {
   if (!config.token) return { ok: false, message: "Not paired. Open the Kakurega popup to pair." };
   const text = cleanSelection(info?.selectionText);
   if (!text) return { ok: false, message: "That selection cannot be sent: it is empty, too long or has control characters." };
+  const secrets = findSecrets(text);
+  if (secrets.length > 0) return { ok: false, message: `Not sent: the selection looks like a secret (${secrets.join(", ")}). Nothing left your browser.` };
   const page = pageOf(info?.pageUrl);
   if (!page) return { ok: false, message: "Only pages on http or https can be sent." };
   try {
