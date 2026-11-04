@@ -21,6 +21,7 @@ kk-companion = { path = "../kk-companion" }
 kk-sandbox = { path = "../kk-sandbox" }
 kk-fetch = { path = "../kk-fetch" }
 kk-backup = { path = "../kk-backup" }
+kk-near = { path = "../kk-near" }
 kk-secrets = { path = "../kk-secrets" }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }

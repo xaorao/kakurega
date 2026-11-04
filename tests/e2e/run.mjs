@@ -52,7 +52,13 @@ const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } })
 const page = await ctx.newPage();
 const requestOrigins = new Set();
 page.on("request", (r) => { try { requestOrigins.add(new URL(r.url()).origin); } catch { /* data: urls */ } });
-page.on("console", (m) => m.type() === "error" && problems.push("console: " + m.text()));
+page.on("console", (m) => {
+  if (m.type() !== "error") return;
+  // The browser logs every non-2xx fetch as a console error. The model-proof refusal is a deliberate 422 that the page
+  // shows as a message (checked by its own steps), so only that exact response is excused.
+  if (m.location().url.endsWith("/api/route/attest") && /status of 422/.test(m.text())) return;
+  problems.push("console: " + m.text());
+});
 page.on("pageerror", (e) => problems.push("pageerror: " + e.message));
 page.on("requestfailed", async (r) => {
   // Classified as a harness artifact (QA guide 12.4): Chromium reports ERR_ABORTED for a streamed (chunked) response whose
@@ -294,6 +300,27 @@ try {
   await page.getByRole("link", { name: "Chat" }).click();
   await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();
   check("the chat says it is private and that conversations are not saved", (await page.getByText("Conversations are not saved").count()) === 1);
+  // model proof panel: the response shapes are the ones the service tests and the live run produce
+  await page.route("**/api/route/attest", async (route) => {
+    const model = JSON.parse(route.request().postData() ?? "{}").model;
+    if (model === "good/model") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ verified: true, model, means: ["Intel TDX hardware vouched for the software that is running."], does_not_mean: ["It does not prove that a particular answer came from this software."], deployments: [{ signer: "0xsignerAAA", tcb: "UpToDate", advisories: [], gpu_verified: true, compose_hash: "abc123", os_image_hash: null, nonce: "nonce777" }] }) });
+    } else {
+      await route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ verified: false, model, error: { code: "NOT_VERIFIED", message: "attestation verified but the route policy refuses it: TcbNotAccepted" } }) });
+    }
+  });
+  await page.getByText("Check a confidential model's hardware proof").click();
+  await page.getByLabel("Model name").fill("good/model");
+  await page.getByRole("button", { name: "Check now" }).click();
+  const proofRegion = page.getByRole("region", { name: "Hardware proof result" });
+  await proofRegion.waitFor();
+  const proofText = await proofRegion.innerText();
+  check("a verified model shows the patch level, GPU evidence, signing key and challenge, and what the result does not prove", proofText.includes("Verified") && proofText.includes("UpToDate") && proofText.includes("NVIDIA GPU evidence verified") && proofText.includes("0xsignerAAA") && proofText.includes("nonce777") && proofText.includes("What this does not show") && proofText.includes("does not prove that a particular answer"));
+  await axeCheck(page, "model proof panel");
+  await page.getByLabel("Model name").fill("bad/model");
+  await page.getByRole("button", { name: "Check now" }).click();
+  await page.getByRole("alert").filter({ hasText: "refuses it" }).waitFor();
+  check("a refused model shows the reason, no verified badge and no deployment details", (await proofRegion.count()) === 0 && (await page.getByText("0xsignerAAA").count()) === 0);
   await page.getByText("Add pages from the web").click();
   await page.getByLabel("Web addresses, one per line (https only)").fill("https://docs.rs/tokio\nhttp://insecure.example/\nhttps://127.0.0.1/admin");
   const originsBefore = requestOrigins.size;

@@ -167,6 +167,9 @@ pub struct Service {
     ext_codes: Mutex<std::collections::HashMap<[u8; 32], std::time::Instant>>,
     ext_fail: Mutex<(u32, Option<std::time::Instant>)>,
     web: Mutex<Arc<dyn WebFetch>>,
+    attester: Mutex<Arc<dyn Attester>>,
+    last_attest: Mutex<Option<std::time::Instant>>,
+    attest_cooldown: Mutex<std::time::Duration>,
     research: Mutex<Research>,
     pub test_mode: bool,
 }
@@ -174,6 +177,25 @@ pub struct Service {
 /// The one door to the internet for research. Tests replace it; the real one is `kk_fetch`.
 pub trait WebFetch: Send + Sync {
     fn fetch(&self, url: &str) -> Result<kk_fetch::Page, kk_fetch::FetchError>;
+}
+
+/// Checks a confidential model's hardware proof. Tests replace it; the real one is `kk_near`.
+pub trait Attester: Send + Sync {
+    fn attest(&self, model: &str) -> Result<Vec<kk_near::RouteAttestation>, String>;
+}
+
+struct RealAttester;
+
+impl Attester for RealAttester {
+    fn attest(&self, model: &str) -> Result<Vec<kk_near::RouteAttestation>, String> {
+        let handle = tokio::runtime::Handle::current();
+        handle
+            .block_on(kk_near::attest_model(
+                model,
+                &kk_near::NearPolicy::default(),
+            ))
+            .map_err(|e| e.to_string())
+    }
 }
 
 struct RealWeb;
@@ -300,6 +322,14 @@ impl Service {
     /// The remembered notes a review may see: the ones that match the project and the recipient first, then the most
     /// recent, within a fixed budget. Every note keeps its own label; the kernel's clearance rules decide what the agent
     /// can read. Each note says why it was included.
+    pub fn set_attest_cooldown(&self, d: std::time::Duration) {
+        *self.attest_cooldown.lock().expect("lock") = d;
+    }
+
+    pub fn set_attester(&self, a: Arc<dyn Attester>) {
+        *self.attester.lock().expect("lock") = a;
+    }
+
     pub fn set_web(&self, web: Arc<dyn WebFetch>) {
         *self.web.lock().expect("lock") = web;
     }
@@ -484,6 +514,9 @@ impl Service {
             ext_codes: Mutex::new(std::collections::HashMap::new()),
             ext_fail: Mutex::new((0, None)),
             web: Mutex::new(Arc::new(RealWeb)),
+            attester: Mutex::new(Arc::new(RealAttester)),
+            last_attest: Mutex::new(None),
+            attest_cooldown: Mutex::new(std::time::Duration::from_secs(3)),
             research: Mutex::new(Research::default()),
             test_mode,
         }))
@@ -1485,6 +1518,83 @@ async fn session_forget(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>)
     }
     svc.log_event("session.forgotten", &id, &[]);
     Json(json!({"forgotten": true})).into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttestBody {
+    model: String,
+}
+
+/// Checks, on demand, the hardware proof of a NEAR AI Cloud model. Only the model name leaves this computer; no
+/// prompt, note or file is involved. A failure is reported in plain words and is never shown as a pass.
+async fn route_attest(axum::Extension(svc): Svc, Json(b): Json<AttestBody>) -> Response {
+    let model = b.model.trim().to_string();
+    if model.is_empty()
+        || model.len() > 80
+        || !model
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | ':'))
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_MODEL",
+            "a model name is 1 to 80 letters, digits or / . _ - :",
+        );
+    }
+    {
+        let mut last = svc.last_attest.lock().expect("lock");
+        if last.is_some_and(|t| t.elapsed() < *svc.attest_cooldown.lock().expect("lock")) {
+            return error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "TOO_FAST",
+                "wait a few seconds between checks",
+            );
+        }
+        *last = Some(std::time::Instant::now());
+    }
+    let attester = svc.attester.lock().expect("lock").clone();
+    let m2 = model.clone();
+    let result = tokio::task::spawn_blocking(move || attester.attest(&m2)).await;
+    let Ok(result) = result else {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ATTEST_FAILED",
+            "the check stopped unexpectedly",
+        );
+    };
+    let means = json!([
+        "A fresh random challenge was answered by the model server, so this is not a replay.",
+        "Intel TDX hardware vouched for the software that is running, at an up-to-date patch level.",
+        "NVIDIA evidence says the GPUs are in confidential mode.",
+        "The key that signs the model's answers belongs to that verified software."
+    ]);
+    let does_not_mean = json!([
+        "It does not prove that a particular answer came from this software; that needs the signed-answer check, which needs a NEAR API key and is not done here.",
+        "It does not protect anything you have not chosen to send to that model.",
+        "It does not cover the Kakurega app on this computer; the signed event log and capsules do."
+    ]);
+    match result {
+        Ok(list) => {
+            svc.log_event(
+                "route.attested",
+                &model,
+                &[("ok", 1usize.into()), ("deployments", list.len().into())],
+            );
+            Json(json!({
+                "verified": true, "model": model, "checked_at": now(), "means": means, "does_not_mean": does_not_mean,
+                "deployments": list.iter().map(|a| json!({
+                    "signer": a.signer_address, "tcb": a.tcb_status, "advisories": a.advisories, "gpu_verified": a.gpu_verified,
+                    "compose_hash": a.compose_hash, "os_image_hash": a.os_image_hash, "nonce": a.nonce,
+                })).collect::<Vec<_>>()
+            }))
+            .into_response()
+        }
+        Err(m) => {
+            svc.log_event("route.attested", &model, &[("ok", 0usize.into())]);
+            (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"verified": false, "model": model, "error": {"code": "NOT_VERIFIED", "message": m}, "does_not_mean": does_not_mean}))).into_response()
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -3192,6 +3302,7 @@ impl Extension for Routes {
             .route("/api/sessions", get(sessions_list).post(session_new))
             .route("/api/sessions/{id}", get(session_get))
             .route("/api/sessions/{id}/forget", post(session_forget))
+            .route("/api/route/attest", post(route_attest))
             .route("/api/research/propose", post(research_propose))
             .route("/api/research/{id}/fetch", post(research_fetch))
             .route("/api/log", get(log_summary))

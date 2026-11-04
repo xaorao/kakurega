@@ -362,6 +362,20 @@
           "kind": "machine",
           "command": "cargo test -p kk-service --test flow sv27",
           "expect": "test result: ok. 1 passed"
+        },
+        {
+          "id": "II-09l",
+          "text": "Model hardware-proof check as a product feature (service endpoint, web panel); live keyless run verified against NEAR AI Cloud, Intel and NVIDIA",
+          "kind": "machine",
+          "command": "cargo test -p kk-service --test flow sv30",
+          "expect": "test result: ok. 1 passed"
+        },
+        {
+          "id": "II-09m",
+          "text": "LIVE: the same check through the real service against NEAR AI Cloud (needs the internet, no key)",
+          "kind": "machine",
+          "command": "cargo test -p kk-service --test flow sv31 -- --ignored",
+          "expect": "test result: ok. 1 passed"
         }
       ]
     },

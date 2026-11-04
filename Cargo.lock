@@ -2708,6 +2708,7 @@ dependencies = [
  "kk-evidence",
  "kk-fetch",
  "kk-memory",
+ "kk-near",
  "kk-review",
  "kk-route",
  "kk-sandbox",

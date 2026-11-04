@@ -3654,3 +3654,125 @@ fn sv29_streamed_chat_delivers_pieces_then_the_whole_reply_and_a_dropped_connect
         log.contains("chat.stopped") && !log.contains("second question") && !log.contains("w1 w2")
     );
 }
+
+struct FakeAttester;
+
+impl kk_service::service::Attester for FakeAttester {
+    fn attest(&self, model: &str) -> Result<Vec<kk_near::RouteAttestation>, String> {
+        match model {
+            "good/model" => Ok(vec![kk_near::RouteAttestation { model: model.into(), signer_address: "0xsignerQ7".into(), tcb_status: "UpToDate".into(), advisories: vec![], gpu_verified: true, compose_hash: Some("c0".into()), os_image_hash: None, nonce: "nonceZ9".into() }]),
+            "old/model" => Err("attestation verified but the route policy refuses it: TcbNotAccepted(\"OutOfDate\")".into()),
+            _ => Err("could not fetch the attestation: network unreachable".into()),
+        }
+    }
+}
+
+#[test]
+fn sv30_the_model_proof_check_reports_what_was_verified_what_it_does_not_mean_and_never_shows_a_failure_as_a_pass(
+) {
+    let (root, _repo) = repo_copy("data-attest");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    svc.set_attester(Arc::new(FakeAttester));
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    assert_eq!(
+        Web::new(c.addr)
+            .post("/api/route/attest", json!({"model": "good/model"}))
+            .0,
+        401
+    );
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    svc.set_attest_cooldown(std::time::Duration::ZERO);
+    for bad in ["", "has space", "semi;colon", &"x".repeat(81)] {
+        assert_eq!(
+            w.post("/api/route/attest", json!({"model": bad})).0,
+            400,
+            "{bad:?}"
+        );
+    }
+    let (st, ok) = w.post("/api/route/attest", json!({"model": "good/model"}));
+    assert_eq!(st, 200, "{ok}");
+    assert_eq!(
+        (
+            ok["verified"].clone(),
+            ok["deployments"][0]["gpu_verified"].clone(),
+            ok["deployments"][0]["tcb"].clone()
+        ),
+        (json!(true), json!(true), json!("UpToDate"))
+    );
+    assert!(
+        ok["means"].as_array().unwrap().len() == 4
+            && ok["does_not_mean"].to_string().contains("API key"),
+        "the limits are stated next to the result"
+    );
+    svc.set_attest_cooldown(std::time::Duration::from_secs(60));
+    let (st, again) = w.post("/api/route/attest", json!({"model": "good/model"}));
+    assert_eq!(
+        (st, again["error"]["code"].as_str()),
+        (429, Some("TOO_FAST")),
+        "checks are rate limited"
+    );
+    svc.set_attest_cooldown(std::time::Duration::ZERO);
+    let (st, refused) = w.post("/api/route/attest", json!({"model": "old/model"}));
+    assert_eq!((st, refused["verified"].clone()), (422, json!(false)));
+    assert!(
+        refused["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("refuses it")
+            && refused.get("deployments").is_none(),
+        "a refusal carries no deployment details to mistake for a pass"
+    );
+    let (st, net) = w.post("/api/route/attest", json!({"model": "unknown/model"}));
+    assert_eq!((st, net["verified"].clone()), (422, json!(false)));
+    let log = log_text(
+        &format!("http://127.0.0.1:{}", c.addr.port()),
+        c.security.admin_token(),
+    );
+    assert!(
+        log.contains("route.attested") && !log.contains("0xsignerQ7") && !log.contains("nonceZ9"),
+        "the log records the model and the outcome only"
+    );
+}
+
+#[test]
+#[ignore = "needs the internet: NEAR AI Cloud's public attestation endpoint and the Intel and NVIDIA verification services"]
+fn sv31_live_the_real_model_proof_check_verifies_a_real_confidential_model_through_the_service() {
+    let (root, _repo) = repo_copy("data-attest-live");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (st, r) = w.post("/api/route/attest", json!({"model": "Qwen/Qwen3.8-27B"}));
+    println!("{st} {r}");
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["verified"], true);
+    let d = &r["deployments"][0];
+    assert!(
+        d["gpu_verified"] == true
+            && d["tcb"] == "UpToDate"
+            && d["signer"].as_str().unwrap().starts_with("0x")
+    );
+    let (st, bad) = w.post("/api/route/attest", json!({"model": "no/such-model-9f3a"}));
+    assert_eq!((st, bad["verified"].clone()), (422, json!(false)), "{bad}");
+}

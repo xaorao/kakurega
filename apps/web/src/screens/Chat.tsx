@@ -1,5 +1,5 @@
 import { createResource, createSignal, For, Show } from "solid-js";
-import { api, ApiError, streamChat, type ChatTurn, type KeptChat, type ResearchPage, type ResearchProposal } from "../api";
+import { api, ApiError, streamChat, type ChatTurn, type KeptChat, type ModelProof, type ResearchPage, type ResearchProposal } from "../api";
 import { t } from "../i18n";
 import { Markdown } from "../components/Markdown";
 
@@ -58,6 +58,22 @@ export function Chat() {
       await refetch();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("chat.error"));
+    }
+  };
+  const [proofModel, setProofModel] = createSignal("Qwen/Qwen3.8-27B");
+  const [proof, setProof] = createSignal<ModelProof | null>(null);
+  const [proofBusy, setProofBusy] = createSignal(false);
+  const [proofError, setProofError] = createSignal("");
+  const checkProof = async () => {
+    setProofBusy(true);
+    setProofError("");
+    setProof(null);
+    try {
+      setProof(await api.attestModel(proofModel().trim()));
+    } catch (err) {
+      setProofError(err instanceof ApiError ? err.message : t("proof.error"));
+    } finally {
+      setProofBusy(false);
     }
   };
   const [urls, setUrls] = createSignal("");
@@ -166,6 +182,38 @@ export function Chat() {
         <Show when={busy() && live()}><li class="card stack msg assistant"><strong>{t("chat.assistant")}</strong><Markdown text={live()} /></li></Show>
         <Show when={busy() && !live()}><li class="muted" role="status">{t("chat.thinking")}</li></Show>
       </ul>
+      <details class="card stack" id="model-proof">
+        <summary>{t("proof.title")}</summary>
+        <p class="muted">{t("proof.lead")}</p>
+        <label for="proof-model">{t("proof.model")}</label>
+        <input id="proof-model" type="text" value={proofModel()} onInput={(e) => setProofModel(e.currentTarget.value)} />
+        <div class="actions">
+          <button type="button" disabled={proofBusy() || proofModel().trim().length === 0} onClick={checkProof}>{proofBusy() ? t("proof.checking") : t("proof.check")}</button>
+          <Show when={proofError()}><span role="alert" class="bad">{proofError()}</span></Show>
+        </div>
+        <Show when={proof()}>
+          {(p) => (
+            <div class="stack" role="region" aria-label={t("proof.result")}>
+              <p><span class={`chip ${p().verified ? "ok" : "bad"}`}>{p().verified ? t("proof.verified") : t("proof.notVerified")}</span> <code>{p().model}</code></p>
+              <For each={p().deployments ?? []}>
+                {(d) => (
+                  <ul class="plain">
+                    <li>{t("proof.tcb", { v: d.tcb })}</li>
+                    <li>{d.gpu_verified ? t("proof.gpuYes") : t("proof.gpuNo")}</li>
+                    <li>{t("proof.signer")} <code>{d.signer}</code></li>
+                    <Show when={d.compose_hash}><li>{t("proof.compose")} <code>{d.compose_hash}</code></li></Show>
+                    <li>{t("proof.nonce")} <code>{d.nonce}</code></li>
+                  </ul>
+                )}
+              </For>
+              <p><strong>{t("proof.means")}</strong></p>
+              <ul><For each={p().means ?? []}>{(m) => <li>{m}</li>}</For></ul>
+              <p><strong>{t("proof.notMeans")}</strong></p>
+              <ul><For each={p().does_not_mean ?? []}>{(m) => <li>{m}</li>}</For></ul>
+            </div>
+          )}
+        </Show>
+      </details>
       <details class="card stack" id="web-research">
         <summary>{t("web.title")}</summary>
         <p class="muted">{t("web.lead")}</p>

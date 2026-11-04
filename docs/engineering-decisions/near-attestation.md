@@ -20,3 +20,9 @@ Signed completion verification (`verify_model_response` and gateway response sig
 
 ## Not covered
 An offline recording of the Intel collateral (the verification needs the network); a fake NEAR server for attack tests of the completion path (needs the completion verifier first); the SDK's own tests (upstream).
+
+## Update: the proof is now a product feature (not only a backend check)
+- What exists: `POST /api/route/attest` in the service, the "Check a confidential model's hardware proof" panel in the web Chat screen. The owner chooses a model name; Kakurega fetches fresh public evidence with a random challenge, verifies the Intel TDX chain and NVIDIA GPU evidence on this computer through the official SDK, applies the Kakurega policy, and shows the result with what it means and what it does not mean. Only the model name leaves the computer. A refusal (policy or fetch failure) is a 422 with the reason, never a pass; checks are rate limited (3 s).
+- Evidence: `sv30` (fake attester: verified, policy refusal, fetch failure, input validation, rate limit, log holds model and outcome only), `sv31` (LIVE, VERIFIED_BY_RUN on 2026-11-04, keyless: the real service verified `Qwen/Qwen3.8-27B` against NEAR AI Cloud, Intel and NVIDIA; an unknown model was refused), browser e2e with both result displays and axe.
+- Still BLOCKED (needs NEAR API key and credits): signed-answer verification, E2EE completions, binding a real answer to this attested signer, and showing that binding in the capsule. The panel states this limit. When the key exists: run the same panel followed by a real completion, verify its signature against the attested signing key, and record both in the capsule route evidence.
+- Opportunities to evaluate next (not yet read or built): NearClaw's approach to showing proof to the user, NEAR Intents for paying for inference, and publishing capsule digests to NEAR as a public timestamp. Each needs a source read before any design.
