@@ -53,7 +53,7 @@ function Protected(props: { job: Job }) {
         {(sum) => (
           <>
             <div class="card stack">
-              <h3>What the agent could not see</h3>
+              <h2>What the agent could not see</h2>
               <Show when={sum().withheld.length > 0} fallback={<p class="muted">No secret files were found.</p>}>
                 <ul class="plain">
                   <For each={sum().withheld}>{(w) => <li><code>{w.path}</code> <span class="chip bad">withheld</span> <span class="muted">{w.notes.join("; ")}</span></li>}</For>
@@ -64,14 +64,14 @@ function Protected(props: { job: Job }) {
               </Show>
             </div>
             <div class="card stack">
-              <h3>Text addressed to AI tools</h3>
+              <h2>Text addressed to AI tools</h2>
               <Show when={sum().injection_suspects.length > 0} fallback={<p class="muted">None found.</p>}>
                 <p>These files contain instructions aimed at AI assistants. They were treated as data and nothing in them was followed.</p>
                 <ul class="plain"><For each={sum().injection_suspects}>{(p) => <li><code>{p}</code> <span class="chip warn">possible prompt injection</span></li>}</For></ul>
               </Show>
             </div>
             <div class="card stack">
-              <h3>Where the data went</h3>
+              <h2>Where the data went</h2>
               <For each={sum().route}>{(r) => <p>Model <strong>{r.model}</strong> on route <strong>{r.class.replace("_", " ")}</strong> at <code>{r.endpoint}</code>{r.simulated ? <span class="chip warn">simulated</span> : <span class="chip ok">real model</span>}</p>}</For>
               <Show when={sum().final_taint}>{(t) => <p>Everything the agent produced is labelled <strong>{t().level}</strong>{t().integrity === "untrusted" ? " and untrusted (it came from content that could contain instructions)" : ""}.</p>}</Show>
               <p class="muted">Source manifest digest <code>{sum().manifest_digest.slice(0, 16)}</code> over {sum().files_in_manifest} files. Only a keyed commitment to it is signed into the capsule.</p>
@@ -80,7 +80,7 @@ function Protected(props: { job: Job }) {
         )}
       </Show>
       <div class="card stack">
-        <h3>Every request the agent made</h3>
+        <h2>Every request the agent made</h2>
         <Show when={audit()} fallback={<p class="muted">Loading…</p>}>
           {(a) => (
             <table>
@@ -119,7 +119,7 @@ function Source(props: { job: Job }) {
           <Show when={content()}>
             {(c) => (
               <Show when={!c().withheld} fallback={<div class="redacted"><strong>Withheld.</strong> This file is labelled restricted. The agent could not read it and it will not be released.</div>}>
-                <pre><code>{c().text}</code></pre>
+                <pre tabindex="0"><code>{c().text}</code></pre>
               </Show>
             )}
           </Show>
@@ -144,11 +144,11 @@ function Findings(props: { job: Job }) {
                 const [t, cls] = statusText(f.status);
                 return (
                   <article class="card stack">
-                    <header class="between"><h3>{f.title}</h3><span class={`chip ${cls}`}>{t}</span></header>
+                    <header class="between"><h2>{f.title}</h2><span class={`chip ${cls}`}>{t}</span></header>
                     <p><code>{f.file}:{f.line}</code></p>
                     <p>{f.explanation}</p>
                     <Show when={f.reproducer}>
-                      <details><summary>Reproducer the kernel ran</summary><pre><code>{f.reproducer}</code></pre><Show when={f.output}><p class="muted">Output</p><pre><code>{f.output}</code></pre></Show></details>
+                      <details><summary>Reproducer the kernel ran</summary><pre tabindex="0"><code>{f.reproducer}</code></pre><Show when={f.output}><p class="muted">Output</p><pre tabindex="0"><code>{f.output}</code></pre></Show></details>
                     </Show>
                     <Show when={f.sample.length > 0}><p class="muted">Checked on a minimal sample of {f.sample.length} files: {f.sample.join(", ")}</p></Show>
                   </article>
@@ -216,37 +216,37 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
         {(r) => (
           <Show when={r().available} fallback={
             <div class="card stack">
-              <h3>Nothing to release</h3>
+              <h2>Nothing to release</h2>
               <p>No finding was confirmed by the kernel, so nothing can be sent. This is the safe result.</p>
               <For each={r().not_confirmed}>{(n) => <p class="muted">{n.title}: {n.why}</p>}</For>
             </div>
           }>
             <div class="card stack">
-              <h3>The exact release</h3>
+              <h2>The exact release</h2>
               <p>For <strong>{r().recipient}</strong>. Digest <code>{r().digest}</code></p>
               <table>
                 <thead><tr><th>File</th><th>Size</th><th>SHA-256</th></tr></thead>
                 <tbody><For each={r().files}>{(f) => <tr><td><code>{f.name}</code></td><td>{f.bytes} bytes</td><td><code>{f.sha256.slice(0, 16)}</code></td></tr>}</For></tbody>
               </table>
-              <For each={r().files!.filter((f) => f.name.startsWith("finding-"))}>{(f) => <details open><summary>{f.name}</summary><pre><code>{f.text}</code></pre></details>}</For>
-              <h4>Held back</h4>
+              <For each={r().files!.filter((f) => f.name.startsWith("finding-"))}>{(f) => <details open><summary>{f.name}</summary><pre tabindex="0"><code>{f.text}</code></pre></details>}</For>
+              <h3>Held back</h3>
               <ul class="plain"><For each={r().removed} fallback={<li class="muted">Nothing.</li>}>{(x) => <li>{x.what}: <span class="muted">{x.why}</span></li>}</For></ul>
               <Show when={r().not_confirmed.length > 0}>
-                <h4>Not confirmed, so not included</h4>
+                <h3>Not confirmed, so not included</h3>
                 <ul class="plain"><For each={r().not_confirmed}>{(x) => <li>{x.title} <span class="muted">({x.why})</span></li>}</For></ul>
               </Show>
-              <h4>This release does not establish</h4>
+              <h3>This release does not establish</h3>
               <ul class="plain"><For each={r().not_established}>{(x) => <li>{x}</li>}</For></ul>
             </div>
             <div class="card stack" aria-live="polite">
-              <h3>Approval</h3>
+              <h2>Approval</h2>
               <Show when={approval().state === "none"}>
                 <p>The browser cannot approve a release by itself. You approve in a terminal on this computer, where you see the exact bytes again.</p>
                 <button class="primary" disabled={busy()} onClick={ask}>Request approval</button>
               </Show>
               <Show when={approval().state === "waiting"}>
                 <p><strong>Waiting for you.</strong> Run this in a terminal on this computer:</p>
-                <pre class="cmd"><code>kaku approve {approval().approval}</code></pre>
+                <pre class="cmd" tabindex="0"><code>kaku approve {approval().approval}</code></pre>
                 <p class="muted">Type the first 12 characters of the digest shown there. {how()}</p>
               </Show>
               <Show when={approval().state === "approved"}>

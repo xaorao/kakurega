@@ -21,6 +21,13 @@ const data = join(work, "data");
 
 const chrome = join(homedir(), "Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing");
 const results = [];
+const axeSource = readFileSync(join(here, "node_modules/axe-core/axe.min.js"), "utf8");
+const axeCheck = async (pg, label) => {
+  await pg.evaluate(axeSource);
+  const res = await pg.evaluate(async () => await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"] } }));
+  const bad = res.violations.filter((v) => ["serious", "critical", "moderate"].includes(v.impact));
+  check(`accessibility (axe, WCAG 2.1 AA): ${label}`, bad.length === 0, bad.map((v) => `${v.id}[${v.impact}] x${v.nodes.length}: ${v.nodes[0]?.target?.join(" ")}`).join(" | ").slice(0, 500));
+};
 const check = (name, ok, detail = "") => {
   results.push({ name, ok, detail });
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  " + detail : ""}`);
@@ -50,6 +57,7 @@ try {
   await page.getByRole("heading", { name: "Review a project" }).waitFor({ timeout: 15000 });
   check("pairing link signs the browser in and clears the code from the address bar", !page.url().includes("pair="));
   await page.screenshot({ path: join(shots, "01-new-review.png") });
+  await axeCheck(page, "new review");
 
   const other = await browser.newContext();
   const reuse = await other.newPage();
@@ -67,6 +75,7 @@ try {
   await page.getByRole("heading", { name: "The exact release" }).waitFor({ timeout: 120000 });
   check("review runs in the sandbox and opens on the release", true);
   await page.screenshot({ path: join(shots, "02-release.png"), fullPage: true });
+  await axeCheck(page, "release");
   const digestText = await page.locator("p", { hasText: "Digest" }).first().innerText();
   const digest = /[0-9a-f]{64}/.exec(digestText)?.[0];
   check("release shows a full digest", !!digest);
@@ -83,6 +92,7 @@ try {
   await page.getByRole("button", { name: /payments\/auth\/session\.py/ }).click();
   await page.getByText("def logout").waitFor();
   await page.screenshot({ path: join(shots, "03-source.png") });
+  await axeCheck(page, "source");
 
   await page.getByRole("tab", { name: "Findings" }).click();
   await page.getByText("Confirmed by the kernel").waitFor();
@@ -94,6 +104,7 @@ try {
   const prot = await page.locator('[role="tabpanel"]').innerText();
   check("protection lists withheld files, injection suspects and refused requests", prot.includes(".env") && prot.includes("README.md") && /refused: UnknownHandle/.test(prot), prot.includes("refused") ? "" : "no refused rows");
   await page.screenshot({ path: join(shots, "04-protection.png"), fullPage: true });
+  await axeCheck(page, "protection");
 
   await page.getByRole("tab", { name: "Release" }).click();
   const noCapsuleYet = await page.getByRole("button", { name: "Sign and deliver the capsule" }).count();
@@ -103,6 +114,7 @@ try {
   const cmd = await page.locator("pre.cmd").innerText();
   check("page tells the user to approve in the terminal", /kaku approve appr-\d+/.test(cmd));
   await page.screenshot({ path: join(shots, "05-waiting.png"), fullPage: true });
+  await axeCheck(page, "waiting for approval");
 
   const approve = spawnSync(kaku, ["approve", "--data-dir", data], { input: digest.slice(0, 12) + "\n", encoding: "utf8" });
   check("terminal shows the exact files and accepts the digest prefix", approve.status === 0 && /RELEASE FOR APPROVAL/.test(approve.stdout) && /Approved\./.test(approve.stdout), approve.stderr.slice(0, 200));

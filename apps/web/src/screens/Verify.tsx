@@ -82,14 +82,14 @@ export function Verify() {
             <Show when={r().valid} fallback={<><h2 class="bad">Not valid</h2><p>{REASONS[r().reason] ?? r().reason}</p><p class="muted">Code: <code>{r().reason}</code></p></>}>
               <h2 class="ok">Valid</h2>
               <p class="muted">{name()}</p>
-              <h3>Established</h3>
+              <h2>Established</h2>
               <ul class="plain">
                 <li>The release and its {r().claimCount} claim(s) carry a valid signature from <code>{r().signer}</code>.</li>
                 <li>All {r().fileCount} released files match the signed digests and sizes exactly. Nothing is missing or extra.</li>
                 <li>Every claim is bound to this exact release. It was made for <strong>{r().recipient}</strong> and expires {new Date(r().expires * 1000).toLocaleString()}.</li>
                 <Show when={r().signerPinned}><li>The signing key is the one you pinned.</li></Show>
               </ul>
-              <h3>Not established</h3>
+              <h2>Not established</h2>
               <ul class="plain">
                 <For each={r().notEstablished}>{(n) => <li>{n}</li>}</For>
                 <li>That any claim is true; only that it was signed and that its evidence files are as signed.</li>

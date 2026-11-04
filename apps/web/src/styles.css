@@ -8,6 +8,7 @@
   --halo: #fafaf7;
   --paper: #ffffff;
   --cipher: #059669;
+  --cipher-text: #047857;
   --cipher-bg: #ecfdf5;
   --redline: #c2410c;
   --redline-bg: #fff7ed;
@@ -31,6 +32,7 @@
     --halo: #0b0b0c;
     --paper: #09090b;
     --cipher: #34d399;
+    --cipher-text: #34d399;
     --cipher-bg: #052e22;
     --redline: #fb923c;
     --redline-bg: #2a1305;
@@ -48,6 +50,7 @@
     --halo: #0b0b0c;
     --paper: #09090b;
     --cipher: #34d399;
+    --cipher-text: #34d399;
     --cipher-bg: #052e22;
     --redline: #fb923c;
     --redline-bg: #2a1305;
@@ -62,13 +65,12 @@ code { background: var(--veil); border: 1px solid var(--line); border-radius: 6p
 pre { background: var(--veil); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 12px 14px; overflow: auto; margin: 0; max-height: 420px; white-space: pre-wrap; overflow-wrap: anywhere; }
 pre code { background: none; border: 0; padding: 0; word-break: normal; }
 h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
-h2 { font-size: 15px; font-weight: 600; margin: 0; }
-h3 { font-size: 16px; font-weight: 600; margin: 0; }
-h4 { font-size: 13px; font-weight: 600; margin: 8px 0 0; text-transform: uppercase; letter-spacing: 0.04em; color: var(--graphite); }
+h2 { font-size: 16px; font-weight: 600; margin: 0; }
+h3 { font-size: 13px; font-weight: 600; margin: 8px 0 0; text-transform: uppercase; letter-spacing: 0.04em; color: var(--graphite); }
 p { margin: 0; }
 a { color: inherit; }
 .muted { color: var(--graphite); }
-.ok { color: var(--cipher); }
+.ok { color: var(--cipher-text); }
 .bad { color: var(--redline); }
 .warn { color: var(--amber); }
 .lead { font-size: 16px; color: var(--stone); max-width: 62ch; }
@@ -80,13 +82,14 @@ a { color: inherit; }
 .brand { font-weight: 600; letter-spacing: 0.02em; text-decoration: none; font-size: 17px; }
 .badges { display: flex; gap: 8px; flex-wrap: wrap; flex: 1; }
 .badge { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 12.5px; color: var(--graphite); background: var(--paper); }
-.badge.ok { color: var(--cipher); border-color: var(--cipher); background: var(--cipher-bg); }
+.badge.ok { color: var(--cipher-text); border-color: var(--cipher); background: var(--cipher-bg); }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cipher); display: inline-block; }
 .banner { background: var(--amber-bg); color: var(--amber); border-bottom: 1px solid var(--line); padding: 8px 20px; font-weight: 500; }
 
 .body { display: grid; grid-template-columns: 280px minmax(0, 1fr); flex: 1; }
 .side { background: var(--paper); border-right: 1px solid var(--line); padding: 20px 14px; display: flex; flex-direction: column; gap: 14px; }
-.side h2 { color: var(--graphite); text-transform: uppercase; letter-spacing: 0.05em; font-size: 12px; padding: 0 8px; }
+.side h2 {
+  font-size: 12px; color: var(--graphite); text-transform: uppercase; letter-spacing: 0.05em; font-size: 12px; padding: 0 8px; }
 .list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .list a { display: grid; grid-template-columns: 10px 1fr; column-gap: 10px; padding: 8px; border-radius: var(--radius-s); text-decoration: none; }
 .list a:hover { background: var(--veil); }
@@ -97,7 +100,7 @@ a { color: inherit; }
 .state.running { background: var(--amber); }
 .state.ready { background: var(--cipher); }
 .state.failed { background: var(--redline); }
-.state-text.ready { color: var(--cipher); }
+.state-text.ready { color: var(--cipher-text); }
 .state-text.failed { color: var(--redline); }
 .main { padding: 32px clamp(16px, 4vw, 48px) 64px; min-width: 0; }
 .wide { max-width: 980px; }
@@ -132,7 +135,7 @@ button.link:hover { color: var(--ink); }
 .tab.active { color: var(--ink); border-bottom-color: var(--ink); font-weight: 500; }
 
 .chip { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 0 9px; font-size: 12px; color: var(--graphite); white-space: nowrap; }
-.chip.ok { color: var(--cipher); border-color: var(--cipher); background: var(--cipher-bg); }
+.chip.ok { color: var(--cipher-text); border-color: var(--cipher); background: var(--cipher-bg); }
 .chip.bad { color: var(--redline); border-color: var(--redline); background: var(--redline-bg); }
 .chip.warn { color: var(--amber); border-color: var(--amber); background: var(--amber-bg); }
 
