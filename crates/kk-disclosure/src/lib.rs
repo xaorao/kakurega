@@ -1,6 +1,6 @@
 use kk_vault::rusqlite::{params, Connection};
 use kk_vault::Vault;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 
 #[derive(Debug)]

@@ -767,23 +767,23 @@ fn me19_forgetting_also_clears_the_review_suggestion_rows_that_held_the_same_tex
     let held = |c: &kk_vault::rusqlite::Connection| -> i64 {
         c.query_row("SELECT count(*) FROM proposals WHERE instr(lower(text), 'quokkaquarry') > 0 OR instr(lower(why), 'quokkaquarry') > 0", [], |r| r.get(0)).unwrap()
     };
-    assert_eq!(held(&c), 1, "control: the still-pending suggestion holds its text, the accepted one must not keep a second copy");
+    assert_eq!(held(c), 1, "control: the still-pending suggestion holds its text, the accepted one must not keep a second copy");
     let mem_id = id(remembered);
     m.forget(4, &mem_id, "private").unwrap();
     assert_eq!(
-        held(&c),
+        held(c),
         1,
         "forgetting one memory must not touch an unrelated pending suggestion"
     );
     m.dismiss_proposal(5, &pending, "job-1").unwrap();
-    assert_eq!(held(&c), 0);
+    assert_eq!(held(c), 0);
     // a pending suggestion whose text is later forgotten through an identical memory is cleared too
     let t = "quokkaquarry warehouse code is 7731";
     let p3 = m.propose(6, "job-2", t, "x", &label).unwrap().unwrap();
     let mem2 = id(m.remember(7, nm(t, internal())).unwrap());
     m.forget(8, &mem2, "private").unwrap();
     assert_eq!(
-        held(&c),
+        held(c),
         0,
         "the suggestion with the same text is cleared when that text is forgotten: {p3}"
     );
