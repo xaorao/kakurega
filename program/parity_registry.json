@@ -1,0 +1,2659 @@
+{
+ "entries": {
+  "G1": {
+   "catalog_cells": [
+    "CORE (inside V&C)",
+    "multi-model among eligible routes only; \"consensus is not proof\"",
+    "LLM Council, **no licence file** → ideas only"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Consensus mode",
+   "trust_reason": "Verification runs on the same route class as the data inside the user's kernel; any surface only displays the result, and a hosted surface may run it only on a route eligible for the data label."
+  },
+  "G10": {
+   "catalog_cells": [
+    "CORE",
+    "deterministic recompute",
+    "DuckDB, MIT"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Math verification",
+   "trust_reason": "Verification runs on the same route class as the data inside the user's kernel; any surface only displays the result, and a hosted surface may run it only on a route eligible for the data label."
+  },
+  "G11": {
+   "catalog_cells": [
+    "CORE",
+    "V&C step 6",
+    "idea"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Smart verification budget",
+   "trust_reason": "Verification runs on the same route class as the data inside the user's kernel; any surface only displays the result, and a hosted surface may run it only on a route eligible for the data label."
+  },
+  "G12": {
+   "catalog_cells": [
+    "CORE",
+    "V&C step 5",
+    "Ragas (method)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Answer quality scorecard",
+   "trust_reason": "Verification runs on the same route class as the data inside the user's kernel; any surface only displays the result, and a hosted surface may run it only on a route eligible for the data label."
+  },
+  "G13": {
+   "catalog_cells": [
+    "LATER",
+    "needs several eligible models",
+    "LLM Council (ideas only)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Blind AI review",
+   "trust_reason": "Verification runs on the same route class as the data inside the user's kernel; any surface only displays the result, and a hosted surface may run it only on a route eligible for the data label."
+  },
+  "G14": {
+   "catalog_cells": [
+    "MERGE into 4 + N1",
+    "also used on our own workflows as regression tests",
+    "Promptfoo, MIT"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Adversarial answer test",
+   "trust_reason": "Verification runs on the same route class as the data inside the user's kernel; any surface only displays the result, and a hosted surface may run it only on a route eligible for the data label."
+  },
+  "G15": {
+   "catalog_cells": [
+    "PLATFORM",
+    "local OCR in no-network parser worker",
+    "Docling, MIT"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Scanned document reader",
+   "trust_reason": "Document intelligence reads private files, so it runs in the local kernel (companion or desktop) with files mounted read-only; hosted web only for data the organisation owns and attests."
+  },
+  "G16": {
+   "catalog_cells": [
+    "PLATFORM",
+    "parser worker; compare Docling vs MinerU on our synthetic set",
+    "MinerU: Apache-2.0 **plus extra terms** (commercial threshold, online-service attribution; read LICENSE.md before adoption)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Intelligent table extraction",
+   "trust_reason": "Document intelligence reads private files, so it runs in the local kernel (companion or desktop) with files mounted read-only; hosted web only for data the organisation owns and attests."
+  },
+  "G17": {
+   "catalog_cells": [
+    "CORE",
+    "structured fields with page/cell source",
+    "invoice2data, MIT"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Invoice field extractor",
+   "trust_reason": "Document intelligence reads private files, so it runs in the local kernel (companion or desktop) with files mounted read-only; hosted web only for data the organisation owns and attests."
+  },
+  "G18": {
+   "catalog_cells": [
+    "CORE",
+    "deterministic + fuzzy match, human-confirmed",
+    "Dedupe, MIT (last push 2025-07: maintenance check)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Duplicate invoice finder",
+   "trust_reason": "Document intelligence reads private files, so it runs in the local kernel (companion or desktop) with files mounted read-only; hosted web only for data the organisation owns and attests."
+  },
+  "G19": {
+   "catalog_cells": [
+    "CORE",
+    "entity resolution with confidence shown",
+    "Dedupe, MIT"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Vendor name matcher",
+   "trust_reason": "Document intelligence reads private files, so it runs in the local kernel (companion or desktop) with files mounted read-only; hosted web only for data the organisation owns and attests."
+  },
+  "G2": {
+   "catalog_cells": [
+    "CORE",
+    "atomic claims, per-claim evidence check",
+    "FActScore, MIT (method; code optional)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Claim-by-claim verification",
+   "trust_reason": "Verification runs on the same route class as the data inside the user's kernel; any surface only displays the result, and a hosted surface may run it only on a route eligible for the data label."
+  },
+  "G20": {
+   "catalog_cells": [
+    "CORE",
+    "ledger vs invoice vs payment, SQL over extracted tables",
+    "DuckDB, MIT"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Financial reconciliation",
+   "trust_reason": "Document intelligence reads private files, so it runs in the local kernel (companion or desktop) with files mounted read-only; hosted web only for data the organisation owns and attests."
+  },
+  "G21": {
+   "catalog_cells": [
+    "CORE",
+    "text diff plus clause-level change summary",
+    "stdlib difflib"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Contract change comparison",
+   "trust_reason": "Document intelligence reads private files, so it runs in the local kernel (companion or desktop) with files mounted read-only; hosted web only for data the organisation owns and attests."
+  },
+  "G22": {
+   "catalog_cells": [
+    "CORE",
+    "contradiction detector; cited both sides; start with pairwise clause comparison + structured tables, adopt a graph only if it wins on our synthetic set (arXiv 2604.04948: exploratory GraphRAG 82% vs basic RAG 94.1% on one corpus)",
+    "GraphRAG MIT"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Cross-document conflict detection",
+   "trust_reason": "Document intelligence reads private files, so it runs in the local kernel (companion or desktop) with files mounted read-only; hosted web only for data the organisation owns and attests."
+  },
+  "G23": {
+   "catalog_cells": [
+    "CORE",
+    "part of source manifest",
+    "Docling"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Missing source warning",
+   "trust_reason": "Document intelligence reads private files, so it runs in the local kernel (companion or desktop) with files mounted read-only; hosted web only for data the organisation owns and attests."
+  },
+  "G24": {
+   "catalog_cells": [
+    "CORE",
+    "which files/pages were read; ties to manifest",
+    "idea"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Source coverage meter",
+   "trust_reason": "Document intelligence reads private files, so it runs in the local kernel (companion or desktop) with files mounted read-only; hosted web only for data the organisation owns and attests."
+  },
+  "G25": {
+   "catalog_cells": [
+    "CORE",
+    "OCR confidence below threshold → human check",
+    "Docling"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Unclear OCR highlighting",
+   "trust_reason": "Document intelligence reads private files, so it runs in the local kernel (companion or desktop) with files mounted read-only; hosted web only for data the organisation owns and attests."
+  },
+  "G26": {
+   "catalog_cells": [
+    "CORE",
+    "dependency graph findings → facts → sources; re-run affected claims when a source changes",
+    "Graphiti, Apache-2.0 (bi-temporal idea)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Change impact scanner",
+   "trust_reason": "Document intelligence reads private files, so it runs in the local kernel (companion or desktop) with files mounted read-only; hosted web only for data the organisation owns and attests."
+  },
+  "G27": {
+   "catalog_cells": [
+    "PLATFORM",
+    "from selected sources, cited",
+    "NotebookLM (page exists)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "One-click research brief",
+   "trust_reason": "Document intelligence reads private files, so it runs in the local kernel (companion or desktop) with files mounted read-only; hosted web only for data the organisation owns and attests."
+  },
+  "G28": {
+   "catalog_cells": [
+    "LATER",
+    "people/companies/contracts/events view",
+    "GraphRAG MIT"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Document relationship graph",
+   "trust_reason": "Document intelligence reads private files, so it runs in the local kernel (companion or desktop) with files mounted read-only; hosted web only for data the organisation owns and attests."
+  },
+  "G29": {
+   "catalog_cells": [
+    "CORE",
+    "exact text and artifacts a route or recipient will receive, with route properties",
+    "Presidio, MIT (for PII hints)"
+   ],
+   "evidence": "release preview before approval; no pre-send impact estimate of arbitrary text yet",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Privacy impact preview",
+   "trust_reason": "These are the privacy controls themselves: enforced by the kernel outside the model, so no surface may bypass or weaken them; surfaces only render and relay the user's decision."
+  },
+  "G3": {
+   "catalog_cells": [
+    "CHANGE",
+    "local/TEE verifier models only; never Mira's hosted pipeline",
+    "Mira Verify: privacy policy sends text to OpenAI/Anthropic/Google → REJECT service, keep idea"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Multi-model fact checking",
+   "trust_reason": "Verification runs on the same route class as the data inside the user's kernel; any surface only displays the result, and a hosted surface may run it only on a route eligible for the data label."
+  },
+  "G30": {
+   "catalog_cells": [
+    "CHANGE",
+    "mapping stays local and encrypted; pseudonymised output is a derived artifact: label does not fall without a grant",
+    "Presidio"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Reversible pseudonymization",
+   "trust_reason": "Helpers that advise; enforcement stays with labels, grants and the sandbox. Run in the kernel so detection never needs a third-party processor."
+  },
+  "G31": {
+   "catalog_cells": [
+    "PLATFORM",
+    "helper only",
+    "Presidio MIT; TEE `openai/privacy-filter` as second opinion (E10)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "PII scanner",
+   "trust_reason": "Helpers that advise; enforcement stays with labels, grants and the sandbox. Run in the kernel so detection never needs a third-party processor."
+  },
+  "G32": {
+   "catalog_cells": [
+    "PLATFORM",
+    "OCR + boxes; human confirms",
+    "Presidio image redactor"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Image redaction assistant",
+   "trust_reason": "Helpers that advise; enforcement stays with labels, grants and the sandbox. Run in the kernel so detection never needs a third-party processor."
+  },
+  "G33": {
+   "catalog_cells": [
+    "PLATFORM",
+    "detects keys/credentials on import",
+    "**TruffleHog is AGPL-3.0 → do not bundle**; use gitleaks (MIT, VERIFIED) or detect-secrets (Apache-2.0, VERIFIED)"
+   ],
+   "evidence": "importer secret detection by name and content: kk-review import tests, fixtures/synthetic-repo journey",
+   "status": "BUILT_TESTED",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Secret scanner",
+   "trust_reason": "Helpers that advise; enforcement stays with labels, grants and the sandbox. Run in the kernel so detection never needs a third-party processor."
+  },
+  "G34": {
+   "catalog_cells": [
+    "PLATFORM",
+    "helper only; see N4",
+    "Promptfoo MIT (test corpora)"
+   ],
+   "evidence": "injection phrase flagging, content treated as data: kk-review import tests, e2e Protection tab",
+   "status": "BUILT_TESTED",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Prompt-injection warning",
+   "trust_reason": "Helpers that advise; enforcement stays with labels, grants and the sandbox. Run in the kernel so detection never needs a third-party processor."
+  },
+  "G35": {
+   "catalog_cells": [
+    "CORE",
+    "the five route properties (01, 6.16)",
+    "NEAR inference SDK, MIT"
+   ],
+   "evidence": "route badge and Protection tab show model, route class and endpoint; live TEE facts only for attestation (kk-near)",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Model privacy inspector",
+   "trust_reason": "Helpers that advise; enforcement stays with labels, grants and the sandbox. Run in the kernel so detection never needs a third-party processor."
+  },
+  "G36": {
+   "catalog_cells": [
+    "CORE",
+    "DisclosureAccount (01, 6.5). NIST SP 800-226 is about *differential privacy* evaluation; its composition idea is relevant but our ledger is not DP",
+    "NIST SP 800-226 (page exists)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Cumulative disclosure budget",
+   "trust_reason": "These are the privacy controls themselves: enforced by the kernel outside the model, so no surface may bypass or weaken them; surfaces only render and relay the user's decision."
+  },
+  "G37": {
+   "catalog_cells": [
+    "CORE",
+    "already invariant I10",
+    "NEAR SDK"
+   ],
+   "evidence": "kk-route route selection never falls back (route tests, kernel taint tests); tests/e2e readiness and browser journeys",
+   "status": "BUILT_TESTED",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "No silent public fallback",
+   "trust_reason": "These are the privacy controls themselves: enforced by the kernel outside the model, so no surface may bypass or weaken them; surfaces only render and relay the user's decision."
+  },
+  "G38": {
+   "catalog_cells": [
+    "CORE",
+    "already mounts per worker",
+    "Quest (read)"
+   ],
+   "evidence": "broker allowed roots and per-plan ops: kk-broker tests; per-agent folder grants UI not built",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Per-agent folder permissions",
+   "trust_reason": "These are the privacy controls themselves: enforced by the kernel outside the model, so no surface may bypass or weaken them; surfaces only render and relay the user's decision."
+  },
+  "G39": {
+   "catalog_cells": [
+    "CORE",
+    "already grants; add scope text",
+    "Cedar"
+   ],
+   "evidence": "approval shows exact files, digest and withheld items: kk-review release tests rs01-rs07, tests/e2e/desktop.mjs native approval, scripts/e2e",
+   "status": "BUILT_TESTED",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Scoped approval cards",
+   "trust_reason": "These are the privacy controls themselves: enforced by the kernel outside the model, so no surface may bypass or weaken them; surfaces only render and relay the user's decision."
+  },
+  "G4": {
+   "catalog_cells": [
+    "CORE",
+    "adversarial second pass",
+    "LLM Council (ideas only)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Challenge this answer",
+   "trust_reason": "Verification runs on the same route class as the data inside the user's kernel; any surface only displays the result, and a hosted surface may run it only on a route eligible for the data label."
+  },
+  "G40": {
+   "catalog_cells": [
+    "PLATFORM",
+    "clipboard guard in app; limits stated (OS clipboard can't be fully controlled)",
+    "Presidio"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Sensitive copy warning",
+   "trust_reason": "These are the privacy controls themselves: enforced by the kernel outside the model, so no surface may bypass or weaken them; surfaces only render and relay the user's decision."
+  },
+  "G41": {
+   "catalog_cells": [
+    "CORE",
+    "permission-graph preview (J08)",
+    "LangGraph MIT (pattern)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Plan preview",
+   "trust_reason": "Workbench features that need local files, processes, snapshots and the OS; the web companion shows them through the kernel API where the browser is only the screen."
+  },
+  "G42": {
+   "catalog_cells": [
+    "MERGE into V&C",
+    "only eligible routes",
+    "ideas"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Ask another agent",
+   "trust_reason": "Verification runs on the same route class as the data inside the user's kernel; any surface only displays the result, and a hosted surface may run it only on a route eligible for the data label."
+  },
+  "G43": {
+   "catalog_cells": [
+    "PLATFORM",
+    "checkpoints in kernel (J15)",
+    "LangGraph"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Pause and resume",
+   "trust_reason": "Workbench features that need local files, processes, snapshots and the OS; the web companion shows them through the kernel API where the browser is only the screen."
+  },
+  "G44": {
+   "catalog_cells": [
+    "PLATFORM",
+    "read from event log",
+    "Langfuse: MIT core but `ee/` folders under another licence → use only non-ee ideas"
+   ],
+   "evidence": "Progress tab and audit table of every broker request; no cross-job timeline",
+   "status": "PARTIAL",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Agent activity timeline",
+   "trust_reason": "Workbench features that need local files, processes, snapshots and the OS; the web companion shows them through the kernel API where the browser is only the screen."
+  },
+  "G45": {
+   "catalog_cells": [
+    "PLATFORM",
+    "tokens/price before costly runs; V&C budget",
+    "Langfuse (ideas)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Cost estimator",
+   "trust_reason": "Workbench features that need local files, processes, snapshots and the OS; the web companion shows them through the kernel API where the browser is only the screen."
+  },
+  "G46": {
+   "catalog_cells": [
+    "CORE",
+    "J09",
+    "idea"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Recover from denial",
+   "trust_reason": "These are the privacy controls themselves: enforced by the kernel outside the model, so no surface may bypass or weaken them; surfaces only render and relay the user's decision."
+  },
+  "G47": {
+   "catalog_cells": [
+    "CORE",
+    "routes by measured capability + eligibility, never brand",
+    "NEAR model catalog"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Task-specific model routing",
+   "trust_reason": "Workbench features that need local files, processes, snapshots and the OS; the web companion shows them through the kernel API where the browser is only the screen."
+  },
+  "G48": {
+   "catalog_cells": [
+    "PLATFORM",
+    "run skill against controlled tests before activation",
+    "Promptfoo"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Test a skill safely",
+   "trust_reason": "Workbench features that need local files, processes, snapshots and the OS; the web companion shows them through the kernel API where the browser is only the screen."
+  },
+  "G49": {
+   "catalog_cells": [
+    "PLATFORM",
+    "J12",
+    "Aider, Apache-2.0"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Code diff and undo",
+   "trust_reason": "Workbench features that need local files, processes, snapshots and the OS; the web companion shows them through the kernel API where the browser is only the screen."
+  },
+  "G5": {
+   "catalog_cells": [
+    "MERGE into 1/4",
+    "disagreements shown per claim",
+    "ideas"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Disagreement detector",
+   "trust_reason": "Verification runs on the same route class as the data inside the user's kernel; any surface only displays the result, and a hosted surface may run it only on a route eligible for the data label."
+  },
+  "G50": {
+   "catalog_cells": [
+    "CHANGE",
+    "partitioned, encrypted cache (rule 4); not a semantic cache across labels",
+    "GPTCache MIT (idea; do not adopt as is)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Local answer cache",
+   "trust_reason": "Workbench features that need local files, processes, snapshots and the OS; the web companion shows them through the kernel API where the browser is only the screen."
+  },
+  "G51": {
+   "catalog_cells": [
+    "CORE",
+    "when a fact became true / stopped",
+    "Graphiti Apache-2.0"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Time-aware memory",
+   "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."
+  },
+  "G52": {
+   "catalog_cells": [
+    "CORE",
+    "gmOS explain()",
+    "gmOS Apache-2.0"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Why do you remember this?",
+   "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."
+  },
+  "G53": {
+   "catalog_cells": [
+    "CORE",
+    "with erasure rules (01, 6.7)",
+    "Letta Apache-2.0"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Memory editing and forgetting",
+   "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."
+  },
+  "G54": {
+   "catalog_cells": [
+    "CORE",
+    "see N-record below",
+    "Letta (idea)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Correction memory",
+   "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."
+  },
+  "G55": {
+   "catalog_cells": [
+    "PLATFORM",
+    "Anamnesis, previewed and labelled",
+    "Anamnesis"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Memory import",
+   "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."
+  },
+  "G56": {
+   "catalog_cells": [
+    "PLATFORM",
+    "two remembered facts disagree",
+    "Graphiti"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Memory conflict alert",
+   "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."
+  },
+  "G57": {
+   "catalog_cells": [
+    "CORE",
+    "per-compartment stores",
+    "0G Memory (comparison)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Private project memories",
+   "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."
+  },
+  "G58": {
+   "catalog_cells": [
+    "CORE",
+    "VT01-VT06",
+    "0G Memory (comparison)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Encrypted memory recovery",
+   "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."
+  },
+  "G59": {
+   "catalog_cells": [
+    "CORE",
+    "01 6.14 issuer trust; evaluate W3C VC 2.0 as a format",
+    "W3C VC Data Model v2.0 (page exists)"
+   ],
+   "evidence": "capsule signed by a vault key with pinning in verifier: kk-evidence tests, scripts/e2e; issuer identity beyond a key not built",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Verified issuer identity",
+   "trust_reason": "Capsule issuance, selective release and signed comments are produced by the kernel's release pipeline and checked by the recipient; approval is only on a trusted path (native window or terminal), never the page."
+  },
+  "G6": {
+   "catalog_cells": [
+    "CORE",
+    "answer must be entailed by the cited passage",
+    "Ragas, Apache-2.0 (now vibrantlabsai/ragas)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Source-grounded verification",
+   "trust_reason": "Verification runs on the same route class as the data inside the user's kernel; any surface only displays the result, and a hosted surface may run it only on a route eligible for the data label."
+  },
+  "G60": {
+   "catalog_cells": [
+    "CORE",
+    "Treeship-style salted disclosure; evaluate RFC 9901 SD-JWT compatibility",
+    "RFC 9901 \"Selective Disclosure for JSON Web Tokens\" (exists)"
+   ],
+   "evidence": "release is a fixed minimal file set with token leak check: kk-review release tests; per-claim selection UI not built",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Selective evidence sharing",
+   "trust_reason": "Capsule issuance, selective release and signed comments are produced by the kernel's release pipeline and checked by the recipient; approval is only on a trusted path (native window or terminal), never the page."
+  },
+  "G61": {
+   "catalog_cells": [
+    "CORE",
+    "read-only WASM verifier + CLI",
+    "VC model"
+   ],
+   "evidence": "/verify in-browser verifier plus python3 run-check.py: scripts/e2e verify journey; no hosted recipient page yet",
+   "status": "PARTIAL",
+   "surface_class": "WEB_HOSTED",
+   "title": "No-install recipient view",
+   "trust_reason": "The recipient view must need no install: a static page that verifies in the browser with no upload, so the recipient trusts nothing the sender hosts."
+  },
+  "G62": {
+   "catalog_cells": [
+    "CORE",
+    "J33",
+    "VC model"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Signed reviewer comments",
+   "trust_reason": "Capsule issuance, selective release and signed comments are produced by the kernel's release pipeline and checked by the recipient; approval is only on a trusted path (native window or terminal), never the page."
+  },
+  "G63": {
+   "catalog_cells": [
+    "CORE",
+    "J33",
+    "idea"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Request more evidence",
+   "trust_reason": "Capsule issuance, selective release and signed comments are produced by the kernel's release pipeline and checked by the recipient; approval is only on a trusted path (native window or terminal), never the page."
+  },
+  "G64": {
+   "catalog_cells": [
+    "LATER (go/no-go D34)",
+    "one calculation only if buyers value it",
+    "RISC Zero Apache-2.0 (metadata)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "TECHNICALLY_INELIGIBLE",
+   "title": "Proof of a private calculation",
+   "trust_reason": "Zero-knowledge proof of a private calculation is a research go/no-go (D34); not claimable until a verified construction exists."
+  },
+  "G65": {
+   "catalog_cells": [
+    "PLATFORM",
+    "diff between issued versions",
+    "difflib"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Capsule version comparison",
+   "trust_reason": "Capsule issuance, selective release and signed comments are produced by the kernel's release pipeline and checked by the recipient; approval is only on a trusted path (native window or terminal), never the page."
+  },
+  "G66": {
+   "catalog_cells": [
+    "CORE",
+    "uses change impact scanner (26)",
+    "Graphiti idea"
+   ],
+   "evidence": "expiry is checked by both verifiers (vectors 'expired'); staleness against newer source not built",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Stale capsule warning",
+   "trust_reason": "Capsule issuance, selective release and signed comments are produced by the kernel's release pipeline and checked by the recipient; approval is only on a trusted path (native window or terminal), never the page."
+  },
+  "G67": {
+   "catalog_cells": [
+    "CORE",
+    "verified panel",
+    "NEAR verifier MIT"
+   ],
+   "evidence": "kk-near verifies a real public attestation (TDX chain, GPU, nonce, signer) and rejects tampering; completion signatures BLOCKED on key",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Live TEE verification details",
+   "trust_reason": "Attestation and signature checks must run in the user's own kernel, never be taken from a page or a server's say-so; surfaces display the verified facts."
+  },
+  "G68": {
+   "catalog_cells": [
+    "CORE",
+    "provider_tee vs gateway shown",
+    "NEAR SDK"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Response signer status",
+   "trust_reason": "Attestation and signature checks must run in the user's own kernel, never be taken from a page or a server's say-so; surfaces display the verified facts."
+  },
+  "G69": {
+   "catalog_cells": [
+    "CORE",
+    "only eligible models, with cost and measured capability",
+    "NEAR catalog (E10)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Verified model picker",
+   "trust_reason": "Attestation and signature checks must run in the user's own kernel, never be taken from a page or a server's say-so; surfaces display the verified facts."
+  },
+  "G7": {
+   "catalog_cells": [
+    "CORE",
+    "opens exact page/cell with highlight (see N15)",
+    "NotebookLM (product page exists)"
+   ],
+   "evidence": "findings show file:line and a reproducer; clickable citation into the source viewer not built",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Clickable source citations",
+   "trust_reason": "Citations come from the kernel's versioned source manifest; clicking is a UI action on every surface, resolved by the kernel."
+  },
+  "G70": {
+   "catalog_cells": [
+    "LATER",
+    "separate from E2EE; hides less than it seems",
+    "NEAR SDK"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "TECHNICALLY_INELIGIBLE",
+   "title": "OHTTP privacy option",
+   "trust_reason": "Deferred until the underlying service or contract path is verified; no claim until then."
+  },
+  "G71": {
+   "catalog_cells": [
+    "CORE",
+    "v2 legacy vs v3",
+    "SDK PR #127 (open)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "E2EE protocol status",
+   "trust_reason": "Attestation and signature checks must run in the user's own kernel, never be taken from a page or a server's say-so; surfaces display the verified facts."
+  },
+  "G72": {
+   "catalog_cells": [
+    "PLATFORM",
+    "TEE whisper or local; route badge",
+    "NEAR catalog"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Private voice transcription",
+   "trust_reason": "Local audio and embedding models need device compute and microphone permission under native consent; the web companion cannot grant them safely."
+  },
+  "G73": {
+   "catalog_cells": [
+    "PLATFORM",
+    "TEE Qwen3-Embedding or local; label rules apply",
+    "NEAR catalog"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Private document embeddings",
+   "trust_reason": "Local audio and embedding models need device compute and microphone permission under native consent; the web companion cannot grant them safely."
+  },
+  "G74": {
+   "catalog_cells": [
+    "PLATFORM",
+    "optional; testnet client only accepts localhost:3000 (E-notes)",
+    "NEAR Auth"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_HOSTED",
+   "title": "Optional easy sign-in",
+   "trust_reason": "Optional sign-in is an account concern of hosted mode only; local mode needs no account."
+  },
+  "G75": {
+   "catalog_cells": [
+    "LATER",
+    "blinded batched roots; only if a recipient needs it",
+    "NEAR docs"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "TECHNICALLY_INELIGIBLE",
+   "title": "Optional on-chain evidence anchor",
+   "trust_reason": "Deferred until the underlying service or contract path is verified; no claim until then."
+  },
+  "G76": {
+   "catalog_cells": [
+    "REJECT for now",
+    "no customer need; avoids gimmick",
+    "NEAR Intents"
+   ],
+   "evidence": "ARCHITECTURE/04_FEATURE_CATALOG.md",
+   "status": "CUT_WITH_REASON",
+   "surface_class": "CUT_BY_CATALOG",
+   "title": "Optional cross-chain payment",
+   "trust_reason": "Rejected in the feature catalog with a stated reason: REJECT for now no customer need; avoids gimmick NEAR Intents"
+  },
+  "G8": {
+   "catalog_cells": [
+    "CHANGE",
+    "rebuild locally (self-consistency, evidence gaps); do not use hosted TLM",
+    "Cleanlab TLM client MIT but needs hosted API key → REJECT service"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Uncertainty warnings",
+   "trust_reason": "Verification runs on the same route class as the data inside the user's kernel; any surface only displays the result, and a hosted surface may run it only on a route eligible for the data label."
+  },
+  "G9": {
+   "catalog_cells": [
+    "CORE",
+    "uses source manifest + claim gaps (see \"What Am I Missing\")",
+    "NotebookLM discover-sources (page exists)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "What evidence is missing?",
+   "trust_reason": "Verification runs on the same route class as the data inside the user's kernel; any surface only displays the result, and a hosted surface may run it only on a route eligible for the data label."
+  },
+  "H1": {
+   "catalog_cells": [
+    "PLATFORM (optional)",
+    "NEAR Auth optional; local use needs no account; shared testnet client only accepts `localhost:3000`",
+    "J02"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_HOSTED",
+   "title": "Email/Google sign-in",
+   "trust_reason": "Account, billing, sharing or marketplace concerns that need a shared service; claimable only after hosted-mode isolation, keys and honest wording are validated."
+  },
+  "H10": {
+   "catalog_cells": [
+    "CORE",
+    "approvals via kernel; eligible-model picker; permission-graph preview",
+    "J05, J07, J08"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Tool toggles, confirm-before-tools, model picker with badges, reasoning levels, plan mode",
+   "trust_reason": "Interface features over the kernel; the browser is the screen and the page is untrusted for approvals, with the same views inside the desktop shell."
+  },
+  "H11": {
+   "catalog_cells": [
+    "PLATFORM",
+    "meter; cache partition rule; provider prompt cache is automatic and reports cached_tokens; its scope across keys is NOT VERIFIED (RK-55)",
+    "J06"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Context meter, cleanup, prompt caching",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H12": {
+   "catalog_cells": [
+    "PLATFORM",
+    "from NEAR usage API; cost estimator (#45)",
+    "J06"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Usage page, cost per model",
+   "trust_reason": "Interface features over the kernel; the browser is the screen and the page is untrusted for approvals, with the same views inside the desktop shell."
+  },
+  "H13": {
+   "catalog_cells": [
+    "PLATFORM",
+    "local; untrusted-origin only if imported",
+    "J16"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Personal AGENTS instructions",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H14": {
+   "catalog_cells": [
+    "PLATFORM",
+    "isolated no-network preview view",
+    "J24"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Interactive previews, app-context capture",
+   "trust_reason": "Needs the OS keychain, signed auto-update, local processes, isolated VMs, screen or microphone under native consent, which a browser cannot grant or enforce."
+  },
+  "H15": {
+   "catalog_cells": [
+    "PLATFORM",
+    "export goes through release path; copy warning (#40)",
+    "J25"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Reply buttons, copy/export",
+   "trust_reason": "Interface features over the kernel; the browser is the screen and the page is untrusted for approvals, with the same views inside the desktop shell."
+  },
+  "H16": {
+   "catalog_cells": [
+    "CORE",
+    "NEAR catalog (64) with eligibility per label; local models",
+    "J05"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Many models",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H17": {
+   "catalog_cells": [
+    "CORE",
+    "verified panel with five route properties, five-state evidence",
+    "J26"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "TeeML verification display",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H18": {
+   "catalog_cells": [
+    "PLATFORM",
+    "Qwen3-VL (TEE) or local; label rules apply",
+    "J04"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Vision",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H19": {
+   "catalog_cells": [
+    "REJECT",
+    "no private video model on NEAR",
+    "-"
+   ],
+   "evidence": "ARCHITECTURE/04_FEATURE_CATALOG.md",
+   "status": "CUT_WITH_REASON",
+   "surface_class": "CUT_BY_CATALOG",
+   "title": "Video generation",
+   "trust_reason": "Rejected in the feature catalog with a stated reason: REJECT no private video model on NEAR -"
+  },
+  "H2": {
+   "catalog_cells": [
+    "PLATFORM",
+    "local i18n; reviewed translations before claiming a language",
+    "J28"
+   ],
+   "evidence": "typed catalogs, English and Hindi (unreviewed), parity tests, journey in Hindi: pnpm --filter @kakurega/web test, scripts/e2e; server-originated text stays English",
+   "status": "PARTIAL",
+   "surface_class": "WEB_COMPANION",
+   "title": "11 languages",
+   "trust_reason": "Interface features over the kernel; the browser is the screen and the page is untrusted for approvals, with the same views inside the desktop shell."
+  },
+  "H20": {
+   "catalog_cells": [
+    "PLATFORM",
+    "provider adapters pass the route matrix; none assumed eligible",
+    "J05"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Plugin-registered providers",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H21": {
+   "catalog_cells": [
+    "PLATFORM",
+    "read-only mounts, no-network tests, undo",
+    "J12"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Coding mode (project, diff, tests, rollback)",
+   "trust_reason": "Needs the OS keychain, signed auto-update, local processes, isolated VMs, screen or microphone under native consent, which a browser cannot grant or enforce."
+  },
+  "H22": {
+   "catalog_cells": [
+    "PLATFORM",
+    "ACP agents as sandboxed workers; public-context unless inside the sandbox rules",
+    "J14"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Local coding agents join the team",
+   "trust_reason": "Needs the OS keychain, signed auto-update, local processes, isolated VMs, screen or microphone under native consent, which a browser cannot grant or enforce."
+  },
+  "H23": {
+   "catalog_cells": [
+    "CHANGE",
+    "a few excellent roles tied to playbooks, not a persona count",
+    "J14"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "26 expert agents",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H24": {
+   "catalog_cells": [
+    "PLATFORM",
+    "kernel orchestrator; each member a worker with own mounts",
+    "J14"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Direct, Roundtable, Assign work, Review, Local agents",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H25": {
+   "catalog_cells": [
+    "PLATFORM",
+    "labels travel with handoffs; checkpoints are kernel approvals",
+    "J15"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Lead, handoffs, completion conditions, human checkpoints",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H26": {
+   "catalog_cells": [
+    "PLATFORM",
+    "read from event log; crash recovery",
+    "J15"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Activity view, recovery, shared-file review",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H27": {
+   "catalog_cells": [
+    "PLATFORM",
+    "playbooks (N10) are the same idea, versioned",
+    "J16"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Reusable methods with version history",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H28": {
+   "catalog_cells": [
+    "LATER",
+    "multi-person; later with shared keys",
+    "J29"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_HOSTED",
+   "title": "Group chats, shared tasks",
+   "trust_reason": "Account, billing, sharing or marketplace concerns that need a shared service; claimable only after hosted-mode isolation, keys and honest wording are validated."
+  },
+  "H29": {
+   "catalog_cells": [
+    "CORE",
+    "gmOS + Anamnesis in sandbox, labelled, encrypted",
+    "J17"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Persistent memory, recall card, local vectors",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H3": {
+   "catalog_cells": [
+    "PLATFORM",
+    "one profile = one data key set; device-local",
+    "J03"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Profiles",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H30": {
+   "catalog_cells": [
+    "PLATFORM",
+    "skills untrusted until approved; lint + audit",
+    "J16"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Learned skills",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H31": {
+   "catalog_cells": [
+    "PLATFORM",
+    "our own skills, original text; NEAR official skills as references",
+    "J16"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "30 bundled skills",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H32": {
+   "catalog_cells": [
+    "LATER",
+    "signed, scanned plugins only; no unmanaged catalog in strict mode",
+    "J30"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_HOSTED",
+   "title": "Plugin store (496)",
+   "trust_reason": "Account, billing, sharing or marketplace concerns that need a shared service; claimable only after hosted-mode isolation, keys and honest wording are validated."
+  },
+  "H33": {
+   "catalog_cells": [
+    "PLATFORM",
+    "each MCP server in sandbox with own capability",
+    "J19"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "MCP client / marketplace",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H34": {
+   "catalog_cells": [
+    "PLATFORM",
+    "same",
+    "J19"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "ACP sub-agents",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H35": {
+   "catalog_cells": [
+    "PLATFORM",
+    "hooks run as workers; no hook without a consumer",
+    "J19"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Hooks",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H36": {
+   "catalog_cells": [
+    "PLATFORM (VM-only in strict)",
+    "disposable VM with approvals; disabled until VM passes tests",
+    "J21"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Computer Use",
+   "trust_reason": "Needs the OS keychain, signed auto-update, local processes, isolated VMs, screen or microphone under native consent, which a browser cannot grant or enforce."
+  },
+  "H37": {
+   "catalog_cells": [
+    "PLATFORM",
+    "public worker for research; restricted data never enters",
+    "J18"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "EXTENSION",
+   "title": "Browser relay (Chrome over CDP)",
+   "trust_reason": "Controlling the user's browser needs the extension adapter with narrow permissions and an origin allowlist; pages stay untrusted."
+  },
+  "H38": {
+   "catalog_cells": [
+    "CORE",
+    "public lane; queries checked against labels",
+    "J18"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Web research",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H39": {
+   "catalog_cells": [
+    "LATER (opt-in)",
+    "off by default, informed opt-in, encrypted, labelled, purge",
+    "J22"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Activity recorder (screen/OCR memory)",
+   "trust_reason": "Needs the OS keychain, signed auto-update, local processes, isolated VMs, screen or microphone under native consent, which a browser cannot grant or enforce."
+  },
+  "H4": {
+   "catalog_cells": [
+    "CORE",
+    "bound folders, per-compartment keys",
+    "J03"
+   ],
+   "evidence": "project roots and folder chooser bound to allowed roots: kk-service tests, scripts/e2e; named workspaces not built",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Workspaces",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H40": {
+   "catalog_cells": [
+    "PLATFORM",
+    "TEE whisper or local",
+    "J23"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Voice",
+   "trust_reason": "Needs the OS keychain, signed auto-update, local processes, isolated VMs, screen or microphone under native consent, which a browser cannot grant or enforce."
+  },
+  "H47": {
+   "catalog_cells": [
+    "REJECT",
+    "replaced by per-device API keys with spend limits",
+    "-"
+   ],
+   "evidence": "ARCHITECTURE/04_FEATURE_CATALOG.md",
+   "status": "CUT_WITH_REASON",
+   "surface_class": "CUT_BY_CATALOG",
+   "title": "Router vs advanced compute payment",
+   "trust_reason": "Rejected in the feature catalog with a stated reason: REJECT replaced by per-device API keys with spend limits -"
+  },
+  "H48": {
+   "catalog_cells": [
+    "CHANGE",
+    "encrypted backup, ciphertext only, two storage places",
+    "J27"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Storage sync (0G Storage)",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H49": {
+   "catalog_cells": [
+    "REJECT",
+    "selling memory means giving a copyable key",
+    "-"
+   ],
+   "evidence": "ARCHITECTURE/04_FEATURE_CATALOG.md",
+   "status": "CUT_WITH_REASON",
+   "surface_class": "CUT_BY_CATALOG",
+   "title": "Agentic ID NFT, tradeable memory",
+   "trust_reason": "Rejected in the feature catalog with a stated reason: REJECT selling memory means giving a copyable key -"
+  },
+  "H5": {
+   "catalog_cells": [
+    "CHANGE",
+    "keys on device (OS keychain + recovery secret); no server issues a key",
+    "J27"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Wallet / vault key",
+   "trust_reason": "Needs the OS keychain, signed auto-update, local processes, isolated VMs, screen or microphone under native consent, which a browser cannot grant or enforce."
+  },
+  "H50": {
+   "catalog_cells": [
+    "REJECT",
+    "no token",
+    "-"
+   ],
+   "evidence": "ARCHITECTURE/04_FEATURE_CATALOG.md",
+   "status": "CUT_WITH_REASON",
+   "surface_class": "CUT_BY_CATALOG",
+   "title": "Points, seasons, SBTs, token",
+   "trust_reason": "Rejected in the feature catalog with a stated reason: REJECT no token -"
+  },
+  "H51": {
+   "catalog_cells": [
+    "LATER",
+    "per-member wrapped keys",
+    "J29"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_HOSTED",
+   "title": "(new) shared team memory with access control",
+   "trust_reason": "Account, billing, sharing or marketplace concerns that need a shared service; claimable only after hosted-mode isolation, keys and honest wording are validated."
+  },
+  "H52": {
+   "catalog_cells": [
+    "CORE",
+    "becomes the Confidential Outcome Capsule evidence",
+    "J26, J31"
+   ],
+   "evidence": "the signed capsule with an explicit not-established list: kk-evidence capsule tests, /verify",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "(new) privacy receipt",
+   "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
+  },
+  "H53": {
+   "catalog_cells": [
+    "REJECT for now",
+    "avoids a gimmick; NEAR Business/OutLayer already exist",
+    "-"
+   ],
+   "evidence": "ARCHITECTURE/04_FEATURE_CATALOG.md",
+   "status": "CUT_WITH_REASON",
+   "surface_class": "CUT_BY_CATALOG",
+   "title": "(new) agent wallet for teammates",
+   "trust_reason": "Rejected in the feature catalog with a stated reason: REJECT for now avoids a gimmick; NEAR Business/OutLayer already exist -"
+  },
+  "H6": {
+   "catalog_cells": [
+    "LATER",
+    "NEAR AI credits via Intents/staking only if users need it",
+    "-"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_HOSTED",
+   "title": "Top-up flows",
+   "trust_reason": "Account, billing, sharing or marketplace concerns that need a shared service; claimable only after hosted-mode isolation, keys and honest wording are validated."
+  },
+  "H7": {
+   "catalog_cells": [
+    "REJECT",
+    "no tokens or points",
+    "-"
+   ],
+   "evidence": "ARCHITECTURE/04_FEATURE_CATALOG.md",
+   "status": "CUT_WITH_REASON",
+   "surface_class": "CUT_BY_CATALOG",
+   "title": "Referral points and redemption",
+   "trust_reason": "Rejected in the feature catalog with a stated reason: REJECT no tokens or points -"
+  },
+  "H8": {
+   "catalog_cells": [
+    "PLATFORM",
+    "signed updates; diagnostics opt-in and content-free; update path cannot carry content",
+    "J28"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Auto-update, consented diagnostics, reply reports",
+   "trust_reason": "Needs the OS keychain, signed auto-update, local processes, isolated VMs, screen or microphone under native consent, which a browser cannot grant or enforce."
+  },
+  "H9": {
+   "catalog_cells": [
+    "CORE",
+    "route badge on every message; unverified streamed text marked",
+    "J04, J23"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Chat, attachments, voice, commands menu",
+   "trust_reason": "Interface features over the kernel; the browser is the screen and the page is untrusted for approvals, with the same views inside the desktop shell."
+  },
+  "K01": {
+   "catalog_cells": [
+    "CORE",
+    "6.2, 7",
+    "L01-L09, I1"
+   ],
+   "evidence": "kk-types label tests and kk-kernel taint tests (kernel-computed taint ignores worker hints)",
+   "status": "BUILT_TESTED",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Typed artifacts with labels and lineage (level, compartments, integrity, purpose, sensitivity-unknown)",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K02": {
+   "catalog_cells": [
+    "CORE",
+    "6.2",
+    "G01-G16, E17"
+   ],
+   "evidence": "kk-policy Cedar schema, default policy and errors-as-deny tests",
+   "status": "BUILT_TESTED",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Policy engine (Cedar) with schema validation and errors-as-deny; kernel-owned approval states",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K03": {
+   "catalog_cells": [
+    "CORE",
+    "6.2",
+    "B01-B07"
+   ],
+   "evidence": "kk-broker protocol, tools, budgets and audit tests (one JSON request per line, strict parse)",
+   "status": "BUILT_TESTED",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Single broker with typed operations, no general fetch",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K04": {
+   "catalog_cells": [
+    "CORE",
+    "6.2",
+    "G13, B04, B06-B07"
+   ],
+   "evidence": "per-plan allowed operations and recomputed taint per step (kk-broker, kk-kernel tests); signed per-step capability tokens not built",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Kernel-issued per-step capabilities, recomputed authorisation",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K05": {
+   "catalog_cells": [
+    "CORE",
+    "6.2",
+    "G10-G12"
+   ],
+   "evidence": "release digest over recipient, policy, expiry and files with approval lease and byte re-check on delivery: kk-review release tests rs02, rs06; atomic spend not applicable yet",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Release records: exact bytes, destination identity, atomic spend, idempotency",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K06": {
+   "catalog_cells": [
+    "CORE",
+    "6.2",
+    "G17"
+   ],
+   "evidence": "kk-effects ledger states and crash recovery tests EF01-EF11; delivery goes through the ledger",
+   "status": "BUILT_TESTED",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Delivery outbox (AUTHORIZED / ATTEMPTED / CONFIRMED / DELIVERY_UNCERTAIN)",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K07": {
+   "catalog_cells": [
+    "PLATFORM",
+    "6.2",
+    "G-series"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Two-person approval option",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K08": {
+   "catalog_cells": [
+    "CORE",
+    "6.2",
+    "G09"
+   ],
+   "evidence": "native approval window with Touch ID prompt in the real Electron shell: tests/e2e/desktop.mjs (OS prompts stubbed; real Touch ID is II-03); passkey path not built",
+   "status": "PARTIAL",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Native approval prompt / passkey",
+   "trust_reason": "Platform isolation, trusted approval and signed distribution depend on the operating system and are claimed per platform only after that platform passes its own isolation tests."
+  },
+  "K09": {
+   "catalog_cells": [
+    "CORE",
+    "6.3",
+    "R01-R18"
+   ],
+   "evidence": "bubblewrap profile with R-suite escape and exhaustion tests: scripts/test-linux (r18 intermittent failure once, open)",
+   "status": "BUILT_TESTED",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "No-network worker sandbox on Linux (bubblewrap flags)",
+   "trust_reason": "Platform isolation, trusted approval and signed distribution depend on the operating system and are claimed per platform only after that platform passes its own isolation tests."
+  },
+  "K10": {
+   "catalog_cells": [
+    "CORE (blocked)",
+    "6.3, 6.16",
+    "R19-R23"
+   ],
+   "evidence": "macOS works through a Linux VM (Lima) as a development transport: scripts/test-lima; strict Seatbelt or product-grade VM (X3) unresolved",
+   "status": "PARTIAL",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "macOS VM worker (or deny-default Seatbelt that passes)",
+   "trust_reason": "Platform isolation, trusted approval and signed distribution depend on the operating system and are claimed per platform only after that platform passes its own isolation tests."
+  },
+  "K11": {
+   "catalog_cells": [
+    "LATER",
+    "6.3",
+    "-"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Windows isolation",
+   "trust_reason": "Platform isolation, trusted approval and signed distribution depend on the operating system and are claimed per platform only after that platform passes its own isolation tests."
+  },
+  "K12": {
+   "catalog_cells": [
+    "CORE",
+    "6.3",
+    "R16, R18, R21"
+   ],
+   "evidence": "cgroup and prlimit limits and launcher self-check: kk-sandbox tests; host watchdog beyond limits not built",
+   "status": "PARTIAL",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Host watchdog (memory, CPU, time, processes); launcher self-check",
+   "trust_reason": "Platform isolation, trusted approval and signed distribution depend on the operating system and are claimed per platform only after that platform passes its own isolation tests."
+  },
+  "K13": {
+   "catalog_cells": [
+    "CORE",
+    "6.2a",
+    "L05, L09, G18, R23"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Trusted control plane, capability envelope, bounded replanning, quarantined parsing",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K14": {
+   "catalog_cells": [
+    "CORE",
+    "6.4",
+    "M01-M21"
+   ],
+   "evidence": "real attestation verified and tamper-rejected: kk-near live tests; completions, E2EE and response verification BLOCKED on the NEAR key",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "NEAR gateway with attestation, E2EE v3, response verification, hold-until-verified",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K15": {
+   "catalog_cells": [
+    "CORE",
+    "6.4, 6.16",
+    "M19-M21"
+   ],
+   "evidence": "route classes, Ollama loopback route and scripted route: kk-route tests; NEAR routes not wired",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Route properties (five), named routes, canonical matrix, API compatibility, measurement allowlist",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K16": {
+   "catalog_cells": [
+    "CORE",
+    "I10",
+    "M04"
+   ],
+   "evidence": "route selection never falls back: kk-route tests; readiness and Start blocked when no route",
+   "status": "BUILT_TESTED",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "No downgrade; wait or fail when no verified route",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K17": {
+   "catalog_cells": [
+    "CORE",
+    "6.6",
+    "V01-V12"
+   ],
+   "evidence": "capsule claims with basis and a not-established list: kk-evidence tests; three evidence classes not complete",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Evidence model (claim kind x status x basis), three evidence classes, completeness limits",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K18": {
+   "catalog_cells": [
+    "CORE",
+    "6.6",
+    "V01-V15"
+   ],
+   "evidence": "DSSE signed envelopes and capsule: kk-evidence tests; hash-chained Merkle event log not built",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Signed hash-chained event log (DSSE + Merkle), hiding commitments",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K19": {
+   "catalog_cells": [
+    "CORE",
+    "6.6",
+    "V08-V09, CP07"
+   ],
+   "evidence": "Rust and JavaScript verifiers agree on 31 shared vectors including tampering: kk-evidence tests, packages/verifier-js tests, scripts/e2e",
+   "status": "BUILT_TESTED",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Offline verifier + second independent verifier",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K20": {
+   "catalog_cells": [
+    "CORE",
+    "6.14",
+    "V17"
+   ],
+   "evidence": "key pinning and weak-key refusal in both verifiers; rotation, revocation and ISSUER_UNVERIFIED states not built",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Issuer identity, rotation, revocation, ISSUER_UNVERIFIED",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K21": {
+   "catalog_cells": [
+    "CORE (hero)",
+    "6.14",
+    "CP01-CP08, V13-V16"
+   ],
+   "evidence": "capsule with B1 assurance and explicit limits built and verified end to end: scripts/e2e; presentation layer minimal",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Confidential Outcome Capsule (payload, envelope, bundle, presentation), no-install verifier",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K22": {
+   "catalog_cells": [
+    "CORE",
+    "6.5",
+    "DA01-DA06"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "DisclosureAccount (cumulative leakage)",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K23": {
+   "catalog_cells": [
+    "CORE",
+    "6.13",
+    "SM01-SM08"
+   ],
+   "evidence": "source manifest with keyed HMAC commitment: kk-review import tests; claim scoping beyond findings not built",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Source manifest and claim scoping",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K24": {
+   "catalog_cells": [
+    "CORE",
+    "6.13",
+    "L07-L08"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Result-proof levels L1/L2/L3; differencing and cohort limits",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K25": {
+   "catalog_cells": [
+    "LATER (go/no-go)",
+    "6.13",
+    "Z01-Z05"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "TECHNICALLY_INELIGIBLE",
+   "title": "Scope-limited zero-knowledge calculation",
+   "trust_reason": "Scope-limited zero-knowledge calculation is a research go/no-go; no claim until a verified construction exists."
+  },
+  "K26": {
+   "catalog_cells": [
+    "CORE",
+    "6.7",
+    "VT01-VT07, ST01-ST04"
+   ],
+   "evidence": "vault with a 0600 key file: kk-vault tests; per-compartment keys and encrypted indexes not built",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Encrypted vault, per-compartment keys, encrypted indexes/WAL/temp, recovery",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K27": {
+   "catalog_cells": [
+    "CORE",
+    "6.7",
+    "F-series"
+   ],
+   "evidence": "the kernel builds a minimal import-closure sample for each check: kk-review check tests c02; general pre-model minimisation not built",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Data minimisation before model calls",
+   "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
+  },
+  "K28": {
+   "catalog_cells": [
+    "CORE",
+    "4.1, 6.1",
+    "HT01-HT07, R20"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Renderer hardening, isolated document viewer, host bridges review",
+   "trust_reason": "User-facing hardening and workflows rendered through the local companion with a strict content policy and an isolated viewer; the page is untrusted."
+  },
+  "K29": {
+   "catalog_cells": [
+    "CORE",
+    "S11, 11",
+    "SC01-SC04"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Signed updates, SBOM, pinned dependencies, NOTICE",
+   "trust_reason": "Platform isolation, trusted approval and signed distribution depend on the operating system and are claimed per platform only after that platform passes its own isolation tests."
+  },
+  "K30": {
+   "catalog_cells": [
+    "CORE",
+    "6.15",
+    "V19"
+   ],
+   "evidence": "scripted test model is labelled TEST MODE in the UI; recorded real attestation; full fixture/live labelling not complete",
+   "status": "PARTIAL",
+   "surface_class": "WEB_HOSTED",
+   "title": "Judge reproducibility package: fixture vs live, SIMULATED / RECORDED_REAL / LIVE_VERIFIED",
+   "trust_reason": "Reproducibility package, rooms and public log anchoring involve outside parties and published artifacts, with fixtures clearly labelled."
+  },
+  "K31": {
+   "catalog_cells": [
+    "LATER",
+    "6.12",
+    "-"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_HOSTED",
+   "title": "Cross-company rooms",
+   "trust_reason": "Reproducibility package, rooms and public log anchoring involve outside parties and published artifacts, with fixtures clearly labelled."
+  },
+  "K32": {
+   "catalog_cells": [
+    "LATER",
+    "6.12",
+    "-"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "CLI_MCP",
+   "title": "Embeddable SDK / policy kernel for other agents",
+   "trust_reason": "An embeddable policy kernel is a developer SDK consumed by other agents through stable typed schemas."
+  },
+  "K33": {
+   "catalog_cells": [
+    "LATER",
+    "6.6",
+    "V-series"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_HOSTED",
+   "title": "Optional blinded NEAR commitment of log roots",
+   "trust_reason": "Reproducibility package, rooms and public log anchoring involve outside parties and published artifacts, with fixtures clearly labelled."
+  },
+  "K34": {
+   "catalog_cells": [
+    "CORE",
+    "1, 6.13",
+    "S6 gate"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Hero diligence workflow: change-of-control contracts + revenue exposure (duplicate invoices = secondary playbook)",
+   "trust_reason": "User-facing hardening and workflows rendered through the local companion with a strict content policy and an isolated viewer; the page is untrusted."
+  },
+  "K35": {
+   "catalog_cells": [
+    "PLATFORM",
+    "6.13",
+    "C03"
+   ],
+   "evidence": "confidential code-review workflow works end to end with a scripted model and a real local model run (scripts/live-local); quality on real models BLOCKED until credits",
+   "status": "PARTIAL",
+   "surface_class": "WEB_COMPANION",
+   "title": "Confidential code-review workflow",
+   "trust_reason": "User-facing hardening and workflows rendered through the local companion with a strict content policy and an isolated viewer; the page is untrusted."
+  },
+  "N1": {
+   "catalog_cells": [
+    "the model-quality gap is our top risk; prevents silent regressions",
+    "CORE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Eval pack / golden-set regression: fixed synthetic tasks re-run whenever a model, prompt, parser or policy changes; shows the quality delta ",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N10": {
+   "catalog_cells": [
+    "makes the first wedge concrete and repeatable",
+    "CORE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Diligence playbooks: versioned checklists (invoices, contracts, cap table) that define required documents and checks; feed the source manife",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N11": {
+   "catalog_cells": [
+    "trust and judge reproducibility",
+    "CORE"
+   ],
+   "evidence": "kernel re-runs each reproducer in the sandbox on a minimal extract, twice, deterministic: kk-review check tests c01-c04, job tests; run-check.py rs01",
+   "status": "BUILT_TESTED",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Reproduce this finding: re-run a finding from the same manifest; deterministic steps match exactly, model steps record parameters and show v",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N12": {
+   "catalog_cells": [
+    "answers the legal-access risk for data-room documents",
+    "CORE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Data-source terms checker: before import the user records the source's terms (bulk download allowed? outside processing allowed?); the syste",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N13": {
+   "catalog_cells": [
+    "prevents false comfort",
+    "CORE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Calibrated confidence: show measured error rates by claim type from N1/N5, not model self-confidence",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N14": {
+   "catalog_cells": [
+    "feature 54 made precise",
+    "CORE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Correction record: structured entry {claim, wrong value, corrected value, source, scope, confirmed by, applies to}, labelled, time-aware, us",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N15": {
+   "catalog_cells": [
+    "the detail users notice first",
+    "CORE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Source viewer with highlights: click any number to open the exact page area or cell",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N16": {
+   "catalog_cells": [
+    "merges ideas 9, 23, 24 into one action",
+    "CORE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "\"What am I missing?\" panel: from the playbook, manifest and claim gaps, lists documents or evidence still needed before a conclusion is safe",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N17": {
+   "catalog_cells": [
+    "the hero question depends on it",
+    "HERO"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Amendment intelligence: understand when a later amendment changes or replaces an earlier clause, with explicit precedence rules, and show co",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N18": {
+   "catalog_cells": [
+    "the real diligence workflow",
+    "HERO"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Buyer question inbox: turn counterparty questions into private, reviewed, evidence-linked draft answers in a queue",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N19": {
+   "catalog_cells": [
+    "review speed and fewer mistakes",
+    "HERO"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "One-screen evidence review: claim, source excerpt, contradiction and reviewer decision in one view",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N2": {
+   "catalog_cells": [
+    "evidence stays true over time",
+    "CORE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Model change notice: pin model and measurement; if the deployment measurement or model changes, require re-approval and show the diff in the",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N20": {
+   "catalog_cells": [
+    "trust and control",
+    "BASELINE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Cost and time preview: expected cost and latency for fast answer vs deep verify, shown before running (merges idea 45)",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N21": {
+   "catalog_cells": [
+    "approval fatigue is a known failure",
+    "HERO"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Low-interruption review: bounded pre-authorised workflows, exception queue, batching; exact recipient/byte review never batched",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N22": {
+   "catalog_cells": [
+    "measures the product, not feature count",
+    "HERO (measurement)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Usefulness-per-approval metric: correct reviewed findings per human minute, with leak counts beside it",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N23": {
+   "catalog_cells": [
+    "simple trust language",
+    "HERO"
+   ],
+   "evidence": "route badge and Protection tab say model, route class and endpoint; one-sentence reason per task not built",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Plain route explanation: one sentence on why a model is or is not allowed for this data; five route properties one click deeper",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N24": {
+   "catalog_cells": [
+    "buyer and seller incentives differ; completeness cannot be signed into existence",
+    "HERO"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Source-Scope Passport with assurance ladder (declared / controlled export / independent attestation / proof of calculation)",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N25": {
+   "catalog_cells": [
+    "stops substituted questions and spliced paragraphs",
+    "HERO"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Question-Bound Capsule: bound to question, manifest hash, method versions, reviewer, recipient and answer",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N26": {
+   "catalog_cells": [
+    "turns a report into a repeat workflow",
+    "HERO"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Recipient challenge thread: narrow questions and evidence requests, versioned answers, stale markers",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N27": {
+   "catalog_cells": [
+    "what a diligence reader actually looks for",
+    "HERO"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Clause exception navigator: assignments, affiliate carve-outs, consent, notice, cure, amendments, effective dates",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N28": {
+   "catalog_cells": [
+    "measured catch rate on seeded errors",
+    "BASELINE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Contrary-hypothesis check: \"which document could overturn this conclusion?\"",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N29": {
+   "catalog_cells": [
+    "exact-byte approval is not enough",
+    "HERO"
+   ],
+   "evidence": "fixed release schema, control and direction characters stripped, token leak check: kk-review release tests rs01-rs05; hidden-layer stripping for rich documents not built",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Safe release sanitiser: fixed release schema; strips hidden layers; rehearsal equals delivery",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N3": {
+   "catalog_cells": [
+    "catches mistakes before they leave",
+    "CORE"
+   ],
+   "evidence": "the release tab shows the exact files and digest before approval; a recipient-side dry run is not built",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Release rehearsal: dry-run the release and show exactly what the recipient will see and what the offline verifier will say, before approval",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N30": {
+   "catalog_cells": [
+    "no-install vs right-recipient conflict",
+    "HERO"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Recipient key ceremony: organisation key or bearer link, stated risks, rotation, revocation",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N31": {
+   "catalog_cells": [
+    "search can reveal the deal",
+    "HERO"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Public-lane query guard: approved-term queries, deal-name deny list, preview",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N32": {
+   "catalog_cells": [
+    "legal access risk",
+    "HERO"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Authorised source import: curated export first, connectors only with the provider's terms and the customer's authorisation",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N33": {
+   "catalog_cells": [
+    "DEVICE_ONLY must work on ordinary hardware",
+    "HERO"
+   ],
+   "evidence": "readiness screen checks model service, model, worker and sandbox with exact fixes: tests/e2e/readiness.mjs; model catalogue not built",
+   "status": "PARTIAL",
+   "surface_class": "WEB_COMPANION",
+   "title": "Local-model readiness checker and catalogue",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N34": {
+   "catalog_cells": [
+    "the only enforceable form of source-level minimisation",
+    "HERO"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Assurance-bounded prompt assembler: the kernel builds the provider request from templates, authenticated instructions, resolved slices and t",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N35": {
+   "catalog_cells": [
+    "models are not lawyers",
+    "HERO"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Named expert sign-off for interpretive (legal) claims, recorded in the capsule",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N36": {
+   "catalog_cells": [
+    "a business must pay for itself",
+    "BASELINE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Economics view: cost, latency and reviewer minutes per accepted answer",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N37": {
+   "catalog_cells": [
+    "explicit checkable basis between requester and issuer",
+    "HERO"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Pre-agreed Answer Contract: question, scope, acceptable evidence, required calculations, exception rules, recipient, verification rules",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N38": {
+   "catalog_cells": [
+    "objective ground truth; matches judge-stated taste (private benchmarking, evals)",
+    "EXPANSION (candidate hero alternative, see 05)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Private evaluation capsule: run a held-out private test set against an agent, skill or model and issue a score the recipient can verify with",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N39": {
+   "catalog_cells": [
+    "judge-stated taste (private Granola); reuses voice + memory",
+    "EXPANSION"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Private meeting notes: TEE or local transcription, labelled notes, memory, action items",
+   "trust_reason": "Needs microphone, snapshots of the real filesystem or running agent-written code under native isolation, which a browser tab cannot grant or enforce."
+  },
+  "N4": {
+   "catalog_cells": [
+    "turns our test suite into a user feature",
+    "PLATFORM"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Self red-team: run the injection corpus against the user's own imported documents; list files that contain instructions aimed at agents",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N40": {
+   "catalog_cells": [
+    "a known agent failure (an agent deleting 100k lines, per a judge's public post)",
+    "BASELINE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Reversible work: copy-on-write workspace snapshots and commit-on-approve for any destructive file operation",
+   "trust_reason": "Needs microphone, snapshots of the real filesystem or running agent-written code under native isolation, which a browser tab cannot grant or enforce."
+  },
+  "N41": {
+   "catalog_cells": [
+    "the AI judges and other agents can run the product; distribution through agents",
+    "HERO (judge path)"
+   ],
+   "evidence": "kaku CLI (serve, pair, approve, verify) and kaku mcp (list, start, status, request approval, verify): kk-cli mcp tests mc01-mc02; import, ask and rehearse commands not built",
+   "status": "PARTIAL",
+   "surface_class": "CLI_MCP",
+   "title": "Agent-callable CLI and MCP surface: import, ask, rehearse, release, verify from the command line or by another agent (like Claude Code or Co",
+   "trust_reason": "Agent and terminal entry points to the same kernel; they cannot approve interactively and an MCP client is a separate principal whose results are public-labelled unless released."
+  },
+  "N42": {
+   "catalog_cells": [
+    "judge-stated taste (selling viewing keys); builds on grants",
+    "EXPANSION"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Scoped time-limited read access (viewing-key style) to a derived artifact",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N43": {
+   "catalog_cells": [
+    "resolves the logging contradiction",
+    "HERO"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Diagnostic store: separate encrypted prompt/response store with retention and access rules",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N44": {
+   "catalog_cells": [
+    "judges, AI screeners and buyers can reproduce it",
+    "HERO (judge path)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_HOSTED",
+   "title": "Demonstration kit: kakurega demo fixture mode, live mode, per-scene commands, evidence-tier labels (see 06)",
+   "trust_reason": "Public, no-install material for recipients and reviewers (verifier page, sample capsules, guides, demo kit); contains no private data and trusts nothing the sender hosts because verification runs in the reader's browser."
+  },
+  "N45": {
+   "catalog_cells": [
+    "the viewer performs the check",
+    "HERO"
+   ],
+   "evidence": "/verify in-browser verifier: scripts/e2e valid and tampered journeys; sample capsule set on the page not built",
+   "status": "PARTIAL",
+   "surface_class": "WEB_HOSTED",
+   "title": "Recipient web verifier with sample capsules (good, tampered, unverifiable, incomplete scope)",
+   "trust_reason": "Public, no-install material for recipients and reviewers (verifier page, sample capsules, guides, demo kit); contains no private data and trusts nothing the sender hosts because verification runs in the reader's browser."
+  },
+  "N46": {
+   "catalog_cells": [
+    "Ghast's most copyable pattern; covers every feature group",
+    "BASELINE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_HOSTED",
+   "title": "Tested walkthrough guides (dated, hardware, prerequisites, proves / does not prove)",
+   "trust_reason": "Public, no-install material for recipients and reviewers (verifier page, sample capsules, guides, demo kit); contains no private data and trusts nothing the sender hosts because verification runs in the reader's browser."
+  },
+  "N47": {
+   "catalog_cells": [
+    "gives the recipient a reason to demand verification and ties the product to a real NEAR outcome; must not be a gimmick",
+    "EXPANSION (candidate for the NEAR demo, see 07)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_HOSTED",
+   "title": "Pay-on-verified-answer: escrow released when the capsule satisfies the Answer Contract (pattern seen in Judge on NEAR and Veridom Pay); paym",
+   "trust_reason": "Needs a shared service (escrow, organisation tenancy); only claimable after hosted-mode isolation, key management and honest wording are validated."
+  },
+  "N48": {
+   "catalog_cells": [
+    "competing submissions already target AI reviewers this way (Morrowseal, AgentGuard, Jurat)",
+    "HERO (judge path)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_HOSTED",
+   "title": "Reviewer guide files: AGENTS.md, llms.txt, a claim-to-code map, a \"Guide for judges\" section, one-command fresh-clone path",
+   "trust_reason": "Public, no-install material for recipients and reviewers (verifier page, sample capsules, guides, demo kit); contains no private data and trusts nothing the sender hosts because verification runs in the reader's browser."
+  },
+  "N49": {
+   "catalog_cells": [
+    "a structured, checkable \"attack fails\" artefact",
+    "BASELINE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Attack outcomes table: seeded injected orders and what each did (like Throughput Treasury's table), regenerated by a script",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N5": {
+   "catalog_cells": [
+    "honest accuracy instead of a vague \"AI checked it\"",
+    "CORE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Spot-check QA: the reviewer verifies a random sample of extracted facts; the UI shows the measured extraction error rate with a confidence i",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N50": {
+   "catalog_cells": [
+    "the recipient can test what is testable and sees what is not established",
+    "HERO"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Challengeable Proof Capsule: permitted check, binding statement, challenge protocol with a budget",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N51": {
+   "catalog_cells": [
+    "the encrypted prompt is not the only exit",
+    "HERO"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Remote-tool guard: provider-side search/browse/plugin tools disabled for restricted data; canary tests; exposure shown otherwise",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N52": {
+   "catalog_cells": [
+    "a reviewer's own question or altered artifact is a stronger test than a prerecorded run",
+    "HERO (judge path)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_HOSTED",
+   "title": "Stranger-controlled challenge in the demo kit",
+   "trust_reason": "Public, no-install material for recipients and reviewers (verifier page, sample capsules, guides, demo kit); contains no private data and trusts nothing the sender hosts because verification runs in the reader's browser."
+  },
+  "N53": {
+   "catalog_cells": [
+    "OpenClaw and Hermes already work this way; owner request",
+    "EXPANSION (sequenced after the hero; part of the PRD)"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "MOBILE",
+   "title": "Own-PC daemon and Telegram bridge: headless always-on mode on the user's PC, outbound connection to Telegram (then other chat apps), pairing",
+   "trust_reason": "Chat services and phones are untrusted transports; consequential approvals need a passkey with an exact-bytes summary on the device, and the kernel stays on the user's machine."
+  },
+  "N54": {
+   "catalog_cells": [
+    "a private model inside a company network leaked a Board-only memo to a junior analyst when permissions were checked at index time (Veriprajna demo, `09`)",
+    "HERO"
+   ],
+   "evidence": "broker refuses unreadable and withheld files and audits them: kk-broker tests; live label authorisation per retrieval beyond files not built",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Withheld-with-reason retrieval: every retrieval is authorised against live labels and grants at query time, not at import; a withheld source",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N55": {
+   "catalog_cells": [
+    "IronClaw 1.0 self-built sandboxed tools",
+    "EXPANSION"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "Agent-written tools: tools the agent writes run only in a worker, are reviewed, labelled, versioned and reusable",
+   "trust_reason": "Needs microphone, snapshots of the real filesystem or running agent-written code under native isolation, which a browser tab cannot grant or enforce."
+  },
+  "N56": {
+   "catalog_cells": [
+    "IronClaw 1.0 multi-tenant design",
+    "EXPANSION"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_HOSTED",
+   "title": "Organisation skill sharing with admin-blind workspaces: shared tools and skills; administrators cannot open member workspaces by default; an",
+   "trust_reason": "Needs a shared service (escrow, organisation tenancy); only claimable after hosted-mode isolation, key management and honest wording are validated."
+  },
+  "N57": {
+   "catalog_cells": [
+    "NEAR's stated plan for private programmatic compliance",
+    "EXPANSION"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Compliance evidence view: which code and route processed which labelled data, for which purpose, exported from the log; mapped to GDPR purpo",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N58": {
+   "catalog_cells": [
+    "NEAR blog, Intel Trust Authority integration",
+    "BASELINE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Additional independent attestation check (Intel Trust Authority where the route supports it), a written route verification policy (debug-mod",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N59": {
+   "catalog_cells": [
+    "a judge's rule \"if an agent can't use it, don't ship it\"; Hermes and OpenClaw reach (`09` 11)",
+    "HERO"
+   ],
+   "evidence": "review workflow has CLI and MCP commands; not every capability yet",
+   "status": "PARTIAL",
+   "surface_class": "CLI_MCP",
+   "title": "Agent-usable everything: every capability has a documented CLI and MCP command with machine-readable output, so other agents (and AI judges)",
+   "trust_reason": "Agent and terminal entry points to the same kernel; they cannot approve interactively and an MCP client is a separate principal whose results are public-labelled unless released."
+  },
+  "N6": {
+   "catalog_cells": [
+    "how real diligence teams work",
+    "PLATFORM"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Reviewer queue and roles: assignments, two-person approval, comment threads, disagreement log",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N60": {
+   "catalog_cells": [
+    "approval-fatigue paper; 46% of CISOs fear agents exceeding permissions",
+    "EXPANSION"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Approval-quality monitor: time-to-approve, rubber-stamp detection, friction only at consequential moments, seeded review drills, and short c",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N61": {
+   "catalog_cells": [
+    "law-firm buyer story; NEAR's \"assume we're lying\"",
+    "HERO"
+   ],
+   "evidence": "Protection tab 'Where the data went' and audit of every request; one-sentence answer not generated",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "\"Where did my data go?\" one-sentence answer plus detail for every task, generated from execution evidence, never by a model: the actual path",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N62": {
+   "catalog_cells": [
+    "Jensen Huang's Hermes keynote demo",
+    "EXPANSION"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "DESKTOP_NATIVE",
+   "title": "One-prompt setup of a customised worker; safe defaults only, never silently grants a new privilege or uploads private data",
+   "trust_reason": "Needs microphone, snapshots of the real filesystem or running agent-written code under native isolation, which a browser tab cannot grant or enforce."
+  },
+  "N63": {
+   "catalog_cells": [
+    "Pixel Office, live agent dashboards, Ghast Agent Team",
+    "EXPANSION"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "WEB_COMPANION",
+   "title": "Live agent office view: true-state team view (real progress, failures and recovery, which label each worker holds, what it waits for), no co",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N64": {
+   "catalog_cells": [
+    "Perplexity Numbat (Apache-2.0)",
+    "BASELINE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Correlated-action monitor: flags sequences such as a worker reading a secret then attempting an external send; produces forensic records and",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N65": {
+   "catalog_cells": [
+    "Ghast Workbench blocks the first chat behind a 0G top-up (hands-on benchmark, `BENCHMARK_GHAST_WORKBENCH.md`)",
+    "BASELINE"
+   ],
+   "evidence": "no account, local model, readiness screen: scripts/e2e, readiness.mjs; unaided first-run by a stranger not yet observed (I-07)",
+   "status": "PARTIAL",
+   "surface_class": "WEB_COMPANION",
+   "title": "Zero-friction first run: first value with no account and no crypto: a local or free private model works immediately; payment, keys or sign-i",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N66": {
+   "catalog_cells": [
+    "owner wants desktop, web, extension, CLI/MCP and messaging on one coherent security model (`SURFACE_PARITY_AND_TRUST_BOUNDARY_MATRIX.md`)",
+    "EXPANSION"
+   ],
+   "evidence": "local-companion mode built and tested (kk-companion security tests, scripts/e2e); hosted mode not built",
+   "status": "PARTIAL",
+   "surface_class": "WEB_COMPANION",
+   "title": "Full web workspace with two stated modes: local-companion mode (web UI talking to the user's own kernel) and hosted mode (a server-side kern",
+   "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."
+  },
+  "N67": {
+   "catalog_cells": [
+    "same",
+    "EXPANSION"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "EXTENSION",
+   "title": "Browser extension with narrow permissions, origin allowlist, content-script messaging rules and native messaging to the local companion; pag",
+   "trust_reason": "No kernel in the extension; it talks to the local companion, every web page is untrusted, and it needs the narrowest permissions and an origin allowlist."
+  },
+  "N68": {
+   "catalog_cells": [
+    "same",
+    "EXPANSION"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "MOBILE",
+   "title": "Mobile and messaging approvals and notifications: passkey approval with an exact-bytes summary, revoke, recovery; chat bridges stay public-c",
+   "trust_reason": "Chat services and phones are untrusted transports; consequential approvals need a passkey with an exact-bytes summary on the device, and the kernel stays on the user's machine."
+  },
+  "N69": {
+   "catalog_cells": [
+    "owner intent; OpenCode, Hermes and Claude Code set the bar",
+    "BASELINE"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "CLI_MCP",
+   "title": "Interactive terminal workspace: typing kaku opens a full-screen chat interface with streaming, slash commands, keyboard-first navigation, ex",
+   "trust_reason": "Agent and terminal entry points to the same kernel; they cannot approve interactively and an MCP client is a separate principal whose results are public-labelled unless released."
+  },
+  "N7": {
+   "catalog_cells": [
+    "proof for compliance and for the user",
+    "CORE"
+   ],
+   "evidence": "per-review Protection tab; no workspace-wide report",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Workspace privacy report: where each class of data went (device, which TEE route, public), counts, blocked attempts; exportable",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N8": {
+   "catalog_cells": [
+    "buyer requirement; states what expiry cannot do",
+    "PLATFORM"
+   ],
+   "evidence": null,
+   "status": "NOT_BUILT",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Retention and expiry: capsule retrieval expiry, workspace retention rules, legal hold",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  },
+  "N9": {
+   "catalog_cells": [
+    "fallback when no private route fits",
+    "PLATFORM"
+   ],
+   "evidence": "local Ollama route with honest 'small models find fewer defects' labelling: live-local run; capability labels per model not built",
+   "status": "PARTIAL",
+   "surface_class": "KERNEL_ALL_SURFACES",
+   "title": "Device-only quality tier: a local model path with honest capability labels",
+   "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."
+  }
+ }
+}

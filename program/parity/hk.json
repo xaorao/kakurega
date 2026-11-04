@@ -1,0 +1,43 @@
+{
+ "groups": [
+  {"ids": ["H3","H4","H11","H13","H16","H17","H18","H20","H23","H24","H25","H26","H27","H29","H30","H31","H33","H34","H35","H38","H48","H52"], "surface_class": "KERNEL_ALL_SURFACES", "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."},
+  {"ids": ["H2","H9","H10","H12","H15"], "surface_class": "WEB_COMPANION", "trust_reason": "Interface features over the kernel; the browser is the screen and the page is untrusted for approvals, with the same views inside the desktop shell."},
+  {"ids": ["H5","H8","H14","H21","H22","H36","H39","H40"], "surface_class": "DESKTOP_NATIVE", "trust_reason": "Needs the OS keychain, signed auto-update, local processes, isolated VMs, screen or microphone under native consent, which a browser cannot grant or enforce."},
+  {"ids": ["H1","H6","H28","H32","H51"], "surface_class": "WEB_HOSTED", "trust_reason": "Account, billing, sharing or marketplace concerns that need a shared service; claimable only after hosted-mode isolation, keys and honest wording are validated."},
+  {"ids": ["H37"], "surface_class": "EXTENSION", "trust_reason": "Controlling the user's browser needs the extension adapter with narrow permissions and an origin allowlist; pages stay untrusted."},
+  {"ids": ["K01","K02","K03","K04","K05","K06","K07","K13","K14","K15","K16","K17","K18","K19","K20","K21","K22","K23","K24","K26","K27"], "surface_class": "KERNEL_ALL_SURFACES", "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."},
+  {"ids": ["K08","K09","K10","K11","K12","K29"], "surface_class": "DESKTOP_NATIVE", "trust_reason": "Platform isolation, trusted approval and signed distribution depend on the operating system and are claimed per platform only after that platform passes its own isolation tests."},
+  {"ids": ["K28","K34","K35"], "surface_class": "WEB_COMPANION", "trust_reason": "User-facing hardening and workflows rendered through the local companion with a strict content policy and an isolated viewer; the page is untrusted."},
+  {"ids": ["K30","K31","K33"], "surface_class": "WEB_HOSTED", "trust_reason": "Reproducibility package, rooms and public log anchoring involve outside parties and published artifacts, with fixtures clearly labelled."},
+  {"ids": ["K32"], "surface_class": "CLI_MCP", "trust_reason": "An embeddable policy kernel is a developer SDK consumed by other agents through stable typed schemas."},
+  {"ids": ["K25"], "surface_class": "TECHNICALLY_INELIGIBLE", "trust_reason": "Scope-limited zero-knowledge calculation is a research go/no-go; no claim until a verified construction exists."}
+ ],
+ "built": {
+  "H2": {"status": "PARTIAL", "evidence": "typed catalogs, English and Hindi (unreviewed), parity tests, journey in Hindi: pnpm --filter @kakurega/web test, scripts/e2e; server-originated text stays English"},
+  "H4": {"status": "PARTIAL", "evidence": "project roots and folder chooser bound to allowed roots: kk-service tests, scripts/e2e; named workspaces not built"},
+  "H52": {"status": "PARTIAL", "evidence": "the signed capsule with an explicit not-established list: kk-evidence capsule tests, /verify"},
+  "K01": {"status": "BUILT_TESTED", "evidence": "kk-types label tests and kk-kernel taint tests (kernel-computed taint ignores worker hints)"},
+  "K02": {"status": "BUILT_TESTED", "evidence": "kk-policy Cedar schema, default policy and errors-as-deny tests"},
+  "K03": {"status": "BUILT_TESTED", "evidence": "kk-broker protocol, tools, budgets and audit tests (one JSON request per line, strict parse)"},
+  "K04": {"status": "PARTIAL", "evidence": "per-plan allowed operations and recomputed taint per step (kk-broker, kk-kernel tests); signed per-step capability tokens not built"},
+  "K05": {"status": "PARTIAL", "evidence": "release digest over recipient, policy, expiry and files with approval lease and byte re-check on delivery: kk-review release tests rs02, rs06; atomic spend not applicable yet"},
+  "K06": {"status": "BUILT_TESTED", "evidence": "kk-effects ledger states and crash recovery tests EF01-EF11; delivery goes through the ledger"},
+  "K08": {"status": "PARTIAL", "evidence": "native approval window with Touch ID prompt in the real Electron shell: tests/e2e/desktop.mjs (OS prompts stubbed; real Touch ID is II-03); passkey path not built"},
+  "K09": {"status": "BUILT_TESTED", "evidence": "bubblewrap profile with R-suite escape and exhaustion tests: scripts/test-linux (r18 intermittent failure once, open)"},
+  "K10": {"status": "PARTIAL", "evidence": "macOS works through a Linux VM (Lima) as a development transport: scripts/test-lima; strict Seatbelt or product-grade VM (X3) unresolved"},
+  "K12": {"status": "PARTIAL", "evidence": "cgroup and prlimit limits and launcher self-check: kk-sandbox tests; host watchdog beyond limits not built"},
+  "K14": {"status": "PARTIAL", "evidence": "real attestation verified and tamper-rejected: kk-near live tests; completions, E2EE and response verification BLOCKED on the NEAR key"},
+  "K15": {"status": "PARTIAL", "evidence": "route classes, Ollama loopback route and scripted route: kk-route tests; NEAR routes not wired"},
+  "K16": {"status": "BUILT_TESTED", "evidence": "route selection never falls back: kk-route tests; readiness and Start blocked when no route"},
+  "K17": {"status": "PARTIAL", "evidence": "capsule claims with basis and a not-established list: kk-evidence tests; three evidence classes not complete"},
+  "K18": {"status": "PARTIAL", "evidence": "DSSE signed envelopes and capsule: kk-evidence tests; hash-chained Merkle event log not built"},
+  "K19": {"status": "BUILT_TESTED", "evidence": "Rust and JavaScript verifiers agree on 31 shared vectors including tampering: kk-evidence tests, packages/verifier-js tests, scripts/e2e"},
+  "K20": {"status": "PARTIAL", "evidence": "key pinning and weak-key refusal in both verifiers; rotation, revocation and ISSUER_UNVERIFIED states not built"},
+  "K21": {"status": "PARTIAL", "evidence": "capsule with B1 assurance and explicit limits built and verified end to end: scripts/e2e; presentation layer minimal"},
+  "K23": {"status": "PARTIAL", "evidence": "source manifest with keyed HMAC commitment: kk-review import tests; claim scoping beyond findings not built"},
+  "K26": {"status": "PARTIAL", "evidence": "vault with a 0600 key file: kk-vault tests; per-compartment keys and encrypted indexes not built"},
+  "K27": {"status": "PARTIAL", "evidence": "the kernel builds a minimal import-closure sample for each check: kk-review check tests c02; general pre-model minimisation not built"},
+  "K30": {"status": "PARTIAL", "evidence": "scripted test model is labelled TEST MODE in the UI; recorded real attestation; full fixture/live labelling not complete"},
+  "K35": {"status": "PARTIAL", "evidence": "confidential code-review workflow works end to end with a scripted model and a real local model run (scripts/live-local); quality on real models BLOCKED until credits"}
+ }
+}

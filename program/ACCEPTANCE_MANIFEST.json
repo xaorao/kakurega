@@ -126,6 +126,31 @@
           "kind": "machine",
           "command": "pnpm --filter @kakurega/web test",
           "expect": "pass 3"
+        },
+        {
+          "id": "II-08",
+          "text": "Parity registry classifies every catalog capability with a surface class and a trust reason; built ones carry evidence (classification only: it does not mean the capabilities are built)",
+          "kind": "machine",
+          "command": "python3 scripts/parity_registry.py",
+          "expect": "PARITY REGISTRY COMPLETE"
+        },
+        {
+          "id": "II-09",
+          "text": "Real workflows beyond code review (documents, research, memory, coding) run on the shared backend in web and desktop",
+          "kind": "pending",
+          "evidence_needed": "journeys and hostile tests per workflow; registry rows move to BUILT_TESTED"
+        },
+        {
+          "id": "II-10",
+          "text": "Hosted mode only with validated tenant isolation, storage, key management and honest wording",
+          "kind": "pending",
+          "evidence_needed": "tenant isolation tests, key management review, hosted journeys"
+        },
+        {
+          "id": "II-11",
+          "text": "Windows and Linux desktop only where their isolation tests pass; platform security claims each have a platform test",
+          "kind": "pending",
+          "evidence_needed": "per-platform isolation test results"
         }
       ]
     },

@@ -1,0 +1,29 @@
+{
+ "groups": [
+  {"ids": ["N1","N2","N4","N5","N9","N11","N13","N14","N20","N22","N23","N34","N36","N37","N43","N49","N51","N54","N57","N58","N60","N61","N64","N3","N24","N25","N29","N30","N35","N42","N7","N8","N31","N50","N34"], "surface_class": "KERNEL_ALL_SURFACES", "trust_reason": "Logic that decides what may leave, what is trusted or how evidence is produced belongs in the kernel so every surface gets the same answer and none can weaken it; surfaces only display and relay user decisions."},
+  {"ids": ["N10","N12","N15","N16","N17","N18","N19","N21","N26","N27","N28","N32","N38","N6","N63","N65","N66","N33"], "surface_class": "WEB_COMPANION", "trust_reason": "Interactive review screens over private files: the browser is only the screen for the local kernel (companion), the page is untrusted for approvals, and the same views are loaded inside the desktop shell."},
+  {"ids": ["N39","N40","N55","N62"], "surface_class": "DESKTOP_NATIVE", "trust_reason": "Needs microphone, snapshots of the real filesystem or running agent-written code under native isolation, which a browser tab cannot grant or enforce."},
+  {"ids": ["N41","N59","N69"], "surface_class": "CLI_MCP", "trust_reason": "Agent and terminal entry points to the same kernel; they cannot approve interactively and an MCP client is a separate principal whose results are public-labelled unless released."},
+  {"ids": ["N44","N45","N46","N48","N52"], "surface_class": "WEB_HOSTED", "trust_reason": "Public, no-install material for recipients and reviewers (verifier page, sample capsules, guides, demo kit); contains no private data and trusts nothing the sender hosts because verification runs in the reader's browser."},
+  {"ids": ["N47","N56"], "surface_class": "WEB_HOSTED", "trust_reason": "Needs a shared service (escrow, organisation tenancy); only claimable after hosted-mode isolation, key management and honest wording are validated."},
+  {"ids": ["N53","N68"], "surface_class": "MOBILE", "trust_reason": "Chat services and phones are untrusted transports; consequential approvals need a passkey with an exact-bytes summary on the device, and the kernel stays on the user's machine."},
+  {"ids": ["N67"], "surface_class": "EXTENSION", "trust_reason": "No kernel in the extension; it talks to the local companion, every web page is untrusted, and it needs the narrowest permissions and an origin allowlist."}
+ ],
+ "built": {
+  "N11": {"status": "BUILT_TESTED", "evidence": "kernel re-runs each reproducer in the sandbox on a minimal extract, twice, deterministic: kk-review check tests c01-c04, job tests; run-check.py rs01"},
+  "N29": {"status": "PARTIAL", "evidence": "fixed release schema, control and direction characters stripped, token leak check: kk-review release tests rs01-rs05; hidden-layer stripping for rich documents not built"},
+  "N3": {"status": "PARTIAL", "evidence": "the release tab shows the exact files and digest before approval; a recipient-side dry run is not built"},
+  "N23": {"status": "PARTIAL", "evidence": "route badge and Protection tab say model, route class and endpoint; one-sentence reason per task not built"},
+  "N61": {"status": "PARTIAL", "evidence": "Protection tab 'Where the data went' and audit of every request; one-sentence answer not generated"},
+  "N33": {"status": "PARTIAL", "evidence": "readiness screen checks model service, model, worker and sandbox with exact fixes: tests/e2e/readiness.mjs; model catalogue not built"},
+  "N65": {"status": "PARTIAL", "evidence": "no account, local model, readiness screen: scripts/e2e, readiness.mjs; unaided first-run by a stranger not yet observed (I-07)"},
+  "N66": {"status": "PARTIAL", "evidence": "local-companion mode built and tested (kk-companion security tests, scripts/e2e); hosted mode not built"},
+  "N41": {"status": "PARTIAL", "evidence": "kaku CLI (serve, pair, approve, verify) and kaku mcp (list, start, status, request approval, verify): kk-cli mcp tests mc01-mc02; import, ask and rehearse commands not built"},
+  "N45": {"status": "PARTIAL", "evidence": "/verify in-browser verifier: scripts/e2e valid and tampered journeys; sample capsule set on the page not built"},
+  "N59": {"status": "PARTIAL", "evidence": "review workflow has CLI and MCP commands; not every capability yet"},
+  "N7": {"status": "PARTIAL", "evidence": "per-review Protection tab; no workspace-wide report"},
+  "N9": {"status": "PARTIAL", "evidence": "local Ollama route with honest 'small models find fewer defects' labelling: live-local run; capability labels per model not built"},
+  "N54": {"status": "PARTIAL", "evidence": "broker refuses unreadable and withheld files and audits them: kk-broker tests; live label authorisation per retrieval beyond files not built"},
+  "N51": {"status": "NOT_BUILT", "evidence": null}
+ }
+}

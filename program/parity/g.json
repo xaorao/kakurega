@@ -1,0 +1,34 @@
+{
+ "groups": [
+  {"ids": ["G1","G2","G3","G4","G5","G6","G8","G9","G10","G11","G12","G13","G14","G42"], "surface_class": "KERNEL_ALL_SURFACES", "trust_reason": "Verification runs on the same route class as the data inside the user's kernel; any surface only displays the result, and a hosted surface may run it only on a route eligible for the data label."},
+  {"ids": ["G7"], "surface_class": "KERNEL_ALL_SURFACES", "trust_reason": "Citations come from the kernel's versioned source manifest; clicking is a UI action on every surface, resolved by the kernel."},
+  {"ids": ["G15","G16","G17","G18","G19","G20","G21","G22","G23","G24","G25","G26","G27","G28"], "surface_class": "WEB_COMPANION", "trust_reason": "Document intelligence reads private files, so it runs in the local kernel (companion or desktop) with files mounted read-only; hosted web only for data the organisation owns and attests."},
+  {"ids": ["G29","G36","G37","G38","G39","G40","G46"], "surface_class": "KERNEL_ALL_SURFACES", "trust_reason": "These are the privacy controls themselves: enforced by the kernel outside the model, so no surface may bypass or weaken them; surfaces only render and relay the user's decision."},
+  {"ids": ["G30","G31","G32","G33","G34","G35"], "surface_class": "KERNEL_ALL_SURFACES", "trust_reason": "Helpers that advise; enforcement stays with labels, grants and the sandbox. Run in the kernel so detection never needs a third-party processor."},
+  {"ids": ["G41","G43","G44","G45","G47","G48","G49","G50"], "surface_class": "DESKTOP_NATIVE", "trust_reason": "Workbench features that need local files, processes, snapshots and the OS; the web companion shows them through the kernel API where the browser is only the screen."},
+  {"ids": ["G51","G52","G53","G54","G55","G56","G57","G58"], "surface_class": "KERNEL_ALL_SURFACES", "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."},
+  {"ids": ["G59","G60","G62","G63","G65","G66"], "surface_class": "KERNEL_ALL_SURFACES", "trust_reason": "Capsule issuance, selective release and signed comments are produced by the kernel's release pipeline and checked by the recipient; approval is only on a trusted path (native window or terminal), never the page."},
+  {"ids": ["G61"], "surface_class": "WEB_HOSTED", "trust_reason": "The recipient view must need no install: a static page that verifies in the browser with no upload, so the recipient trusts nothing the sender hosts."},
+  {"ids": ["G64"], "surface_class": "TECHNICALLY_INELIGIBLE", "trust_reason": "Zero-knowledge proof of a private calculation is a research go/no-go (D34); not claimable until a verified construction exists."},
+  {"ids": ["G67","G68","G69","G71"], "surface_class": "KERNEL_ALL_SURFACES", "trust_reason": "Attestation and signature checks must run in the user's own kernel, never be taken from a page or a server's say-so; surfaces display the verified facts."},
+  {"ids": ["G70","G75"], "surface_class": "TECHNICALLY_INELIGIBLE", "trust_reason": "Deferred until the underlying service or contract path is verified; no claim until then."},
+  {"ids": ["G72","G73"], "surface_class": "DESKTOP_NATIVE", "trust_reason": "Local audio and embedding models need device compute and microphone permission under native consent; the web companion cannot grant them safely."},
+  {"ids": ["G74"], "surface_class": "WEB_HOSTED", "trust_reason": "Optional sign-in is an account concern of hosted mode only; local mode needs no account."}
+ ],
+ "built": {
+  "G37": {"status": "BUILT_TESTED", "evidence": "kk-route route selection never falls back (route tests, kernel taint tests); tests/e2e readiness and browser journeys"},
+  "G39": {"status": "BUILT_TESTED", "evidence": "approval shows exact files, digest and withheld items: kk-review release tests rs01-rs07, tests/e2e/desktop.mjs native approval, scripts/e2e"},
+  "G61": {"status": "PARTIAL", "evidence": "/verify in-browser verifier plus python3 run-check.py: scripts/e2e verify journey; no hosted recipient page yet"},
+  "G60": {"status": "PARTIAL", "evidence": "release is a fixed minimal file set with token leak check: kk-review release tests; per-claim selection UI not built"},
+  "G33": {"status": "BUILT_TESTED", "evidence": "importer secret detection by name and content: kk-review import tests, fixtures/synthetic-repo journey"},
+  "G34": {"status": "BUILT_TESTED", "evidence": "injection phrase flagging, content treated as data: kk-review import tests, e2e Protection tab"},
+  "G35": {"status": "PARTIAL", "evidence": "route badge and Protection tab show model, route class and endpoint; live TEE facts only for attestation (kk-near)"},
+  "G67": {"status": "PARTIAL", "evidence": "kk-near verifies a real public attestation (TDX chain, GPU, nonce, signer) and rejects tampering; completion signatures BLOCKED on key"},
+  "G38": {"status": "PARTIAL", "evidence": "broker allowed roots and per-plan ops: kk-broker tests; per-agent folder grants UI not built"},
+  "G29": {"status": "PARTIAL", "evidence": "release preview before approval; no pre-send impact estimate of arbitrary text yet"},
+  "G44": {"status": "PARTIAL", "evidence": "Progress tab and audit table of every broker request; no cross-job timeline"},
+  "G59": {"status": "PARTIAL", "evidence": "capsule signed by a vault key with pinning in verifier: kk-evidence tests, scripts/e2e; issuer identity beyond a key not built"},
+  "G66": {"status": "PARTIAL", "evidence": "expiry is checked by both verifiers (vectors 'expired'); staleness against newer source not built"},
+  "G7":  {"status": "PARTIAL", "evidence": "findings show file:line and a reproducer; clickable citation into the source viewer not built"}
+ }
+}
