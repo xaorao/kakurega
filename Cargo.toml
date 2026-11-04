@@ -11,7 +11,9 @@ publish = false
 unsafe_code = "forbid"
 
 [profile.dev]
+incremental = false
 debug = "line-tables-only"
 
 [profile.test]
+incremental = false
 debug = "line-tables-only"
