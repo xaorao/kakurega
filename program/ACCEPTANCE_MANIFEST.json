@@ -92,7 +92,8 @@
           "text": "Real Electron window starts the companion, pairs automatically, loads the workspace; hostile page checks; native approval flow delivers a release (OS prompts stubbed in the main process; real Touch ID is II-03)",
           "kind": "machine",
           "command": "node tests/e2e/desktop.mjs",
-          "expect": "desktop checks passed"
+          "expect": "desktop checks passed",
+          "gui": true
         },
         {
           "id": "II-03",
@@ -205,7 +206,8 @@
           "text": "Real Secure Enclave key through the real binaries (no presence prompt): enrol, p256 listing, signed approval, missing helper, damaged blob",
           "kind": "machine",
           "command": "python3 tests/e2e/signed_approval_enclave.py",
-          "expect": "secure-enclave approval checks passed"
+          "expect": "secure-enclave approval checks passed",
+          "gui": true
         },
         {
           "id": "II-12e",
@@ -219,20 +221,21 @@
           "text": "Electron shell under renderer compromise and network attack: XSS cannot read the session or reach admin endpoints, CSP, stolen cookie from foreign origin and rebinding hosts, no CORS, no IPC channels, navigation, window.open, frames, drop",
           "kind": "machine",
           "command": "node tests/e2e/desktop_attack.mjs",
-          "expect": "desktop attack checks passed"
+          "expect": "desktop attack checks passed",
+          "gui": true
         },
         {
           "id": "II-13b",
           "text": "Electron production fuses on a copy of the binary: no Node mode, no NODE_OPTIONS, no inspector, and the app still starts",
           "kind": "machine",
           "command": "node tests/e2e/desktop_fuses.mjs",
-          "expect": "fuse checks passed"
+          "expect": "fuse checks passed",
+          "gui": true
         },
         {
           "id": "II-12f",
-          "text": "Owner (or a person) sees the macOS password or Touch ID prompt after the helper dialog on the shipped helper",
-          "kind": "human",
-          "evidence_needed": "owner runs python3 spikes/enclave/presence-check.py and reports the last line"
+          "text": "Owner ran spikes/enclave/presence-check.py on the Mac mini: the helper's dialog appeared, the owner approved and gave the account password, and the output was 'PASS: the presence-gated enclave key signed after your approval and the Rust verifier accepts the signature.' (pasted terminal output; the owner is the observer).",
+          "kind": "human_done"
         },
         {
           "id": "II-09d",
@@ -267,14 +270,16 @@
           "text": "Packaged Electron app: one asar with its header hash in Info.plist, load-only-from-asar and integrity fuses, Node and inspector doors closed; tampered header or contents do not run; a planted loose app folder is ignored",
           "kind": "machine",
           "command": "node tests/e2e/desktop_packaged.mjs",
-          "expect": "packaged-app checks passed"
+          "expect": "packaged-app checks passed",
+          "gui": true
         },
         {
           "id": "II-13d",
           "text": "Tauri candidate under the same renderer-compromise attacks: session unreadable, admin endpoints unreachable, CSP, no native command callable from the page, window.open and navigation refused",
           "kind": "machine",
           "command": "python3 tests/e2e/tauri_attack.py",
-          "expect": "tauri attack checks passed"
+          "expect": "tauri attack checks passed",
+          "gui": true
         },
         {
           "id": "II-10a",

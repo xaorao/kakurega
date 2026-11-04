@@ -40,6 +40,8 @@ const app = await electron.launch({
 try {
   const page = await app.firstWindow();
   await page.getByRole("heading", { name: "Review a project" }).waitFor({ timeout: 30000 });
+  // Record what the shell would hand to the user's browser, without opening anything on the owner's screen.
+  await app.evaluate(({ shell }) => { globalThis.__external = []; shell.openExternal = async (u) => { globalThis.__external.push(String(u)); }; });
   const origin = new URL(page.url()).origin;
   const port = Number(new URL(origin).port);
   const admin = JSON.parse(readFileSync(join(data, "admin.json"), "utf8"));
@@ -135,6 +137,8 @@ try {
   check("a foreign iframe cannot be read and the app cannot be framed by itself or others to attack it", frames === true);
   const drop = await page.evaluate(() => { const dt = new DataTransfer(); dt.items.add(new File(["x"], "x.html")); const e = new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }); document.body.dispatchEvent(e); return location.origin; });
   check("dropping a file on the window does not navigate it", drop === origin && new URL(page.url()).origin === origin);
+  const external = await app.evaluate(() => globalThis.__external);
+  check("the only things the shell would open in the owner's browser are plain https links without credentials", external.every((u) => /^https:\/\/[^@/]+\//.test(u)), JSON.stringify(external));
   check("the window is still the app after all of the above", new URL(page.url()).origin === origin && (await page.getByRole("heading", { name: "Review a project" }).count()) === 1);
 } finally {
   await app.close();

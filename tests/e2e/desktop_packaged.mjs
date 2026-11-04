@@ -78,13 +78,8 @@ const withLoose = await launch("loose");
 check("a loose app folder planted beside the asar is ignored and never runs", !existsSync(marker) && withLoose.served, `marker=${existsSync(marker)} served=${withLoose.served}`);
 rmSync(loose, { recursive: true, force: true });
 
-const asNode = await new Promise((res) => {
-  const c = spawn(pkg.bin, ["-e", "console.log('NODE-RAN')"], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, stdio: ["ignore", "pipe", "ignore"] });
-  let out = "";
-  c.stdout.on("data", (d) => (out += d));
-  setTimeout(() => { c.kill("SIGKILL"); spawnSync("pkill", ["-9", "-f", "packaged-test/pkg"]); res(out); }, 6000);
-});
-check("the packaged binary cannot be turned into a Node interpreter", !/NODE-RAN/.test(asNode));
+const nodeEnv = await launch("nodeenv", { ELECTRON_RUN_AS_NODE: "1", NODE_OPTIONS: "--inspect=9238" });
+check("with ELECTRON_RUN_AS_NODE and NODE_OPTIONS set the packaged binary still starts as the app, not as Node", nodeEnv.served);
 
 const restored = await launch("restored");
 check("after restoring the original asar the app starts again (the failures above were caused by the tampering)", restored.served);

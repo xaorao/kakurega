@@ -1,5 +1,5 @@
 import { spawnSync, spawn } from "node:child_process";
-import { cpSync, rmSync, mkdirSync } from "node:fs";
+import { cpSync, rmSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import net from "node:net";
@@ -16,15 +16,20 @@ const hard = join(work, "Electron.app/Contents/MacOS/Electron");
 const results = [];
 const check = (n, ok, d = "") => (results.push(ok), console.log(`${ok ? "PASS" : "FAIL"}  ${n}${d ? "  " + d : ""}`));
 
-const asNode = (bin) => spawnSync(bin, ["-e", "console.log('NODE-RAN')"], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8", timeout: 15000 });
+const probeDir = join(repo, "tests/e2e/probe");
+const asNode = (bin) => {
+  const out = join(work, `probe-${Math.random().toString(36).slice(2)}.txt`);
+  spawnSync(bin, [probeDir], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", PROBE_OUT: out }, timeout: 20000, killSignal: "SIGKILL", stdio: "ignore" });
+  return existsSync(out) ? readFileSync(out, "utf8") : "did-not-run";
+};
 const base = asNode(stock);
-check("control: the stock Electron can be turned into a plain Node interpreter by an environment variable", /NODE-RAN/.test(base.stdout), base.stdout.trim().slice(0, 40));
+check("control: the stock Electron can be turned into a plain Node interpreter by an environment variable", base === "false", base);
 
 const wire = await harden(hard, { cookieEncryption: false });
 check("fuses flipped: RunAsNode off, NODE_OPTIONS off, --inspect off, file-protocol privileges off (cookie encryption is left off in this unattended test: it makes macOS ask for the keychain password)", wire && Object.keys(wire).length > 0, JSON.stringify(wire));
 
 const h = asNode(hard);
-check("hardened: ELECTRON_RUN_AS_NODE no longer gives a Node interpreter", !/NODE-RAN/.test(h.stdout), (h.stdout + h.stderr).trim().slice(0, 60));
+check("hardened: ELECTRON_RUN_AS_NODE no longer gives a Node interpreter (the script runs as an Electron app instead)", h === "true", h);
 
 const probe = (bin, args, env = {}) =>
   new Promise((res) => {
@@ -44,7 +49,6 @@ check("control: the stock Electron opens a debugger port when started with --ins
 check("hardened: --inspect opens no debugger port", hardInspect === false);
 check("hardened: NODE_OPTIONS=--inspect opens no debugger port", hardEnv === false);
 // the hardened binary still runs the app
-import { existsSync, readFileSync } from "node:fs";
 const data = join(work, "data");
 mkdirSync(join(work, "root"), { recursive: true });
 mkdirSync(data, { recursive: true });

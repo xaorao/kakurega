@@ -45,6 +45,7 @@ try {
   check("the pairing code is gone from the address", !page.url().includes("pair="), page.url());
   await page.screenshot({ path: join(shots, "desktop-01-workspace.png") });
 
+  await app.evaluate(({ shell }) => { shell.openExternal = async () => {}; });
   const exposure = await page.evaluate(() => ({ require: typeof require, process: typeof process, electron: typeof window.electron, ipc: typeof window.ipcRenderer }));
   check("the page has no Node, no require, no electron bridge", Object.values(exposure).every((v) => v === "undefined"), JSON.stringify(exposure));
 

@@ -21,10 +21,14 @@ def main():
     milestone = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("--") else "I"
     only = [a.split("=", 1)[1] for a in sys.argv if a.startswith("--only=")]
     skip_heavy = "--skip-heavy" in sys.argv
+    with_gui = "--gui" in sys.argv
     items = manifest["milestones"][milestone]["items"]
     results = []
     for item in items:
         if only and item["id"] not in only:
+            continue
+        if item["kind"] == "machine" and item.get("gui") and not with_gui:
+            results.append({"id": item["id"], "status": "NOT_RUN_GUI", "note": "opens windows on this Mac; run with --gui when you are not at the screen (the Linux VM runs the same desktop checks without any window: scripts/desktop-linux)"})
             continue
         if item["kind"] == "machine":
             if skip_heavy and item["command"] != "scripts/test":
@@ -53,6 +57,9 @@ def main():
         return 3
     if "SKIPPED_BY_FLAG" in statuses:
         print("GATE: INCOMPLETE (items skipped by flag)")
+        return 3
+    if "NOT_RUN_GUI" in statuses and not (statuses - {"PASS", "PASS_OWNER_OBSERVED", "NOT_RUN_GUI"}):
+        print("GATE: INCOMPLETE (window-opening rows not run; use --gui: " + ", ".join(r["id"] for r in results if r["status"] == "NOT_RUN_GUI") + ")")
         return 3
     print("GATE: CONDITIONAL PASS (all machine-checkable items pass; outstanding: " + ", ".join(sorted(statuses - {"PASS", "PASS_OWNER_OBSERVED"})) + ")")
     return 0

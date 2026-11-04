@@ -52,6 +52,7 @@ impl Bridge {
         }
     }
 
+    #[cfg(test)]
     pub fn set_pairing_code(&mut self, code: &str) {
         self.set_pairing_code_aged(code, Duration::ZERO);
     }
