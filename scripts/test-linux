@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+vm="${KK_VM:-kak}"
+limactl start "$vm" >/dev/null 2>&1 || true
+limactl shell "$vm" -- bash -lc ". \$HOME/.cargo/env; cd '$repo' && export CARGO_TARGET_DIR=\$HOME/kk-target && cargo test --locked -p kk-sandbox -- --test-threads=1"

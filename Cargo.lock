@@ -297,6 +297,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "kk-sandbox"
+version = "0.0.1"
+dependencies = [
+ "kk-types",
+]
+
+[[package]]
 name = "kk-types"
 version = "0.0.1"
 dependencies = [

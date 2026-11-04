@@ -1,0 +1,12 @@
+[package]
+name = "kk-sandbox"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Launches untrusted workers inside a bubblewrap sandbox with no network, a minimal filesystem and hard limits"
+
+[dependencies]
+kk-types = { path = "../kk-types" }
+
+[lints]
+workspace = true
