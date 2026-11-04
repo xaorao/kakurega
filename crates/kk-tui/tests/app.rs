@@ -1836,3 +1836,95 @@ fn tu41_the_release_view_lists_personal_data_counts_between_what_is_withheld_and
     let hostile = kk_tui::app::release_lines(&json!({"available": true, "digest": "a", "recipient": "a", "files": [], "removed": [], "not_confirmed": [], "not_established": [], "personal_data": [{"file": "a\u{1b}[2Jb", "found": "x\u{7}y"}]})).join("\n");
     assert!(!hostile.contains('\u{1b}') && !hostile.contains('\u{7}'));
 }
+
+fn open_approval_for_job(app: &mut App) {
+    app.jobs.push(kk_tui::app::JobRow {
+        id: "job-4".into(),
+        recipient: "x".into(),
+        state: "ready".into(),
+    });
+    open_approval(app);
+    assert!(matches!(app.mode, Mode::Approval(_)));
+}
+
+#[test]
+fn tu42_an_approval_view_closes_by_itself_when_the_approval_was_decided_somewhere_else() {
+    let mut a = booted();
+    open_approval_for_job(&mut a);
+    // while it is still waiting, the view stays; the watch asks the service which approvals are waiting
+    let r = a.handle(Event::Tick);
+    let watch = r
+        .iter()
+        .find(|q| q.path == "/admin/approvals")
+        .expect("a watch request");
+    assert!(watch.admin && matches!(watch.method, Method::Get));
+    assert!(
+        a.handle(Event::Tick)
+            .iter()
+            .all(|q| q.path != "/admin/approvals"),
+        "one watch at a time"
+    );
+    a.handle(ok(
+        watch,
+        200,
+        json!({"approvals": [{"id": "appr-9", "job": "job-4"}]}),
+    ));
+    assert!(
+        matches!(a.mode, Mode::Approval(_)),
+        "still waiting, so the view stays"
+    );
+    // the next look finds it gone (approved or refused in the desktop window)
+    let r = a.handle(Event::Tick);
+    let watch = r.iter().find(|q| q.path == "/admin/approvals").unwrap();
+    a.handle(ok(watch, 200, json!({"approvals": []})));
+    assert!(matches!(a.mode, Mode::Normal));
+    assert!(text(&a).contains("Approval closed"));
+    // a failed look changes nothing
+    let mut b = booted();
+    open_approval_for_job(&mut b);
+    let r = b.handle(Event::Tick);
+    let watch = r.iter().find(|q| q.path == "/admin/approvals").unwrap();
+    b.handle(Event::Resp(Resp {
+        id: watch.id,
+        result: Err("down".into()),
+    }));
+    assert!(matches!(b.mode, Mode::Approval(_)));
+    assert!(
+        !text(&b).contains("Could not reach"),
+        "a background look stays quiet"
+    );
+    // another approval being gone does not close this one
+    let r = b.handle(Event::Tick);
+    let watch = r.iter().find(|q| q.path == "/admin/approvals").unwrap();
+    b.handle(ok(
+        watch,
+        200,
+        json!({"approvals": [{"id": "appr-77", "job": "job-9"}]}),
+    ));
+    assert!(
+        matches!(b.mode, Mode::Normal),
+        "this one is not in the list"
+    );
+}
+
+#[test]
+fn tu43_while_the_owner_is_approving_here_the_watch_does_not_interfere() {
+    let mut a = booted();
+    open_approval_for_job(&mut a);
+    typed(&mut a, "abcdef012345");
+    let sent = a.handle(key(KeyCode::Enter));
+    assert!(
+        sent.iter().any(|q| q.path.ends_with("/approve")),
+        "the approval was sent"
+    );
+    let ticks = a.handle(Event::Tick);
+    assert!(
+        ticks.iter().all(|q| q.path != "/admin/approvals"),
+        "no watch while our own answer is on its way"
+    );
+    let approve = sent.iter().find(|q| q.path.ends_with("/approve")).unwrap();
+    a.handle(ok(approve, 200, json!({"state": "approved"})));
+    assert!(matches!(a.mode, Mode::Normal));
+    assert!(text(&a).contains("Approved. The files are fixed."));
+    assert!(!text(&a).contains("Approval closed"));
+}

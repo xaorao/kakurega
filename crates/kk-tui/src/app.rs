@@ -82,6 +82,7 @@ enum Intent {
     ApproveJob(String),
     ApprovalDetail { job: String, aid: String },
     ApproveSubmit,
+    ApprovalWatch(String),
     Deny,
     Deliver,
     MemoryList,
@@ -155,6 +156,7 @@ pub struct App {
     pending: BTreeMap<u64, Intent>,
     watching: BTreeMap<String, usize>,
     inflight_polls: BTreeSet<String>,
+    approval_watch_inflight: bool,
     pub chat_history: Vec<(String, String)>,
     pub session: Option<String>,
     /// Long pastes shown as a short placeholder in the composer and expanded when a chat message is sent.
@@ -235,6 +237,7 @@ impl App {
             pending: BTreeMap::new(),
             watching: BTreeMap::new(),
             inflight_polls: BTreeSet::new(),
+            approval_watch_inflight: false,
             chat_history: Vec::new(),
             session: None,
             pasted: Vec::new(),
@@ -462,6 +465,24 @@ impl App {
                     .cloned()
                     .collect();
                 let mut out = Vec::new();
+                // an approval view must not stay open for something already decided in the desktop window or another terminal
+                if let Mode::Approval(v) = &self.mode {
+                    let deciding = self
+                        .pending
+                        .values()
+                        .any(|i| matches!(i, Intent::ApproveSubmit | Intent::Deny));
+                    if !self.approval_watch_inflight && !deciding {
+                        self.approval_watch_inflight = true;
+                        let aid = v.aid.clone();
+                        out.push(self.req(
+                            Intent::ApprovalWatch(aid),
+                            true,
+                            Method::Get,
+                            "/admin/approvals",
+                            None,
+                        ));
+                    }
+                }
                 for id in ids {
                     self.inflight_polls.insert(id.clone());
                     out.push(self.req(
@@ -1570,6 +1591,11 @@ impl App {
                 if let Intent::Poll(id) = &intent {
                     self.inflight_polls.remove(id);
                 }
+                if matches!(intent, Intent::ApprovalWatch(_)) {
+                    // a background look; the next tick tries again and other requests report an unreachable service
+                    self.approval_watch_inflight = false;
+                    return Vec::new();
+                }
                 self.say(
                     Kind::Error,
                     format!("Could not reach the service: {}", clean(&e)),
@@ -1905,6 +1931,30 @@ impl App {
                     statement: body["statement"].clone(),
                     requires_proof: body["requires_proof"] == true,
                 });
+                Vec::new()
+            }
+            Intent::ApprovalWatch(aid) => {
+                self.approval_watch_inflight = false;
+                if !ok {
+                    return Vec::new();
+                }
+                let waiting = body["approvals"]
+                    .as_array()
+                    .is_some_and(|a| a.iter().any(|x| x["id"].as_str() == Some(aid.as_str())));
+                // an answer to our own approve or refuse is on its way: it will say what happened
+                let deciding = self
+                    .pending
+                    .values()
+                    .any(|i| matches!(i, Intent::ApproveSubmit | Intent::Deny));
+                let still_open =
+                    !deciding && matches!(&self.mode, Mode::Approval(v) if v.aid == aid);
+                if still_open && !waiting {
+                    self.mode = Mode::Normal;
+                    self.say(
+                        Kind::Warn,
+                        "Approval closed: it was decided somewhere else (the desktop window or another terminal) or has expired, so there is nothing to approve here. /reviews shows where the review stands.",
+                    );
+                }
                 Vec::new()
             }
             Intent::ApproveSubmit => {

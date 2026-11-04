@@ -221,6 +221,33 @@ try:
     (repo / "target/e2e-shots/tui-delivered.txt").write_text(screen_text())
     send("Where are login sessions kept?\r")
     check("plain text is a chat message answered by the private assistant", wait_for(r"\[test model\] I received \d+ characters") is not None)
+    # an approval decided in another window closes the terminal's approval view by itself
+    import json as _json, urllib.request as _ur
+    _a = _json.load(open(data / "admin.json"))
+    _base = f"http://127.0.0.1:{_a['port']}"
+    def _req(path, body=None):
+        return _json.load(_ur.urlopen(_ur.Request(_base + path, data=_json.dumps(body).encode() if body is not None else None, headers={"authorization": "Bearer " + _a["token"], "content-type": "application/json"}, method="POST" if body is not None else "GET"), timeout=20))
+    def _until(fn, seconds):
+        end = time.time() + seconds
+        while time.time() < end:
+            pump(0.3)
+            v = fn()
+            if v:
+                return v
+        return None
+    _known = {j["id"] for j in _req("/admin/jobs")["jobs"]}
+    send("/review payments-service for second-audit\r")
+    _job = _until(lambda: next((j["id"] for j in _req("/admin/jobs")["jobs"] if j["id"] not in _known), None), 30)
+    check("a second review starts", _job is not None)
+    _ready = _until(lambda: next((j for j in _req("/admin/jobs")["jobs"] if j["id"] == _job and j["state"] == "ready"), None), 150)
+    check("and finishes ready", _ready is not None)
+    send(f"/approve {_job}\r")
+    _aid = _until(lambda: next((x["id"] for x in _req("/admin/approvals")["approvals"] if x["job"] == _job), None), 30)
+    check("its approval is waiting on the service", _aid is not None)
+    pump(2.0)
+    check("and the terminal shows the approval view", "type the first 12 characters" in screen_text().replace("\n", " ") or "first 12 characters" in screen_text())
+    _req(f"/admin/approvals/{_aid}/deny", {})
+    check("when it is refused somewhere else the terminal says so and leaves the view", wait_for(r"Approval closed", 15) is not None and "first 12 characters" not in screen_text().split("Approval closed")[-1])
     send("a draft to be replaced")
     pump(0.3)
     send("\x07")
