@@ -131,6 +131,8 @@ fn check_args(schema: &Value, args: &Value) -> Result<(), String> {
 /// else, and anything missing or unreadable, gets the same answer, so a path cannot be probed.
 pub struct Ctx {
     roots: Vec<std::path::PathBuf>,
+    /// Tier 0: only the tools that read. The tools that start a review or ask for an approval are neither listed nor callable.
+    read_only: bool,
 }
 
 impl Ctx {
@@ -142,7 +144,31 @@ impl Ctx {
         if let Ok(exports) = data_dir.join("exports").canonicalize() {
             roots.push(exports);
         }
-        Ctx { roots }
+        Ctx {
+            roots,
+            read_only: false,
+        }
+    }
+
+    pub fn read_only(mut self, on: bool) -> Ctx {
+        self.read_only = on;
+        self
+    }
+
+    /// The tools this connection may see and call.
+    fn visible(&self) -> Value {
+        let all = tools();
+        if !self.read_only {
+            return all;
+        }
+        Value::Array(
+            all.as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|t| t["annotations"]["readOnlyHint"] == true)
+                .collect(),
+        )
     }
 
     fn allows(&self, canonical: &std::path::Path) -> bool {
@@ -171,7 +197,7 @@ fn read_small(ctx: &Ctx, path: &str, suffixes: &[&str]) -> Result<Vec<u8>, Strin
 }
 
 fn call(admin: &Result<Admin, String>, ctx: &Ctx, name: &str, a: &Value) -> Value {
-    let all = tools();
+    let all = ctx.visible();
     let Some(def) = all
         .as_array()
         .and_then(|t| t.iter().find(|t| t["name"] == name))
@@ -288,13 +314,14 @@ pub fn handle(admin: &Result<Admin, String>, ctx: &Ctx, line: &str) -> Option<Va
             json!({"protocolVersion": PROTOCOL, "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "kakurega", "title": "Kakurega", "version": env!("CARGO_PKG_VERSION")}, "instructions": "Counts and statuses only. Source text, memory text and findings are never returned. Approvals happen in a window or terminal the owner controls."}),
         ),
         "ping" => ok(json!({})),
-        "tools/list" => ok(json!({"tools": tools()})),
+        "tools/list" => ok(json!({"tools": ctx.visible()})),
         "tools/call" => {
             let p = msg.get("params").cloned().unwrap_or(Value::Null);
             let Some(name) = p.get("name").and_then(Value::as_str) else {
                 return err(-32602, "params.name is required");
             };
-            if !tools()
+            if !ctx
+                .visible()
                 .as_array()
                 .is_some_and(|t| t.iter().any(|t| t["name"] == name))
             {
@@ -348,7 +375,10 @@ fn read_line_bounded(input: &mut dyn BufRead, max: usize) -> Option<(Vec<u8>, bo
 
 pub fn run(args: &[String]) -> u8 {
     let admin = connect(args);
-    let ctx = Ctx::new(&crate::data_dir(args));
+    let ctx = Ctx::new(&crate::data_dir(args)).read_only(
+        args.iter().any(|a| a == "--read-only")
+            || std::env::var("KAKU_MCP_READ_ONLY").is_ok_and(|v| v == "1"),
+    );
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
     let mut out = std::io::stdout();

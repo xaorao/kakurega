@@ -278,3 +278,100 @@ fn mc05_an_oversized_line_is_refused_without_being_buffered_and_the_next_request
     assert_eq!(r[0]["error"]["code"], -32600);
     assert_eq!(r[1]["result"], json!({}));
 }
+
+fn session_args(extra: &[&str], lines: &[String]) -> Vec<Value> {
+    let empty = std::env::temp_dir().join(format!("kk-mcp-ro-{}", std::process::id()));
+    std::fs::create_dir_all(&empty).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kaku"))
+        .args(["mcp", "--data-dir"])
+        .arg(&empty)
+        .args(extra)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    for l in lines {
+        writeln!(stdin, "{l}").unwrap();
+    }
+    drop(stdin);
+    String::from_utf8(child.wait_with_output().unwrap().stdout)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+#[test]
+fn mc06_read_only_mode_hides_and_refuses_every_tool_that_changes_anything() {
+    let list = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).to_string();
+    let full = session_args(&[], std::slice::from_ref(&list));
+    let ro = session_args(
+        &["--read-only"],
+        &[
+            list.clone(),
+            call(2, "start_review", json!({"repo": "/tmp", "recipient": "x"})),
+            call(3, "request_approval", json!({"id": "job-1"})),
+            call(4, "overview", json!({})),
+        ],
+    );
+    let names = |r: &Value| {
+        r["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    let (full_names, ro_names) = (names(&full[0]), names(&ro[0]));
+    assert!(
+        full_names.contains(&"start_review".to_string())
+            && full_names.contains(&"request_approval".to_string())
+    );
+    assert!(
+        !ro_names.contains(&"start_review".to_string())
+            && !ro_names.contains(&"request_approval".to_string()),
+        "{ro_names:?}"
+    );
+    assert_eq!(ro_names.len(), full_names.len() - 2);
+    for t in ro[0]["result"]["tools"].as_array().unwrap() {
+        assert_eq!(
+            t["annotations"]["readOnlyHint"], true,
+            "{} must be read-only",
+            t["name"]
+        );
+    }
+    assert_eq!(
+        ro[1]["error"]["code"], -32602,
+        "a hidden tool is unknown even when called by name"
+    );
+    assert_eq!(ro[2]["error"]["code"], -32602);
+    assert!(ro[3].get("result").is_some(), "reading still works");
+    let env = {
+        let empty = std::env::temp_dir().join(format!("kk-mcp-ro-env-{}", std::process::id()));
+        std::fs::create_dir_all(&empty).unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_kaku"))
+            .args(["mcp", "--data-dir"])
+            .arg(&empty)
+            .env("KAKU_MCP_READ_ONLY", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        writeln!(child.stdin.take().unwrap(), "{list}").unwrap();
+        let out = child.wait_with_output().unwrap();
+        serde_json::from_str::<Value>(
+            String::from_utf8(out.stdout)
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        names(&env).len(),
+        ro_names.len(),
+        "the environment switch does the same"
+    );
+}

@@ -21,7 +21,7 @@ Usage:
              [--transport lima|local] [--vm NAME] [--worker-bin PATH] [--launcher PATH]
   kaku pair                         print a new one-time pairing link for the browser
   kaku approve [APPROVAL-ID]        review the exact release in this terminal and approve it
-  kaku mcp                          speak MCP on stdin and stdout for an agent client (cannot approve)
+  kaku mcp [--read-only]            speak MCP on stdin and stdout for an agent client (cannot approve; --read-only also hides the tools that start a review or ask for an approval)
   kaku telegram pair | kaku telegram   notifications and counts on your phone (never contents)
   kaku approver enroll|list|revoke   key that signs approvals (required once enrolled)
   kaku extension pair|status|revoke  connect the browser extension (it can only queue suggestions)
