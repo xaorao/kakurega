@@ -17,3 +17,10 @@ debug = "line-tables-only"
 [profile.test]
 incremental = false
 debug = "line-tables-only"
+
+# third-party code needs no debug information; this keeps the build output several times smaller
+[profile.dev.package."*"]
+debug = false
+
+[profile.test.package."*"]
+debug = false
