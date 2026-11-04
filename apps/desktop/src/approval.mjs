@@ -31,7 +31,7 @@ export function createApprover({ client, confirm, authenticate, sign = null, see
       const detail = await client.get(`/admin/approvals/${item.id}`);
       if (detail.status !== 200) continue;
       const a = detail.json;
-      const yes = a.requires_proof ? true : await confirm(describe(a), a);
+      const yes = a.requires_proof && sign?.ownsDialog ? true : await confirm(describe(a), a);
       if (!yes) {
         await client.post(`/admin/approvals/${item.id}/deny`);
         done.push({ id: item.id, outcome: "denied" });

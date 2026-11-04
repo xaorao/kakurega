@@ -73,7 +73,7 @@ test("ds-proof when the service requires a proof the shell hands the signer only
   const calls = [];
   const a = { ...sample, requires_proof: true, statement_canonical: '{"approval":"ap1"}' };
   const signed = [];
-  const poll = createApprover({ client: fakeClient([a], calls), confirm: async () => { throw new Error("the helper owns the dialog"); }, authenticate: async () => { throw new Error("must not prompt twice"); }, sign: async (...args) => (signed.push(args), "PROOF") });
+  const poll = createApprover({ client: fakeClient([a], calls), confirm: async () => { throw new Error("the helper owns the dialog"); }, authenticate: async () => { throw new Error("must not prompt twice"); }, sign: Object.assign(async (...args) => (signed.push(args), "PROOF"), { ownsDialog: true }) });
   assert.equal((await poll())[0].outcome, "approved");
   assert.deepEqual(signed[0], ["ap1"], "no bytes, no recipient: only the id");
   assert.ok(calls.some((c) => c[0].endsWith("/approve") && c[1]?.proof === "PROOF"));
@@ -85,4 +85,19 @@ test("ds-proof when the service requires a proof the shell hands the signer only
   const refuses = createApprover({ client: fakeClient([{ ...a }], calls3), confirm: async () => true, authenticate: async () => true, sign: async () => { throw new Error("denied"); } });
   assert.equal((await refuses())[0].outcome, "signing_failed");
   assert.ok(calls3.some((c) => c[0].endsWith("/deny")));
+});
+
+test("ds-sw a signer that does not own the dialog gets the shell's confirmation first, and a refusal signs nothing", async () => {
+  const a = { ...sample, requires_proof: true };
+  const asked = [];
+  const signer = Object.assign(async (id) => (asked.push(id), "PROOF"), { ownsDialog: false });
+  const callsYes = [];
+  const yes = createApprover({ client: fakeClient([a], callsYes), confirm: async () => (asked.push("confirm"), true), authenticate: async () => true, sign: signer });
+  assert.equal((await yes())[0].outcome, "approved");
+  assert.deepEqual(asked, ["confirm", "ap1"], "dialog before signature");
+  const callsNo = [];
+  const asked2 = [];
+  const no = createApprover({ client: fakeClient([{ ...a }], callsNo), confirm: async () => false, authenticate: async () => true, sign: Object.assign(async (id) => (asked2.push(id), "P"), { ownsDialog: false }) });
+  assert.equal((await no())[0].outcome, "denied");
+  assert.deepEqual(asked2, [], "nothing was signed after a refusal");
 });

@@ -124,6 +124,72 @@ pub fn run(args: &[String]) -> u8 {
                 }
             }
         }
+        Some("sign") => {
+            // Used by a desktop shell that has already shown the owner the release and got a yes. The kernel's own
+            // statement is fetched here and checked; the caller supplies only the approval id, never bytes to sign.
+            let Some(id) = crate::flag(args, "--approval").filter(|i| {
+                !i.is_empty()
+                    && i.len() <= 64
+                    && i.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            }) else {
+                eprintln!("usage: kaku approver sign --approval ID");
+                return 2;
+            };
+            let key = match approval::load_approver(&crate::data_dir(args)) {
+                Ok(Some(k @ ApproverKey::Software(_))) => k,
+                Ok(Some(_)) => {
+                    eprintln!(
+                        "this computer uses a Secure Enclave key; sign with the enclave helper"
+                    );
+                    return 1;
+                }
+                _ => {
+                    eprintln!("no usable approver key here; run `kaku approver enroll` first");
+                    return 1;
+                }
+            };
+            let d = match admin.get(&format!("/admin/approvals/{id}")) {
+                Ok((200, v)) => v,
+                other => {
+                    eprintln!("the kernel does not know this approval: {other:?}");
+                    return 1;
+                }
+            };
+            let st = &d["statement"];
+            let statement = approval::Statement {
+                approval: st["approval"].as_str().unwrap_or("").into(),
+                job: st["job"].as_str().unwrap_or("").into(),
+                digest: st["digest"].as_str().unwrap_or("").into(),
+                recipient: st["recipient"].as_str().unwrap_or("").into(),
+                policy: st["policy"].as_str().unwrap_or("").into(),
+                expires: st["expires"].as_i64().unwrap_or(0),
+                nonce: st["nonce"].as_str().unwrap_or("").into(),
+            };
+            if statement.approval != id
+                || d["digest"].as_str() != Some(statement.digest.as_str())
+                || d["recipient"].as_str() != Some(statement.recipient.as_str())
+                || d["statement_canonical"].as_str()
+                    != Some(approval::canonical(&statement).as_str())
+            {
+                eprintln!("the kernel's details are inconsistent; refusing to sign");
+                return 1;
+            }
+            if statement.expires <= now() {
+                eprintln!("this approval has expired; refusing to sign");
+                return 1;
+            }
+            match key.sign_statement(&statement) {
+                Ok(p) => {
+                    println!("{p}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("signing failed: {e}");
+                    1
+                }
+            }
+        }
         Some("list") => match admin.get("/admin/approvers") {
             Ok((200, v)) => {
                 for a in v["approvers"].as_array().into_iter().flatten() {
@@ -178,7 +244,7 @@ pub fn run(args: &[String]) -> u8 {
             }
         }
         _ => {
-            eprintln!("usage: kaku approver enroll [--label NAME] | list | revoke KEY_ID");
+            eprintln!("usage: kaku approver enroll [--enclave] [--label NAME] | list | revoke KEY_ID | sign --approval ID");
             2
         }
     }

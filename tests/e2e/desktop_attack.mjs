@@ -6,7 +6,7 @@ import http from "node:http";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../..");
-const work = join(repo, "target/desktop-attack-tmp");
+const work = process.env.KK_WORK ?? join(repo, "target/desktop-attack-tmp");
 rmSync(work, { recursive: true, force: true });
 const root = join(work, "root");
 const project = join(root, "payments-service");
@@ -33,9 +33,9 @@ const rawHttp = (port, { method = "GET", path = "/", headers = {}, body = null }
   });
 
 const app = await electron.launch({
-  executablePath: join(repo, "apps/desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"),
-  args: [join(repo, "apps/desktop")],
-  env: { ...process.env, KAKU_BIN: join(repo, "target/debug/kaku"), KAKUREGA_DATA_DIR: data, KAKU_ARGS: `--root ${root} --scripted ${join(here, "script.json")} --ui-dir ${join(repo, "apps/web/dist")}` },
+  executablePath: process.env.ELECTRON_BIN ?? join(repo, "apps/desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"),
+  args: [process.env.DESKTOP_APP_DIR ?? join(repo, "apps/desktop")],
+  env: { ...process.env, KAKU_BIN: process.env.KAKU_BIN ?? join(repo, "target/debug/kaku"), KAKUREGA_DATA_DIR: data, KAKU_ARGS: `--root ${root} --scripted ${join(here, "script.json")} --ui-dir ${join(repo, "apps/web/dist")}` },
 });
 try {
   const page = await app.firstWindow();
@@ -104,7 +104,7 @@ try {
   }));
   check("the main process registers no IPC channels for a compromised page to call", surface.ipcChannels.length === 0, JSON.stringify(surface.ipcChannels));
   check("a page-side ipcRenderer, require, process, electron bridge and preload globals do not exist", await page.evaluate(() => [typeof require, typeof process, typeof window.electron, typeof window.ipcRenderer, typeof window.api, typeof window.kakurega].every((t) => t === "undefined")));
-  const mainSrc = readFileSync(join(repo, "apps/desktop/src/main.mjs"), "utf8");
+  const mainSrc = readFileSync(join(process.env.DESKTOP_APP_DIR ?? join(repo, "apps/desktop"), "src/main.mjs"), "utf8");
   check("the shell source sets no debugging or inspect switches, and registers no URL scheme (the test harness itself adds an inspector, so the live switch is not asserted)", !/remote-debugging|--inspect|appendSwitch|setAsDefaultProtocolClient/.test(mainSrc) && !surface.isDefaultProtocol, JSON.stringify(surface));
 
   // navigation and window attacks

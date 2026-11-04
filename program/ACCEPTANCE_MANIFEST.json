@@ -148,9 +148,9 @@
         },
         {
           "id": "II-11",
-          "text": "Windows and Linux desktop only where their isolation tests pass; platform security claims each have a platform test",
+          "text": "Windows and Linux desktop. Linux (Ubuntu 26.04 arm64, Electron 45 with the real setuid sandbox, virtual display in the Lima VM): the attack suite passes 19/19 and the no-Touch-ID approval flow passes 7/7 with a software approver key signed through kaku. NOT done: Windows at all; Linux packaging (deb or AppImage), integrity and fuses on Linux, a hardware or OS key store (TPM, Secret Service) instead of a key file, a real desktop session instead of Xvfb.",
           "kind": "pending",
-          "evidence_needed": "per-platform isolation test results"
+          "evidence_needed": "Windows run, Linux packaging and key custody, physical machines"
         },
         {
           "id": "II-12",
@@ -289,6 +289,13 @@
           "kind": "machine",
           "command": "cargo test -p kk-evidence gate",
           "expect": "test result: ok. 2 passed"
+        },
+        {
+          "id": "II-11a",
+          "text": "Linux desktop (Electron, virtual display in the VM): attack suite and no-Touch-ID approval flow",
+          "kind": "machine",
+          "command": "limactl shell kak -- (see TESTING.md for the exact environment)",
+          "expect": "19/19 and 7/7"
         }
       ]
     },

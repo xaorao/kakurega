@@ -23,6 +23,16 @@ function enclaveSigner() {
     });
 }
 
+// A software key kept by the kaku binary (never read by this process). The owner confirms in this shell's own dialog
+// first; kaku fetches the release from the kernel itself and signs only that.
+function softwareSigner() {
+  if (!kakuBin || !existsSync(join(dataDir, "approver.key"))) return null;
+  return (approvalId) =>
+    new Promise((resolve, reject) => {
+      execFile(kakuBin, ["approver", "sign", "--approval", approvalId, "--data-dir", dataDir], { timeout: 60000, maxBuffer: 65536 }, (err, out) => (err ? reject(err) : resolve(String(out).trim())));
+    });
+}
+
 async function waitForAdmin() {
   for (let i = 0; i < 100; i++) {
     try {
@@ -96,7 +106,12 @@ async function start() {
   window.once("ready-to-show", () => window.show());
   await window.loadURL(`${admin.origin}/#pair=${pairing.json.code}`);
 
-  const pollOnce = createApprover({ client, confirm, authenticate, sign: (id) => { const f = enclaveSigner(); return f ? f(id) : Promise.reject(new Error("no Secure Enclave approver key is enrolled on this Mac")); } });
+  const signer = (id) => {
+    const f = enclaveSigner() ?? softwareSigner();
+    return f ? f(id) : Promise.reject(new Error("no approver key is enrolled on this computer"));
+  };
+  Object.defineProperty(signer, "ownsDialog", { get: () => enclaveSigner() !== null });
+  const pollOnce = createApprover({ client, confirm, authenticate, sign: signer });
   setInterval(() => pollOnce().catch(() => {}), 1000);
 }
 
