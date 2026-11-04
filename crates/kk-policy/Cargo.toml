@@ -1,0 +1,13 @@
+[package]
+name = "kk-policy"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Cedar policy evaluation for the Kakurega broker: schema-validated requests, default deny, evaluation errors count as deny"
+
+[dependencies]
+kk-types = { path = "../kk-types" }
+cedar-policy = "=4.14.1"
+
+[lints]
+workspace = true

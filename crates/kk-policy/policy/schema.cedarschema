@@ -1,0 +1,34 @@
+entity Worker = {
+  kind: String,
+  clearance_level: Long,
+  compartments: Set<String>,
+  allowed_tools: Set<Tool>,
+};
+entity Artifact = {
+  level: Long,
+  compartments: Set<String>,
+  untrusted: Bool,
+  sensitivity_unknown: Bool,
+};
+entity Tool = {
+  readonly: Bool,
+};
+entity Route = {
+  class: String,
+  tee_verified: Bool,
+};
+entity Recipient = {
+  clearance_level: Long,
+};
+
+type StepContext = {
+  taint_level: Long,
+  taint_untrusted: Bool,
+  human_approved: Bool,
+};
+
+action "read.artifact" appliesTo { principal: Worker, resource: Artifact, context: StepContext };
+action "write.artifact" appliesTo { principal: Worker, resource: Artifact, context: StepContext };
+action "model.complete" appliesTo { principal: Worker, resource: Route, context: StepContext };
+action "tool.call" appliesTo { principal: Worker, resource: Tool, context: StepContext };
+action "release.propose" appliesTo { principal: Worker, resource: Recipient, context: StepContext };
