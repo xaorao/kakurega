@@ -123,6 +123,7 @@ pub struct Service {
     inner: Mutex<Inner>,
     store: Mutex<Vault>,
     ledger: Mutex<Ledger<SystemClock>>,
+    memory: Mutex<kk_memory::Memories>,
     pub test_mode: bool,
 }
 
@@ -156,6 +157,15 @@ impl Service {
             .map_err(|e| e.to_string())?;
         let store = open_vault(data_dir, "jobs.db")?;
         init_store(&store)?;
+        let memory = {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(b"kakurega memory fingerprint v1");
+            h.update(keys.commitment_key);
+            let fp: [u8; 32] = h.finalize().into();
+            kk_memory::Memories::open(open_vault(data_dir, "memory.db")?, fp)
+                .map_err(|e| e.to_string())?
+        };
         let mut inner = Inner {
             jobs: BTreeMap::new(),
             snaps: BTreeMap::new(),
@@ -229,6 +239,7 @@ impl Service {
             inner: Mutex::new(inner),
             store: Mutex::new(store),
             ledger: Mutex::new(ledger),
+            memory: Mutex::new(memory),
             test_mode,
         }))
     }
@@ -407,6 +418,177 @@ async fn readiness(axum::Extension(svc): Svc) -> Json<Value> {
         .unwrap_or_default();
     let ready = checks.iter().all(|c| c["ok"] == true);
     Json(json!({"ready": ready, "checks": checks}))
+}
+
+fn memory_json(r: &kk_memory::Recalled) -> Value {
+    let m = &r.memory;
+    json!({
+        "id": m.id, "text": m.text, "why": r.why, "untrusted": r.untrusted,
+        "level": format!("{:?}", m.label.level).to_lowercase(),
+        "compartments": m.label.compartments.iter().collect::<Vec<_>>(),
+        "subject": m.subject, "created_at": m.created_at,
+        "valid_from": m.valid_from, "valid_to": m.valid_to,
+        "source": match &m.source { kk_memory::Source::User => "you".to_string(), kk_memory::Source::Review(id) => format!("review {id}") },
+    })
+}
+
+fn memory_error(e: kk_memory::MemoryError) -> Response {
+    match e {
+        kk_memory::MemoryError::Refused(m) => {
+            error(StatusCode::UNPROCESSABLE_ENTITY, "MEMORY_REFUSED", &m)
+        }
+        kk_memory::MemoryError::NotFound => {
+            error(StatusCode::NOT_FOUND, "NO_MEMORY", "no such memory")
+        }
+        kk_memory::MemoryError::Storage(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "MEMORY_STORAGE",
+            "the memory store failed",
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+struct MemoryQuery {
+    q: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MemoryBody {
+    text: String,
+    reason: Option<String>,
+    level: Option<String>,
+    valid_to: Option<i64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ForgetBody {
+    reason: Option<String>,
+}
+
+fn level_from(s: Option<&str>) -> Option<kk_types::label::Level> {
+    use kk_types::label::Level;
+    match s.unwrap_or("internal") {
+        "public" => Some(Level::Public),
+        "internal" => Some(Level::Internal),
+        "confidential" => Some(Level::Confidential),
+        "restricted" => Some(Level::Restricted),
+        _ => None,
+    }
+}
+
+async fn memories_list(axum::Extension(svc): Svc, Query(q): Query<MemoryQuery>) -> Response {
+    let mem = svc.memory.lock().expect("lock");
+    let res = mem.owner_clearance().and_then(|c| {
+        match q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(text) => mem.recall(text, &c, now(), 50),
+            None => mem.list(&c, now(), 100),
+        }
+    });
+    match res {
+        Ok(items) => Json(json!({"memories": items.iter().map(memory_json).collect::<Vec<_>>()}))
+            .into_response(),
+        Err(e) => memory_error(e),
+    }
+}
+
+async fn memory_add(axum::Extension(svc): Svc, Json(b): Json<MemoryBody>) -> Response {
+    let Some(level) = level_from(b.level.as_deref()) else {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_LEVEL",
+            "level must be public, internal, confidential or restricted",
+        );
+    };
+    let m = kk_memory::NewMemory {
+        text: b.text,
+        label: kk_types::label::Label::new(level),
+        subject: None,
+        reason: b
+            .reason
+            .unwrap_or_else(|| "you added it in the Memory screen".into()),
+        source: kk_memory::Source::User,
+        valid_from: None,
+        valid_to: b.valid_to,
+    };
+    match svc.memory.lock().expect("lock").remember(now(), m) {
+        Ok(kk_memory::Remembered::Added(id)) => {
+            (StatusCode::CREATED, Json(json!({"id": id, "added": true}))).into_response()
+        }
+        Ok(kk_memory::Remembered::AlreadyKnown(id)) => {
+            Json(json!({"id": id, "added": false})).into_response()
+        }
+        Err(e) => memory_error(e),
+    }
+}
+
+async fn memory_correct(
+    axum::Extension(svc): Svc,
+    UrlPath(id): UrlPath<String>,
+    Json(b): Json<MemoryBody>,
+) -> Response {
+    let mem = svc.memory.lock().expect("lock");
+    let old = match mem.owner_clearance().and_then(|c| mem.history(&id, &c)) {
+        Ok(h) => h.into_iter().find(|x| x.id == id),
+        Err(e) => return memory_error(e),
+    };
+    let Some(old) = old else {
+        return error(StatusCode::NOT_FOUND, "NO_MEMORY", "no such memory");
+    };
+    let level = match level_from(b.level.as_deref()) {
+        Some(l) if b.level.is_some() => l,
+        Some(_) => old.label.level,
+        None => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "BAD_LEVEL",
+                "level must be public, internal, confidential or restricted",
+            )
+        }
+    };
+    let mut label = kk_types::label::Label::new(level);
+    for c in &old.label.compartments {
+        label = label.with_compartment(c);
+    }
+    let m = kk_memory::NewMemory {
+        text: b.text,
+        label,
+        subject: old.subject.clone(),
+        reason: b.reason.unwrap_or_else(|| "you corrected it".into()),
+        source: kk_memory::Source::User,
+        valid_from: None,
+        valid_to: b.valid_to.or(old.valid_to),
+    };
+    match mem.correct(now(), &id, m) {
+        Ok(new) => Json(json!({"id": new})).into_response(),
+        Err(e) => memory_error(e),
+    }
+}
+
+async fn memory_forget(
+    axum::Extension(svc): Svc,
+    UrlPath(id): UrlPath<String>,
+    Json(b): Json<ForgetBody>,
+) -> Response {
+    match svc.memory.lock().expect("lock").forget(
+        now(),
+        &id,
+        &b.reason.unwrap_or_else(|| "you asked to forget it".into()),
+    ) {
+        Ok(()) => Json(json!({"forgotten": true})).into_response(),
+        Err(e) => memory_error(e),
+    }
+}
+
+async fn memory_history(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    let mem = svc.memory.lock().expect("lock");
+    match mem.owner_clearance().and_then(|c| mem.history(&id, &c)) {
+        Ok(h) if h.is_empty() => error(StatusCode::NOT_FOUND, "NO_MEMORY", "no such memory"),
+        Ok(h) => Json(json!({"versions": h.iter().map(|m| json!({"id": m.id, "text": m.text, "reason": m.reason, "created_at": m.created_at, "current": m.superseded_by.is_none()})).collect::<Vec<_>>()})).into_response(),
+        Err(e) => memory_error(e),
+    }
 }
 
 async fn fs_list(axum::Extension(svc): Svc, Query(q): Query<PathQuery>) -> Response {
@@ -929,6 +1111,10 @@ impl Extension for Routes {
         Router::new()
             .route("/api/config", get(config))
             .route("/api/readiness", get(readiness))
+            .route("/api/memories", get(memories_list).post(memory_add))
+            .route("/api/memories/{id}/correct", post(memory_correct))
+            .route("/api/memories/{id}/forget", post(memory_forget))
+            .route("/api/memories/{id}/history", get(memory_history))
             .route("/api/fs", get(fs_list))
             .route("/api/jobs", get(list).post(start))
             .route("/api/jobs/{id}", get(get_job))

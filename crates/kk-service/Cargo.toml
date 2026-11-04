@@ -9,6 +9,8 @@ description = "The product service: review jobs, approvals and delivery behind t
 kk-types = { path = "../kk-types" }
 kk-evidence = { path = "../kk-evidence" }
 kk-vault = { path = "../kk-vault" }
+kk-memory = { path = "../kk-memory" }
+sha2 = "0.10"
 kk-effects = { path = "../kk-effects" }
 kk-review = { path = "../kk-review" }
 kk-route = { path = "../kk-route" }

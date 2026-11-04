@@ -2544,6 +2544,7 @@ dependencies = [
  "kk-companion",
  "kk-effects",
  "kk-evidence",
+ "kk-memory",
  "kk-review",
  "kk-route",
  "kk-sandbox",
@@ -2551,6 +2552,7 @@ dependencies = [
  "kk-vault",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "ureq",
 ]

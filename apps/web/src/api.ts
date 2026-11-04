@@ -37,6 +37,8 @@ export interface Config {
 }
 export interface ReadinessCheck { id: string; label: string; ok: boolean; detail: string; fix: string }
 export interface Readiness { ready: boolean; checks: ReadinessCheck[] }
+export interface MemoryItem { id: string; text: string; why: string; untrusted: boolean; level: string; compartments: string[]; created_at: number; valid_to: number | null; source: string }
+export interface MemoryVersion { id: string; text: string; reason: string; created_at: number; current: boolean }
 export interface Withheld { path: string; notes: string[] }
 export interface Summary {
   imported: number;
@@ -85,6 +87,11 @@ export const api = {
   session: () => request<{ paired: boolean; csrf: string }>("GET", "/api/session"),
   logout: () => request<void>("POST", "/api/logout"),
   config: () => request<Config>("GET", "/api/config"),
+  memories: (q?: string) => request<{ memories: MemoryItem[] }>("GET", `/api/memories${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  addMemory: (b: { text: string; level: string; reason?: string }) => request<{ id: string; added: boolean }>("POST", "/api/memories", b),
+  correctMemory: (id: string, b: { text: string; reason?: string }) => request<{ id: string }>("POST", `/api/memories/${id}/correct`, b),
+  forgetMemory: (id: string, reason?: string) => request<{ forgotten: boolean }>("POST", `/api/memories/${id}/forget`, { reason }),
+  memoryHistory: (id: string) => request<{ versions: MemoryVersion[] }>("GET", `/api/memories/${id}/history`),
   readiness: () => request<Readiness>("GET", "/api/readiness"),
   fs: (path?: string) => request<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>("GET", `/api/fs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   startJob: (repo: string, recipient: string) => request<{ id: string }>("POST", "/api/jobs", { repo, recipient }),

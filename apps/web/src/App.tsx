@@ -4,6 +4,7 @@ void ApiError;
 import { NewReview } from "./screens/NewReview";
 import { ReviewView } from "./screens/ReviewView";
 import { Verify } from "./screens/Verify";
+import { Memory } from "./screens/Memory";
 import { applyLocale, LOCALES, locale, rich, setLocale, t, type Locale } from "./i18n";
 
 function useHash() {
@@ -195,6 +196,7 @@ export function App() {
           <div class="body">
             <nav class="side" aria-label={t("nav.label")}>
               <a class="primary" href="#/">{t("nav.new")}</a>
+              <a href="#/memory" class={hash() === "#/memory" ? "navlink active" : "navlink"}>{t("nav.memory")}</a>
               <label class="sr" for="search">{t("nav.search.label")}</label>
               <input
                 id="search"
@@ -223,8 +225,10 @@ export function App() {
             <main class="main">
               <Show when={config()}>
                 {(c) => (
-                  <Show when={jobId()} fallback={<NewReview config={c()} onStarted={(id) => { void refresh(); location.hash = `#/job/${id}`; }} />}>
+                  <Show when={hash() !== "#/memory"} fallback={<Memory />}>
+                    <Show when={jobId()} fallback={<NewReview config={c()} onStarted={(id) => { void refresh(); location.hash = `#/job/${id}`; }} />}>
                     {(id) => <ReviewView id={id()} config={c()} onUpdate={() => void refresh()} />}
+                    </Show>
                   </Show>
                 )}
               </Show>

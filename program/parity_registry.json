@@ -558,7 +558,7 @@
     "when a fact became true / stopped",
     "Graphiti Apache-2.0"
    ],
-   "evidence": "kk-memory: validity windows and as-of recall, both edges mutation-checked (me03); library only, not yet wired into the service, review jobs or UI",
+   "evidence": "kk-memory validity windows and as-of recall (me03) with the Memory screen and service API (sv11, scripts/e2e); no automatic capture from reviews and no validity-window field in the UI yet",
    "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Time-aware memory",
@@ -570,8 +570,8 @@
     "gmOS explain()",
     "gmOS Apache-2.0"
    ],
-   "evidence": "kk-memory recall returns a why line (source, reason, validity) for every memory (me01); no UI yet",
-   "status": "PARTIAL",
+   "evidence": "every memory shows its reason and source in the Memory screen: kk-memory me01, scripts/e2e 'listed with the reason it is kept'",
+   "status": "BUILT_TESTED",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Why do you remember this?",
    "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."
@@ -582,8 +582,8 @@
     "with erasure rules (01, 6.7)",
     "Letta Apache-2.0"
    ],
-   "evidence": "kk-memory forget removes text, search index and the whole correction chain, leaves a keyed-hash tombstone and an audit entry without text (me05, me12, mutation-checked); no UI yet; file-level remnants of an encrypted database were not independently inspected",
-   "status": "PARTIAL",
+   "evidence": "confirmed forget in the Memory screen deletes the text, search index and correction chain; same text cannot return, also after a restart: kk-memory me05 (mutation-checked), kk-service sv11, scripts/e2e forget journey; remnants inside the encrypted file were not independently inspected",
+   "status": "BUILT_TESTED",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Memory editing and forgetting",
    "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."
@@ -594,7 +594,7 @@
     "see N-record below",
     "Letta (idea)"
    ],
-   "evidence": "kk-memory correct keeps history and replaces the current version atomically (me04); structured claim/wrong/corrected record (N14) not built; no UI",
+   "evidence": "Memory screen correction keeps history and the privacy level: kk-memory me04, kk-service sv11, scripts/e2e; structured wrong/corrected/source record (N14) not built",
    "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Correction memory",
@@ -630,7 +630,7 @@
     "per-compartment stores",
     "0G Memory (comparison)"
    ],
-   "evidence": "memories carry labels and compartments enforced at recall (me02, mutation-checked); per-project scoping not built",
+   "evidence": "labels enforced at recall (me02, me13); the Memory screen lists with the owner clearance; per-project scoping and route-clearance recall inside review jobs not wired",
    "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Private project memories",

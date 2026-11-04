@@ -505,6 +505,49 @@ impl Memories {
         Ok(out)
     }
 
+    pub fn owner_clearance(&self) -> Result<Label, MemoryError> {
+        let mut label = Label::new(Level::Restricted);
+        let mut st = self
+            .conn()
+            .prepare("SELECT DISTINCT compartments FROM memories WHERE compartments != ''")?;
+        let rows = st.query_map([], |r| r.get::<_, String>(0))?;
+        for r in rows {
+            for c in r?.split('\u{1f}').filter(|c| !c.is_empty()) {
+                label = label.with_compartment(c);
+            }
+        }
+        Ok(label)
+    }
+
+    pub fn list(
+        &self,
+        clearance: &Label,
+        as_of: i64,
+        limit: usize,
+    ) -> Result<Vec<Recalled>, MemoryError> {
+        let mut st = self.conn().prepare(
+            "SELECT * FROM memories WHERE status = 'active'
+               AND (valid_from IS NULL OR valid_from <= ?1) AND (valid_to IS NULL OR valid_to > ?1)
+             ORDER BY created_at DESC, rowid DESC",
+        )?;
+        let rows = st.query_map(params![as_of], row_to_memory)?;
+        let mut out = Vec::new();
+        for r in rows {
+            let r = r?;
+            if r.m.label.confidentiality_within(clearance) {
+                out.push(Recalled {
+                    why: explain(&r.m),
+                    untrusted: r.untrusted,
+                    memory: r.m,
+                });
+                if out.len() >= limit.clamp(1, 200) {
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
+
     pub fn history(&self, id: &str, clearance: &Label) -> Result<Vec<Memory>, MemoryError> {
         let mut start = id.to_string();
         let mut seen = BTreeSet::new();

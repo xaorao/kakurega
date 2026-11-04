@@ -491,3 +491,53 @@ fn me12_the_audit_trail_records_every_change_without_the_text() {
         .iter()
         .all(|e| !e.3.to_lowercase().contains("audit me")));
 }
+
+#[test]
+fn me13_listing_is_newest_first_label_gated_and_the_owner_clearance_sees_every_compartment() {
+    let m = mem(&dir());
+    m.remember(1, nm("first public thing", Label::new(Level::Public)))
+        .unwrap();
+    m.remember(
+        2,
+        nm(
+            "second legal thing",
+            Label::new(Level::Internal).with_compartment("legal"),
+        ),
+    )
+    .unwrap();
+    m.remember(
+        3,
+        nm(
+            "third restricted thing",
+            Label::new(Level::Restricted).with_compartment("hr"),
+        ),
+    )
+    .unwrap();
+    let texts = |c: &Label| {
+        m.list(c, 10, 50)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.memory.text)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        texts(&Label::new(Level::Internal)),
+        vec!["first public thing"]
+    );
+    assert_eq!(
+        texts(&m.owner_clearance().unwrap()),
+        vec![
+            "third restricted thing",
+            "second legal thing",
+            "first public thing"
+        ]
+    );
+    let old = id(m.remember(4, nm("will be replaced", internal())).unwrap());
+    m.correct(5, &old, nm("replacement", internal())).unwrap();
+    let after = texts(&m.owner_clearance().unwrap());
+    assert!(
+        after.contains(&"replacement".to_string())
+            && !after.contains(&"will be replaced".to_string()),
+        "superseded versions are not listed"
+    );
+}

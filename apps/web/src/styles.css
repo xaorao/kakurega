@@ -184,3 +184,12 @@ pre.cmd { font-size: 15px; }
 input[type="search"] { font: inherit; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--paper); color: var(--ink); width: 100%; box-sizing: border-box; }
 input[type="search"]:focus { border-color: var(--ink); }
 .greeting { margin: -4px 0 0; color: var(--graphite); font-size: 16px; }
+
+textarea { font: inherit; padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--paper); color: var(--ink); width: 100%; box-sizing: border-box; resize: vertical; }
+textarea:focus { border-color: var(--ink); }
+select { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--paper); color: var(--ink); }
+.navlink { display: block; padding: 8px 14px; color: var(--graphite); text-decoration: none; border-radius: var(--radius-s); }
+.navlink:hover, .navlink.active { color: var(--ink); background: var(--veil); }
+.mem-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+button.danger { background: var(--redline); border-color: var(--redline); color: #fff; }
+.confirm { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }

@@ -665,3 +665,115 @@ fn sv10_reviews_approvals_and_capsules_survive_a_restart_and_interrupted_reviews
         "stored source text is encrypted at rest"
     );
 }
+
+#[test]
+fn sv11_memory_needs_a_session_validates_input_and_survives_a_restart_including_forgetting() {
+    let (root, _repo) = repo_copy("memory");
+    let data = root.join("data");
+    let mem_id;
+    {
+        let svc = Service::new(
+            &data,
+            vec![root.clone()],
+            Arc::new(CannedRunner { confirm: true }),
+            true,
+        )
+        .unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let anon = Web::new(c.addr);
+        assert_eq!(anon.get("/api/memories").0, 401, "no session, no memories");
+        assert_eq!(
+            anon.post("/api/memories", json!({"text": "x"})).0,
+            401,
+            "no session and no CSRF token, no writes"
+        );
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        let (st, added) = w.post(
+            "/api/memories",
+            json!({"text": "Acme pays on the 15th", "level": "confidential"}),
+        );
+        assert_eq!(st, 201, "{added}");
+        mem_id = added["id"].as_str().unwrap().to_string();
+        assert_eq!(
+            w.post("/api/memories", json!({"text": "Acme pays on the 15th"}))
+                .1["added"],
+            false
+        );
+        for bad in [
+            json!({"text": "the password is hunter2hunter2"}),
+            json!({"text": ""}),
+            json!({"text": "ok", "level": "top-secret"}),
+            json!({"text": "ok", "surprise": 1}),
+        ] {
+            let (st, body) = w.post("/api/memories", bad.clone());
+            assert!(st == 422 || st == 400, "{bad} gave {st} {body}");
+            assert_ne!(st, 201);
+        }
+        let (_, listed) = w.get("/api/memories");
+        assert_eq!(listed["memories"].as_array().unwrap().len(), 1);
+        assert_eq!(listed["memories"][0]["level"], "confidential");
+        assert_eq!(w.post("/api/memories/nope/forget", json!({})).0, 404);
+        let (st, fixed) = w.post(
+            &format!("/api/memories/{mem_id}/correct"),
+            json!({"text": "Acme pays on the 20th", "reason": "terms changed"}),
+        );
+        assert_eq!(st, 200, "{fixed}");
+        let new_id = fixed["id"].as_str().unwrap().to_string();
+        let (_, hist) = w.get(&format!("/api/memories/{new_id}/history"));
+        assert_eq!(hist["versions"].as_array().unwrap().len(), 2);
+        let (_, after) = w.get("/api/memories?q=pays");
+        assert_eq!(after["memories"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            after["memories"][0]["level"], "confidential",
+            "a correction keeps the privacy level"
+        );
+        let (_, own) = w.post(
+            "/api/memories",
+            json!({"text": "Tabs not spaces", "level": "internal"}),
+        );
+        let own = own["id"].as_str().unwrap().to_string();
+        assert_eq!(
+            w.post(
+                &format!("/api/memories/{own}/forget"),
+                json!({"reason": "mine"})
+            )
+            .0,
+            200
+        );
+    }
+    {
+        let svc = Service::new(
+            &data,
+            vec![root.clone()],
+            Arc::new(CannedRunner { confirm: true }),
+            true,
+        )
+        .unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        let (_, listed) = w.get("/api/memories");
+        let texts: Vec<&str> = listed["memories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["text"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            texts,
+            vec!["Acme pays on the 20th"],
+            "the correction survived the restart and the forgotten one did not"
+        );
+        let (st, _) = w.post("/api/memories", json!({"text": "tabs not spaces"}));
+        assert_eq!(st, 422, "the decision to forget survived the restart");
+    }
+}
