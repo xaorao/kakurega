@@ -522,8 +522,8 @@
     "J12",
     "Aider, Apache-2.0"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "A fix's diff is shown with line numbers, applied only when nothing changed, undone only when nothing changed since, across up to four files all-or-nothing: kk-service sv24 and sv41, kk-review f03-f07, kk-service mw01 (rollback), web diff df01-df02, terminal /fixes /applyfix /undofix. Mutation-checked.",
+   "status": "BUILT_TESTED",
    "surface_class": "DESKTOP_NATIVE",
    "title": "Code diff and undo",
    "trust_reason": "Workbench features that need local files, processes, snapshots and the OS; the web companion shows them through the kernel API where the browser is only the screen."
@@ -606,8 +606,8 @@
     "Anamnesis, previewed and labelled",
     "Anamnesis"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "kaku memory import and the web Memory screen import card bring another assistant's markdown notes in as untrusted, labelled notes (secrets refused, instruction-like notes never given to a model): kk-service sv34, kk-cli memory_import, browser e2e import checks (126/126 at the time, 132/132 now), mutation-checked. Only the Claude Code note format is mapped; other assistants' adapters are not built.",
+   "status": "BUILT_TESTED",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Memory import",
    "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."
@@ -642,8 +642,8 @@
     "VT01-VT06",
     "0G Memory (comparison)"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "kaku backup / kaku restore: one encrypted file of all data with a recovery key shown once (ChaCha20-Poly1305, per-backup key): kk-backup bk01-bk07, kk-service sv27, real CLI run, eight mutations fail tests. Web, desktop and terminal buttons are not built; the command line is the surface.",
+   "status": "BUILT_TESTED",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Encrypted memory recovery",
    "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."
@@ -942,8 +942,8 @@
     "meter; cache partition rule; provider prompt cache is automatic and reports cached_tokens; its scope across keys is NOT VERIFIED (RK-55)",
     "J06"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "Context meter (estimate of tokens sent and turns left out) in web and terminal: kk-service sv28 and sv40, tu34. Not built: cleanup, prompt caching, exact token counts.",
+   "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Context meter, cleanup, prompt caching",
    "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
@@ -990,8 +990,8 @@
     "export goes through release path; copy warning (#40)",
     "J25"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "Copy buttons on code blocks and safe markdown in the web chat (md01-md06), memory export as JSON, backup. Not built: reply buttons, export of a conversation.",
+   "status": "PARTIAL",
    "surface_class": "WEB_COMPANION",
    "title": "Reply buttons, copy/export",
    "trust_reason": "Interface features over the kernel; the browser is the screen and the page is untrusted for approvals, with the same views inside the desktop shell."
@@ -1074,8 +1074,8 @@
     "read-only mounts, no-network tests, undo",
     "J12"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "Reproducer-verified fixes with the project's own tests as an oracle, diff, guarded undo, multi-file: see G49. Not built: a general coding agent that writes new code, non-Python test runners, a project workspace view.",
+   "status": "PARTIAL",
    "surface_class": "DESKTOP_NATIVE",
    "title": "Coding mode (project, diff, tests, rollback)",
    "trust_reason": "Needs the OS keychain, signed auto-update, local processes, isolated VMs, screen or microphone under native consent, which a browser cannot grant or enforce."
@@ -1170,8 +1170,8 @@
     "gmOS + Anamnesis in sandbox, labelled, encrypted",
     "J17"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "Persistent encrypted memory, recall that says why each note matched (the Memory screen's Why line), project-scoped notes, and recall by meaning through a local embedding model: kk-memory me21-me32, fu01-fu05, kk-service sv43, live measurement with nomic-embed-text recorded as modest (5 of 7 first results right on a tiny set); NEAR embeddings need a key.",
+   "status": "BUILT_TESTED",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Persistent memory, recall card, local vectors",
    "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
@@ -1290,8 +1290,8 @@
     "public lane; queries checked against labels",
     "J18"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "Web pages the owner approves by exact address, and web search through an owner-chosen SearXNG-style provider with the exact words approved first; results are untrusted data: kk-fetch fe01-fe10, kk-service sv26 and sv42, web panel and terminal /search /read /web (tu35-tu36), browser checks. Not verified against a live search provider; no robots.txt, PDF or JavaScript pages.",
+   "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Web research",
    "trust_reason": "Agent, memory, tool and routing behaviour is decided by the kernel under labels and grants; every surface renders the same state and none may add a privileged shortcut."
@@ -1458,8 +1458,8 @@
     "signed updates; diagnostics opt-in and content-free; update path cannot carry content",
     "J28"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "Update verification exists (K29); no auto-update, no diagnostics, no reply reports.",
+   "status": "PARTIAL",
    "surface_class": "DESKTOP_NATIVE",
    "title": "Auto-update, consented diagnostics, reply reports",
    "trust_reason": "Needs the OS keychain, signed auto-update, local processes, isolated VMs, screen or microphone under native consent, which a browser cannot grant or enforce."
@@ -1818,8 +1818,8 @@
     "S11, 11",
     "SC01-SC04"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "Signed update announcements with rollback, expiry and checksum checks (`kaku update`): kk-update up01-up09, kk-cli uc01; NOTICE.md; Cargo.lock and pnpm-lock.yaml are committed and setup installs from the lockfile. Not built: SBOM, installing an update (needs a signed build).",
+   "status": "PARTIAL",
    "surface_class": "DESKTOP_NATIVE",
    "title": "Signed updates, SBOM, pinned dependencies, NOTICE",
    "trust_reason": "Platform isolation, trusted approval and signed distribution depend on the operating system and are claimed per platform only after that platform passes its own isolation tests."

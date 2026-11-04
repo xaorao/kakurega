@@ -143,7 +143,7 @@
         },
         {
           "id": "II-09",
-          "text": "Workflows beyond code review on the shared backend. Built: private memory with backup export and import, private chat, document questions with checked quotes (web, terminal, desktop), proposed fixes verified against the finding's reproducer and applied to the owner's files only when nothing changed (service, web screen and terminal /fixes and /applyfix). Not built: research with live sources (needs an egress and privacy decision), coding beyond reproducer-verified fixes, MCP exposure of fixes.",
+          "text": "Workflows beyond code review on the shared backend. Built and tested: private memory (backup export and import, encrypted backup with a recovery key, project-scoped notes, notes imported from other assistants, recall by meaning with a local embedding model), private chat with streaming and a stop, document questions with checked quotes (web, terminal, desktop), research with live sources the owner approves first (pages and search through an owner-chosen provider; web and terminal), and proposed fixes verified against the finding's reproducer (up to four files, applied and undone only when nothing changed; service, web and terminal). Not built: a general coding agent that writes new code, non-Python test runners, MCP exposure of fixes (the MCP server is read-only by design), live search provider verification.",
           "kind": "pending",
           "evidence_needed": "journeys and hostile tests per workflow; registry rows move to BUILT_TESTED"
         },
