@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Builds the Linux .deb in the Lima VM, then installs it there and checks it (tests/e2e/deb_check.sh). The package is copied to
+# target/packaged-linux/ on this Mac. Version comes from the first argument or the workspace version.
+set -euo pipefail
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+vm="${KK_VM:-kak}"
+version="${1:-$(grep -m1 '^version' "$repo/Cargo.toml" | sed 's/.*"\(.*\)".*/\1/')}"
+limactl start "$vm" >/dev/null 2>&1 || true
+pnpm --dir "$repo" --filter @kakurega/web run build >/dev/null
+limactl shell "$vm" -- bash -lc "
+set -e
+. \$HOME/.cargo/env; export CARGO_TARGET_DIR=\$HOME/kk-target RUSTUP_TOOLCHAIN=1.94.1
+cd '$repo' && cargo build --release --locked -p kk-cli -p kk-worker
+mkdir -p ~/kk-desktop && cd ~/kk-desktop
+[ -d node_modules/electron/dist ] || { npm install --no-audit --no-fund electron@45.2.2 >/dev/null; node node_modules/electron/install.js; }
+cd '$repo'
+rm -rf \$HOME/kk-pkg && mkdir -p \$HOME/kk-pkg
+node apps/desktop/scripts/package-linux.mjs \$HOME/kk-desktop/node_modules/electron/dist \$HOME/kk-target/release/kaku \$HOME/kk-target/release/kk-worker '$repo/apps/web/dist' \$HOME/kk-pkg/build '$version'
+DEB=\$(ls \$HOME/kk-pkg/build/*.deb)
+bash tests/e2e/deb_check.sh \"\$DEB\" '$version'
+"
+# the VM sees this folder read-only, so the package is copied back out
+rm -rf "$repo/target/packaged-linux" && mkdir -p "$repo/target/packaged-linux"
+limactl shell "$vm" -- bash -lc 'ls ~/kk-pkg/build/*.deb' | while read -r f; do limactl cp "$vm:$f" "$repo/target/packaged-linux/"; done
+echo "package: $(ls "$repo"/target/packaged-linux/*.deb)"

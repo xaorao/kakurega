@@ -30,6 +30,8 @@ target/debug/kaku serve              # or the browser workspace: prints a one-ti
 
 Desktop: `cd apps/desktop && pnpm install && pnpm start` with `KAKU_BIN` pointing at the built `kaku`.
 
+Linux package: `scripts/package-linux` builds and checks a `.deb` in the Linux VM and copies it to `target/packaged-linux/` (install with `sudo dpkg -i`, start with `kakurega`).
+
 ## Check it
 
 ```
