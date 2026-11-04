@@ -7,7 +7,7 @@ This file is the plain list. Evidence for each line is in `TESTING.md`; the stat
 - Quality of any real model's review or chat. Local small models find few defects; no bake-off was run.
 - A person other than the builder using the product unaided. No first-time-user test has been observed.
 - Real Touch ID. The desktop approval flow is tested with the operating-system prompt stubbed.
-- Real Telegram delivery. The bridge is tested against a fake Telegram server.
+- Telegram: the bridge was checked once on a real phone (pairing, a status reply and a review notification, observed by the owner) and against a fake Telegram server. Delivery retries, flood control and 4xx/5xx handling are unit-tested only; long-running reliability (days, reconnects, many chats) is not tested. Chat is a transport for counts and ids: approvals are never done through chat.
 
 ## Known weaknesses
 - macOS runs the sandbox inside a Linux virtual machine; that is a development arrangement, not a hardened macOS sandbox.

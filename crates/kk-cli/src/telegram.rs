@@ -239,12 +239,31 @@ pub fn run(args: &[String]) -> u8 {
     let mut admin = HttpAdmin(admin);
     if args.first().map(String::as_str) == Some("pair") {
         let code: String = {
-            let mut b = [0u8; 4];
+            let mut b = [0u8; 6];
             getrandom_fill(&mut b);
             b.iter().map(|x| format!("{x:02x}")).collect()
         };
         let _ = std::fs::remove_file(bound_path(&dir));
-        let _ = std::fs::write(dir.join("telegram.pairing"), &code);
+        {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let path = dir.join("telegram.pairing");
+            let _ = std::fs::remove_file(&path);
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)
+            {
+                Ok(mut f) => {
+                    let _ = f.write_all(code.as_bytes());
+                }
+                Err(e) => {
+                    eprintln!("could not save the pairing code: {e}");
+                    return 1;
+                }
+            }
+        }
         println!("Send this to your bot in a private chat within 5 minutes:\n  /pair {code}\nThen run `kaku telegram` to start the bridge. Any earlier pairing was removed.");
         return 0;
     }
@@ -280,9 +299,17 @@ pub fn run(args: &[String]) -> u8 {
     reload_code(&mut bridge);
     println!("Telegram bridge running. It sends counts and ids only, never file contents. Ctrl-C stops it.");
     let mut offset: i64 = 0;
+    let mut outbox = Outbox::default();
     let mut last_poll = Instant::now() - Duration::from_secs(10);
     loop {
         reload_code(&mut bridge);
+        // A re-pair or an unpair removes the binding file: stop notifying the old chat at once.
+        if bridge.bound_chat.is_some() && !bound_path(&dir).exists() {
+            bridge.bound_chat = None;
+            outbox = Outbox::default();
+            eprintln!("the chat binding was removed: no further messages will be sent");
+        }
+        outbox.flush(Instant::now(), &mut |o| send_once(&agent, &api, &token, o));
         let url = format!("{api}/bot{token}/getUpdates?timeout=2&offset={offset}&allowed_updates=%5B%22message%22%5D");
         match agent.get(&url).call() {
             Ok(mut r) if r.status().as_u16() == 200 => {
@@ -295,9 +322,17 @@ pub fn run(args: &[String]) -> u8 {
                         let _ = std::fs::remove_file(dir.join("telegram.pairing"));
                     }
                     for o in outs {
-                        send(&agent, &api, &token, &o);
+                        outbox.push(o);
                     }
                 }
+            }
+            Ok(r) if r.status().as_u16() == 401 => {
+                eprintln!("Telegram rejected the bot token (401). Check TELEGRAM_BOT_TOKEN; the bridge is stopping.");
+                return 1;
+            }
+            Ok(r) if r.status().as_u16() == 409 => {
+                eprintln!("Telegram reports a conflict (409): another bridge is polling this bot, or a webhook is set for it. Stop the other one; trying again in 10 seconds.");
+                std::thread::sleep(Duration::from_secs(10));
             }
             Ok(r) => {
                 eprintln!("telegram answered {}", r.status());
@@ -314,7 +349,7 @@ pub fn run(args: &[String]) -> u8 {
         if last_poll.elapsed() >= Duration::from_secs(2) {
             last_poll = Instant::now();
             for o in bridge.poll_notifications(&mut admin) {
-                send(&agent, &api, &token, &o);
+                outbox.push(o);
             }
         }
     }
@@ -325,13 +360,109 @@ fn getrandom_fill(b: &mut [u8]) {
     std::io::Read::read_exact(&mut f, b).expect("random bytes");
 }
 
-fn send(agent: &ureq::Agent, api: &str, token: &str, o: &Out) {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SendOutcome {
+    Delivered,
+    /// Telegram asked us to wait (flood control) before trying again.
+    RetryAfter(Duration),
+    /// A temporary failure: network error or a 5xx answer.
+    Retry,
+    /// The message will never be accepted (blocked bot, unknown chat, bad request): do not loop on it.
+    Drop(String),
+}
+
+/// What an answer from `sendMessage` means. Status errors are not raised by the HTTP client, so they must be read here.
+pub fn classify_send(status: u16, body: &str) -> SendOutcome {
+    match status {
+        200 => SendOutcome::Delivered,
+        429 => {
+            let wait = serde_json::from_str::<Value>(body)
+                .ok()
+                .and_then(|v| v["parameters"]["retry_after"].as_u64())
+                .unwrap_or(5)
+                .clamp(1, 60);
+            SendOutcome::RetryAfter(Duration::from_secs(wait))
+        }
+        500..=599 => SendOutcome::Retry,
+        s => SendOutcome::Drop(format!("Telegram refused the message ({s})")),
+    }
+}
+
+fn send_once(agent: &ureq::Agent, api: &str, token: &str, o: &Out) -> SendOutcome {
     let url = format!("{api}/bot{token}/sendMessage");
-    if let Err(e) = agent
+    match agent
         .post(&url)
         .send_json(json!({"chat_id": o.chat, "text": o.text, "disable_web_page_preview": true}))
     {
-        eprintln!("could not send a message: {}", scrub(&e.to_string(), token));
+        Ok(mut r) => {
+            let status = r.status().as_u16();
+            let body = r.body_mut().read_to_string().unwrap_or_default();
+            classify_send(status, &body)
+        }
+        Err(e) => {
+            eprintln!(
+                "could not reach Telegram to send a message: {}",
+                scrub(&e.to_string(), token)
+            );
+            SendOutcome::Retry
+        }
+    }
+}
+
+/// Messages that could not be delivered yet. Bounded, oldest dropped first, and a message is tried at most ten times.
+#[derive(Default)]
+pub struct Outbox {
+    items: std::collections::VecDeque<(Out, u32, Instant)>,
+}
+
+impl Outbox {
+    pub const MAX: usize = 50;
+    pub const MAX_TRIES: u32 = 10;
+
+    pub fn push(&mut self, o: Out) {
+        if self.items.len() >= Self::MAX {
+            self.items.pop_front();
+        }
+        self.items.push_back((o, 0, Instant::now()));
+    }
+
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    #[cfg(test)]
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// Tries every message that is due, in order. A flood-control answer pauses everything behind it.
+    pub fn flush(&mut self, now: Instant, send: &mut dyn FnMut(&Out) -> SendOutcome) {
+        let mut keep = std::collections::VecDeque::new();
+        let mut paused = false;
+        while let Some((o, tries, due)) = self.items.pop_front() {
+            if paused || due > now {
+                keep.push_back((o, tries, due));
+                continue;
+            }
+            match send(&o) {
+                SendOutcome::Delivered => {}
+                SendOutcome::Drop(m) => eprintln!("dropping a message: {m}"),
+                SendOutcome::RetryAfter(wait) => {
+                    paused = true;
+                    keep.push_back((o, tries, now + wait));
+                }
+                SendOutcome::Retry => {
+                    if tries + 1 < Self::MAX_TRIES {
+                        let backoff = Duration::from_secs(1u64 << (tries + 1).min(6));
+                        keep.push_back((o, tries + 1, now + backoff));
+                    } else {
+                        eprintln!("giving up on a message after {} tries", Self::MAX_TRIES);
+                    }
+                }
+            }
+        }
+        self.items = keep;
     }
 }
 
@@ -633,6 +764,110 @@ mod tests {
                 .1
                 .is_none()
                 || b.bound_chat == Some(111)
+        );
+    }
+
+    #[test]
+    fn tg17_send_answers_are_read_not_ignored_and_undelivered_messages_wait_in_a_bounded_outbox() {
+        assert_eq!(classify_send(200, "{}"), SendOutcome::Delivered);
+        assert_eq!(
+            classify_send(429, r#"{"ok":false,"parameters":{"retry_after":7}}"#),
+            SendOutcome::RetryAfter(Duration::from_secs(7))
+        );
+        assert_eq!(
+            classify_send(429, "junk"),
+            SendOutcome::RetryAfter(Duration::from_secs(5))
+        );
+        assert_eq!(
+            classify_send(429, r#"{"parameters":{"retry_after":99999}}"#),
+            SendOutcome::RetryAfter(Duration::from_secs(60)),
+            "a huge wait is capped"
+        );
+        for s in [500, 502, 503] {
+            assert_eq!(classify_send(s, ""), SendOutcome::Retry);
+        }
+        for s in [400, 401, 403, 404] {
+            assert!(matches!(classify_send(s, ""), SendOutcome::Drop(_)), "{s}");
+        }
+        let out = |t: &str| Out {
+            chat: 1,
+            text: t.into(),
+        };
+        let t0 = Instant::now() + Duration::from_secs(1);
+        let mut box_ = Outbox::default();
+        box_.push(out("a"));
+        box_.push(out("b"));
+        let mut sent: Vec<String> = Vec::new();
+        // a temporary failure keeps the message and does not lose its order
+        box_.flush(t0, &mut |o| {
+            if o.text == "a" {
+                SendOutcome::Retry
+            } else {
+                sent.push(o.text.clone());
+                SendOutcome::Delivered
+            }
+        });
+        assert_eq!((box_.len(), sent.clone()), (1, vec!["b".to_string()]));
+        box_.flush(t0, &mut |_| {
+            panic!("not due yet: back-off must hold the message back")
+        });
+        let mut again = Vec::new();
+        box_.flush(t0 + Duration::from_secs(5), &mut |o| {
+            again.push(o.text.clone());
+            SendOutcome::Delivered
+        });
+        assert_eq!((again, box_.len()), (vec!["a".to_string()], 0));
+        // flood control pauses everything behind it; a refusal drops only that message
+        let mut b2 = Outbox::default();
+        for t in ["x", "y", "z"] {
+            b2.push(out(t));
+        }
+        let mut seen = Vec::new();
+        b2.flush(t0, &mut |o| {
+            seen.push(o.text.clone());
+            if o.text == "x" {
+                SendOutcome::RetryAfter(Duration::from_secs(10))
+            } else {
+                SendOutcome::Delivered
+            }
+        });
+        assert_eq!(
+            (seen, b2.len()),
+            (vec!["x".to_string()], 3),
+            "nothing behind a flood-control answer is sent"
+        );
+        let mut b3 = Outbox::default();
+        b3.push(out("bad"));
+        b3.push(out("ok"));
+        let mut got = Vec::new();
+        b3.flush(t0, &mut |o| {
+            got.push(o.text.clone());
+            if o.text == "bad" {
+                SendOutcome::Drop("blocked".into())
+            } else {
+                SendOutcome::Delivered
+            }
+        });
+        assert_eq!(
+            (got, b3.len()),
+            (vec!["bad".to_string(), "ok".to_string()], 0)
+        );
+        // bounds
+        let mut b4 = Outbox::default();
+        for i in 0..80 {
+            b4.push(out(&format!("m{i}")));
+        }
+        assert_eq!(b4.len(), Outbox::MAX);
+        let mut tries = 0;
+        let mut now = t0;
+        while !b4.is_empty() && tries < 40 {
+            now += Duration::from_secs(120);
+            b4.flush(now, &mut |_| SendOutcome::Retry);
+            tries += 1;
+        }
+        assert!(
+            b4.is_empty(),
+            "a message is given up on after ten failed tries"
         );
     }
 }

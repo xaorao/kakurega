@@ -103,7 +103,7 @@ try:
     env = dict(os.environ, TELEGRAM_BOT_TOKEN=TOKEN)
     pair = subprocess.run([kaku, "telegram", "pair", "--data-dir", str(data)], capture_output=True, text=True, env=env)
     code = pair.stdout.split("/pair ")[1].split()[0]
-    check("`kaku telegram pair` prints a one-time code", len(code) == 8, "")
+    check("`kaku telegram pair` prints a one-time code", len(code) == 12, "")
 
     def start_bridge():
         b = subprocess.Popen([kaku, "telegram", "--data-dir", str(data), "--api-base", api], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
@@ -117,7 +117,7 @@ try:
     check("an unpaired chat and a group get no reply at all", not sent)
     say(111, "/pair 00000000")
     time.sleep(1.5)
-    check("a wrong code gets no reply either", not sent)
+    check("a wrong code during an open pairing window is explained, never accepted", len(sent) == 1 and "wrong or has expired" in sent[0]["text"])
     say(111, f"/pair {code}")
     m = wait_sent(lambda m: m["chat_id"] == 111 and "Paired" in m["text"])
     check("the right code in a private chat pairs it", m is not None)

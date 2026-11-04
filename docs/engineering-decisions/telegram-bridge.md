@@ -20,3 +20,8 @@ Pure bridge tests (pairing, allowlist, silence to strangers, templates carry no 
 
 ## Not covered
 Real Telegram delivery, group chats, webhooks, media, rate limits imposed by Telegram, other chat apps, phone approvals.
+
+## Update after the real run and the capability matrix (`capability-matrix/C-channels-telegram.md`)
+- Fixed (validated by reading and by tests tg16, tg17): the HTTP client was built without TLS; the pairing code was read once at start; a wrong or expired code got silence; send ignored HTTP status so a 429, 403 or 5xx lost the notification silently; a re-pair did not stop a running bridge from notifying the old chat; getUpdates 401 and 409 were not distinguished; the pairing code was 32 bits in a world-readable file (now 48 bits, mode 0600, five tries).
+- Delivery now reads the answer, honours flood control, retries temporary failures with back-off from a bounded outbox (50 messages, 10 tries) and drops messages Telegram will never accept.
+- Reading owed (stated in the matrix): IronClaw's pairing and egress source was not in the checkout; Ghast's bridge is in a closed app. Capability recovery from the matrix continues in priority order.
