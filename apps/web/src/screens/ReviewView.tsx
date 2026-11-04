@@ -169,6 +169,16 @@ function Fixes(props: { jobId: string }) {
   const [asking, setAsking] = createSignal<number | null>(null);
   const [note, setNote] = createSignal("");
   const [err, setErr] = createSignal("");
+  const undo = async (f: Fix) => {
+    setErr("");
+    try {
+      await api.undoFix(props.jobId, f.index, f.file);
+      setNote(t("fix.undone", { file: f.file }));
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : String(e));
+    }
+    await refetch();
+  };
   const apply = async (f: Fix) => {
     setErr("");
     try {
@@ -206,7 +216,7 @@ function Fixes(props: { jobId: string }) {
                     </div>
                   </Show>
                 </Show>
-                <Show when={f.applied}><p><span class="chip ok">{t("fix.done")}</span></p></Show>
+                <Show when={f.applied}><p><span class="chip ok">{t("fix.done")}</span> <button onClick={() => undo(f)}>{t("fix.undo")}</button></p></Show>
               </li>
             )}
           </For>

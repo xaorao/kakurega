@@ -104,6 +104,7 @@ export const api = {
   memoryHistory: (id: string) => request<{ versions: MemoryVersion[] }>("GET", `/api/memories/${id}/history`),
   fixes: (job: string) => request<{ fixes: Fix[] }>("GET", `/api/jobs/${job}/fixes`),
   applyFix: (job: string, n: number, file: string) => request<{ applied: boolean; file: string }>("POST", `/api/jobs/${job}/fixes/${n}/apply`, { file }),
+  undoFix: (job: string, n: number, file: string) => request<{ undone: boolean; file: string }>("POST", `/api/jobs/${job}/fixes/${n}/undo`, { file }),
   suggestions: (job: string) => request<{ suggestions: Suggestion[] }>("GET", `/api/jobs/${job}/memory-suggestions`),
   acceptSuggestion: (job: string, id: string) => request<{ id: string; added: boolean }>("POST", `/api/jobs/${job}/memory-suggestions/${id}/accept`, {}),
   dismissSuggestion: (job: string, id: string) => request<{ dismissed: boolean }>("POST", `/api/jobs/${job}/memory-suggestions/${id}/dismiss`, {}),

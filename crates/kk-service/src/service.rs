@@ -163,6 +163,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, meta TEXT NOT NULL, snap TEXT);
              CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY, body TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS fix_snapshots(job TEXT NOT NULL, n INTEGER NOT NULL, file TEXT NOT NULL, orig BLOB NOT NULL, sha_after TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (job, n));
              CREATE TABLE IF NOT EXISTS approvers(key_id TEXT PRIMARY KEY, public BLOB NOT NULL, label TEXT NOT NULL, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);",
         )
@@ -1536,12 +1537,17 @@ async fn findings(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Re
     }
 }
 
+/// Applied unless the most recent of `fix_applied` and `fix_undone` for this fix is an undo.
 fn fix_applied(svc: &Service, id: &str, n: usize) -> bool {
     let g = svc.inner.lock().expect("lock");
     g.jobs.get(id).is_some_and(|j| {
         j.events
             .iter()
-            .any(|e| e.stage == "fix_applied" && e.detail == n.to_string())
+            .rev()
+            .find(|e| {
+                (e.stage == "fix_applied" || e.stage == "fix_undone") && e.detail == n.to_string()
+            })
+            .is_some_and(|e| e.stage == "fix_applied")
     })
 }
 
@@ -1561,6 +1567,126 @@ async fn fixes_list(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> 
 #[serde(deny_unknown_fields)]
 struct ApplyFixBody {
     file: String,
+}
+
+async fn fix_undo(
+    axum::Extension(svc): Svc,
+    UrlPath((id, n)): UrlPath<(String, usize)>,
+    Json(b): Json<ApplyFixBody>,
+) -> Response {
+    let s = match snap_of(&svc, &id) {
+        Err(r) => return r,
+        Ok(s) => s,
+    };
+    let Some(f) = s.fixes.get(n) else {
+        return error(StatusCode::NOT_FOUND, "NO_FIX", "no such proposed fix");
+    };
+    if b.file != f.file {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "FILE_MISMATCH",
+            "name the file you are restoring",
+        );
+    }
+    if !fix_applied(&svc, &id, n) {
+        return error(
+            StatusCode::CONFLICT,
+            "NOT_APPLIED",
+            "this fix is not applied, so there is nothing to undo",
+        );
+    }
+    let repo = {
+        let g = svc.inner.lock().expect("lock");
+        g.jobs.get(&id).map(|j| j.repo.clone())
+    };
+    let Some(repo) = repo.and_then(|r| svc.allowed_dir(&r.to_string_lossy())) else {
+        return error(
+            StatusCode::FORBIDDEN,
+            "NOT_ALLOWED",
+            "the project folder is no longer available",
+        );
+    };
+    let snap: Option<(Vec<u8>, String)> = {
+        let store = svc.store.lock().expect("lock");
+        store
+            .connection()
+            .query_row(
+                "SELECT orig, sha_after FROM fix_snapshots WHERE job = ?1 AND n = ?2",
+                kk_vault::rusqlite::params![id, n as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok()
+    };
+    let Some((orig, sha_after)) = snap else {
+        return error(
+            StatusCode::CONFLICT,
+            "NO_SNAPSHOT",
+            "the original copy is not available",
+        );
+    };
+    if Path::new(&f.file)
+        .components()
+        .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_PATH",
+            "the file path is not allowed",
+        );
+    }
+    let full = repo.join(&f.file);
+    let Ok(meta) = std::fs::symlink_metadata(&full) else {
+        return error(
+            StatusCode::CONFLICT,
+            "FILE_MISSING",
+            "the file is no longer there",
+        );
+    };
+    if !meta.is_file()
+        || meta.file_type().is_symlink()
+        || !full.canonicalize().is_ok_and(|c| c.starts_with(&repo))
+    {
+        return error(
+            StatusCode::FORBIDDEN,
+            "BAD_PATH",
+            "the file is not a plain file inside the project",
+        );
+    }
+    let Ok(current) = std::fs::read(&full) else {
+        return error(
+            StatusCode::CONFLICT,
+            "FILE_MISSING",
+            "the file could not be read",
+        );
+    };
+    if kk_evidence::capsule::sha256_hex(&current) != sha_after {
+        return error(StatusCode::CONFLICT, "CHANGED_SINCE_APPLY", "the file has been edited since the fix was applied, so restoring the original would erase those edits; restore it by hand");
+    }
+    let tmp = full.with_file_name(format!(".kakurega-undo-{}.tmp", std::process::id()));
+    let written = std::fs::write(&tmp, &orig)
+        .and_then(|_| std::fs::set_permissions(&tmp, meta.permissions()))
+        .and_then(|_| std::fs::rename(&tmp, &full));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "WRITE_FAILED",
+            "the file could not be written; nothing was changed",
+        );
+    }
+    svc.push_event(&id, "fix_undone", &n.to_string());
+    svc.log_event(
+        "fix.undone",
+        &id,
+        &[
+            ("file", f.file.clone().into()),
+            (
+                "sha256_restored",
+                kk_evidence::capsule::sha256_hex(&orig).into(),
+            ),
+        ],
+    );
+    Json(json!({"undone": true, "file": f.file})).into_response()
 }
 
 async fn fix_apply(
@@ -1659,6 +1785,21 @@ async fn fix_apply(
             "the text to replace is no longer there exactly once",
         );
     };
+    let after = kk_evidence::capsule::sha256_hex(&updated);
+    {
+        let store = svc.store.lock().expect("lock");
+        let saved = store.connection().execute(
+            "INSERT OR REPLACE INTO fix_snapshots(job, n, file, orig, sha_after, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            kk_vault::rusqlite::params![id, n as i64, f.file, current, after, now()],
+        );
+        if saved.is_err() {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "SNAPSHOT_FAILED",
+                "could not keep a copy of the original, so nothing was changed",
+            );
+        }
+    }
     let tmp = full.with_file_name(format!(".kakurega-fix-{}.tmp", std::process::id()));
     let written = std::fs::write(&tmp, &updated)
         .and_then(|_| std::fs::set_permissions(&tmp, meta.permissions()))
@@ -1671,7 +1812,6 @@ async fn fix_apply(
             "the file could not be written; nothing was changed",
         );
     }
-    let after = kk_evidence::capsule::sha256_hex(&updated);
     svc.push_event(&id, "fix_applied", &n.to_string());
     svc.log_event(
         "fix.applied",
@@ -2468,6 +2608,7 @@ impl Extension for Routes {
             .route("/api/jobs/{id}/findings", get(findings))
             .route("/api/jobs/{id}/fixes", get(fixes_list))
             .route("/api/jobs/{id}/fixes/{n}/apply", post(fix_apply))
+            .route("/api/jobs/{id}/fixes/{n}/undo", post(fix_undo))
             .route("/api/jobs/{id}/release", get(release))
             .route(
                 "/api/jobs/{id}/approval",

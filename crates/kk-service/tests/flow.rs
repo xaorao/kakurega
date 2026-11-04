@@ -2800,3 +2800,105 @@ fn sv23_tenants_are_structurally_isolated_from_each_other() {
     );
     assert!(tenants.delete("../bob").is_err());
 }
+
+#[test]
+fn sv24_an_applied_fix_can_be_undone_once_and_never_over_later_edits() {
+    let (root, repo) = repo_copy("undo");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let session = repo.join("payments/auth/session.py");
+    let original = std::fs::read(&session).unwrap();
+    let start_job = |w: &Web| -> String {
+        let (_, s) = w.post(
+            "/api/jobs",
+            json!({"repo": repo.to_string_lossy(), "recipient": "fixer"}),
+        );
+        let job = s["id"].as_str().unwrap().to_string();
+        wait_for(w, &job, &["ready"]);
+        job
+    };
+    let file = json!({"file": "payments/auth/session.py"});
+    let job = start_job(&w);
+    let url = |n: usize, what: &str| format!("/api/jobs/{job}/fixes/{n}/{what}");
+    assert_eq!(
+        w.post(&url(0, "undo"), file.clone()).1["error"]["code"],
+        "NOT_APPLIED",
+        "nothing to undo before applying"
+    );
+    assert_eq!(w.post(&url(0, "apply"), file.clone()).0, 200);
+    let applied = std::fs::read(&session).unwrap();
+    assert_ne!(applied, original);
+    assert_eq!(
+        w.post(&url(0, "undo"), json!({"file": "other.py"})).0,
+        400,
+        "the file must be named"
+    );
+    assert!([401, 403].contains(
+        &raw(
+            &format!("http://127.0.0.1:{}", c.addr.port()),
+            "POST",
+            &url(0, "undo"),
+            &[],
+            Some(file.clone())
+        )
+        .0
+    ));
+    assert_eq!(w.post(&url(0, "undo"), file.clone()).0, 200);
+    assert_eq!(
+        std::fs::read(&session).unwrap(),
+        original,
+        "the original bytes are back exactly"
+    );
+    assert_eq!(
+        w.get(&format!("/api/jobs/{job}/fixes")).1["fixes"][0]["applied"],
+        false
+    );
+    assert_eq!(
+        w.post(&url(0, "undo"), file.clone()).1["error"]["code"],
+        "NOT_APPLIED",
+        "a second undo is refused"
+    );
+    // the original copy is kept inside the encrypted store, never as a plain file next to the data
+    let leak = std::fs::read_dir(root.join("data"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.path().is_file())
+        .any(|e| {
+            std::fs::read(e.path())
+                .map(|b| String::from_utf8_lossy(&b).contains("cookie_jar"))
+                .unwrap_or(false)
+        });
+    assert!(!leak, "no data file holds the original text in the clear");
+    // apply again, edit the file, and the undo refuses rather than erase the edit
+    assert_eq!(w.post(&url(0, "apply"), file.clone()).0, 200);
+    let mut edited = std::fs::read_to_string(&session).unwrap();
+    edited.push_str("\n# my own change after the fix\n");
+    std::fs::write(&session, &edited).unwrap();
+    let (st, r) = w.post(&url(0, "undo"), file.clone());
+    assert_eq!(
+        (st, r["error"]["code"].as_str()),
+        (409, Some("CHANGED_SINCE_APPLY"))
+    );
+    assert_eq!(
+        std::fs::read_to_string(&session).unwrap(),
+        edited,
+        "the later edit is untouched"
+    );
+    let log = log_text(
+        &format!("http://127.0.0.1:{}", c.addr.port()),
+        c.security.admin_token(),
+    );
+    assert!(log.contains("fix.undone") && !log.contains("cookie_jar"));
+}

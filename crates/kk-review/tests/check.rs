@@ -255,7 +255,7 @@ fn f01_fixes_are_parsed_strictly_and_applied_only_as_one_exact_replacement() {
         d.contains("--- a/a.py")
             && d.contains("-x = 1")
             && d.contains("+x = 2")
-            && d.contains("line 2")
+            && d.contains("@@ -")
     );
 }
 
@@ -367,5 +367,44 @@ fn c05_a_script_that_prints_the_marker_without_touching_the_cited_code_is_not_a_
         real.status,
         CheckStatus::Reproduced,
         "a reproducer that really exercises the cited file still confirms: {real:?}"
+    );
+}
+
+#[test]
+fn f03_the_diff_shows_context_a_header_and_correct_counts() {
+    let original = b"l1\nl2\nl3\nl4\nold a\nold b\nl7\nl8\nl9\nl10\nl11\n";
+    let fix = Fix {
+        title: "t".into(),
+        file: "a.py".into(),
+        old_text: "old a\nold b\n".into(),
+        new_text: "new\n".into(),
+        explanation: String::new(),
+    };
+    let d = unified_diff(original, &fix);
+    assert!(
+        d.starts_with("--- a/a.py\n+++ b/a.py\n@@ -2,8 +2,7 @@\n"),
+        "{d}"
+    );
+    assert!(
+        d.contains(" l2\n l3\n l4\n-old a\n-old b\n+new\n l7\n l8\n l9\n"),
+        "{d}"
+    );
+    assert!(
+        !d.contains("l1") && !d.contains("l10"),
+        "only three lines of context"
+    );
+    let at_start = unified_diff(
+        b"x\ny\n",
+        &Fix {
+            title: "t".into(),
+            file: "b".into(),
+            old_text: "x\n".into(),
+            new_text: "z\n".into(),
+            explanation: String::new(),
+        },
+    );
+    assert!(
+        at_start.contains("@@ -1,2 +1,2 @@") && at_start.contains("-x\n+z\n y\n"),
+        "{at_start}"
     );
 }

@@ -211,6 +211,8 @@ export const en = {
   "fix.cancel": "Cancel",
   "fix.applied": "Applied to {file}.",
   "fix.done": "Applied",
+  "fix.undo": "Undo (restore the original)",
+  "fix.undone": "Restored {file}.",
   "fix.change": "The change",
   "find.none": "The agent reported no findings.",
   "find.noneNote": "That is not proof the project is free of defects; it only means nothing was reported and confirmed.",

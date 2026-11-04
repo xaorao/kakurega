@@ -60,6 +60,7 @@ enum Intent {
     Findings,
     Fixes(String),
     ApplyFix(String),
+    UndoFix(String),
     Release,
     ApproveRequest(String),
     ApproveJob(String),
@@ -94,6 +95,7 @@ pub struct ConfirmView {
     pub prompt: String,
     pub forget_id: String,
     pub apply: Option<(String, usize, String)>,
+    pub undo: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -383,15 +385,21 @@ impl App {
             Mode::Confirm(c) => {
                 let id = c.forget_id.clone();
                 let apply = c.apply.clone();
+                let undo = c.undo;
                 match k.code {
                     KeyCode::Char('y') | KeyCode::Char('Y') if !ctrl && apply.is_some() => {
                         self.mode = Mode::Normal;
                         let (job, n, file) = apply.expect("checked");
+                        let what = if undo { "undo" } else { "apply" };
                         vec![self.req(
-                            Intent::ApplyFix(file.clone()),
+                            if undo {
+                                Intent::UndoFix(file.clone())
+                            } else {
+                                Intent::ApplyFix(file.clone())
+                            },
                             false,
                             Method::Post,
-                            &format!("/api/jobs/{job}/fixes/{}/apply", n - 1),
+                            &format!("/api/jobs/{job}/fixes/{}/{what}", n - 1),
                             Some(json!({"file": file})),
                         )]
                     }
@@ -613,7 +621,7 @@ impl App {
                         "/reviews                       list reviews".into(),
                         "/open [JOB]                    show a review's progress".into(),
                         "/findings [JOB]  /release [JOB]   what the kernel confirmed, and what would be sent".into(),
-                        "/fixes [JOB]  /applyfix N       proposed fixes, checked against the reproducer".into(),
+                        "/fixes [JOB]  /applyfix N  /undofix N   proposed fixes, checked against the reproducer".into(),
                         "/approve [JOB]                 look at the exact files, then approve or refuse".into(),
                         "/deliver [JOB]                 sign and deliver an approved release".into(),
                         "/memory [WORDS]  /remember TEXT  /correct ID TEXT  /forget ID".into(),
@@ -671,7 +679,16 @@ impl App {
                     self.say(Kind::Warn, "That fix was not accepted by the reproducer check, so it cannot be applied.");
                     return Vec::new();
                 }
-                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Change {file} on this computer now? This edits your own file. [y/N]"), forget_id: String::new(), apply: Some((j, n, file)) });
+                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Change {file} on this computer now? This edits your own file. [y/N]"), forget_id: String::new(), apply: Some((j, n, file)), undo: false });
+                Vec::new()
+            }
+            Command::UndoFix { n, job } => {
+                let Some(j) = self.job_or_latest(job, &["ready", "nothing_to_release"], "undo a fix for") else { return Vec::new() };
+                let Some((_, _, file, _)) = self.fixes_seen.iter().find(|(fj, fnum, _, _)| *fj == j && *fnum == n).cloned() else {
+                    self.say(Kind::Warn, "Run /fixes first; then /undofix N.");
+                    return Vec::new();
+                };
+                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Restore the original {file} on this computer now? [y/N]"), forget_id: String::new(), apply: Some((j, n, file)), undo: true });
                 Vec::new()
             }
             Command::Release(j) => {
@@ -704,7 +721,7 @@ impl App {
             Command::Remember(t) => vec![self.req(Intent::Remember, false, Method::Post, "/api/memories", Some(json!({"text": t, "level": "internal", "reason": "you added it in the terminal"})))],
             Command::Correct { id, text } => vec![self.req(Intent::Correct, false, Method::Post, &format!("/api/memories/{id}/correct"), Some(json!({"text": text, "reason": "you corrected it in the terminal"})))],
             Command::Forget(id) => {
-                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id, apply: None });
+                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id, apply: None, undo: false });
                 Vec::new()
             }
             Command::Log => vec![self.req(Intent::Log, false, Method::Get, "/api/log", None)],
@@ -1306,6 +1323,17 @@ impl App {
                         lines,
                     );
                 }
+                Vec::new()
+            }
+            Intent::UndoFix(file) => {
+                self.say(
+                    if ok { Kind::Ok } else { Kind::Error },
+                    if ok {
+                        format!("Restored {file}.")
+                    } else {
+                        err_text(status, &body)
+                    },
+                );
                 Vec::new()
             }
             Intent::ApplyFix(file) => {

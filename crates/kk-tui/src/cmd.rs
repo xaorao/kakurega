@@ -8,6 +8,7 @@ pub enum Command {
     Findings(Option<String>),
     Fixes(Option<String>),
     ApplyFix { n: usize, job: Option<String> },
+    UndoFix { n: usize, job: Option<String> },
     Release(Option<String>),
     Approve(Option<String>),
     Deliver(Option<String>),
@@ -23,9 +24,9 @@ pub enum Command {
 }
 
 pub const NAMES: &[&str] = &[
-    "help", "status", "review", "reviews", "open", "findings", "fixes", "applyfix", "release",
-    "approve", "deliver", "memory", "ask", "remember", "correct", "forget", "log", "verify",
-    "clear", "quit",
+    "help", "status", "review", "reviews", "open", "findings", "fixes", "applyfix", "undofix",
+    "release", "approve", "deliver", "memory", "ask", "remember", "correct", "forget", "log",
+    "verify", "clear", "quit",
 ];
 
 pub fn usage(name: &str) -> &'static str {
@@ -35,6 +36,7 @@ pub fn usage(name: &str) -> &'static str {
         "findings" => "/findings [JOB]",
         "fixes" => "/fixes [JOB]",
         "applyfix" => "/applyfix N [JOB]",
+        "undofix" => "/undofix N [JOB]",
         "release" => "/release [JOB]",
         "approve" => "/approve [JOB]",
         "deliver" => "/deliver [JOB]",
@@ -96,6 +98,18 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "open" => job_arg(rest).map(Command::Open),
         "findings" => job_arg(rest).map(Command::Findings),
         "fixes" => job_arg(rest).map(Command::Fixes),
+        "undofix" => {
+            let mut parts = rest.split_whitespace();
+            let n = parts
+                .next()
+                .and_then(|x| x.parse::<usize>().ok())
+                .filter(|n| *n >= 1 && *n <= 99);
+            let job = job_arg(parts.next().unwrap_or(""))?;
+            match (n, parts.next()) {
+                (Some(n), None) => Ok(Command::UndoFix { n, job }),
+                _ => Err(format!("usage: {}", usage("undofix"))),
+            }
+        }
         "applyfix" => {
             let mut parts = rest.split_whitespace();
             let n = parts

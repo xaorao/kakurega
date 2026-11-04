@@ -835,3 +835,45 @@ fn tu18_fixes_are_listed_with_their_limit_and_applied_only_after_listing_then_y(
         .join("\n");
     assert!(text.contains("Applied to payments/auth/session.py."));
 }
+
+#[test]
+fn tu19_undofix_needs_a_listing_first_a_y_and_posts_to_the_undo_route() {
+    let mut a = booted();
+    a.jobs.push(kk_tui::app::JobRow {
+        id: "job-4".into(),
+        recipient: "x".into(),
+        state: "ready".into(),
+    });
+    for bad in ["/undofix", "/undofix 0", "/undofix x", "/undofix 1 2 3"] {
+        assert!(enter(&mut a, bad).is_empty(), "{bad}");
+    }
+    assert!(enter(&mut a, "/undofix 1").is_empty());
+    assert!(
+        matches!(a.mode, Mode::Normal),
+        "undo before listing is refused"
+    );
+    let r = enter(&mut a, "/fixes");
+    a.handle(ok(&r[0], 200, json!({"fixes": [{"index": 0, "title": "t", "file": "payments/auth/session.py", "explanation": "e", "status": "fixes_the_reproducer", "verified": true, "diff": "-a\n+b\n", "applied": true}]})));
+    assert!(enter(&mut a, "/undofix 1").is_empty());
+    let Mode::Confirm(c) = &a.mode else {
+        panic!("a confirmation is required")
+    };
+    assert!(c.prompt.contains("Restore the original"));
+    assert!(a.handle(key(KeyCode::Char('n'))).is_empty());
+    enter(&mut a, "/undofix 1");
+    let r = a.handle(key(KeyCode::Char('y')));
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0].path, "/api/jobs/job-4/fixes/0/undo");
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"undone": true, "file": "payments/auth/session.py"}),
+    ));
+    let text = a
+        .cards
+        .iter()
+        .flat_map(|c| c.lines.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("Restored payments/auth/session.py."));
+}

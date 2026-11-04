@@ -421,20 +421,46 @@ pub fn verify_fix(
     }
 }
 
-/// A plain unified diff of the one replacement, for people to read; applying uses `apply_fix`, never this text.
+/// A plain unified diff of the one replacement with three lines of context on each side, for people to read; applying
+/// uses `apply_fix`, never this text.
 pub fn unified_diff(original: &[u8], fix: &Fix) -> String {
     let text = String::from_utf8_lossy(original);
     let at = text.find(fix.old_text.as_str()).unwrap_or(0);
-    let first_line = text[..at].matches('\n').count() + 1;
+    let body = text.strip_suffix('\n').unwrap_or(&text);
+    let lines: Vec<&str> = body.split('\n').collect();
+    let first = text[..at].matches('\n').count();
+    let removed = fix.old_text.matches('\n').count() + usize::from(!fix.old_text.ends_with('\n'));
+    let last = (first + removed).min(lines.len());
+    let before_start = first.saturating_sub(3);
+    let after_end = (last + 3).min(lines.len());
+    let old_len = (last - first) + (first - before_start) + (after_end - last);
+    let new_lines: Vec<&str> = fix
+        .new_text
+        .trim_end_matches('\n')
+        .split('\n')
+        .filter(|_| !fix.new_text.is_empty())
+        .collect();
+    let new_len = new_lines.len() + (first - before_start) + (after_end - last);
     let mut out = format!(
-        "--- a/{}\n+++ b/{}\n@@ line {} @@\n",
-        fix.file, fix.file, first_line
+        "--- a/{}\n+++ b/{}\n@@ -{},{} +{},{} @@\n",
+        fix.file,
+        fix.file,
+        before_start + 1,
+        old_len,
+        before_start + 1,
+        new_len
     );
-    for l in fix.old_text.lines() {
+    for l in &lines[before_start..first] {
+        out.push_str(&format!(" {l}\n"));
+    }
+    for l in fix.old_text.trim_end_matches('\n').split('\n') {
         out.push_str(&format!("-{l}\n"));
     }
-    for l in fix.new_text.lines() {
+    for l in &new_lines {
         out.push_str(&format!("+{l}\n"));
+    }
+    for l in &lines[last..after_end] {
+        out.push_str(&format!(" {l}\n"));
     }
     out
 }

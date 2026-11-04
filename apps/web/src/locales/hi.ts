@@ -213,6 +213,8 @@ export const hi: Record<keyof typeof en, string> = {
   "fix.cancel": "रद्द करें",
   "fix.applied": "{file} में लागू हो गया।",
   "fix.done": "लागू हो गया",
+  "fix.undo": "वापस करें (मूल फ़ाइल लौटाएँ)",
+  "fix.undone": "{file} पहले जैसी हो गई।",
   "fix.change": "बदलाव",
   "find.none": "एजेंट ने कोई निष्कर्ष नहीं बताया।",
   "find.noneNote": "इसका मतलब यह नहीं कि प्रोजेक्ट खामियों से मुक्त है; सिर्फ़ इतना कि कुछ बताया और पुष्ट नहीं हुआ।",

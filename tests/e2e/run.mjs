@@ -244,6 +244,12 @@ try {
   await fixesCard.getByText("Applied to payments/auth/session.py.").waitFor();
   const afterFix = readFileSync(sessionPath, "utf8");
   check("applying edits the file on disk exactly as shown and nothing else", afterFix.includes("ACTIVE_TOKENS.pop(token, None)") && !afterFix.includes("cookie_jar") && afterFix.includes("def validate") && afterFix.length < beforeFix.length);
+  await fixesCard.getByRole("button", { name: /^Undo/ }).click();
+  await fixesCard.getByText("Restored payments/auth/session.py.").waitFor();
+  check("Undo puts the original bytes back exactly", readFileSync(sessionPath, "utf8") === beforeFix);
+  await fixesCard.getByRole("button", { name: /^Apply to/ }).click();
+  await fixesCard.getByRole("button", { name: "Yes, change the file" }).click();
+  await fixesCard.getByText("Applied to payments/auth/session.py.").waitFor();
   check("the card then shows it as applied and offers no second apply", (await fixesCard.getByRole("button", { name: /^Apply to/ }).count()) === 0 && (await fixesCard.getByText("Applied", { exact: true }).count()) === 1);
   await sugg.locator("li").first().getByRole("button", { name: "Remember" }).click();
   await sugg.getByText("Remembered.").waitFor();

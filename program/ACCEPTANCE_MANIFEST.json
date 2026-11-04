@@ -322,6 +322,13 @@
           "kind": "machine",
           "command": "scripts/test-lima",
           "expect": "c05_a_script_that_prints_the_marker_without_touching_the_cited_code_is_not_a_confirmation"
+        },
+        {
+          "id": "II-09h",
+          "text": "Guarded undo of an applied fix (original kept in the encrypted store, refused if the file was edited since, once only), diff with context; web Undo button, terminal /undofix",
+          "kind": "machine",
+          "command": "cargo test -p kk-service --test flow sv24",
+          "expect": "test result: ok. 1 passed"
         }
       ]
     },
