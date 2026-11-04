@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+need() { command -v "$1" >/dev/null || { echo "missing tool: $1"; exit 1; }; }
+need git; need cargo; need node; need pnpm; need python3
+node -e 'const [a,b]=process.versions.node.split(".").map(Number); if(a<22||(a===22&&b<19)){console.error("node >= 22.19 required, have "+process.version);process.exit(1)}'
+rustup show active-toolchain >/dev/null 2>&1 || true
+pnpm install --frozen-lockfile=false
+cargo fetch
+install -m 755 scripts/pre-commit .git/hooks/pre-commit
+echo "setup complete"

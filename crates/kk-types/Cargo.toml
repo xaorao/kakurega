@@ -1,0 +1,9 @@
+[package]
+name = "kk-types"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Shared value types used by every Kakurega layer"
+
+[lints]
+workspace = true

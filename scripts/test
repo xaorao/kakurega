@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+python3 scripts/scan_secrets.py --selftest
+python3 scripts/scan_secrets.py
+python3 scripts/check_layers.py --selftest
+python3 scripts/check_layers.py
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+pnpm test
+echo "ALL CHECKS PASSED"
