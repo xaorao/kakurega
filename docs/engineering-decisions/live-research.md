@@ -6,7 +6,7 @@
 - Fetched pages are evidence with a source address, a time and a hash, and they are never trusted as instructions.
 
 ## References
-- Hermes Agent `tools/url_safety.py` (MIT, commit 29a61cb7). READ: lines 1-140 (module contract, address classes, metadata hosts, credential-named parameters). NOT READ: lines 140-650 (DNS pinning transport, fake-IP handling, redirect hook details), `web_tools_extract.py`, `web_result_cache.py`, `web_tools_truncate.py`, `web_tools_rescue.py`. Only `web_tools.py` lines 1-120 of the tool module were read.
+- Hermes Agent `tools/url_safety.py` (MIT, commit 29a61cb7). READ: lines 1-140 (module contract, address classes, metadata hosts, credential-named parameters). READ since: lines 140-651 (authority ambiguity, fake-IP ranges, connect-time resolution and pinning, redirect target); NOT READ: `web_tools_extract.py`, `web_result_cache.py`, `web_tools_truncate.py`, `web_tools_rescue.py`. Only `web_tools.py` lines 1-120 of the tool module were read.
 - Not studied for this slice: Claude Code and Codex web tools, Perplexity-style search, OpenClaw's browser tools. Search providers were not studied; the search design below is independent.
 
 ## Decision
@@ -33,3 +33,4 @@
 - Limits: SearXNG response shape only; other providers (Brave, Tavily) would need their own parsers and keys; result quality is the provider's; NOT tested against a live SearXNG instance (no public instance was queried).
 - Acceptance: fe07-fe09, sv42 (four guards mutation-checked: digest binding, secret refusal, id-space separation, instruction-like withholding), browser checks against a mocked run.
 - Terminal (added): `/search WORDS`, `/read ADDRESS_OR_NUMBER ...`, `/web [clear]`. Each shows what would go out and waits for y; any other key sends nothing. Approved pages go to the model as untrusted `sources` on later messages (five at most); `/clear` and `/web clear` drop them. Acceptance: tu35, tu36 (digest binding, withheld-page and cancel paths mutation-checked). A real-terminal (pty) run of these commands against a live service was not done.
+- After the full read of Hermes `url_safety.py`: added trailing-dot host normalisation and the Azure wire server address to the refused set (fe10, both mutations fail). Hermes' fake-IP exemption and its private-URL opt-out are deliberately not adopted: a research fetch from this app has no reason to reach a private network. Its trusted-private-host list is a product-specific exception and is not relevant.

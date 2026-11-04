@@ -37,6 +37,7 @@ fn v4_public(a: Ipv4Addr) -> bool {
         || a.is_broadcast()
         || a.is_multicast()
         || o[0] == 0
+        || (o[0] == 168 && o[1] == 63 && o[2] == 129 && o[3] == 16) // Azure wire server, a public-range address every Azure VM can reach
         || (o[0] == 100 && (64..128).contains(&o[1])) // carrier-grade NAT, includes 100.100.100.200
         || (o[0] == 192 && o[1] == 0 && o[2] == 0) // IETF protocol assignments
         || (o[0] == 192 && o[1] == 0 && o[2] == 2) // documentation
@@ -133,10 +134,13 @@ pub fn validate_url(raw: &str) -> Result<Url, FetchError> {
     if u.port().is_some_and(|p| p != 443) {
         return Err(FetchError::BadUrl("only the standard https port is used"));
     }
+    // a trailing dot names the same host ("localhost." is localhost), so it must not slip past the name checks
     let host = u
         .host_str()
         .ok_or(FetchError::BadUrl("no host"))?
-        .to_ascii_lowercase();
+        .to_ascii_lowercase()
+        .trim_end_matches('.')
+        .to_string();
     if host == "localhost"
         || host.ends_with(".localhost")
         || host.ends_with(".local")
@@ -1075,5 +1079,46 @@ mod tests {
             .borrow()
             .iter()
             .all(|(_, p)| p.iter().all(|a| a.port() == 443)));
+    }
+
+    #[test]
+    fn fe10_hosts_written_in_unusual_ways_are_read_the_way_a_browser_reads_them_and_refused() {
+        // the Rust url crate follows the WHATWG rules, so the host checked here is the host a browser would dial
+        for bad in [
+            "https://2130706433/", // 127.0.0.1 as one decimal number
+            "https://0x7f.1/",     // hex and short forms
+            "https://0177.0.0.1/", // octal
+            "https://127.1/",
+            "https://%31%32%37.0.0.1/", // percent-encoded host
+            "https://127\u{3002}0\u{3002}0\u{3002}1/", // ideographic full stops
+            "https://[::ffff:127.0.0.1]/",
+            "https://[::ffff:0:127.0.0.1]/",
+            "https://[::1]/",
+            "https://[fd00:ec2::254]/",   // AWS metadata over IPv6
+            "https://[64:ff9b::7f00:1]/", // NAT64 wrapper of 127.0.0.1
+            "https://[2002:7f00:1::]/",   // 6to4 wrapper of 127.0.0.1
+            "https://169.254.169.254/",
+            "https://169.254.169.253/",
+            "https://169.254.170.2/",
+            "https://100.100.100.200/",
+            "https://168.63.129.16/", // Azure wire server
+            "https://localhost./",    // trailing dot
+            "https://metadata.google.internal./",
+            "https://printer.local./",
+        ] {
+            assert!(validate_url(bad).is_err(), "{bad} must be refused");
+        }
+        // a backslash ends the host for a browser, so this is example.com and never the address after it
+        let u = validate_url("https://example.com\\@127.0.0.1/").unwrap();
+        assert_eq!(u.host_str(), Some("example.com"));
+        for good in [
+            "https://example.com/",
+            "https://docs.rs/tokio",
+            "https://[2606:4700:4700::1111]/",
+            "https://1.1.1.1/",
+            "https://168.63.129.17/",
+        ] {
+            assert!(validate_url(good).is_ok(), "{good}");
+        }
     }
 }
