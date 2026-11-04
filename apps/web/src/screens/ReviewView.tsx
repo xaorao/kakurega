@@ -417,8 +417,21 @@ export function ReviewView(props: { id: string; config: Config; onUpdate?: () =>
               <p class="muted">{t("review.forRecipient", { recipient: j().recipient })}<span class={`state-text ${j().state}`}>{t(`state.${j().state}` as Key)}</span></p>
             </div>
           </header>
-          <div class="tabs" role="tablist">
-            <For each={tabs}>{([k, label]) => <button role="tab" aria-selected={tab() === k} class={tab() === k ? "tab active" : "tab"} onClick={() => setTab(k)}>{t(label)}</button>}</For>
+          <div
+            class="tabs"
+            role="tablist"
+            onKeyDown={(e) => {
+              const keys = tabs.map(([k]) => k);
+              const i = keys.indexOf(tab());
+              const next = e.key === "ArrowRight" ? (i + 1) % keys.length : e.key === "ArrowLeft" ? (i - 1 + keys.length) % keys.length : e.key === "Home" ? 0 : e.key === "End" ? keys.length - 1 : -1;
+              if (next >= 0) {
+                e.preventDefault();
+                setTab(keys[next] as Tab);
+                queueMicrotask(() => (e.currentTarget.querySelectorAll('[role="tab"]')[next] as HTMLElement | undefined)?.focus());
+              }
+            }}
+          >
+            <For each={tabs}>{([k, label]) => <button role="tab" tabindex={tab() === k ? 0 : -1} aria-selected={tab() === k} class={tab() === k ? "tab active" : "tab"} onClick={() => setTab(k)}>{t(label)}</button>}</For>
           </div>
           <div role="tabpanel">
             <Show when={tab() === "progress"}><Progress job={j()} /></Show>

@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, ErrorBoundary, For, onCleanup, onMount, Show } from "solid-js";
 import { api, ApiError, setCsrf, type Config, type Job } from "./api";
 void ApiError;
 import { NewReview } from "./screens/NewReview";
@@ -134,6 +134,8 @@ export function App() {
   const [config, setConfig] = createSignal<Config | null>(null);
   const [jobs, setJobs] = createSignal<Job[]>([]);
   const [query, setQuery] = createSignal("");
+  const [unreachable, setUnreachable] = createSignal(false);
+  const [failures, setFailures] = createSignal(0);
   let searchBox: HTMLInputElement | undefined;
   const shown = createMemo(() => {
     const q = query().trim().toLowerCase();
@@ -163,8 +165,13 @@ export function App() {
       setConfig(c);
       setJobs(j.jobs);
       setPaired(true);
-    } catch {
-      setPaired(false);
+    } catch (e) {
+      // A refused answer from the service means "not paired"; no answer at all means the service is not there.
+      if (e instanceof ApiError) setPaired(false);
+      else {
+        setUnreachable(true);
+        setPaired(false);
+      }
     }
   };
   createEffect(() => {
@@ -173,8 +180,10 @@ export function App() {
   const refresh = async () => {
     try {
       setJobs((await api.jobs()).jobs);
+      setFailures(0);
     } catch {
-      /* the next poll will try again */
+      // keep the last state on screen, say so after three misses in a row, and keep trying
+      setFailures((n) => n + 1);
     }
   };
   const timer = setInterval(() => paired() && void refresh(), 1500);
@@ -184,7 +193,7 @@ export function App() {
 
   return (
     <Show when={paired() !== null} fallback={<main class="center"><p class="muted">{t("app.connecting")}</p></main>}>
-      <Show when={paired()} fallback={<Pair onDone={() => { setPaired(null); }} />}>
+      <Show when={paired()} fallback={<Show when={unreachable()} fallback={<Pair onDone={() => { setPaired(null); }} />}><main class="center"><p role="alert" class="bad">{t("app.unreachable")}</p><button onClick={() => { setUnreachable(false); setPaired(null); }}>{t("app.retry")}</button></main></Show>}>
         <div class="shell">
           <header class="top">
             <a class="brand" href="#/">kakurega</a>
@@ -193,6 +202,9 @@ export function App() {
             <ThemePicker />
             <button class="link" onClick={async () => { await api.logout(); setPaired(false); }}>{t("top.signout")}</button>
           </header>
+          <Show when={failures() >= 3}>
+            <div class="banner" role="status">{t("app.connectionLost")}</div>
+          </Show>
           <Show when={config()?.test_mode}>
             <div class="banner" role="status">{t("banner.test")}</div>
           </Show>
@@ -229,6 +241,7 @@ export function App() {
               </ul>
             </nav>
             <main class="main">
+              <ErrorBoundary fallback={(_err, reset) => <section class="card stack" role="alert"><p>{t("app.crashed")}</p><button onClick={reset}>{t("app.reload")}</button></section>}>
               <Show when={config()}>
                 {(c) => (
                   <Show when={hash() !== "#/memory" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/docs"} fallback={hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/docs" ? <Documents /> : <Memory />}>
@@ -238,6 +251,7 @@ export function App() {
                   </Show>
                 )}
               </Show>
+              </ErrorBoundary>
             </main>
           </div>
         </div>

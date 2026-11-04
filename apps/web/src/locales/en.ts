@@ -1,5 +1,10 @@
 export const en = {
   "app.connecting": "Connecting…",
+  "app.unreachable": "Kakurega could not reach its local service. It may have stopped or restarted.",
+  "app.retry": "Try again",
+  "app.connectionLost": "The connection to the local service was lost. Showing the last known state; trying again.",
+  "app.crashed": "This screen hit an error and could not be shown. Your data is not affected.",
+  "app.reload": "Reload this screen",
   "pair.title": "Pair this browser",
   "pair.intro": "Run <c>kaku pair</c> in a terminal on this computer and open the link it prints, or paste the code here.",
   "pair.label": "One-time code",

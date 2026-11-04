@@ -50,6 +50,8 @@ const problems = [];
 const browser = await chromium.launch({ executablePath: chrome, headless: true });
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
 const page = await ctx.newPage();
+const requestOrigins = new Set();
+page.on("request", (r) => { try { requestOrigins.add(new URL(r.url()).origin); } catch { /* data: urls */ } });
 page.on("console", (m) => m.type() === "error" && problems.push("console: " + m.text()));
 page.on("pageerror", (e) => problems.push("pageerror: " + e.message));
 page.on("requestfailed", (r) => problems.push("requestfailed: " + r.url() + " " + r.failure()?.errorText));
@@ -105,6 +107,11 @@ try {
   await page.screenshot({ path: join(shots, "03-source.png") });
   await axeCheck(page, "source");
 
+  await page.getByRole("tab", { name: "Findings" }).click();
+  await page.getByRole("tab", { name: "Findings" }).press("ArrowRight");
+  check("the arrow keys move between the review tabs and keep focus on the selected one", (await page.getByRole("tab", { name: "Release" }).getAttribute("aria-selected")) === "true" && (await page.evaluate(() => document.activeElement?.textContent)) === "Release");
+  await page.getByRole("tab", { name: "Release" }).press("Home");
+  check("Home goes to the first tab", (await page.getByRole("tab", { name: "Progress" }).getAttribute("aria-selected")) === "true");
   await page.getByRole("tab", { name: "Findings" }).click();
   await page.getByText("Confirmed by the kernel").waitFor();
   check("finding is confirmed by the kernel", true);
@@ -256,6 +263,9 @@ try {
   await page.getByLabel("Your message").press("Shift+Enter");
   await page.getByLabel("Your message").type("(one line more)");
   check("Shift+Enter adds a line instead of sending", (await page.locator(".msg").count()) === 0);
+  await page.getByLabel("Your message").dispatchEvent("keydown", { key: "Enter", isComposing: true, keyCode: 229, bubbles: true, cancelable: true });
+  await page.waitForTimeout(300);
+  check("Enter that confirms an input-method composition does not send the message", (await page.locator(".msg").count()) === 0);
   await page.getByLabel("Your message").press("Enter");
   await page.locator(".msg.assistant").waitFor();
   const reply = await page.locator(".msg.assistant").innerText();
@@ -338,6 +348,14 @@ try {
   check("journey completed", false, String(e).slice(0, 400));
   await page.screenshot({ path: join(shots, "failure.png"), fullPage: true }).catch(() => {});
 }
+const unreach = await browser.newContext();
+const up = await unreach.newPage();
+await up.route("**/api/session", (r) => r.abort());
+await up.goto(base + "/");
+await up.getByRole("alert").waitFor({ timeout: 15000 }).catch(() => {});
+check("when the local service cannot be reached the page says so and offers to retry instead of asking for a pairing code", /could not reach/i.test(await up.locator("body").innerText()) && (await up.getByRole("button", { name: "Try again" }).count()) === 1 && (await up.getByRole("heading", { name: "Pair this browser" }).count()) === 0);
+await unreach.close();
+check("every request the workspace made went to its own local service and nowhere else", [...requestOrigins].every((o) => o === base), JSON.stringify([...requestOrigins]));
 check("zero console errors, page errors, failed requests or 5xx responses", problems.length === 0, problems.join(" | ").slice(0, 400));
 await browser.close();
 server.kill();

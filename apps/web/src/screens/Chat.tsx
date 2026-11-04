@@ -58,7 +58,8 @@ export function Chat() {
           value={text()}
           onInput={(e) => setText(e.currentTarget.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
+            // Enter that confirms an input-method composition (Hindi, Chinese, Japanese) must not send the message.
+            if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
               e.preventDefault();
               void send();
             }
