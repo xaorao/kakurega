@@ -143,6 +143,10 @@ pub struct App {
     inflight_polls: BTreeSet<String>,
     pub chat_history: Vec<(String, String)>,
     pub session: Option<String>,
+    /// Long pastes shown as a short placeholder in the composer and expanded when a chat message is sent.
+    pub pasted: Vec<(String, String)>,
+    /// Messages typed while an answer is still arriving; each is sent after the previous answer completes.
+    pub queued: Vec<String>,
     /// Set by Esc while an answer is streaming; the network thread then closes the connection.
     pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     live: Option<(usize, String)>,
@@ -205,6 +209,8 @@ impl App {
             inflight_polls: BTreeSet::new(),
             chat_history: Vec::new(),
             session: None,
+            pasted: Vec::new(),
+            queued: Vec::new(),
             cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             live: None,
             chat_waiting: false,
@@ -294,9 +300,7 @@ impl App {
                     v.typed.push_str(&t);
                     v.typed.truncate(DIGEST_ACK_LEN);
                 } else if matches!(self.mode, Mode::Normal) {
-                    for c in clean(&t).chars() {
-                        self.insert(if c == '\n' || c == '\t' { ' ' } else { c });
-                    }
+                    self.paste(&t);
                 }
                 Vec::new()
             }
@@ -402,6 +406,88 @@ impl App {
             _ => {}
         }
         Vec::new()
+    }
+
+    /// A paste never runs anything. Into a command line it is flattened to one line; into a message, a long paste
+    /// becomes a short placeholder that is expanded only when the message is sent as chat.
+    fn paste(&mut self, raw: &str) {
+        let text = clean(raw).replace("\r\n", "\n").replace('\r', "\n");
+        let text = text.trim_matches('\n');
+        if self.input.trim_start().starts_with('/') {
+            for c in text.chars() {
+                self.insert(if c == '\n' || c == '\t' { ' ' } else { c });
+            }
+            return;
+        }
+        let lines = text.matches('\n').count() + 1;
+        if lines >= 3 || text.chars().count() > 150 {
+            let base = format!("[Pasted ~{lines} lines]");
+            let mut label = base.clone();
+            let mut k = 2;
+            while self.pasted.iter().any(|(l, _)| *l == label) {
+                label = format!("[Pasted ~{lines} lines #{k}]");
+                k += 1;
+            }
+            self.pasted.push((label.clone(), text.to_string()));
+            if self.pasted.len() > 20 {
+                self.pasted.remove(0);
+            }
+            for c in label.chars() {
+                self.insert(c);
+            }
+            return;
+        }
+        for c in text.chars() {
+            self.insert(if c == '\t' { ' ' } else { c });
+        }
+    }
+
+    /// Replaces each placeholder still present in a chat message by what was pasted.
+    pub fn expand_pasted(&self, line: &str) -> String {
+        let mut out = line.to_string();
+        for (label, text) in &self.pasted {
+            if let Some(at) = out.find(label.as_str()) {
+                out.replace_range(at..at + label.len(), text);
+            }
+        }
+        out
+    }
+
+    /// Moves the cursor one line up or down inside a multi-line message. False when there is no such line, so the
+    /// key falls through to history.
+    fn move_line(&mut self, delta: i64) -> bool {
+        if !self.input.contains('\n') {
+            return false;
+        }
+        let chars: Vec<char> = self.input.chars().collect();
+        let before = &chars[..self.cursor.min(chars.len())];
+        let line_start = before.iter().rposition(|c| *c == '\n').map_or(0, |i| i + 1);
+        let col = self.cursor - line_start;
+        if delta < 0 {
+            if line_start == 0 {
+                return false;
+            }
+            let prev_end = line_start - 1;
+            let prev_start = chars[..prev_end]
+                .iter()
+                .rposition(|c| *c == '\n')
+                .map_or(0, |i| i + 1);
+            self.cursor = prev_start + col.min(prev_end - prev_start);
+        } else {
+            let Some(nl) = chars[self.cursor.min(chars.len())..]
+                .iter()
+                .position(|c| *c == '\n')
+            else {
+                return false;
+            };
+            let next_start = self.cursor + nl + 1;
+            let next_end = chars[next_start..]
+                .iter()
+                .position(|c| *c == '\n')
+                .map_or(chars.len(), |i| next_start + i);
+            self.cursor = next_start + col.min(next_end - next_start);
+        }
+        true
     }
 
     fn insert(&mut self, c: char) {
@@ -625,6 +711,8 @@ impl App {
             KeyCode::Right => self.cursor = (self.cursor + 1).min(n),
             KeyCode::Home => self.cursor = 0,
             KeyCode::End => self.cursor = n,
+            KeyCode::Up if self.move_line(-1) => {}
+            KeyCode::Down if self.move_line(1) => {}
             KeyCode::Up => {
                 if !self.history.is_empty() {
                     let p = match self.hist_pos {
@@ -664,7 +752,21 @@ impl App {
                     self.cursor = 0;
                 }
             }
+            KeyCode::Char('j') if ctrl => self.insert('\n'),
+            KeyCode::Enter
+                if k.modifiers.contains(KeyModifiers::SHIFT)
+                    || k.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.insert('\n')
+            }
             KeyCode::Enter => {
+                if !self.input.trim_start().starts_with('/') && !self.input.trim().is_empty() {
+                    let size = self.expand_pasted(&self.input).chars().count();
+                    if size > 4000 {
+                        self.say(Kind::Warn, format!("That message is {size} characters; the limit is 4000. Shorten it or send it in parts. Nothing was sent."));
+                        return Vec::new();
+                    }
+                }
                 let line = std::mem::take(&mut self.input);
                 self.cursor = 0;
                 self.hist_pos = None;
@@ -678,6 +780,11 @@ impl App {
                     }
                 }
                 self.say(Kind::User, clean(&line));
+                let line = if line.trim_start().starts_with('/') {
+                    line
+                } else {
+                    self.expand_pasted(&line)
+                };
                 return self.run_line(&line);
             }
             _ => {}
@@ -751,6 +858,7 @@ impl App {
             }
             Command::Clear | Command::NewChat => {
                 self.chat_history.clear();
+                self.queued.clear();
                 let was_kept = self.session.take().is_some();
                 self.say(
                     Kind::Info,
@@ -867,7 +975,12 @@ impl App {
 
     fn chat(&mut self, message: &str) -> Vec<Req> {
         if self.chat_waiting {
-            self.say(Kind::Warn, "Still waiting for the last answer.");
+            if self.queued.len() >= 5 {
+                self.say(Kind::Warn, "Five messages are already waiting. Wait for an answer, or press Esc to stop the current one.");
+            } else {
+                self.queued.push(message.to_string());
+                self.say(Kind::Info, format!("Queued ({} waiting). It is sent when the current answer is finished. Esc stops the current answer and drops the queue.", self.queued.len()));
+            }
             return Vec::new();
         }
         let start = self.chat_history.len().saturating_sub(18);
@@ -1551,6 +1664,10 @@ impl App {
                 let live = self.live.take();
                 if !ok || body["stopped"] == true {
                     self.chat_history.pop();
+                    let dropped = std::mem::take(&mut self.queued).len();
+                    if dropped > 0 {
+                        self.say(Kind::Warn, format!("{dropped} queued message(s) were not sent because the answer did not finish. Type them again."));
+                    }
                     if let Some((i, partial)) = live {
                         if let Some(c) = self.cards.get_mut(i) {
                             c.lines = text_lines(&partial);
@@ -1603,7 +1720,12 @@ impl App {
                     }
                     None => self.push(Kind::Info, Some("Assistant"), lines),
                 }
-                Vec::new()
+                if self.queued.is_empty() {
+                    Vec::new()
+                } else {
+                    let next = self.queued.remove(0);
+                    self.chat(&next)
+                }
             }
             Intent::Keep => {
                 if ok {

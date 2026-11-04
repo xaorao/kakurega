@@ -134,10 +134,11 @@ fn card_lines(c: &Card, width: usize, th: &Theme) -> Vec<Line<'static>> {
 
 pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
     let area = f.area();
+    let input_lines = app.input.split('\n').count().clamp(1, 6) as u16;
     let rows = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(3),
-        Constraint::Length(3),
+        Constraint::Length(input_lines + 2),
         Constraint::Length(1),
     ])
     .split(area);
@@ -194,25 +195,40 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
     } else {
         ""
     };
-    let shown = if app.input.is_empty() {
-        Line::from(Span::styled(
+    let all: Vec<&str> = app.input.split('\n').collect();
+    let (cur_row, cur_col) = {
+        let before: String = app.input.chars().take(app.cursor).collect();
+        let row = before.matches('\n').count();
+        let col: usize = before
+            .rsplit('\n')
+            .next()
+            .unwrap_or("")
+            .chars()
+            .map(|c| c.width().unwrap_or(0))
+            .sum();
+        (row, col)
+    };
+    let h = inner.height as usize;
+    let first = (cur_row + 1)
+        .saturating_sub(h)
+        .min(all.len().saturating_sub(h.min(all.len())));
+    let shown: Vec<Line> = if app.input.is_empty() {
+        vec![Line::from(Span::styled(
             hint,
             Style::default().add_modifier(Modifier::DIM),
-        ))
+        ))]
     } else {
-        Line::raw(app.input.clone())
+        all.iter()
+            .skip(first)
+            .take(h)
+            .map(|l| Line::raw((*l).to_string()))
+            .collect()
     };
     f.render_widget(Paragraph::new(shown), inner);
     if matches!(app.mode, Mode::Normal) {
-        let col: usize = app
-            .input
-            .chars()
-            .take(app.cursor)
-            .map(|c| c.width().unwrap_or(0))
-            .sum();
         f.set_cursor_position((
-            inner.x + (col as u16).min(inner.width.saturating_sub(1)),
-            inner.y,
+            inner.x + (cur_col as u16).min(inner.width.saturating_sub(1)),
+            inner.y + (cur_row.saturating_sub(first) as u16).min(inner.height.saturating_sub(1)),
         ));
     }
 

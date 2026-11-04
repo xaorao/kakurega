@@ -147,8 +147,8 @@ fn tu03_the_composer_edits_like_a_terminal_line_editor_including_unicode_and_pas
     assert_eq!(app.input, "");
     app.handle(Event::Paste("line one\nline two\t\u{1b}[2Jend".into()));
     assert!(
-        !app.input.contains('\n') && !app.input.contains('\u{1b}') && !app.input.contains('\t'),
-        "a paste cannot smuggle control characters: {:?}",
+        !app.input.contains('\u{1b}') && !app.input.contains('\t') && app.input.contains('\n'),
+        "a short paste into a message keeps its lines but cannot smuggle control characters: {:?}",
         app.input
     );
     app.handle(ctrl('k'));
@@ -189,9 +189,18 @@ fn tu04_plain_text_is_a_chat_message_sent_with_bounded_history_and_never_as_a_co
     );
     assert!(
         enter(&mut app, "second message while waiting").is_empty(),
-        "one question at a time"
+        "one question at a time: the second one is queued"
     );
-    app.handle(ok(&r[0], 200, json!({"reply": "Here is a summary.\u{1b}[31m", "route": {"simulated": false}, "notes_used": 2, "notes_withheld": 1})));
+    let auto = app.handle(ok(&r[0], 200, json!({"reply": "Here is a summary.\u{1b}[31m", "route": {"simulated": false}, "notes_used": 2, "notes_withheld": 1})));
+    assert_eq!(
+        auto[0].body.as_ref().unwrap()["message"],
+        "second message while waiting"
+    );
+    app.handle(ok(
+        &auto[0],
+        200,
+        json!({"reply": "second answer", "route": {"simulated": false}, "notes_used": 0}),
+    ));
     let t = text(&app);
     assert!(
         t.contains("Assistant")
@@ -205,8 +214,8 @@ fn tu04_plain_text_is_a_chat_message_sent_with_bounded_history_and_never_as_a_co
     let sent = r2[0].body.as_ref().unwrap();
     assert_eq!(
         sent["history"].as_array().unwrap().len(),
-        2,
-        "the earlier turn is sent as context"
+        4,
+        "the earlier turns are sent as context"
     );
     app.handle(ok(
         &r2[0],
@@ -216,7 +225,7 @@ fn tu04_plain_text_is_a_chat_message_sent_with_bounded_history_and_never_as_a_co
     assert!(text(&app).contains("the local model did not answer"));
     assert_eq!(
         app.chat_history.len(),
-        2,
+        4,
         "a failed turn is not kept in the history"
     );
     enter(&mut app, "/clear");
@@ -1062,10 +1071,6 @@ fn tu24_a_streamed_answer_grows_in_one_card_is_replaced_by_the_final_text_and_ca
     let r = enter(&mut a, "tell me about invoices");
     assert!(r[0].stream && r[0].path == "/api/chat/stream");
     let id = r[0].id;
-    assert!(
-        enter(&mut a, "second message while waiting").is_empty(),
-        "a second message waits for the first"
-    );
     let before = a.cards.len();
     delta(&mut a, id, "Invoices ");
     delta(&mut a, id, "are paid ");
@@ -1123,4 +1128,169 @@ fn tu24_a_streamed_answer_grows_in_one_card_is_replaced_by_the_final_text_and_ca
     // deltas for another request are ignored
     delta(&mut a, 9999, "stray");
     assert!(!text(&a).contains("stray"));
+}
+
+fn with_mods(c: KeyCode, m: KeyModifiers) -> Event {
+    Event::Key(KeyEvent {
+        code: c,
+        modifiers: m,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    })
+}
+
+#[test]
+fn tu25_shift_or_alt_enter_adds_a_line_and_up_down_move_between_lines_before_history() {
+    let mut a = booted();
+    typed(&mut a, "first");
+    assert!(a
+        .handle(with_mods(KeyCode::Enter, KeyModifiers::SHIFT))
+        .is_empty());
+    typed(&mut a, "second");
+    a.handle(with_mods(KeyCode::Enter, KeyModifiers::ALT));
+    typed(&mut a, "third");
+    a.handle(ctrl('j'));
+    typed(&mut a, "fourth");
+    assert_eq!(a.input, "first\nsecond\nthird\nfourth");
+    a.handle(key(KeyCode::Up));
+    a.handle(key(KeyCode::Up));
+    a.handle(key(KeyCode::Up));
+    assert_eq!(
+        a.cursor, 5,
+        "the cursor is at the end of the first line, not in history"
+    );
+    a.handle(key(KeyCode::Down));
+    assert_eq!(a.cursor, 11);
+    let r = a.handle(key(KeyCode::Enter));
+    assert_eq!(
+        r[0].body.as_ref().unwrap()["message"],
+        "first\nsecond\nthird\nfourth",
+        "newlines are part of the message"
+    );
+}
+
+#[test]
+fn tu26_a_long_paste_is_a_placeholder_until_sent_and_never_reaches_a_command() {
+    let mut a = booted();
+    let big = (0..30)
+        .map(|i| format!("line {i} of a long log"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    typed(&mut a, "summarise: ");
+    a.handle(Event::Paste(big.clone()));
+    assert!(
+        a.input.contains("[Pasted ~30 lines]") && a.input.len() < 60,
+        "{}",
+        a.input
+    );
+    a.handle(Event::Paste(big.clone()));
+    assert!(
+        a.input.contains("[Pasted ~30 lines #2]"),
+        "a second paste gets its own label"
+    );
+    let r = a.handle(key(KeyCode::Enter));
+    let msg = r[0].body.as_ref().unwrap()["message"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        msg.starts_with("summarise: line 0 of a long log")
+            && msg.matches("line 29 of a long log").count() == 2
+            && !msg.contains("[Pasted"),
+        "both are expanded in the sent message"
+    );
+    assert!(
+        text(&a).contains("[Pasted ~30 lines]") && !text(&a).contains("line 15 of"),
+        "the screen keeps the short form"
+    );
+    // into a command line a paste is flattened and never folded
+    let mut b = booted();
+    typed(&mut b, "/remember ");
+    b.handle(Event::Paste(big.clone()));
+    assert!(
+        !b.input.contains('\n') && !b.input.contains("[Pasted") && b.input.contains("line 29"),
+        "{}",
+        b.input
+    );
+    // a placeholder typed by hand is just text, and one pasted inside a command line is not expanded
+    let mut c = booted();
+    c.handle(Event::Paste(big.clone()));
+    let label = c.input.clone();
+    let reqs = c.handle(ctrl('a'));
+    assert!(reqs.is_empty());
+    typed(&mut c, "/remember ");
+    let r = c.handle(key(KeyCode::Enter));
+    assert!(
+        r[0].path == "/api/memories"
+            && !r[0].body.as_ref().unwrap()["text"]
+                .as_str()
+                .unwrap()
+                .contains("line 29"),
+        "{label}"
+    );
+    // too long to send: refused on the spot, nothing is cleared or sent
+    let mut d = booted();
+    d.handle(Event::Paste("x".repeat(5000)));
+    let r = d.handle(key(KeyCode::Enter));
+    assert!(
+        r.is_empty() && text(&d).contains("the limit is 4000") && d.input.contains("[Pasted"),
+        "the draft is kept so it can be shortened"
+    );
+}
+
+#[test]
+fn tu27_the_composer_grows_with_its_lines_and_shows_the_cursor_line() {
+    let mut a = booted();
+    for i in 0..9 {
+        typed(&mut a, &format!("row{i}"));
+        a.handle(with_mods(KeyCode::Enter, KeyModifiers::SHIFT));
+    }
+    typed(&mut a, "last");
+    let (lines, _) = render(&a, 60, 20, true);
+    let screen = lines.join("\n");
+    assert!(
+        screen.contains("last") && !screen.contains("row0"),
+        "the window follows the cursor line:\n{screen}"
+    );
+    let (lines, _) = render(&a, 30, 8, false);
+    assert!(
+        lines.join("\n").contains("last"),
+        "still readable in a tiny terminal"
+    );
+}
+
+#[test]
+fn tu28_messages_typed_while_an_answer_streams_are_queued_in_order_and_dropped_if_it_is_stopped() {
+    let mut a = booted();
+    let r = enter(&mut a, "one");
+    assert!(enter(&mut a, "two").is_empty() && enter(&mut a, "three").is_empty());
+    assert_eq!(a.queued, ["two", "three"]);
+    assert!(text(&a).contains("Queued (2 waiting)"));
+    // the first answer finishes: the next queued message goes out by itself, with the first exchange in its history
+    let next = a.handle(ok(
+        &r[0],
+        200,
+        json!({"done": true, "reply": "answer one", "route": {"simulated": true}, "notes_used": 0}),
+    ));
+    assert_eq!(next.len(), 1);
+    let body = next[0].body.as_ref().unwrap();
+    assert_eq!(body["message"], "two");
+    assert_eq!(body["history"].as_array().unwrap().len(), 2);
+    assert_eq!(a.queued, ["three"]);
+    // stopping the answer drops what was waiting, and says so
+    a.handle(key(KeyCode::Esc));
+    let after = a.handle(ok(&next[0], 200, json!({"stopped": true})));
+    assert!(after.is_empty() && a.queued.is_empty());
+    assert!(text(&a).contains("1 queued message(s) were not sent"));
+    // the queue is bounded
+    let mut b = booted();
+    enter(&mut b, "first");
+    for i in 0..7 {
+        enter(&mut b, &format!("q{i}"));
+    }
+    assert_eq!(b.queued.len(), 5);
+    assert!(text(&b).contains("Five messages are already waiting"));
+    // a command is still run at once while an answer streams
+    let r = enter(&mut b, "/reviews");
+    assert_eq!(r[0].path, "/api/jobs");
 }
