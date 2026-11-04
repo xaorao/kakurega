@@ -142,7 +142,7 @@
         },
         {
           "id": "II-10",
-          "text": "Hosted mode only with validated tenant isolation, storage, key management and honest wording",
+          "text": "Hosted mode only with validated tenant isolation, storage, key management and honest wording Design and claim ladder: docs/engineering-decisions/hosted-mode.md. Steps (a) per-user isolation and (b) client-side attestation gate are buildable now; (c) real TEE attestation is blocked on a TEE host.",
           "kind": "pending",
           "evidence_needed": "tenant isolation tests, key management review, hosted journeys"
         },
