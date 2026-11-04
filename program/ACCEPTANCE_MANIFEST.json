@@ -105,6 +105,24 @@
           "text": "Electron chosen with measurements; Tauri not measured (recorded). Reviewer accepts or asks for a Tauri measurement",
           "kind": "human",
           "evidence_needed": "Prateek accepts the Electron decision or asks for a Tauri build and measurement"
+        },
+        {
+          "id": "II-05",
+          "text": "Readiness screen: first launch checks Ollama, model and sandbox and offers fixes; a stranger reaches a first review",
+          "kind": "pending",
+          "evidence_needed": "browser and desktop journeys on a clean data dir, screenshots, I-07 tester"
+        },
+        {
+          "id": "II-06",
+          "text": "History with search (Cmd+K), theme choice and greeting in the web UI",
+          "kind": "pending",
+          "evidence_needed": "journeys, axe, screenshots light and dark"
+        },
+        {
+          "id": "II-07",
+          "text": "Localisation scaffolding: strings extracted, one extra language rendered",
+          "kind": "pending",
+          "evidence_needed": "journey in second language, no missing keys"
         }
       ]
     },
