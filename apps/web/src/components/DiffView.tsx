@@ -1,7 +1,7 @@
 import { For } from "solid-js";
 import { parseDiff } from "../diff";
 
-const MARK = { add: "+", del: "-", ctx: " ", hunk: "", file: "" } as const;
+const MARK = { add: "+", del: "-", ctx: " ", hunk: "", file: "", meta: "" } as const;
 
 /** A fix shown the way a code review shows it. The sign in front of each line carries the meaning; colour only helps. */
 export function DiffView(props: { diff: string; label: string }) {
