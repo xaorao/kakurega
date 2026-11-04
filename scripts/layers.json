@@ -2,6 +2,7 @@
   "rule": "a kk-* crate may depend only on kk-* crates in a strictly lower layer",
   "layers": {
     "kk-types": 0,
-    "kk-evidence": 1
+    "kk-evidence": 1,
+    "kk-vault": 1
   }
 }
