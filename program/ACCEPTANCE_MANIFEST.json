@@ -180,9 +180,10 @@
         },
         {
           "id": "III-04",
-          "text": "Free-form chat with a model in the terminal and web workspace (H9)",
-          "kind": "pending",
-          "evidence_needed": "a chat surface backed by a real model route, with route badge, tool approvals and tests"
+          "text": "Private chat on a device-only route: bounded input, saved notes offered as data (instruction-like notes withheld), nothing saved, log without text; web and terminal surfaces. Real-model quality is not measured (live check in TESTING.md); NEAR-routed chat is III-08.",
+          "kind": "machine",
+          "command": "cargo test -p kk-service --test flow sv17",
+          "expect": "test result: ok. 1 passed"
         },
         {
           "id": "III-05",

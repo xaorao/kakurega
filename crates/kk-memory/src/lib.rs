@@ -186,10 +186,28 @@ fn new_id() -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
+const STOPWORDS: &[&str] = &[
+    "the", "and", "for", "are", "but", "not", "you", "all", "any", "can", "had", "her", "was",
+    "one", "our", "out", "has", "have", "his", "how", "its", "may", "who", "did", "get", "now",
+    "see", "she", "too", "use", "what", "when", "where", "which", "while", "with", "that", "this",
+    "these", "those", "there", "their", "they", "them", "then", "than", "from", "into", "about",
+    "would", "could", "should", "does", "doing", "each", "other", "some", "such", "only", "own",
+    "same", "very", "just", "also", "been", "being", "were", "will", "your", "say", "says", "tell",
+    "give", "show", "know",
+];
+
 fn fts_query(q: &str) -> Option<String> {
     let terms: Vec<String> = q
         .split(|c: char| !c.is_alphanumeric())
         .filter(|t| !t.is_empty())
+        .filter(|t| {
+            let l = t.to_lowercase();
+            if t.is_ascii() {
+                l.len() >= 3 && !STOPWORDS.contains(&l.as_str())
+            } else {
+                t.chars().count() >= 2
+            }
+        })
         .take(12)
         .map(|t| format!("\"{}\"", t.replace('"', "")))
         .collect();
@@ -198,6 +216,47 @@ fn fts_query(q: &str) -> Option<String> {
     } else {
         Some(terms.join(" OR "))
     }
+}
+
+/// True when saved text reads like an instruction to an AI system. Such notes stay in memory but are never handed to a model as context.
+pub fn instruction_like(text: &str) -> bool {
+    let t = text.to_lowercase();
+    let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
+    const PHRASES: &[&str] = &[
+        "ignore all previous",
+        "ignore previous",
+        "ignore the previous",
+        "ignore prior",
+        "ignore the above",
+        "ignore all prior",
+        "ignore your instructions",
+        "ignore any instructions",
+        "disregard all",
+        "disregard previous",
+        "disregard the previous",
+        "disregard your",
+        "forget your instructions",
+        "forget all previous",
+        "forget previous instructions",
+        "new instructions:",
+        "system prompt",
+        "you are now",
+        "you must now",
+        "from now on you",
+        "act as ",
+        "pretend to be",
+        "pretend you are",
+        "reply only with",
+        "respond only with",
+        "answer only with",
+        "do not tell the user",
+        "don't tell the user",
+        "without telling the user",
+        "override your",
+        "jailbreak",
+        "developer mode",
+    ];
+    PHRASES.iter().any(|p| t.contains(p))
 }
 
 struct Row {
@@ -765,6 +824,12 @@ pub struct Recalled {
     pub memory: Memory,
     pub why: String,
     pub untrusted: bool,
+}
+
+impl Recalled {
+    pub fn instruction_like(&self) -> bool {
+        instruction_like(&self.memory.text)
+    }
 }
 
 fn explain(m: &Memory) -> String {

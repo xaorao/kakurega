@@ -70,6 +70,7 @@ enum Intent {
     Correct,
     Forget,
     Log,
+    Chat,
 }
 
 #[derive(Debug, Clone)]
@@ -120,6 +121,8 @@ pub struct App {
     pending: BTreeMap<u64, Intent>,
     watching: BTreeMap<String, usize>,
     inflight_polls: BTreeSet<String>,
+    pub chat_history: Vec<(String, String)>,
+    chat_waiting: bool,
 }
 
 pub fn clean(s: &str) -> String {
@@ -174,6 +177,8 @@ impl App {
             pending: BTreeMap::new(),
             watching: BTreeMap::new(),
             inflight_polls: BTreeSet::new(),
+            chat_history: Vec::new(),
+            chat_waiting: false,
         }
     }
 
@@ -533,6 +538,9 @@ impl App {
     }
 
     pub fn run_line(&mut self, line: &str) -> Vec<Req> {
+        if !line.trim_start().starts_with('/') {
+            return self.chat(line.trim());
+        }
         let cmd = match cmd::parse(line) {
             Ok(c) => c,
             Err(m) => {
@@ -555,13 +563,20 @@ impl App {
                         "/memory [WORDS]  /remember TEXT  /correct ID TEXT  /forget ID".into(),
                         "/log                           the signed activity log".into(),
                         "/verify FILE                   check a capsule offline".into(),
+                        "/clear                         forget this conversation (it is never saved)".into(),
                         "/status  /help  /quit          Tab completes, Up/Down recall, PageUp/PageDown scroll".into(),
+                        "Anything else you type is a message to the private assistant on this computer.".into(),
                     ],
                 );
                 Vec::new()
             }
             Command::Quit => {
                 self.quit = true;
+                Vec::new()
+            }
+            Command::Clear => {
+                self.chat_history.clear();
+                self.say(Kind::Info, "The conversation was cleared. Conversations are never saved.");
                 Vec::new()
             }
             Command::Status => vec![self.req(Intent::Readiness, false, Method::Get, "/api/readiness", None)],
@@ -616,6 +631,27 @@ impl App {
                 Vec::new()
             }
         }
+    }
+
+    fn chat(&mut self, message: &str) -> Vec<Req> {
+        if self.chat_waiting {
+            self.say(Kind::Warn, "Still waiting for the last answer.");
+            return Vec::new();
+        }
+        let start = self.chat_history.len().saturating_sub(18);
+        let history: Vec<Value> = self.chat_history[start..]
+            .iter()
+            .map(|(r, c)| json!({"role": r, "content": c}))
+            .collect();
+        self.chat_history.push(("user".into(), message.to_string()));
+        self.chat_waiting = true;
+        vec![self.req(
+            Intent::Chat,
+            false,
+            Method::Post,
+            "/api/chat",
+            Some(json!({"message": message, "history": history})),
+        )]
     }
 
     fn scrub_last_remember(&mut self) {
@@ -1148,6 +1184,33 @@ impl App {
                         err_text(status, &body)
                     },
                 );
+                Vec::new()
+            }
+            Intent::Chat => {
+                self.chat_waiting = false;
+                if !ok {
+                    self.chat_history.pop();
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let reply = body["reply"].as_str().unwrap_or("").to_string();
+                self.chat_history.push(("assistant".into(), reply.clone()));
+                let mut foot = vec![format!(
+                    "{} · {} note(s) used",
+                    if body["route"]["simulated"] == true {
+                        "test model"
+                    } else {
+                        "private, on this computer"
+                    },
+                    body["notes_used"]
+                )];
+                if body["notes_withheld"].as_u64().unwrap_or(0) > 0 {
+                    foot.push(format!("{} note(s) were not given to the model because they look like instructions.", body["notes_withheld"]));
+                }
+                let mut lines = text_lines(&reply);
+                lines.push(String::new());
+                lines.extend(foot);
+                self.push(Kind::Info, Some("Assistant"), lines);
                 Vec::new()
             }
             Intent::Log => {

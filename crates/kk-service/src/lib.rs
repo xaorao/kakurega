@@ -3,4 +3,4 @@ pub mod keys;
 pub mod service;
 pub mod snapshot;
 
-pub use service::{JobRunner, Routes, Service};
+pub use service::{ChatReply, JobRunner, Routes, Service};

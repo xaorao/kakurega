@@ -42,6 +42,8 @@ export interface MemoryVersion { id: string; text: string; reason: string; creat
 export interface Suggestion { id: string; text: string; why: string; level: string; untrusted: boolean }
 export interface LogEntry { seq: number; at: number; kind: string; subject: string; data: Record<string, string | number> }
 export interface LogSummary { count: number; head: string | null; public_key: string; recent: LogEntry[] }
+export interface ChatTurn { role: "user" | "assistant"; content: string }
+export interface ChatReply { reply: string; route: { id: string; class: string; simulated: boolean }; notes_used: number; notes_withheld: number }
 export interface Withheld { path: string; notes: string[] }
 export interface Summary {
   imported: number;
@@ -101,6 +103,7 @@ export const api = {
   acceptSuggestion: (job: string, id: string) => request<{ id: string; added: boolean }>("POST", `/api/jobs/${job}/memory-suggestions/${id}/accept`, {}),
   dismissSuggestion: (job: string, id: string) => request<{ dismissed: boolean }>("POST", `/api/jobs/${job}/memory-suggestions/${id}/dismiss`, {}),
   log: () => request<LogSummary>("GET", "/api/log"),
+  chat: (message: string, history: ChatTurn[]) => request<ChatReply>("POST", "/api/chat", { message, history }),
   readiness: () => request<Readiness>("GET", "/api/readiness"),
   fs: (path?: string) => request<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>("GET", `/api/fs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   startJob: (repo: string, recipient: string) => request<{ id: string }>("POST", "/api/jobs", { repo, recipient }),

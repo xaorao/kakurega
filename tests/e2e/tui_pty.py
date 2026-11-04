@@ -216,6 +216,8 @@ try:
     send("/deliver\r")
     check("delivery produces a capsule", wait_for(r"Delivered") is not None and ".kkg" in screen_text())
     (repo / "target/e2e-shots/tui-delivered.txt").write_text(screen_text())
+    send("Where are login sessions kept?\r")
+    check("plain text is a chat message answered by the private assistant", wait_for(r"\[test model\] I received \d+ characters") is not None)
     send("/remember the password is hunter2hunter2\r")
     check("a secret is refused", wait_for(r"secrets are never stored") is not None)
     check("and hidden from the transcript", "text hidden" in screen_text())

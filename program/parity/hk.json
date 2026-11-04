@@ -251,6 +251,10 @@
   "K22": {
    "status": "PARTIAL",
    "evidence": "see G36: ledger, thresholds, block and recording are built and tested; differencing, cohort-size and amendment checks (DA02 beyond aliases, DA03-DA05) are not built"
+  },
+  "H9": {
+   "status": "PARTIAL",
+   "evidence": "private chat on a device-only route in the web workspace and the terminal: kk-service sv17 (auth, bounds, notes as data, injection-like notes withheld, no text in the log), scripts/e2e chat journey (axe clean), tests/e2e/tui_pty.py chat turn; live local model checked with scripts/live-chat.py. Not built: attachments, voice, streaming, saved conversations, tools, model picker, NEAR route"
   }
  }
 }

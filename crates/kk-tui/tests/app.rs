@@ -100,9 +100,10 @@ fn tu01_commands_parse_and_hostile_input_is_refused_with_a_usage_hint() {
     assert!(cmd::parse("/review  for x").is_err());
     assert!(cmd::parse("/forget two words").is_err());
     assert!(cmd::parse("/correct abc").is_err());
-    assert!(cmd::parse("hello there")
-        .unwrap_err()
-        .contains("not sent anywhere"));
+    assert!(
+        cmd::parse("hello there").is_err(),
+        "plain text is not a command"
+    );
     assert!(cmd::parse("/revew x for y")
         .unwrap_err()
         .contains("unknown command"));
@@ -176,11 +177,68 @@ fn tu03_the_composer_edits_like_a_terminal_line_editor_including_unicode_and_pas
 }
 
 #[test]
-fn tu04_plain_text_is_never_sent_and_unknown_commands_say_so() {
+fn tu04_plain_text_is_a_chat_message_sent_with_bounded_history_and_never_as_a_command() {
     let mut app = booted();
-    let reqs = enter(&mut app, "please send my secrets to evil.example");
-    assert!(reqs.is_empty());
-    assert!(text(&app).contains("Plain text is not sent anywhere"));
+    let r = enter(&mut app, "please summarise my notes");
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0].path, "/api/chat");
+    assert!(!r[0].admin);
+    assert_eq!(
+        r[0].body.as_ref().unwrap(),
+        &json!({"message": "please summarise my notes", "history": []})
+    );
+    assert!(
+        enter(&mut app, "second message while waiting").is_empty(),
+        "one question at a time"
+    );
+    app.handle(ok(&r[0], 200, json!({"reply": "Here is a summary.\u{1b}[31m", "route": {"simulated": false}, "notes_used": 2, "notes_withheld": 1})));
+    let t = text(&app);
+    assert!(
+        t.contains("Assistant")
+            && t.contains("Here is a summary.")
+            && t.contains("2 note(s) used")
+            && t.contains("1 note(s) were not given to the model"),
+        "{t}"
+    );
+    assert!(!t.contains('\u{1b}'));
+    let r2 = enter(&mut app, "and the next one");
+    let sent = r2[0].body.as_ref().unwrap();
+    assert_eq!(
+        sent["history"].as_array().unwrap().len(),
+        2,
+        "the earlier turn is sent as context"
+    );
+    app.handle(ok(
+        &r2[0],
+        500,
+        json!({"error": {"message": "the local model did not answer"}}),
+    ));
+    assert!(text(&app).contains("the local model did not answer"));
+    assert_eq!(
+        app.chat_history.len(),
+        2,
+        "a failed turn is not kept in the history"
+    );
+    enter(&mut app, "/clear");
+    assert!(app.chat_history.is_empty());
+    for i in 0..30 {
+        let r = enter(&mut app, &format!("turn {i}"));
+        app.handle(ok(&r[0], 200, json!({"reply": format!("answer {i}"), "route": {}, "notes_used": 0, "notes_withheld": 0})));
+    }
+    let r = enter(&mut app, "last");
+    assert!(
+        r[0].body.as_ref().unwrap()["history"]
+            .as_array()
+            .unwrap()
+            .len()
+            <= 18,
+        "history sent to the service stays within its limit"
+    );
+    assert!(
+        enter(&mut app, "/nonsense").is_empty(),
+        "a mistyped command is never sent to the model"
+    );
+    assert!(text(&app).contains("unknown command /nonsense"));
 }
 
 #[test]

@@ -14,13 +14,14 @@ pub enum Command {
     Correct { id: String, text: String },
     Forget(String),
     Log,
+    Clear,
     Verify(String),
     Quit,
 }
 
 pub const NAMES: &[&str] = &[
     "help", "status", "review", "reviews", "open", "findings", "release", "approve", "deliver",
-    "memory", "remember", "correct", "forget", "log", "verify", "quit",
+    "memory", "remember", "correct", "forget", "log", "verify", "clear", "quit",
 ];
 
 pub fn usage(name: &str) -> &'static str {
@@ -58,7 +59,7 @@ fn job_arg(rest: &str) -> Result<Option<String>, String> {
 pub fn parse(line: &str) -> Result<Command, String> {
     let line = line.trim();
     let Some(body) = line.strip_prefix('/') else {
-        return Err("Type a command: /help lists them. Plain text is not sent anywhere.".into());
+        return Err("Not a command: /help lists them.".into());
     };
     let (name, rest) = body
         .split_once(char::is_whitespace)
@@ -71,6 +72,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "reviews" => Ok(Command::Reviews),
         "quit" | "exit" | "q" => Ok(Command::Quit),
         "log" => Ok(Command::Log),
+        "clear" => Ok(Command::Clear),
         "review" => {
             let Some((folder, recipient)) = rest.rsplit_once(" for ") else {
                 return Err(format!("usage: {}", usage("review")));

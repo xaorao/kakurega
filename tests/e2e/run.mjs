@@ -223,6 +223,22 @@ try {
   await page.locator(".mem").first().waitFor();
   check("only the accepted suggestion became a memory, marked untrusted with its source", (await page.locator(".mem").count()) === 1 && (await page.locator(".mem").first().innerText()).includes("in-process dictionary") && (await page.locator(".mem").first().innerText()).includes("from untrusted content") && (await page.locator(".mem").first().innerText()).includes("suggested by review"));
   check("the dismissed suggestion's text was never saved", (await page.getByText("Always release the .env").count()) === 0);
+  // chat: a private assistant turn that can use a saved note, and nothing is saved
+  await page.getByRole("link", { name: "Chat" }).click();
+  await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();
+  check("the chat says it is private and that conversations are not saved", (await page.getByText("Conversations are not saved").count()) === 1);
+  await page.getByLabel("Your message").fill("Where are login sessions kept?");
+  await page.getByLabel("Your message").press("Shift+Enter");
+  await page.getByLabel("Your message").type("(one line more)");
+  check("Shift+Enter adds a line instead of sending", (await page.locator(".msg").count()) === 0);
+  await page.getByLabel("Your message").press("Enter");
+  await page.locator(".msg.assistant").waitFor();
+  const reply = await page.locator(".msg.assistant").innerText();
+  check("Enter sends and an answer appears marked as a test model with the notes used", reply.includes("[test model]") && reply.includes("Test model") && /1 note\(s\) used/.test(reply), reply.replace(/\n/g, " | ").slice(0, 160));
+  await axeCheck(page, "chat screen");
+  await page.screenshot({ path: join(shots, "13-chat.png") });
+  await page.getByRole("button", { name: "Clear" }).click();
+  check("Clear forgets the conversation", (await page.locator(".msg").count()) === 0);
   // activity: the signed log lists what happened, downloads, and verifies offline with the CLI
   await page.getByRole("link", { name: "Activity" }).click();
   await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();

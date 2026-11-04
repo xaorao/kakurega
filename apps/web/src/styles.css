@@ -193,3 +193,6 @@ select { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border
 .mem-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 button.danger { background: var(--redline); border-color: var(--redline); color: #fff; }
 .confirm { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.msg.user { border-left: 3px solid var(--ink); }
+.msg.assistant { border-left: 3px solid var(--cipher); }
