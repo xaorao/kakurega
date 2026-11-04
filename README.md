@@ -4,6 +4,25 @@ A confidential AI workspace. The AI works on your private files and code, a secu
 
 Status: early development. Nothing here is a finished product yet.
 
+## What works today
+
+- `kaku serve` runs a local workspace in your browser: pair, choose a project folder, an agent reviews it inside a sealed sandbox, the kernel re-runs each finding's reproducer on a minimal extract, you approve the exact files in a terminal, and a signed capsule is delivered.
+- `kaku verify` and the browser page at `/verify` check a capsule offline and say what it does not establish.
+- Models: a local model through Ollama (private, runs on this computer). NEAR AI Cloud attestation is verified for real; NEAR completions need an API key and are not wired yet.
+- Sandbox: Linux bubblewrap, used directly on Linux and through a Linux virtual machine (Lima) on macOS.
+
+## Run it (macOS)
+
+```
+scripts/setup
+ollama serve &                       # and: ollama pull qwen2.5:1.5b
+limactl start kak                    # Linux VM with bubblewrap and Rust
+scripts/e2e                          # builds the worker in the VM, the CLI and the web app, then drives a real browser
+target/debug/kaku serve              # prints a one-time pairing link
+```
+
+Honest limits: small local models find few defects; the review results of real models are not measured yet. The sandbox on macOS needs the virtual machine. Windows is not supported.
+
 ## Develop
 
 ```

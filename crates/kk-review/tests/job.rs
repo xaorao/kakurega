@@ -14,9 +14,12 @@ use std::path::{Path, PathBuf};
 const REPRO: &str = "from payments.auth import session\nt = session.login('alice')\nassert session.validate(t)\nsession.logout(t)\nprint('REPRODUCED' if session.validate(t) else 'NOT REPRODUCED')\n";
 
 fn materialize() -> PathBuf {
-    let dst = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/job-tmp")
-        .join(format!("repo-{}", std::process::id()));
+    let base = if cfg!(target_os = "linux") {
+        std::env::temp_dir().join("kk-job-tmp")
+    } else {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/job-tmp")
+    };
+    let dst = base.join(format!("repo-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dst);
     fn copy(src: &Path, dst: &Path) {
         fs::create_dir_all(dst).unwrap();
@@ -66,7 +69,11 @@ fn vm_paths() -> (Transport, PathBuf) {
 
 fn config(name: &str) -> JobConfig {
     let (transport, worker_binary) = vm_paths();
-    let scratch = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/job-tmp/scratch");
+    let scratch = if cfg!(target_os = "linux") {
+        std::env::temp_dir().join("kk-job-tmp/scratch")
+    } else {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/job-tmp/scratch")
+    };
     fs::create_dir_all(&scratch).unwrap();
     JobConfig {
         repo: materialize(),

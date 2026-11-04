@@ -10,7 +10,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn fixture_files() -> Vec<ImportedFile> {
-    let dst = std::env::temp_dir().join(format!("kk-check-fixture-{}", std::process::id()));
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dst = std::env::temp_dir().join(format!(
+        "kk-check-fixture-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     let _ = fs::remove_dir_all(&dst);
     fn copy(src: &Path, dst: &Path) {
         fs::create_dir_all(dst).unwrap();
@@ -129,7 +134,11 @@ fn transport() -> Transport {
 }
 
 fn scratch() -> PathBuf {
-    let d = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/check-tmp");
+    let d = if cfg!(target_os = "linux") {
+        std::env::temp_dir().join("kk-check-scratch")
+    } else {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/check-tmp")
+    };
     fs::create_dir_all(&d).unwrap();
     d
 }
