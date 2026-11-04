@@ -215,9 +215,10 @@
         },
         {
           "id": "III-09",
-          "text": "Reproducible build and install, signed distribution where supported, documented limits; a credible launch",
-          "kind": "pending",
-          "evidence_needed": "clean-checkout install on a second machine, release signing, launch assets"
+          "text": "Clean-checkout install, build and test from a fresh clone of the repository; README and docs/LIMITS.md state what is and is not claimed. Not done: install on a second physical machine, release signing or notarisation, packaged installers, launch assets.",
+          "kind": "machine",
+          "command": "scripts/clean-checkout",
+          "expect": "ALL CHECKS PASSED"
         },
         {
           "id": "III-05b",
@@ -252,6 +253,12 @@
           "text": "Real Telegram: the owner pairs the real bot and receives a real notification",
           "kind": "human",
           "evidence_needed": "Prateek runs `kaku telegram pair`, sends /pair CODE to the bot, runs `kaku telegram`, and a review notification arrives on the phone"
+        },
+        {
+          "id": "III-09b",
+          "text": "Install and run on a second machine; signed and notarised desktop build; launch site and demo",
+          "kind": "pending",
+          "evidence_needed": "a second machine's install log, Apple signing identity (owner), recorded demo, published site"
         }
       ]
     }
