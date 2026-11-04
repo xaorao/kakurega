@@ -1294,3 +1294,91 @@ fn tu28_messages_typed_while_an_answer_streams_are_queued_in_order_and_dropped_i
     let r = enter(&mut b, "/reviews");
     assert_eq!(r[0].path, "/api/jobs");
 }
+
+#[test]
+fn tu29_proof_and_gateway_commands_show_what_was_verified_and_what_was_not_and_refuse_odd_names() {
+    let mut a = booted();
+    for bad in [
+        "/proof a b",
+        "/proof ../x;rm",
+        "/proof ".to_string().as_str(),
+    ] {
+        let r = enter(&mut a, bad);
+        if bad.trim() == "/proof" {
+            assert_eq!(r[0].body.as_ref().unwrap()["model"], "Qwen/Qwen3.8-27B");
+        } else {
+            assert!(r.is_empty(), "{bad}");
+        }
+    }
+    let r = enter(&mut a, "/proof good/model");
+    assert_eq!(
+        (r[0].path.as_str(), &r[0].body.as_ref().unwrap()["model"]),
+        ("/api/route/attest", &json!("good/model"))
+    );
+    assert!(text(&a).contains("Only the model name is sent"));
+    a.handle(ok(&r[0], 200, json!({"verified": true, "deployments": [{"tcb": "UpToDate", "gpu_verified": true, "signer": "0xsig", "nonce": "n9"}], "means": ["Intel TDX vouched."], "does_not_mean": ["Not a signed answer."]})));
+    let t = text(&a);
+    assert!(
+        t.contains("Model verified")
+            && t.contains("UpToDate")
+            && t.contains("NVIDIA GPU evidence verified")
+            && t.contains("0xsig")
+            && t.contains("What this does not show")
+            && t.contains("Not a signed answer.")
+    );
+    let r = enter(&mut a, "/proof refused/model");
+    a.handle(ok(&r[0], 422, json!({"verified": false, "error": {"code": "NOT_VERIFIED", "message": "the route policy refuses it"}})));
+    assert!(text(&a).contains("Not verified") && text(&a).contains("the route policy refuses it"));
+    let r = enter(&mut a, "/gateway");
+    assert_eq!(r[0].path, "/api/route/gateway");
+    a.handle(ok(&r[0], 200, json!({"verified": true, "gateway": {"tcb": "UpToDate", "tls_bound": true, "signer": "gw", "nonce": "gn"}, "means": [], "does_not_mean": []})));
+    assert!(
+        text(&a).contains("Gateway verified")
+            && text(&a).contains("encryption ends inside the verified software")
+    );
+}
+
+#[test]
+fn tu30_typed_lines_are_saved_in_the_background_and_loaded_once_without_secrets_or_surprises() {
+    let mut a = booted();
+    let first = a.drain_background();
+    assert_eq!(
+        (first.len(), first[0].path.as_str()),
+        (1, "/api/history"),
+        "the saved history is requested once"
+    );
+    assert!(a.drain_background().is_empty());
+    enter(&mut a, "/reviews");
+    enter(&mut a, "hello there");
+    let saves = a.drain_background();
+    assert_eq!(
+        saves
+            .iter()
+            .map(|r| r.body.as_ref().unwrap()["text"]
+                .as_str()
+                .unwrap()
+                .to_string())
+            .collect::<Vec<_>>(),
+        ["/reviews", "hello there"]
+    );
+    assert!(a.drain_background().is_empty(), "each line is sent once");
+    // the loaded history sits before what was typed in this run, and Up reaches it
+    a.handle(ok(
+        &first[0],
+        200,
+        json!({"lines": ["older one", "older two"]}),
+    ));
+    a.handle(key(KeyCode::Up));
+    assert_eq!(a.input, "hello there");
+    a.handle(key(KeyCode::Up));
+    a.handle(key(KeyCode::Up));
+    a.handle(key(KeyCode::Up));
+    assert_eq!(a.input, "older one");
+    // a failed load changes nothing, and clearing empties the local list and asks the service to forget
+    let mut b = booted();
+    let r = b.drain_background();
+    b.handle(ok(&r[0], 500, json!({"error": {"message": "down"}})));
+    let c = enter(&mut b, "/clearhistory");
+    assert_eq!(c[0].path, "/api/history/clear");
+    assert!(b.history.is_empty() || b.history == ["/clearhistory"]);
+}

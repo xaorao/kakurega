@@ -255,6 +255,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS fix_snapshots(job TEXT NOT NULL, n INTEGER NOT NULL, file TEXT NOT NULL, orig BLOB NOT NULL, sha_after TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (job, n));
              CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, title TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS session_turns(session TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (session, seq));
+             CREATE TABLE IF NOT EXISTS prompt_history(id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS approvers(key_id TEXT PRIMARY KEY, public BLOB NOT NULL, label TEXT NOT NULL, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);",
         )
@@ -1383,6 +1384,72 @@ async fn chat_stream(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Resp
         axum::http::HeaderValue::from_static("no-store"),
     );
     resp
+}
+
+const MAX_HISTORY: i64 = 200;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HistoryAdd {
+    text: String,
+}
+
+/// The lines the owner typed in the terminal, oldest first, kept in the encrypted store so Up-arrow works across runs.
+async fn history_list(axum::Extension(svc): Svc) -> Response {
+    let store = svc.store.lock().expect("lock");
+    let c = store.connection();
+    let Ok(mut st) = c.prepare("SELECT text FROM (SELECT id, text FROM prompt_history ORDER BY id DESC LIMIT 200) ORDER BY id") else {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "STORE", "could not read the history");
+    };
+    let rows: Vec<String> = st
+        .query_map([], |r| r.get::<_, String>(0))
+        .map(|it| it.flatten().collect())
+        .unwrap_or_default();
+    Json(json!({"lines": rows})).into_response()
+}
+
+async fn history_add(axum::Extension(svc): Svc, Json(b): Json<HistoryAdd>) -> Response {
+    let t = b.text.trim();
+    if t.is_empty()
+        || t.len() > 4000
+        || !chat_clean(t)
+        || !kk_secrets::scan(t).is_empty()
+        || kk_secrets::looks_secret(t).is_some()
+    {
+        return Json(json!({"saved": false})).into_response();
+    }
+    let store = svc.store.lock().expect("lock");
+    let c = store.connection();
+    let last: Option<String> = c
+        .query_row(
+            "SELECT text FROM prompt_history ORDER BY id DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    if last.as_deref() == Some(t) {
+        return Json(json!({"saved": false})).into_response();
+    }
+    let ok = c
+        .execute(
+            "INSERT INTO prompt_history(text, at) VALUES (?1, ?2)",
+            kk_vault::rusqlite::params![t, now()],
+        )
+        .is_ok();
+    let _ = c.execute(
+        "DELETE FROM prompt_history WHERE id <= (SELECT max(id) FROM prompt_history) - ?1",
+        [MAX_HISTORY],
+    );
+    Json(json!({"saved": ok})).into_response()
+}
+
+async fn history_clear(axum::Extension(svc): Svc) -> Response {
+    {
+        let store = svc.store.lock().expect("lock");
+        let _ = store.connection().execute("DELETE FROM prompt_history", []);
+    }
+    svc.log_event("history.cleared", "history", &[]);
+    Json(json!({"cleared": true})).into_response()
 }
 
 const MAX_SESSIONS: i64 = 200;
@@ -3369,6 +3436,8 @@ impl Extension for Routes {
             .route("/api/chat", post(chat))
             .route("/api/chat/stream", post(chat_stream))
             .route("/api/ask", post(ask))
+            .route("/api/history", get(history_list).post(history_add))
+            .route("/api/history/clear", post(history_clear))
             .route("/api/sessions", get(sessions_list).post(session_new))
             .route("/api/sessions/{id}", get(session_get))
             .route("/api/sessions/{id}/forget", post(session_forget))

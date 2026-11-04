@@ -84,6 +84,9 @@ fn event_loop(http: Http, data_dir: &Path) -> Result<(), String> {
     for r in app.start() {
         let _ = req_tx.send(r);
     }
+    for r in app.drain_background() {
+        let _ = req_tx.send(r);
+    }
     loop {
         term.draw(|f| draw(f, &app, &theme))
             .map_err(|e| e.to_string())?;
@@ -98,6 +101,9 @@ fn event_loop(http: Http, data_dir: &Path) -> Result<(), String> {
             };
             if let Some(ev) = ev {
                 for r in app.handle(ev) {
+                    let _ = req_tx.send(r);
+                }
+                for r in app.drain_background() {
                     let _ = req_tx.send(r);
                 }
             }

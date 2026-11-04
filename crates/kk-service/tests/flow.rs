@@ -3795,3 +3795,92 @@ fn sv31_live_the_real_model_proof_check_verifies_a_real_confidential_model_throu
     let (st, bad) = w.post("/api/route/attest", json!({"model": "no/such-model-9f3a"}));
     assert_eq!((st, bad["verified"].clone()), (422, json!(false)), "{bad}");
 }
+
+#[test]
+fn sv32_prompt_history_survives_a_restart_skips_secrets_and_repeats_is_bounded_and_clearable() {
+    let (root, _repo) = repo_copy("data-history");
+    let data = root.join("data");
+    let boot = || {
+        let svc = Service::new(
+            &data,
+            vec![root.clone()],
+            Arc::new(CannedRunner { confirm: true }),
+            true,
+        )
+        .unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        (w, c)
+    };
+    let (w, c) = boot();
+    assert_eq!(Web::new(c.addr).get("/api/history").0, 401);
+    for line in [
+        "first line",
+        "first line",
+        "/reviews",
+        "Histcanary Marmot question",
+    ] {
+        w.post("/api/history", json!({"text": line}));
+    }
+    let secret = format!("here {}_{}", "ghp", "R7kQ2mZx9LpV4nB8cT1yH6wD3sF5jA0gUe2K");
+    assert_eq!(
+        w.post("/api/history", json!({"text": secret})).1["saved"],
+        false
+    );
+    for bad in ["", "   ", "bell\u{7}"] {
+        assert_eq!(
+            w.post("/api/history", json!({"text": bad})).1["saved"],
+            false,
+            "{bad:?}"
+        );
+    }
+    assert_eq!(
+        w.get("/api/history").1["lines"],
+        json!(["first line", "/reviews", "Histcanary Marmot question"]),
+        "a repeat of the last line is skipped, secrets are not kept"
+    );
+    drop(c);
+    let (w2, c2) = boot();
+    assert_eq!(
+        w2.get("/api/history").1["lines"].as_array().unwrap().len(),
+        3,
+        "kept across a restart"
+    );
+    let in_clear = std::fs::read_dir(&data)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.path().is_file())
+        .any(|e| {
+            std::fs::read(e.path())
+                .map(|b| b.windows(8).any(|x| x == b"Histcana"))
+                .unwrap_or(false)
+        });
+    assert!(!in_clear, "no plain text on disk");
+    for i in 0..230 {
+        w2.post("/api/history", json!({"text": format!("line number {i}")}));
+    }
+    let lines = w2.get("/api/history").1["lines"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (lines.len(), lines.last().unwrap().clone()),
+        (200, json!("line number 229")),
+        "bounded at 200, newest kept"
+    );
+    assert_eq!(w2.post("/api/history/clear", json!({})).0, 200);
+    assert_eq!(
+        w2.get("/api/history").1["lines"].as_array().unwrap().len(),
+        0
+    );
+    let log = log_text(
+        &format!("http://127.0.0.1:{}", c2.addr.port()),
+        c2.security.admin_token(),
+    );
+    assert!(log.contains("history.cleared") && !log.contains("Marmot"));
+}

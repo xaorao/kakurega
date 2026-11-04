@@ -60,6 +60,11 @@ pub struct Card {
 #[derive(Debug, Clone)]
 enum Intent {
     Config,
+    HistoryLoad,
+    HistorySave,
+    HistoryClear,
+    Proof,
+    GatewayProof,
     Keep,
     Sessions,
     OpenChat(String),
@@ -147,6 +152,8 @@ pub struct App {
     pub pasted: Vec<(String, String)>,
     /// Messages typed while an answer is still arriving; each is sent after the previous answer completes.
     pub queued: Vec<String>,
+    history_to_save: Vec<String>,
+    history_loaded: bool,
     /// Set by Esc while an answer is streaming; the network thread then closes the connection.
     pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     live: Option<(usize, String)>,
@@ -211,6 +218,8 @@ impl App {
             session: None,
             pasted: Vec::new(),
             queued: Vec::new(),
+            history_to_save: Vec::new(),
+            history_loaded: false,
             cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             live: None,
             chat_waiting: false,
@@ -265,6 +274,32 @@ impl App {
             ),
             self.req(Intent::Jobs, false, Method::Get, "/api/jobs", None),
         ]
+    }
+
+    /// Requests that run in the background and are never shown: loading the saved command history once, and saving each
+    /// line the owner types. The event loop calls this after every event.
+    pub fn drain_background(&mut self) -> Vec<Req> {
+        let mut out = Vec::new();
+        if !self.history_loaded {
+            self.history_loaded = true;
+            out.push(self.req(
+                Intent::HistoryLoad,
+                false,
+                Method::Get,
+                "/api/history",
+                None,
+            ));
+        }
+        for line in std::mem::take(&mut self.history_to_save) {
+            out.push(self.req(
+                Intent::HistorySave,
+                false,
+                Method::Post,
+                "/api/history",
+                Some(json!({"text": line})),
+            ));
+        }
+        out
     }
 
     pub fn status_line(&self) -> String {
@@ -780,6 +815,7 @@ impl App {
                     }
                 }
                 self.say(Kind::User, clean(&line));
+                self.history_to_save.push(line.clone());
                 let line = if line.trim_start().starts_with('/') {
                     line
                 } else {
@@ -841,6 +877,7 @@ impl App {
                         "/deliver [JOB]                 sign and deliver an approved release".into(),
                         "/memory [WORDS]  /remember TEXT  /correct ID TEXT  /forget ID".into(),
                         "/ask FOLDER : QUESTION         ask about documents; every quote is checked".into(),
+                        "/proof [MODEL]  /gateway       check a NEAR confidential model's or the gateway's hardware proof".into(),
                         "/log                           the signed activity log".into(),
                         "/verify FILE                   check a capsule offline".into(),
                         "/keep                          save this conversation in the encrypted store (otherwise it is never saved)".into(),
@@ -869,6 +906,19 @@ impl App {
                     },
                 );
                 Vec::new()
+            }
+            Command::Proof(model) => {
+                let model = model.unwrap_or_else(|| "Qwen/Qwen3.8-27B".to_string());
+                self.say(Kind::Info, format!("Checking the hardware proof of {model}. Only the model name is sent, to NEAR AI Cloud and to Intel and NVIDIA's verification services."));
+                vec![self.req(Intent::Proof, false, Method::Post, "/api/route/attest", Some(json!({"model": model})))]
+            }
+            Command::Gateway => {
+                self.say(Kind::Info, "Checking the proof of NEAR AI Cloud's gateway (front door). Nothing of yours is sent.");
+                vec![self.req(Intent::GatewayProof, false, Method::Post, "/api/route/gateway", Some(json!({})))]
+            }
+            Command::ClearHistory => {
+                self.history.clear();
+                vec![self.req(Intent::HistoryClear, false, Method::Post, "/api/history/clear", Some(json!({})))]
             }
             Command::Keep => {
                 if self.session.is_some() {
@@ -1726,6 +1776,99 @@ impl App {
                     let next = self.queued.remove(0);
                     self.chat(&next)
                 }
+            }
+            Intent::Proof | Intent::GatewayProof => {
+                let gateway = matches!(intent, Intent::GatewayProof);
+                if !ok {
+                    self.push(
+                        Kind::Error,
+                        Some("Not verified"),
+                        text_lines(&err_text(status, &body)),
+                    );
+                    return Vec::new();
+                }
+                let mut lines = Vec::new();
+                let deployments: Vec<Value> = if gateway {
+                    vec![body["gateway"].clone()]
+                } else {
+                    body["deployments"].as_array().cloned().unwrap_or_default()
+                };
+                for d in &deployments {
+                    lines.push(format!(
+                        "Intel patch level: {}",
+                        clean(d["tcb"].as_str().unwrap_or("?"))
+                    ));
+                    if gateway {
+                        lines.push(if d["tls_bound"] == true {
+                            "This connection's encryption ends inside the verified software".into()
+                        } else {
+                            "Where this connection's encryption ends was not checked".to_string()
+                        });
+                    } else {
+                        lines.push(if d["gpu_verified"] == true {
+                            "NVIDIA GPU evidence verified".into()
+                        } else {
+                            "GPU evidence not verified".to_string()
+                        });
+                    }
+                    lines.push(format!(
+                        "Answer-signing key: {}",
+                        clean(d["signer"].as_str().unwrap_or("?"))
+                    ));
+                    lines.push(format!(
+                        "Fresh challenge: {}",
+                        clean(d["nonce"].as_str().unwrap_or("?"))
+                    ));
+                }
+                lines.push(String::new());
+                lines.push("What this shows:".into());
+                for m in body["means"].as_array().into_iter().flatten() {
+                    lines.push(format!("  · {}", clean(m.as_str().unwrap_or(""))));
+                }
+                lines.push("What this does not show:".into());
+                for m in body["does_not_mean"].as_array().into_iter().flatten() {
+                    lines.push(format!("  · {}", clean(m.as_str().unwrap_or(""))));
+                }
+                self.push(
+                    Kind::Ok,
+                    Some(if gateway {
+                        "Gateway verified"
+                    } else {
+                        "Model verified"
+                    }),
+                    lines,
+                );
+                Vec::new()
+            }
+            Intent::HistoryLoad => {
+                if ok {
+                    let saved: Vec<String> = body["lines"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|l| l.as_str().map(clean))
+                        .collect();
+                    let typed_now = std::mem::take(&mut self.history);
+                    self.history = saved;
+                    for l in typed_now {
+                        if self.history.last() != Some(&l) {
+                            self.history.push(l);
+                        }
+                    }
+                }
+                Vec::new()
+            }
+            Intent::HistorySave => Vec::new(),
+            Intent::HistoryClear => {
+                self.say(
+                    if ok { Kind::Ok } else { Kind::Error },
+                    if ok {
+                        "Command history cleared.".to_string()
+                    } else {
+                        err_text(status, &body)
+                    },
+                );
+                Vec::new()
             }
             Intent::Keep => {
                 if ok {

@@ -20,6 +20,9 @@ pub enum Command {
     Log,
     Clear,
     Keep,
+    ClearHistory,
+    Proof(Option<String>),
+    Gateway,
     Sessions,
     NewChat,
     Verify(String),
@@ -27,9 +30,34 @@ pub enum Command {
 }
 
 pub const NAMES: &[&str] = &[
-    "help", "status", "review", "reviews", "open", "findings", "fixes", "applyfix", "undofix",
-    "release", "approve", "deliver", "memory", "ask", "remember", "correct", "forget", "log",
-    "verify", "clear", "keep", "sessions", "resume", "newchat", "quit",
+    "help",
+    "status",
+    "review",
+    "reviews",
+    "open",
+    "findings",
+    "fixes",
+    "applyfix",
+    "undofix",
+    "release",
+    "approve",
+    "deliver",
+    "memory",
+    "ask",
+    "remember",
+    "correct",
+    "forget",
+    "log",
+    "verify",
+    "clear",
+    "keep",
+    "clearhistory",
+    "proof",
+    "gateway",
+    "sessions",
+    "resume",
+    "newchat",
+    "quit",
 ];
 
 pub fn usage(name: &str) -> &'static str {
@@ -49,6 +77,7 @@ pub fn usage(name: &str) -> &'static str {
         "correct" => "/correct ID NEW TEXT",
         "forget" => "/forget ID",
         "verify" => "/verify FILE",
+        "proof" => "/proof [MODEL]",
         _ => "/help",
     }
 }
@@ -86,6 +115,20 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "log" => Ok(Command::Log),
         "clear" => Ok(Command::Clear),
         "keep" => Ok(Command::Keep),
+        "clearhistory" => Ok(Command::ClearHistory),
+        "gateway" => Ok(Command::Gateway),
+        "proof" => {
+            if rest.len() > 80
+                || rest.contains(char::is_whitespace)
+                || !rest
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | ':'))
+            {
+                Err(format!("usage: {}", usage("proof")))
+            } else {
+                Ok(Command::Proof((!rest.is_empty()).then(|| rest.to_string())))
+            }
+        }
         "sessions" | "resume" => Ok(Command::Sessions),
         "newchat" => Ok(Command::NewChat),
         "review" => {
