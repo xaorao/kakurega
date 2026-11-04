@@ -154,7 +154,7 @@
   },
   "N41": {
    "status": "PARTIAL",
-   "evidence": "kaku CLI (serve, pair, approve, verify) and kaku mcp (list, start, status, request approval, verify): kk-cli mcp tests mc01-mc02; import, ask and rehearse commands not built"
+   "evidence": "kaku CLI plus `kaku mcp` with seven typed tools, strict schemas, golden contract: kk-cli mc01-mc03; live agent session tests/e2e/mcp_live.py (19 checks, no private text in any response); docs/mcp.md. Not built: SDK package, import/ask/rehearse commands"
   },
   "N45": {
    "status": "PARTIAL",
@@ -162,7 +162,7 @@
   },
   "N59": {
    "status": "PARTIAL",
-   "evidence": "review workflow has CLI and MCP commands; not every capability yet"
+   "evidence": "review workflow, memory (web, terminal), log verification and capsule verification have a command or tool; memory and chat deliberately have no MCP tool because an MCP client is a sink; not every capability has a documented command yet"
   },
   "N7": {
    "status": "PARTIAL",

@@ -1,0 +1,37 @@
+# Kakurega MCP server
+
+`kaku mcp` speaks the Model Context Protocol (version 2025-06-18) over standard input and output, one JSON message per line. It lets an agent start and watch reviews on your computer without ever seeing what is in them.
+
+## Use it
+
+The service must be running (`kaku serve`, or the desktop app, or the terminal workspace). Then add the server to an MCP client, for example:
+
+```json
+{ "mcpServers": { "kakurega": { "command": "kaku", "args": ["mcp"] } } }
+```
+
+Pass `--data-dir DIR` if the service was started with another data directory.
+
+## What an agent can do
+
+| Tool | Reads | Changes |
+|---|---|---|
+| `overview` | counts: setup problems, reviews by state, memories by privacy level, signed log head | nothing |
+| `list_reviews`, `review_status` | state and counts only | nothing |
+| `start_review` | a folder path the owner allowed | starts a review; releases nothing |
+| `request_approval` | | asks the owner to approve; the owner decides in a window or terminal |
+| `verify_capsule`, `verify_log` | a capsule or saved log file, checked offline | nothing |
+
+Every tool has an input schema that forbids extra fields, an output schema, and annotations. The published list is a contract: `crates/kk-cli/tests/mcp_tools.golden.json` fails the build when it changes, so a schema change is always deliberate.
+
+## What an agent cannot do
+
+An MCP client is a sink, not a principal with your privileges. The server has no tool to approve or deliver a release, and none that returns source files, findings, memory text, chat text or release contents. Files given to `verify_*` must end in `.kkg` or `.json`, be regular files under 20 MB, and every failure reads "cannot read that file", so the tool cannot be used to probe your file system.
+
+## Checked
+
+`cargo test -p kk-cli --test mcp` (protocol, the golden contract, argument validation, uniform file errors) and `python3 tests/e2e/mcp_live.py` (a live agent session against a real sandboxed review that scans every response for source, finding and memory text).
+
+## Limits
+
+Counts and statuses are the only review data an agent receives. Anything richer needs an explicit release through the approval path, which an MCP client cannot trigger. There is no HTTP transport and no authentication beyond local access to the data directory.

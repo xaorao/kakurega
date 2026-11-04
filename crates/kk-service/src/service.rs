@@ -1533,6 +1533,43 @@ fn mcp_view(svc: &Service, j: &Job) -> Value {
     })
 }
 
+async fn admin_overview(axum::Extension(svc): Svc) -> Response {
+    let svc2 = svc.clone();
+    let checks = tokio::task::spawn_blocking(move || svc2.runner.readiness())
+        .await
+        .unwrap_or_default();
+    let mut by_state = std::collections::BTreeMap::<String, u64>::new();
+    for j in svc.inner.lock().expect("lock").jobs.values() {
+        let st = match &j.state {
+            JobState::Running => "running",
+            JobState::Ready => "ready",
+            JobState::NothingToRelease(_) => "nothing_to_release",
+            JobState::Failed(_) => "failed",
+        };
+        *by_state.entry(st.to_string()).or_default() += 1;
+    }
+    let memories: serde_json::Map<String, Value> = svc
+        .memory
+        .lock()
+        .expect("lock")
+        .counts_by_level()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(l, n)| (l, json!(n)))
+        .collect();
+    let head = svc.log.head().ok().flatten();
+    Json(json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "route": svc.runner.route_info(),
+        "ready": checks.iter().all(|c| c["ok"] == true),
+        "setup_problems": checks.iter().filter(|c| c["ok"] != true).filter_map(|c| c["label"].as_str()).collect::<Vec<_>>(),
+        "reviews": by_state,
+        "memories_by_level": memories,
+        "log": {"entries": head.as_ref().map(|h| h.0).unwrap_or(0), "head": head.map(|h| h.1), "public_key": kk_evidence::b64::encode(&svc.log.public_key())},
+    }))
+    .into_response()
+}
+
 async fn admin_jobs_list(axum::Extension(svc): Svc) -> Json<Value> {
     let jobs: Vec<Job> = svc
         .inner
@@ -1602,6 +1639,7 @@ impl Extension for Routes {
             .route("/api/jobs/{id}/deliver", post(do_deliver))
             .route("/api/jobs/{id}/capsule", get(download))
             .route("/admin/log", get(log_export))
+            .route("/admin/overview", get(admin_overview))
             .route("/admin/jobs", get(admin_jobs_list).post(admin_job_start))
             .route("/admin/jobs/{id}", get(admin_job_get))
             .route(

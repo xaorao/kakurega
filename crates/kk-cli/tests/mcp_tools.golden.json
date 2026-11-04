@@ -1,0 +1,329 @@
+[
+  {
+    "name": "overview",
+    "title": "Overview",
+    "description": "Counts only: setup problems, reviews by state, memories by privacy level and the signed log's latest entry. Never returns source text, memory text or findings.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "setup_problems": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reviews": {
+          "type": "object"
+        },
+        "memories_by_level": {
+          "type": "object"
+        },
+        "log": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "ready",
+        "reviews"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "list_reviews",
+    "title": "List reviews",
+    "description": "List reviews with state and counts only. Never returns source text.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "jobs": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "jobs"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "start_review",
+    "title": "Start a review",
+    "description": "Start a private review of a project folder for a named recipient. Nothing is released by starting a review.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "description": "Absolute path of the project folder, inside a root the owner allowed.",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "recipient": {
+          "type": "string",
+          "description": "Who will receive the result.",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "repo",
+        "recipient"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "review_status",
+    "title": "Review status",
+    "description": "State and counts of one review.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "A review id such as job-3.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "stage": {},
+        "files_reviewed": {},
+        "files_withheld": {},
+        "findings_reported": {},
+        "findings_confirmed": {},
+        "approval": {},
+        "delivered": {}
+      },
+      "required": [
+        "id",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "request_approval",
+    "title": "Request approval",
+    "description": "Ask the owner to approve the release. This tool cannot approve: the owner approves in the desktop window, the terminal workspace or `kaku approve`, after seeing the exact files.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "A review id such as job-3.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "approval": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "how": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "verify_capsule",
+    "title": "Verify a capsule",
+    "description": "Check a capsule file (.kkg) offline and report what it does and does not establish.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path of a .kkg capsule file.",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "valid": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "signer": {},
+        "recipient": {},
+        "established": {
+          "type": "array"
+        },
+        "not_established": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "valid"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "verify_log",
+    "title": "Verify the event log",
+    "description": "Check a saved signed event log (.json) offline, optionally against a pinned key and an anchor.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path of a saved event log.",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "pin": {
+          "type": "string",
+          "description": "Base64url Ed25519 public key to require.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "anchor": {
+          "type": "string",
+          "description": "COUNT:HEAD printed by `kaku log export`.",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "valid": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "entries": {
+          "type": "integer"
+        },
+        "head": {
+          "type": "string"
+        },
+        "signer": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "valid"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  }
+]

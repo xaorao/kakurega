@@ -714,6 +714,17 @@ impl Memories {
         Ok(())
     }
 
+    pub fn counts_by_level(&self) -> Result<Vec<(String, i64)>, MemoryError> {
+        let mut st = self.conn().prepare("SELECT level, count(*) FROM memories WHERE status = 'active' GROUP BY level ORDER BY level")?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
+        let mut out = Vec::new();
+        for r in rows {
+            let (l, n) = r?;
+            out.push((format!("{:?}", int_to_level(l)).to_lowercase(), n));
+        }
+        Ok(out)
+    }
+
     pub fn owner_clearance(&self) -> Result<Label, MemoryError> {
         let mut label = Label::new(Level::Restricted);
         let mut st = self

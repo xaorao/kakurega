@@ -2286,7 +2286,7 @@
     "the AI judges and other agents can run the product; distribution through agents",
     "HERO (judge path)"
    ],
-   "evidence": "kaku CLI (serve, pair, approve, verify) and kaku mcp (list, start, status, request approval, verify): kk-cli mcp tests mc01-mc02; import, ask and rehearse commands not built",
+   "evidence": "kaku CLI plus `kaku mcp` with seven typed tools, strict schemas, golden contract: kk-cli mc01-mc03; live agent session tests/e2e/mcp_live.py (19 checks, no private text in any response); docs/mcp.md. Not built: SDK package, import/ask/rehearse commands",
    "status": "PARTIAL",
    "surface_class": "CLI_MCP",
    "title": "Agent-callable CLI and MCP surface: import, ask, rehearse, release, verify from the command line or by another agent (like Claude Code or Co",
@@ -2495,7 +2495,7 @@
     "a judge's rule \"if an agent can't use it, don't ship it\"; Hermes and OpenClaw reach (`09` 11)",
     "HERO"
    ],
-   "evidence": "review workflow has CLI and MCP commands; not every capability yet",
+   "evidence": "review workflow, memory (web, terminal), log verification and capsule verification have a command or tool; memory and chat deliberately have no MCP tool because an MCP client is a sink; not every capability has a documented command yet",
    "status": "PARTIAL",
    "surface_class": "CLI_MCP",
    "title": "Agent-usable everything: every capability has a documented CLI and MCP command with machine-readable output, so other agents (and AI judges)",

@@ -187,9 +187,10 @@
         },
         {
           "id": "III-05",
-          "text": "CLI subcommands and MCP server with stable typed schemas and an SDK; import, ask, rehearse and release commands",
-          "kind": "pending",
-          "evidence_needed": "schema tests, example client, parity with the workspace"
+          "text": "MCP server with stable typed schemas (golden contract), strict argument validation, uniform file errors; docs/mcp.md. Live agent session without leaks: tests/e2e/mcp_live.py. NOT built: an SDK package, import/ask/rehearse commands.",
+          "kind": "machine",
+          "command": "cargo test -p kk-cli --test mcp",
+          "expect": "test result: ok. 3 passed"
         },
         {
           "id": "III-06",
@@ -215,6 +216,13 @@
           "text": "Reproducible build and install, signed distribution where supported, documented limits; a credible launch",
           "kind": "pending",
           "evidence_needed": "clean-checkout install on a second machine, release signing, launch assets"
+        },
+        {
+          "id": "III-05b",
+          "text": "A live MCP agent session against a real sandboxed review returns counts only and leaks no source, finding or memory text",
+          "kind": "machine",
+          "command": "python3 tests/e2e/mcp_live.py",
+          "expect": "MCP checks passed"
         }
       ]
     }
