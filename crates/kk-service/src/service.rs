@@ -184,11 +184,24 @@ impl Service {
             .iter()
             .filter(|f| !f.withheld && !f.path.starts_with("kakurega-memory/"))
             .count();
+        let sizes: std::collections::BTreeMap<String, u64> = s
+            .files
+            .iter()
+            .filter(|f| !f.withheld && !f.path.starts_with("kakurega-memory/"))
+            .map(|f| (f.path.clone(), f.bytes as u64))
+            .collect();
+        let project_bytes: u64 = sizes.values().sum();
+        let source_sizes = paths
+            .iter()
+            .filter_map(|p| sizes.get(p).map(|b| (p.clone(), *b)))
+            .collect();
         kk_disclosure::Plan {
             recipient: recipient.to_string(),
             source_paths: paths.into_iter().collect(),
             project_files,
             project: repo.to_string_lossy().into_owned(),
+            source_sizes,
+            project_bytes,
         }
     }
 

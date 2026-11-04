@@ -28,6 +28,8 @@ fn plan(who: &str, files: &[&str], total: usize) -> Plan {
         source_paths: files.iter().map(|s| s.to_string()).collect(),
         project_files: total,
         project: "payments".into(),
+        source_sizes: Default::default(),
+        project_bytes: 0,
     }
 }
 
@@ -167,4 +169,83 @@ fn dc07_the_ledger_survives_a_reopen_and_tiny_projects_are_not_judged_by_percent
         Verdict::Allow,
         "below the minimum project size a percentage means nothing"
     );
+}
+
+fn sized(who: &str, files: &[(&str, u64)], total_files: usize, total_bytes: u64) -> Plan {
+    Plan {
+        recipient: who.into(),
+        source_paths: files.iter().map(|(p, _)| p.to_string()).collect(),
+        project_files: total_files,
+        project: "payments".into(),
+        source_sizes: files.iter().map(|(p, b)| (p.to_string(), *b)).collect(),
+        project_bytes: total_bytes,
+    }
+}
+
+#[test]
+fn dc10_a_few_large_files_cannot_hide_behind_a_low_file_count() {
+    let (l, _) = open(Policy::default());
+    // 2 of 10 files is 20% by count, but those two files hold 90% of the bytes.
+    let a = l
+        .assess(
+            1000,
+            &sized(
+                "acme",
+                &[("big1.py", 45_000), ("big2.py", 45_000)],
+                10,
+                100_000,
+            ),
+        )
+        .unwrap();
+    assert_eq!(a.verdict, Verdict::Block, "{a:?}");
+    assert!(a.reasons[0].contains("by size"));
+    assert!(a.byte_coverage_after > 0.89 && a.coverage_after > 0.89);
+    // the same two files by count only (sizes unknown) stay allowed: the old behaviour is only the fallback
+    let b = l
+        .assess(1000, &plan("acme", &["big1.py", "big2.py"], 10))
+        .unwrap();
+    assert_eq!(b.verdict, Verdict::Allow);
+}
+
+#[test]
+fn dc11_bytes_accumulate_across_releases_and_a_file_counts_once_at_its_largest_size() {
+    let (l, _) = open(Policy::default());
+    let first = sized("acme", &[("a.py", 20_000)], 10, 100_000);
+    assert_eq!(l.assess(1000, &first).unwrap().verdict, Verdict::Allow);
+    l.record_delivered(1000, &first, "d1").unwrap();
+    let second = sized("ACME", &[("b.py", 20_000)], 10, 100_000);
+    let a = l.assess(2000, &second).unwrap();
+    assert_eq!(
+        a.verdict,
+        Verdict::Escalate,
+        "40% by size across two releases: {a:?}"
+    );
+    assert!((a.byte_coverage_after - 0.4).abs() < 1e-9);
+    l.record_delivered(2000, &second, "d2").unwrap();
+    let again = sized("acme", &[("a.py", 20_000)], 10, 100_000);
+    let r = l.assess(3000, &again).unwrap();
+    assert!(
+        (r.byte_coverage_after - 0.4).abs() < 1e-9,
+        "the same file twice is still one file: {r:?}"
+    );
+    let third = sized("acme", &[("c.py", 30_000)], 10, 100_000);
+    assert_eq!(l.assess(3000, &third).unwrap().verdict, Verdict::Block);
+}
+
+#[test]
+fn dc13_an_old_ledger_without_a_size_column_is_upgraded_in_place() {
+    let (l, path) = open(Policy::default());
+    drop(l);
+    let v = Vault::open(&path, &VaultKey::from_bytes([3; 32])).unwrap();
+    v.connection().execute_batch("DROP TABLE disclosures; CREATE TABLE disclosures (seq INTEGER PRIMARY KEY AUTOINCREMENT, recipient_key TEXT NOT NULL, recipient_shown TEXT NOT NULL, project TEXT NOT NULL, release_digest TEXT NOT NULL, at INTEGER NOT NULL, source_path TEXT NOT NULL); INSERT INTO disclosures(recipient_key, recipient_shown, project, release_digest, at, source_path) VALUES ('acme','Acme','payments','d0',1,'old.py');").unwrap();
+    drop(v);
+    let l2 = Ledger::open(
+        Vault::open(&path, &VaultKey::from_bytes([3; 32])).unwrap(),
+        Policy::default(),
+    )
+    .unwrap();
+    let a = l2
+        .assess(10, &sized("acme", &[("new.py", 100)], 10, 1_000))
+        .unwrap();
+    assert_eq!(a.files_after, 2, "the old row still counts: {a:?}");
 }

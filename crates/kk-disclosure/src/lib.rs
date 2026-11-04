@@ -1,6 +1,6 @@
 use kk_vault::rusqlite::{params, Connection};
 use kk_vault::Vault;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 #[derive(Debug)]
@@ -45,6 +45,10 @@ pub struct Plan {
     pub source_paths: Vec<String>,
     pub project_files: usize,
     pub project: String,
+    /// Size in bytes of each source file that would be shown (a file missing here counts as 0).
+    pub source_sizes: BTreeMap<String, u64>,
+    /// Total bytes of the project's releasable files; 0 means unknown, and then only file counts are used.
+    pub project_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -61,6 +65,7 @@ pub struct Assessment {
     pub checked: Vec<String>,
     pub not_checked: Vec<String>,
     pub coverage_after: f64,
+    pub byte_coverage_after: f64,
     pub files_after: usize,
     pub releases_before: usize,
 }
@@ -85,7 +90,8 @@ CREATE TABLE IF NOT EXISTS disclosures (
     project TEXT NOT NULL,
     release_digest TEXT NOT NULL,
     at INTEGER NOT NULL,
-    source_path TEXT NOT NULL
+    source_path TEXT NOT NULL,
+    bytes INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS disclosures_r ON disclosures(recipient_key, project);
 CREATE TABLE IF NOT EXISTS releases (
@@ -100,6 +106,11 @@ CREATE TABLE IF NOT EXISTS releases (
 impl Ledger {
     pub fn open(vault: Vault, policy: Policy) -> Result<Ledger, DisclosureError> {
         vault.connection().execute_batch(SCHEMA)?;
+        // Older ledgers have no size column; adding it twice is an error we ignore.
+        let _ = vault.connection().execute(
+            "ALTER TABLE disclosures ADD COLUMN bytes INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
         Ok(Ledger { vault, policy })
     }
 
@@ -107,16 +118,26 @@ impl Ledger {
         self.vault.connection()
     }
 
-    fn disclosed(&self, key: &str, project: &str) -> Result<BTreeSet<String>, DisclosureError> {
-        let mut st = self.conn().prepare("SELECT DISTINCT source_path FROM disclosures WHERE recipient_key = ?1 AND project = ?2")?;
-        let rows = st.query_map(params![key, project], |r| r.get::<_, String>(0))?;
+    fn disclosed(
+        &self,
+        key: &str,
+        project: &str,
+    ) -> Result<BTreeMap<String, u64>, DisclosureError> {
+        let mut st = self.conn().prepare("SELECT source_path, MAX(bytes) FROM disclosures WHERE recipient_key = ?1 AND project = ?2 GROUP BY source_path")?;
+        let rows = st.query_map(params![key, project], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?.max(0) as u64))
+        })?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
     pub fn assess(&self, now: i64, plan: &Plan) -> Result<Assessment, DisclosureError> {
         let key = canonical_recipient(&plan.recipient);
         let mut files = self.disclosed(&key, &plan.project)?;
-        files.extend(plan.source_paths.iter().cloned());
+        for p in &plan.source_paths {
+            let size = plan.source_sizes.get(p).copied().unwrap_or(0);
+            let e = files.entry(p.clone()).or_insert(0);
+            *e = (*e).max(size);
+        }
         let releases_before: i64 = self.conn().query_row(
             "SELECT count(*) FROM releases WHERE recipient_key = ?1 AND project = ?2",
             params![key, plan.project],
@@ -128,16 +149,26 @@ impl Ledger {
             |r| r.get(0),
         )?;
         let total = plan.project_files.max(1);
-        let coverage = files.len() as f64 / total as f64;
+        let file_coverage = files.len() as f64 / total as f64;
+        let disclosed_bytes: u64 = files.values().sum();
+        let byte_coverage = if plan.project_bytes > 0 {
+            (disclosed_bytes as f64 / plan.project_bytes as f64).min(1.0)
+        } else {
+            0.0
+        };
+        // A few large files can hold most of a project: the larger of the two measures decides.
+        let coverage = file_coverage.max(byte_coverage);
+        let by_size = byte_coverage > file_coverage;
+        let measure = if by_size { "by size" } else { "by file count" };
         let mut verdict = Verdict::Allow;
         let mut reasons = Vec::new();
         if plan.project_files >= self.policy.min_project_files {
             if coverage > self.policy.block_coverage {
                 verdict = Verdict::Block;
-                reasons.push(format!("Together with earlier releases, {} of this project's {} files ({:.0}%) would have been shown to this recipient, above the {:.0}% limit.", files.len(), plan.project_files, coverage * 100.0, self.policy.block_coverage * 100.0));
+                reasons.push(format!("Together with earlier releases, {} of this project's {} files ({:.0}% {measure}) would have been shown to this recipient, above the {:.0}% limit.", files.len(), plan.project_files, coverage * 100.0, self.policy.block_coverage * 100.0));
             } else if coverage > self.policy.escalate_coverage {
                 verdict = Verdict::Escalate;
-                reasons.push(format!("Together with earlier releases, {} of this project's {} files ({:.0}%) would have been shown to this recipient, above the {:.0}% review threshold.", files.len(), plan.project_files, coverage * 100.0, self.policy.escalate_coverage * 100.0));
+                reasons.push(format!("Together with earlier releases, {} of this project's {} files ({:.0}% {measure}) would have been shown to this recipient, above the {:.0}% review threshold.", files.len(), plan.project_files, coverage * 100.0, self.policy.escalate_coverage * 100.0));
             }
         }
         if recent as usize >= self.policy.max_releases_per_day {
@@ -153,6 +184,7 @@ impl Ledger {
             checked: vec![
                 "Distinct source files already shown to this recipient for this project, with every spelling of the recipient name that reduces to the same letters and digits.".into(),
                 "Number of releases to this recipient in the last 24 hours.".into(),
+                "Share of the project's bytes already shown, so a few large files cannot hide behind a low file count.".into(),
             ],
             not_checked: vec![
                 "Whether combined excerpts reveal something that no single file shows.".into(),
@@ -160,6 +192,7 @@ impl Ledger {
                 "Information the recipient obtained from sources other than Kakurega.".into(),
             ],
             coverage_after: coverage,
+            byte_coverage_after: byte_coverage,
             files_after: files.len(),
             releases_before: releases_before as usize,
         })
@@ -177,7 +210,7 @@ impl Ledger {
             return Ok(());
         }
         for p in &plan.source_paths {
-            self.conn().execute("INSERT INTO disclosures(recipient_key, recipient_shown, project, release_digest, at, source_path) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![key, plan.recipient, plan.project, release_digest, now, p])?;
+            self.conn().execute("INSERT INTO disclosures(recipient_key, recipient_shown, project, release_digest, at, source_path, bytes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![key, plan.recipient, plan.project, release_digest, now, p, plan.source_sizes.get(p).copied().unwrap_or(0) as i64])?;
         }
         Ok(())
     }
