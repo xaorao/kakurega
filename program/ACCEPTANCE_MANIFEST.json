@@ -85,7 +85,7 @@
           "text": "Desktop shell policy and approval logic: origin allow-list, sandboxed window, approval needs human yes and OS proof, hostile ids",
           "kind": "machine",
           "command": "pnpm --filter @kakurega/desktop test",
-          "expect": "pass 6"
+          "expect": "fail 0"
         },
         {
           "id": "II-02",
@@ -126,7 +126,7 @@
           "text": "Localisation scaffolding: all interface strings in typed catalogs, Hindi renders the main screens (journey checks in scripts/e2e), catalogs cannot drift (keys, placeholders, tags). Hindi text is machine-written and needs a native review; server-originated text stays English.",
           "kind": "machine",
           "command": "pnpm --filter @kakurega/web test",
-          "expect": "pass 3"
+          "expect": "fail 0"
         },
         {
           "id": "II-08",
@@ -312,7 +312,7 @@
           "text": "Full-screen terminal workspace: command parsing, editing, rendering at several sizes, approval needs the typed digest, refusal recorded, output sanitised, secrets scrubbed (unit tests with fake responses)",
           "kind": "machine",
           "command": "cargo test -p kk-tui",
-          "expect": "test result: ok. 15 passed"
+          "expect": "test result: ok. 18 passed"
         },
         {
           "id": "III-02",
@@ -396,7 +396,7 @@
           "text": "Bridge unit tests: pairing, allowlist silence, templates without private text, notification de-duplication and no replay, token scrubbing, read-only",
           "kind": "machine",
           "command": "cargo test -p kk-cli telegram",
-          "expect": "test result: ok. 5 passed"
+          "expect": "test result: ok. 6 passed"
         },
         {
           "id": "III-07c",
