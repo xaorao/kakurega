@@ -66,6 +66,10 @@ page.on("requestfailed", async (r) => {
   // showed the complete answer (checked by the chat steps); a request without a response still counts as a failure.
   const response = await r.response().catch(() => null);
   if (r.url().endsWith("/api/chat/stream") && r.failure()?.errorText === "net::ERR_ABORTED" && response?.status() === 200) return;
+  // Also classified as a harness artifact: an idempotent GET that the browser cancelled because the page was reloaded or
+  // navigated while it was in flight (the screens poll /api/fs, /api/readiness and /api/jobs). A POST or any other failure
+  // still counts.
+  if (r.method() === "GET" && r.failure()?.errorText === "net::ERR_ABORTED" && /\/(api\/(fs|readiness|jobs|sessions|memories)|favicon\.svg)(\?|$)/.test(new URL(r.url()).pathname + new URL(r.url()).search)) return;
   problems.push("requestfailed: " + r.url() + " " + r.failure()?.errorText);
 });
 page.on("response", (r) => r.status() >= 500 && problems.push("http " + r.status() + " " + r.url()));
@@ -406,6 +410,15 @@ try {
   const ans = await page.locator("#h-answer").locator("xpath=..").innerText();
   check("the answer says it is not proof and shows one quote found with its line and one not found", ans.includes("not proof") && ans.includes("1 of 2 quote(s) found") && ans.includes("Found in the file (line 1)") && ans.includes("Not found: the file does not contain this text"), ans.replace(/\n/g, " | ").slice(0, 200));
   check("the secret file is reported as not sent and its content is nowhere", ans.includes("Not sent to the model") && ans.includes(".env") && !ans.includes("sk_live"));
+  const showBtn = page.getByRole("button", { name: "Show in file" });
+  check("only a quote that was found offers to be shown in its file", (await showBtn.count()) === 1);
+  await showBtn.click();
+  const passage = page.locator("pre.passage");
+  await passage.waitFor();
+  check("the passage opens in place with line numbers and the cited line marked, and never shows the secret file", (await passage.locator(".hit").count()) === 1 && /\b1\b/.test(await passage.locator(".ln").first().innerText()) && !(await passage.innerText()).includes("sk_live"));
+  await axeCheck(page, "documents screen with a passage open");
+  await page.getByRole("button", { name: "Hide" }).click();
+  check("Hide closes the passage", (await passage.count()) === 0);
   await axeCheck(page, "documents screen");
   await page.screenshot({ path: join(shots, "14-documents.png") });
   // activity: the signed log lists what happened, downloads, and verifies offline with the CLI

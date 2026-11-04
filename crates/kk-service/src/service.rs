@@ -2338,6 +2338,63 @@ async fn ext_capture(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ExcerptBody {
+    folder: String,
+    file: String,
+    line: usize,
+}
+
+/// A few lines around a cited line, so the owner can read the passage in place. Only files that the question could have
+/// used are shown: a withheld (restricted or secret) file answers exactly like a file that does not exist.
+async fn ask_excerpt(axum::Extension(svc): Svc, Json(b): Json<ExcerptBody>) -> Response {
+    let Some(dir) = svc.allowed_dir(&b.folder) else {
+        return error(
+            StatusCode::FORBIDDEN,
+            "NOT_ALLOWED",
+            "that folder is not available",
+        );
+    };
+    let out = tokio::task::spawn_blocking(move || {
+        let imported = kk_review::import::scan_tree(&dir, kk_types::label::Level::Internal);
+        let ctx = kk_review::ask::build_context(&imported.files);
+        if !ctx.used.contains(&b.file) {
+            return None;
+        }
+        let f = imported.files.iter().find(|f| f.path == b.file)?;
+        let text = String::from_utf8_lossy(&f.bytes).into_owned();
+        let lines: Vec<&str> = text.lines().collect();
+        if b.line == 0 || b.line > lines.len() {
+            return None;
+        }
+        let start = b.line.saturating_sub(4).max(1);
+        let end = (b.line + 4).min(lines.len());
+        let shown: Vec<String> = lines[start - 1..end]
+            .iter()
+            .map(|l| {
+                l.chars()
+                    .filter(|c| !c.is_control() || *c == '\t')
+                    .take(400)
+                    .collect()
+            })
+            .collect();
+        Some((b.file, start, b.line, shown))
+    })
+    .await;
+    match out {
+        Ok(Some((file, start, focus, lines))) => {
+            Json(json!({"file": file, "start": start, "focus": focus, "lines": lines}))
+                .into_response()
+        }
+        _ => error(
+            StatusCode::NOT_FOUND,
+            "NO_PASSAGE",
+            "that passage is not available",
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AskBody {
     folder: String,
     question: String,
@@ -3619,6 +3676,7 @@ impl Extension for Routes {
             .route("/api/chat", post(chat))
             .route("/api/chat/stream", post(chat_stream))
             .route("/api/ask", post(ask))
+            .route("/api/ask/excerpt", post(ask_excerpt))
             .route("/api/history", get(history_list).post(history_add))
             .route("/api/history/clear", post(history_clear))
             .route("/api/sessions", get(sessions_list).post(session_new))

@@ -1,5 +1,5 @@
 import { createResource, createSignal, For, Show } from "solid-js";
-import { api, ApiError, type AskReply } from "../api";
+import { api, ApiError, type AskReply, type Passage } from "../api";
 import { t, type Key } from "../i18n";
 
 export function Documents() {
@@ -21,6 +21,20 @@ export function Documents() {
       setError(err instanceof ApiError ? err.message : t("docs.error"));
     } finally {
       setBusy(false);
+    }
+  };
+  const [passages, setPassages] = createSignal<Record<string, Passage | string>>({});
+  const showPassage = async (file: string, line: number, folder: string) => {
+    const key = `${file}:${line}`;
+    if (passages()[key]) {
+      const { [key]: _gone, ...rest } = passages();
+      setPassages(rest);
+      return;
+    }
+    try {
+      setPassages({ ...passages(), [key]: await api.passage(folder, file, line) });
+    } catch (err) {
+      setPassages({ ...passages(), [key]: err instanceof ApiError ? err.message : t("docs.error") });
     }
   };
   const list = (xs: string[]) => xs.join(", ");
@@ -63,7 +77,20 @@ export function Documents() {
                     {(c) => (
                       <li class="stack cite">
                         <p class="mem-text">&ldquo;{c.quote}&rdquo;</p>
-                        <p class="muted"><code>{c.file}</code> <span class={`chip ${c.verdict === "verified" ? "ok" : "bad"}`}>{t(`docs.${c.verdict}` as Key, { line: c.line ?? 0 })}</span></p>
+                        <p class="muted"><code>{c.file}</code> <span class={`chip ${c.verdict === "verified" ? "ok" : "bad"}`}>{t(`docs.${c.verdict}` as Key, { line: c.line ?? 0 })}</span>
+                          <Show when={c.verdict === "verified" && c.line}>
+                            {" "}<button type="button" class="link" aria-expanded={!!passages()[`${c.file}:${c.line}`]} onClick={() => showPassage(c.file, c.line as number, chosen())}>{passages()[`${c.file}:${c.line}`] ? t("docs.hidePassage") : t("docs.showPassage")}</button>
+                          </Show>
+                        </p>
+                        <Show when={passages()[`${c.file}:${c.line}`]}>
+                          {(p) => (
+                            <Show when={typeof p() !== "string"} fallback={<p role="alert" class="bad">{String(p())}</p>}>
+                              <pre class="passage" tabindex="0" aria-label={t("docs.passageLabel", { file: c.file })}>
+                                <For each={(p() as Passage).lines}>{(l, i) => <div class={(p() as Passage).start + i() === (p() as Passage).focus ? "hit" : ""}><span class="ln">{(p() as Passage).start + i()}</span> {l}</div>}</For>
+                              </pre>
+                            </Show>
+                          )}
+                        </Show>
                       </li>
                     )}
                   </For>

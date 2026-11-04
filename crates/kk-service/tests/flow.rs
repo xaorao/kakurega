@@ -4121,3 +4121,91 @@ fn sv34_notes_imported_from_another_assistant_are_untrusted_labelled_with_their_
         assert_eq!(w.post("/api/memories/import-notes", bad).0, 400);
     }
 }
+
+#[test]
+fn sv35_a_cited_passage_can_be_read_in_place_but_withheld_files_and_odd_requests_get_nothing() {
+    let (root, _repo) = repo_copy("data-excerpt");
+    let docs = root.join("docs");
+    std::fs::create_dir_all(&docs).unwrap();
+    let body: String = (1..=12)
+        .map(|i| format!("line {i} of the contract\n"))
+        .collect();
+    std::fs::write(docs.join("contract.md"), &body).unwrap();
+    std::fs::write(
+        docs.join(".env"),
+        format!("API_TOKEN={}{}\n", "sk_li", "ve_abcdefghijklmnop0123"),
+    )
+    .unwrap();
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let f = docs.to_string_lossy().to_string();
+    assert_eq!(
+        Web::new(c.addr)
+            .post(
+                "/api/ask/excerpt",
+                json!({"folder": f, "file": "contract.md", "line": 5})
+            )
+            .0,
+        401
+    );
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (st, r) = w.post(
+        "/api/ask/excerpt",
+        json!({"folder": f, "file": "contract.md", "line": 6}),
+    );
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(
+        (r["start"].clone(), r["focus"].clone()),
+        (json!(2), json!(6))
+    );
+    assert_eq!(r["lines"].as_array().unwrap().len(), 9);
+    assert_eq!(r["lines"][4], "line 6 of the contract");
+    let (_, edge) = w.post(
+        "/api/ask/excerpt",
+        json!({"folder": f, "file": "contract.md", "line": 1}),
+    );
+    assert_eq!(
+        (
+            edge["start"].clone(),
+            edge["lines"].as_array().unwrap().len()
+        ),
+        (json!(1), 5)
+    );
+    for (file, line) in [
+        (".env", 1),
+        ("nothing.md", 1),
+        ("../data/state.db", 1),
+        ("contract.md", 0),
+        ("contract.md", 13),
+    ] {
+        let (st, r) = w.post(
+            "/api/ask/excerpt",
+            json!({"folder": f, "file": file, "line": line}),
+        );
+        assert_eq!(
+            (st, r["error"]["code"].as_str()),
+            (404, Some("NO_PASSAGE")),
+            "{file}:{line}"
+        );
+        assert!(!r.to_string().contains("sk_live"));
+    }
+    assert_eq!(
+        w.post(
+            "/api/ask/excerpt",
+            json!({"folder": "/etc", "file": "passwd", "line": 1})
+        )
+        .0,
+        403
+    );
+}

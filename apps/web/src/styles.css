@@ -214,3 +214,7 @@ button.danger { background: var(--redline); border-color: var(--redline); color:
 .codeblock .actions { justify-content: space-between; padding: 4px 8px; border-bottom: 1px solid var(--line); }
 .codeblock pre { margin: 0; padding: 8px; overflow-x: auto; }
 .codeblock code { background: none; padding: 0; }
+
+.passage { margin: 4px 0 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; white-space: pre; font-family: var(--mono, ui-monospace, monospace); font-size: 0.9em; }
+.passage .ln { display: inline-block; min-width: 3ch; margin-right: 8px; color: var(--graphite); text-align: right; user-select: none; }
+.passage .hit { background: var(--cipher-bg); color: var(--ink); outline: 1px solid var(--cipher-text); }
