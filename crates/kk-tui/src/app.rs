@@ -160,6 +160,8 @@ pub struct App {
     pub queued: Vec<String>,
     /// Lines put aside with Ctrl-S or /stash, newest last. Kept in memory only and gone when the terminal closes.
     pub stashed: Vec<String>,
+    /// Set by Ctrl-G: the text to open in the owner's editor. The runtime takes it, runs the editor and calls `finish_edit`.
+    pub editor_request: Option<String>,
     pub popup_sel: usize,
     popup_dismissed: Option<String>,
     history_to_save: Vec<String>,
@@ -241,6 +243,7 @@ impl App {
             live: None,
             chat_waiting: false,
             approver: None,
+            editor_request: None,
             fixes_seen: Vec::new(),
             search_hits: Vec::new(),
             web_pages: Vec::new(),
@@ -558,6 +561,22 @@ impl App {
         }
         for c in text.chars() {
             self.insert(if c == '\t' { ' ' } else { c });
+        }
+    }
+
+    /// Takes back what the editor returned. Control characters are removed like in any paste; a failure or an unchanged
+    /// result leaves the composer as it was.
+    pub fn finish_edit(&mut self, result: Result<String, String>) {
+        match result {
+            Ok(text) => {
+                let text = clean(&text.replace("\r\n", "\n"))
+                    .trim_end_matches('\n')
+                    .to_string();
+                self.input = text;
+                self.cursor = self.input.chars().count();
+                self.pasted.clear();
+            }
+            Err(e) => self.say(Kind::Warn, e),
         }
     }
 
@@ -934,6 +953,9 @@ impl App {
                 self.stash_input();
             }
             KeyCode::Char('r') if ctrl => self.pop_stash(),
+            KeyCode::Char('g') if ctrl => {
+                self.editor_request = Some(self.expand_pasted(&self.input));
+            }
             KeyCode::Char('j') if ctrl => self.insert('\n'),
             KeyCode::Enter
                 if k.modifiers.contains(KeyModifiers::SHIFT)
@@ -1028,6 +1050,7 @@ impl App {
                         "/log                           the signed activity log".into(),
                         "/verify FILE                   check a capsule offline".into(),
                         "/stash  /pop                   put the line you are typing aside; bring it back (Ctrl-S, Ctrl-R)".into(),
+                        "Ctrl-G                         write the message in your editor ($VISUAL or $EDITOR)".into(),
                         "/keep                          save this conversation in the encrypted store (otherwise it is never saved)".into(),
                         "/sessions                      pick a kept conversation or a review (type to filter, Ctrl-D twice forgets a chat)".into(),
                         "/newchat  /clear               leave this conversation and start a fresh one".into(),

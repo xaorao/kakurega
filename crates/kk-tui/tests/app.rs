@@ -1692,3 +1692,39 @@ fn tu37_remember_can_name_a_project_and_the_memory_list_shows_it() {
         "{t}"
     );
 }
+
+#[test]
+fn tu38_ctrl_g_hands_the_whole_message_to_the_editor_and_takes_back_what_is_saved() {
+    let mut a = booted();
+    typed(&mut a, "draft ");
+    a.handle(Event::Paste(
+        "line one\nline two\nline three\nline four".into(),
+    ));
+    assert!(a.input.contains("[Pasted ~4 lines]"));
+    a.handle(ctrl('g'));
+    let sent = a.editor_request.take().expect("Ctrl-G asks for the editor");
+    assert_eq!(
+        sent, "draft line one\nline two\nline three\nline four",
+        "folded pastes are shown in full to the editor"
+    );
+    // a failed edit leaves the composer as it was and says why
+    let before = a.input.clone();
+    a.finish_edit(Err(
+        "`vi` ended with an error, so your text is unchanged".into()
+    ));
+    assert_eq!(a.input, before);
+    assert!(text(&a).contains("ended with an error"));
+    // a saved edit replaces the text; control characters are dropped; the cursor goes to the end
+    a.finish_edit(Ok("rewritten \u{1b}[31mmessage\r\nsecond line\n\n".into()));
+    assert!(
+        !a.input.contains('\u{1b}') && !a.input.contains('\r'),
+        "no control characters survive"
+    );
+    assert!(a.input.starts_with("rewritten ") && a.input.ends_with("message\nsecond line"));
+    assert!(a.pasted.is_empty() && a.cursor == a.input.chars().count());
+    let r = a.handle(key(KeyCode::Enter));
+    assert!(r[0].body.as_ref().unwrap()["message"]
+        .as_str()
+        .unwrap()
+        .ends_with("message\nsecond line"));
+}

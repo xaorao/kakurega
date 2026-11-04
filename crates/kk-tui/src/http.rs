@@ -5,7 +5,6 @@ use std::path::Path;
 pub struct Http {
     agent: ureq::Agent,
     admin_agent: ureq::Agent,
-    stream_agent: ureq::Agent,
     base: String,
     token: String,
     csrf: String,
@@ -30,11 +29,6 @@ impl Http {
         let mut h = Http {
             agent: build_agent(),
             admin_agent: build_agent(),
-            stream_agent: ureq::Agent::config_builder()
-                .http_status_as_error(false)
-                .timeout_global(Some(std::time::Duration::from_secs(900)))
-                .build()
-                .into(),
             base: format!("http://127.0.0.1:{port}"),
             token,
             csrf: String::new(),
@@ -126,9 +120,13 @@ impl Http {
         use std::sync::atomic::Ordering;
         let result = (|| -> Result<(u16, Value), String> {
             let url = format!("{}{}", self.base, req.path);
+            // the same agent as every other request, so the paired session is sent; only the time allowed is longer
             let mut r = self
-                .stream_agent
+                .agent
                 .post(&url)
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(900)))
+                .build()
                 .header("Origin", &self.base)
                 .header("Sec-Fetch-Site", "same-origin")
                 .header("x-kk-csrf", &self.csrf)

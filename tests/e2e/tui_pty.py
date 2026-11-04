@@ -139,6 +139,9 @@ master, slave = pty.openpty()
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 110, 0, 0))
 env = dict(os.environ, TERM="xterm-256color", LANG="en_US.UTF-8")
 env.pop("NO_COLOR", None)
+editor_script = work / "editor.sh"
+editor_script.write_text("#!/bin/sh\nprintf 'edited in the editor ZZZ' > \"$1\"\n")
+env["VISUAL"] = "sh " + str(editor_script)
 proc = subprocess.Popen(
     [str(kaku), "tui", "--data-dir", str(data), "--root", str(work / "root"), "--scripted", str(repo / "tests/e2e/script.json"), "--ui-dir", str(repo / "apps/web/dist")],
     stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True,
@@ -218,6 +221,13 @@ try:
     (repo / "target/e2e-shots/tui-delivered.txt").write_text(screen_text())
     send("Where are login sessions kept?\r")
     check("plain text is a chat message answered by the private assistant", wait_for(r"\[test model\] I received \d+ characters") is not None)
+    send("a draft to be replaced")
+    pump(0.3)
+    send("\x07")
+    check("Ctrl-G hands the screen to the editor and takes it back with the saved text in the composer", wait_for(r"edited in the editor ZZZ", 20) is not None and "kakurega" in screen_text())
+    send("\r")
+    check("the edited text is what is sent", wait_for(r"received 24 characters", 30) is not None)
+    check("the editor's file is gone afterwards", subprocess.run("ls /tmp /var/folders/*/*/T 2>/dev/null | grep -c kaku-edit-", shell=True, capture_output=True, text=True).stdout.strip() in ("0", ""))
     send("/remember the password is hunter2hunter2\r")
     check("a secret is refused", wait_for(r"secrets are never stored") is not None)
     check("and hidden from the transcript", "text hidden" in screen_text())

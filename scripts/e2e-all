@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Every end-to-end script on the Mac, in one run. scripts/test covers unit and integration tests only; this is the other half.
+# Needs: the Lima VM `kak` (worker build), Playwright's Chromium, a graphical session for the Electron desktop checks.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+scripts/e2e
+cargo build -p kk-cli
+spikes/enclave/build.sh --test target/debug/kaku-enclave-test >/dev/null
+spikes/enclave/build.sh target/debug/kaku-enclave >/dev/null
+python3 tests/e2e/enclave_helper.py
+python3 tests/e2e/signed_approval.py
+python3 tests/e2e/signed_approval_enclave.py
+python3 tests/e2e/mcp_live.py
+python3 tests/e2e/telegram_fake.py
+python3 tests/e2e/tui_pty.py
+node tests/e2e/readiness.mjs
+node tests/e2e/extension.mjs
+node tests/e2e/desktop.mjs
+node tests/e2e/desktop_attack.mjs
+node tests/e2e/desktop_recovery.mjs
+node tests/e2e/desktop_fuses.mjs
+node tests/e2e/desktop_packaged.mjs
+echo "ALL END-TO-END CHECKS PASSED"

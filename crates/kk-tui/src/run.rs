@@ -106,6 +106,20 @@ fn event_loop(http: Http, data_dir: &Path) -> Result<(), String> {
                 for r in app.drain_background() {
                     let _ = req_tx.send(r);
                 }
+                if let Some(text) = app.editor_request.take() {
+                    // hand the screen to the editor, then take it back exactly as it was
+                    restore();
+                    let command = crate::editor::chosen(
+                        std::env::var("VISUAL").ok(),
+                        std::env::var("EDITOR").ok(),
+                    );
+                    let result = crate::editor::edit_with(&command, &text);
+                    enable_raw_mode().map_err(|e| e.to_string())?;
+                    execute!(stdout(), EnterAlternateScreen, EnableBracketedPaste)
+                        .map_err(|e| e.to_string())?;
+                    term.clear().map_err(|e| e.to_string())?;
+                    app.finish_edit(result);
+                }
             }
         }
         while let Ok(ev) = ev_rx.try_recv() {
