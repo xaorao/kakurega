@@ -507,3 +507,161 @@ fn sv09_the_page_cannot_reach_the_approval_interface_with_its_own_session() {
     assert_eq!(code, 403);
     assert_eq!(c.security.active_sessions(), 1);
 }
+
+#[test]
+fn sv10_reviews_approvals_and_capsules_survive_a_restart_and_interrupted_reviews_say_so() {
+    let (root, repo) = repo_copy("restart");
+    let data = root.join("data");
+    let first_id;
+    let second_id;
+    let capsule_digest;
+    {
+        let svc = Service::new(
+            &data,
+            vec![root.clone()],
+            Arc::new(CannedRunner { confirm: true }),
+            true,
+        )
+        .unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        let (_, started) = w.post(
+            "/api/jobs",
+            json!({"repo": repo.to_string_lossy(), "recipient": "acme-audit"}),
+        );
+        first_id = started["id"].as_str().unwrap().to_string();
+        wait_for(&w, &first_id, &["ready"]);
+        let (_, req) = w.post(&format!("/api/jobs/{first_id}/approval"), json!({}));
+        let aid = req["approval"].as_str().unwrap().to_string();
+        let token = c.security.admin_token().to_string();
+        let base = format!("http://127.0.0.1:{}", c.addr.port());
+        let (_, shown) = admin(
+            &base,
+            &token,
+            "GET",
+            &format!("/admin/approvals/{aid}"),
+            None,
+        );
+        capsule_digest = shown["digest"].as_str().unwrap().to_string();
+        admin(
+            &base,
+            &token,
+            "POST",
+            &format!("/admin/approvals/{aid}/approve"),
+            Some(json!({"ack": &capsule_digest[..12]})),
+        );
+        assert_eq!(
+            w.post(&format!("/api/jobs/{first_id}/deliver"), json!({}))
+                .0,
+            200
+        );
+        let (_, second) = w.post(
+            "/api/jobs",
+            json!({"repo": repo.to_string_lossy(), "recipient": "other"}),
+        );
+        second_id = second["id"].as_str().unwrap().to_string();
+        wait_for(&w, &second_id, &["ready"]);
+        drop(c);
+    }
+    let svc_dropped_check = std::time::Instant::now();
+    while svc_dropped_check.elapsed() < Duration::from_secs(5)
+        && Service::new(
+            &data,
+            vec![root.clone()],
+            Arc::new(CannedRunner { confirm: true }),
+            true,
+        )
+        .is_err()
+    {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    {
+        let store = kk_service::keys::open_vault(&data, "jobs.db").unwrap();
+        store
+            .connection()
+            .execute(
+                "UPDATE jobs SET meta = replace(meta, '\"Ready\"', '\"Running\"') WHERE id = ?1",
+                [&second_id],
+            )
+            .unwrap();
+    }
+    let svc = Service::new(
+        &data,
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .expect("restart");
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (_, jobs) = w.get("/api/jobs");
+    assert_eq!(
+        jobs["jobs"].as_array().unwrap().len(),
+        2,
+        "both reviews are still listed"
+    );
+    let (_, j1) = w.get(&format!("/api/jobs/{first_id}"));
+    assert_eq!(j1["state"], "ready");
+    assert_eq!(j1["delivered"]["digest"], capsule_digest.as_str());
+    assert_eq!(
+        w.get(&format!("/api/jobs/{first_id}/approval")).1["state"],
+        "delivered"
+    );
+    let (_, files) = w.get(&format!("/api/jobs/{first_id}/files"));
+    assert!(files["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["path"] == ".env" && f["withheld"] == true));
+    let (_, env_file) = w.get(&format!("/api/jobs/{first_id}/file?path=.env"));
+    assert!(
+        env_file["text"].is_null(),
+        "withheld content is not even stored in the snapshot"
+    );
+    let (code, bytes) = w.get_bytes(&format!("/api/jobs/{first_id}/capsule"));
+    assert_eq!(code, 200);
+    assert!(
+        capsule::verify(
+            &bytes,
+            &VerifyOptions {
+                pinned_keys: Some(vec![svc.signer_public()]),
+                now: kk_now(),
+                expected_recipient: Some("acme-audit".into())
+            }
+        )
+        .valid
+    );
+    let (_, j2) = w.get(&format!("/api/jobs/{second_id}"));
+    assert_eq!(
+        j2["state"], "failed",
+        "a review that was running when the service stopped is reported as interrupted"
+    );
+    assert!(j2["note"].as_str().unwrap().contains("stopped"));
+    let (_, again) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "x"}),
+    );
+    let next_n: u64 = again["id"]
+        .as_str()
+        .unwrap()
+        .trim_start_matches("job-")
+        .parse()
+        .unwrap();
+    let prev_n: u64 = second_id.trim_start_matches("job-").parse().unwrap();
+    assert!(next_n > prev_n, "job numbers continue after a restart");
+    let raw_db = std::fs::read(data.join("jobs.db")).unwrap();
+    assert!(
+        !raw_db.windows(8).any(|w| w == b"def logo"),
+        "stored source text is encrypted at rest"
+    );
+}
