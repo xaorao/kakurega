@@ -18,6 +18,9 @@
         "ready": {
           "type": "boolean"
         },
+        "approvals_require_signature": {
+          "type": "boolean"
+        },
         "setup_problems": {
           "type": "array",
           "items": {
@@ -37,8 +40,7 @@
       "required": [
         "ready",
         "reviews"
-      ],
-      "additionalProperties": false
+      ]
     },
     "annotations": {
       "readOnlyHint": true,
@@ -69,8 +71,7 @@
       },
       "required": [
         "jobs"
-      ],
-      "additionalProperties": false
+      ]
     },
     "annotations": {
       "readOnlyHint": true,
@@ -114,8 +115,7 @@
       },
       "required": [
         "id"
-      ],
-      "additionalProperties": false
+      ]
     },
     "annotations": {
       "readOnlyHint": false,
@@ -162,8 +162,7 @@
       "required": [
         "id",
         "state"
-      ],
-      "additionalProperties": false
+      ]
     },
     "annotations": {
       "readOnlyHint": true,
@@ -205,8 +204,7 @@
       },
       "required": [
         "approval"
-      ],
-      "additionalProperties": false
+      ]
     },
     "annotations": {
       "readOnlyHint": false,
@@ -254,8 +252,7 @@
       },
       "required": [
         "valid"
-      ],
-      "additionalProperties": false
+      ]
     },
     "annotations": {
       "readOnlyHint": true,
@@ -316,8 +313,7 @@
       },
       "required": [
         "valid"
-      ],
-      "additionalProperties": false
+      ]
     },
     "annotations": {
       "readOnlyHint": true,

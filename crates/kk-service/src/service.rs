@@ -2396,6 +2396,7 @@ async fn admin_overview(axum::Extension(svc): Svc) -> Response {
         "setup_problems": checks.iter().filter(|c| c["ok"] != true).filter_map(|c| c["label"].as_str()).collect::<Vec<_>>(),
         "reviews": by_state,
         "memories_by_level": memories,
+        "approvals_require_signature": svc.approvers_enrolled(),
         "log": {"entries": head.as_ref().map(|h| h.0).unwrap_or(0), "head": head.map(|h| h.1), "public_key": kk_evidence::b64::encode(&svc.log.public_key())},
     }))
     .into_response()

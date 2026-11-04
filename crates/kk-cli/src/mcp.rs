@@ -18,6 +18,11 @@ fn obj(props: Value, required: &[&str]) -> Value {
     json!({"type": "object", "properties": props, "required": required, "additionalProperties": false})
 }
 
+fn out_obj(props: Value, required: &[&str]) -> Value {
+    // Output objects may carry more fields than listed; the listed ones are the stable contract.
+    json!({"type": "object", "properties": props, "required": required})
+}
+
 fn tool(
     name: &str,
     title: &str,
@@ -38,20 +43,20 @@ pub fn tools() -> Value {
     let _ = error_out;
     json!([
         tool("overview", "Overview", "Counts only: setup problems, reviews by state, memories by privacy level and the signed log's latest entry. Never returns source text, memory text or findings.", obj(json!({}), &[]),
-            obj(json!({"version": {"type": "string"}, "ready": {"type": "boolean"}, "setup_problems": {"type": "array", "items": {"type": "string"}}, "reviews": {"type": "object"}, "memories_by_level": {"type": "object"}, "log": {"type": "object"}}), &["ready", "reviews"]), true),
+            out_obj(json!({"version": {"type": "string"}, "ready": {"type": "boolean"}, "approvals_require_signature": {"type": "boolean"}, "setup_problems": {"type": "array", "items": {"type": "string"}}, "reviews": {"type": "object"}, "memories_by_level": {"type": "object"}, "log": {"type": "object"}}), &["ready", "reviews"]), true),
         tool("list_reviews", "List reviews", "List reviews with state and counts only. Never returns source text.", obj(json!({}), &[]),
-            obj(json!({"jobs": {"type": "array", "items": {"type": "object"}}}), &["jobs"]), true),
+            out_obj(json!({"jobs": {"type": "array", "items": {"type": "object"}}}), &["jobs"]), true),
         tool("start_review", "Start a review", "Start a private review of a project folder for a named recipient. Nothing is released by starting a review.",
             obj(json!({"repo": string_prop("Absolute path of the project folder, inside a root the owner allowed.", 4096), "recipient": string_prop("Who will receive the result.", 128)}), &["repo", "recipient"]),
-            obj(json!({"id": {"type": "string"}}), &["id"]), false),
+            out_obj(json!({"id": {"type": "string"}}), &["id"]), false),
         tool("review_status", "Review status", "State and counts of one review.", obj(json!({"id": job_id_prop()}), &["id"]),
-            obj(json!({"id": {"type": "string"}, "state": {"type": "string"}, "stage": {}, "files_reviewed": {}, "files_withheld": {}, "findings_reported": {}, "findings_confirmed": {}, "approval": {}, "delivered": {}}), &["id", "state"]), true),
+            out_obj(json!({"id": {"type": "string"}, "state": {"type": "string"}, "stage": {}, "files_reviewed": {}, "files_withheld": {}, "findings_reported": {}, "findings_confirmed": {}, "approval": {}, "delivered": {}}), &["id", "state"]), true),
         tool("request_approval", "Request approval", "Ask the owner to approve the release. This tool cannot approve: the owner approves in the desktop window, the terminal workspace or `kaku approve`, after seeing the exact files.", obj(json!({"id": job_id_prop()}), &["id"]),
-            obj(json!({"approval": {"type": "string"}, "digest": {"type": "string"}, "how": {"type": "string"}}), &["approval"]), false),
+            out_obj(json!({"approval": {"type": "string"}, "digest": {"type": "string"}, "how": {"type": "string"}}), &["approval"]), false),
         tool("verify_capsule", "Verify a capsule", "Check a capsule file (.kkg) offline and report what it does and does not establish.", obj(json!({"path": string_prop("Path of a .kkg capsule file.", 4096)}), &["path"]),
-            obj(json!({"valid": {"type": "boolean"}, "reason": {"type": "string"}, "signer": {}, "recipient": {}, "established": {"type": "array"}, "not_established": {"type": "array"}}), &["valid"]), true),
+            out_obj(json!({"valid": {"type": "boolean"}, "reason": {"type": "string"}, "signer": {}, "recipient": {}, "established": {"type": "array"}, "not_established": {"type": "array"}}), &["valid"]), true),
         tool("verify_log", "Verify the event log", "Check a saved signed event log (.json) offline, optionally against a pinned key and an anchor.", obj(json!({"path": string_prop("Path of a saved event log.", 4096), "pin": string_prop("Base64url Ed25519 public key to require.", 64), "anchor": string_prop("COUNT:HEAD printed by `kaku log export`.", 200)}), &["path"]),
-            obj(json!({"valid": {"type": "boolean"}, "reason": {"type": "string"}, "entries": {"type": "integer"}, "head": {"type": "string"}, "signer": {"type": "string"}}), &["valid"]), true)
+            out_obj(json!({"valid": {"type": "boolean"}, "reason": {"type": "string"}, "entries": {"type": "integer"}, "head": {"type": "string"}, "signer": {"type": "string"}}), &["valid"]), true)
     ])
 }
 
@@ -122,8 +127,36 @@ fn check_args(schema: &Value, args: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn read_small(path: &str, suffixes: &[&str]) -> Result<Vec<u8>, String> {
+/// Where the verify tools may read from: the folder the agent was started in and the owner's export folder. Anything
+/// else, and anything missing or unreadable, gets the same answer, so a path cannot be probed.
+pub struct Ctx {
+    roots: Vec<std::path::PathBuf>,
+}
+
+impl Ctx {
+    pub fn new(data_dir: &std::path::Path) -> Ctx {
+        let mut roots = Vec::new();
+        if let Ok(cwd) = std::env::current_dir().and_then(|d| d.canonicalize()) {
+            roots.push(cwd);
+        }
+        if let Ok(exports) = data_dir.join("exports").canonicalize() {
+            roots.push(exports);
+        }
+        Ctx { roots }
+    }
+
+    fn allows(&self, canonical: &std::path::Path) -> bool {
+        self.roots.iter().any(|r| canonical.starts_with(r))
+    }
+}
+
+fn read_small(ctx: &Ctx, path: &str, suffixes: &[&str]) -> Result<Vec<u8>, String> {
     let p = std::path::Path::new(path);
+    let canonical = p.canonicalize().ok().filter(|c| ctx.allows(c));
+    let Some(canonical) = canonical else {
+        return Err("cannot read that file".into());
+    };
+    let p = canonical.as_path();
     let ext_ok = p
         .extension()
         .and_then(|e| e.to_str())
@@ -137,7 +170,7 @@ fn read_small(path: &str, suffixes: &[&str]) -> Result<Vec<u8>, String> {
     std::fs::read(p).map_err(|_| "cannot read that file".to_string())
 }
 
-fn call(admin: &Result<Admin, String>, name: &str, a: &Value) -> Value {
+fn call(admin: &Result<Admin, String>, ctx: &Ctx, name: &str, a: &Value) -> Value {
     let all = tools();
     let Some(def) = all
         .as_array()
@@ -151,7 +184,7 @@ fn call(admin: &Result<Admin, String>, name: &str, a: &Value) -> Value {
     let s = |k: &str| a.get(k).and_then(Value::as_str).map(str::to_string);
     match name {
         "verify_capsule" => {
-            let bytes = match read_small(&s("path").unwrap_or_default(), &["kkg", "json"]) {
+            let bytes = match read_small(ctx, &s("path").unwrap_or_default(), &["kkg", "json"]) {
                 Ok(b) => b,
                 Err(e) => return fail(&e),
             };
@@ -161,7 +194,7 @@ fn call(admin: &Result<Admin, String>, name: &str, a: &Value) -> Value {
             };
         }
         "verify_log" => {
-            let bytes = match read_small(&s("path").unwrap_or_default(), &["json"]) {
+            let bytes = match read_small(ctx, &s("path").unwrap_or_default(), &["json"]) {
                 Ok(b) => b,
                 Err(e) => return fail(&e),
             };
@@ -226,7 +259,7 @@ fn call(admin: &Result<Admin, String>, name: &str, a: &Value) -> Value {
     }
 }
 
-pub fn handle(admin: &Result<Admin, String>, line: &str) -> Option<Value> {
+pub fn handle(admin: &Result<Admin, String>, ctx: &Ctx, line: &str) -> Option<Value> {
     let msg: Value = match serde_json::from_str(line) {
         Ok(v) => v,
         Err(_) => {
@@ -261,35 +294,81 @@ pub fn handle(admin: &Result<Admin, String>, line: &str) -> Option<Value> {
             let Some(name) = p.get("name").and_then(Value::as_str) else {
                 return err(-32602, "params.name is required");
             };
+            if !tools()
+                .as_array()
+                .is_some_and(|t| t.iter().any(|t| t["name"] == name))
+            {
+                return err(-32602, "unknown tool");
+            }
             let args = p
                 .get("arguments")
                 .cloned()
                 .unwrap_or(Value::Object(Map::new()));
-            ok(call(admin, name, &args))
+            ok(call(admin, ctx, name, &args))
         }
         m if m.starts_with("notifications/") => None,
         _ => err(-32601, "method not found"),
     }
 }
 
+/// Reads one line without ever holding more than `max` bytes of it: the rest of an oversized line is discarded as it
+/// arrives. Returns None at end of input.
+fn read_line_bounded(input: &mut dyn BufRead, max: usize) -> Option<(Vec<u8>, bool)> {
+    let mut line = Vec::new();
+    let mut too_long = false;
+    let mut any = false;
+    loop {
+        let buf = match input.fill_buf() {
+            Ok(b) => b,
+            Err(_) => return None,
+        };
+        if buf.is_empty() {
+            return any.then_some((line, too_long));
+        }
+        any = true;
+        let (chunk, found) = match buf.iter().position(|b| *b == b'\n') {
+            Some(i) => (&buf[..i], Some(i + 1)),
+            None => (buf, None),
+        };
+        if !too_long {
+            if line.len() + chunk.len() > max {
+                too_long = true;
+                line.clear();
+            } else {
+                line.extend_from_slice(chunk);
+            }
+        }
+        let used = found.unwrap_or(buf.len());
+        input.consume(used);
+        if found.is_some() {
+            return Some((line, too_long));
+        }
+    }
+}
+
 pub fn run(args: &[String]) -> u8 {
     let admin = connect(args);
+    let ctx = Ctx::new(&crate::data_dir(args));
     let stdin = std::io::stdin();
+    let mut input = stdin.lock();
     let mut out = std::io::stdout();
-    for line in stdin.lock().lines() {
-        let Ok(line) = line else { break };
-        if line.trim().is_empty() {
-            continue;
-        }
-        if line.len() > MAX_LINE {
+    while let Some((bytes, too_long)) = read_line_bounded(&mut input, MAX_LINE) {
+        if too_long {
             let _ = writeln!(
                 out,
                 "{}",
                 json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32600, "message": "request too large"}})
             );
+            let _ = out.flush();
             continue;
         }
-        if let Some(r) = handle(&admin, &line) {
+        let Ok(line) = String::from_utf8(bytes) else {
+            continue;
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Some(r) = handle(&admin, &ctx, &line) {
             if writeln!(out, "{r}").and_then(|_| out.flush()).is_err() {
                 break;
             }

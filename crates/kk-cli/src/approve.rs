@@ -17,6 +17,7 @@ pub fn connect(args: &[String]) -> Result<Admin, String> {
     let token = v["token"].as_str().ok_or("damaged admin.json")?.to_string();
     let cfg = ureq::Agent::config_builder()
         .http_status_as_error(false)
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
         .build();
     Ok(Admin {
         base: format!("http://127.0.0.1:{port}"),

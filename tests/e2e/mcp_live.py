@@ -32,7 +32,7 @@ try:
         if (data / "admin.json").exists():
             break
         time.sleep(0.1)
-    mcp = subprocess.Popen([kaku, "mcp", "--data-dir", str(data)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+    mcp = subprocess.Popen([kaku, "mcp", "--data-dir", str(data)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1, cwd=str(work))
     n = 0
 
     def rpc(method, params=None):
@@ -44,15 +44,37 @@ try:
         transcript.append(line)
         return json.loads(line)
 
+    schemas = {}
+
+    def conforms(v, sch):
+        t = sch.get("type")
+        types = {"object": dict, "array": list, "string": str, "boolean": bool, "integer": int, "number": (int, float)}
+        if t and not (isinstance(v, types[t]) and not (t in ("integer", "number") and isinstance(v, bool))):
+            return False
+        if t == "object":
+            props = sch.get("properties", {})
+            if any(k not in v for k in sch.get("required", [])):
+                return False
+            if sch.get("additionalProperties") is False and any(k not in props for k in v):
+                return False
+            return all(conforms(v[k], props[k]) for k in v if k in props)
+        if t == "array" and "items" in sch:
+            return all(conforms(x, sch["items"]) for x in v)
+        return True
+
     def tool(name, **args):
         r = rpc("tools/call", {"name": name, "arguments": args})["result"]
+        if r.get("structuredContent") is not None and name in schemas:
+            check(f"{name}: the structured output satisfies the tool's own output schema", conforms(r["structuredContent"], schemas[name]), json.dumps(r["structuredContent"])[:100])
         return r
 
     init = rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test-agent", "version": "0"}})
     check("initialize answers with the protocol version", init["result"]["protocolVersion"] == "2025-06-18")
     tools = rpc("tools/list")["result"]["tools"]
     check("seven typed tools are offered", len(tools) == 7)
+    schemas.update({t["name"]: t["outputSchema"] for t in tools})
     o = tool("overview")
+    check("overview tells the agent whether approvals need a signature", isinstance(o["structuredContent"].get("approvals_require_signature"), bool))
     check("overview returns structured counts", o["isError"] is False and "reviews" in o["structuredContent"] and o["structuredContent"]["ready"] in (True, False), json.dumps(o["structuredContent"])[:140])
     started = tool("start_review", repo=str(work / "root/payments-service"), recipient="mcp-agent")
     check("an agent can start a review", started["isError"] is False and started["structuredContent"]["id"].startswith("job-"))

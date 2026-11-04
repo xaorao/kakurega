@@ -3,9 +3,17 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 fn session(lines: &[String]) -> Vec<Value> {
+    session_in(None, lines)
+}
+
+fn session_in(cwd: Option<&std::path::Path>, lines: &[String]) -> Vec<Value> {
     let empty = std::env::temp_dir().join(format!("kk-mcp-empty-{}", std::process::id()));
     std::fs::create_dir_all(&empty).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_kaku"))
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kaku"));
+    if let Some(c) = cwd {
+        cmd.current_dir(c);
+    }
+    let mut child = cmd
         .args(["mcp", "--data-dir"])
         .arg(&empty)
         .stdin(Stdio::piped())
@@ -131,7 +139,7 @@ fn mc03_arguments_are_validated_against_the_schema_and_files_are_reported_unifor
     let big = std::fs::File::create(dir.join("big.kkg")).unwrap();
     big.set_len(21 << 20).unwrap();
     let junk = dir.join("junk.kkg").to_string_lossy().to_string();
-    let r = session(&[
+    let r = session_in(Some(&dir), &[
         call(1, "overview", json!({})),
         call(2, "review_status", json!({"id": "../../etc/passwd"})),
         call(3, "review_status", json!({"id": "job-1", "extra": true})),
@@ -188,7 +196,85 @@ fn mc03_arguments_are_validated_against_the_schema_and_files_are_reported_unifor
         "an invalid capsule is a valid answer: {junk_answer}"
     );
     assert_eq!(r[13]["result"]["structuredContent"]["valid"], false);
-    assert!(text(14).contains("unknown tool"));
-    assert!(text(15).contains("pin"));
+    assert_eq!(
+        r[14]["error"]["code"], -32602,
+        "an unknown tool is a protocol error, not a tool result: {:?}",
+        r[14]
+    );
+    assert!(r[14]["result"].is_null());
+    assert!(r[15]["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("pin"));
     assert_eq!(r[16]["result"]["isError"], true);
+}
+
+#[test]
+fn mc04_verify_tools_read_only_inside_the_agents_folder_and_answer_every_other_path_the_same() {
+    let base = std::env::temp_dir().join(format!("kk-mcp-paths-{}", std::process::id()));
+    let inside = base.join("work");
+    let outside = base.join("elsewhere");
+    std::fs::create_dir_all(&inside).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(inside.join("log.json"), "not a log").unwrap();
+    std::fs::write(outside.join("admin.json"), "{\"token\":\"x\"}").unwrap();
+    let outside_file = outside.join("admin.json").to_string_lossy().to_string();
+    let link = inside.join("sneaky.json");
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(&outside_file, &link).unwrap();
+    let r = session_in(
+        Some(&inside),
+        &[
+            call(
+                1,
+                "verify_log",
+                json!({"path": inside.join("log.json").to_string_lossy()}),
+            ),
+            call(2, "verify_log", json!({"path": outside_file})),
+            call(
+                3,
+                "verify_log",
+                json!({"path": outside.join("nope.json").to_string_lossy()}),
+            ),
+            call(
+                4,
+                "verify_log",
+                json!({"path": inside.join("nope.json").to_string_lossy()}),
+            ),
+            call(5, "verify_log", json!({"path": link.to_string_lossy()})),
+            call(6, "verify_log", json!({"path": "../elsewhere/admin.json"})),
+        ],
+    );
+    let text = |i: usize| {
+        r[i]["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert!(
+        text(0).contains("\"valid\":false"),
+        "a file inside the folder is read: {}",
+        text(0)
+    );
+    for (i, x) in r.iter().enumerate().take(6).skip(1) {
+        assert!(
+            text(i).contains("cannot read that file"),
+            "path {} must look like any unreadable file: {}",
+            i + 1,
+            text(i)
+        );
+        assert_eq!(x["result"]["isError"], true);
+    }
+}
+
+#[test]
+fn mc05_an_oversized_line_is_refused_without_being_buffered_and_the_next_request_is_still_served() {
+    let big = "x".repeat(3 << 20);
+    let r = session(&[
+        big,
+        json!({"jsonrpc": "2.0", "id": 9, "method": "ping"}).to_string(),
+    ]);
+    assert_eq!(r.len(), 2, "{r:?}");
+    assert_eq!(r[0]["error"]["code"], -32600);
+    assert_eq!(r[1]["result"], json!({}));
 }

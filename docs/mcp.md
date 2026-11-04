@@ -35,3 +35,6 @@ An MCP client is a sink, not a principal with your privileges. The server has no
 ## Limits
 
 Counts and statuses are the only review data an agent receives. Anything richer needs an explicit release through the approval path, which an MCP client cannot trigger. There is no HTTP transport and no authentication beyond local access to the data directory.
+
+## Reading files
+See the notes in the engineering record: `verify_*` read only inside the agent's folder or the export folder with one uniform error; unknown tools are protocol errors; oversized lines are refused unbuffered; service calls time out after 30 seconds. `overview` reports `approvals_require_signature`; without an enrolled approver key the local admin token alone can approve.
