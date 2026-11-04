@@ -44,7 +44,7 @@ fn index(files: &[ImportedFile]) -> BTreeMap<String, &ImportedFile> {
     files.iter().map(|f| (f.path.clone(), f)).collect()
 }
 
-const REPRO: &str = "from payments.auth import session\nt = session.login('alice')\nassert session.validate(t)\nsession.logout(t)\nprint('REPRODUCED' if session.validate(t) else 'NOT REPRODUCED')\n";
+const REPRO: &str = "from payments.auth import session\nt = session.login('alice')\nassert session.validate(t)\nprint('CONTROL_OK')\nsession.logout(t)\nprint('REPRODUCED' if session.validate(t) else 'NOT REPRODUCED')\n";
 
 fn finding(reproducer: &str) -> Finding {
     Finding {
@@ -336,5 +336,36 @@ fn f02_a_fix_is_only_called_good_when_the_reproducer_stops_reproducing_and_still
             .bytes,
         original,
         "verification never changes the project files"
+    );
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn c05_a_script_that_prints_the_marker_without_touching_the_cited_code_is_not_a_confirmation() {
+    // Audit P0: confirmation must depend on the cited code, not on a script that merely prints the success word.
+    let files = fixture_files();
+    let idx = index(&files);
+    let t = transport();
+    let env = CheckEnv {
+        transport: &t,
+        scratch: &scratch(),
+        python: "/usr/bin/python3",
+    };
+    for (name, code) in [
+        ("unconditional marker", "print('REPRODUCED')\n"),
+        ("marker after an import that proves nothing", "import os\nprint('REPRODUCED')\n"),
+        ("marker after importing a different module", "from payments.util import backoff\nprint('REPRODUCED')\n"),
+        ("both markers printed unconditionally", "print('CONTROL_OK')\nprint('REPRODUCED')\n"),
+        ("both markers after importing the cited module", "from payments.auth import session\nprint('CONTROL_OK')\nprint('REPRODUCED')\n"),
+        ("the real script without its control line", "from payments.auth import session\nt = session.login('alice')\nassert session.validate(t)\nsession.logout(t)\nprint('REPRODUCED' if session.validate(t) else 'NOT REPRODUCED')\n"),
+    ] {
+        let r = run_reproducer(&finding(code), &idx, &env);
+        assert_ne!(r.status, CheckStatus::Reproduced, "{name} must not confirm: {r:?}");
+    }
+    let real = run_reproducer(&finding(REPRO), &idx, &env);
+    assert_eq!(
+        real.status,
+        CheckStatus::Reproduced,
+        "a reproducer that really exercises the cited file still confirms: {real:?}"
     );
 }

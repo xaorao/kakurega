@@ -222,7 +222,13 @@ pub fn run_reproducer(
         };
     }
     let mut outputs = Vec::new();
-    for _ in 0..2 {
+    // Round 2 is the negative control: the cited file is emptied. A script whose verdict does not depend on that
+    // code cannot be evidence about it.
+    let mut control_stdout = String::new();
+    for round in 0..3 {
+        if round == 2 {
+            let _ = fs::write(sample.join(&finding.file), b"");
+        }
         let mut spec = SandboxSpec::new(env.python);
         spec.args = vec!["-B".into(), "/repro/repro.py".into()];
         spec.env = vec![("PYTHONPATH".into(), "/sample".into())];
@@ -243,6 +249,11 @@ pub fn run_reproducer(
             ..Limits::default()
         };
         match run_with(&spec, env.transport) {
+            Ok(o) if round == 2 => {
+                if o.exit == Exit::Code(0) {
+                    control_stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+                }
+            }
             Ok(o) => {
                 if o.exit != Exit::Code(0) {
                     let _ = fs::remove_dir_all(&dir);
@@ -288,10 +299,15 @@ pub fn run_reproducer(
         };
     }
     let stdout = outputs.remove(0);
-    let status = if stdout.lines().any(|l| l.trim() == "REPRODUCED") {
-        CheckStatus::Reproduced
-    } else {
+    let marker = |text: &str, word: &str| text.lines().any(|l| l.trim() == word);
+    let status = if !marker(&stdout, "REPRODUCED") {
         CheckStatus::NotReproduced
+    } else if !marker(&stdout, "CONTROL_OK") {
+        CheckStatus::Failed("the script printed REPRODUCED without a CONTROL_OK line: it must first show, and assert, that the normal behaviour works".into())
+    } else if marker(&control_stdout, "REPRODUCED") {
+        CheckStatus::Failed("the script still prints REPRODUCED when the cited file is emptied, so its result does not depend on the code it claims to test".into())
+    } else {
+        CheckStatus::Reproduced
     };
     CheckResult {
         status,
@@ -362,7 +378,7 @@ pub fn apply_fix(original: &[u8], fix: &Fix) -> Option<Vec<u8>> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FixStatus {
-    /// The reproducer printed REPRODUCED before the change and does not after it.
+    /// The reproducer printed REPRODUCED (with CONTROL_OK) before the change and does not after it.
     FixesTheReproducer,
     StillReproduced,
     CouldNotApply(String),
@@ -394,7 +410,9 @@ pub fn verify_fix(
     let mut map: BTreeMap<String, &ImportedFile> = files.clone();
     map.insert(fix.file.clone(), &patched);
     let after = run_reproducer(finding, &map, env);
+    let control_after = after.stdout.lines().any(|l| l.trim() == "CONTROL_OK");
     match after.status {
+        CheckStatus::NotReproduced if !control_after => FixStatus::NotChecked("after the change the script no longer shows the normal behaviour working (no CONTROL_OK), so this cannot be told apart from removing the feature".into()),
         CheckStatus::NotReproduced => FixStatus::FixesTheReproducer,
         CheckStatus::Reproduced => FixStatus::StillReproduced,
         other => FixStatus::NotChecked(format!(

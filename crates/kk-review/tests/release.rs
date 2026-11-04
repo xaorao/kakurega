@@ -46,7 +46,7 @@ fn index(f: &[ImportedFile]) -> BTreeMap<String, &ImportedFile> {
     f.iter().map(|x| (x.path.clone(), x)).collect()
 }
 
-const REPRO: &str = "from payments.auth import session\nt = session.login('alice')\nassert session.validate(t)\nsession.logout(t)\nprint('REPRODUCED' if session.validate(t) else 'NOT REPRODUCED')\n";
+const REPRO: &str = "from payments.auth import session\nt = session.login('alice')\nassert session.validate(t)\nprint('CONTROL_OK')\nsession.logout(t)\nprint('REPRODUCED' if session.validate(t) else 'NOT REPRODUCED')\n";
 
 fn finding() -> Finding {
     Finding {
@@ -62,7 +62,7 @@ fn finding() -> Finding {
 fn confirmed() -> CheckResult {
     CheckResult {
         status: CheckStatus::Reproduced,
-        stdout: "REPRODUCED\n".into(),
+        stdout: "CONTROL_OK\nREPRODUCED\n".into(),
         sample_paths: vec![
             "payments/__init__.py".into(),
             "payments/auth/__init__.py".into(),

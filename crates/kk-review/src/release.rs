@@ -119,12 +119,18 @@ pub fn assemble(
             continue;
         }
         n += 1;
+        let bound: String = check
+            .sample_paths
+            .iter()
+            .map(|p| format!("  {}  sha256 {}\n", p, project_files[p].sha256))
+            .collect();
         let text = format!(
-            "Finding {n}: {}\nLocation: {}:{}\n\n{}\n\nHow to check: run run-check.py. It rebuilds the minimal sample from sample-{n}.json, runs repro-{n}.py and compares the output with expected-{n}.txt.\n",
+            "Finding {n}: {}\nLocation: {}:{}\n\n{}\n\nHow to check: run run-check.py. It rebuilds the minimal sample from sample-{n}.json, runs repro-{n}.py and compares the output with expected-{n}.txt.\n\nWhat this establishes: the script printed CONTROL_OK (normal behaviour works), then REPRODUCED, twice with identical output, and did not print REPRODUCED when the cited file was emptied. It was checked on exactly these files and nothing else:\n{}It does not establish that the defect exists in any other version of the code.\n",
             clean_text(&finding.title, 200),
             finding.file,
             finding.line,
-            clean_text(&finding.explanation, 4000)
+            clean_text(&finding.explanation, 4000),
+            bound
         );
         files.insert(format!("finding-{n}.txt"), text.into_bytes());
         files.insert(

@@ -11,7 +11,7 @@ use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const REPRO: &str = "from payments.auth import session\nt = session.login('alice')\nassert session.validate(t)\nsession.logout(t)\nprint('REPRODUCED' if session.validate(t) else 'NOT REPRODUCED')\n";
+const REPRO: &str = "from payments.auth import session\nt = session.login('alice')\nassert session.validate(t)\nprint('CONTROL_OK')\nsession.logout(t)\nprint('REPRODUCED' if session.validate(t) else 'NOT REPRODUCED')\n";
 
 fn materialize() -> PathBuf {
     let base = if cfg!(target_os = "linux") {

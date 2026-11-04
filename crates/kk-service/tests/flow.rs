@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-const REPRO: &str = "from payments.auth import session\nt = session.login('alice')\nassert session.validate(t)\nsession.logout(t)\nprint('REPRODUCED' if session.validate(t) else 'NOT REPRODUCED')\n";
+const REPRO: &str = "from payments.auth import session\nt = session.login('alice')\nassert session.validate(t)\nprint('CONTROL_OK')\nsession.logout(t)\nprint('REPRODUCED' if session.validate(t) else 'NOT REPRODUCED')\n";
 
 static WALK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 type Seen = Vec<(String, Vec<(String, String, String)>)>;
@@ -84,7 +84,7 @@ impl JobRunner for CannedRunner {
         };
         let check = CheckResult {
             status,
-            stdout: "REPRODUCED\n".into(),
+            stdout: "CONTROL_OK\nREPRODUCED\n".into(),
             sample_paths: walker_sample.unwrap_or_else(|| {
                 vec![
                     "payments/__init__.py".into(),
