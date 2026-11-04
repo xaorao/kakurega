@@ -48,6 +48,8 @@ pub struct SnapFix {
     pub new_text: String,
     pub explanation: String,
     pub status: String,
+    #[serde(default)]
+    pub tests: String,
     pub verified: bool,
     pub diff: String,
     pub file_sha256: String,
@@ -186,7 +188,11 @@ impl Snapshot {
                                 .to_string()
                         }
                         kk_review::check::FixStatus::NotChecked(m) => format!("not_checked: {m}"),
+                        kk_review::check::FixStatus::BreaksTests(m) => {
+                            format!("breaks_tests: {m}")
+                        }
                     },
+                    tests: f.tests.clone(),
                     verified: f.status == kk_review::check::FixStatus::FixesTheReproducer,
                     diff: f.diff.clone(),
                     file_sha256: f.file_sha256.clone(),

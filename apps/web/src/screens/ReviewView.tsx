@@ -204,6 +204,7 @@ function Fixes(props: { jobId: string }) {
                 <p>{f.explanation}</p>
                 <details><summary>{t("fix.change")}</summary><pre tabindex="0"><code>{f.diff}</code></pre></details>
                 <p><span class={`chip ${f.verified ? "ok" : "bad"}`}>{f.verified ? t("fix.ok") : t("fix.notAccepted")}</span></p>
+                <Show when={f.tests}><p class="muted wrap">{f.tests}</p></Show>
                 <Show when={!f.verified}><p class="muted wrap">{t("fix.why", { why: f.status.replace(/^[a-z_]+: ?/, "").replace(/\s+/g, " ").slice(0, 240) })}</p></Show>
                 <Show when={f.verified && !f.applied}>
                   <Show when={asking() === f.index} fallback={<div class="actions"><button onClick={() => setAsking(f.index)}>{t("fix.apply", { file: f.file })}</button></div>}>

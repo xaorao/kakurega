@@ -49,6 +49,7 @@ pub struct ProposedFix {
     pub finding_title: String,
     pub fix: crate::check::Fix,
     pub status: crate::check::FixStatus,
+    pub tests: String,
     pub diff: String,
     pub file_sha256: String,
 }
@@ -225,7 +226,8 @@ pub fn run_job(
         else {
             continue;
         };
-        let status = crate::check::verify_fix(&finding, &before, &fix, &index, &env);
+        let (status, tests) =
+            crate::check::verify_fix_with_tests(&finding, &before, &fix, &index, &env);
         let orig = index
             .get(&fix.file)
             .map(|f| (f.bytes.clone(), f.sha256.clone()));
@@ -236,6 +238,7 @@ pub fn run_job(
             finding_title: finding.title.clone(),
             fix,
             status,
+            tests,
             diff,
             file_sha256,
         });

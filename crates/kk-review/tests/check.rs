@@ -1,6 +1,7 @@
 use kk_review::check::{
-    apply_fix, clean_text, parse_finding, parse_fix, python_closure, run_reproducer, unified_diff,
-    verify_fix, CheckEnv, CheckStatus, ClosureError, Finding, Fix, FixStatus,
+    apply_fix, clean_text, parse_finding, parse_fix, parse_unittest, python_closure,
+    run_project_tests, run_reproducer, unified_diff, verify_fix, verify_fix_with_tests, CheckEnv,
+    CheckStatus, ClosureError, Finding, Fix, FixStatus, TestRun,
 };
 use kk_review::import::{scan_tree, ImportedFile};
 use kk_sandbox::Transport;
@@ -407,4 +408,97 @@ fn f03_the_diff_shows_context_a_header_and_correct_counts() {
         at_start.contains("@@ -1,2 +1,2 @@") && at_start.contains("-x\n+z\n y\n"),
         "{at_start}"
     );
+}
+
+#[test]
+fn f04_the_project_test_run_is_read_strictly() {
+    let ok = "..\n----------------------------------------------------------------------\nRan 2 tests in 0.001s\n\nOK\n";
+    assert_eq!(parse_unittest(true, ok), TestRun::Passed(2));
+    assert_eq!(
+        parse_unittest(false, ok),
+        TestRun::Failed("Ran 2 tests in 0.001s  OK".into()),
+        "a non-zero exit is never a pass"
+    );
+    let failed = "F.\nRan 2 tests in 0.002s\n\nFAILED (failures=1)\n";
+    assert!(
+        matches!(parse_unittest(false, failed), TestRun::Failed(m) if m.contains("FAILED (failures=1)"))
+    );
+    assert_eq!(
+        parse_unittest(false, "Ran 0 tests in 0.000s\n\nNO TESTS RAN\n"),
+        TestRun::NoTests
+    );
+    assert!(
+        matches!(parse_unittest(false, "Traceback (most recent call last):\nImportError: boom\n"), TestRun::Failed(m) if m.contains("no test summary"))
+    );
+    assert!(
+        matches!(parse_unittest(true, ""), TestRun::Failed(_)),
+        "no output is not a pass"
+    );
+    // output that merely contains the word OK earlier does not pass
+    assert!(matches!(
+        parse_unittest(true, "OK\nRan 1 test in 0.1s\n\nFAILED (errors=1)\n"),
+        TestRun::Failed(_)
+    ));
+}
+
+const SESSION_TESTS: &str = "import unittest\nfrom payments.auth import session\n\n\nclass SessionTests(unittest.TestCase):\n    def test_login_validates(self):\n        self.assertTrue(session.validate(session.login('alice')))\n\n    def test_logging_one_user_out_keeps_the_other_logged_in(self):\n        a = session.login('alice')\n        b = session.login('bob')\n        session.logout(a)\n        self.assertTrue(session.validate(b))\n";
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn f05_a_fix_that_stops_the_reproducer_but_breaks_the_projects_passing_tests_is_not_accepted() {
+    let mut files = fixture_files();
+    let bytes = SESSION_TESTS.as_bytes().to_vec();
+    files.push(ImportedFile {
+        path: "payments/auth/test_session.py".into(),
+        sha256: kk_evidence::capsule::sha256_hex(&bytes),
+        bytes,
+        label: files[0].label.clone(),
+        notes: vec![],
+    });
+    let idx = index(&files);
+    let t = transport();
+    let env = CheckEnv {
+        transport: &t,
+        scratch: &scratch(),
+        python: "/usr/bin/python3",
+    };
+    assert_eq!(
+        run_project_tests(&idx, &env),
+        TestRun::Passed(2),
+        "the tests pass on the original code"
+    );
+    let f = finding(REPRO);
+    let before = run_reproducer(&f, &idx, &env);
+    assert_eq!(before.status, CheckStatus::Reproduced);
+    let (good, note) = verify_fix_with_tests(&f, &before, &fix(GOOD_OLD, GOOD_NEW), &idx, &env);
+    assert_eq!(good, FixStatus::FixesTheReproducer);
+    assert!(note.contains("2 test(s) passed before and after"), "{note}");
+    let sledgehammer = fix(GOOD_OLD, "    ACTIVE_TOKENS.clear()\n");
+    let (bad, note) = verify_fix_with_tests(&f, &before, &sledgehammer, &idx, &env);
+    assert!(matches!(bad, FixStatus::BreaksTests(_)), "{bad:?} {note}");
+    assert!(
+        note.contains("passed before this change and fail after it"),
+        "{note}"
+    );
+    assert_eq!(
+        verify_fix(&f, &before, &sledgehammer, &idx, &env),
+        FixStatus::FixesTheReproducer,
+        "without the project's tests the sledgehammer looks fine"
+    );
+
+    // when the project's tests already fail, there is nothing to compare, and the note says so
+    let mut broken_files = fixture_files();
+    let tests_bytes = format!("{SESSION_TESTS}\n    def test_that_always_fails(self):\n        self.fail('already broken')\n").into_bytes();
+    broken_files.push(ImportedFile {
+        path: "payments/auth/test_session.py".into(),
+        sha256: kk_evidence::capsule::sha256_hex(&tests_bytes),
+        bytes: tests_bytes,
+        label: broken_files[0].label.clone(),
+        notes: vec![],
+    });
+    let bidx = index(&broken_files);
+    let bbefore = run_reproducer(&f, &bidx, &env);
+    let (status, note) = verify_fix_with_tests(&f, &bbefore, &sledgehammer, &bidx, &env);
+    assert_eq!(status, FixStatus::FixesTheReproducer, "{note}");
+    assert!(note.contains("before the change: tests failed"), "{note}");
 }

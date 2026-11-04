@@ -115,6 +115,7 @@ impl JobRunner for CannedRunner {
                     file_sha256: sess.sha256.clone(),
                     fix,
                     status,
+                    tests: String::new(),
                 }
             };
             vec![

@@ -383,6 +383,158 @@ pub enum FixStatus {
     StillReproduced,
     CouldNotApply(String),
     NotChecked(String),
+    /// The reproducer stops reproducing, but the project's own tests passed before the change and fail after it.
+    BreaksTests(String),
+}
+
+/// What running the project's own `unittest` tests said, in the sandbox, with no network.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TestRun {
+    Passed(u32),
+    Failed(String),
+    NoTests,
+    Unavailable(String),
+}
+
+impl TestRun {
+    pub fn describe(&self) -> String {
+        match self {
+            TestRun::Passed(n) => format!("{n} test(s) passed"),
+            TestRun::Failed(m) => format!("tests failed: {m}"),
+            TestRun::NoTests => "the project has no unittest tests that could run".into(),
+            TestRun::Unavailable(m) => format!("the tests could not be run: {m}"),
+        }
+    }
+}
+
+/// Reads the end of a `python -m unittest` run. Anything not clearly a pass is not a pass.
+pub fn parse_unittest(exit_ok: bool, stderr: &str) -> TestRun {
+    let ran = stderr.lines().rev().find_map(|l| {
+        l.strip_prefix("Ran ")
+            .and_then(|r| r.split_whitespace().next())
+            .and_then(|n| n.parse::<u32>().ok())
+    });
+    let tail: String = stderr
+        .lines()
+        .rev()
+        .take(3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join(" ");
+    match ran {
+        None => TestRun::Failed(format!(
+            "no test summary: {}",
+            tail.chars().take(160).collect::<String>()
+        )),
+        Some(0) => TestRun::NoTests,
+        Some(n) if exit_ok && stderr.lines().rev().take(3).any(|l| l.trim() == "OK") => {
+            TestRun::Passed(n)
+        }
+        Some(_) => TestRun::Failed(tail.chars().take(160).collect()),
+    }
+}
+
+fn looks_like_test(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.ends_with(".py") && (name.starts_with("test") || name.ends_with("_test.py"))
+}
+
+/// Runs the project's own `unittest` tests over every file the review may see. Only called when a test file exists.
+pub fn run_project_tests(files: &BTreeMap<String, &ImportedFile>, env: &CheckEnv<'_>) -> TestRun {
+    if !files.keys().any(|p| looks_like_test(p)) {
+        return TestRun::NoTests;
+    }
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir: PathBuf = env
+        .scratch
+        .join(format!("tests-{}-{n}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let project = dir.join("project");
+    for (p, f) in files {
+        let dest = project.join(p);
+        if dest.parent().map(fs::create_dir_all).transpose().is_err()
+            || fs::write(&dest, &f.bytes).is_err()
+        {
+            let _ = fs::remove_dir_all(&dir);
+            return TestRun::Unavailable("could not prepare the project".into());
+        }
+    }
+    let mut spec = SandboxSpec::new(env.python);
+    spec.args = vec![
+        "-B".into(),
+        "-m".into(),
+        "unittest".into(),
+        "discover".into(),
+        "-s".into(),
+        "/project".into(),
+        "-t".into(),
+        "/project".into(),
+    ];
+    spec.env = vec![("PYTHONPATH".into(), "/project".into())];
+    spec.binds.push(Bind {
+        host: project,
+        inside: "/project".into(),
+        writable: false,
+    });
+    spec.chdir = Some("/project".into());
+    spec.limits = Limits {
+        wall: Duration::from_secs(60),
+        cpu_secs: 30,
+        ..Limits::default()
+    };
+    let result = run_with(&spec, env.transport);
+    let _ = fs::remove_dir_all(&dir);
+    match result {
+        Ok(o) => parse_unittest(o.exit == Exit::Code(0), &String::from_utf8_lossy(&o.stderr)),
+        Err(SandboxError::Unsupported(m)) => TestRun::Unavailable(m.to_string()),
+        Err(e) => TestRun::Unavailable(e.to_string()),
+    }
+}
+
+/// `verify_fix`, then the project's own tests before and after. A fix that makes passing tests fail is not accepted.
+pub fn verify_fix_with_tests(
+    finding: &Finding,
+    before: &CheckResult,
+    fix: &Fix,
+    files: &BTreeMap<String, &ImportedFile>,
+    env: &CheckEnv<'_>,
+) -> (FixStatus, String) {
+    let status = verify_fix(finding, before, fix, files, env);
+    if status != FixStatus::FixesTheReproducer {
+        return (status, String::new());
+    }
+    let before_tests = run_project_tests(files, env);
+    let TestRun::Passed(_) = before_tests else {
+        return (
+            status,
+            format!("before the change: {}", before_tests.describe()),
+        );
+    };
+    let Some(orig) = files.get(&fix.file) else {
+        return (status, String::new());
+    };
+    let Some(bytes) = apply_fix(&orig.bytes, fix) else {
+        return (status, String::new());
+    };
+    let mut patched = (*orig).clone();
+    patched.bytes = bytes;
+    let mut map = files.clone();
+    map.insert(fix.file.clone(), &patched);
+    let after_tests = run_project_tests(&map, env);
+    match after_tests {
+        TestRun::Passed(n) => (
+            status,
+            format!("the project's {n} test(s) passed before and after this change"),
+        ),
+        TestRun::Failed(m) => (
+            FixStatus::BreaksTests(m.clone()),
+            format!("the project's tests passed before this change and fail after it: {m}"),
+        ),
+        other => (status, format!("after the change: {}", other.describe())),
+    }
 }
 
 /// Checks a proposed fix against the finding it claims to fix. This establishes only that this reproducer stops

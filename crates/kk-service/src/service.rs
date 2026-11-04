@@ -1868,7 +1868,8 @@ async fn fixes_list(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> 
         Ok(s) => Json(json!({"fixes": s.fixes.iter().enumerate().map(|(i, f)| json!({
             "index": i, "title": f.title, "file": f.file, "explanation": f.explanation, "status": f.status,
             "verified": f.verified, "diff": f.diff, "applied": fix_applied(&svc, &id, i),
-            "established": "Only that the finding's reproducer stops reproducing after this change. The project's own tests were not run and the change is not proven correct or complete.",
+            "tests": f.tests,
+            "established": if f.tests.contains("passed before and after") { "That the finding's reproducer stops reproducing after this change and that the project's own unittest tests, which passed before, still pass. The change is not proven correct or complete." } else { "Only that the finding's reproducer stops reproducing after this change. The project's own tests were not run, or could not be, and the change is not proven correct or complete." },
         })).collect::<Vec<_>>()}))
         .into_response(),
     }

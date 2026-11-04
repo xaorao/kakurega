@@ -336,6 +336,13 @@
           "kind": "machine",
           "command": "cargo test -p kk-service --test flow sv26",
           "expect": "test result: ok. 1 passed"
+        },
+        {
+          "id": "II-09j",
+          "text": "Project test oracle: fix rejected when it breaks the project's passing unittest tests (Linux VM sandbox)",
+          "kind": "machine",
+          "command": "scripts/test-lima",
+          "expect": "test result: ok"
         }
       ]
     },
