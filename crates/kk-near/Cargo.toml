@@ -1,0 +1,14 @@
+[package]
+name = "kk-near"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "NEAR AI Cloud verification: attestation of model deployments through the official inference SDK, with Kakurega's route policy on top"
+
+[dependencies]
+kk-types = { path = "../kk-types" }
+nearai-inference-sdk = "=0.2.1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+
+[lints]
+workspace = true
