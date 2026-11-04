@@ -193,6 +193,7 @@ export const hi: Record<keyof typeof en, string> = {
   "inbox.kind.ready_to_deliver": "स्वीकृत, भेजा नहीं गया",
   "inbox.kind.failed": "विफल",
   "inbox.kind.suggestions": "सुझाए गए नोट",
+  "fix.diffLabel": "{file} में बदलाव",
   "chat.error": "सहायक उत्तर नहीं दे सका।",
   "nav.docs": "दस्तावेज़",
   "docs.title": "अपने दस्तावेज़ों से पूछें",

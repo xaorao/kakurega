@@ -246,7 +246,9 @@ try {
   const fixText = await fixesCard.innerText();
   check("two proposed fixes are shown with the limit stated, one accepted by the reproducer and one not accepted", (await fixesCard.locator("li").count()) === 2 && fixText.includes("project's own tests were not run") && fixText.includes("The reproducer stops reproducing") && fixText.includes("Not accepted"));
   await fixesCard.locator("details").first().locator("summary").click();
-  check("the change is shown as a readable diff", (await fixesCard.locator("pre").first().innerText()).includes("+    ACTIVE_TOKENS.pop(token, None)"));
+  const diffBox = fixesCard.locator("pre.diff").first();
+  check("the change is shown as a readable diff with signs, line numbers and the removed and added lines marked", (await diffBox.locator(".dl.add").count()) >= 1 && (await diffBox.locator(".dl.del").count()) >= 1 && (await diffBox.locator(".dl.add .sign").first().innerText()) === "+" && (await diffBox.locator(".dl.del .sign").first().innerText()) === "-" && (await diffBox.innerText()).includes("ACTIVE_TOKENS.pop(token, None)") && /\d/.test(await diffBox.locator(".dl.del .ln").first().innerText()));
+  await axeCheck(page, "fix diff open");
   check("only the accepted fix offers Apply", (await fixesCard.getByRole("button", { name: /^Apply to/ }).count()) === 1);
   await axeCheck(page, "findings tab with proposed fixes");
   await page.screenshot({ path: join(shots, "15-fixes.png"), fullPage: true });

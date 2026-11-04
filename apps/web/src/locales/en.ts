@@ -191,6 +191,7 @@ export const en = {
   "inbox.kind.ready_to_deliver": "Approved, not delivered",
   "inbox.kind.failed": "Failed",
   "inbox.kind.suggestions": "Suggested notes",
+  "fix.diffLabel": "Changes to {file}",
   "chat.error": "The assistant could not answer.",
   "nav.docs": "Documents",
   "docs.title": "Ask your documents",

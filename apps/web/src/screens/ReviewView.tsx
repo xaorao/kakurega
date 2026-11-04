@@ -1,4 +1,5 @@
 import { createEffect, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { DiffView } from "../components/DiffView";
 import { api, ApiError, type Config, type Fix, type Job } from "../api";
 import { rich, t, type Key } from "../i18n";
 
@@ -202,7 +203,7 @@ function Fixes(props: { jobId: string }) {
               <li class="stack">
                 <p><code>{f.file}</code> · {f.title}</p>
                 <p>{f.explanation}</p>
-                <details><summary>{t("fix.change")}</summary><pre tabindex="0"><code>{f.diff}</code></pre></details>
+                <details><summary>{t("fix.change")}</summary><DiffView diff={f.diff} label={t("fix.diffLabel", { file: f.file })} /></details>
                 <p><span class={`chip ${f.verified ? "ok" : "bad"}`}>{f.verified ? t("fix.ok") : t("fix.notAccepted")}</span></p>
                 <Show when={f.tests}><p class="muted wrap">{f.tests}</p></Show>
                 <Show when={!f.verified}><p class="muted wrap">{t("fix.why", { why: f.status.replace(/^[a-z_]+: ?/, "").replace(/\s+/g, " ").slice(0, 240) })}</p></Show>

@@ -1471,3 +1471,45 @@ fn tu32_the_completion_list_is_drawn_above_the_composer_and_fits_small_terminals
         let _ = render(&a, w, h, true);
     }
 }
+
+#[test]
+fn tu33_a_half_typed_line_can_be_put_aside_and_brought_back_without_losing_what_was_typed_since() {
+    let mut a = booted();
+    typed(&mut a, "a long question I am not ready to send");
+    a.handle(ctrl('s'));
+    assert!(a.input.is_empty() && a.stashed.len() == 1);
+    typed(&mut a, "quick one");
+    a.handle(ctrl('r'));
+    assert_eq!(a.input, "a long question I am not ready to send");
+    assert_eq!(
+        a.stashed,
+        ["quick one"],
+        "the line typed since went onto the stash instead of being lost"
+    );
+    a.handle(ctrl('u'));
+    a.handle(ctrl('r'));
+    assert_eq!(a.input, "quick one");
+    a.handle(ctrl('u'));
+    a.handle(ctrl('r'));
+    assert!(text(&a).contains("Nothing is stashed."));
+    // empty input stashes nothing; commands do the same; the stash is bounded
+    a.handle(ctrl('s'));
+    assert!(a.stashed.is_empty());
+    typed(&mut a, "/stash");
+    a.handle(key(KeyCode::Enter));
+    assert!(text(&a).contains("Type something first"));
+    for i in 0..12 {
+        typed(&mut a, &format!("line {i}"));
+        a.handle(ctrl('s'));
+    }
+    assert_eq!(a.stashed.len(), 10);
+    assert_eq!(a.stashed[0], "line 2", "the oldest are dropped first");
+    typed(&mut a, "/pop");
+    a.handle(key(KeyCode::Enter));
+    assert_eq!(a.input, "line 11");
+    // a stashed line is never sent by stashing or popping
+    assert!(a
+        .drain_background()
+        .iter()
+        .all(|r| r.path == "/api/history"));
+}

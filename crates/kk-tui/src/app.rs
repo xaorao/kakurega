@@ -152,6 +152,8 @@ pub struct App {
     pub pasted: Vec<(String, String)>,
     /// Messages typed while an answer is still arriving; each is sent after the previous answer completes.
     pub queued: Vec<String>,
+    /// Lines put aside with Ctrl-S or /stash, newest last. Kept in memory only and gone when the terminal closes.
+    pub stashed: Vec<String>,
     pub popup_sel: usize,
     popup_dismissed: Option<String>,
     history_to_save: Vec<String>,
@@ -220,6 +222,7 @@ impl App {
             session: None,
             pasted: Vec::new(),
             queued: Vec::new(),
+            stashed: Vec::new(),
             popup_sel: 0,
             popup_dismissed: None,
             history_to_save: Vec::new(),
@@ -594,6 +597,40 @@ impl App {
         true
     }
 
+    /// Puts the composer's text aside (at most ten) and clears it. Placeholders for folded pastes stay valid.
+    fn stash_input(&mut self) -> bool {
+        if self.input.trim().is_empty() {
+            return false;
+        }
+        if self.stashed.len() >= 10 {
+            self.stashed.remove(0);
+        }
+        self.stashed.push(std::mem::take(&mut self.input));
+        self.cursor = 0;
+        self.say(
+            Kind::Info,
+            format!(
+                "Stashed ({} aside). /pop or Ctrl-R brings the latest back.",
+                self.stashed.len()
+            ),
+        );
+        true
+    }
+
+    fn pop_stash(&mut self) {
+        match self.stashed.pop() {
+            None => self.say(Kind::Info, "Nothing is stashed."),
+            Some(text) => {
+                // what was typed since goes back on the stash rather than being lost
+                if !self.input.trim().is_empty() {
+                    self.stashed.push(std::mem::take(&mut self.input));
+                }
+                self.input = text;
+                self.cursor = self.input.chars().count();
+            }
+        }
+    }
+
     fn insert(&mut self, c: char) {
         let at = self
             .input
@@ -859,6 +896,10 @@ impl App {
                     self.cursor = 0;
                 }
             }
+            KeyCode::Char('s') if ctrl => {
+                self.stash_input();
+            }
+            KeyCode::Char('r') if ctrl => self.pop_stash(),
             KeyCode::Char('j') if ctrl => self.insert('\n'),
             KeyCode::Enter
                 if k.modifiers.contains(KeyModifiers::SHIFT)
@@ -952,6 +993,7 @@ impl App {
                         "/proof [MODEL]  /gateway       check a NEAR confidential model's or the gateway's hardware proof".into(),
                         "/log                           the signed activity log".into(),
                         "/verify FILE                   check a capsule offline".into(),
+                        "/stash  /pop                   put the line you are typing aside; bring it back (Ctrl-S, Ctrl-R)".into(),
                         "/keep                          save this conversation in the encrypted store (otherwise it is never saved)".into(),
                         "/sessions                      pick a kept conversation or a review (type to filter, Ctrl-D twice forgets a chat)".into(),
                         "/newchat  /clear               leave this conversation and start a fresh one".into(),
@@ -991,6 +1033,16 @@ impl App {
             Command::ClearHistory => {
                 self.history.clear();
                 vec![self.req(Intent::HistoryClear, false, Method::Post, "/api/history/clear", Some(json!({})))]
+            }
+            Command::Stash(true) => {
+                if !self.stash_input() {
+                    self.say(Kind::Info, "Type something first; /stash puts the line you are typing aside.");
+                }
+                Vec::new()
+            }
+            Command::Stash(false) => {
+                self.pop_stash();
+                Vec::new()
             }
             Command::Keep => {
                 if self.session.is_some() {

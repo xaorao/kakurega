@@ -218,3 +218,11 @@ button.danger { background: var(--redline); border-color: var(--redline); color:
 .passage { margin: 4px 0 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; white-space: pre; font-family: var(--mono, ui-monospace, monospace); font-size: 0.9em; }
 .passage .ln { display: inline-block; min-width: 3ch; margin-right: 8px; color: var(--graphite); text-align: right; user-select: none; }
 .passage .hit { background: var(--cipher-bg); color: var(--ink); outline: 1px solid var(--cipher-text); }
+
+.diff { margin: 4px 0 0; padding: 6px 0; border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; font-family: var(--mono, ui-monospace, monospace); font-size: 0.9em; }
+.diff .dl { display: flex; white-space: pre; padding: 0 8px; }
+.diff .ln { min-width: 4ch; margin-right: 6px; color: var(--graphite); text-align: right; user-select: none; }
+.diff .sign { min-width: 2ch; font-weight: 700; user-select: none; }
+.diff .add { background: var(--cipher-bg); color: var(--ink); }
+.diff .del { background: var(--redline-bg); color: var(--ink); }
+.diff .hunk, .diff .file { color: var(--stone); font-weight: 600; }
