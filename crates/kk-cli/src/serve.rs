@@ -143,7 +143,15 @@ fn serve(args: &[String]) -> Result<(), String> {
         None => println!("  No web interface build found (apps/web/dist); only the API is served."),
     }
     println!("Press Ctrl-C to stop.");
+    let owner =
+        std::env::var_os("KAKU_EXIT_WITH_PARENT").map(|_| std::os::unix::process::parent_id());
     loop {
-        std::thread::sleep(std::time::Duration::from_secs(3600));
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        if let Some(p) = owner {
+            if std::os::unix::process::parent_id() != p {
+                let _ = std::fs::remove_file(data.join("admin.json"));
+                return Ok(());
+            }
+        }
     }
 }

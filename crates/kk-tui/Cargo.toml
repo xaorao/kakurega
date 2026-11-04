@@ -1,0 +1,17 @@
+[package]
+name = "kk-tui"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "The kaku full-screen terminal workspace: a keyboard-first client of the local Kakurega service"
+
+[dependencies]
+kk-evidence = { path = "../kk-evidence" }
+ratatui = "0.29"
+crossterm = "0.28"
+serde_json = "1"
+ureq = { version = "3", default-features = false, features = ["json", "cookies"] }
+unicode-width = "0.2"
+
+[lints]
+workspace = true

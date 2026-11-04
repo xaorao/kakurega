@@ -1250,3 +1250,161 @@ fn sv15_every_consequential_action_leaves_a_signed_chained_record_without_privat
         );
     }
 }
+
+#[test]
+fn sv16_the_terminal_workspace_drives_a_whole_review_through_the_real_service() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+    use kk_tui::app::{App, Event, Mode, Req};
+    let (root, repo) = repo_copy("tui");
+    let data = root.join("data");
+    let svc = Service::new(
+        &data,
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    std::fs::write(
+        data.join("admin.json"),
+        json!({"port": c.addr.port(), "token": c.security.admin_token()}).to_string(),
+    )
+    .unwrap();
+    let http = kk_tui::http::Http::connect(&data).expect("the terminal pairs like a browser");
+    let key = |code: KeyCode| {
+        Event::Key(KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })
+    };
+    fn pump(app: &mut App, http: &kk_tui::http::Http, mut reqs: Vec<Req>) {
+        while !reqs.is_empty() {
+            let mut next = Vec::new();
+            for r in reqs {
+                let resp = http.run(&r);
+                next.extend(app.handle(Event::Resp(resp)));
+            }
+            reqs = next;
+        }
+    }
+    let mut app = App::new();
+    let boot = app.start();
+    pump(&mut app, &http, boot);
+    assert!(
+        app.status_line().contains("test") && app.ready == Some(true)
+            || app.ready == Some(true)
+            || app.ready == Some(false),
+        "{}",
+        app.status_line()
+    );
+    let say = |app: &mut App, http: &kk_tui::http::Http, line: &str| {
+        let mut reqs = Vec::new();
+        for ch in line.chars() {
+            reqs.extend(app.handle(key(KeyCode::Char(ch))));
+        }
+        reqs.extend(app.handle(key(KeyCode::Enter)));
+        pump(app, http, reqs);
+    };
+    let all = |app: &App| {
+        app.cards
+            .iter()
+            .flat_map(|c| c.title.iter().chain(c.lines.iter()))
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    say(
+        &mut app,
+        &http,
+        &format!("/review {} for tui-audit", repo.to_string_lossy()),
+    );
+    assert!(all(&app).contains("started"), "{}", all(&app));
+    let mut finished = false;
+    for _ in 0..100 {
+        let ticks = app.handle(Event::Tick);
+        pump(&mut app, &http, ticks);
+        if all(&app).contains("finished: ready") {
+            finished = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(finished, "{}", all(&app));
+    say(&mut app, &http, "/findings");
+    assert!(all(&app).contains("CONFIRMED by the kernel"));
+    say(&mut app, &http, "/release");
+    assert!(all(&app).contains("finding-1.txt") && all(&app).contains("Cumulative disclosure"));
+    say(&mut app, &http, "/approve");
+    let Mode::Approval(v) = &app.mode else {
+        panic!("the approval view did not open: {}", all(&app))
+    };
+    let digest = v.digest.clone();
+    let early = http.run(&Req {
+        id: 9999,
+        admin: false,
+        method: kk_tui::app::Method::Post,
+        path: "/api/jobs/job-1/deliver".into(),
+        body: Some(json!({})),
+    });
+    assert_eq!(
+        early.result.unwrap().0,
+        409,
+        "delivery before approval is refused by the service"
+    );
+    let mut reqs = Vec::new();
+    for ch in "0".repeat(12).chars() {
+        reqs.extend(app.handle(key(KeyCode::Char(ch))));
+    }
+    reqs.extend(app.handle(key(KeyCode::Enter)));
+    assert!(reqs.is_empty(), "a wrong prefix never reaches the service");
+    for _ in 0..12 {
+        app.handle(key(KeyCode::Backspace));
+    }
+    for ch in digest.chars().take(12) {
+        reqs.extend(app.handle(key(KeyCode::Char(ch))));
+    }
+    reqs.extend(app.handle(key(KeyCode::Enter)));
+    pump(&mut app, &http, reqs);
+    assert!(
+        matches!(app.mode, Mode::Normal) && all(&app).contains("Approved."),
+        "{}",
+        all(&app)
+    );
+    say(&mut app, &http, "/deliver");
+    assert!(
+        all(&app).contains("Delivered") && all(&app).contains(".kkg"),
+        "{}",
+        all(&app)
+    );
+    say(&mut app, &http, "/remember The payments service uses Redis");
+    say(&mut app, &http, "/remember the password is hunter2hunter2");
+    assert!(all(&app).contains("secrets are never stored"));
+    say(&mut app, &http, "/memory redis");
+    assert!(all(&app).contains("The payments service uses Redis"));
+    let id = all(&app)
+        .lines()
+        .find(|l| l.contains("[internal]") && l.contains("The payments service uses Redis"))
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string();
+    say(&mut app, &http, &format!("/forget {id}"));
+    let reqs = app.handle(key(KeyCode::Char('y')));
+    pump(&mut app, &http, reqs);
+    assert!(all(&app).contains("Forgotten."));
+    say(&mut app, &http, "/log");
+    assert!(
+        all(&app).contains("release.delivery_finished") && all(&app).contains("memory.forgotten")
+    );
+    assert!(
+        !all(&app).contains("hunter2"),
+        "a refused secret appears nowhere in the workspace output"
+    );
+}

@@ -19,6 +19,7 @@
     "kk-near": 1,
     "kk-memory": 2,
     "kk-disclosure": 2,
-    "kk-eventlog": 2
+    "kk-eventlog": 2,
+    "kk-tui": 2
   }
 }

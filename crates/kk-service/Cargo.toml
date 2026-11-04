@@ -25,6 +25,8 @@ serde_json = "1"
 getrandom = "0.3"
 
 [dev-dependencies]
+kk-tui = { path = "../kk-tui" }
+crossterm = "0.28"
 kk-eventlog = { path = "../kk-eventlog" }
 ureq = { version = "3", default-features = false, features = ["json"] }
 

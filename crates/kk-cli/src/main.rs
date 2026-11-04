@@ -3,6 +3,7 @@ mod log;
 mod mcp;
 mod runner;
 mod serve;
+mod tui;
 mod verify;
 
 use std::process::ExitCode;
@@ -10,6 +11,7 @@ use std::process::ExitCode;
 const USAGE: &str = "kaku: private code review with checkable results
 
 Usage:
+  kaku [tui]                        open the full-screen workspace (starts the service if needed)
   kaku serve [--data-dir DIR] [--ui-dir DIR] [--root DIR]... [--model NAME] [--ollama URL]
              [--transport lima|local] [--vm NAME] [--worker-bin PATH] [--launcher PATH]
   kaku pair                         print a new one-time pairing link for the browser
@@ -30,6 +32,12 @@ fn main() -> ExitCode {
         Some("verify") => verify::run(&args[1..]),
         Some("mcp") => mcp::run(&args[1..]),
         Some("log") => log::run(&args[1..]),
+        Some("tui") => tui::run(&args[1..]),
+        None if std::io::IsTerminal::is_terminal(&std::io::stdout())
+            && std::io::IsTerminal::is_terminal(&std::io::stdin()) =>
+        {
+            tui::run(&args)
+        }
         Some("--help") | Some("-h") | None => {
             println!("{USAGE}");
             0

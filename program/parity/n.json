@@ -195,6 +195,10 @@
   "N60": {
    "status": "NOT_BUILT",
    "evidence": null
+  },
+  "N69": {
+   "status": "PARTIAL",
+   "evidence": "kk-tui: full-screen workspace in the single kaku binary with slash commands, tab completion, history, live progress, an approval view that needs the typed digest, disclosure and not-established text, refusal recorded, output sanitised, secrets scrubbed: kk-tui tu01-tu15 (six deliberate breaks each failed a test), kk-service sv16 through the real service, tests/e2e/tui_pty.py in a real pseudo-terminal (18 checks incl. clean terminal restore and no orphan service). Not built: free-form chat, markdown rendering, mouse, command palette, themes, Windows, screen-reader testing"
   }
  }
 }

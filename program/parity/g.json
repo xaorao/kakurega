@@ -244,6 +244,10 @@
   "G36": {
    "status": "PARTIAL",
    "evidence": "kk-disclosure per-recipient ledger of delivered releases: distinct project files shown (aliases linked), review and block thresholds, 24-hour budget, recorded once on delivery (dc01-dc07; mutation-checked); service integration sv14 (aliases, review then block, approver sees the same assessment, another recipient separate); release tab and approval text show it; scripts/e2e. Only source-file coverage and rate are checked (no differencing or cohort checks); thresholds are fixed defaults without a settings screen"
+  },
+  "G43": {
+   "status": "NOT_BUILT",
+   "evidence": null
   }
  }
 }
