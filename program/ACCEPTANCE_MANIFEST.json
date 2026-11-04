@@ -89,9 +89,10 @@
         },
         {
           "id": "II-02",
-          "text": "Real desktop window starts the companion, pairs automatically and loads the workspace; a page script cannot reach or answer the native approval",
-          "kind": "pending",
-          "evidence_needed": "Playwright-driven Electron run with screenshots, console clean, hostile page test"
+          "text": "Real Electron window starts the companion, pairs automatically, loads the workspace; hostile page checks; native approval flow delivers a release (OS prompts stubbed in the main process; real Touch ID is II-03)",
+          "kind": "machine",
+          "command": "node tests/e2e/desktop.mjs",
+          "expect": "desktop checks passed"
         },
         {
           "id": "II-03",
