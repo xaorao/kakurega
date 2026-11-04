@@ -89,6 +89,40 @@ pub fn parse_note(file_stem: &str, input: &str) -> Option<Note> {
     })
 }
 
+/// Hermes Agent keeps its curated memory in `MEMORY.md` (what it learned) and `USER.md` (about the user) as entries joined by
+/// a line holding only `§`. Claude Code's `MEMORY.md` is something else: an index of links to the notes beside it.
+pub fn is_link_index(text: &str) -> bool {
+    let mut any = false;
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        any = true;
+        let linked =
+            line.trim_start_matches(['-', '*', ' ']).starts_with('[') && line.contains("](");
+        if !linked && !line.starts_with('#') {
+            return false;
+        }
+    }
+    any
+}
+
+/// The entries of a `§`-delimited memory file, without empty ones.
+pub fn split_entries(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for line in text.trim_start_matches('\u{feff}').lines() {
+        if line.trim() == "§" {
+            out.push(std::mem::take(&mut cur));
+        } else {
+            cur.push_str(line);
+            cur.push('\n');
+        }
+    }
+    out.push(cur);
+    out.into_iter()
+        .map(|e| e.trim().to_string())
+        .filter(|e| !e.is_empty())
+        .collect()
+}
+
 /// All notes under `dir` (two levels deep), skipping the `MEMORY.md` index, hidden files, links and oversized files.
 pub fn read_dir(dir: &Path) -> Result<(Vec<Note>, usize), String> {
     let mut notes = Vec::new();
@@ -114,11 +148,39 @@ pub fn read_dir(dir: &Path) -> Result<(Vec<Note>, usize), String> {
                 }
                 continue;
             }
-            if !name.ends_with(".md") || name.eq_ignore_ascii_case("MEMORY.md") {
+            if !name.ends_with(".md") {
                 continue;
             }
             if meta.len() > MAX_FILE_BYTES || notes.len() >= MAX_FILES {
                 skipped += 1;
+                continue;
+            }
+            let hermes_file =
+                name.eq_ignore_ascii_case("MEMORY.md") || name.eq_ignore_ascii_case("USER.md");
+            if hermes_file {
+                match std::fs::read_to_string(e.path()) {
+                    Ok(text) if name.eq_ignore_ascii_case("MEMORY.md") && is_link_index(&text) => {}
+                    Ok(text) => {
+                        let kind = if name.eq_ignore_ascii_case("USER.md") {
+                            "preference"
+                        } else {
+                            "reference"
+                        };
+                        let stem = name.trim_end_matches(".md");
+                        for (i, entry) in split_entries(&text).into_iter().enumerate() {
+                            if notes.len() >= MAX_FILES {
+                                skipped += 1;
+                            } else {
+                                notes.push(Note {
+                                    name: format!("{stem} entry {}", i + 1),
+                                    kind: kind.into(),
+                                    text: entry,
+                                });
+                            }
+                        }
+                    }
+                    Err(_) => skipped += 1,
+                }
                 continue;
             }
             match std::fs::read_to_string(e.path()) {
@@ -251,5 +313,63 @@ mod tests {
         assert_eq!(names, ["a", "b"]);
         assert_eq!(skipped, 1, "only the oversized file counts as skipped");
         assert!(read_dir(&d.join("missing")).is_err());
+    }
+
+    #[test]
+    fn mi03_hermes_memory_files_become_one_note_per_entry_and_claude_code_index_files_are_still_skipped(
+    ) {
+        assert_eq!(
+            split_entries("first lesson\n§\nsecond lesson\nmore\n§\n\n§\n  third  \n"),
+            ["first lesson", "second lesson\nmore", "third"]
+        );
+        assert_eq!(split_entries("only one"), ["only one"]);
+        assert!(split_entries("\n§\n").is_empty());
+        assert!(is_link_index(
+            "# Memory\n- [user role](user_role.md) - who\n- [fb](fb.md)\n"
+        ));
+        assert!(!is_link_index("The staging box is 10.1.2.3\n§\nUse pnpm\n"));
+        assert!(
+            !is_link_index("Use pnpm"),
+            "a plain sentence is content, not an index"
+        );
+        assert!(!is_link_index(""));
+        let d = std::env::temp_dir().join(format!("kk-mi3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(
+            d.join("MEMORY.md"),
+            "Deploys go through the blue pipeline\n§\nTests need PAYMENTS_TOKEN_SECRET\n",
+        )
+        .unwrap();
+        std::fs::write(
+            d.join("USER.md"),
+            "Prefers short answers\n§\nWorks in IST\n",
+        )
+        .unwrap();
+        let (notes, skipped) = read_dir(&d).unwrap();
+        assert_eq!(skipped, 0);
+        let got: Vec<_> = notes
+            .iter()
+            .map(|n| (n.name.as_str(), n.kind.as_str(), n.text.as_str()))
+            .collect();
+        assert!(got.contains(&(
+            "MEMORY entry 1",
+            "reference",
+            "Deploys go through the blue pipeline"
+        )));
+        assert!(got.contains(&(
+            "MEMORY entry 2",
+            "reference",
+            "Tests need PAYMENTS_TOKEN_SECRET"
+        )));
+        assert!(got.contains(&("USER entry 1", "preference", "Prefers short answers")));
+        assert_eq!(notes.len(), 4);
+        // a Claude Code folder keeps its index out
+        let c = std::env::temp_dir().join(format!("kk-mi3c-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&c);
+        std::fs::create_dir_all(&c).unwrap();
+        std::fs::write(c.join("MEMORY.md"), "- [a](a.md)\n").unwrap();
+        std::fs::write(c.join("a.md"), "Alpha").unwrap();
+        assert_eq!(read_dir(&c).unwrap().0.len(), 1);
     }
 }

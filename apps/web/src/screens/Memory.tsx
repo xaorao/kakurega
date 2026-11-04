@@ -1,6 +1,7 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, type MemoryItem } from "../api";
 import { t, type Key } from "../i18n";
+import { notesFromFile } from "../notes-import";
 import { Suggestions } from "./ReviewView";
 
 const LEVELS = ["public", "internal", "confidential", "restricted"] as const;
@@ -89,9 +90,9 @@ function ImportNotes(props: { onDone: () => void }) {
         bad.push(f.name);
         continue;
       }
-      const text = (await f.text()).trim();
-      if (!text || text.length > MAX_NOTE_CHARS) bad.push(f.name);
-      else ok.push({ name: f.name, text });
+      const notes = notesFromFile(f.name, await f.text());
+      if (notes.length === 0 || notes.some((n) => n.text.length > MAX_NOTE_CHARS) || ok.length + notes.length > MAX_NOTES) bad.push(f.name);
+      else ok.push(...notes);
     }
     setPicked(ok);
     setSkipped(bad);
