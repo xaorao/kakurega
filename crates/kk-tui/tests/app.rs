@@ -629,3 +629,84 @@ fn tu15_a_refused_secret_is_scrubbed_from_the_transcript_and_the_command_history
         app.input
     );
 }
+
+#[test]
+fn tu16_when_the_service_requires_a_signed_approval_the_terminal_signs_the_exact_statement_or_refuses_to_send(
+) {
+    use kk_evidence::approval::{verify, Statement};
+    use kk_evidence::keys::{Signer, TrustedKeys};
+    let statement = json!({"approval": "appr-9", "job": "job-4", "digest": "abcdef0123456789abcdef", "recipient": "acme-audit", "policy": "policy-1", "expires": 1_700_086_400, "nonce": "n-123"});
+    let open = |app: &mut App| {
+        app.jobs.push(kk_tui::app::JobRow {
+            id: "job-4".into(),
+            recipient: "x".into(),
+            state: "ready".into(),
+        });
+        let r = enter(app, "/approve job-4");
+        let d = app.handle(ok(
+            &r[0],
+            202,
+            json!({"approval": "appr-9", "digest": "abcdef0123456789abcdef"}),
+        ));
+        let mut body = release_body();
+        body["approval"] = json!("appr-9");
+        body["statement"] = statement.clone();
+        body["requires_proof"] = json!(true);
+        app.handle(ok(&d[0], 200, body));
+    };
+    // no key: nothing is sent
+    let mut a = booted();
+    open(&mut a);
+    typed(&mut a, "abcdef012345");
+    assert!(
+        a.handle(key(KeyCode::Enter)).is_empty(),
+        "without an approver key the request is never made"
+    );
+    let Mode::Approval(v) = &a.mode else { panic!() };
+    assert!(v.error.as_deref().unwrap().contains("kaku approver enroll"));
+    // with a key: the request carries a proof over exactly this statement
+    let signer = Signer::from_seed([31; 32]);
+    let mut b = booted();
+    b.approver = Some(Signer::from_seed([31; 32]));
+    open(&mut b);
+    typed(&mut b, "abcdef012345");
+    let r = b.handle(key(KeyCode::Enter));
+    assert_eq!(r.len(), 1);
+    let body = r[0].body.as_ref().unwrap();
+    assert_eq!(body["ack"], "abcdef012345");
+    let mut trusted = TrustedKeys::new();
+    trusted.add(&signer.public()).unwrap();
+    let expected = Statement {
+        approval: "appr-9".into(),
+        job: "job-4".into(),
+        digest: "abcdef0123456789abcdef".into(),
+        recipient: "acme-audit".into(),
+        policy: "policy-1".into(),
+        expires: 1_700_086_400,
+        nonce: "n-123".into(),
+    };
+    assert_eq!(
+        verify(body["proof"].as_str().unwrap(), &trusted, &expected),
+        Ok(signer.key_id())
+    );
+    // a service that does not require proof gets no proof field
+    let mut c = booted();
+    c.approver = Some(Signer::from_seed([31; 32]));
+    c.jobs.push(kk_tui::app::JobRow {
+        id: "job-4".into(),
+        recipient: "x".into(),
+        state: "ready".into(),
+    });
+    let r0 = enter(&mut c, "/approve job-4");
+    let d0 = c.handle(ok(
+        &r0[0],
+        202,
+        json!({"approval": "appr-9", "digest": "abcdef0123456789abcdef"}),
+    ));
+    let mut legacy = release_body();
+    legacy["approval"] = json!("appr-9");
+    c.handle(ok(&d0[0], 200, legacy));
+    typed(&mut c, "abcdef012345");
+    let r = c.handle(key(KeyCode::Enter));
+    assert!(r[0].body.as_ref().unwrap().get("proof").is_none());
+}

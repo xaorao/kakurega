@@ -2087,3 +2087,264 @@ fn sv19_document_questions_return_answers_whose_quotes_are_checked_and_hide_rest
         "the log records that a question was asked, never what"
     );
 }
+
+#[test]
+fn sv20_once_an_approver_is_enrolled_only_a_signed_approval_of_the_exact_release_can_approve() {
+    use kk_evidence::approval::{sign, Statement};
+    use kk_evidence::keys::Signer;
+    let (root, repo) = repo_copy("signed");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    let bearer = format!("Bearer {}", c.security.admin_token());
+    let adm =
+        |m: &str, p: &str, b: Option<Value>| raw(&base, m, p, &[("Authorization", &bearer)], b);
+    let approver = Signer::from_seed([21; 32]);
+    let stranger = Signer::from_seed([22; 32]);
+    let new_job = |w: &Web, who: &str| -> (String, String) {
+        let (_, s) = w.post(
+            "/api/jobs",
+            json!({"repo": repo.to_string_lossy(), "recipient": who}),
+        );
+        let job = s["id"].as_str().unwrap().to_string();
+        wait_for(w, &job, &["ready"]);
+        let (_, r) = w.post(&format!("/api/jobs/{job}/approval"), json!({}));
+        (job, r["approval"].as_str().unwrap().to_string())
+    };
+    let show = |aid: &str| adm("GET", &format!("/admin/approvals/{aid}"), None).1;
+    let st_of = |v: &Value| Statement {
+        approval: v["statement"]["approval"].as_str().unwrap().into(),
+        job: v["statement"]["job"].as_str().unwrap().into(),
+        digest: v["statement"]["digest"].as_str().unwrap().into(),
+        recipient: v["statement"]["recipient"].as_str().unwrap().into(),
+        policy: v["statement"]["policy"].as_str().unwrap().into(),
+        expires: v["statement"]["expires"].as_i64().unwrap(),
+        nonce: v["statement"]["nonce"].as_str().unwrap().into(),
+    };
+    // before any approver is enrolled the old path (admin token plus the digest prefix) still works and says proof is not required
+    let (_, a0) = new_job(&w, "legacy");
+    let v0 = show(&a0);
+    assert_eq!(v0["requires_proof"], false);
+    assert_eq!(
+        adm(
+            "POST",
+            &format!("/admin/approvals/{a0}/approve"),
+            Some(json!({"ack": &v0["digest"].as_str().unwrap()[..12]}))
+        )
+        .0,
+        200
+    );
+    // enrolment
+    assert_eq!(
+        adm(
+            "POST",
+            "/admin/approvers",
+            Some(json!({"public_key": "nope", "label": "x"}))
+        )
+        .0,
+        400
+    );
+    assert_eq!(
+        adm(
+            "POST",
+            "/admin/approvers",
+            Some(json!({"public_key": kk_evidence::b64::encode(&[0u8; 32]), "label": "weak"}))
+        )
+        .0,
+        400,
+        "a weak key is refused"
+    );
+    let (st, enrolled) = adm(
+        "POST",
+        "/admin/approvers",
+        Some(
+            json!({"public_key": kk_evidence::b64::encode(&approver.public()), "label": "my terminal"}),
+        ),
+    );
+    assert_eq!(st, 200, "{enrolled}");
+    assert_eq!(
+        adm("GET", "/admin/approvers", None).1["approvers"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        raw(
+            &base,
+            "POST",
+            "/admin/approvers",
+            &[("Authorization", "Bearer wrong")],
+            Some(json!({"public_key": "x", "label": "x"}))
+        )
+        .0,
+        401
+    );
+    // now a proof is required
+    let (_, a1) = new_job(&w, "acme-audit");
+    let v1 = show(&a1);
+    assert_eq!(v1["requires_proof"], true);
+    let ack = v1["digest"].as_str().unwrap()[..12].to_string();
+    let approve = |aid: &str, proof: Option<String>| {
+        adm(
+            "POST",
+            &format!("/admin/approvals/{aid}/approve"),
+            Some(match proof {
+                Some(p) => json!({"ack": ack, "proof": p}),
+                None => json!({"ack": ack}),
+            }),
+        )
+    };
+    assert_eq!(
+        approve(&a1, None).1["error"]["code"],
+        "PROOF_REQUIRED",
+        "the admin token and the digest are no longer enough"
+    );
+    assert_eq!(
+        approve(&a1, Some(sign(&stranger, &st_of(&v1)))).1["error"]["code"],
+        "BAD_PROOF",
+        "a valid signature from a key nobody enrolled is not an approval"
+    );
+    let mut other = st_of(&v1);
+    other.recipient = "someone-else".into();
+    assert_eq!(
+        approve(&a1, Some(sign(&approver, &other))).1["error"]["code"],
+        "BAD_PROOF",
+        "a signature over a different recipient"
+    );
+    let mut other = st_of(&v1);
+    other.digest = "ff".repeat(32);
+    assert_eq!(
+        approve(&a1, Some(sign(&approver, &other))).1["error"]["code"],
+        "BAD_PROOF",
+        "a signature over different bytes"
+    );
+    let mut other = st_of(&v1);
+    other.nonce = "replayed-nonce".into();
+    assert_eq!(
+        approve(&a1, Some(sign(&approver, &other))).1["error"]["code"],
+        "BAD_PROOF",
+        "a signature over another nonce"
+    );
+    assert_eq!(
+        approve(&a1, Some("garbage".into())).1["error"]["code"],
+        "BAD_PROOF"
+    );
+    // a proof made for one approval cannot be replayed on another approval of the same recipient and files
+    let proof_a1 = sign(&approver, &st_of(&v1));
+    let (_, a2) = new_job(&w, "acme-audit");
+    let v2 = show(&a2);
+    let ack2 = v2["digest"].as_str().unwrap()[..12].to_string();
+    assert_eq!(
+        adm(
+            "POST",
+            &format!("/admin/approvals/{a2}/approve"),
+            Some(json!({"ack": ack2, "proof": proof_a1.clone()}))
+        )
+        .1["error"]["code"],
+        "BAD_PROOF",
+        "approval id and nonce differ, so the old proof is dead"
+    );
+    assert_eq!(
+        w.post(
+            &format!("/api/jobs/{}/deliver", v1["job"].as_str().unwrap()),
+            json!({})
+        )
+        .0,
+        409,
+        "nothing was approved, so nothing can be delivered"
+    );
+    // the right proof works once
+    assert_eq!(approve(&a1, Some(proof_a1.clone())).0, 200);
+    assert_eq!(
+        approve(&a1, Some(proof_a1)).0,
+        409,
+        "a second approval of the same release is refused"
+    );
+    assert_eq!(
+        w.post(
+            &format!("/api/jobs/{}/deliver", v1["job"].as_str().unwrap()),
+            json!({})
+        )
+        .0,
+        200
+    );
+    // changing who may approve needs an enrolled approver's signature too
+    let second = Signer::from_seed([23; 32]);
+    let second_pub = kk_evidence::b64::encode(&second.public());
+    let second_id = kk_evidence::keys::KeyId::of(&second.public());
+    let nowt = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let act = |signer: &Signer, action: &str, subject: &str, at: i64| {
+        kk_evidence::approval::sign_action(
+            signer,
+            &kk_evidence::approval::Action {
+                action: action.into(),
+                subject: subject.into(),
+                at,
+            },
+        )
+    };
+    assert_eq!(
+        adm(
+            "POST",
+            "/admin/approvers",
+            Some(json!({"public_key": second_pub, "label": "intruder"}))
+        )
+        .1["error"]["code"],
+        "PROOF_REQUIRED",
+        "the admin token alone cannot add an approver once one exists"
+    );
+    assert_eq!(adm("POST", "/admin/approvers", Some(json!({"public_key": second_pub, "label": "intruder", "proof": act(&stranger, "enroll", second_id.as_str(), nowt)}))).1["error"]["code"], "BAD_PROOF", "a stranger's signature");
+    assert_eq!(adm("POST", "/admin/approvers", Some(json!({"public_key": second_pub, "label": "intruder", "proof": act(&approver, "enroll", second_id.as_str(), nowt - 600)}))).1["error"]["code"], "BAD_PROOF", "a stale signature");
+    assert_eq!(adm("POST", "/admin/approvers", Some(json!({"public_key": second_pub, "label": "intruder", "proof": act(&approver, "revoke", second_id.as_str(), nowt)}))).1["error"]["code"], "BAD_PROOF", "a signature for another action");
+    assert_eq!(adm("POST", "/admin/approvers", Some(json!({"public_key": second_pub, "label": "second terminal", "proof": act(&approver, "enroll", second_id.as_str(), nowt)}))).0, 200);
+    assert_eq!(
+        adm("GET", "/admin/approvers", None).1["approvers"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let key_id = kk_evidence::keys::KeyId::of(&approver.public());
+    assert_eq!(
+        adm(
+            "POST",
+            "/admin/approvers/revoke",
+            Some(json!({"key_id": key_id.as_str()}))
+        )
+        .1["error"]["code"],
+        "PROOF_REQUIRED",
+        "the admin token alone cannot remove an approver"
+    );
+    assert_eq!(adm("POST", "/admin/approvers/revoke", Some(json!({"key_id": key_id.as_str(), "proof": act(&second, "revoke", key_id.as_str(), nowt)}))).1["revoked"], true);
+    let (_, a3) = new_job(&w, "after-revoke");
+    let v3 = show(&a3);
+    assert_eq!(adm("POST", &format!("/admin/approvals/{a3}/approve"), Some(json!({"ack": &v3["digest"].as_str().unwrap()[..12], "proof": sign(&approver, &st_of(&v3))}))).1["error"]["code"], "BAD_PROOF", "a revoked key can no longer approve");
+    assert_eq!(
+        adm(
+            "POST",
+            &format!("/admin/approvals/{a3}/approve"),
+            Some(json!({"ack": &v3["digest"].as_str().unwrap()[..12]}))
+        )
+        .1["error"]["code"],
+        "PROOF_REQUIRED",
+        "and the legacy path stays closed while any approver remains"
+    );
+    let log = log_text(&base, c.security.admin_token());
+    assert!(log.contains("approver.enrolled") && log.contains("approver.revoked"));
+}

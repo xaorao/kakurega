@@ -1566,7 +1566,7 @@
     "6.2",
     "G09"
    ],
-   "evidence": "native approval window with Touch ID prompt in the real Electron shell: tests/e2e/desktop.mjs (OS prompts stubbed; real Touch ID is II-03); passkey path not built",
+   "evidence": "native approval window with Touch ID prompt in the real Electron shell: tests/e2e/desktop.mjs (OS prompts stubbed; real Touch ID is II-03); passkey path not built; signed approval binding for terminal tools: kk-service sv20, tests/e2e/signed_approval.py; OS-protected key and the desktop shells signing not built",
    "status": "PARTIAL",
    "surface_class": "DESKTOP_NATIVE",
    "title": "Native approval prompt / passkey",
@@ -1710,7 +1710,7 @@
     "6.14",
     "V17"
    ],
-   "evidence": "key pinning and weak-key refusal in both verifiers; rotation, revocation and ISSUER_UNVERIFIED states not built",
+   "evidence": "key pinning and weak-key refusal in both verifiers; rotation, revocation and ISSUER_UNVERIFIED states not built; approver enrolment and revocation need a signature from an enrolled approver (sv20)",
    "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Issuer identity, rotation, revocation, ISSUER_UNVERIFIED",

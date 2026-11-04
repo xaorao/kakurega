@@ -82,6 +82,8 @@ pub struct ApprovalView {
     pub typed: String,
     pub error: Option<String>,
     pub scroll: u16,
+    pub statement: Value,
+    pub requires_proof: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +125,7 @@ pub struct App {
     inflight_polls: BTreeSet<String>,
     pub chat_history: Vec<(String, String)>,
     chat_waiting: bool,
+    pub approver: Option<kk_evidence::keys::Signer>,
 }
 
 pub fn clean(s: &str) -> String {
@@ -179,6 +182,7 @@ impl App {
             inflight_polls: BTreeSet::new(),
             chat_history: Vec::new(),
             chat_waiting: false,
+            approver: None,
         }
     }
 
@@ -320,12 +324,35 @@ impl App {
                             return Vec::new();
                         }
                         let (aid, ack) = (v.aid.clone(), want);
+                        let mut body = json!({"ack": ack});
+                        if v.requires_proof {
+                            let st = &v.statement;
+                            let statement = kk_evidence::approval::Statement {
+                                approval: st["approval"].as_str().unwrap_or("").into(),
+                                job: st["job"].as_str().unwrap_or("").into(),
+                                digest: st["digest"].as_str().unwrap_or("").into(),
+                                recipient: st["recipient"].as_str().unwrap_or("").into(),
+                                policy: st["policy"].as_str().unwrap_or("").into(),
+                                expires: st["expires"].as_i64().unwrap_or(0),
+                                nonce: st["nonce"].as_str().unwrap_or("").into(),
+                            };
+                            match &self.approver {
+                                Some(signer) => {
+                                    body["proof"] =
+                                        json!(kk_evidence::approval::sign(signer, &statement))
+                                }
+                                None => {
+                                    v.error = Some("This service requires a signed approval and this terminal has no approver key. Run `kaku approver enroll` first. Nothing was approved.".into());
+                                    return Vec::new();
+                                }
+                            }
+                        }
                         return vec![self.req(
                             Intent::ApproveSubmit,
                             true,
                             Method::Post,
                             &format!("/admin/approvals/{aid}/approve"),
-                            Some(json!({"ack": ack})),
+                            Some(body),
                         )];
                     }
                     KeyCode::Backspace => {
@@ -1063,6 +1090,8 @@ impl App {
                     typed: String::new(),
                     error: None,
                     scroll: 0,
+                    statement: body["statement"].clone(),
+                    requires_proof: body["requires_proof"] == true,
                 });
                 Vec::new()
             }

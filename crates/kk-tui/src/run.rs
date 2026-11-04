@@ -35,15 +35,18 @@ pub fn run(data_dir: &Path) -> Result<(), String> {
     }));
     enable_raw_mode().map_err(|e| e.to_string())?;
     execute!(stdout(), EnterAlternateScreen, EnableBracketedPaste).map_err(|e| e.to_string())?;
-    let result = event_loop(http);
+    let result = event_loop(http, data_dir);
     restore();
     result
 }
 
-fn event_loop(http: Http) -> Result<(), String> {
+fn event_loop(http: Http, data_dir: &Path) -> Result<(), String> {
     let mut term = Terminal::new(CrosstermBackend::new(stdout())).map_err(|e| e.to_string())?;
     let theme = Theme::from_env();
     let mut app = App::new();
+    app.approver = kk_evidence::approval::load_key(&data_dir.join("approver.key"))
+        .ok()
+        .flatten();
     let (req_tx, req_rx) = mpsc::channel::<Req>();
     let (ev_tx, ev_rx) = mpsc::channel::<Event>();
     {

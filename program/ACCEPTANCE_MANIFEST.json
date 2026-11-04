@@ -154,9 +154,10 @@
         },
         {
           "id": "II-12",
-          "text": "Cryptographic approval binding: an approval signature over recipient, exact release bytes hash, policy version and a nonce, made with an OS-protected key after user presence, verified by the kernel before it will deliver; independent of the renderer and of the shell framework",
-          "kind": "pending",
-          "evidence_needed": "kernel contract and tests (replay, wrong digest, swapped recipient, duplicate approval), a native helper, physical-hardware Touch ID run"
+          "text": "Signed approval binding in the kernel (statement over recipient, bytes, policy, nonce; enrol and revoke need a signature) with terminal tools that sign. Software key file today; OS-protected key custody, a native helper and the desktop shells signing are NOT built (docs/engineering-decisions/approval-binding.md).",
+          "kind": "machine",
+          "command": "cargo test -p kk-service --test flow sv20",
+          "expect": "test result: ok. 1 passed"
         },
         {
           "id": "II-13",
@@ -177,6 +178,19 @@
           "kind": "machine",
           "command": "cargo test -p kk-service --test flow sv19",
           "expect": "test result: ok. 1 passed"
+        },
+        {
+          "id": "II-12b",
+          "text": "Real binaries: enrol, token-only approval refused, kaku approve signs, key permissions, revoke by signature",
+          "kind": "machine",
+          "command": "python3 tests/e2e/signed_approval.py",
+          "expect": "signed-approval checks passed"
+        },
+        {
+          "id": "II-12c",
+          "text": "Secure Enclave or Keychain key with user presence behind a native helper, verified on physical hardware",
+          "kind": "pending",
+          "evidence_needed": "native helper, hardware Touch ID run by the owner"
         }
       ]
     },

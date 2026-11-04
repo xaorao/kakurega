@@ -182,7 +182,7 @@
   },
   "K08": {
    "status": "PARTIAL",
-   "evidence": "native approval window with Touch ID prompt in the real Electron shell: tests/e2e/desktop.mjs (OS prompts stubbed; real Touch ID is II-03); passkey path not built"
+   "evidence": "native approval window with Touch ID prompt in the real Electron shell: tests/e2e/desktop.mjs (OS prompts stubbed; real Touch ID is II-03); passkey path not built; signed approval binding for terminal tools: kk-service sv20, tests/e2e/signed_approval.py; OS-protected key and the desktop shells signing not built"
   },
   "K09": {
    "status": "BUILT_TESTED",
@@ -222,7 +222,7 @@
   },
   "K20": {
    "status": "PARTIAL",
-   "evidence": "key pinning and weak-key refusal in both verifiers; rotation, revocation and ISSUER_UNVERIFIED states not built"
+   "evidence": "key pinning and weak-key refusal in both verifiers; rotation, revocation and ISSUER_UNVERIFIED states not built; approver enrolment and revocation need a signature from an enrolled approver (sv20)"
   },
   "K21": {
    "status": "PARTIAL",

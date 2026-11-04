@@ -1,4 +1,5 @@
 mod approve;
+mod approver;
 mod extension;
 mod log;
 mod mcp;
@@ -20,6 +21,7 @@ Usage:
   kaku approve [APPROVAL-ID]        review the exact release in this terminal and approve it
   kaku mcp                          speak MCP on stdin and stdout for an agent client (cannot approve)
   kaku telegram pair | kaku telegram   notifications and counts on your phone (never contents)
+  kaku approver enroll|list|revoke   key that signs approvals (required once enrolled)
   kaku extension pair|status|revoke  connect the browser extension (it can only queue suggestions)
   kaku log export [--out FILE]      save the signed event log
   kaku log verify FILE [--pin KEY] [--anchor COUNT:HEAD]   check a saved log offline
@@ -37,6 +39,7 @@ fn main() -> ExitCode {
         Some("mcp") => mcp::run(&args[1..]),
         Some("log") => log::run(&args[1..]),
         Some("extension") => extension::run(&args[1..]),
+        Some("approver") => approver::run(&args[1..]),
         Some("telegram") => telegram::run(&args[1..]),
         Some("tui") => tui::run(&args[1..]),
         None if std::io::IsTerminal::is_terminal(&std::io::stdout())

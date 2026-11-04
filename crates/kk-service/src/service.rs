@@ -88,6 +88,14 @@ struct ApprovalRec {
     expires: i64,
     state: String,
     denied: bool,
+    #[serde(default)]
+    nonce: String,
+    #[serde(default = "default_policy")]
+    policy: String,
+}
+
+fn default_policy() -> String {
+    "policy-1".into()
 }
 
 impl ApprovalRec {
@@ -155,6 +163,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, meta TEXT NOT NULL, snap TEXT);
              CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY, body TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS approvers(key_id TEXT PRIMARY KEY, public BLOB NOT NULL, label TEXT NOT NULL, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);",
         )
         .map_err(|e| e.to_string())
@@ -1489,6 +1498,12 @@ async fn request_approval(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String
             expires: draft.expires,
             state: "waiting".into(),
             denied: false,
+            nonce: {
+                let mut n = [0u8; 16];
+                getrandom::fill(&mut n).expect("randomness");
+                kk_evidence::b64::encode(&n)
+            },
+            policy: default_policy(),
         };
         g.approvals.insert(aid.clone(), rec.clone());
         let job = g.jobs.get_mut(&id).map(|j| {
@@ -1765,6 +1780,8 @@ async fn admin_show(axum::Extension(svc): Svc, UrlPath(aid): UrlPath<String>) ->
         Ok(s) => {
             let mut d = draft_json(&s);
             d["approval"] = json!(aid);
+            d["statement"] = svc.statement_json(&aid);
+            d["requires_proof"] = json!(svc.approvers_enrolled());
             d["disclosure"] = svc.disclosure_json(&job, &s).0;
             d["job"] = json!(job);
             d["digest"] = json!(digest);
@@ -1776,6 +1793,202 @@ async fn admin_show(axum::Extension(svc): Svc, UrlPath(aid): UrlPath<String>) ->
 #[derive(Deserialize)]
 struct AckBody {
     ack: String,
+    #[serde(default)]
+    proof: Option<String>,
+}
+
+impl Service {
+    fn approver_keys(&self) -> kk_evidence::keys::TrustedKeys {
+        let mut trusted = kk_evidence::keys::TrustedKeys::new();
+        let store = self.store.lock().expect("lock");
+        if let Ok(mut st) = store.connection().prepare("SELECT public FROM approvers") {
+            if let Ok(rows) = st.query_map([], |r| r.get::<_, Vec<u8>>(0)) {
+                for raw in rows.flatten() {
+                    if let Ok(k) = <[u8; 32]>::try_from(raw) {
+                        trusted.add(&k);
+                    }
+                }
+            }
+        }
+        trusted
+    }
+
+    fn approvers_enrolled(&self) -> bool {
+        let store = self.store.lock().expect("lock");
+        store
+            .connection()
+            .query_row("SELECT count(*) FROM approvers", [], |r| r.get::<_, i64>(0))
+            .unwrap_or(0)
+            > 0
+    }
+}
+
+impl Service {
+    fn statement_json(&self, aid: &str) -> Value {
+        let g = self.inner.lock().expect("lock");
+        match g.approvals.get(aid) {
+            Some(a) => {
+                json!({"approval": aid, "job": a.job, "digest": a.digest, "recipient": a.recipient, "policy": a.policy, "expires": a.expires, "nonce": a.nonce})
+            }
+            None => Value::Null,
+        }
+    }
+}
+
+fn statement_of(aid: &str, a: &ApprovalRec) -> kk_evidence::approval::Statement {
+    kk_evidence::approval::Statement {
+        approval: aid.to_string(),
+        job: a.job.clone(),
+        digest: a.digest.clone(),
+        recipient: a.recipient.clone(),
+        policy: a.policy.clone(),
+        expires: a.expires,
+        nonce: a.nonce.clone(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnrollBody {
+    public_key: String,
+    label: String,
+    #[serde(default)]
+    proof: Option<String>,
+}
+
+async fn admin_approver_enroll(axum::Extension(svc): Svc, Json(b): Json<EnrollBody>) -> Response {
+    let Some(public) = kk_evidence::b64::decode(&b.public_key)
+        .ok()
+        .and_then(|r| <[u8; 32]>::try_from(r).ok())
+    else {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_KEY",
+            "public_key must be a base64url Ed25519 public key (32 bytes)",
+        );
+    };
+    let mut probe = kk_evidence::keys::TrustedKeys::new();
+    let Some(id) = probe.add(&public) else {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "WEAK_KEY",
+            "that key is not acceptable",
+        );
+    };
+    if b.label.is_empty() || b.label.len() > 64 || b.label.chars().any(|c| c.is_control()) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_LABEL",
+            "the label must be 1 to 64 characters without control characters",
+        );
+    }
+    if svc.approvers_enrolled() {
+        let Some(proof) = &b.proof else {
+            return error(
+                StatusCode::FORBIDDEN,
+                "PROOF_REQUIRED",
+                "adding an approver needs a signature from an enrolled approver",
+            );
+        };
+        if let Err(r) = kk_evidence::approval::verify_action(
+            proof,
+            &svc.approver_keys(),
+            "enroll",
+            id.as_str(),
+            now(),
+        ) {
+            return error(
+                StatusCode::FORBIDDEN,
+                "BAD_PROOF",
+                &format!("the signature was refused: {r:?}"),
+            );
+        }
+    }
+    let n = svc.store.lock().expect("lock").connection().execute("INSERT OR REPLACE INTO approvers(key_id, public, label, created) VALUES (?1, ?2, ?3, ?4)", kk_vault::rusqlite::params![id.as_str(), public.to_vec(), b.label, now()]).unwrap_or(0);
+    if n == 0 {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "STORE",
+            "could not save the approver",
+        );
+    }
+    svc.log_event(
+        "approver.enrolled",
+        "approvers",
+        &[
+            ("key", id.as_str().to_string().into()),
+            ("label", b.label.into()),
+        ],
+    );
+    Json(json!({"key_id": id.as_str(), "signed_approvals_required": true})).into_response()
+}
+
+async fn admin_approver_list(axum::Extension(svc): Svc) -> Response {
+    let store = svc.store.lock().expect("lock");
+    let mut out = Vec::new();
+    if let Ok(mut st) = store
+        .connection()
+        .prepare("SELECT key_id, label, created FROM approvers ORDER BY created")
+    {
+        if let Ok(rows) = st.query_map([], |r| Ok(json!({"key_id": r.get::<_, String>(0)?, "label": r.get::<_, String>(1)?, "created": r.get::<_, i64>(2)?}))) {
+            out.extend(rows.flatten());
+        }
+    }
+    Json(json!({"approvers": out})).into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RevokeApproverBody {
+    key_id: String,
+    #[serde(default)]
+    proof: Option<String>,
+}
+
+async fn admin_approver_revoke(
+    axum::Extension(svc): Svc,
+    Json(b): Json<RevokeApproverBody>,
+) -> Response {
+    if svc.approvers_enrolled() {
+        let Some(proof) = &b.proof else {
+            return error(
+                StatusCode::FORBIDDEN,
+                "PROOF_REQUIRED",
+                "removing an approver needs a signature from an enrolled approver",
+            );
+        };
+        if let Err(r) = kk_evidence::approval::verify_action(
+            proof,
+            &svc.approver_keys(),
+            "revoke",
+            &b.key_id,
+            now(),
+        ) {
+            return error(
+                StatusCode::FORBIDDEN,
+                "BAD_PROOF",
+                &format!("the signature was refused: {r:?}"),
+            );
+        }
+    }
+    let n = svc
+        .store
+        .lock()
+        .expect("lock")
+        .connection()
+        .execute(
+            "DELETE FROM approvers WHERE key_id = ?1",
+            kk_vault::rusqlite::params![b.key_id],
+        )
+        .unwrap_or(0);
+    if n > 0 {
+        svc.log_event(
+            "approver.revoked",
+            "approvers",
+            &[("key", b.key_id.chars().take(80).collect::<String>().into())],
+        );
+    }
+    Json(json!({"revoked": n > 0})).into_response()
 }
 
 async fn admin_approve(
@@ -1783,6 +1996,8 @@ async fn admin_approve(
     UrlPath(aid): UrlPath<String>,
     Json(b): Json<AckBody>,
 ) -> Response {
+    let need_proof = svc.approvers_enrolled();
+    let trusted = svc.approver_keys();
     let (resp, rec) = {
         let mut g = svc.inner.lock().expect("lock");
         let Some(a) = g.approvals.get_mut(&aid) else {
@@ -1790,6 +2005,22 @@ async fn admin_approve(
         };
         if a.denied {
             return error(StatusCode::CONFLICT, "DENIED", "this approval was denied");
+        }
+        if need_proof {
+            let Some(proof) = &b.proof else {
+                return error(
+                    StatusCode::FORBIDDEN,
+                    "PROOF_REQUIRED",
+                    "a signed approval from an enrolled approver key is required",
+                );
+            };
+            if let Err(r) = kk_evidence::approval::verify(proof, &trusted, &statement_of(&aid, a)) {
+                return error(
+                    StatusCode::FORBIDDEN,
+                    "BAD_PROOF",
+                    &format!("the approval signature was refused: {r:?}"),
+                );
+            }
         }
         let mut lease = a.lease();
         match lease.approve(&b.ack, now()) {
@@ -1981,6 +2212,11 @@ impl Extension for Routes {
             .route("/api/jobs/{id}/deliver", post(do_deliver))
             .route("/api/jobs/{id}/capsule", get(download))
             .route("/admin/log", get(log_export))
+            .route(
+                "/admin/approvers",
+                get(admin_approver_list).post(admin_approver_enroll),
+            )
+            .route("/admin/approvers/revoke", post(admin_approver_revoke))
             .route("/admin/extension", get(admin_ext_status))
             .route("/admin/extension/pairing", post(admin_ext_pairing))
             .route("/admin/extension/revoke", post(admin_ext_revoke))

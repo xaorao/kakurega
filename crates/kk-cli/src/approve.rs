@@ -222,10 +222,28 @@ pub fn run(args: &[String]) -> u8 {
         println!("Refused. Nothing was approved.");
         return 1;
     }
-    match admin.post(
-        &format!("/admin/approvals/{id}/approve"),
-        json!({"ack": ack}),
-    ) {
+    let mut body = json!({"ack": ack});
+    if d["requires_proof"] == true {
+        let signer = match kk_evidence::approval::load_key(&crate::approver::key_path(args)) {
+            Ok(Some(s)) => s,
+            _ => {
+                eprintln!("This service requires a signed approval, and this terminal has no usable approver key. Run `kaku approver enroll` on this computer first.");
+                return 1;
+            }
+        };
+        let st = &d["statement"];
+        let statement = kk_evidence::approval::Statement {
+            approval: st["approval"].as_str().unwrap_or("").into(),
+            job: st["job"].as_str().unwrap_or("").into(),
+            digest: st["digest"].as_str().unwrap_or("").into(),
+            recipient: st["recipient"].as_str().unwrap_or("").into(),
+            policy: st["policy"].as_str().unwrap_or("").into(),
+            expires: st["expires"].as_i64().unwrap_or(0),
+            nonce: st["nonce"].as_str().unwrap_or("").into(),
+        };
+        body["proof"] = json!(kk_evidence::approval::sign(&signer, &statement));
+    }
+    match admin.post(&format!("/admin/approvals/{id}/approve"), body) {
         Ok((200, _)) => {
             println!("Approved. Go back to the browser and press Deliver.");
             0
