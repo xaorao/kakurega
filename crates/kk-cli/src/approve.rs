@@ -1,13 +1,13 @@
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 
-struct Admin {
+pub struct Admin {
     base: String,
     token: String,
     agent: ureq::Agent,
 }
 
-fn connect(args: &[String]) -> Result<Admin, String> {
+pub fn connect(args: &[String]) -> Result<Admin, String> {
     let dir = crate::data_dir(args);
     let text = std::fs::read_to_string(dir.join("admin.json")).map_err(|_| {
         "kaku serve is not running (no admin.json in the data directory)".to_string()
@@ -26,7 +26,7 @@ fn connect(args: &[String]) -> Result<Admin, String> {
 }
 
 impl Admin {
-    fn get(&self, path: &str) -> Result<(u16, Value), String> {
+    pub fn get(&self, path: &str) -> Result<(u16, Value), String> {
         let mut r = self
             .agent
             .get(&format!("{}{path}", self.base))
@@ -39,7 +39,7 @@ impl Admin {
         ))
     }
 
-    fn post(&self, path: &str, body: Value) -> Result<(u16, Value), String> {
+    pub fn post(&self, path: &str, body: Value) -> Result<(u16, Value), String> {
         let mut r = self
             .agent
             .post(&format!("{}{path}", self.base))

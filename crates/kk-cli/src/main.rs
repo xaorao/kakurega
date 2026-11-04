@@ -1,4 +1,5 @@
 mod approve;
+mod mcp;
 mod runner;
 mod serve;
 mod verify;
@@ -12,6 +13,7 @@ Usage:
              [--transport lima|local] [--vm NAME] [--worker-bin PATH] [--launcher PATH]
   kaku pair                         print a new one-time pairing link for the browser
   kaku approve [APPROVAL-ID]        review the exact release in this terminal and approve it
+  kaku mcp                          speak MCP on stdin and stdout for an agent client (cannot approve)
   kaku verify CAPSULE [--pin KEY]   check a capsule offline (KEY: base64url public key)
 
 Options for every command: --data-dir DIR (default ~/.kakurega)";
@@ -23,6 +25,7 @@ fn main() -> ExitCode {
         Some("pair") => approve::pair(&args[1..]),
         Some("approve") => approve::run(&args[1..]),
         Some("verify") => verify::run(&args[1..]),
+        Some("mcp") => mcp::run(&args[1..]),
         Some("--help") | Some("-h") | None => {
             println!("{USAGE}");
             0

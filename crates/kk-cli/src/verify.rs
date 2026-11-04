@@ -69,3 +69,32 @@ pub fn run(args: &[String]) -> u8 {
         1
     }
 }
+
+pub fn check_bytes(bytes: &[u8]) -> Result<serde_json::Value, String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let report = verify(
+        bytes,
+        &VerifyOptions {
+            pinned_keys: None,
+            now,
+            expected_recipient: None,
+        },
+    );
+    if report.valid {
+        Ok(serde_json::json!({
+            "valid": true,
+            "signer": report.signer.as_ref().map(|k| k.as_str()),
+            "signer_pinned": report.signer_pinned,
+            "recipient": report.recipient,
+            "assurance": report.binding_level,
+            "route": report.route,
+            "established": report.established,
+            "not_established": report.not_established,
+        }))
+    } else {
+        Ok(serde_json::json!({"valid": false, "reason": report.reason}))
+    }
+}
