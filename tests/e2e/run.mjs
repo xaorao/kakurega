@@ -69,7 +69,7 @@ page.on("requestfailed", async (r) => {
   // Also classified as a harness artifact: an idempotent GET that the browser cancelled because the page was reloaded or
   // navigated while it was in flight (the screens poll /api/fs, /api/readiness and /api/jobs). A POST or any other failure
   // still counts.
-  if (r.method() === "GET" && r.failure()?.errorText === "net::ERR_ABORTED" && /\/(api\/(fs|readiness|jobs|sessions|memories)|favicon\.svg)(\?|$)/.test(new URL(r.url()).pathname + new URL(r.url()).search)) return;
+  if (r.method() === "GET" && r.failure()?.errorText === "net::ERR_ABORTED" && /\/(api\/(fs|readiness|jobs|sessions|memories|inbox|events)|favicon\.svg)(\?|$)/.test(new URL(r.url()).pathname + new URL(r.url()).search)) return;
   problems.push("requestfailed: " + r.url() + " " + r.failure()?.errorText);
 });
 page.on("response", (r) => r.status() >= 500 && problems.push("http " + r.status() + " " + r.url()));
@@ -280,7 +280,7 @@ try {
   check("the dismissed suggestion's text was never saved", (await page.getByText("Always release the .env").count()) === 0);
   // setup panel: a failing check that the service says it can fix shows a button and the progress, never a quiet success
   await page.getByRole("link", { name: "New review" }).click();
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   let repairState = null;
   await page.route("**/api/readiness**", async (route) => {
     if (route.request().method() === "POST") {
@@ -297,9 +297,9 @@ try {
   await page.getByText("Could not fix it: could not install m: disk full").waitFor({ timeout: 10000 });
   check("a failed fix shows its reason", true);
   await page.unroute("**/api/readiness**");
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await page.reload();
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   // waiting-for-you screen: empty state from the real service, then items in the shape the service tests produce
   await page.getByRole("link", { name: /Waiting for you/ }).click();
   await page.getByRole("heading", { name: "Waiting for you", exact: true }).waitFor();
@@ -313,9 +313,9 @@ try {
   check("each waiting item names what it is, who it is for and links to the review", itemsText.includes("Approval waiting") && itemsText.includes("Acme") && itemsText.includes("Failed") && (await page.getByRole("link", { name: "Open" }).first().getAttribute("href")) === "#/job/job-9");
   await axeCheck(page, "waiting for you screen (items)");
   await page.unroute("**/api/inbox");
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await page.reload();
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   // command palette: keyboard-driven, focus returns where it was, and it can change settings
   await page.getByRole("button", { name: "Commands" }).focus();
   await page.keyboard.press("Control+Shift+P");
@@ -389,7 +389,7 @@ try {
   check("Enter that confirms an input-method composition does not send the message", (await page.locator(".msg").count()) === 0);
   await page.getByLabel("Your message").press("Enter");
   await page.getByText("note(s) used").first().waitFor();
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   const reply = await page.locator(".msg.assistant").innerText();
   check("Enter sends and an answer appears marked as a test model with the notes used", reply.includes("[test model]") && reply.includes("Test model") && /1 note\(s\) used/.test(reply), reply.replace(/\n/g, " | ").slice(0, 160));
   await axeCheck(page, "chat screen");
@@ -402,7 +402,7 @@ try {
   await page.getByLabel("Your message").fill("Remember this keptcanary line please");
   await page.getByLabel("Your message").press("Enter");
   await page.getByText("Saved in the encrypted store").waitFor();
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await page.reload();
   await page.getByRole("link", { name: "Chat" }).click();
   await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();

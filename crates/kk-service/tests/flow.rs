@@ -4268,3 +4268,89 @@ fn sv36_the_inbox_lists_what_waits_on_the_owner_and_nothing_else() {
         !inbox.to_string().contains("cookie_jar") && !inbox.to_string().contains("ACTIVE_TOKENS")
     );
 }
+
+#[test]
+fn sv37_the_event_stream_says_something_changed_without_content_needs_a_session_and_is_bounded() {
+    use std::io::{BufRead, BufReader};
+    let (root, repo) = repo_copy("data-events");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    assert_eq!(Web::new(c.addr).get("/api/events").0, 401);
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let open = || {
+        w.agent
+            .get(&format!("{}/api/events", w.base))
+            .header("Cookie", &w.cookie)
+            .call()
+            .unwrap()
+    };
+    let mut r = open();
+    assert_eq!(
+        r.headers().get("content-type").unwrap(),
+        "text/event-stream"
+    );
+    let mut reader = BufReader::new(r.body_mut().as_reader());
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    assert!(line.starts_with(": connected"), "{line}");
+    // starting a review changes things: a data line arrives promptly
+    let (_, s) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "events-recipient"}),
+    );
+    let started = std::time::Instant::now();
+    let mut got = String::new();
+    while !got.contains("data: changed") && started.elapsed() < std::time::Duration::from_secs(10) {
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        got.push_str(&line);
+    }
+    assert!(got.contains("data: changed"), "{got}");
+    assert!(
+        !got.contains("events-recipient") && !got.contains(s["id"].as_str().unwrap()),
+        "the stream carries no content"
+    );
+    // connections are bounded and a closed one frees its place
+    let mut held = Vec::new();
+    for _ in 0..7 {
+        held.push(open());
+    }
+    let r9 = w
+        .agent
+        .get(&format!("{}/api/events", w.base))
+        .header("Cookie", &w.cookie)
+        .call()
+        .unwrap();
+    assert_eq!(r9.status().as_u16(), 429, "the ninth stream is refused");
+    drop(held);
+    drop(reader);
+    drop(r);
+    let t0 = std::time::Instant::now();
+    loop {
+        let again = w
+            .agent
+            .get(&format!("{}/api/events", w.base))
+            .header("Cookie", &w.cookie)
+            .call()
+            .unwrap();
+        if again.status().as_u16() == 200 {
+            break;
+        }
+        assert!(
+            t0.elapsed() < std::time::Duration::from_secs(10),
+            "places are released when connections close"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+}

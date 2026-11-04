@@ -199,8 +199,24 @@ export function App() {
       setFailures((n) => n + 1);
     }
   };
-  const timer = setInterval(() => paired() && void refresh(), 1500);
+  // Changes arrive as server-sent events; the timer is only a slow safety net in case the stream is unavailable.
+  const timer = setInterval(() => paired() && void refresh(), 10000);
   onCleanup(() => clearInterval(timer));
+  let stream: EventSource | null = null;
+  createEffect(() => {
+    if (paired() && !stream && typeof EventSource !== "undefined") {
+      stream = new EventSource("/api/events");
+      stream.onmessage = () => {
+        void refresh();
+        window.dispatchEvent(new Event("kk-changed"));
+      };
+    }
+    if (!paired() && stream) {
+      stream.close();
+      stream = null;
+    }
+  });
+  onCleanup(() => stream?.close());
 
   const paletteItems = createMemo<PaletteItem[]>(() => {
     const go = (hash: string) => () => {

@@ -177,6 +177,7 @@ pub struct Service {
     web: Mutex<Arc<dyn WebFetch>>,
     attester: Mutex<Arc<dyn Attester>>,
     repairs: Mutex<std::collections::HashMap<String, Value>>,
+    streams: std::sync::atomic::AtomicUsize,
     last_attest: Mutex<Option<std::time::Instant>>,
     attest_cooldown: Mutex<std::time::Duration>,
     research: Mutex<Research>,
@@ -533,6 +534,7 @@ impl Service {
             web: Mutex::new(Arc::new(RealWeb)),
             attester: Mutex::new(Arc::new(RealAttester)),
             repairs: Mutex::new(std::collections::HashMap::new()),
+            streams: std::sync::atomic::AtomicUsize::new(0),
             last_attest: Mutex::new(None),
             attest_cooldown: Mutex::new(std::time::Duration::from_secs(3)),
             research: Mutex::new(Research::default()),
@@ -2549,6 +2551,106 @@ async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -> Response 
     }
 }
 
+const MAX_EVENT_STREAMS: usize = 8;
+
+/// A short fingerprint of everything the screens show about reviews and approvals. When it changes, screens refresh.
+fn change_marker(svc: &Service) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let g = svc.inner.lock().expect("lock");
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for j in g.jobs.values() {
+        j.id.hash(&mut h);
+        j.events.len().hash(&mut h);
+        j.approval.hash(&mut h);
+        j.delivered.is_some().hash(&mut h);
+        match &j.state {
+            JobState::Running => 0u8,
+            JobState::Ready => 1,
+            JobState::NothingToRelease(_) => 2,
+            JobState::Failed(_) => 3,
+        }
+        .hash(&mut h);
+    }
+    for (id, a) in &g.approvals {
+        id.hash(&mut h);
+        a.state.hash(&mut h);
+        a.denied.hash(&mut h);
+    }
+    h.finish()
+}
+
+struct StreamSlot(Arc<Service>);
+
+impl Drop for StreamSlot {
+    fn drop(&mut self) {
+        self.0
+            .streams
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Server-sent events: a line `data: changed` whenever reviews or approvals change, and a comment every 15 seconds so
+/// idle connections stay open. It carries no content, only the fact that something changed; the screen then asks for
+/// what it shows through the normal, authenticated routes.
+async fn events(axum::Extension(svc): Svc) -> Response {
+    if svc
+        .streams
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        >= MAX_EVENT_STREAMS
+    {
+        svc.streams
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        return error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "TOO_MANY_STREAMS",
+            "too many live connections are open",
+        );
+    }
+    let slot = StreamSlot(svc.clone());
+    let first = change_marker(&svc);
+    let state = (svc, slot, first, 0u32, true);
+    let stream =
+        futures_util::stream::unfold(state, |(svc, slot, last, ticks, hello)| async move {
+            if hello {
+                return Some((
+                    Ok::<_, std::convert::Infallible>(axum::body::Bytes::from_static(
+                        b": connected\n\n",
+                    )),
+                    (svc, slot, last, 0, false),
+                ));
+            }
+            let (mut last, mut ticks) = (last, ticks);
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                let now_marker = change_marker(&svc);
+                if now_marker != last {
+                    last = now_marker;
+                    return Some((
+                        Ok(axum::body::Bytes::from_static(b"data: changed\n\n")),
+                        (svc, slot, last, 0, false),
+                    ));
+                }
+                ticks += 1;
+                if ticks >= 37 {
+                    return Some((
+                        Ok(axum::body::Bytes::from_static(b": still here\n\n")),
+                        (svc, slot, last, 0, false),
+                    ));
+                }
+            }
+        });
+    let mut resp = Response::new(axum::body::Body::from_stream(stream));
+    resp.headers_mut().insert(
+        "content-type",
+        axum::http::HeaderValue::from_static("text/event-stream"),
+    );
+    resp.headers_mut().insert(
+        "cache-control",
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    resp
+}
+
 /// A review as the inbox sees it: id, recipient, created, state, approval (state, refused) and whether it was delivered.
 type InboxJob = (
     String,
@@ -3773,6 +3875,7 @@ impl Extension for Routes {
                 post(suggestion_dismiss),
             )
             .route("/api/fs", get(fs_list))
+            .route("/api/events", get(events))
             .route("/api/inbox", get(inbox))
             .route("/api/jobs", get(list).post(start))
             .route("/api/jobs/{id}", get(get_job))
