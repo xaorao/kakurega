@@ -225,7 +225,8 @@ fn text_type(ct: &str) -> bool {
 }
 
 impl Fetcher<'_> {
-    pub fn fetch(&self, raw: &str) -> Result<Page, FetchError> {
+    /// The checked GET shared by page reading and search: every hop is validated, resolved and pinned from the start.
+    fn get_checked(&self, raw: &str) -> Result<(Url, Response), FetchError> {
         let mut current = validate_url(raw)?;
         for _hop in 0..=MAX_REDIRECTS {
             let host = current
@@ -267,28 +268,107 @@ impl Fetcher<'_> {
             if !text_type(&r.content_type) {
                 return Err(FetchError::NotText);
             }
-            let body = String::from_utf8_lossy(&r.body[..r.body.len().min(MAX_BODY)]).into_owned();
-            let html = r.content_type.to_ascii_lowercase().contains("html");
-            let (title, mut text) = if html {
-                extract_html(&body)
-            } else {
-                (String::new(), clean_text(&body))
-            };
-            let mut truncated = r.body.len() >= MAX_BODY;
-            if text.chars().count() > MAX_TEXT_CHARS {
-                text = text.chars().take(MAX_TEXT_CHARS).collect();
-                truncated = true;
-            }
-            return Ok(Page {
-                requested: raw.to_string(),
-                final_url: current.to_string(),
-                title,
-                text,
-                truncated,
-            });
+            return Ok((current, r));
         }
         Err(FetchError::TooManyRedirects)
     }
+
+    pub fn fetch(&self, raw: &str) -> Result<Page, FetchError> {
+        let (current, r) = self.get_checked(raw)?;
+        let body = String::from_utf8_lossy(&r.body[..r.body.len().min(MAX_BODY)]).into_owned();
+        let html = r.content_type.to_ascii_lowercase().contains("html");
+        let (title, mut text) = if html {
+            extract_html(&body)
+        } else {
+            (String::new(), clean_text(&body))
+        };
+        let mut truncated = r.body.len() >= MAX_BODY;
+        if text.chars().count() > MAX_TEXT_CHARS {
+            text = text.chars().take(MAX_TEXT_CHARS).collect();
+            truncated = true;
+        }
+        Ok(Page {
+            requested: raw.to_string(),
+            final_url: current.to_string(),
+            title,
+            text,
+            truncated,
+        })
+    }
+
+    /// The raw body of a JSON answer from a search provider, under the same rules as any page.
+    pub fn fetch_json(&self, raw: &str) -> Result<Vec<u8>, FetchError> {
+        let (_, r) = self.get_checked(raw)?;
+        if !r.content_type.to_ascii_lowercase().contains("json") {
+            return Err(FetchError::NotText);
+        }
+        if r.body.len() >= MAX_BODY {
+            return Err(FetchError::BadUrl("the search answer was too large"));
+        }
+        Ok(r.body)
+    }
+}
+
+// ---- search ----
+
+pub const MAX_QUERY_CHARS: usize = 200;
+pub const MAX_HITS: usize = 8;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hit {
+    pub title: String,
+    pub url: String,
+    pub snippet: String,
+}
+
+/// The exact address that would be requested for a query at a SearXNG-style provider.
+pub fn search_url(provider: &str, query: &str) -> Result<Url, FetchError> {
+    let mut u = validate_url(provider)?;
+    if u.query().is_some() {
+        return Err(FetchError::BadUrl(
+            "the search provider address must not have a query",
+        ));
+    }
+    let q = query.trim();
+    if q.is_empty() || q.chars().count() > MAX_QUERY_CHARS || q.chars().any(|c| c.is_control()) {
+        return Err(FetchError::BadUrl(
+            "the search text must be 1 to 200 plain characters",
+        ));
+    }
+    u.query_pairs_mut()
+        .append_pair("q", q)
+        .append_pair("format", "json")
+        .append_pair("safesearch", "1");
+    Ok(u)
+}
+
+/// Results of a SearXNG-style JSON answer. Only addresses that could be fetched are kept; titles and snippets are cleaned
+/// text and are still untrusted.
+pub fn parse_hits(body: &[u8]) -> Vec<Hit> {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for r in v["results"].as_array().into_iter().flatten() {
+        let (Some(url), Some(title)) = (r["url"].as_str(), r["title"].as_str()) else {
+            continue;
+        };
+        let Ok(u) = validate_url(url) else { continue };
+        if !seen.insert(u.to_string()) {
+            continue;
+        }
+        let cut = |s: &str, n: usize| clean_text(s).chars().take(n).collect::<String>();
+        out.push(Hit {
+            title: cut(title, 200),
+            url: u.to_string(),
+            snippet: cut(r["content"].as_str().unwrap_or(""), 400),
+        });
+        if out.len() >= MAX_HITS {
+            break;
+        }
+    }
+    out
 }
 
 // ---- text extraction ----
@@ -887,5 +967,113 @@ mod tests {
                 .err(),
             Some(FetchError::Status(404))
         ));
+    }
+
+    #[test]
+    fn fe07_search_address_is_exact_and_the_provider_is_held_to_the_same_rules() {
+        let u = search_url("https://search.example/search", "  rust async  ").unwrap();
+        assert_eq!(
+            u.as_str(),
+            "https://search.example/search?q=rust+async&format=json&safesearch=1"
+        );
+        for bad in [
+            "http://search.example/search",
+            "https://localhost/search",
+            "https://user:pw@search.example/search",
+            "https://search.example:8443/search",
+            "https://search.example/search?token=abc",
+            "https://search.example/search?x=1",
+        ] {
+            assert!(search_url(bad, "q").is_err(), "{bad}");
+        }
+        assert!(search_url("https://search.example/s", "   ").is_err());
+        assert!(search_url("https://search.example/s", &"a".repeat(201)).is_err());
+        assert!(search_url("https://search.example/s", "a\nb").is_err());
+        let hostile = search_url("https://search.example/s", "x&q=other#frag y").unwrap();
+        assert_eq!(
+            hostile.query_pairs().count(),
+            3,
+            "the query text cannot add parameters: {hostile}"
+        );
+    }
+
+    #[test]
+    fn fe08_only_fetchable_addresses_survive_and_text_is_cleaned_and_capped() {
+        let body = serde_json::json!({"results": [
+            {"title": "Good\u{202e} one", "url": "https://a.example/x", "content": "snippet\u{200b} text"},
+            {"title": "dup", "url": "https://a.example/x", "content": "again"},
+            {"title": "local", "url": "https://127.0.0.1/admin", "content": "no"},
+            {"title": "plain http", "url": "http://b.example/", "content": "no"},
+            {"title": "creds", "url": "https://u:p@c.example/", "content": "no"},
+            {"title": "no url", "content": "no"},
+            {"url": "https://d.example/", "content": "no title"},
+            {"title": "T".repeat(500), "url": "https://e.example/", "content": "S".repeat(900)},
+        ]}).to_string();
+        let hits = parse_hits(body.as_bytes());
+        assert_eq!(
+            hits.iter().map(|h| h.url.as_str()).collect::<Vec<_>>(),
+            ["https://a.example/x", "https://e.example/"]
+        );
+        assert_eq!(
+            (hits[0].title.as_str(), hits[0].snippet.as_str()),
+            ("Good one", "snippet text")
+        );
+        assert_eq!(
+            (
+                hits[1].title.chars().count(),
+                hits[1].snippet.chars().count()
+            ),
+            (200, 400)
+        );
+        assert!(parse_hits(b"not json").is_empty() && parse_hits(b"{}").is_empty());
+        let many = serde_json::json!({"results": (0..40).map(|i| serde_json::json!({"title": "t", "url": format!("https://h{i}.example/"), "content": ""})).collect::<Vec<_>>()});
+        assert_eq!(parse_hits(many.to_string().as_bytes()).len(), MAX_HITS);
+    }
+
+    #[test]
+    fn fe09_a_search_answer_must_be_json_and_goes_through_the_same_address_checks() {
+        let dns = FakeDns(
+            [
+                ("search.example", vec![ip("93.184.216.34")]),
+                ("rebind.example", vec![ip("93.184.216.34"), ip("10.0.0.5")]),
+            ]
+            .into(),
+        );
+        let net = FakeNet {
+            pages: [
+                (
+                    "https://search.example/s?q=a&format=json&safesearch=1",
+                    page(200, "application/json; charset=utf-8", "{\"results\":[]}"),
+                ),
+                (
+                    "https://search.example/s?q=b&format=json&safesearch=1",
+                    page(200, "text/html", "<p>hi</p>"),
+                ),
+            ]
+            .into(),
+            calls: RefCell::new(vec![]),
+        };
+        let f = Fetcher {
+            dns: &dns,
+            transport: &net,
+        };
+        assert_eq!(
+            f.fetch_json("https://search.example/s?q=a&format=json&safesearch=1")
+                .unwrap(),
+            b"{\"results\":[]}"
+        );
+        assert_eq!(
+            f.fetch_json("https://search.example/s?q=b&format=json&safesearch=1"),
+            Err(FetchError::NotText)
+        );
+        assert_eq!(
+            f.fetch_json("https://rebind.example/s?q=a"),
+            Err(FetchError::BlockedAddress)
+        );
+        assert!(net
+            .calls
+            .borrow()
+            .iter()
+            .all(|(_, p)| p.iter().all(|a| a.port() == 443)));
     }
 }

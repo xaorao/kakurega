@@ -1,5 +1,5 @@
 import { createResource, createSignal, For, Show } from "solid-js";
-import { api, ApiError, streamChat, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal } from "../api";
+import { api, ApiError, streamChat, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
 import { t } from "../i18n";
 import { Markdown } from "../components/Markdown";
 
@@ -117,6 +117,38 @@ export function Chat() {
       setPages([...pages(), ...r.pages]);
       setProposal(null);
       setUrls("");
+    } catch (err) {
+      setWebError(err instanceof ApiError ? err.message : t("web.error"));
+    } finally {
+      setWebBusy(false);
+    }
+  };
+  const [searchOn, setSearchOn] = createSignal<{ available: boolean; provider?: string } | null>(null);
+  api.searchStatus().then(setSearchOn).catch(() => setSearchOn({ available: false }));
+  const [words, setWords] = createSignal("");
+  const [searchProposal, setSearchProposal] = createSignal<SearchProposal | null>(null);
+  const [hits, setHits] = createSignal<SearchHit[]>([]);
+  const showSearch = async () => {
+    setWebBusy(true);
+    setWebError("");
+    setSearchProposal(null);
+    setHits([]);
+    try {
+      setSearchProposal(await api.searchPropose(words()));
+    } catch (err) {
+      setWebError(err instanceof ApiError ? err.message : t("web.error"));
+    } finally {
+      setWebBusy(false);
+    }
+  };
+  const sendSearch = async () => {
+    const p = searchProposal();
+    if (!p) return;
+    setWebBusy(true);
+    setWebError("");
+    try {
+      setHits((await api.searchRun(p.id, p.digest)).results);
+      setSearchProposal(null);
     } catch (err) {
       setWebError(err instanceof ApiError ? err.message : t("web.error"));
     } finally {
@@ -256,6 +288,40 @@ export function Chat() {
       <details class="card stack" id="web-research">
         <summary>{t("web.title")}</summary>
         <p class="muted">{t("web.lead")}</p>
+        <Show when={searchOn()?.available}>
+          <label for="web-search">{t("web.searchWords")}</label>
+          <input id="web-search" type="text" maxlength="200" value={words()} onInput={(e) => setWords(e.currentTarget.value)} />
+          <div class="actions">
+            <button type="button" disabled={webBusy() || words().trim().length === 0} onClick={showSearch}>{t("web.searchShow")}</button>
+          </div>
+          <Show when={searchProposal()}>
+            {(p) => (
+              <div class="stack" role="region" aria-label={t("web.searchReview")}>
+                <p><strong>{t("web.searchSends", { site: p().will_send_to })}</strong></p>
+                <p><code>{p().query}</code></p>
+                <p class="muted">{p().stays_here}</p>
+                <div class="actions">
+                  <button class="primary" type="button" disabled={webBusy()} onClick={sendSearch}>{t("web.searchSend")}</button>
+                  <button type="button" onClick={() => setSearchProposal(null)}>{t("web.cancel")}</button>
+                </div>
+              </div>
+            )}
+          </Show>
+          <Show when={hits().length > 0}>
+            <p><strong>{t("web.searchResults")}</strong></p>
+            <ul class="plain">
+              <For each={hits()}>
+                {(h) => (
+                  <li>
+                    <code>{h.url}</code>{h.withheld ? ` — ${t("web.withheld")}` : ` · ${h.title}`}
+                    <Show when={h.snippet}><span class="muted"> — {h.snippet}</span></Show>
+                    <button type="button" onClick={() => setUrls((urls() ? urls() + "\n" : "") + h.url)}>{t("web.searchUse")}</button>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </Show>
+        </Show>
         <label for="web-urls">{t("web.urls")}</label>
         <textarea id="web-urls" rows="3" value={urls()} onInput={(e) => setUrls(e.currentTarget.value)} />
         <div class="actions">

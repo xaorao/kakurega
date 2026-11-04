@@ -2599,6 +2599,7 @@ dependencies = [
 name = "kk-fetch"
 version = "0.0.1"
 dependencies = [
+ "serde_json",
  "ureq",
  "url",
 ]

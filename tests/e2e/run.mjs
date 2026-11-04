@@ -36,7 +36,7 @@ const check = (name, ok, detail = "") => {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  " + detail : ""}`);
 };
 
-const server = spawn(kaku, ["serve", "--data-dir", data, "--root", root, "--scripted", join(here, "script.json"), "--ui-dir", join(repo, "apps/web/dist")], { stdio: ["ignore", "pipe", "pipe"] });
+const server = spawn(kaku, ["serve", "--data-dir", data, "--root", root, "--scripted", join(here, "script.json"), "--ui-dir", join(repo, "apps/web/dist")], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, KAKUREGA_SEARCH_URL: "https://search.example/search" } });
 let out = "";
 server.stdout.on("data", (d) => (out += d));
 server.stderr.on("data", (d) => (out += d));
@@ -406,6 +406,22 @@ try {
   await page.getByRole("alert").filter({ hasText: "refuses it" }).waitFor();
   check("a refused model shows the reason, no verified badge and no deployment details", (await proofRegion.count()) === 0 && (await page.getByText("0xsignerAAA").count()) === 0);
   await page.getByText("Add pages from the web").click();
+  await page.getByLabel("Search the web (the words you type go to the search site)").fill("tokio async runtime");
+  const originsBeforeSearch = requestOrigins.size;
+  await page.getByRole("button", { name: "Show what will be sent" }).click();
+  const searchRegion = page.getByRole("region", { name: "Review the search" });
+  await searchRegion.waitFor();
+  const searchReview = await searchRegion.innerText();
+  check("the search review shows the exact words and the one site that would receive them, and says nothing was sent", searchReview.includes("tokio async runtime") && searchReview.includes("search.example") && searchReview.includes("Nothing has been sent yet") && requestOrigins.size === originsBeforeSearch);
+  await page.route("**/api/search/*/run", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ results: [{ title: "Tokio tutorial", snippet: "Learn async Rust.", url: "https://tokio.rs/tutorial", host: "tokio.rs", withheld: false }, { title: "", snippet: "", url: "https://evil.example/p", host: "evil.example", withheld: true }], untrusted: true, note: "x" }) }));
+  await page.getByRole("button", { name: "Send this search" }).click();
+  await page.getByText("Suggestions from the search site (untrusted)").waitFor();
+  const hitsText = await page.locator("#web-research").innerText();
+  check("search suggestions are labelled untrusted, and an instruction-like one shows no text", hitsText.includes("https://tokio.rs/tutorial") && hitsText.includes("Learn async Rust.") && hitsText.includes("evil.example") && hitsText.includes("reads like instructions"));
+  await page.getByRole("button", { name: "Add to addresses" }).first().click();
+  check("choosing a suggestion only adds its address to the list; nothing is requested", (await page.getByLabel("Web addresses, one per line (https only)").inputValue()).trim() === "https://tokio.rs/tutorial" && requestOrigins.size === originsBeforeSearch);
+  await axeCheck(page, "web search panel");
+  await page.getByLabel("Web addresses, one per line (https only)").fill("");
   await page.getByLabel("Web addresses, one per line (https only)").fill("https://docs.rs/tokio\nhttp://insecure.example/\nhttps://127.0.0.1/admin");
   const originsBefore = requestOrigins.size;
   await page.getByRole("button", { name: "Show what would be requested" }).click();

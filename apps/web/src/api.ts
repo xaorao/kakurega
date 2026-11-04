@@ -90,6 +90,8 @@ export interface Schedule { id: string; repo: string; recipient: string; every_h
 export interface ScheduleRun { schedule: string; at: number; outcome: string; job: string | null }
 export interface ResearchItem { url: string; host?: string; allowed: boolean; reason?: string }
 export interface ResearchProposal { id: string; digest: string; items: ResearchItem[]; will_request: string[]; stays_here: string }
+export interface SearchProposal { id: string; digest: string; query: string; will_send_to: string; stays_here: string }
+export interface SearchHit { title: string; snippet: string; url: string; host: string | null; withheld: boolean }
 export interface ResearchPage { page_id?: string; url: string; final_url?: string; title?: string; sha256?: string; truncated?: boolean; looks_like_instructions?: boolean; error?: string }
 export interface AskCitation { file: string; quote: string; verdict: "verified" | "not_found" | "unknown_file" | "bad_length"; line: number | null }
 export interface AskReply { checkable: boolean; answer?: string; citations?: AskCitation[]; verified?: number; unchecked_text?: string; files_used: string[]; files_withheld: string[]; files_skipped: string[]; injection_suspects: string[]; route: { simulated: boolean } }
@@ -169,6 +171,9 @@ export const api = {
   keepChat: (title: string) => request<{ id: string }>("POST", "/api/sessions", { title }),
   keptChat: (id: string) => request<{ id: string; turns: ChatTurn[] }>("GET", `/api/sessions/${id}`),
   forgetChat: (id: string) => request<{ forgotten: boolean }>("POST", `/api/sessions/${id}/forget`, {}),
+  searchStatus: () => request<{ available: boolean; provider?: string; how_to_enable?: string }>("GET", "/api/search/status"),
+  searchPropose: (query: string) => request<SearchProposal>("POST", "/api/search/propose", { query }),
+  searchRun: (id: string, digest: string) => request<{ results: SearchHit[]; note: string }>("POST", `/api/search/${id}/run`, { approve: true, digest }),
   researchPropose: (urls: string[]) => request<ResearchProposal>("POST", "/api/research/propose", { urls }),
   researchFetch: (id: string, digest: string) => request<{ pages: ResearchPage[]; note: string }>("POST", `/api/research/${id}/fetch`, { approve: true, digest }),
   ask: (folder: string, question: string) => request<AskReply>("POST", "/api/ask", { folder, question }),
