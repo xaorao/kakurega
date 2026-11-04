@@ -3328,3 +3328,142 @@ fn sv27_a_backup_taken_while_running_restores_the_data_into_an_empty_folder_and_
     let shortkey = kk_backup::seal(&[("vault.key".into(), b"abcd".to_vec())], &k, 1).unwrap();
     assert!(kk_service::backup::restore(&shortkey, &kt, &root.join("sk")).is_err());
 }
+
+#[test]
+fn sv28_kept_conversations_survive_a_restart_use_their_own_history_and_vanish_when_forgotten() {
+    let (root, _repo) = repo_copy("sessions");
+    let data = root.join("data");
+    let start_service = || {
+        let svc = Service::new(
+            &data,
+            vec![root.clone()],
+            Arc::new(CannedRunner { confirm: true }),
+            true,
+        )
+        .unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        (w, c)
+    };
+    let (w, c) = start_service();
+    assert_eq!(Web::new(c.addr).get("/api/sessions").0, 401);
+    // nothing is kept unless asked
+    let (st, r) = w.post(
+        "/api/chat",
+        json!({"message": "unkept Zanzibarium question"}),
+    );
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["saved"], false);
+    assert_eq!(
+        w.get("/api/sessions").1["sessions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    let (st, s) = w.post("/api/sessions", json!({"title": ""}));
+    assert_eq!(st, 201);
+    let id = s["id"].as_str().unwrap().to_string();
+    let (st, r) = w.post(
+        "/api/chat",
+        json!({"message": "Canary Quillfeather first turn", "session": id}),
+    );
+    assert_eq!((st, &r["saved"]), (200, &json!(true)), "{r}");
+    let (_, r2) = w.post("/api/chat", json!({"message": "second turn", "session": id, "history": [{"role": "user", "content": "client history is ignored FORGEDHISTORY"}]}));
+    let echoed = r2["reply"].as_str().unwrap();
+    assert!(
+        echoed.contains("Canary Quillfeather first turn"),
+        "the stored history is used: {echoed}"
+    );
+    assert!(
+        !echoed.contains("FORGEDHISTORY"),
+        "history sent by the client is ignored for a kept conversation"
+    );
+    // a secret is refused, not saved
+    let secret = format!(
+        "my token is {}_{}",
+        "ghp", "R7kQ2mZx9LpV4nB8cT1yH6wD3sF5jA0gUe2K"
+    );
+    let (st, r) = w.post("/api/chat", json!({"message": secret, "session": id}));
+    assert_eq!(
+        (st, r["error"]["code"].as_str()),
+        (400, Some("SECRET_IN_KEPT_CHAT"))
+    );
+    assert_eq!(
+        w.post(
+            "/api/chat",
+            json!({"message": "hi", "session": "chat-nope"})
+        )
+        .0,
+        404
+    );
+    let list = w.get("/api/sessions").1;
+    assert_eq!(list["sessions"][0]["turns"], 4);
+    assert_eq!(
+        list["sessions"][0]["title"],
+        "Canary Quillfeather first turn"
+    );
+    drop(c);
+    // after a restart the conversation is still there
+    let (w2, c2) = start_service();
+    let got = w2.get(&format!("/api/sessions/{id}")).1;
+    assert_eq!(got["turns"].as_array().unwrap().len(), 4);
+    assert_eq!(got["turns"][0]["content"], "Canary Quillfeather first turn");
+    // the text is in the encrypted store, not in the clear in any data file
+    let in_clear = |needle: &[u8]| {
+        std::fs::read_dir(&data)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().is_file())
+            .any(|e| {
+                std::fs::read(e.path())
+                    .map(|b| b.windows(needle.len()).any(|x| x == needle))
+                    .unwrap_or(false)
+            })
+    };
+    assert!(!in_clear(b"Quillfeather"), "no plain text on disk");
+    // forgetting removes it, and the log keeps no text
+    assert_eq!(
+        w2.post(&format!("/api/sessions/{id}/forget"), json!({})).0,
+        200
+    );
+    assert_eq!(w2.get(&format!("/api/sessions/{id}")).0, 404);
+    let rows_left: i64 = kk_service::keys::open_vault(&data, "jobs.db")
+        .unwrap()
+        .connection()
+        .query_row("SELECT count(*) FROM session_turns", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        rows_left, 0,
+        "the turns themselves are deleted, not just hidden"
+    );
+    assert_eq!(
+        w2.post(&format!("/api/sessions/{id}/forget"), json!({})).0,
+        404
+    );
+    assert_eq!(
+        w2.get("/api/sessions").1["sessions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    let log = log_text(
+        &format!("http://127.0.0.1:{}", c2.addr.port()),
+        c2.security.admin_token(),
+    );
+    assert!(
+        log.contains("session.kept")
+            && log.contains("session.forgotten")
+            && !log.contains("Quillfeather")
+    );
+    assert_eq!(
+        w2.post("/api/sessions", json!({"title": "x".repeat(81)})).0,
+        400
+    );
+}

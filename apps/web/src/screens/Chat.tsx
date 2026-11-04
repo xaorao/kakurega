@@ -1,5 +1,5 @@
-import { createSignal, For, Show } from "solid-js";
-import { api, ApiError, type ChatTurn, type ResearchPage, type ResearchProposal } from "../api";
+import { createResource, createSignal, For, Show } from "solid-js";
+import { api, ApiError, type ChatTurn, type KeptChat, type ResearchPage, type ResearchProposal } from "../api";
 import { t } from "../i18n";
 
 interface Shown extends ChatTurn {
@@ -11,6 +11,52 @@ export function Chat() {
   const [text, setText] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
+  const [session, setSession] = createSignal<string | null>(null);
+  const [confirmForget, setConfirmForget] = createSignal<string | null>(null);
+  const [kept, { refetch }] = createResource<KeptChat[]>(async () => {
+    try {
+      return (await api.keptChats()).sessions;
+    } catch {
+      return [];
+    }
+  });
+  const keep = async () => {
+    setError("");
+    try {
+      const r = await api.keepChat("");
+      setSession(r.id);
+      await refetch();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : t("chat.error"));
+    }
+  };
+  const openKept = async (id: string) => {
+    setError("");
+    try {
+      const r = await api.keptChat(id);
+      setTurns(r.turns.map(({ role, content }) => ({ role, content })));
+      setSession(id);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : t("chat.error"));
+    }
+  };
+  const forget = async (id: string) => {
+    if (confirmForget() !== id) {
+      setConfirmForget(id);
+      return;
+    }
+    setConfirmForget(null);
+    try {
+      await api.forgetChat(id);
+      if (session() === id) {
+        setSession(null);
+        setTurns([]);
+      }
+      await refetch();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : t("chat.error"));
+    }
+  };
   const [urls, setUrls] = createSignal("");
   const [proposal, setProposal] = createSignal<ResearchProposal | null>(null);
   const [pages, setPages] = createSignal<ResearchPage[]>([]);
@@ -55,11 +101,13 @@ export function Chat() {
     setBusy(true);
     setError("");
     try {
-      const r = await api.chat(message, history, pages().filter((p) => p.page_id && !p.looks_like_instructions).map((p) => p.page_id as string));
+      const r = await api.chat(message, history, pages().filter((p) => p.page_id && !p.looks_like_instructions).map((p) => p.page_id as string), session() ?? undefined);
       const foot = [r.route.simulated ? t("chat.test") : t("chat.private"), t("chat.notesUsed", { n: r.notes_used })];
+      if (session()) foot.push(r.saved ? t("chat.saved") : t("chat.notSaved"));
       if (r.web_sources_used > 0) foot.push(t("web.used", { n: r.web_sources_used }));
       if (r.notes_withheld > 0) foot.push(t("chat.withheld", { n: r.notes_withheld }));
       setTurns([...turns(), { role: "assistant", content: r.reply, foot }]);
+      if (session()) await refetch();
     } catch (err) {
       setTurns(turns().slice(0, -1));
       setText(message);
@@ -72,7 +120,27 @@ export function Chat() {
     <section class="stack wide" aria-labelledby="h-chat">
       <h1 id="h-chat">{t("chat.title")}</h1>
       <p class="lead">{t("chat.lead")}</p>
-      <p class="muted">{t("chat.note")}</p>
+      <p class="muted">{session() ? t("chat.noteKept") : t("chat.note")}</p>
+      <div class="card stack" role="region" aria-label={t("chat.keptTitle")}>
+        <div class="actions">
+          <Show when={!session()}><button type="button" onClick={keep}>{t("chat.keep")}</button></Show>
+          <Show when={session()}><span class="chip ok">{t("chat.keptNow")}</span> <button type="button" onClick={() => { setSession(null); setTurns([]); }}>{t("chat.newChat")}</button></Show>
+        </div>
+        <Show when={(kept() ?? []).length > 0}>
+          <p><strong>{t("chat.keptTitle")}</strong></p>
+          <ul class="plain stack">
+            <For each={kept() ?? []}>
+              {(k) => (
+                <li class="actions">
+                  <span>{k.title || t("chat.untitled")} · {t("chat.turns", { n: k.turns })}</span>
+                  <button type="button" onClick={() => openKept(k.id)}>{t("chat.open")}</button>
+                  <button type="button" onClick={() => forget(k.id)}>{confirmForget() === k.id ? t("chat.forgetSure") : t("chat.forget")}</button>
+                </li>
+              )}
+            </For>
+          </ul>
+        </Show>
+      </div>
       <ul class="plain stack chat" aria-live="polite">
         <For each={turns()} fallback={<li class="muted">{t("chat.empty")}</li>}>
           {(m) => (

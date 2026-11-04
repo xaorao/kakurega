@@ -53,6 +53,10 @@ pub struct Card {
 #[derive(Debug, Clone)]
 enum Intent {
     Config,
+    Keep,
+    Sessions,
+    OpenChat(String),
+    ForgetChat(String),
     Readiness,
     Jobs,
     StartReview,
@@ -101,6 +105,7 @@ pub struct ConfirmView {
 #[derive(Debug, Clone)]
 pub enum Mode {
     Normal,
+    Picker(crate::picker::Picker),
     Approval(ApprovalView),
     Confirm(ConfirmView),
 }
@@ -130,6 +135,7 @@ pub struct App {
     watching: BTreeMap<String, usize>,
     inflight_polls: BTreeSet<String>,
     pub chat_history: Vec<(String, String)>,
+    pub session: Option<String>,
     chat_waiting: bool,
     pub approver: Option<kk_evidence::approval::ApproverKey>,
     pub fixes_seen: Vec<(String, usize, String, bool)>,
@@ -188,6 +194,7 @@ impl App {
             watching: BTreeMap::new(),
             inflight_polls: BTreeSet::new(),
             chat_history: Vec::new(),
+            session: None,
             chat_waiting: false,
             approver: None,
             fixes_seen: Vec::new(),
@@ -304,6 +311,66 @@ impl App {
         }
     }
 
+    fn picker_key(&mut self, k: KeyEvent) -> Vec<Req> {
+        use crate::picker::{Delete, ItemKind};
+        let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        let Mode::Picker(p) = &mut self.mode else {
+            return Vec::new();
+        };
+        match k.code {
+            KeyCode::Esc => self.mode = Mode::Normal,
+            KeyCode::Char('c') if ctrl => self.mode = Mode::Normal,
+            KeyCode::Down => p.move_by(1),
+            KeyCode::Up => p.move_by(-1),
+            KeyCode::PageDown => p.move_by(8),
+            KeyCode::PageUp => p.move_by(-8),
+            KeyCode::Backspace => p.backspace(),
+            KeyCode::Char('d') if ctrl => match p.delete_press() {
+                Delete::Armed(_) => {
+                    p.error =
+                        Some("Press Ctrl-D again to forget this conversation for good.".into())
+                }
+                Delete::Confirmed(id) => {
+                    p.error = None;
+                    return vec![self.req(
+                        Intent::ForgetChat(id.clone()),
+                        false,
+                        Method::Post,
+                        &format!("/api/sessions/{id}/forget"),
+                        Some(json!({})),
+                    )];
+                }
+                Delete::NotAllowed => p.error = Some("Reviews are not removed here.".into()),
+                Delete::Nothing => {}
+            },
+            KeyCode::Enter => {
+                let Some(it) = p.current().cloned() else {
+                    return Vec::new();
+                };
+                self.mode = Mode::Normal;
+                return match it.kind {
+                    ItemKind::Chat => vec![self.req(
+                        Intent::OpenChat(it.id.clone()),
+                        false,
+                        Method::Get,
+                        &format!("/api/sessions/{}", it.id),
+                        None,
+                    )],
+                    ItemKind::Review => vec![self.req(
+                        Intent::Poll(it.id.clone()),
+                        false,
+                        Method::Get,
+                        &format!("/api/jobs/{}", it.id),
+                        None,
+                    )],
+                };
+            }
+            KeyCode::Char(c) if !ctrl => p.type_char(c),
+            _ => {}
+        }
+        Vec::new()
+    }
+
     fn insert(&mut self, c: char) {
         let at = self
             .input
@@ -320,6 +387,9 @@ impl App {
             return Vec::new();
         }
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        if matches!(self.mode, Mode::Picker(_)) {
+            return self.picker_key(k);
+        }
         match &mut self.mode {
             Mode::Approval(v) => {
                 match k.code {
@@ -428,6 +498,7 @@ impl App {
                 }
             }
             Mode::Normal => self.on_key_normal(k),
+            Mode::Picker(_) => Vec::new(),
         }
     }
 
@@ -628,7 +699,9 @@ impl App {
                         "/ask FOLDER : QUESTION         ask about documents; every quote is checked".into(),
                         "/log                           the signed activity log".into(),
                         "/verify FILE                   check a capsule offline".into(),
-                        "/clear                         forget this conversation (it is never saved)".into(),
+                        "/keep                          save this conversation in the encrypted store (otherwise it is never saved)".into(),
+                        "/sessions                      pick a kept conversation or a review (type to filter, Ctrl-D twice forgets a chat)".into(),
+                        "/newchat  /clear               leave this conversation and start a fresh one".into(),
                         "/status  /help  /quit          Tab completes, Up/Down recall, PageUp/PageDown scroll".into(),
                         "Anything else you type is a message to the private assistant on this computer.".into(),
                     ],
@@ -639,10 +712,33 @@ impl App {
                 self.quit = true;
                 Vec::new()
             }
-            Command::Clear => {
+            Command::Clear | Command::NewChat => {
                 self.chat_history.clear();
-                self.say(Kind::Info, "The conversation was cleared. Conversations are never saved.");
+                let was_kept = self.session.take().is_some();
+                self.say(
+                    Kind::Info,
+                    if was_kept {
+                        "Started a new conversation. The kept one stays saved; /sessions opens it again."
+                    } else {
+                        "The conversation was cleared. It was not saved; /keep saves a conversation."
+                    },
+                );
                 Vec::new()
+            }
+            Command::Keep => {
+                if self.session.is_some() {
+                    self.say(Kind::Info, "This conversation is already kept.");
+                    return Vec::new();
+                }
+                vec![self.req(Intent::Keep, false, Method::Post, "/api/sessions", Some(json!({"title": ""})))]
+            }
+            Command::Sessions => {
+                let mut p = crate::picker::Picker::new("Conversations and reviews");
+                for j in &self.jobs {
+                    p.items.push(crate::picker::Item { id: j.id.clone(), label: format!("Review for {}", j.recipient), detail: j.state.clone(), when: 0, kind: crate::picker::ItemKind::Review });
+                }
+                self.mode = Mode::Picker(p);
+                vec![self.req(Intent::Sessions, false, Method::Get, "/api/sessions", None)]
             }
             Command::Status => vec![self.req(Intent::Readiness, false, Method::Get, "/api/readiness", None)],
             Command::Reviews => vec![self.req(Intent::Jobs, false, Method::Get, "/api/jobs", None)],
@@ -749,7 +845,10 @@ impl App {
             false,
             Method::Post,
             "/api/chat",
-            Some(json!({"message": message, "history": history})),
+            Some(match &self.session {
+                Some(id) => json!({"message": message, "history": history, "session": id}),
+                None => json!({"message": message, "history": history}),
+            }),
         )]
     }
 
@@ -1430,6 +1529,87 @@ impl App {
                 lines.push(String::new());
                 lines.extend(foot);
                 self.push(Kind::Info, Some("Assistant"), lines);
+                Vec::new()
+            }
+            Intent::Keep => {
+                if ok {
+                    self.session = body["id"].as_str().map(clean);
+                    self.say(Kind::Ok, "Kept. From now on this conversation is saved in the encrypted store on this computer. /sessions opens kept ones; /newchat leaves it.");
+                } else {
+                    self.say(Kind::Error, err_text(status, &body));
+                }
+                Vec::new()
+            }
+            Intent::Sessions => {
+                if let Mode::Picker(p) = &mut self.mode {
+                    p.loading = false;
+                    if ok {
+                        for k in body["sessions"].as_array().into_iter().flatten() {
+                            let title = clean(k["title"].as_str().unwrap_or(""));
+                            p.items.push(crate::picker::Item {
+                                id: clean(k["id"].as_str().unwrap_or("?")),
+                                label: if title.is_empty() {
+                                    "Untitled conversation".into()
+                                } else {
+                                    title
+                                },
+                                detail: format!("{} message(s)", k["turns"].as_u64().unwrap_or(0)),
+                                when: k["updated"].as_i64().unwrap_or(0),
+                                kind: crate::picker::ItemKind::Chat,
+                            });
+                        }
+                    } else {
+                        p.error = Some(format!(
+                            "Could not load kept conversations. {}",
+                            err_text(status, &body)
+                        ));
+                    }
+                }
+                Vec::new()
+            }
+            Intent::OpenChat(id) => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                self.chat_history.clear();
+                self.cards.clear();
+                for t in body["turns"].as_array().into_iter().flatten() {
+                    let (role, content) = (
+                        t["role"].as_str().unwrap_or(""),
+                        clean(t["content"].as_str().unwrap_or("")),
+                    );
+                    if role != "user" && role != "assistant" {
+                        continue;
+                    }
+                    self.chat_history.push((role.to_string(), content.clone()));
+                    let (kind, title) = if role == "user" {
+                        (Kind::User, None)
+                    } else {
+                        (Kind::Info, Some("Assistant"))
+                    };
+                    self.push(kind, title, text_lines(&content));
+                }
+                self.session = Some(id);
+                self.say(
+                    Kind::Ok,
+                    "Opened the kept conversation. New messages are saved to it.",
+                );
+                Vec::new()
+            }
+            Intent::ForgetChat(id) => {
+                if let Mode::Picker(p) = &mut self.mode {
+                    if ok {
+                        p.remove(&id);
+                        p.error = None;
+                    } else {
+                        p.error = Some(err_text(status, &body));
+                    }
+                }
+                if ok && self.session.as_deref() == Some(id.as_str()) {
+                    self.session = None;
+                    self.chat_history.clear();
+                }
                 Vec::new()
             }
             Intent::Log => {

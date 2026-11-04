@@ -43,7 +43,8 @@ export interface Suggestion { id: string; text: string; why: string; level: stri
 export interface LogEntry { seq: number; at: number; kind: string; subject: string; data: Record<string, string | number> }
 export interface LogSummary { count: number; head: string | null; public_key: string; recent: LogEntry[] }
 export interface ChatTurn { role: "user" | "assistant"; content: string }
-export interface ChatReply { reply: string; route: { id: string; class: string; simulated: boolean }; notes_used: number; notes_withheld: number; web_sources_used: number }
+export interface ChatReply { reply: string; route: { id: string; class: string; simulated: boolean }; notes_used: number; notes_withheld: number; web_sources_used: number; saved?: boolean }
+export interface KeptChat { id: string; title: string; created: number; updated: number; turns: number }
 export interface ResearchItem { url: string; host?: string; allowed: boolean; reason?: string }
 export interface ResearchProposal { id: string; digest: string; items: ResearchItem[]; will_request: string[]; stays_here: string }
 export interface ResearchPage { page_id?: string; url: string; final_url?: string; title?: string; sha256?: string; truncated?: boolean; looks_like_instructions?: boolean; error?: string }
@@ -112,7 +113,11 @@ export const api = {
   acceptSuggestion: (job: string, id: string) => request<{ id: string; added: boolean }>("POST", `/api/jobs/${job}/memory-suggestions/${id}/accept`, {}),
   dismissSuggestion: (job: string, id: string) => request<{ dismissed: boolean }>("POST", `/api/jobs/${job}/memory-suggestions/${id}/dismiss`, {}),
   log: () => request<LogSummary>("GET", "/api/log"),
-  chat: (message: string, history: ChatTurn[], sources: string[] = []) => request<ChatReply>("POST", "/api/chat", { message, history, sources }),
+  chat: (message: string, history: ChatTurn[], sources: string[] = [], session?: string) => request<ChatReply>("POST", "/api/chat", session ? { message, history, sources, session } : { message, history, sources }),
+  keptChats: () => request<{ sessions: KeptChat[] }>("GET", "/api/sessions"),
+  keepChat: (title: string) => request<{ id: string }>("POST", "/api/sessions", { title }),
+  keptChat: (id: string) => request<{ id: string; turns: ChatTurn[] }>("GET", `/api/sessions/${id}`),
+  forgetChat: (id: string) => request<{ forgotten: boolean }>("POST", `/api/sessions/${id}/forget`, {}),
   researchPropose: (urls: string[]) => request<ResearchProposal>("POST", "/api/research/propose", { urls }),
   researchFetch: (id: string, digest: string) => request<{ pages: ResearchPage[]; note: string }>("POST", `/api/research/${id}/fetch`, { approve: true, digest }),
   ask: (folder: string, question: string) => request<AskReply>("POST", "/api/ask", { folder, question }),

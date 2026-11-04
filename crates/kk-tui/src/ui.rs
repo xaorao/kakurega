@@ -184,6 +184,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
         Mode::Normal => " Command ",
         Mode::Approval(_) => " Approval is open: answer it first ",
         Mode::Confirm(_) => " Confirm ",
+        Mode::Picker(_) => " Choose with the arrow keys; typing filters ",
     };
     let block = Block::default().borders(Borders::ALL).title(composer_title);
     let inner = block.inner(rows[2]);
@@ -217,6 +218,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
 
     let footer = match &app.mode {
         Mode::Confirm(c) => c.prompt.clone(),
+        Mode::Picker(_) => "Up/Down choose · Enter opens · type to filter · Ctrl-D twice forgets a chat · Esc closes".to_string(),
         Mode::Approval(_) => {
             "Type the digest prefix · Enter approves · Esc or Ctrl-C refuses".to_string()
         }
@@ -284,5 +286,115 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
             )));
         }
         f.render_widget(Paragraph::new(prompt), parts[1]);
+    }
+
+    if let Mode::Picker(p) = &app.mode {
+        let pop = Rect {
+            x: area.x,
+            y: area.y + 1,
+            width: area.width,
+            height: area.height.saturating_sub(2),
+        };
+        f.render_widget(Clear, pop);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" {} ", p.title))
+            .border_style(th.fg(Color::Cyan).add_modifier(Modifier::BOLD));
+        let inner = block.inner(pop);
+        f.render_widget(block, pop);
+        let parts = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+        let filter = if p.filter.is_empty() {
+            Span::styled(
+                "type to filter",
+                Style::default().add_modifier(Modifier::DIM),
+            )
+        } else {
+            Span::raw(p.filter.clone())
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("Filter: ", Style::default().add_modifier(Modifier::BOLD)),
+                filter,
+            ])),
+            parts[0],
+        );
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let vis = p.visible();
+        let mut rows: Vec<(Line, bool)> = Vec::new();
+        let mut last_group = String::new();
+        let mut selected_row = 0usize;
+        for (n, i) in vis.iter().enumerate() {
+            let it = &p.items[*i];
+            let group = match it.kind {
+                crate::picker::ItemKind::Chat => crate::picker::day_label(it.when, now),
+                crate::picker::ItemKind::Review => "Reviews".to_string(),
+            };
+            if group != last_group {
+                rows.push((
+                    Line::from(Span::styled(
+                        group.clone(),
+                        th.fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    )),
+                    false,
+                ));
+                last_group = group;
+            }
+            let armed = p.armed.as_deref() == Some(it.id.as_str());
+            let text = if armed {
+                format!("  {}  [Ctrl-D again to forget]", it.label)
+            } else {
+                format!("  {}  · {}", it.label, it.detail)
+            };
+            if n == p.selected {
+                selected_row = rows.len();
+            }
+            let style = if armed {
+                th.fg(Color::Red).add_modifier(Modifier::BOLD)
+            } else if n == p.selected {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            rows.push((Line::from(Span::styled(text, style)), n == p.selected));
+        }
+        let height = parts[1].height as usize;
+        let skip = selected_row.saturating_sub(height.saturating_sub(1));
+        let shown: Vec<Line> = if rows.is_empty() {
+            let msg = if p.loading {
+                "Loading…"
+            } else if p.filter.is_empty() {
+                "Nothing here yet. /keep saves a conversation; /review starts a review."
+            } else {
+                "No match."
+            };
+            vec![Line::from(Span::styled(
+                msg,
+                Style::default().add_modifier(Modifier::DIM),
+            ))]
+        } else {
+            rows.into_iter()
+                .skip(skip)
+                .take(height)
+                .map(|(l, _)| l)
+                .collect()
+        };
+        f.render_widget(Paragraph::new(shown), parts[1]);
+        if let Some(e) = &p.error {
+            f.render_widget(
+                Paragraph::new(Span::styled(
+                    e.clone(),
+                    th.fg(Color::Red).add_modifier(Modifier::BOLD),
+                )),
+                parts[2],
+            );
+        }
     }
 }

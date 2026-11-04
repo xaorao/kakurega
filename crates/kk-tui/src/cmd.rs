@@ -19,6 +19,9 @@ pub enum Command {
     Forget(String),
     Log,
     Clear,
+    Keep,
+    Sessions,
+    NewChat,
     Verify(String),
     Quit,
 }
@@ -26,7 +29,7 @@ pub enum Command {
 pub const NAMES: &[&str] = &[
     "help", "status", "review", "reviews", "open", "findings", "fixes", "applyfix", "undofix",
     "release", "approve", "deliver", "memory", "ask", "remember", "correct", "forget", "log",
-    "verify", "clear", "quit",
+    "verify", "clear", "keep", "sessions", "resume", "newchat", "quit",
 ];
 
 pub fn usage(name: &str) -> &'static str {
@@ -82,6 +85,9 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "quit" | "exit" | "q" => Ok(Command::Quit),
         "log" => Ok(Command::Log),
         "clear" => Ok(Command::Clear),
+        "keep" => Ok(Command::Keep),
+        "sessions" | "resume" => Ok(Command::Sessions),
+        "newchat" => Ok(Command::NewChat),
         "review" => {
             let Some((folder, recipient)) = rest.rsplit_once(" for ") else {
                 return Err(format!("usage: {}", usage("review")));

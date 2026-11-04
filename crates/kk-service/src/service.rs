@@ -206,6 +206,8 @@ fn init_store(v: &Vault) -> Result<(), String> {
             "CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, meta TEXT NOT NULL, snap TEXT);
              CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY, body TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS fix_snapshots(job TEXT NOT NULL, n INTEGER NOT NULL, file TEXT NOT NULL, orig BLOB NOT NULL, sha_after TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (job, n));
+             CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, title TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS session_turns(session TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (session, seq));
              CREATE TABLE IF NOT EXISTS approvers(key_id TEXT PRIMARY KEY, public BLOB NOT NULL, label TEXT NOT NULL, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);",
         )
@@ -1060,6 +1062,8 @@ struct ChatBody {
     history: Vec<ChatTurn>,
     #[serde(default)]
     sources: Vec<String>,
+    #[serde(default)]
+    session: Option<String>,
 }
 
 const CHAT_SYSTEM: &str = "You are Kakurega's private assistant. You run on the owner's own computer. \
@@ -1093,6 +1097,48 @@ async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
             "the conversation history is too long or malformed",
         );
     }
+    let kept: Option<(String, Vec<ChatTurn>)> = match &b.session {
+        None => None,
+        Some(id) => {
+            if !kk_secrets::scan(&b.message).is_empty()
+                || kk_secrets::looks_secret(&b.message).is_some()
+            {
+                return error(StatusCode::BAD_REQUEST, "SECRET_IN_KEPT_CHAT", "this message looks like it contains a secret, and a kept conversation is saved; send it in a conversation that is not kept, or remove the secret");
+            }
+            match session_turns(&svc, id) {
+                Some(t) => Some((
+                    id.clone(),
+                    t.into_iter()
+                        .rev()
+                        .take(18)
+                        .rev()
+                        .map(|(role, content)| ChatTurn { role, content })
+                        .collect(),
+                )),
+                None => {
+                    return error(
+                        StatusCode::NOT_FOUND,
+                        "NO_SESSION",
+                        "there is no such kept conversation",
+                    )
+                }
+            }
+        }
+    };
+    let b = match &kept {
+        Some((_, h)) => ChatBody {
+            history: h
+                .iter()
+                .map(|t| ChatTurn {
+                    role: t.role.clone(),
+                    content: t.content.clone(),
+                })
+                .collect(),
+            ..b
+        },
+        None => b,
+    };
+    let message_to_keep = b.message.clone();
     let svc2 = svc.clone();
     let out = tokio::task::spawn_blocking(move || {
         let (notes, used, untrusted_used, withheld) = {
@@ -1187,10 +1233,156 @@ async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
                     ("chars_out", r.text.chars().count().into()),
                 ],
             );
-            Json(json!({"reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated}, "notes_used": used.len(), "untrusted_notes_used": untrusted_used, "notes_withheld": withheld, "web_sources_used": web_used})).into_response()
+            let mut saved = false;
+            if let Some((id, _)) = &kept {
+                saved = session_append(&svc, id, &message_to_keep, &r.text);
+            }
+            Json(json!({"reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated}, "notes_used": used.len(), "untrusted_notes_used": untrusted_used, "notes_withheld": withheld, "web_sources_used": web_used, "saved": saved})).into_response()
         }
         Err(m) => error(StatusCode::BAD_GATEWAY, "NO_MODEL", &m),
     }
+}
+
+const MAX_SESSIONS: i64 = 200;
+const MAX_SESSION_TURNS: i64 = 400;
+
+fn session_turns(svc: &Service, id: &str) -> Option<Vec<(String, String)>> {
+    let store = svc.store.lock().expect("lock");
+    let c = store.connection();
+    c.query_row("SELECT 1 FROM sessions WHERE id = ?1", [id], |_| Ok(()))
+        .ok()?;
+    let mut st = c
+        .prepare("SELECT role, content FROM session_turns WHERE session = ?1 ORDER BY seq")
+        .ok()?;
+    let rows = st
+        .query_map([id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })
+        .ok()?;
+    Some(rows.flatten().collect())
+}
+
+/// Saves one finished exchange. A conversation that has reached its limit stops saving instead of dropping old turns.
+fn session_append(svc: &Service, id: &str, user: &str, assistant: &str) -> bool {
+    let t = now();
+    let store = svc.store.lock().expect("lock");
+    let c = store.connection();
+    let n: i64 = c
+        .query_row(
+            "SELECT count(*) FROM session_turns WHERE session = ?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap_or(i64::MAX);
+    if n + 2 > MAX_SESSION_TURNS {
+        return false;
+    }
+    let ok = c.execute("INSERT INTO session_turns(session, seq, role, content, at) VALUES (?1, ?2, 'user', ?3, ?4), (?1, ?5, 'assistant', ?6, ?4)", kk_vault::rusqlite::params![id, n, user, t, n + 1, assistant]).is_ok();
+    if ok {
+        let title: String = user
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(60)
+            .collect();
+        let _ = c.execute("UPDATE sessions SET updated = ?2, title = CASE WHEN title = '' THEN ?3 ELSE title END WHERE id = ?1", kk_vault::rusqlite::params![id, t, title]);
+    }
+    ok
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionNew {
+    #[serde(default)]
+    title: String,
+}
+
+async fn sessions_list(axum::Extension(svc): Svc) -> Response {
+    let store = svc.store.lock().expect("lock");
+    let c = store.connection();
+    let Ok(mut st) = c.prepare("SELECT s.id, s.title, s.created, s.updated, (SELECT count(*) FROM session_turns t WHERE t.session = s.id) FROM sessions s ORDER BY s.updated DESC, s.id LIMIT 200") else {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "STORE", "could not read the conversations");
+    };
+    let rows: Vec<Value> = st
+        .query_map([], |r| Ok(json!({"id": r.get::<_, String>(0)?, "title": r.get::<_, String>(1)?, "created": r.get::<_, i64>(2)?, "updated": r.get::<_, i64>(3)?, "turns": r.get::<_, i64>(4)?})))
+        .map(|it| it.flatten().collect())
+        .unwrap_or_default();
+    Json(json!({"sessions": rows, "note": "Only conversations you chose to keep are listed. Forget removes the text from the encrypted store."})).into_response()
+}
+
+async fn session_new(axum::Extension(svc): Svc, Json(b): Json<SessionNew>) -> Response {
+    if b.title.chars().count() > 80
+        || !chat_clean(&b.title)
+        || !kk_secrets::scan(&b.title).is_empty()
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_TITLE",
+            "a title is at most 80 characters, with no control characters or secrets",
+        );
+    }
+    let mut raw = [0u8; 6];
+    getrandom::fill(&mut raw).expect("operating system randomness");
+    let id = format!(
+        "chat-{}",
+        raw.iter().map(|x| format!("{x:02x}")).collect::<String>()
+    );
+    {
+        let store = svc.store.lock().expect("lock");
+        let c = store.connection();
+        let n: i64 = c
+            .query_row("SELECT count(*) FROM sessions", [], |r| r.get(0))
+            .unwrap_or(i64::MAX);
+        if n >= MAX_SESSIONS {
+            return error(
+                StatusCode::CONFLICT,
+                "TOO_MANY",
+                "forget some kept conversations first",
+            );
+        }
+        let t = now();
+        if c.execute(
+            "INSERT INTO sessions(id, title, created, updated) VALUES (?1, ?2, ?3, ?3)",
+            kk_vault::rusqlite::params![id, b.title.trim(), t],
+        )
+        .is_err()
+        {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "STORE",
+                "could not keep the conversation",
+            );
+        }
+    }
+    svc.log_event("session.kept", &id, &[]);
+    (StatusCode::CREATED, Json(json!({"id": id}))).into_response()
+}
+
+async fn session_get(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    match session_turns(&svc, &id) {
+        None => error(StatusCode::NOT_FOUND, "NO_SESSION", "there is no such kept conversation"),
+        Some(t) => Json(json!({"id": id, "turns": t.into_iter().map(|(role, content)| json!({"role": role, "content": content})).collect::<Vec<_>>()})).into_response(),
+    }
+}
+
+async fn session_forget(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    let removed = {
+        let store = svc.store.lock().expect("lock");
+        let c = store.connection();
+        let _ = c.execute("DELETE FROM session_turns WHERE session = ?1", [&id]);
+        c.execute("DELETE FROM sessions WHERE id = ?1", [&id])
+            .unwrap_or(0)
+    };
+    if removed == 0 {
+        return error(
+            StatusCode::NOT_FOUND,
+            "NO_SESSION",
+            "there is no such kept conversation",
+        );
+    }
+    svc.log_event("session.forgotten", &id, &[]);
+    Json(json!({"forgotten": true})).into_response()
 }
 
 #[derive(Deserialize)]
@@ -2894,6 +3086,9 @@ impl Extension for Routes {
             .route("/api/readiness", get(readiness))
             .route("/api/chat", post(chat))
             .route("/api/ask", post(ask))
+            .route("/api/sessions", get(sessions_list).post(session_new))
+            .route("/api/sessions/{id}", get(session_get))
+            .route("/api/sessions/{id}/forget", post(session_forget))
             .route("/api/research/propose", post(research_propose))
             .route("/api/research/{id}/fetch", post(research_fetch))
             .route("/api/log", get(log_summary))

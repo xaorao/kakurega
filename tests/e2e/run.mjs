@@ -290,6 +290,25 @@ try {
   await page.screenshot({ path: join(shots, "13-chat.png") });
   await page.getByRole("button", { name: "Clear" }).click();
   check("Clear forgets the conversation", (await page.locator(".msg").count()) === 0);
+  // a kept conversation survives a reload, can be opened again, and is gone after Forget
+  await page.getByRole("button", { name: "Keep this conversation" }).click();
+  await page.getByText("Kept", { exact: true }).waitFor();
+  await page.getByLabel("Your message").fill("Remember this keptcanary line please");
+  await page.getByLabel("Your message").press("Enter");
+  await page.getByText("Saved in the encrypted store").waitFor();
+  await page.reload();
+  await page.getByRole("link", { name: "Chat" }).click();
+  await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Open" }).first().waitFor();
+  check("after a reload the kept conversation is listed and nothing else is shown until it is opened", (await page.locator(".msg").count()) === 0 && (await page.getByRole("button", { name: "Open" }).count()) === 1);
+  await page.getByRole("button", { name: "Open" }).click();
+  await page.locator(".msg").nth(1).waitFor();
+  check("opening the kept conversation brings back both sides of the exchange", (await page.locator(".msg").count()) === 2);
+  await page.getByRole("button", { name: "Forget", exact: true }).click();
+  check("Forget asks for a second press before removing anything", (await page.getByRole("button", { name: "Press again to forget" }).count()) === 1 && (await page.locator(".msg").count()) === 2);
+  await page.getByRole("button", { name: "Press again to forget" }).click();
+  await page.getByRole("button", { name: "Keep this conversation" }).waitFor();
+  check("after Forget the conversation is gone from the list and the screen", (await page.getByRole("button", { name: "Open" }).count()) === 0 && (await page.locator(".msg").count()) === 0);
   // documents: an answer whose quotes are checked against the files
   await page.getByRole("link", { name: "Documents" }).click();
   await page.getByRole("heading", { name: "Ask your documents", exact: true }).waitFor();

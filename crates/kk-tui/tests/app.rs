@@ -877,3 +877,173 @@ fn tu19_undofix_needs_a_listing_first_a_y_and_posts_to_the_undo_route() {
         .join("\n");
     assert!(text.contains("Restored payments/auth/session.py."));
 }
+
+fn picker_rows(app: &App) -> Vec<String> {
+    let Mode::Picker(p) = &app.mode else {
+        panic!("the picker is not open")
+    };
+    p.visible().iter().map(|i| p.items[*i].id.clone()).collect()
+}
+
+#[test]
+fn tu20_keep_sends_the_session_with_every_message_and_new_chat_leaves_it() {
+    let mut a = booted();
+    let r = enter(&mut a, "/keep");
+    assert_eq!(
+        (r[0].method, r[0].path.as_str()),
+        (Method::Post, "/api/sessions")
+    );
+    a.handle(ok(&r[0], 201, json!({"id": "chat-aa11"})));
+    assert_eq!(a.session.as_deref(), Some("chat-aa11"));
+    assert!(
+        enter(&mut a, "/keep").is_empty(),
+        "a second keep does nothing"
+    );
+    let r = enter(&mut a, "hello there");
+    assert_eq!(r[0].body.as_ref().unwrap()["session"], "chat-aa11");
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"reply": "hi", "route": {"simulated": false}, "notes_used": 0, "saved": true}),
+    ));
+    assert!(a.session.is_some());
+    enter(&mut a, "/newchat");
+    assert!(a.session.is_none() && a.chat_history.is_empty());
+    let r = enter(&mut a, "unkept message");
+    assert!(
+        r[0].body.as_ref().unwrap().get("session").is_none(),
+        "an unkept chat sends no session"
+    );
+}
+
+#[test]
+fn tu21_the_picker_lists_chats_and_reviews_filters_opens_and_forgets_with_a_second_press() {
+    let mut a = booted();
+    a.jobs.push(kk_tui::app::JobRow {
+        id: "job-1".into(),
+        recipient: "acme".into(),
+        state: "ready".into(),
+    });
+    let r = enter(&mut a, "/sessions");
+    assert_eq!(r[0].path, "/api/sessions");
+    assert!(matches!(a.mode, Mode::Picker(_)));
+    a.handle(ok(&r[0], 200, json!({"sessions": [
+        {"id": "chat-1", "title": "Invoice questions", "created": 100, "updated": 100, "turns": 4},
+        {"id": "chat-2", "title": "Garden notes", "created": 200, "updated": 200, "turns": 2}
+    ]})));
+    assert_eq!(
+        picker_rows(&a),
+        ["chat-2", "chat-1", "job-1"],
+        "newest chats first, reviews after"
+    );
+    typed(&mut a, "invoice");
+    assert_eq!(picker_rows(&a), ["chat-1"]);
+    for _ in 0..7 {
+        a.handle(key(KeyCode::Backspace));
+    }
+    // delete: first press only arms
+    a.handle(key(KeyCode::Down));
+    assert!(a.handle(ctrl('d')).is_empty());
+    let Mode::Picker(p) = &a.mode else { panic!() };
+    assert_eq!(p.armed.as_deref(), Some("chat-1"));
+    let r = a.handle(ctrl('d'));
+    assert_eq!(r[0].path, "/api/sessions/chat-1/forget");
+    a.handle(ok(&r[0], 200, json!({"forgotten": true})));
+    assert_eq!(picker_rows(&a), ["chat-2", "job-1"]);
+    // a failed forget stays in the list with its reason
+    a.handle(key(KeyCode::Up));
+    let r = {
+        a.handle(ctrl('d'));
+        a.handle(ctrl('d'))
+    };
+    a.handle(ok(
+        &r[0],
+        500,
+        json!({"error": {"code": "STORE", "message": "disk trouble"}}),
+    ));
+    let Mode::Picker(p) = &a.mode else {
+        panic!("the picker stays open on failure")
+    };
+    assert!(
+        p.error.as_deref().unwrap_or("").contains("disk trouble"),
+        "{:?}",
+        p.error
+    );
+    assert_eq!(picker_rows(&a), ["chat-2", "job-1"]);
+    // opening a chat restores both sides and continues in the same session
+    let r = a.handle(key(KeyCode::Enter));
+    assert_eq!(r[0].path, "/api/sessions/chat-2");
+    assert!(matches!(a.mode, Mode::Normal));
+    a.handle(ok(&r[0], 200, json!({"id": "chat-2", "turns": [{"role": "user", "content": "first question"}, {"role": "assistant", "content": "first answer"}]})));
+    assert_eq!(a.session.as_deref(), Some("chat-2"));
+    assert!(text(&a).contains("first question") && text(&a).contains("first answer"));
+    assert_eq!(a.chat_history.len(), 2);
+}
+
+#[test]
+fn tu22_reviews_open_from_the_picker_are_never_deleted_there_and_failures_do_not_close_it() {
+    let mut a = booted();
+    a.jobs.push(kk_tui::app::JobRow {
+        id: "job-7".into(),
+        recipient: "acme".into(),
+        state: "ready".into(),
+    });
+    let r = enter(&mut a, "/resume");
+    a.handle(ok(
+        &r[0],
+        503,
+        json!({"error": {"code": "DOWN", "message": "service is restarting"}}),
+    ));
+    let Mode::Picker(p) = &a.mode else {
+        panic!("a load failure keeps the picker open")
+    };
+    assert!(p.error.as_deref().unwrap().contains("Could not load"));
+    assert_eq!(
+        picker_rows(&a),
+        ["job-7"],
+        "reviews already known are still offered"
+    );
+    assert!(a.handle(ctrl('d')).is_empty());
+    let Mode::Picker(p) = &a.mode else { panic!() };
+    assert!(p
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("Reviews are not removed"));
+    let r = a.handle(key(KeyCode::Enter));
+    assert_eq!(r[0].path, "/api/jobs/job-7");
+    let mut b = booted();
+    enter(&mut b, "/sessions");
+    b.handle(key(KeyCode::Esc));
+    assert!(matches!(b.mode, Mode::Normal), "Esc closes");
+}
+
+#[test]
+fn tu23_the_picker_renders_in_small_and_large_terminals_without_losing_the_selection() {
+    let mut a = booted();
+    let r = enter(&mut a, "/sessions");
+    let sessions: Vec<Value> = (0..40).map(|i| json!({"id": format!("chat-{i:02}"), "title": format!("Conversation number {i}"), "created": i, "updated": 1_700_000_000 + i, "turns": 2})).collect();
+    a.handle(ok(&r[0], 200, json!({ "sessions": sessions })));
+    for (w, h) in [(80u16, 24u16), (40, 12), (120, 40)] {
+        for _ in 0..5 {
+            a.handle(key(KeyCode::Down));
+        }
+        let (lines, _) = render(&a, w, h, true);
+        let screen = lines.join("\n");
+        assert!(
+            screen.contains("Conversations and reviews") && screen.contains("Filter:"),
+            "{w}x{h}\n{screen}"
+        );
+        assert!(screen.contains("Conversation number"), "{w}x{h}");
+    }
+    // the selected row stays on screen after moving far down
+    a.handle(key(KeyCode::PageDown));
+    a.handle(key(KeyCode::PageDown));
+    let (lines, _) = render(&a, 80, 12, true);
+    let Mode::Picker(p) = &a.mode else { panic!() };
+    let want = p.current().unwrap().label.clone();
+    assert!(
+        lines.join("\n").contains(&want),
+        "the selected item {want} must be visible"
+    );
+}
