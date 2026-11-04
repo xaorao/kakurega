@@ -2348,3 +2348,111 @@ fn sv20_once_an_approver_is_enrolled_only_a_signed_approval_of_the_exact_release
     let log = log_text(&base, c.security.admin_token());
     assert!(log.contains("approver.enrolled") && log.contains("approver.revoked"));
 }
+
+#[test]
+fn sv21_memory_backup_exports_everything_and_import_refuses_secrets_and_junk() {
+    let (root, _repo) = repo_copy("backup");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    for t in [
+        "The vendor contract renews every March",
+        "Invoices are paid on the 5th",
+    ] {
+        assert_eq!(
+            w.post("/api/memories", json!({"text": t, "level": "confidential"}))
+                .0,
+            201
+        );
+    }
+    let (st, backup) = w.get("/api/memories/export");
+    assert_eq!(st, 200);
+    assert_eq!(backup["memories"].as_array().unwrap().len(), 2);
+    assert!(
+        backup["memories"][0].get("id").is_none(),
+        "ids are not part of a backup"
+    );
+    assert_eq!(w.get("/api/memories/export").0, 200);
+    // restoring into a second, empty service
+    let (root2, _r2) = repo_copy("backup2");
+    let svc2 = Service::new(
+        &root2.join("data"),
+        vec![root2.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c2 = start(Options {
+        extension: Arc::new(Routes(svc2.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w2 = Web::new(c2.addr);
+    w2.pair(&c2.security.issue_pairing_code());
+    let (st, r) = w2.post("/api/memories/import", backup.clone());
+    assert_eq!((st, r["added"].as_u64()), (200, Some(2)), "{r}");
+    let (_, again) = w2.post("/api/memories/import", backup.clone());
+    assert_eq!(
+        (again["added"].as_u64(), again["already_known"].as_u64()),
+        (Some(0), Some(2)),
+        "importing twice adds nothing"
+    );
+    let (_, listed) = w2.get("/api/memories");
+    assert_eq!(listed["memories"].as_array().unwrap().len(), 2);
+    assert!(
+        listed["memories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["level"] == "confidential"),
+        "levels survive the round trip"
+    );
+    let secret = format!("{}{}", "sk_", "live_9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c");
+    let (_, r) = w2.post("/api/memories/import", json!({"kakurega_memory_backup": 1, "memories": [{"text": secret}, {"text": "fine note", "level": "bogus"}, {"text": "ok note", "level": "internal"}]}));
+    assert_eq!(
+        (r["added"].as_u64(), r["refused"].as_u64()),
+        (Some(1), Some(2)),
+        "a secret and a bad level are refused, the rest imported: {r}"
+    );
+    assert_eq!(
+        w2.post("/api/memories/import", json!({"memories": []})).0,
+        422,
+        "not a backup"
+    );
+    assert_eq!(
+        w2.post(
+            "/api/memories/import",
+            json!({"kakurega_memory_backup": 2, "memories": []})
+        )
+        .0,
+        400
+    );
+    let log = log_text(
+        &format!("http://127.0.0.1:{}", c2.addr.port()),
+        c2.security.admin_token(),
+    );
+    assert!(log.contains("memory.imported") && !log.contains("vendor contract"));
+    // an unpaired browser gets nothing
+    assert_eq!(
+        raw(
+            &format!("http://127.0.0.1:{}", c.addr.port()),
+            "GET",
+            "/api/memories/export",
+            &[],
+            None
+        )
+        .0,
+        401
+    );
+}

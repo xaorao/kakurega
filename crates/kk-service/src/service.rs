@@ -648,6 +648,91 @@ async fn memories_list(axum::Extension(svc): Svc, Query(q): Query<MemoryQuery>) 
     }
 }
 
+async fn memories_export(axum::Extension(svc): Svc) -> Response {
+    let mem = svc.memory.lock().expect("lock");
+    let res = mem
+        .owner_clearance()
+        .and_then(|c| mem.list(&c, now(), 100_000));
+    let items = match res {
+        Ok(i) => i,
+        Err(e) => return memory_error(e),
+    };
+    drop(mem);
+    svc.log_event(
+        "memory.exported",
+        "memory",
+        &[("count", items.len().into())],
+    );
+    let body = json!({"kakurega_memory_backup": 1, "exported_at": now(), "memories": items.iter().map(|r| {
+        let m = &r.memory;
+        json!({"text": m.text, "level": format!("{:?}", m.label.level).to_lowercase(), "valid_to": m.valid_to})
+    }).collect::<Vec<_>>()});
+    (
+        [
+            ("content-type", "application/json"),
+            (
+                "content-disposition",
+                "attachment; filename=\"kakurega-memory-backup.json\"",
+            ),
+            ("cache-control", "no-store"),
+        ],
+        body.to_string(),
+    )
+        .into_response()
+}
+
+#[derive(Deserialize)]
+struct ImportItem {
+    text: String,
+    #[serde(default)]
+    level: Option<String>,
+    #[serde(default)]
+    valid_to: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct ImportBody {
+    kakurega_memory_backup: i64,
+    memories: Vec<ImportItem>,
+}
+
+async fn memories_import(axum::Extension(svc): Svc, Json(b): Json<ImportBody>) -> Response {
+    if b.kakurega_memory_backup != 1 || b.memories.len() > 5000 {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_BACKUP",
+            "this is not a Kakurega memory backup, or it has more than 5000 items",
+        );
+    }
+    let (mut added, mut known, mut refused) = (0usize, 0usize, 0usize);
+    for it in b.memories {
+        let Some(level) = level_from(it.level.as_deref()) else {
+            refused += 1;
+            continue;
+        };
+        let m = kk_memory::NewMemory {
+            text: it.text,
+            label: kk_types::label::Label::new(level),
+            subject: None,
+            reason: "restored from a backup".into(),
+            source: kk_memory::Source::User,
+            valid_from: None,
+            valid_to: it.valid_to,
+        };
+        match svc.memory.lock().expect("lock").remember(now(), m) {
+            Ok(kk_memory::Remembered::Added(_)) => added += 1,
+            Ok(_) => known += 1,
+            Err(_) => refused += 1,
+        }
+    }
+    svc.log_event(
+        "memory.imported",
+        "memory",
+        &[("added", added.into()), ("refused", refused.into())],
+    );
+    Json(json!({"added": added, "already_known": known, "refused": refused})).into_response()
+}
+
 async fn memory_add(axum::Extension(svc): Svc, Json(b): Json<MemoryBody>) -> Response {
     let Some(level) = level_from(b.level.as_deref()) else {
         return error(
@@ -2185,6 +2270,8 @@ impl Extension for Routes {
             .route("/api/log", get(log_summary))
             .route("/api/log/export", get(log_export))
             .route("/api/memories", get(memories_list).post(memory_add))
+            .route("/api/memories/export", get(memories_export))
+            .route("/api/memories/import", post(memories_import))
             .route("/api/memories/{id}/correct", post(memory_correct))
             .route("/api/memories/{id}/forget", post(memory_forget))
             .route("/api/memories/{id}/history", get(memory_history))
