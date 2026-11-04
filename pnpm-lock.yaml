@@ -14,6 +14,12 @@ importers:
         specifier: 2.1.0
         version: 2.1.0
 
+  packages/verifier-js:
+    dependencies:
+      '@kakurega/canon':
+        specifier: workspace:*
+        version: link:../canon-js
+
 packages:
 
   canonicalize@2.1.0:
