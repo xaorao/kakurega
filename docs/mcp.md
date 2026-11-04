@@ -10,7 +10,7 @@ The service must be running (`kaku serve`, or the desktop app, or the terminal w
 { "mcpServers": { "kakurega": { "command": "kaku", "args": ["mcp"] } } }
 ```
 
-Pass `--data-dir DIR` if the service was started with another data directory.
+`kaku` must be a path the client can run: use the full path of the binary you built (for example `/path/to/kakurega/target/debug/kaku`) or `/opt/kakurega/kaku` from the Linux package. Pass `--data-dir DIR` if the service was started with another data directory.
 
 ## What an agent can do
 
