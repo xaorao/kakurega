@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { t } from "../i18n";
+import { matchItems } from "../palette-match";
 
 export interface PaletteItem {
   id: string;
@@ -8,21 +9,17 @@ export interface PaletteItem {
   run: () => void;
 }
 
-/** Items whose label or group contains every word typed, in the order given. */
-export function matchItems(items: PaletteItem[], query: string): PaletteItem[] {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  return items.filter((i) => {
-    const hay = `${i.label} ${i.group}`.toLowerCase();
-    return words.every((w) => hay.includes(w));
-  });
-}
-
 export function Palette(props: { open: boolean; items: PaletteItem[]; onClose: () => void }) {
   const [q, setQ] = createSignal("");
   const [sel, setSel] = createSignal(0);
   const shown = createMemo(() => matchItems(props.items, q()));
   let input: HTMLInputElement | undefined;
   let opener: Element | null = null;
+  createEffect(() => {
+    // keep the highlighted row in view when arrow keys move past the visible part of the list
+    const row = props.open ? shown()[sel()] : undefined;
+    if (row) document.getElementById(`pal-${row.id}`)?.scrollIntoView?.({ block: "nearest" });
+  });
   createEffect(() => {
     if (props.open) {
       opener = document.activeElement;

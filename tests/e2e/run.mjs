@@ -394,6 +394,14 @@ try {
   check("a search with no match says so", (await palette.getByText("Nothing matches.").count()) === 1);
   await page.keyboard.press("Escape");
   check("Escape closes the palette", (await palette.count()) === 0);
+  await page.keyboard.press("Control+Shift+P");
+  await page.keyboard.type("mmry");
+  check("letters typed in order find a command (an abbreviation)", (await palette.getByRole("option").first().innerText()).includes("Memory"));
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+Shift+P");
+  await page.keyboard.type("new");
+  check("the best match comes first: a command that starts with the word", (await palette.getByRole("option").first().innerText()).toLowerCase().startsWith("new"));
+  await page.keyboard.press("Escape");
   // chat: a private assistant turn that can use a saved note, and nothing is saved
   await page.getByRole("link", { name: "Chat" }).click();
   await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();
