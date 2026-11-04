@@ -1,5 +1,5 @@
 import { createSignal, For, Show } from "solid-js";
-import { api, ApiError, type ChatTurn } from "../api";
+import { api, ApiError, type ChatTurn, type ResearchPage, type ResearchProposal } from "../api";
 import { t } from "../i18n";
 
 interface Shown extends ChatTurn {
@@ -11,6 +11,40 @@ export function Chat() {
   const [text, setText] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
+  const [urls, setUrls] = createSignal("");
+  const [proposal, setProposal] = createSignal<ResearchProposal | null>(null);
+  const [pages, setPages] = createSignal<ResearchPage[]>([]);
+  const [webBusy, setWebBusy] = createSignal(false);
+  const [webError, setWebError] = createSignal("");
+  const propose = async () => {
+    setWebBusy(true);
+    setWebError("");
+    setProposal(null);
+    try {
+      const list = urls().split(/\s+/).filter(Boolean);
+      setProposal(await api.researchPropose(list));
+    } catch (err) {
+      setWebError(err instanceof ApiError ? err.message : t("web.error"));
+    } finally {
+      setWebBusy(false);
+    }
+  };
+  const fetchApproved = async () => {
+    const p = proposal();
+    if (!p) return;
+    setWebBusy(true);
+    setWebError("");
+    try {
+      const r = await api.researchFetch(p.id, p.digest);
+      setPages([...pages(), ...r.pages]);
+      setProposal(null);
+      setUrls("");
+    } catch (err) {
+      setWebError(err instanceof ApiError ? err.message : t("web.error"));
+    } finally {
+      setWebBusy(false);
+    }
+  };
   const send = async (e?: Event) => {
     e?.preventDefault();
     const message = text().trim();
@@ -21,8 +55,9 @@ export function Chat() {
     setBusy(true);
     setError("");
     try {
-      const r = await api.chat(message, history);
+      const r = await api.chat(message, history, pages().filter((p) => p.page_id && !p.looks_like_instructions).map((p) => p.page_id as string));
       const foot = [r.route.simulated ? t("chat.test") : t("chat.private"), t("chat.notesUsed", { n: r.notes_used })];
+      if (r.web_sources_used > 0) foot.push(t("web.used", { n: r.web_sources_used }));
       if (r.notes_withheld > 0) foot.push(t("chat.withheld", { n: r.notes_withheld }));
       setTurns([...turns(), { role: "assistant", content: r.reply, foot }]);
     } catch (err) {
@@ -50,6 +85,46 @@ export function Chat() {
         </For>
         <Show when={busy()}><li class="muted" role="status">{t("chat.thinking")}</li></Show>
       </ul>
+      <details class="card stack" id="web-research">
+        <summary>{t("web.title")}</summary>
+        <p class="muted">{t("web.lead")}</p>
+        <label for="web-urls">{t("web.urls")}</label>
+        <textarea id="web-urls" rows="3" value={urls()} onInput={(e) => setUrls(e.currentTarget.value)} />
+        <div class="actions">
+          <button type="button" disabled={webBusy() || urls().trim().length === 0} onClick={propose}>{t("web.show")}</button>
+          <Show when={webError()}><span role="alert" class="bad">{webError()}</span></Show>
+        </div>
+        <Show when={proposal()}>
+          {(p) => (
+            <div class="stack" role="region" aria-label={t("web.review")}>
+              <p><strong>{t("web.willRequest")}</strong></p>
+              <ul class="plain">
+                <For each={p().items}>{(i) => <li class={i.allowed ? "" : "muted"}><code>{i.url}</code> {i.allowed ? "" : `— ${t("web.refused")}: ${i.reason}`}</li>}</For>
+              </ul>
+              <p class="muted">{p().stays_here}</p>
+              <div class="actions">
+                <button class="primary" type="button" disabled={webBusy()} onClick={fetchApproved}>{t("web.fetch")}</button>
+                <button type="button" onClick={() => setProposal(null)}>{t("web.cancel")}</button>
+              </div>
+            </div>
+          )}
+        </Show>
+        <Show when={pages().length > 0}>
+          <p><strong>{t("web.pages")}</strong></p>
+          <ul class="plain">
+            <For each={pages()}>
+              {(p) => (
+                <li>
+                  <code>{p.final_url ?? p.url}</code> {p.title ? `· ${p.title}` : ""}
+                  {p.error ? ` — ${t("web.failed")}: ${p.error}` : ""}
+                  {p.looks_like_instructions ? ` — ${t("web.withheld")}` : ""}
+                </li>
+              )}
+            </For>
+          </ul>
+          <button type="button" onClick={() => setPages([])}>{t("web.forget")}</button>
+        </Show>
+      </details>
       <form class="card stack" onSubmit={send}>
         <label for="chat-input">{t("chat.input")}</label>
         <textarea

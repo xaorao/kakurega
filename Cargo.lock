@@ -2582,6 +2582,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kk-fetch"
+version = "0.0.1"
+dependencies = [
+ "ureq",
+ "url",
+]
+
+[[package]]
 name = "kk-kernel"
 version = "0.0.1"
 dependencies = [
@@ -2685,10 +2693,12 @@ dependencies = [
  "kk-effects",
  "kk-eventlog",
  "kk-evidence",
+ "kk-fetch",
  "kk-memory",
  "kk-review",
  "kk-route",
  "kk-sandbox",
+ "kk-secrets",
  "kk-tui",
  "kk-types",
  "kk-vault",

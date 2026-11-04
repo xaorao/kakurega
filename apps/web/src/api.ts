@@ -43,7 +43,10 @@ export interface Suggestion { id: string; text: string; why: string; level: stri
 export interface LogEntry { seq: number; at: number; kind: string; subject: string; data: Record<string, string | number> }
 export interface LogSummary { count: number; head: string | null; public_key: string; recent: LogEntry[] }
 export interface ChatTurn { role: "user" | "assistant"; content: string }
-export interface ChatReply { reply: string; route: { id: string; class: string; simulated: boolean }; notes_used: number; notes_withheld: number }
+export interface ChatReply { reply: string; route: { id: string; class: string; simulated: boolean }; notes_used: number; notes_withheld: number; web_sources_used: number }
+export interface ResearchItem { url: string; host?: string; allowed: boolean; reason?: string }
+export interface ResearchProposal { id: string; digest: string; items: ResearchItem[]; will_request: string[]; stays_here: string }
+export interface ResearchPage { page_id?: string; url: string; final_url?: string; title?: string; sha256?: string; truncated?: boolean; looks_like_instructions?: boolean; error?: string }
 export interface AskCitation { file: string; quote: string; verdict: "verified" | "not_found" | "unknown_file" | "bad_length"; line: number | null }
 export interface AskReply { checkable: boolean; answer?: string; citations?: AskCitation[]; verified?: number; unchecked_text?: string; files_used: string[]; files_withheld: string[]; files_skipped: string[]; injection_suspects: string[]; route: { simulated: boolean } }
 export interface Withheld { path: string; notes: string[] }
@@ -109,7 +112,9 @@ export const api = {
   acceptSuggestion: (job: string, id: string) => request<{ id: string; added: boolean }>("POST", `/api/jobs/${job}/memory-suggestions/${id}/accept`, {}),
   dismissSuggestion: (job: string, id: string) => request<{ dismissed: boolean }>("POST", `/api/jobs/${job}/memory-suggestions/${id}/dismiss`, {}),
   log: () => request<LogSummary>("GET", "/api/log"),
-  chat: (message: string, history: ChatTurn[]) => request<ChatReply>("POST", "/api/chat", { message, history }),
+  chat: (message: string, history: ChatTurn[], sources: string[] = []) => request<ChatReply>("POST", "/api/chat", { message, history, sources }),
+  researchPropose: (urls: string[]) => request<ResearchProposal>("POST", "/api/research/propose", { urls }),
+  researchFetch: (id: string, digest: string) => request<{ pages: ResearchPage[]; note: string }>("POST", `/api/research/${id}/fetch`, { approve: true, digest }),
   ask: (folder: string, question: string) => request<AskReply>("POST", "/api/ask", { folder, question }),
   readiness: () => request<Readiness>("GET", "/api/readiness"),
   fs: (path?: string) => request<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>("GET", `/api/fs${path ? `?path=${encodeURIComponent(path)}` : ""}`),

@@ -265,6 +265,16 @@ try {
   await page.getByRole("link", { name: "Chat" }).click();
   await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();
   check("the chat says it is private and that conversations are not saved", (await page.getByText("Conversations are not saved").count()) === 1);
+  await page.getByText("Add pages from the web").click();
+  await page.getByLabel("Web addresses, one per line (https only)").fill("https://docs.rs/tokio\nhttp://insecure.example/\nhttps://127.0.0.1/admin");
+  const originsBefore = requestOrigins.size;
+  await page.getByRole("button", { name: "Show what would be requested" }).click();
+  await page.getByText("These exact addresses would be requested:").waitFor();
+  const reviewText = await page.getByRole("region", { name: "Review before fetching" }).innerText();
+  check("the research review lists the exact addresses, refuses the insecure and internal ones with a reason, and says nothing was sent", reviewText.includes("https://docs.rs/tokio") && (reviewText.match(/not allowed/g) ?? []).length === 2 && reviewText.includes("Nothing has been sent yet"));
+  check("showing the review made no request to anywhere but the local service", requestOrigins.size === originsBefore);
+  await page.getByRole("button", { name: "Cancel" }).click();
+  check("cancelling the review discards it", (await page.getByText("These exact addresses would be requested:").count()) === 0);
   await page.getByLabel("Your message").fill("Where are login sessions kept?");
   await page.getByLabel("Your message").press("Shift+Enter");
   await page.getByLabel("Your message").type("(one line more)");

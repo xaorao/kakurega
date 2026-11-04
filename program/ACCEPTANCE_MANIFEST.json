@@ -329,6 +329,13 @@
           "kind": "machine",
           "command": "cargo test -p kk-service --test flow sv24",
           "expect": "test result: ok. 1 passed"
+        },
+        {
+          "id": "II-09i",
+          "text": "Live research slice: guarded fetch door (kk-fetch), two-step per-request approval bound to the exact addresses, untrusted pages in chat, web panel. Search provider not built.",
+          "kind": "machine",
+          "command": "cargo test -p kk-service --test flow sv26",
+          "expect": "test result: ok. 1 passed"
         }
       ]
     },
