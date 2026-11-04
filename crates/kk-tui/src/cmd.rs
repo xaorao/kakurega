@@ -60,6 +60,65 @@ pub const NAMES: &[&str] = &[
     "quit",
 ];
 
+/// One line per command for the completion list.
+pub fn describe(name: &str) -> &'static str {
+    match name {
+        "help" => "list every command",
+        "status" => "is the model, sandbox and storage ready",
+        "review" => "start a private review of a folder",
+        "reviews" => "list reviews and their state",
+        "open" => "show a review's progress",
+        "findings" => "what the kernel confirmed",
+        "fixes" => "proposed fixes, checked against the reproducer",
+        "applyfix" => "apply a verified fix to your file",
+        "undofix" => "restore the original file",
+        "release" => "show exactly what would be sent",
+        "approve" => "look at the exact files, then approve or refuse",
+        "deliver" => "sign and deliver an approved release",
+        "memory" => "list or search saved notes",
+        "ask" => "ask about documents; every quote is checked",
+        "remember" => "save a note",
+        "correct" => "change a saved note",
+        "forget" => "delete a saved note for good",
+        "log" => "the signed activity log",
+        "verify" => "check a capsule offline",
+        "clear" => "start a fresh conversation",
+        "keep" => "save this conversation in the encrypted store",
+        "clearhistory" => "forget the saved command history",
+        "proof" => "hardware proof of a NEAR confidential model",
+        "gateway" => "hardware proof of the NEAR gateway",
+        "sessions" => "pick a kept conversation or a review",
+        "resume" => "same as /sessions",
+        "newchat" => "leave this conversation and start a new one",
+        "quit" => "leave Kakurega",
+        _ => "",
+    }
+}
+
+/// Commands whose name starts with, then contains, what has been typed after the slash.
+pub fn matches(typed: &str) -> Vec<&'static str> {
+    let t = typed.trim_start_matches('/').to_ascii_lowercase();
+    let mut names: Vec<&'static str> = NAMES.to_vec();
+    names.sort_unstable();
+    let mut out: Vec<&'static str> = names
+        .iter()
+        .copied()
+        .filter(|n| n.starts_with(&t))
+        .collect();
+    out.extend(
+        names
+            .iter()
+            .copied()
+            .filter(|n| !n.starts_with(&t) && n.contains(&t)),
+    );
+    out
+}
+
+/// True when running the command needs something typed after its name.
+pub fn takes_arguments(name: &str) -> bool {
+    usage(name).contains(' ')
+}
+
 pub fn usage(name: &str) -> &'static str {
     match name {
         "review" => "/review FOLDER for RECIPIENT",

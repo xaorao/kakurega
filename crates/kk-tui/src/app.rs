@@ -152,6 +152,8 @@ pub struct App {
     pub pasted: Vec<(String, String)>,
     /// Messages typed while an answer is still arriving; each is sent after the previous answer completes.
     pub queued: Vec<String>,
+    pub popup_sel: usize,
+    popup_dismissed: Option<String>,
     history_to_save: Vec<String>,
     history_loaded: bool,
     /// Set by Esc while an answer is streaming; the network thread then closes the connection.
@@ -218,6 +220,8 @@ impl App {
             session: None,
             pasted: Vec::new(),
             queued: Vec::new(),
+            popup_sel: 0,
+            popup_dismissed: None,
             history_to_save: Vec::new(),
             history_loaded: false,
             cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -300,6 +304,71 @@ impl App {
             ));
         }
         out
+    }
+
+    /// The command names to offer while the first word of the line is being typed.
+    pub fn completions(&self) -> Vec<&'static str> {
+        if !matches!(self.mode, Mode::Normal)
+            || !self.input.starts_with('/')
+            || self.input.contains(char::is_whitespace)
+            || self.popup_dismissed.as_deref() == Some(self.input.as_str())
+        {
+            return Vec::new();
+        }
+        let list = cmd::matches(&self.input);
+        // a command typed out in full needs no help, and Up/Down then keep walking the history
+        if list.len() == 1 && list[0] == self.input[1..].to_ascii_lowercase() {
+            return Vec::new();
+        }
+        list
+    }
+
+    fn popup_key(&mut self, k: KeyEvent) -> Option<Vec<Req>> {
+        let list = self.completions();
+        if list.is_empty() || k.modifiers.contains(KeyModifiers::CONTROL) {
+            return None;
+        }
+        let n = list.len();
+        let sel = self.popup_sel.min(n - 1);
+        match k.code {
+            KeyCode::Down => {
+                self.popup_sel = (sel + 1) % n;
+                Some(Vec::new())
+            }
+            KeyCode::Up => {
+                self.popup_sel = (sel + n - 1) % n;
+                Some(Vec::new())
+            }
+            KeyCode::Esc => {
+                self.popup_dismissed = Some(self.input.clone());
+                Some(Vec::new())
+            }
+            KeyCode::Tab => {
+                self.input = format!("/{} ", list[sel]);
+                self.cursor = self.input.chars().count();
+                self.popup_sel = 0;
+                Some(Vec::new())
+            }
+            KeyCode::Enter
+                if cmd::NAMES.contains(&self.input[1..].to_ascii_lowercase().as_str()) =>
+            {
+                None
+            }
+            KeyCode::Enter => {
+                let name = list[sel];
+                self.popup_sel = 0;
+                if cmd::takes_arguments(name) {
+                    self.input = format!("/{name} ");
+                    self.cursor = self.input.chars().count();
+                    Some(Vec::new())
+                } else {
+                    self.input = format!("/{name}");
+                    self.cursor = self.input.chars().count();
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     pub fn status_line(&self) -> String {
@@ -670,6 +739,9 @@ impl App {
     }
 
     fn on_key_normal(&mut self, k: KeyEvent) -> Vec<Req> {
+        if let Some(r) = self.popup_key(k) {
+            return r;
+        }
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         let n = self.input.chars().count();
         match k.code {

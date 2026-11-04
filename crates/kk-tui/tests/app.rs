@@ -1382,3 +1382,92 @@ fn tu30_typed_lines_are_saved_in_the_background_and_loaded_once_without_secrets_
     assert_eq!(c[0].path, "/api/history/clear");
     assert!(b.history.is_empty() || b.history == ["/clearhistory"]);
 }
+
+#[test]
+fn tu31_typing_a_slash_offers_matching_commands_that_can_be_chosen_completed_or_hidden() {
+    let mut a = booted();
+    assert!(a.completions().is_empty());
+    typed(&mut a, "/");
+    assert!(
+        a.completions().len() >= 25 && a.completions()[0] == "applyfix",
+        "every command, in order"
+    );
+    typed(&mut a, "me");
+    assert_eq!(
+        a.completions()[0],
+        "memory",
+        "prefix matches come first, then names that merely contain the text"
+    );
+    a.handle(key(KeyCode::Backspace));
+    a.handle(key(KeyCode::Backspace));
+    typed(&mut a, "fi");
+    assert_eq!(a.completions()[..2], ["findings", "fixes"]);
+    a.handle(key(KeyCode::Down));
+    a.handle(key(KeyCode::Tab));
+    assert_eq!(
+        a.input, "/fixes ",
+        "Tab completes the chosen command and leaves room for arguments"
+    );
+    assert!(
+        a.completions().is_empty(),
+        "the list closes once a space is typed"
+    );
+    // Enter on a command that needs arguments completes it instead of running it
+    a.handle(ctrl('u'));
+    typed(&mut a, "/forg");
+    assert!(a.handle(key(KeyCode::Enter)).is_empty());
+    assert_eq!(a.input, "/forget ");
+    // a command typed out in full runs as typed, even when a longer name also matches
+    a.handle(ctrl('u'));
+    typed(&mut a, "/review");
+    assert_eq!(a.completions(), ["review", "reviews"]);
+    assert!(a.handle(key(KeyCode::Enter)).is_empty());
+    assert!(
+        a.input.is_empty() && text(&a).contains("usage: /review FOLDER for RECIPIENT"),
+        "it ran and printed its usage"
+    );
+    // Enter on a command with no arguments runs it
+    a.handle(ctrl('u'));
+    typed(&mut a, "/revie");
+    let ws = a.completions();
+    assert_eq!(ws, ["review", "reviews"]);
+    a.handle(key(KeyCode::Down));
+    let r = a.handle(key(KeyCode::Enter));
+    assert_eq!(r[0].path, "/api/jobs", "/reviews ran");
+    // Esc hides the list until the line changes; the arrow keys still walk history then
+    typed(&mut a, "/he");
+    assert_eq!(a.completions(), ["help"]);
+    a.handle(key(KeyCode::Esc));
+    assert!(a.completions().is_empty() && a.input == "/he");
+    typed(&mut a, "l");
+    assert_eq!(
+        a.completions(),
+        ["help"],
+        "typing again brings the list back"
+    );
+    // wrap-around
+    a.handle(ctrl('u'));
+    typed(&mut a, "/");
+    a.handle(key(KeyCode::Up));
+    a.handle(key(KeyCode::Tab));
+    assert_eq!(
+        a.input, "/verify ",
+        "Up from the first wraps to the last alphabetical command that is not quit... "
+    );
+}
+
+#[test]
+fn tu32_the_completion_list_is_drawn_above_the_composer_and_fits_small_terminals() {
+    let mut a = booted();
+    typed(&mut a, "/re");
+    let (lines, _) = render(&a, 80, 24, true);
+    let s = lines.join("\n");
+    assert!(
+        s.contains("/release") && s.contains("what would be sent")
+            || s.contains("show exactly what would be sent"),
+        "{s}"
+    );
+    for (w, h) in [(80u16, 24u16), (40, 12), (120, 40), (20, 5)] {
+        let _ = render(&a, w, h, true);
+    }
+}

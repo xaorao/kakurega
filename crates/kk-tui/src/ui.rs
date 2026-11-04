@@ -181,6 +181,48 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
         );
     }
 
+    let completions = app.completions();
+    if !completions.is_empty() {
+        let shown = completions.len().min(8);
+        let h = shown as u16 + 2;
+        let r = rows[1];
+        if r.height >= h && r.width >= 20 {
+            let pop = Rect {
+                x: r.x,
+                y: r.y + r.height - h,
+                width: r.width.min(72),
+                height: h,
+            };
+            f.render_widget(Clear, pop);
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(" Commands · Tab completes · Enter picks · Esc hides ");
+            let inner = block.inner(pop);
+            f.render_widget(block, pop);
+            let sel = app.popup_sel.min(completions.len() - 1);
+            let first = sel.saturating_sub(shown - 1);
+            let pad = completions.iter().map(|n| n.len()).max().unwrap_or(0) + 2;
+            let lines: Vec<Line> = completions
+                .iter()
+                .enumerate()
+                .skip(first)
+                .take(shown)
+                .map(|(i, n)| {
+                    let text = format!("/{:<pad$}{}", n, crate::cmd::describe(n), pad = pad);
+                    if i == sel {
+                        Line::from(Span::styled(
+                            text,
+                            Style::default().add_modifier(Modifier::REVERSED),
+                        ))
+                    } else {
+                        Line::raw(text)
+                    }
+                })
+                .collect();
+            f.render_widget(Paragraph::new(lines), inner);
+        }
+    }
+
     let composer_title = match &app.mode {
         Mode::Normal => " Command ",
         Mode::Approval(_) => " Approval is open: answer it first ",
