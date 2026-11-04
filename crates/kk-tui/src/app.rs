@@ -110,6 +110,9 @@ pub struct ApprovalView {
     pub requires_proof: bool,
 }
 
+/// Ticks (about 0.7 s each) the first Esc stays armed: roughly four seconds.
+pub const ESC_ARM_TICKS: u8 = 6;
+
 #[derive(Debug, Clone)]
 pub struct ConfirmView {
     pub prompt: String,
@@ -162,6 +165,8 @@ pub struct App {
     pub stashed: Vec<String>,
     /// Set by Ctrl-G: the text to open in the owner's editor. The runtime takes it, runs the editor and calls `finish_edit`.
     pub editor_request: Option<String>,
+    /// Set by the first Esc while an answer is arriving; the second Esc within a few seconds stops it. Counts down on ticks.
+    pub esc_armed: u8,
     pub popup_sel: usize,
     popup_dismissed: Option<String>,
     history_to_save: Vec<String>,
@@ -169,7 +174,7 @@ pub struct App {
     /// Set by Esc while an answer is streaming; the network thread then closes the connection.
     pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     live: Option<(usize, String)>,
-    chat_waiting: bool,
+    pub chat_waiting: bool,
     pub approver: Option<kk_evidence::approval::ApproverKey>,
     pub fixes_seen: Vec<(String, usize, String, bool)>,
     /// Addresses suggested by the last search, numbered from 1 for /read.
@@ -244,6 +249,7 @@ impl App {
             chat_waiting: false,
             approver: None,
             editor_request: None,
+            esc_armed: 0,
             fixes_seen: Vec::new(),
             search_hits: Vec::new(),
             web_pages: Vec::new(),
@@ -448,6 +454,7 @@ impl App {
                 Vec::new()
             }
             Event::Tick => {
+                self.esc_armed = self.esc_armed.saturating_sub(1);
                 let ids: Vec<String> = self
                     .watching
                     .keys()
@@ -943,7 +950,13 @@ impl App {
             }
             KeyCode::Esc => {
                 if self.chat_waiting {
-                    self.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+                    // one stray key must not throw away a long answer: the first Esc arms, the second stops
+                    if self.esc_armed > 0 {
+                        self.esc_armed = 0;
+                        self.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+                    } else {
+                        self.esc_armed = ESC_ARM_TICKS;
+                    }
                 } else {
                     self.input.clear();
                     self.cursor = 0;

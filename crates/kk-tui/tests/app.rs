@@ -1099,6 +1099,12 @@ fn tu24_a_streamed_answer_grows_in_one_card_is_replaced_by_the_final_text_and_ca
     // Esc while waiting asks the network thread to stop, and does not clear the composer
     typed(&mut a, "draft");
     a.handle(key(KeyCode::Esc));
+    assert!(
+        !a.cancel.load(std::sync::atomic::Ordering::SeqCst),
+        "one Esc only arms"
+    );
+    assert!(footer_text(&a).contains("Esc again to stop the answer"));
+    a.handle(key(KeyCode::Esc));
     assert!(a.cancel.load(std::sync::atomic::Ordering::SeqCst));
     assert_eq!(a.input, "draft");
     a.handle(ok(&r[0], 200, json!({"stopped": true})));
@@ -1278,6 +1284,7 @@ fn tu28_messages_typed_while_an_answer_streams_are_queued_in_order_and_dropped_i
     assert_eq!(body["history"].as_array().unwrap().len(), 2);
     assert_eq!(a.queued, ["three"]);
     // stopping the answer drops what was waiting, and says so
+    a.handle(key(KeyCode::Esc));
     a.handle(key(KeyCode::Esc));
     let after = a.handle(ok(&next[0], 200, json!({"stopped": true})));
     assert!(after.is_empty() && a.queued.is_empty());
@@ -1727,4 +1734,44 @@ fn tu38_ctrl_g_hands_the_whole_message_to_the_editor_and_takes_back_what_is_save
         .as_str()
         .unwrap()
         .ends_with("message\nsecond line"));
+}
+
+fn footer_text(a: &App) -> String {
+    let mut term = Terminal::new(TestBackend::new(110, 30)).unwrap();
+    term.draw(|f| draw(f, a, &Theme::from_env())).unwrap();
+    let buf = term.backend().buffer().clone();
+    (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn tu39_the_first_esc_only_arms_and_the_arming_runs_out() {
+    let mut a = booted();
+    let r = enter(&mut a, "hello");
+    assert!(footer_text(&a).contains("Esc twice stops the answer"));
+    a.handle(key(KeyCode::Esc));
+    assert!(a.esc_armed > 0 && !a.cancel.load(std::sync::atomic::Ordering::SeqCst));
+    for _ in 0..kk_tui::app::ESC_ARM_TICKS {
+        a.handle(Event::Tick);
+    }
+    assert_eq!(a.esc_armed, 0, "left alone, the arming expires");
+    a.handle(key(KeyCode::Esc));
+    assert!(
+        !a.cancel.load(std::sync::atomic::Ordering::SeqCst),
+        "an Esc after it expired arms again instead of stopping"
+    );
+    a.handle(key(KeyCode::Esc));
+    assert!(a.cancel.load(std::sync::atomic::Ordering::SeqCst));
+    a.handle(ok(&r[0], 200, json!({"stopped": true})));
+    assert_eq!(a.esc_armed, 0);
+    assert!(
+        !footer_text(&a).contains("Esc twice stops"),
+        "the hint goes away with the answer"
+    );
 }

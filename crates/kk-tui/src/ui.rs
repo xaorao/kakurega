@@ -280,6 +280,12 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
         Mode::Approval(_) => {
             "Type the digest prefix · Enter approves · Esc or Ctrl-C refuses".to_string()
         }
+        Mode::Normal if app.chat_waiting && app.esc_armed > 0 => {
+            "Esc again to stop the answer · Ctrl-C quits".to_string()
+        }
+        Mode::Normal if app.chat_waiting => {
+            "Esc twice stops the answer · new messages wait their turn · Ctrl-C quits".to_string()
+        }
         Mode::Normal => {
             "Tab complete · Up/Down history · PgUp/PgDn scroll · /help · Ctrl-C quits".to_string()
         }
