@@ -85,6 +85,15 @@ try {
   await page.getByRole("button", { name: "Sign and deliver the capsule" }).click();
   await page.getByText("Delivered.").waitFor({ timeout: 20000 });
   check("after native approval the release is signed and delivered", true);
+  await page.getByRole("link", { name: "Documents" }).click();
+  await page.getByRole("heading", { name: "Ask your documents", exact: true }).waitFor({ timeout: 20000 });
+  const first = page.getByRole("button", { name: /payments|contracts|docs/i }).first();
+  await first.click();
+  await page.getByLabel("Your question").fill("What does this folder describe?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await page.getByRole("heading", { name: /Answer|Unchecked/i }).first().waitFor({ timeout: 60000 });
+  check("document questions work in the desktop window and show a checked or clearly unchecked answer", true);
+  await page.screenshot({ path: join(shots, "desktop-03-documents.png") });
   check("no console or page errors after the full flow", problems.length === 0, problems.join(" | "));
 } finally {
   await app.close();
