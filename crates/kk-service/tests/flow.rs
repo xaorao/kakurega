@@ -2645,3 +2645,158 @@ fn sv22_a_checked_fix_is_applied_to_the_owners_file_only_when_nothing_has_change
         "the log records the file and hash, never the code"
     );
 }
+
+#[test]
+fn sv23_tenants_are_structurally_isolated_from_each_other() {
+    use kk_service::tenants::{valid_id, TenantError, Tenants};
+    let base = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/service-tmp")
+        .join(format!("tenants-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let tenants = Tenants::new(
+        &base,
+        Box::new(|| Arc::new(CannedRunner { confirm: true })),
+        true,
+    )
+    .unwrap();
+    for bad in [
+        "",
+        "ab",
+        "../x",
+        "a/b",
+        "a b",
+        "ALICE",
+        "aLICE",
+        "alicE",
+        "alice.",
+        ".hidden",
+        "-alice",
+        "al\u{0}ice",
+        "аlice",
+        &"a".repeat(41),
+        "tenants",
+        "con\n",
+    ] {
+        if bad == "tenants" {
+            assert!(valid_id(bad));
+            continue;
+        }
+        assert!(!valid_id(bad), "{bad:?} must be refused");
+        assert_eq!(tenants.get_or_create(bad).err(), Some(TenantError::BadId));
+    }
+    assert!(tenants.get_or_create("alice").is_ok() && tenants.get_or_create("bob").is_ok());
+    let (a, b) = (
+        tenants.get_or_create("alice").unwrap(),
+        tenants.get_or_create("bob").unwrap(),
+    );
+    assert!(
+        Arc::ptr_eq(&a, &tenants.get_or_create("alice").unwrap()),
+        "one service per tenant"
+    );
+    assert_ne!(
+        a.signer_public(),
+        b.signer_public(),
+        "each tenant signs with its own key"
+    );
+    let serve = |svc: &Arc<Service>| {
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        (c, w)
+    };
+    let (_ca, wa) = serve(&a);
+    let (_cb, wb) = serve(&b);
+    assert_eq!(
+        wa.post(
+            "/api/memories",
+            json!({"text": "Alice's secret supplier is Contoso", "level": "confidential"})
+        )
+        .0,
+        201
+    );
+    assert_eq!(
+        wb.get("/api/memories").1["memories"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0,
+        "bob sees none of alice's memory"
+    );
+    assert_eq!(
+        wb.get("/api/memories?q=Contoso").1["memories"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0,
+        "nor by search"
+    );
+    assert_eq!(
+        wa.get("/api/memories").1["memories"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    // files and jobs: a tenant can only start reviews inside its own file area
+    let fa = tenants.files_dir("alice").unwrap();
+    let fb = tenants.files_dir("bob").unwrap();
+    assert!(fa.is_dir() && fb.is_dir() && fa != fb);
+    fs::write(fa.join("alice-notes.txt"), "alice only").unwrap();
+    let (st, _) = wb.post(
+        "/api/jobs",
+        json!({"repo": fa.to_string_lossy(), "recipient": "acme-audit"}),
+    );
+    assert!(
+        (400..500).contains(&st),
+        "bob cannot review alice's folder: {st}"
+    );
+    let (st, _) = wb.post(
+        "/api/jobs",
+        json!({"repo": format!("{}/../../alice/files", fb.display()), "recipient": "acme-audit"}),
+    );
+    assert!(
+        (400..500).contains(&st),
+        "nor through a relative path: {st}"
+    );
+    let (st, _) = wb.get(&format!("/api/fs?path={}", fa.display()));
+    assert!(st >= 400, "bob cannot list alice's folder: {st}");
+    // data directories are separate and private to the owner of the process
+    use std::os::unix::fs::PermissionsExt;
+    for id in ["alice", "bob"] {
+        let mode = fs::metadata(base.join("tenants").join(id))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700, "{id}");
+    }
+    assert_ne!(
+        fs::read(base.join("tenants/alice/data/memory.db")).unwrap(),
+        fs::read(base.join("tenants/bob/data/memory.db")).unwrap()
+    );
+    assert_eq!(tenants.ids(), vec!["alice".to_string(), "bob".to_string()]);
+    // deletion removes everything of one tenant, refuses while a request still holds the service, and leaves the other alone
+    assert_eq!(tenants.delete("alice").err(), Some(TenantError::Busy));
+    drop(wa);
+    drop(_ca);
+    drop(a);
+    assert_eq!(tenants.delete("alice"), Ok(true));
+    assert!(!base.join("tenants/alice").exists() && !tenants.exists("alice"));
+    assert_eq!(tenants.delete("alice"), Ok(false));
+    assert_eq!(wb.get("/api/memories").0, 200);
+    let again = tenants.get_or_create("alice").unwrap();
+    let (_c2, w2) = serve(&again);
+    assert_eq!(
+        w2.get("/api/memories").1["memories"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0,
+        "a re-created tenant starts empty: no data survives deletion"
+    );
+    assert!(tenants.delete("../bob").is_err());
+}

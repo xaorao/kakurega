@@ -142,9 +142,9 @@
         },
         {
           "id": "II-10",
-          "text": "Hosted mode only with validated tenant isolation, storage, key management and honest wording Design and claim ladder: docs/engineering-decisions/hosted-mode.md. Steps (a) per-user isolation and (b) client-side attestation gate are buildable now; (c) real TEE attestation is blocked on a TEE host.",
+          "text": "Hosted mode at the confidential-host rung only (docs/engineering-decisions/hosted-mode.md). Built and tested: (a) per-tenant structural isolation (kk-service tenants, sv23) and (b) the client-side attestation gate (kk-evidence gate, g01/g02) against a FAKE verifier. NOT built: authentication and routing in front of the tenants, TLS, a real TDX quote verifier, a hosted data lifecycle. (c) real attestation on a TEE host is BLOCKED on a host and NEAR access.",
           "kind": "pending",
-          "evidence_needed": "tenant isolation tests, key management review, hosted journeys"
+          "evidence_needed": "a TEE host running the kernel image, a real quote verifier, and an end-to-end run that refuses a tampered image"
         },
         {
           "id": "II-11",
@@ -275,6 +275,20 @@
           "kind": "machine",
           "command": "python3 tests/e2e/tauri_attack.py",
           "expect": "tauri attack checks passed"
+        },
+        {
+          "id": "II-10a",
+          "text": "Tenants: one service, vault, memory, jobs, approvals, approvers, log and signing key per tenant; hostile ids refused; cross-tenant file access refused; deletion leaves nothing",
+          "kind": "machine",
+          "command": "cargo test -p kk-service --test flow sv23",
+          "expect": "test result: ok. 1 passed"
+        },
+        {
+          "id": "II-10b",
+          "text": "Attestation gate logic against a fake verifier: unknown build, debug enclave, replay, relay to another endpoint, stale, future, empty policy",
+          "kind": "machine",
+          "command": "cargo test -p kk-evidence gate",
+          "expect": "test result: ok. 2 passed"
         }
       ]
     },
