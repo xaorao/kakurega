@@ -2,20 +2,38 @@
 pub enum Command {
     Help,
     Status,
-    Review { folder: String, recipient: String },
+    Review {
+        folder: String,
+        recipient: String,
+    },
     Reviews,
     Open(Option<String>),
     Findings(Option<String>),
     Fixes(Option<String>),
-    ApplyFix { n: usize, job: Option<String> },
-    UndoFix { n: usize, job: Option<String> },
+    ApplyFix {
+        n: usize,
+        job: Option<String>,
+    },
+    UndoFix {
+        n: usize,
+        job: Option<String>,
+    },
     Release(Option<String>),
     Approve(Option<String>),
     Deliver(Option<String>),
     Memory(Option<String>),
-    Remember(String),
-    Ask { folder: String, question: String },
-    Correct { id: String, text: String },
+    Remember {
+        text: String,
+        project: Option<String>,
+    },
+    Ask {
+        folder: String,
+        question: String,
+    },
+    Correct {
+        id: String,
+        text: String,
+    },
     Forget(String),
     Log,
     Clear,
@@ -143,7 +161,7 @@ pub fn usage(name: &str) -> &'static str {
         "approve" => "/approve [JOB]",
         "deliver" => "/deliver [JOB]",
         "memory" => "/memory [WORDS]",
-        "remember" => "/remember TEXT",
+        "remember" => "/remember [in PROJECT:] TEXT",
         "ask" => "/ask FOLDER : QUESTION",
         "correct" => "/correct ID NEW TEXT",
         "forget" => "/forget ID",
@@ -285,8 +303,27 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "remember" => {
             if rest.is_empty() {
                 Err(format!("usage: {}", usage("remember")))
+            } else if let Some(after) = rest.strip_prefix("in ") {
+                match after.split_once(':') {
+                    Some((p, text))
+                        if !text.trim().is_empty()
+                            && !p.trim().is_empty()
+                            && p.trim().chars().count() <= 80
+                            && !p.contains(['/', '\\'])
+                            && !p.chars().any(char::is_control) =>
+                    {
+                        Ok(Command::Remember {
+                            text: text.trim().to_string(),
+                            project: Some(p.trim().to_string()),
+                        })
+                    }
+                    _ => Err(format!("usage: {}", usage("remember"))),
+                }
             } else {
-                Ok(Command::Remember(rest.to_string()))
+                Ok(Command::Remember {
+                    text: rest.to_string(),
+                    project: None,
+                })
             }
         }
         "correct" => match rest.split_once(char::is_whitespace) {

@@ -1652,3 +1652,43 @@ fn tu36_search_and_read_refusals_from_the_service_are_shown_and_nothing_is_pendi
     }
     assert!(text(&a).contains("usage: /search WORDS"));
 }
+
+#[test]
+fn tu37_remember_can_name_a_project_and_the_memory_list_shows_it() {
+    let mut a = booted();
+    let r = enter(
+        &mut a,
+        "/remember in payments-service: Invoices are rounded half up",
+    );
+    assert_eq!(r[0].path, "/api/memories");
+    let body = r[0].body.as_ref().unwrap();
+    assert_eq!(
+        (body["text"].as_str(), body["project"].as_str()),
+        (
+            Some("Invoices are rounded half up"),
+            Some("payments-service")
+        )
+    );
+    let r = enter(&mut a, "/remember Plain note for everywhere");
+    assert!(r[0].body.as_ref().unwrap().get("project").is_none());
+    for bad in [
+        "/remember in : text",
+        "/remember in a/b: text",
+        "/remember in payments:",
+        "/remember in payments",
+    ] {
+        assert!(enter(&mut a, bad).is_empty(), "{bad}");
+    }
+    assert!(text(&a).contains("usage: /remember [in PROJECT:] TEXT"));
+    let r = enter(&mut a, "/memory");
+    a.handle(ok(&r[0], 200, json!({"memories": [
+        {"id": "m1", "text": "Invoices are rounded half up", "level": "internal", "untrusted": false, "why": "you added it", "project": "payments-service"},
+        {"id": "m2", "text": "Plain note", "level": "internal", "untrusted": false, "why": "you added it", "project": null}
+    ]})));
+    let t = text(&a);
+    assert!(
+        t.contains("m1  [internal] project payments-service  Invoices")
+            && t.contains("m2  [internal]  Plain note"),
+        "{t}"
+    );
+}

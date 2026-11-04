@@ -1060,30 +1060,56 @@ impl App {
             Command::Proof(model) => {
                 let model = model.unwrap_or_else(|| "Qwen/Qwen3.8-27B".to_string());
                 self.say(Kind::Info, format!("Checking the hardware proof of {model}. Only the model name is sent, to NEAR AI Cloud and to Intel and NVIDIA's verification services."));
-                vec![self.req(Intent::Proof, false, Method::Post, "/api/route/attest", Some(json!({"model": model})))]
+                vec![self.req(
+                    Intent::Proof,
+                    false,
+                    Method::Post,
+                    "/api/route/attest",
+                    Some(json!({"model": model})),
+                )]
             }
             Command::Gateway => {
                 self.say(Kind::Info, "Checking the proof of NEAR AI Cloud's gateway (front door). Nothing of yours is sent.");
-                vec![self.req(Intent::GatewayProof, false, Method::Post, "/api/route/gateway", Some(json!({})))]
+                vec![self.req(
+                    Intent::GatewayProof,
+                    false,
+                    Method::Post,
+                    "/api/route/gateway",
+                    Some(json!({})),
+                )]
             }
             Command::Search(words) => {
-                vec![self.req(Intent::SearchPropose, false, Method::Post, "/api/search/propose", Some(json!({"query": words})))]
+                vec![self.req(
+                    Intent::SearchPropose,
+                    false,
+                    Method::Post,
+                    "/api/search/propose",
+                    Some(json!({"query": words})),
+                )]
             }
             Command::Read(arg) => {
                 let mut urls = Vec::new();
                 for p in arg.split_whitespace() {
                     match p.parse::<usize>() {
-                        Ok(n) => match self.search_hits.get(n.wrapping_sub(1)) {
-                            Some(u) => urls.push(u.clone()),
-                            None => {
-                                self.say(Kind::Warn, format!("There is no search result number {n}. Run /search first."));
-                                return Vec::new();
+                        Ok(n) => {
+                            match self.search_hits.get(n.wrapping_sub(1)) {
+                                Some(u) => urls.push(u.clone()),
+                                None => {
+                                    self.say(Kind::Warn, format!("There is no search result number {n}. Run /search first."));
+                                    return Vec::new();
+                                }
                             }
-                        },
+                        }
                         Err(_) => urls.push(p.to_string()),
                     }
                 }
-                vec![self.req(Intent::ReadPropose, false, Method::Post, "/api/research/propose", Some(json!({"urls": urls})))]
+                vec![self.req(
+                    Intent::ReadPropose,
+                    false,
+                    Method::Post,
+                    "/api/research/propose",
+                    Some(json!({"urls": urls})),
+                )]
             }
             Command::Web(clear) => {
                 if clear {
@@ -1092,18 +1118,32 @@ impl App {
                 } else if self.web_pages.is_empty() {
                     self.say(Kind::Info, "No web pages in this conversation. /search finds addresses; /read adds pages you approve.");
                 } else {
-                    let lines: Vec<String> = self.web_pages.iter().map(|(_, u)| u.clone()).collect();
-                    self.push(Kind::Info, Some("Web pages in this conversation (untrusted)"), lines);
+                    let lines: Vec<String> =
+                        self.web_pages.iter().map(|(_, u)| u.clone()).collect();
+                    self.push(
+                        Kind::Info,
+                        Some("Web pages in this conversation (untrusted)"),
+                        lines,
+                    );
                 }
                 Vec::new()
             }
             Command::ClearHistory => {
                 self.history.clear();
-                vec![self.req(Intent::HistoryClear, false, Method::Post, "/api/history/clear", Some(json!({})))]
+                vec![self.req(
+                    Intent::HistoryClear,
+                    false,
+                    Method::Post,
+                    "/api/history/clear",
+                    Some(json!({})),
+                )]
             }
             Command::Stash(true) => {
                 if !self.stash_input() {
-                    self.say(Kind::Info, "Type something first; /stash puts the line you are typing aside.");
+                    self.say(
+                        Kind::Info,
+                        "Type something first; /stash puts the line you are typing aside.",
+                    );
                 }
                 Vec::new()
             }
@@ -1116,78 +1156,199 @@ impl App {
                     self.say(Kind::Info, "This conversation is already kept.");
                     return Vec::new();
                 }
-                vec![self.req(Intent::Keep, false, Method::Post, "/api/sessions", Some(json!({"title": ""})))]
+                vec![self.req(
+                    Intent::Keep,
+                    false,
+                    Method::Post,
+                    "/api/sessions",
+                    Some(json!({"title": ""})),
+                )]
             }
             Command::Sessions => {
                 let mut p = crate::picker::Picker::new("Conversations and reviews");
                 for j in &self.jobs {
-                    p.items.push(crate::picker::Item { id: j.id.clone(), label: format!("Review for {}", j.recipient), detail: j.state.clone(), when: 0, kind: crate::picker::ItemKind::Review });
+                    p.items.push(crate::picker::Item {
+                        id: j.id.clone(),
+                        label: format!("Review for {}", j.recipient),
+                        detail: j.state.clone(),
+                        when: 0,
+                        kind: crate::picker::ItemKind::Review,
+                    });
                 }
                 self.mode = Mode::Picker(p);
                 vec![self.req(Intent::Sessions, false, Method::Get, "/api/sessions", None)]
             }
-            Command::Status => vec![self.req(Intent::Readiness, false, Method::Get, "/api/readiness", None)],
+            Command::Status => vec![self.req(
+                Intent::Readiness,
+                false,
+                Method::Get,
+                "/api/readiness",
+                None,
+            )],
             Command::Reviews => vec![self.req(Intent::Jobs, false, Method::Get, "/api/jobs", None)],
             Command::Review { folder, recipient } => {
                 let path = if folder.starts_with('/') {
                     folder
                 } else {
                     match self.roots.first() {
-                        Some(r) => format!("{}/{}", r.trim_end_matches('/'), folder.trim_start_matches("./")),
+                        Some(r) => format!(
+                            "{}/{}",
+                            r.trim_end_matches('/'),
+                            folder.trim_start_matches("./")
+                        ),
                         None => folder,
                     }
                 };
-                vec![self.req(Intent::StartReview, false, Method::Post, "/api/jobs", Some(json!({"repo": path, "recipient": recipient})))]
+                vec![self.req(
+                    Intent::StartReview,
+                    false,
+                    Method::Post,
+                    "/api/jobs",
+                    Some(json!({"repo": path, "recipient": recipient})),
+                )]
             }
             Command::Open(j) => {
-                let Some(j) = self.job_or_latest(j, &[], "open") else { return Vec::new() };
-                vec![self.req(Intent::Poll(j.clone()), false, Method::Get, &format!("/api/jobs/{j}"), None)]
+                let Some(j) = self.job_or_latest(j, &[], "open") else {
+                    return Vec::new();
+                };
+                vec![self.req(
+                    Intent::Poll(j.clone()),
+                    false,
+                    Method::Get,
+                    &format!("/api/jobs/{j}"),
+                    None,
+                )]
             }
             Command::Findings(j) => {
-                let Some(j) = self.job_or_latest(j, &["ready", "nothing_to_release"], "show findings for") else { return Vec::new() };
-                vec![self.req(Intent::Findings, false, Method::Get, &format!("/api/jobs/{j}/findings"), None)]
+                let Some(j) =
+                    self.job_or_latest(j, &["ready", "nothing_to_release"], "show findings for")
+                else {
+                    return Vec::new();
+                };
+                vec![self.req(
+                    Intent::Findings,
+                    false,
+                    Method::Get,
+                    &format!("/api/jobs/{j}/findings"),
+                    None,
+                )]
             }
             Command::Fixes(j) => {
-                let Some(j) = self.job_or_latest(j, &["ready", "nothing_to_release"], "show fixes for") else { return Vec::new() };
-                vec![self.req(Intent::Fixes(j.clone()), false, Method::Get, &format!("/api/jobs/{j}/fixes"), None)]
+                let Some(j) =
+                    self.job_or_latest(j, &["ready", "nothing_to_release"], "show fixes for")
+                else {
+                    return Vec::new();
+                };
+                vec![self.req(
+                    Intent::Fixes(j.clone()),
+                    false,
+                    Method::Get,
+                    &format!("/api/jobs/{j}/fixes"),
+                    None,
+                )]
             }
             Command::ApplyFix { n, job } => {
-                let Some(j) = self.job_or_latest(job, &["ready", "nothing_to_release"], "apply a fix for") else { return Vec::new() };
-                let Some((_, _, file, verified)) = self.fixes_seen.iter().find(|(fj, fnum, _, _)| *fj == j && *fnum == n).cloned() else {
-                    self.say(Kind::Warn, "Run /fixes first and read the change; then /applyfix N.");
+                let Some(j) =
+                    self.job_or_latest(job, &["ready", "nothing_to_release"], "apply a fix for")
+                else {
+                    return Vec::new();
+                };
+                let Some((_, _, file, verified)) = self
+                    .fixes_seen
+                    .iter()
+                    .find(|(fj, fnum, _, _)| *fj == j && *fnum == n)
+                    .cloned()
+                else {
+                    self.say(
+                        Kind::Warn,
+                        "Run /fixes first and read the change; then /applyfix N.",
+                    );
                     return Vec::new();
                 };
                 if !verified {
                     self.say(Kind::Warn, "That fix was not accepted by the reproducer check, so it cannot be applied.");
                     return Vec::new();
                 }
-                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Change {file} on this computer now? This edits your own file. [y/N]"), forget_id: String::new(), apply: Some((j, n, file)), undo: false, web: None });
+                self.mode = Mode::Confirm(ConfirmView {
+                    prompt: format!(
+                        "Change {file} on this computer now? This edits your own file. [y/N]"
+                    ),
+                    forget_id: String::new(),
+                    apply: Some((j, n, file)),
+                    undo: false,
+                    web: None,
+                });
                 Vec::new()
             }
             Command::UndoFix { n, job } => {
-                let Some(j) = self.job_or_latest(job, &["ready", "nothing_to_release"], "undo a fix for") else { return Vec::new() };
-                let Some((_, _, file, _)) = self.fixes_seen.iter().find(|(fj, fnum, _, _)| *fj == j && *fnum == n).cloned() else {
+                let Some(j) =
+                    self.job_or_latest(job, &["ready", "nothing_to_release"], "undo a fix for")
+                else {
+                    return Vec::new();
+                };
+                let Some((_, _, file, _)) = self
+                    .fixes_seen
+                    .iter()
+                    .find(|(fj, fnum, _, _)| *fj == j && *fnum == n)
+                    .cloned()
+                else {
                     self.say(Kind::Warn, "Run /fixes first; then /undofix N.");
                     return Vec::new();
                 };
-                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Restore the original {file} on this computer now? [y/N]"), forget_id: String::new(), apply: Some((j, n, file)), undo: true, web: None });
+                self.mode = Mode::Confirm(ConfirmView {
+                    prompt: format!("Restore the original {file} on this computer now? [y/N]"),
+                    forget_id: String::new(),
+                    apply: Some((j, n, file)),
+                    undo: true,
+                    web: None,
+                });
                 Vec::new()
             }
             Command::Release(j) => {
-                let Some(j) = self.job_or_latest(j, &["ready"], "show a release for") else { return Vec::new() };
-                vec![self.req(Intent::Release, false, Method::Get, &format!("/api/jobs/{j}/release"), None)]
+                let Some(j) = self.job_or_latest(j, &["ready"], "show a release for") else {
+                    return Vec::new();
+                };
+                vec![self.req(
+                    Intent::Release,
+                    false,
+                    Method::Get,
+                    &format!("/api/jobs/{j}/release"),
+                    None,
+                )]
             }
             Command::Approve(j) => {
-                let Some(j) = self.job_or_latest(j, &["ready"], "approve") else { return Vec::new() };
-                vec![self.req(Intent::ApproveRequest(j.clone()), false, Method::Post, &format!("/api/jobs/{j}/approval"), Some(json!({})))]
+                let Some(j) = self.job_or_latest(j, &["ready"], "approve") else {
+                    return Vec::new();
+                };
+                vec![self.req(
+                    Intent::ApproveRequest(j.clone()),
+                    false,
+                    Method::Post,
+                    &format!("/api/jobs/{j}/approval"),
+                    Some(json!({})),
+                )]
             }
             Command::Deliver(j) => {
-                let Some(j) = self.job_or_latest(j, &["ready"], "deliver") else { return Vec::new() };
-                vec![self.req(Intent::Deliver, false, Method::Post, &format!("/api/jobs/{j}/deliver"), Some(json!({})))]
+                let Some(j) = self.job_or_latest(j, &["ready"], "deliver") else {
+                    return Vec::new();
+                };
+                vec![self.req(
+                    Intent::Deliver,
+                    false,
+                    Method::Post,
+                    &format!("/api/jobs/{j}/deliver"),
+                    Some(json!({})),
+                )]
             }
             Command::Memory(q) => {
                 let path = match q {
-                    Some(q) => format!("/api/memories?q={}", q.chars().filter(|c| c.is_alphanumeric() || *c == ' ').collect::<String>().replace(' ', "%20")),
+                    Some(q) => format!(
+                        "/api/memories?q={}",
+                        q.chars()
+                            .filter(|c| c.is_alphanumeric() || *c == ' ')
+                            .collect::<String>()
+                            .replace(' ', "%20")
+                    ),
                     None => "/api/memories".to_string(),
                 };
                 vec![self.req(Intent::MemoryList, false, Method::Get, &path, None)]
@@ -1198,10 +1359,34 @@ impl App {
                     return Vec::new();
                 }
                 self.chat_waiting = true;
-                vec![self.req(Intent::Ask, false, Method::Post, "/api/ask", Some(json!({"folder": folder, "question": question})))]
+                vec![self.req(
+                    Intent::Ask,
+                    false,
+                    Method::Post,
+                    "/api/ask",
+                    Some(json!({"folder": folder, "question": question})),
+                )]
             }
-            Command::Remember(t) => vec![self.req(Intent::Remember, false, Method::Post, "/api/memories", Some(json!({"text": t, "level": "internal", "reason": "you added it in the terminal"})))],
-            Command::Correct { id, text } => vec![self.req(Intent::Correct, false, Method::Post, &format!("/api/memories/{id}/correct"), Some(json!({"text": text, "reason": "you corrected it in the terminal"})))],
+            Command::Remember { text, project } => {
+                let mut body = json!({"text": text, "level": "internal", "reason": "you added it in the terminal"});
+                if let Some(p) = project {
+                    body["project"] = json!(p);
+                }
+                vec![self.req(
+                    Intent::Remember,
+                    false,
+                    Method::Post,
+                    "/api/memories",
+                    Some(body),
+                )]
+            }
+            Command::Correct { id, text } => vec![self.req(
+                Intent::Correct,
+                false,
+                Method::Post,
+                &format!("/api/memories/{id}/correct"),
+                Some(json!({"text": text, "reason": "you corrected it in the terminal"})),
+            )],
             Command::Forget(id) => {
                 self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id, apply: None, undo: false, web: None });
                 Vec::new()
@@ -1720,7 +1905,7 @@ impl App {
                 if list.is_empty() {
                     self.say(
                         Kind::Info,
-                        "Nothing remembered yet. /remember TEXT adds something.",
+                        "Nothing remembered yet. /remember TEXT adds something; /remember in PROJECT: TEXT keeps it for one project.",
                     );
                 }
                 let lines: Vec<String> = list
@@ -1730,11 +1915,18 @@ impl App {
                             "{}  [{}]{}  {}",
                             clean(m["id"].as_str().unwrap_or("?")),
                             clean(m["level"].as_str().unwrap_or("?")),
-                            if m["untrusted"] == true {
-                                " untrusted"
-                            } else {
-                                ""
-                            },
+                            format!(
+                                "{}{}",
+                                if m["untrusted"] == true {
+                                    " untrusted"
+                                } else {
+                                    ""
+                                },
+                                m["project"]
+                                    .as_str()
+                                    .map(|p| format!(" project {}", clean(p)))
+                                    .unwrap_or_default()
+                            ),
                             clean(m["text"].as_str().unwrap_or(""))
                         )];
                         v.push(format!(
