@@ -53,14 +53,20 @@ class H(BaseHTTPRequestHandler):
             self.send_response(404); self.end_headers(); return
         with lock:
             offset = int(self.path.split("offset=")[1].split("&")[0]) if "offset=" in self.path else 0
-            ups = [u for u in queue if u["update_id"] >= offset]
+            # like Telegram, updates below the requested offset are confirmed and gone
+            queue[:] = [u for u in queue if u["update_id"] >= offset]
+            ups = list(queue)
         time.sleep(0.2)
         self.reply({"ok": True, "result": ups})
 
     def do_POST(self):
         n = int(self.headers.get("content-length", 0))
         body = json.loads(self.rfile.read(n) or b"{}")
-        if self.path == f"/bot{TOKEN}/sendMessage":
+        if self.path == f"/bot{TOKEN}/setMyCommands":
+            with lock:
+                menus.append(body)
+            self.reply({"ok": True, "result": True})
+        elif self.path == f"/bot{TOKEN}/sendMessage":
             with lock:
                 sent.append(body)
             self.reply({"ok": True, "result": {}})
@@ -68,6 +74,7 @@ class H(BaseHTTPRequestHandler):
             self.send_response(404); self.end_headers()
 
 
+menus = []
 fake = HTTPServer(("127.0.0.1", 0), H)
 threading.Thread(target=fake.serve_forever, daemon=True).start()
 api = f"http://127.0.0.1:{fake.server_port}"
@@ -114,6 +121,7 @@ try:
     say(222, f"/pair {code}", "group")
     say(111, "/status")
     time.sleep(2)
+    check("the phone's command menu is set once to exactly the three commands the bridge answers", len(menus) >= 1 and [c["command"] for c in menus[0]["commands"]] == ["status", "reviews", "help"], str(menus)[:120])
     check("an unpaired chat and a group get no reply at all", not sent)
     say(111, "/pair 00000000")
     time.sleep(1.5)

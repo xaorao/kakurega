@@ -10,12 +10,24 @@ pub trait Admin {
     fn get(&mut self, path: &str) -> Result<Value, String>;
 }
 
+pub const FLOOD_LIMIT: usize = 5;
+pub const FLOOD_WINDOW: Duration = Duration::from_secs(10);
+
+/// The commands the phone's `/` menu offers; exactly the ones the bridge answers.
+pub const MENU: &[(&str, &str)] = &[
+    ("status", "Counts of reviews, memories and log entries"),
+    ("reviews", "Recent reviews and their states"),
+    ("help", "What this bot does and does not do"),
+];
+
 pub struct Bridge {
     pub bound_chat: Option<i64>,
     pairing_code: Option<(String, Instant, u8)>,
     seen_states: BTreeMap<String, String>,
     seen_approvals: BTreeMap<String, bool>,
     primed: bool,
+    /// When the bound chat's recent commands were handled, newest last, to bound the load a hijacked chat can cause.
+    recent: std::collections::VecDeque<Instant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +61,7 @@ impl Bridge {
             seen_states: BTreeMap::new(),
             seen_approvals: BTreeMap::new(),
             primed: false,
+            recent: std::collections::VecDeque::new(),
         }
     }
 
@@ -111,6 +124,19 @@ impl Bridge {
             }
             Some(bound) if bound != chat => (vec![], None),
             Some(_) => {
+                // at most five commands in any ten seconds; beyond that the bridge stays silent and asks nothing of the service
+                let now = Instant::now();
+                while self
+                    .recent
+                    .front()
+                    .is_some_and(|t| now.duration_since(*t) > FLOOD_WINDOW)
+                {
+                    self.recent.pop_front();
+                }
+                if self.recent.len() >= FLOOD_LIMIT {
+                    return (vec![], None);
+                }
+                self.recent.push_back(now);
                 let reply = match word.as_str() {
                     "/status" => match admin.get("/admin/overview") {
                         Ok(v) => {
@@ -185,6 +211,25 @@ pub fn scrub(text: &str, token: &str) -> String {
     }
 }
 
+/// Problems with a token file that make it unsafe to keep a bot token in. Empty when the file is fine.
+pub fn token_file_problems(path: &Path) -> Vec<String> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut out = Vec::new();
+    match std::fs::symlink_metadata(path) {
+        Err(_) => out.push("the token file does not exist".to_string()),
+        Ok(m) if m.file_type().is_symlink() => {
+            out.push("the token file is a symbolic link; use the real file".to_string())
+        }
+        Ok(m) if !m.is_file() => out.push("the token file is not a regular file".to_string()),
+        Ok(m) if m.permissions().mode() & 0o077 != 0 => out.push(format!(
+            "the token file is readable by other users (mode {:o}); run chmod 600 on it",
+            m.permissions().mode() & 0o777
+        )),
+        Ok(_) => {}
+    }
+    out
+}
+
 pub fn read_token(file: Option<&Path>) -> Result<String, String> {
     if let Ok(t) = std::env::var("TELEGRAM_BOT_TOKEN") {
         if !t.is_empty() {
@@ -195,6 +240,9 @@ pub fn read_token(file: Option<&Path>) -> Result<String, String> {
         .map(Path::to_path_buf)
         .or_else(|| std::env::var_os("KAKU_TELEGRAM_ENV").map(PathBuf::from))
         .ok_or("set TELEGRAM_BOT_TOKEN or pass --token-file FILE")?;
+    if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err("the token file is a symbolic link; use the real file".to_string());
+    }
     let text =
         std::fs::read_to_string(&path).map_err(|_| "cannot read the token file".to_string())?;
     text.lines()
@@ -267,6 +315,9 @@ pub fn run(args: &[String]) -> u8 {
         println!("Send this to your bot in a private chat within 5 minutes:\n  /pair {code}\nThen run `kaku telegram` to start the bridge. Any earlier pairing was removed.");
         return 0;
     }
+    if args.first().map(String::as_str) == Some("doctor") {
+        return doctor(args, &dir);
+    }
     let token = match read_token(
         crate::flag(args, "--token-file")
             .map(PathBuf::from)
@@ -297,6 +348,17 @@ pub fn run(args: &[String]) -> u8 {
         }
     };
     reload_code(&mut bridge);
+    // the phone's `/` menu lists exactly the commands the bridge answers
+    let menu = json!({"commands": MENU.iter().map(|(c, d)| json!({"command": c, "description": d})).collect::<Vec<_>>()});
+    if let Err(e) = agent
+        .post(&format!("{api}/bot{token}/setMyCommands"))
+        .send_json(&menu)
+    {
+        eprintln!(
+            "could not set the command menu: {}",
+            scrub(&e.to_string(), &token)
+        );
+    }
     println!("Telegram bridge running. It sends counts and ids only, never file contents. Ctrl-C stops it.");
     let mut offset: i64 = 0;
     let mut outbox = Outbox::default();
@@ -353,6 +415,101 @@ pub fn run(args: &[String]) -> u8 {
             }
         }
     }
+}
+
+/// `kaku telegram doctor`: checks the setup without sending anything to any chat.
+fn doctor(args: &[String], dir: &Path) -> u8 {
+    let mut bad = 0u8;
+    let mut say = |ok: bool, text: String| {
+        println!("{} {text}", if ok { "ok   " } else { "FIX  " });
+        if !ok {
+            bad = 1;
+        }
+    };
+    let file = crate::flag(args, "--token-file")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("KAKU_TELEGRAM_ENV").map(PathBuf::from));
+    match &file {
+        Some(f) => {
+            let p = token_file_problems(f);
+            say(p.is_empty(), if p.is_empty() { "token file is a regular file readable only by you".into() } else { p.join("; ") });
+        }
+        None => say(std::env::var("TELEGRAM_BOT_TOKEN").is_ok_and(|t| !t.is_empty()), "token comes from TELEGRAM_BOT_TOKEN (a token file with mode 600 is safer: it does not appear in the process environment)".into()),
+    }
+    let token = read_token(file.as_deref());
+    say(
+        token.is_ok(),
+        token
+            .clone()
+            .err()
+            .unwrap_or_else(|| "a token was found".into()),
+    );
+    if let Ok(token) = token {
+        let api =
+            crate::flag(args, "--api-base").unwrap_or_else(|| "https://api.telegram.org".into());
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .timeout_global(Some(Duration::from_secs(10)))
+            .build()
+            .into();
+        match agent.get(&format!("{api}/bot{token}/getMe")).call() {
+            Ok(mut r) if r.status().as_u16() == 200 => {
+                let v: Value = r.body_mut().read_json().unwrap_or(Value::Null);
+                say(
+                    v["ok"] == true,
+                    format!(
+                        "Telegram accepts the token (bot @{})",
+                        plain(v["result"]["username"].as_str().unwrap_or("?"))
+                    ),
+                );
+            }
+            Ok(r) => say(
+                false,
+                format!(
+                    "Telegram answered {} to getMe: the token is wrong or revoked",
+                    r.status()
+                ),
+            ),
+            Err(e) => say(
+                false,
+                format!(
+                    "Telegram is not reachable: {}",
+                    scrub(&e.to_string(), &token)
+                ),
+            ),
+        }
+        match agent
+            .get(&format!("{api}/bot{token}/getWebhookInfo"))
+            .call()
+        {
+            Ok(mut r) if r.status().as_u16() == 200 => {
+                let v: Value = r.body_mut().read_json().unwrap_or(Value::Null);
+                let url = v["result"]["url"].as_str().unwrap_or("");
+                say(
+                    url.is_empty(),
+                    if url.is_empty() {
+                        "no webhook is set, so polling works".into()
+                    } else {
+                        "a webhook is set for this bot; polling will conflict with it (the bridge calls deleteWebhook only if you ask)".into()
+                    },
+                );
+            }
+            _ => say(false, "could not read the webhook state".into()),
+        }
+    }
+    say(
+        bound_path(dir).exists(),
+        if bound_path(dir).exists() {
+            "a chat is paired".into()
+        } else {
+            "no chat is paired yet: run `kaku telegram pair`".into()
+        },
+    );
+    say(
+        !dir.join("telegram.pairing").exists() || !bound_path(dir).exists(),
+        "no stale pairing code".into(),
+    );
+    bad
 }
 
 fn getrandom_fill(b: &mut [u8]) {
@@ -585,6 +742,7 @@ mod tests {
             "/status; rm -rf",
             "/chat hello",
         ] {
+            b.recent.clear();
             let t = b.handle_update(&mut f, &msg(7, hostile)).0;
             if hostile.starts_with("/status;") {
                 continue;
@@ -869,5 +1027,76 @@ mod tests {
             b4.is_empty(),
             "a message is given up on after ten failed tries"
         );
+    }
+
+    #[test]
+    fn tg20_a_flood_from_the_bound_chat_reaches_the_service_at_most_five_times_in_ten_seconds() {
+        let mut b = Bridge::new(Some(7));
+        let mut f = fake();
+        let mut answered = 0;
+        for _ in 0..50 {
+            let (outs, _) = b.handle_update(&mut f, &msg(7, "/status"));
+            answered += outs.len();
+        }
+        assert_eq!(answered, FLOOD_LIMIT);
+        assert_eq!(
+            f.asked.len(),
+            FLOOD_LIMIT,
+            "the admin API was asked at most five times"
+        );
+        // after the window the chat is served again
+        b.recent
+            .iter_mut()
+            .for_each(|t| *t = Instant::now() - FLOOD_WINDOW - Duration::from_secs(1));
+        let (outs, _) = b.handle_update(&mut f, &msg(7, "/status"));
+        assert_eq!(outs.len(), 1);
+        // strangers never count against the bound chat
+        let mut c = Bridge::new(Some(7));
+        for _ in 0..20 {
+            c.handle_update(&mut f, &msg(99, "/status"));
+        }
+        assert!(c.handle_update(&mut f, &msg(7, "/status")).0.len() == 1);
+    }
+
+    #[test]
+    fn tg21_the_menu_lists_exactly_the_commands_the_bridge_answers() {
+        let mut b = Bridge::new(Some(7));
+        let mut f = fake();
+        for (c, d) in MENU {
+            assert!(!d.is_empty() && c.chars().all(|x| x.is_ascii_lowercase()));
+            b.recent.clear();
+            let (outs, _) = b.handle_update(&mut f, &msg(7, &format!("/{c}")));
+            assert_eq!(outs.len(), 1, "/{c} is answered");
+            assert!(
+                !outs[0].text.contains("cannot"),
+                "/{c} is a real command, not the refusal"
+            );
+        }
+        assert_eq!(MENU.len(), 3);
+    }
+
+    #[test]
+    fn tg22_token_files_must_be_real_regular_files_readable_only_by_the_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = std::env::temp_dir().join(format!("kk-tgdoctor-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let ok = d.join("good.env");
+        std::fs::write(&ok, "TELEGRAM_BOT_TOKEN=1:abc\n").unwrap();
+        std::fs::set_permissions(&ok, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(token_file_problems(&ok).is_empty());
+        std::fs::set_permissions(&ok, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(token_file_problems(&ok)[0].contains("readable by other users"));
+        let link = d.join("link.env");
+        std::os::unix::fs::symlink(&ok, &link).unwrap();
+        assert!(token_file_problems(&link)[0].contains("symbolic link"));
+        assert!(
+            read_token(Some(&link))
+                .unwrap_err()
+                .contains("symbolic link"),
+            "a linked token file is not read"
+        );
+        assert!(token_file_problems(&d)[0].contains("not a regular file"));
+        assert!(token_file_problems(&d.join("missing"))[0].contains("does not exist"));
     }
 }
