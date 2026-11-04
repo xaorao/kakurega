@@ -84,6 +84,14 @@ async function start() {
     event.preventDefault();
     if (mayOpenExternally(url)) shell.openExternal(url);
   });
+  window.webContents.on("will-frame-navigate", (event) => {
+    if (!isAppUrl(event.url, admin.origin)) event.preventDefault();
+  });
+  // will-navigate and will-frame-navigate do not fire for every target (about:blank slips through), so any
+  // top-level page that is not the app is replaced at once.
+  window.webContents.on("did-navigate", (_e, url) => {
+    if (!isAppUrl(url, admin.origin)) window.loadURL(`${admin.origin}/`).catch(() => {});
+  });
   window.webContents.on("will-attach-webview", (event) => event.preventDefault());
   window.once("ready-to-show", () => window.show());
   await window.loadURL(`${admin.origin}/#pair=${pairing.json.code}`);

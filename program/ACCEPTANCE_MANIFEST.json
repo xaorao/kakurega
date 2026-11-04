@@ -161,9 +161,9 @@
         },
         {
           "id": "II-13",
-          "text": "Shell boundary attack tests on the packaged app: DNS rebinding, cross-origin and CSRF (covered by companion tests), stolen session token, renderer XSS, IPC spoofing, duplicate approvals, production fuses and CSP, signed update path",
+          "text": "Packaged-shell hardening beyond what is tested: asar packaging with OnlyLoadAppFromAsar and embedded integrity validation, a signed and notarised build, a signed update path, and the same attack suite on the Tauri candidate. Tested on Electron without packaging: II-13a, II-13b.",
           "kind": "pending",
-          "evidence_needed": "test results for the chosen shell's production build"
+          "evidence_needed": "packaged and signed build, update-path tests, Tauri attack suite"
         },
         {
           "id": "II-09a",
@@ -212,6 +212,20 @@
           "kind": "machine",
           "command": "python3 tests/e2e/enclave_helper.py",
           "expect": "enclave helper checks passed"
+        },
+        {
+          "id": "II-13a",
+          "text": "Electron shell under renderer compromise and network attack: XSS cannot read the session or reach admin endpoints, CSP, stolen cookie from foreign origin and rebinding hosts, no CORS, no IPC channels, navigation, window.open, frames, drop",
+          "kind": "machine",
+          "command": "node tests/e2e/desktop_attack.mjs",
+          "expect": "desktop attack checks passed"
+        },
+        {
+          "id": "II-13b",
+          "text": "Electron production fuses on a copy of the binary: no Node mode, no NODE_OPTIONS, no inspector, and the app still starts",
+          "kind": "machine",
+          "command": "node tests/e2e/desktop_fuses.mjs",
+          "expect": "fuse checks passed"
         }
       ]
     },

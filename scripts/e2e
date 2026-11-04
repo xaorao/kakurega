@@ -8,3 +8,4 @@ limactl shell "$vm" -- bash -lc ". \$HOME/.cargo/env; cd '$repo' && export CARGO
 cargo build -p kk-cli
 pnpm --filter @kakurega/web run build
 node tests/e2e/run.mjs
+node tests/e2e/desktop_attack.mjs
