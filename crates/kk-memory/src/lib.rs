@@ -87,9 +87,32 @@ pub enum Remembered {
     AlreadyKnown(String),
 }
 
+/// Turns text into vectors that are close when the meaning is close. The one implementation Kakurega ships talks to a
+/// model on this computer; vectors are as private as the notes they came from.
+pub trait Embedder: Send + Sync {
+    fn model(&self) -> String;
+    /// Vectors for stored notes.
+    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String>;
+    /// The vector for a question. Some models want questions and documents prepared differently.
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>, String> {
+        self.embed(&[text.to_string()])?
+            .into_iter()
+            .next()
+            .ok_or_else(|| "no vector came back".to_string())
+    }
+    /// How close a note must be to count as a match. Models differ a lot in how spread out their scores are.
+    fn min_similarity(&self) -> f32 {
+        0.35
+    }
+}
+
+/// At most this many notes can enter a recall through meaning alone, so a weak model cannot flood the results.
+const MEANING_ONLY_CAP: usize = 5;
+
 pub struct Memories {
     vault: Vault,
     fp_key: [u8; 32],
+    embedder: Option<std::sync::Arc<dyn Embedder>>,
 }
 
 const SCHEMA: &str = "
@@ -316,10 +339,25 @@ fn row_to_memory(r: &kk_vault::rusqlite::Row<'_>) -> kk_vault::rusqlite::Result<
 impl Memories {
     pub fn open(vault: Vault, fingerprint_key: [u8; 32]) -> Result<Memories, MemoryError> {
         vault.connection().execute_batch(SCHEMA)?;
+        vault.connection().execute_batch("CREATE TABLE IF NOT EXISTS memory_vectors(id TEXT PRIMARY KEY, model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL);")?;
         Ok(Memories {
             vault,
             fp_key: fingerprint_key,
+            embedder: None,
         })
+    }
+
+    pub fn set_embedder(&mut self, e: std::sync::Arc<dyn Embedder>) {
+        self.embedder = Some(e);
+    }
+
+    /// Number of notes that currently have a stored vector.
+    pub fn vector_count(&self) -> usize {
+        self.conn()
+            .query_row("SELECT count(*) FROM memory_vectors", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap_or(0) as usize
     }
 
     fn conn(&self) -> &Connection {
@@ -466,6 +504,8 @@ impl Memories {
                 "UPDATE memories SET status = 'superseded', superseded_by = ?1 WHERE id = ?2",
                 params![new, id],
             )?;
+            self.conn()
+                .execute("DELETE FROM memory_vectors WHERE id = ?1", params![id])?;
             self.event(now, "correct", id, &format!("replaced by {new}"))
         })();
         match r {
@@ -520,6 +560,8 @@ impl Memories {
                     "UPDATE memories SET text = '', subject = NULL, reason = '' WHERE id = ?1",
                     params![mid],
                 )?;
+                self.conn()
+                    .execute("DELETE FROM memory_vectors WHERE id = ?1", params![mid])?;
                 self.conn()
                     .execute("DELETE FROM memories WHERE id = ?1", params![mid])?;
                 self.event(now, "forget", mid, "deleted")?;
@@ -607,19 +649,26 @@ impl Memories {
             }
             ranked
         };
+        let by_meaning = self.rank_by_meaning(query, as_of, level, pool, &mut by_id);
         let mut out = Vec::new();
-        for f in fuse::fuse(&[keyword, similar]) {
+        for f in fuse::fuse(&[keyword, similar, by_meaning]) {
             let Some(r) = by_id.remove(&f.id) else {
                 continue;
             };
             if !r.m.label.confidentiality_within(clearance) {
                 continue;
             }
-            let how = match (f.ranks[0], f.ranks[1]) {
-                (Some(_), Some(_)) => "matched by keywords and by similar wording",
-                (Some(_), None) => "matched by keywords",
-                _ => "matched by similar wording",
-            };
+            let mut parts = Vec::new();
+            if f.ranks[0].is_some() {
+                parts.push("keywords");
+            }
+            if f.ranks[1].is_some() {
+                parts.push("similar wording");
+            }
+            if f.ranks[2].is_some() {
+                parts.push("meaning");
+            }
+            let how = format!("matched by {}", parts.join(" and by "));
             out.push(Recalled {
                 why: format!("{}; {how}", explain(&r.m)),
                 untrusted: r.untrusted,
@@ -630,6 +679,96 @@ impl Memories {
             }
         }
         Ok(out)
+    }
+
+    /// Ranks readable notes by closeness of meaning to the query. Missing vectors are made on the way (a few at a time, so a
+    /// recall stays quick); any problem with the embedder just means this ranking is empty and keywords still work.
+    fn rank_by_meaning(
+        &self,
+        query: &str,
+        as_of: i64,
+        level: i64,
+        pool: usize,
+        by_id: &mut std::collections::HashMap<String, Row>,
+    ) -> Vec<String> {
+        const MAKE_PER_RECALL: usize = 24;
+        let Some(e) = &self.embedder else {
+            return Vec::new();
+        };
+        let model = e.model();
+        let Ok(mut st) = self.conn().prepare(
+            "SELECT m.*, v.model AS vmodel, v.vec AS vvec FROM memories m LEFT JOIN memory_vectors v ON v.id = m.id
+             WHERE m.status = 'active' AND m.text <> ''
+               AND (m.valid_from IS NULL OR m.valid_from <= ?1) AND (m.valid_to IS NULL OR m.valid_to > ?1)
+               AND m.level <= ?2
+             ORDER BY m.created_at DESC, m.id LIMIT 1000",
+        ) else { return Vec::new() };
+        let Ok(rows) = st.query_map(params![as_of, level], |r| {
+            let row = row_to_memory(r)?;
+            let vm: Option<String> = r.get("vmodel")?;
+            let vv: Option<Vec<u8>> = r.get("vvec")?;
+            Ok((row, vm, vv))
+        }) else {
+            return Vec::new();
+        };
+        let all: Vec<(Row, Option<String>, Option<Vec<u8>>)> = rows.flatten().collect();
+        drop(st);
+        let mut have: Vec<(String, Vec<f32>)> = Vec::new();
+        let mut missing: Vec<(String, String)> = Vec::new();
+        for (row, vm, vv) in &all {
+            match (vm, vv.as_deref().and_then(fuse::from_blob)) {
+                (Some(m), Some(v)) if *m == model => have.push((row.m.id.clone(), v)),
+                _ if missing.len() < MAKE_PER_RECALL => {
+                    missing.push((row.m.id.clone(), row.m.text.clone()))
+                }
+                _ => {}
+            }
+        }
+        if !missing.is_empty() {
+            let texts: Vec<String> = missing.iter().map(|(_, t)| t.clone()).collect();
+            if let Ok(vecs) = e.embed(&texts) {
+                if vecs.len() == missing.len() {
+                    for ((id, _), v) in missing.iter().zip(vecs) {
+                        if v.is_empty() || v.iter().any(|x| !x.is_finite()) {
+                            continue;
+                        }
+                        let _ = self.conn().execute(
+                            "INSERT OR REPLACE INTO memory_vectors(id, model, dim, vec) VALUES (?1, ?2, ?3, ?4)",
+                            params![id, model, v.len() as i64, fuse::to_blob(&v)],
+                        );
+                        have.push((id.clone(), v));
+                    }
+                }
+            }
+        }
+        let Ok(q) = e.embed_query(query) else {
+            return Vec::new();
+        };
+        let min = e.min_similarity();
+        let mut scored: Vec<(f32, String)> = have
+            .into_iter()
+            .map(|(id, v)| (fuse::cosine(&q, &v), id))
+            .filter(|(c, _)| *c >= min)
+            .collect();
+        scored.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.1.cmp(&b.1))
+        });
+        scored.truncate(pool.min(MEANING_ONLY_CAP));
+        let ids: Vec<String> = scored.into_iter().map(|(_, id)| id).collect();
+        for id in &ids {
+            if !by_id.contains_key(id) {
+                if let Ok(r) = self.conn().query_row(
+                    "SELECT * FROM memories WHERE id = ?1",
+                    params![id],
+                    row_to_memory,
+                ) {
+                    by_id.insert(id.clone(), r);
+                }
+            }
+        }
+        ids
     }
 
     pub fn propose(

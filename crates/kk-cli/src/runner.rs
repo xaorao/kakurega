@@ -180,6 +180,20 @@ impl JobRunner for ReviewRunner {
         })
     }
 
+    fn embedder(&self) -> Option<std::sync::Arc<dyn kk_memory::Embedder>> {
+        if self.scripted.is_some() {
+            return None;
+        }
+        let model =
+            std::env::var("KAKU_EMBED_MODEL").unwrap_or_else(|_| "nomic-embed-text".to_string());
+        OllamaRoute::new(&self.ollama, &self.model)
+            .ok()
+            .map(|route| {
+                std::sync::Arc::new(OllamaEmbedder { route, model })
+                    as std::sync::Arc<dyn kk_memory::Embedder>
+            })
+    }
+
     fn repairable(&self) -> Vec<String> {
         if self.scripted.is_some() {
             Vec::new()
@@ -339,5 +353,63 @@ impl JobRunner for ReviewRunner {
     fn route_info(&self) -> Value {
         json!({"id": format!("ollama:{}", self.model), "class": "device_only", "model": if self.scripted.is_some() { "scripted test model".to_string() } else { self.model.clone() }, "simulated": self.scripted.is_some(), "endpoint": self.ollama,
                "transport": match &self.transport { Transport::Local => "local sandbox".to_string(), Transport::Lima { vm, .. } => format!("sandbox in the {vm} virtual machine") }})
+    }
+}
+
+/// Recall by meaning through the embedding model of the local Ollama. If the model is not installed, embedding fails and
+/// recall quietly uses keywords and wording only.
+struct OllamaEmbedder {
+    route: OllamaRoute,
+    model: String,
+}
+
+impl OllamaEmbedder {
+    /// nomic-embed-text is trained with a task prefix on both sides; without them its scores bunch together and unrelated
+    /// text scores almost as high as related text (measured on the real model).
+    fn prefixed(&self) -> bool {
+        self.model.starts_with("nomic-embed")
+    }
+}
+
+impl kk_memory::Embedder for OllamaEmbedder {
+    fn model(&self) -> String {
+        if self.prefixed() {
+            format!("{}+prefixes", self.model)
+        } else {
+            self.model.clone()
+        }
+    }
+    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        let prepared: Vec<String> = if self.prefixed() {
+            texts
+                .iter()
+                .map(|t| format!("search_document: {t}"))
+                .collect()
+        } else {
+            texts.to_vec()
+        };
+        self.route
+            .embed_with(&self.model, &prepared)
+            .map_err(|e| e.to_string())
+    }
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>, String> {
+        let prepared = if self.prefixed() {
+            format!("search_query: {text}")
+        } else {
+            text.to_string()
+        };
+        self.route
+            .embed_with(&self.model, &[prepared])
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .next()
+            .ok_or_else(|| "no vector came back".to_string())
+    }
+    fn min_similarity(&self) -> f32 {
+        if self.prefixed() {
+            0.5
+        } else {
+            0.6
+        }
     }
 }

@@ -367,4 +367,60 @@ mod streaming {
         let r = OllamaRoute::new(&url, "m").unwrap().pull(&mut |_, _| false);
         assert!(matches!(r, Err(RouteError::BadResponse(m)) if m.contains("stopped waiting")));
     }
+
+    #[test]
+    fn st05_embeddings_come_back_in_order_and_malformed_answers_are_errors() {
+        let (url, _) = serve(vec!["{\"embeddings\":[[0.1,0.2],[0.3,0.4]]}".to_string()]);
+        let r = OllamaRoute::new(&url, "m")
+            .unwrap()
+            .embed_with("e", &["a".into(), "b".into()])
+            .unwrap();
+        assert_eq!(r, vec![vec![0.1f32, 0.2], vec![0.3, 0.4]]);
+        for (label, body) in [
+            ("count mismatch", "{\"embeddings\":[[0.1]]}"),
+            ("no field", "{}"),
+            ("empty vector", "{\"embeddings\":[[],[1.0]]}"),
+            ("not numbers", "{\"embeddings\":[[\"x\"],[1.0]]}"),
+        ] {
+            let (url, _) = serve(vec![body.to_string()]);
+            let r = OllamaRoute::new(&url, "m")
+                .unwrap()
+                .embed_with("e", &["a".into(), "b".into()]);
+            assert!(
+                matches!(r, Err(RouteError::BadResponse(_))),
+                "{label}: {r:?}"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "needs a local Ollama with the nomic-embed-text model"]
+fn live_a_real_embedding_model_puts_similar_meaning_closer_than_unrelated_text() {
+    let route = OllamaRoute::new("http://127.0.0.1:11434", "unused").unwrap();
+    let v = route
+        .embed_with(
+            "nomic-embed-text",
+            &[
+                "Suppliers are paid on the fifth of the month".to_string(),
+                "When does the billing run happen?".to_string(),
+                "Tomatoes need staking in June".to_string(),
+            ],
+        )
+        .expect("embeddings");
+    let cos = |a: &[f32], b: &[f32]| {
+        let (mut d, mut x, mut y) = (0f32, 0f32, 0f32);
+        for (p, q) in a.iter().zip(b) {
+            d += p * q;
+            x += p * p;
+            y += q * q;
+        }
+        d / (x.sqrt() * y.sqrt())
+    };
+    let (related, unrelated) = (cos(&v[0], &v[1]), cos(&v[2], &v[1]));
+    println!("related {related} unrelated {unrelated}");
+    assert!(
+        related > unrelated + 0.05,
+        "related {related} vs unrelated {unrelated}"
+    );
 }

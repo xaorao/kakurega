@@ -330,6 +330,44 @@ impl OllamaRoute {
 }
 
 impl OllamaRoute {
+    /// Vectors for texts, from the local Ollama's `/api/embed`. Nothing leaves this computer.
+    pub fn embed_with(&self, model: &str, texts: &[String]) -> Result<Vec<Vec<f32>>, RouteError> {
+        let mut resp = self
+            .agent
+            .post(&format!("{}/api/embed", self.base))
+            .send_json(json!({"model": model, "input": texts}))
+            .map_err(|e| RouteError::Unreachable(e.to_string()))?;
+        if !resp.status().is_success() {
+            return Err(RouteError::BadResponse(format!("status {}", resp.status())));
+        }
+        let v: Value = resp
+            .body_mut()
+            .read_json()
+            .map_err(|e| RouteError::BadResponse(e.to_string()))?;
+        let rows = v["embeddings"]
+            .as_array()
+            .ok_or_else(|| RouteError::BadResponse("no embeddings in the answer".into()))?;
+        if rows.len() != texts.len() {
+            return Err(RouteError::BadResponse(
+                "the number of vectors does not match the number of texts".into(),
+            ));
+        }
+        rows.iter()
+            .map(|r| {
+                r.as_array()
+                    .filter(|a| !a.is_empty() && a.len() <= 8192)
+                    .and_then(|a| {
+                        a.iter()
+                            .map(|x| x.as_f64().map(|f| f as f32))
+                            .collect::<Option<Vec<f32>>>()
+                    })
+                    .ok_or_else(|| {
+                        RouteError::BadResponse("a vector was missing or malformed".into())
+                    })
+            })
+            .collect()
+    }
+
     /// Asks the local Ollama to download this model. Ollama fetches it from its own registry; nothing of the owner's is
     /// sent. `on_progress` gets the step name and the percentage when known, and returns `false` to give up waiting.
     pub fn pull(

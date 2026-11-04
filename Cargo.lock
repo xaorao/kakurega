@@ -2525,6 +2525,7 @@ dependencies = [
  "kk-companion",
  "kk-eventlog",
  "kk-evidence",
+ "kk-memory",
  "kk-review",
  "kk-route",
  "kk-sandbox",

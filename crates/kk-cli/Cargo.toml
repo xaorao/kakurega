@@ -15,6 +15,7 @@ kk-eventlog = { path = "../kk-eventlog" }
 kk-tui = { path = "../kk-tui" }
 kk-companion = { path = "../kk-companion" }
 kk-service = { path = "../kk-service" }
+kk-memory = { path = "../kk-memory" }
 kk-review = { path = "../kk-review" }
 kk-route = { path = "../kk-route" }
 kk-sandbox = { path = "../kk-sandbox" }

@@ -943,3 +943,188 @@ fn me23_recall_order_is_the_same_every_time() {
         assert_eq!(again, first);
     }
 }
+
+use kk_memory::Embedder;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::sync::Arc;
+
+/// Words that mean the same thing share a dimension; a stand-in for a real model that makes the tests exact.
+struct Concepts {
+    model: &'static str,
+    fail: AtomicBool,
+    calls: AtomicUsize,
+}
+
+impl Concepts {
+    fn new(model: &'static str) -> Arc<Concepts> {
+        Arc::new(Concepts {
+            model,
+            fail: AtomicBool::new(false),
+            calls: AtomicUsize::new(0),
+        })
+    }
+}
+
+impl Embedder for Concepts {
+    fn model(&self) -> String {
+        self.model.into()
+    }
+    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        self.calls.fetch_add(texts.len(), Ordering::SeqCst);
+        if self.fail.load(Ordering::SeqCst) {
+            return Err("model not running".into());
+        }
+        let groups: [&[&str]; 3] = [
+            &[
+                "invoice", "invoices", "bill", "billing", "paid", "pays", "payment", "payments",
+            ],
+            &["tomato", "tomatoes", "garden", "plant", "staking"],
+            &["layoff", "layoffs", "restructuring", "redundancy"],
+        ];
+        Ok(texts
+            .iter()
+            .map(|t| {
+                let l = t.to_lowercase();
+                let mut v: Vec<f32> = groups
+                    .iter()
+                    .map(|g| g.iter().filter(|w| l.contains(**w)).count() as f32)
+                    .collect();
+                v.push(0.01);
+                v
+            })
+            .collect())
+    }
+}
+
+fn mem_with(e: Arc<Concepts>) -> Memories {
+    let mut m = mem(&dir());
+    m.set_embedder(e);
+    m
+}
+
+#[test]
+fn me24_a_note_is_found_by_meaning_when_it_shares_no_word_with_the_question() {
+    let m = mem_with(Concepts::new("c1"));
+    m.remember(
+        1,
+        nm("Suppliers are paid on the fifth of the month", internal()),
+    )
+    .unwrap();
+    m.remember(2, nm("Tomatoes need staking in June", internal()))
+        .unwrap();
+    let got = m
+        .recall("when is the billing run", &internal(), 9, 5)
+        .unwrap();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert!(got[0].memory.text.contains("Suppliers"));
+    assert!(got[0].why.contains("by meaning"), "{}", got[0].why);
+    assert_eq!(m.vector_count(), 2, "vectors were made on the way");
+    assert!(
+        m.recall("quantum chromodynamics", &internal(), 9, 5)
+            .unwrap()
+            .is_empty(),
+        "unrelated questions match nothing"
+    );
+}
+
+#[test]
+fn me25_vectors_die_with_their_note_whether_it_is_forgotten_or_replaced() {
+    let m = mem_with(Concepts::new("c1"));
+    let a = id(m
+        .remember(1, nm("Suppliers are paid on the fifth", internal()))
+        .unwrap());
+    let b = id(m
+        .remember(2, nm("Garden tomatoes need staking", internal()))
+        .unwrap());
+    m.recall("billing", &internal(), 9, 5).unwrap();
+    assert_eq!(m.vector_count(), 2);
+    m.forget(3, &a, "test").unwrap();
+    assert_eq!(m.vector_count(), 1, "forgetting removes the vector");
+    let new = m
+        .correct(
+            4,
+            &b,
+            nm("Garden tomatoes need staking and shade", internal()),
+        )
+        .unwrap();
+    assert_eq!(
+        m.vector_count(),
+        0,
+        "the replaced note's vector is gone and the new one has none yet"
+    );
+    m.recall("garden plant", &internal(), 9, 5).unwrap();
+    assert_eq!(
+        m.vector_count(),
+        1,
+        "the new version is embedded when next needed"
+    );
+    m.forget(5, &new, "test").unwrap();
+    assert_eq!(
+        m.vector_count(),
+        0,
+        "forgetting a chain removes every vector"
+    );
+}
+
+#[test]
+fn me26_meaning_never_shows_a_note_above_the_callers_clearance() {
+    let m = mem_with(Concepts::new("c1"));
+    m.remember(
+        1,
+        nm(
+            "Layoff list for the autumn restructuring",
+            Label::new(kk_types::label::Level::Restricted),
+        ),
+    )
+    .unwrap();
+    m.remember(2, nm("Quarterly budget approved", internal()))
+        .unwrap();
+    let got = m.recall("redundancy plans", &internal(), 9, 5).unwrap();
+    assert!(got.is_empty(), "{got:?}");
+    assert_eq!(
+        m.vector_count(),
+        1,
+        "only the readable note was embedded; the restricted one never was"
+    );
+}
+
+#[test]
+fn me27_a_missing_embedder_or_a_failing_one_leaves_keyword_recall_working() {
+    let e = Concepts::new("c1");
+    let m = mem_with(e.clone());
+    m.remember(1, nm("Supplier invoices are paid on the fifth", internal()))
+        .unwrap();
+    e.fail.store(true, Ordering::SeqCst);
+    let got = m.recall("invoices", &internal(), 9, 5).unwrap();
+    assert_eq!(got.len(), 1);
+    assert!(!got[0].why.contains("meaning"));
+    assert_eq!(m.vector_count(), 0);
+}
+
+#[test]
+fn me28_vectors_from_another_model_are_not_compared_and_are_replaced() {
+    let d = dir();
+    let m1 = {
+        let mut m = mem(&d);
+        m.set_embedder(Concepts::new("model-a"));
+        m
+    };
+    m1.remember(1, nm("Suppliers are paid on the fifth", internal()))
+        .unwrap();
+    m1.recall("billing", &internal(), 9, 5).unwrap();
+    assert_eq!(m1.vector_count(), 1);
+    drop(m1);
+    let e2 = Concepts::new("model-b");
+    let mut m2 = Memories::open(Vault::open(&d.join("m.db"), &key(7)).unwrap(), [9; 32]).unwrap();
+    m2.set_embedder(e2.clone());
+    let got = m2.recall("billing", &internal(), 9, 5).unwrap();
+    assert_eq!(
+        got.len(),
+        1,
+        "the note is re-embedded with the new model and found"
+    );
+    assert!(
+        e2.calls.load(Ordering::SeqCst) >= 2,
+        "the new model embedded the note and the question"
+    );
+}

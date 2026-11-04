@@ -115,6 +115,38 @@ pub fn rank_similar(query: &str, notes: &[(String, &str)], min: f64) -> Vec<Stri
         .collect()
 }
 
+/// Cosine similarity of two vectors of equal length; 0.0 when either is empty, all zero or the lengths differ.
+pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    if a.is_empty() || a.len() != b.len() {
+        return 0.0;
+    }
+    let (mut dot, mut na, mut nb) = (0f32, 0f32, 0f32);
+    for (x, y) in a.iter().zip(b) {
+        dot += x * y;
+        na += x * x;
+        nb += y * y;
+    }
+    if na <= 0.0 || nb <= 0.0 || !dot.is_finite() {
+        return 0.0;
+    }
+    dot / (na.sqrt() * nb.sqrt())
+}
+
+pub fn to_blob(v: &[f32]) -> Vec<u8> {
+    v.iter().flat_map(|x| x.to_le_bytes()).collect()
+}
+
+pub fn from_blob(b: &[u8]) -> Option<Vec<f32>> {
+    if !b.len().is_multiple_of(4) {
+        return None;
+    }
+    Some(
+        b.chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,5 +230,29 @@ mod tests {
         assert_eq!(coverage(&trigrams(""), &trigrams("abc")), 0.0);
         let hindi = trigrams("चालान भुगतान");
         assert!(coverage(&hindi, &trigrams("हर महीने चालान भुगतान 20 तारीख को")) > 0.9);
+    }
+
+    #[test]
+    fn fu06_cosine_and_the_stored_form_of_a_vector() {
+        assert!((cosine(&[1.0, 0.0], &[1.0, 0.0]) - 1.0).abs() < 1e-6);
+        assert!(cosine(&[1.0, 0.0], &[0.0, 1.0]).abs() < 1e-6);
+        assert!(
+            (cosine(&[1.0, 1.0], &[2.0, 2.0]) - 1.0).abs() < 1e-6,
+            "length does not matter"
+        );
+        for (a, b) in [
+            (vec![], vec![]),
+            (vec![1.0], vec![1.0, 2.0]),
+            (vec![0.0, 0.0], vec![1.0, 1.0]),
+            (vec![f32::NAN, 1.0], vec![1.0, 1.0]),
+        ] {
+            assert_eq!(cosine(&a, &b), 0.0);
+        }
+        let v = vec![0.5f32, -1.25, 3.0];
+        assert_eq!(from_blob(&to_blob(&v)).unwrap(), v);
+        assert!(
+            from_blob(&[1, 2, 3]).is_none(),
+            "a damaged blob is not a vector"
+        );
     }
 }

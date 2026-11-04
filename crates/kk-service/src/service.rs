@@ -39,6 +39,10 @@ pub trait JobRunner: Send + Sync {
     fn repairable(&self) -> Vec<String> {
         Vec::new()
     }
+    /// A way to turn text into vectors for recall by meaning, if this runner has a local model for it.
+    fn embedder(&self) -> Option<Arc<dyn kk_memory::Embedder>> {
+        None
+    }
     /// Fixes one failed check. `progress` receives short status text. Runs on a background thread.
     fn repair(&self, _id: &str, _progress: &dyn Fn(&str)) -> Result<String, String> {
         Err("this check cannot be fixed automatically".into())
@@ -446,8 +450,12 @@ impl Service {
             h.update(b"kakurega memory fingerprint v1");
             h.update(keys.commitment_key);
             let fp: [u8; 32] = h.finalize().into();
-            kk_memory::Memories::open(open_vault(data_dir, "memory.db")?, fp)
-                .map_err(|e| e.to_string())?
+            let mut m = kk_memory::Memories::open(open_vault(data_dir, "memory.db")?, fp)
+                .map_err(|e| e.to_string())?;
+            if let Some(e) = runner.embedder() {
+                m.set_embedder(e);
+            }
+            m
         };
         let mut inner = Inner {
             jobs: BTreeMap::new(),
