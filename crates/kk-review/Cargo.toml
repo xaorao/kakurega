@@ -7,6 +7,7 @@ description = "The code review job: import a repository with labels and a source
 
 [dependencies]
 kk-types = { path = "../kk-types" }
+kk-secrets = { path = "../kk-secrets" }
 kk-evidence = { path = "../kk-evidence" }
 kk-broker = { path = "../kk-broker" }
 kk-kernel = { path = "../kk-kernel" }

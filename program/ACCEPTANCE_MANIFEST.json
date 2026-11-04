@@ -301,6 +301,27 @@
           "kind": "machine",
           "command": "scripts/desktop-linux",
           "expect": "desktop (no Touch ID) checks passed"
+        },
+        {
+          "id": "II-14a",
+          "text": "One shared secret detector (provider formats, assignments with false-positive filters, URL passwords, wallet keys, bounded decoding) with a corpus of positives and benign look-alikes",
+          "kind": "machine",
+          "command": "cargo test -p kk-secrets",
+          "expect": "test result: ok. 5 passed"
+        },
+        {
+          "id": "II-14b",
+          "text": "Release egress: withheld values stopped in raw, base64, hex, percent-encoded and reversed forms, short values and URL passwords; provider secrets the old markers missed; variable names allowed",
+          "kind": "machine",
+          "command": "cargo test -p kk-review --test release",
+          "expect": "test result: ok. 10 passed"
+        },
+        {
+          "id": "II-14c",
+          "text": "Finding verification controls (marker without the cited code, missing CONTROL_OK) in the Linux sandbox",
+          "kind": "machine",
+          "command": "scripts/test-lima",
+          "expect": "c05_a_script_that_prints_the_marker_without_touching_the_cited_code_is_not_a_confirmation"
         }
       ]
     },

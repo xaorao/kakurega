@@ -5,7 +5,7 @@ use kk_review::import::{scan_tree, ImportedFile};
 use kk_review::release::{
     assemble, build_capsule, release_digest, Lease, LeaseError, LeaseState, Rejection,
 };
-use kk_types::label::Level;
+use kk_types::label::{Label, Level};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
@@ -204,8 +204,11 @@ fn rs03_text_from_withheld_files_and_secret_markers_can_never_be_released() {
     leak.explanation = "The database url is postgres://payments:hunter2@db.internal:5432/payments in the environment.".into();
     let r = assemble(&[(leak, confirmed())], &idx, "acme", "p", 0, 60);
     assert!(
-        matches!(r, Err(Rejection::ContainsWithheldText { .. })),
-        "{r:?}"
+        matches!(
+            r,
+            Err(Rejection::ContainsWithheldText { .. }) | Err(Rejection::ContainsSecret { .. })
+        ),
+        "a withheld URL must be stopped by the withheld-text check or the shared secret detector"
     );
     let mut marker = finding();
     marker.explanation = format!("Key {}{} was found.", "sk_live", "_abcdefghijklmnop");
@@ -384,4 +387,153 @@ fn rs07_a_released_draft_becomes_a_capsule_that_both_verifiers_accept_and_that_t
         + marker.len();
     tampered[pos] = if tampered[pos] == b'A' { b'B' } else { b'A' };
     assert!(!capsule::verify(&tampered, &opts).valid);
+}
+
+fn b64(s: &str) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for c in s.as_bytes().chunks(3) {
+        let n = (c[0] as u32) << 16
+            | (*c.get(1).unwrap_or(&0) as u32) << 8
+            | *c.get(2).unwrap_or(&0) as u32;
+        for i in 0..4 {
+            if i <= c.len() {
+                out.push(A[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn rs08_withheld_values_cannot_leave_in_a_transformed_or_partial_form() {
+    // Audit finding (matrix F, S6): only exact whole tokens of 12 characters or more were checked, so a short password,
+    // a fragment of a URL, or an encoded copy of a secret passed.
+    let f = files();
+    let idx = index(&f);
+    let key = ["sk_live", "_51NfakeFAKEfakeFAKE0000000000"].concat();
+    let hex: String = key.bytes().map(|b| format!("{b:02x}")).collect();
+    let rev: String = key.chars().rev().collect();
+    let attacks: Vec<(&str, String)> = vec![
+        (
+            "short password alone",
+            "The service logs in with the password hunter2.".to_string(),
+        ),
+        (
+            "url password piece",
+            "The credential is the part between the colon and the at sign: hunter2.".to_string(),
+        ),
+        (
+            "base64 of the key",
+            format!("Look at this blob: {}", b64(&key)),
+        ),
+        (
+            "base64 of the password",
+            format!("token {}", b64("hunter2")),
+        ),
+        ("hex of the key", format!("dump: {hex}")),
+        ("reversed key", format!("mirror: {rev}")),
+        (
+            "percent-encoded url",
+            "see postgres%3A%2F%2Fpayments%3Ahunter2%40db.internal".to_string(),
+        ),
+    ];
+    let mut leaked = Vec::new();
+    for (name, text) in attacks {
+        let mut fnd = finding();
+        fnd.explanation = text;
+        let r = assemble(&[(fnd, confirmed())], &idx, "acme", "p", 0, 60);
+        if r.is_ok() {
+            leaked.push(name);
+        }
+    }
+    assert!(leaked.is_empty(), "these leaked: {leaked:?}");
+    let mut ok = finding();
+    ok.explanation = "The variable PAYMENTS_API_KEY is read from the environment and is never validated before use.".into();
+    assert!(
+        assemble(&[(ok, confirmed())], &idx, "acme", "p", 0, 60).is_ok(),
+        "naming a variable is not a leak"
+    );
+}
+
+#[test]
+fn rs09_provider_secrets_that_the_old_five_markers_missed_are_rejected_at_release() {
+    let f = files();
+    let idx = index(&f);
+    for (name, secret) in [
+        (
+            "restricted stripe key",
+            ["rk_live", "_", "abcdEFGH1234ijklMNOP5678"].concat(),
+        ),
+        (
+            "openai key",
+            [
+                "sk",
+                "-proj-",
+                "aB3dE5gH7jK9mN2pQ4rS6tU8vW1xY0zCfLhJkMnPqRsTuVwX",
+            ]
+            .concat(),
+        ),
+        (
+            "anthropic key",
+            [
+                "sk",
+                "-ant-api03-",
+                "aB3dE5gH7jK9mN2pQ4rS6tU8vW1xY0zCfLhJkMnPqRsTuVwXyZaB3dE5gH7jK9mN2pQ4rS6tU8vW1xY",
+            ]
+            .concat(),
+        ),
+        (
+            "near key",
+            format!(
+                "ed25519:{}",
+                &"5Jr8Qk2mN7pXvB4cD9eF3gH6jK1LzW8yTuRsAqPo3nMbVc2XdZ4aSfGhJk7LpQwErTy9Uip"
+                    .repeat(2)[..88]
+            ),
+        ),
+        (
+            "jwt",
+            [
+                "eyJ",
+                "hbGciOiJIUzI1NiJ9.",
+                "eyJ",
+                "zdWIiOiIxMjM0NTY3ODkwIn0.",
+                "dBjftJeZ4CVPmB92K27uhbUJU1p1r",
+            ]
+            .concat(),
+        ),
+        ("basic auth blob", b64("deploy:Zk9fQ2x8Lm4vPq7R")),
+    ] {
+        let mut fnd = finding();
+        fnd.explanation = format!("The code contains {secret} in plain text.");
+        let r = assemble(&[(fnd, confirmed())], &idx, "acme", "p", 0, 60);
+        assert!(r.is_err(), "{name} must be rejected");
+    }
+}
+
+#[test]
+fn rs10_short_values_from_a_withheld_file_are_stopped_even_when_they_are_not_in_a_url() {
+    let mut f = files();
+    f.push(ImportedFile {
+        path: "ops/.env.admin".into(),
+        bytes: b"ADMIN_PASSWORD=hunter9x\nDEPLOY_NOTE=ab12cd\n".to_vec(),
+        label: Label::new(Level::Restricted).with_compartment("secrets"),
+        sha256: "0".repeat(64),
+        notes: vec![],
+    });
+    let idx = index(&f);
+    for text in [
+        "The admin password is hunter9x and it never rotates.",
+        "Deploy note says ab12cd.",
+    ] {
+        let mut fnd = finding();
+        fnd.explanation = text.into();
+        assert!(
+            assemble(&[(fnd, confirmed())], &idx, "acme", "p", 0, 60).is_err(),
+            "{text}"
+        );
+    }
+    let mut ok = finding();
+    ok.explanation = "ADMIN_PASSWORD is read from the environment.".into();
+    assert!(assemble(&[(ok, confirmed())], &idx, "acme", "p", 0, 60).is_ok());
 }

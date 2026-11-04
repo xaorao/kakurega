@@ -81,20 +81,49 @@ pub fn release_digest(
 }
 
 fn contains_secret_marker(text: &str) -> bool {
-    ["-----BEGIN ", "sk_live_", "AKIA", "ghp_", "xoxb-"]
-        .iter()
-        .any(|m| text.contains(m))
+    kk_secrets::looks_secret(text).is_some()
 }
 
-fn withheld_tokens(withheld: &[&ImportedFile]) -> Vec<(String, String)> {
-    let mut out = Vec::new();
+/// Everything from a withheld file that must not appear in a release, in the forms a leak can take: whole long tokens,
+/// the values of assignments (any length from 6, since a short password is still a password), and for values of at
+/// least 8 characters their base64, hex, percent-encoded and reversed forms and their URL pieces.
+fn withheld_needles(withheld: &[&ImportedFile]) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
     for f in withheld {
         let text = String::from_utf8_lossy(&f.bytes).to_string();
+        let mut push = |needle: String| {
+            if !out.iter().any(|(p, n)| *p == f.path && *n == needle) {
+                out.push((f.path.clone(), needle));
+            }
+        };
         for token in text.split(|c: char| {
             c.is_whitespace() || matches!(c, '=' | '"' | '\'' | ',' | ';' | '(' | ')')
         }) {
-            if token.len() >= 12 {
-                out.push((f.path.clone(), token.to_string()));
+            // a variable's NAME (PAYMENTS_API_KEY) is not its value; only values are withheld
+            let env_name = token
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+            if token.len() >= 12 && !env_name {
+                push(token.to_string());
+            }
+        }
+        for line in text.lines() {
+            let Some((_, value)) = line.split_once('=').or_else(|| line.split_once(": ")) else {
+                continue;
+            };
+            let v = value
+                .trim()
+                .trim_matches(|c| c == '"' || c == '\'' || c == '`');
+            if v.len() >= 6 && !v.contains(char::is_whitespace) {
+                push(v.to_string());
+            }
+            for variant in kk_secrets::variants(v, 8) {
+                push(variant);
+            }
+            for piece in kk_secrets::pieces(v, 6) {
+                for variant in kk_secrets::variants(&piece, 6) {
+                    push(variant);
+                }
             }
         }
     }
@@ -176,7 +205,7 @@ pub fn assemble(
         .filter(|f| f.label.level >= Level::Restricted)
         .copied()
         .collect();
-    let lines = withheld_tokens(&withheld);
+    let lines = withheld_needles(&withheld);
     let mut total = 0usize;
     let mut removed = Vec::new();
     for (name, bytes) in &files {

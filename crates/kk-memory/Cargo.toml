@@ -8,6 +8,7 @@ description = "Private memory for Kakurega: labelled, time-aware, correctable an
 [dependencies]
 kk-types = { path = "../kk-types" }
 kk-vault = { path = "../kk-vault" }
+kk-secrets = { path = "../kk-secrets" }
 hmac = "0.12"
 sha2 = "0.10"
 getrandom = "0.3"

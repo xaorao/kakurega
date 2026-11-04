@@ -23,7 +23,9 @@ SELF = {"scripts/scan_secrets.py"}
 FAKE_FIXTURE_PREFIX = "fixtures/synthetic-repo/"
 MARKER_FILES = {
     "crates/kk-review/src/import.rs": {"private key block"},
-    "crates/kk-memory/src/secret.rs": {"private key block"},
+    "crates/kk-secrets/src/lib.rs": {"private key block"},
+    "crates/kk-secrets/tests/corpus.rs": {"private key block"},
+    "crates/kk-review/tests/release.rs": {"private key block"},
     "crates/kk-review/tests/import.rs": {"private key block"},
 }
 

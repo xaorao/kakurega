@@ -1,0 +1,1134 @@
+//! One secret detector for the whole product. The importer decides what an agent may read, memory refuses to store
+//! secrets, and the release check is the last line before anything leaves the computer. They used to carry three
+//! disagreeing lists; they now share this table.
+//!
+//! The provider formats follow the public token layouts that the MIT-licensed gitleaks rule set also covers (prefix,
+//! alphabet and length); the matcher, the false-positive filters and the wallet rules are written here. See NOTICE.md.
+
+use std::collections::BTreeSet;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hit {
+    pub rule: &'static str,
+    /// Byte offsets into the scanned text. Decoded hits point at the encoded segment.
+    pub start: usize,
+    pub end: usize,
+    pub decoded: bool,
+}
+
+const B64: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=_-";
+
+struct Format {
+    rule: &'static str,
+    prefix: &'static str,
+    /// Allowed characters of the body after the prefix.
+    body: Body,
+    min: usize,
+    max: usize,
+}
+
+#[derive(Clone, Copy)]
+enum Body {
+    Alnum,
+    AlnumDashUnderscore,
+    AlnumDashUnderscoreDot,
+    Hex,
+    UpperBase32,
+    Base58,
+    SlackLike,
+}
+
+fn body_ok(b: Body, c: char) -> bool {
+    match b {
+        Body::Alnum => c.is_ascii_alphanumeric(),
+        Body::AlnumDashUnderscore => c.is_ascii_alphanumeric() || c == '-' || c == '_',
+        Body::AlnumDashUnderscoreDot => {
+            c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'
+        }
+        Body::Hex => c.is_ascii_hexdigit(),
+        Body::UpperBase32 => c.is_ascii_uppercase() || ('2'..='7').contains(&c),
+        Body::Base58 => c.is_ascii_alphanumeric() && !matches!(c, '0' | 'O' | 'I' | 'l'),
+        Body::SlackLike => c.is_ascii_alphanumeric() || c == '-',
+    }
+}
+
+const FORMATS: &[Format] = &[
+    Format {
+        rule: "github token",
+        prefix: "ghp_",
+        body: Body::Alnum,
+        min: 36,
+        max: 255,
+    },
+    Format {
+        rule: "github token",
+        prefix: "gho_",
+        body: Body::Alnum,
+        min: 36,
+        max: 255,
+    },
+    Format {
+        rule: "github token",
+        prefix: "ghu_",
+        body: Body::Alnum,
+        min: 36,
+        max: 255,
+    },
+    Format {
+        rule: "github token",
+        prefix: "ghs_",
+        body: Body::Alnum,
+        min: 36,
+        max: 255,
+    },
+    Format {
+        rule: "github token",
+        prefix: "ghr_",
+        body: Body::Alnum,
+        min: 36,
+        max: 255,
+    },
+    Format {
+        rule: "github fine-grained token",
+        prefix: "github_pat_",
+        body: Body::AlnumDashUnderscore,
+        min: 40,
+        max: 255,
+    },
+    Format {
+        rule: "aws access key id",
+        prefix: "AKIA",
+        body: Body::UpperBase32,
+        min: 16,
+        max: 16,
+    },
+    Format {
+        rule: "aws access key id",
+        prefix: "ASIA",
+        body: Body::UpperBase32,
+        min: 16,
+        max: 16,
+    },
+    Format {
+        rule: "aws access key id",
+        prefix: "AROA",
+        body: Body::UpperBase32,
+        min: 16,
+        max: 16,
+    },
+    Format {
+        rule: "aws access key id",
+        prefix: "AIDA",
+        body: Body::UpperBase32,
+        min: 16,
+        max: 16,
+    },
+    Format {
+        rule: "stripe secret key",
+        prefix: "sk_live_",
+        body: Body::Alnum,
+        min: 16,
+        max: 255,
+    },
+    Format {
+        rule: "stripe secret key",
+        prefix: "rk_live_",
+        body: Body::Alnum,
+        min: 16,
+        max: 255,
+    },
+    Format {
+        rule: "stripe test key",
+        prefix: "sk_test_",
+        body: Body::Alnum,
+        min: 16,
+        max: 255,
+    },
+    Format {
+        rule: "stripe test key",
+        prefix: "rk_test_",
+        body: Body::Alnum,
+        min: 16,
+        max: 255,
+    },
+    Format {
+        rule: "slack token",
+        prefix: "xoxb-",
+        body: Body::SlackLike,
+        min: 20,
+        max: 255,
+    },
+    Format {
+        rule: "slack token",
+        prefix: "xoxp-",
+        body: Body::SlackLike,
+        min: 20,
+        max: 255,
+    },
+    Format {
+        rule: "slack token",
+        prefix: "xoxa-",
+        body: Body::SlackLike,
+        min: 20,
+        max: 255,
+    },
+    Format {
+        rule: "slack token",
+        prefix: "xoxs-",
+        body: Body::SlackLike,
+        min: 20,
+        max: 255,
+    },
+    Format {
+        rule: "slack app token",
+        prefix: "xapp-",
+        body: Body::SlackLike,
+        min: 20,
+        max: 255,
+    },
+    Format {
+        rule: "google api key",
+        prefix: "AIza",
+        body: Body::AlnumDashUnderscore,
+        min: 35,
+        max: 35,
+    },
+    Format {
+        rule: "anthropic api key",
+        prefix: "sk-ant-",
+        body: Body::AlnumDashUnderscore,
+        min: 40,
+        max: 255,
+    },
+    Format {
+        rule: "openai api key",
+        prefix: "sk-proj-",
+        body: Body::AlnumDashUnderscore,
+        min: 40,
+        max: 255,
+    },
+    Format {
+        rule: "openai api key",
+        prefix: "sk-",
+        body: Body::Alnum,
+        min: 40,
+        max: 80,
+    },
+    Format {
+        rule: "gitlab token",
+        prefix: "glpat-",
+        body: Body::AlnumDashUnderscore,
+        min: 20,
+        max: 255,
+    },
+    Format {
+        rule: "npm token",
+        prefix: "npm_",
+        body: Body::Alnum,
+        min: 36,
+        max: 36,
+    },
+    Format {
+        rule: "pypi token",
+        prefix: "pypi-AgEIcHlwaS5vcmc",
+        body: Body::AlnumDashUnderscore,
+        min: 50,
+        max: 400,
+    },
+    Format {
+        rule: "huggingface token",
+        prefix: "hf_",
+        body: Body::Alnum,
+        min: 34,
+        max: 40,
+    },
+    Format {
+        rule: "digitalocean token",
+        prefix: "dop_v1_",
+        body: Body::Hex,
+        min: 64,
+        max: 64,
+    },
+    Format {
+        rule: "shopify token",
+        prefix: "shpat_",
+        body: Body::Hex,
+        min: 32,
+        max: 32,
+    },
+    Format {
+        rule: "shopify token",
+        prefix: "shpss_",
+        body: Body::Hex,
+        min: 32,
+        max: 32,
+    },
+    Format {
+        rule: "twilio api key",
+        prefix: "SK",
+        body: Body::Hex,
+        min: 32,
+        max: 32,
+    },
+    Format {
+        rule: "mailgun key",
+        prefix: "key-",
+        body: Body::Hex,
+        min: 32,
+        max: 32,
+    },
+    Format {
+        rule: "sendgrid key",
+        prefix: "SG.",
+        body: Body::AlnumDashUnderscoreDot,
+        min: 60,
+        max: 80,
+    },
+    Format {
+        rule: "near or solana private key",
+        prefix: "ed25519:",
+        body: Body::Base58,
+        min: 86,
+        max: 90,
+    },
+];
+
+const PRIVATE_KEY_BLOCKS: &[&str] = &[
+    "-----BEGIN RSA PRIVATE KEY-----",
+    "-----BEGIN PRIVATE KEY-----",
+    "-----BEGIN OPENSSH PRIVATE KEY-----",
+    "-----BEGIN EC PRIVATE KEY-----",
+    "-----BEGIN DSA PRIVATE KEY-----",
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----",
+    "-----BEGIN PGP PRIVATE KEY BLOCK-----",
+];
+
+const KEYWORDS: &[&str] = &[
+    "password",
+    "passwd",
+    "passphrase",
+    "secret",
+    "token",
+    "api key",
+    "secret key",
+    "api_key",
+    "apikey",
+    "api-key",
+    "private_key",
+    "privatekey",
+    "access_key",
+    "accesskey",
+    "auth_key",
+    "client_secret",
+    "credential",
+];
+
+fn is_word_boundary(text: &str, at: usize) -> bool {
+    text[..at]
+        .chars()
+        .next_back()
+        .map(|c| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(true)
+}
+
+/// Shannon entropy in bits per character.
+pub fn entropy(s: &str) -> f64 {
+    let mut counts: std::collections::BTreeMap<char, f64> = std::collections::BTreeMap::new();
+    let mut n: f64 = 0.0;
+    for c in s.chars() {
+        *counts.entry(c).or_insert(0.0) += 1.0;
+        n += 1.0;
+    }
+    if n == 0.0 {
+        return 0.0;
+    }
+    -counts
+        .values()
+        .map(|c| (c / n) * (c / n).log2())
+        .sum::<f64>()
+}
+
+fn all_hex(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// UUIDs and plain hash digests are identifiers, not secrets, unless a keyword sits next to them.
+fn identifier_shape(s: &str) -> bool {
+    let uuid = s.len() == 36
+        && s.chars().enumerate().all(|(i, c)| {
+            if matches!(i, 8 | 13 | 18 | 23) {
+                c == '-'
+            } else {
+                c.is_ascii_hexdigit()
+            }
+        });
+    uuid || (matches!(s.len(), 32 | 40 | 56 | 64 | 96 | 128) && all_hex(s))
+        || s.starts_with("sha256-")
+        || s.starts_with("sha512-")
+        || s.starts_with("sha384-")
+}
+
+fn templated(v: &str) -> bool {
+    let v = v.trim();
+    v.starts_with("${")
+        || v.starts_with("{{")
+        || v.starts_with('<')
+        || v.starts_with('$')
+        || v.starts_with('%')
+        || v.starts_with('{')
+        || v.starts_with('[')
+        || (v.starts_with("${") && v.ends_with('}'))
+        || v.contains("{{")
+        || v.contains("${")
+        || v.ends_with('%')
+}
+
+fn indirect_reference(v: &str) -> bool {
+    v.contains('(')
+        || v.contains(')')
+        || v.contains("os.environ")
+        || v.contains("getenv")
+        || v.contains("process.env")
+        || v.contains("::")
+        || v.contains("[\"")
+        || v.contains("['")
+        || v.contains("->")
+        || v.starts_with("self.")
+        || v.starts_with("this.")
+        || v.starts_with("++")
+        || v.starts_with("--")
+        || v.starts_with("!")
+}
+
+fn placeholder(v: &str) -> bool {
+    let l = v.to_ascii_lowercase();
+    [
+        "example",
+        "your_",
+        "your-",
+        "yourtoken",
+        "changeme",
+        "xxxxxxxx",
+        "********",
+        "placeholder",
+        "redacted",
+        "dummy",
+        "sample",
+        "<",
+        "insert",
+        "todo",
+        "none",
+        "null",
+        "undefined",
+        "false",
+        "true",
+    ]
+    .iter()
+    .any(|p| l.contains(p))
+        && l.len() < 40
+}
+
+fn sequential(v: &str) -> bool {
+    let b: Vec<u8> = v.bytes().collect();
+    b.len() >= 6 && (b.windows(2).all(|w| w[1] == w[0] + 1) || b.windows(2).all(|w| w[1] == w[0]))
+}
+
+fn strip_quotes(v: &str) -> &str {
+    v.trim()
+        .trim_matches(|c| c == '"' || c == '\'' || c == '`' || c == ',' || c == ';')
+}
+
+/// A value that plausibly is a literal credential: long enough, no whitespace, not a reference, not a placeholder, and
+/// either random enough or mixing letters with digits.
+pub fn credential_value(raw: &str) -> bool {
+    let v = strip_quotes(raw);
+    if v.len() < 8
+        || v.contains(char::is_whitespace)
+        || templated(v)
+        || indirect_reference(v)
+        || placeholder(v)
+        || sequential(v)
+    {
+        return false;
+    }
+    if identifier_shape(v) {
+        return false;
+    }
+    let has_digit = v.chars().any(|c| c.is_ascii_digit());
+    let has_alpha = v.chars().any(|c| c.is_ascii_alphabetic());
+    let has_special = v.chars().any(|c| !c.is_ascii_alphanumeric());
+    let all_lower_alpha = v.chars().all(|c| c.is_ascii_lowercase());
+    // A plain word is not a credential, but a long run of letters after a password keyword is a passphrase.
+    if all_lower_alpha || v.chars().all(|c| c.is_ascii_uppercase()) {
+        return (v.len() >= 16 && entropy(v) >= 3.4) || (v.len() >= 20 && entropy(v) >= 3.1);
+    }
+    // Readable words with a dash or a mixed-case run are not credentials; a credential has digits or very high entropy.
+    if !has_digit {
+        return v.len() >= 20 && entropy(v) >= 4.0 && has_alpha;
+    }
+    entropy(v) >= 2.5 && has_alpha || (has_special && entropy(v) >= 3.0)
+}
+
+fn push(hits: &mut Vec<Hit>, rule: &'static str, start: usize, end: usize, decoded: bool) {
+    hits.push(Hit {
+        rule,
+        start,
+        end,
+        decoded,
+    });
+}
+
+fn scan_formats(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
+    for f in FORMATS {
+        let mut from = 0;
+        while let Some(i) = text[from..].find(f.prefix) {
+            let start = from + i;
+            from = start + f.prefix.len();
+            if !is_word_boundary(text, start) {
+                continue;
+            }
+            let body: String = text[from..]
+                .chars()
+                .take_while(|c| body_ok(f.body, *c))
+                .collect();
+            let n = body.chars().count();
+            let documented_example = f.rule == "aws access key id" && body.contains("EXAMPLE");
+            if n >= f.min && n <= f.max.max(f.min) && !documented_example {
+                if f.prefix == "SK"
+                    && !(body.chars().any(|c| c.is_ascii_digit())
+                        && body.chars().any(|c| c.is_ascii_alphabetic()))
+                {
+                    continue;
+                }
+                push(hits, f.rule, start, from + body.len(), decoded);
+            } else if n > f.max && f.max < 255 {
+                // a longer run of the same alphabet is not this format (for example a hash)
+            }
+        }
+    }
+}
+
+fn scan_blocks_and_urls(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
+    for m in PRIVATE_KEY_BLOCKS {
+        if let Some(i) = text.find(m) {
+            push(hits, "private key block", i, i + m.len(), decoded);
+        }
+    }
+    // JWT: three dot-separated base64url parts, the first two starting with eyJ
+    let mut pos = 0;
+    for w in text.split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))) {
+        let start = text[pos..].find(w).map(|o| pos + o).unwrap_or(pos);
+        pos = start + w.len();
+        let parts: Vec<&str> = w.split('.').collect();
+        if parts.len() == 3 && w.starts_with("eyJ") && parts[1].starts_with("eyJ") && w.len() >= 30
+        {
+            push(hits, "signed token", start, start + w.len(), decoded);
+        }
+    }
+    // credentials inside a URL: scheme://user:password@host
+    let mut at = 0;
+    while let Some(i) = text[at..].find("://") {
+        let auth_start = at + i + 3;
+        let rest = &text[auth_start..];
+        let authority: &str = rest
+            .split(|c: char| {
+                c == '/' || c == '?' || c == '#' || c.is_whitespace() || c == '"' || c == '\''
+            })
+            .next()
+            .unwrap_or("");
+        if let Some((userinfo, _)) = authority.rsplit_once('@') {
+            if let Some((_, pw)) = userinfo.split_once(':') {
+                let pw_l = pw.to_ascii_lowercase();
+                let example_host = authority.to_ascii_lowercase().contains("example")
+                    || authority.contains("localhost");
+                if !pw.is_empty()
+                    && !templated(pw)
+                    && !placeholder(pw)
+                    && !example_host
+                    && ![
+                        "pass",
+                        "password",
+                        "passwd",
+                        "secret",
+                        "token",
+                        "pwd",
+                        "xxx",
+                        "xxxx",
+                        "****",
+                        "changeme",
+                        "your-password",
+                        "yourpassword",
+                    ]
+                    .contains(&pw_l.as_str())
+                {
+                    push(
+                        hits,
+                        "password in a URL",
+                        auth_start,
+                        auth_start + authority.len(),
+                        decoded,
+                    );
+                }
+            }
+        }
+        at = auth_start;
+    }
+}
+
+/// The value after an assignment: the content of a quoted string, or an unquoted run that stops at whitespace and at
+/// the punctuation that ends a value in code, query strings and lists.
+fn take_value(v: &str) -> (&str, bool) {
+    let mut chars = v.char_indices();
+    match chars.next() {
+        Some((_, q @ ('"' | '\'' | '`'))) => {
+            let rest = &v[1..];
+            match rest.find(q) {
+                Some(end) => (&rest[..end], true),
+                None => (rest.split_whitespace().next().unwrap_or(""), true),
+            }
+        }
+        _ => {
+            let end = v
+                .find(|c: char| {
+                    c.is_whitespace() || matches!(c, ',' | ';' | '&' | ')' | '}' | ']' | '>')
+                })
+                .unwrap_or(v.len());
+            (&v[..end], false)
+        }
+    }
+}
+
+/// Code is full of `token = point.tokens`, `secret: Optional[str]` and `"test-key"`. An unquoted value is a literal only if
+/// it has no code syntax; a quoted one must not be a placeholder word, a test marker or plain readable words.
+fn literal_credential(v: &str, quoted: bool) -> bool {
+    if !v.is_ascii() {
+        return false;
+    }
+    let lower = v.to_ascii_lowercase();
+    if [
+        "test",
+        "mock",
+        "fake",
+        "dummy",
+        "example",
+        "sample",
+        "placeholder",
+        "changeme",
+        "redacted",
+        "xxxx",
+        "lorem",
+        "default",
+        "demo",
+    ]
+    .iter()
+    .any(|m| lower.contains(m))
+        && v.len() < 48
+    {
+        return false;
+    }
+    // readable identifiers: lowercase words joined by dashes or underscores, no digits
+    if v.len() < 48
+        && v.chars()
+            .all(|c| c.is_ascii_lowercase() || c == '-' || c == '_' || c == '.')
+        && v.chars().any(|c| matches!(c, '-' | '_' | '.'))
+    {
+        return false;
+    }
+    // environment variable names, CamelCase identifiers and paths are names, not values
+    let env_name = v.len() >= 3
+        && v.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+        && v.chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+    let camel = {
+        let mut upper_runs = 0;
+        let mut prev_lower = false;
+        for c in v.chars() {
+            if c.is_ascii_uppercase() && prev_lower {
+                upper_runs += 1;
+            }
+            prev_lower = c.is_ascii_lowercase();
+        }
+        v.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+            && upper_runs >= 1
+            && v.chars().all(|c| c.is_ascii_alphanumeric())
+            && v.chars().filter(|c| c.is_ascii_digit()).count() <= 2
+    };
+    let path_like = v.starts_with('/')
+        || v.starts_with("./")
+        || v.starts_with("~/")
+        || (v.contains('/')
+            && !v.contains('=')
+            && !v.contains('+')
+            && v.split('/').filter(|p| !p.is_empty()).count() >= 2
+            && v.chars().filter(|c| *c == '/').count() >= 2);
+    if env_name || camel || path_like {
+        return false;
+    }
+    if !quoted {
+        let code_syntax = v.contains(['(', ')', '[', ']', '{', '}', '<', '>', '`', '\\', '?'])
+            || v.contains("::")
+            || v.contains("->")
+            || v.contains("=>");
+        let member_path = v.contains('.')
+            && v.split('.').all(|p| {
+                !p.is_empty()
+                    && p.chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                    && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            });
+        if code_syntax || member_path {
+            return false;
+        }
+    }
+    credential_value(v)
+}
+
+fn scan_assignments(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
+    scan_bare_key(text, decoded, hits);
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let l = line.trim_end_matches(['\n', '\r']);
+        {
+            let lower = l.to_ascii_lowercase();
+            for kw in KEYWORDS {
+                let mut from = 0;
+                while let Some(i) = lower[from..].find(kw) {
+                    let kstart = from + i;
+                    let after = &l[kstart + kw.len()..];
+                    from = kstart + kw.len();
+                    // the key name may continue (PASSWORD_FILE, token_count): take the rest of the identifier
+                    let ident_rest: String = after
+                        .chars()
+                        .take_while(|c| {
+                            c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.'
+                        })
+                        .collect();
+                    let lower_rest = ident_rest.to_ascii_lowercase();
+                    if [
+                        "_file",
+                        "_path",
+                        "_url",
+                        "_count",
+                        "_len",
+                        "_length",
+                        "_name",
+                        "_type",
+                        "_ttl",
+                        "_expiry",
+                        "_expires",
+                        "_endpoint",
+                        "_header",
+                        "_field",
+                        "_id",
+                        "_input",
+                        "_output",
+                        "_budget",
+                        "_limit",
+                        "_usage",
+                        "s",
+                    ]
+                    .iter()
+                    .any(|s| lower_rest == *s || lower_rest.starts_with(&format!("{s}_")))
+                        && !lower_rest.is_empty()
+                        && lower_rest != "s"
+                    {
+                        continue;
+                    }
+                    let rest = after[ident_rest.len()..]
+                        .trim_start_matches([' ', '"', '\'', '`', ']', ')']);
+                    let value = rest
+                        .strip_prefix(":=")
+                        .or_else(|| rest.strip_prefix("=>"))
+                        .or_else(|| rest.strip_prefix("=="))
+                        .or_else(|| rest.strip_prefix('='))
+                        .or_else(|| rest.strip_prefix(':'))
+                        .or_else(|| rest.strip_prefix("is "))
+                        .or_else(|| rest.strip_prefix("was "));
+                    if value.is_none() && !rest.is_empty() {
+                        // "api key 9f8e7d6c...": a keyword followed directly by a long random token
+                        let token = rest.split_whitespace().next().unwrap_or("");
+                        if token.len() >= 20
+                            && entropy(token) >= 3.3
+                            && token.chars().any(|c| c.is_ascii_digit())
+                            && token.chars().any(|c| c.is_ascii_alphabetic())
+                            && token.chars().all(|c| {
+                                c.is_ascii_alphanumeric()
+                                    || matches!(c, '+' | '/' | '_' | '-' | '=')
+                            })
+                        {
+                            let vstart = offset + (l.len() - rest.len());
+                            push(
+                                hits,
+                                "credential with its value",
+                                vstart,
+                                vstart + token.len(),
+                                decoded,
+                            );
+                            break;
+                        }
+                    }
+                    if let Some(v) = value {
+                        let (token, quoted) = take_value(v.trim_start());
+                        // `x += y`, `x == y` are code, not an assignment of a literal
+                        if rest.starts_with("==") || rest.starts_with("!=") {
+                            continue;
+                        }
+                        if literal_credential(token, quoted) {
+                            let vstart = offset + (l.len() - v.trim_start().len());
+                            push(
+                                hits,
+                                "credential with its value",
+                                vstart,
+                                vstart + token.len(),
+                                decoded,
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        offset += line.len();
+    }
+}
+
+/// "key 4f9a8c7e...": the bare word `key` counts only when a long random token follows it directly.
+fn scan_bare_key(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
+    let lower = text.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(i) = lower[from..].find("key ") {
+        let at = from + i;
+        from = at + 4;
+        if !is_word_boundary(text, at) {
+            continue;
+        }
+        let token = text[at + 4..].split_whitespace().next().unwrap_or("");
+        let token = token.trim_matches(|c| c == '"' || c == '\'' || c == ',' || c == '.');
+        if token.len() >= 20
+            && entropy(token) >= 3.3
+            && token.chars().any(|c| c.is_ascii_digit())
+            && token.chars().any(|c| c.is_ascii_alphabetic())
+            && token
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '_' | '-' | '='))
+        {
+            push(
+                hits,
+                "credential with its value",
+                at + 4,
+                at + 4 + token.len(),
+                decoded,
+            );
+        }
+    }
+}
+
+fn scan_wallets(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
+    // a Solana-style keypair: a bracketed list of exactly 64 byte values
+    let mut from = 0;
+    while let Some(i) = text[from..].find('[') {
+        let start = from + i;
+        let Some(j) = text[start..].find(']') else {
+            break;
+        };
+        let inner = &text[start + 1..start + j];
+        let nums: Vec<&str> = inner.split(',').map(str::trim).collect();
+        if nums.len() == 64 && nums.iter().all(|n| n.parse::<u16>().is_ok_and(|v| v < 256)) {
+            push(hits, "solana keypair", start, start + j + 1, decoded);
+        }
+        from = start + 1;
+    }
+    // a 64-hex key next to a key-like name
+    let lower = text.to_ascii_lowercase();
+    for kw in [
+        "private_key",
+        "privatekey",
+        "secret_key",
+        "secretkey",
+        "seed",
+        "signing_key",
+    ] {
+        let mut f = 0;
+        while let Some(i) = lower[f..].find(kw) {
+            let after = &text[f + i + kw.len()..];
+            f = f + i + kw.len();
+            let raw = after.trim_start_matches([' ', '"', '\'', '=', ':']);
+            let raw = raw.strip_prefix("0x").unwrap_or(raw);
+            let hexrun: String = raw.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+            if hexrun.len() == 64 {
+                push(hits, "64-hex private key", f, f + hexrun.len(), decoded);
+            }
+        }
+    }
+    // a recovery phrase: 12 or 24 plain lowercase words after a phrase-like name
+    for kw in [
+        "seed phrase",
+        "recovery phrase",
+        "mnemonic",
+        "secret phrase",
+        "backup phrase",
+    ] {
+        let mut f = 0;
+        while let Some(i) = lower[f..].find(kw) {
+            let after =
+                text[f + i + kw.len()..].trim_start_matches([' ', ':', '=', '"', '\'', '-']);
+            f = f + i + kw.len();
+            let line = after.lines().next().unwrap_or("");
+            let words: Vec<&str> = line.split_whitespace().take(24).collect();
+            let plain = words
+                .iter()
+                .take_while(|w| {
+                    w.len() >= 3 && w.len() <= 8 && w.chars().all(|c| c.is_ascii_lowercase())
+                })
+                .count();
+            // No embedded word list yet: ordinary sentences are told apart by repeated words and common function words.
+            let phrase = &words[..plain.min(words.len())];
+            const COMMON: &[&str] = &[
+                "the", "and", "over", "with", "that", "this", "for", "are", "was", "were", "you",
+                "your", "not", "but", "have", "from", "will", "all", "can",
+            ];
+            let distinct: std::collections::BTreeSet<&&str> = phrase.iter().collect();
+            if distinct.len() != phrase.len()
+                || phrase.iter().filter(|w| COMMON.contains(w)).count() >= 2
+            {
+                continue;
+            }
+            if plain == 12 || plain == 15 || plain == 18 || plain == 21 || plain == 24 {
+                push(hits, "recovery phrase", f, f + line.len(), decoded);
+            }
+        }
+    }
+}
+
+fn scan_text(text: &str, decoded: bool) -> Vec<Hit> {
+    let mut hits = Vec::new();
+    scan_formats(text, decoded, &mut hits);
+    scan_blocks_and_urls(text, decoded, &mut hits);
+    scan_assignments(text, decoded, &mut hits);
+    scan_wallets(text, decoded, &mut hits);
+    hits
+}
+
+// ---- decoding (bounded) ----
+
+fn b64_value(c: u8) -> Option<u8> {
+    match c {
+        b'A'..=b'Z' => Some(c - b'A'),
+        b'a'..=b'z' => Some(c - b'a' + 26),
+        b'0'..=b'9' => Some(c - b'0' + 52),
+        b'+' | b'-' => Some(62),
+        b'/' | b'_' => Some(63),
+        _ => None,
+    }
+}
+
+pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    let bytes: Vec<u8> = s.bytes().filter(|b| *b != b'=').collect();
+    if bytes.is_empty() || bytes.len() % 4 == 1 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    let mut buf = 0u32;
+    let mut bits = 0;
+    for b in bytes {
+        buf = (buf << 6) | b64_value(b)? as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+            buf &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
+}
+
+pub fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if !s.len().is_multiple_of(2) || !all_hex(s) {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
+}
+
+/// Budget for decoding, so a decode bomb cannot make the scan slow.
+const MAX_DECODE_DEPTH: usize = 2;
+const MAX_DECODED_BYTES: usize = 256 * 1024;
+const MAX_SEGMENTS: usize = 64;
+
+fn candidate_segments(text: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut start = None;
+    for (i, c) in text
+        .char_indices()
+        .chain(std::iter::once((text.len(), ' ')))
+    {
+        let ok = B64.contains(c) && c != '=';
+        match (ok, start) {
+            (true, None) => start = Some(i),
+            (false, Some(s)) => {
+                if i - s >= 24 {
+                    out.push((s, i));
+                }
+                start = None;
+            }
+            _ => {}
+        }
+        if out.len() >= MAX_SEGMENTS * 4 {
+            break;
+        }
+    }
+    out
+}
+
+fn scan_decoded(text: &str, depth: usize, budget: &mut usize, hits: &mut Vec<Hit>) {
+    if depth >= MAX_DECODE_DEPTH || *budget == 0 {
+        return;
+    }
+    let mut seen = 0;
+    for (s, e) in candidate_segments(text) {
+        if seen >= MAX_SEGMENTS || *budget == 0 {
+            break;
+        }
+        let seg = &text[s..e];
+        let decoded = base64_decode(seg).or_else(|| hex_decode(seg));
+        let Some(bytes) = decoded else { continue };
+        if bytes.len() > *budget {
+            continue;
+        }
+        let Ok(inner) = String::from_utf8(bytes) else {
+            continue;
+        };
+        if !inner
+            .chars()
+            .all(|c| !c.is_control() || c == '\n' || c == '\t' || c == '\r')
+        {
+            continue;
+        }
+        seen += 1;
+        *budget = budget.saturating_sub(inner.len());
+        for h in scan_text(&inner, true) {
+            hits.push(Hit {
+                rule: h.rule,
+                start: s,
+                end: e,
+                decoded: true,
+            });
+        }
+        // `user:password` pairs (HTTP basic auth, docker auth) are credentials once decoded
+        if let Some((u, p)) = inner.split_once(':') {
+            if !u.is_empty()
+                && u.len() <= 64
+                && u.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@'))
+                && !p.contains(['{', '}', '"', '\'', ','])
+                && credential_value(p)
+                && inner.len() <= 200
+                && !inner.contains('\n')
+            {
+                hits.push(Hit {
+                    rule: "decoded user:password",
+                    start: s,
+                    end: e,
+                    decoded: true,
+                });
+            }
+        }
+        scan_decoded(&inner, depth + 1, budget, hits);
+    }
+}
+
+/// Every credential-shaped thing in `text`, including inside bounded base64 and hex segments.
+pub fn scan(text: &str) -> Vec<Hit> {
+    let mut hits = scan_text(text, false);
+    let mut budget = MAX_DECODED_BYTES;
+    scan_decoded(text, 0, &mut budget, &mut hits);
+    hits.sort_by_key(|h| (h.start, h.end));
+    hits.dedup_by(|a, b| a.rule == b.rule && a.start == b.start && a.end == b.end);
+    hits
+}
+
+/// The first reason the text looks like it holds a secret, in the short plain form the product shows.
+pub fn looks_secret(text: &str) -> Option<&'static str> {
+    scan(text).first().map(|h| h.rule)
+}
+
+// ---- release egress: known withheld values in transformed forms ----
+
+fn b64_encode(bytes: &[u8], url: bool, pad: bool) -> String {
+    let alpha: &[u8; 64] = if url {
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    } else {
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    };
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let n = (chunk[0] as u32) << 16
+            | (*chunk.get(1).unwrap_or(&0) as u32) << 8
+            | *chunk.get(2).unwrap_or(&0) as u32;
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(alpha[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else if pad {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+fn percent_encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}
+
+/// Forms a withheld value can take when something reproduces it: raw, base64 (three spellings), hex, percent-encoded and
+/// reversed. Only values of at least `min_len` characters are expanded, to keep false matches out.
+pub fn variants(value: &str, min_len: usize) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let v = value.trim();
+    if v.len() < min_len {
+        return out;
+    }
+    out.insert(v.to_string());
+    out.insert(b64_encode(v.as_bytes(), false, true));
+    out.insert(b64_encode(v.as_bytes(), false, false));
+    out.insert(b64_encode(v.as_bytes(), true, false));
+    let hex: String = v.bytes().map(|b| format!("{b:02x}")).collect();
+    out.insert(hex.to_ascii_uppercase());
+    out.insert(hex);
+    out.insert(percent_encode(v));
+    out.insert(v.chars().rev().collect());
+    out.remove("");
+    out
+}
+
+/// The secret part of a credential-bearing value: for `scheme://user:password@host/...` the password and the
+/// `user:password` pair. Hosts and user names are not secrets by themselves and are not returned, because ordinary
+/// finding text names services and hosts.
+pub fn pieces(value: &str, min_len: usize) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    if let Some(rest) = value.split("://").nth(1) {
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+        if let Some((userinfo, _host)) = authority.rsplit_once('@') {
+            if let Some((_user, password)) = userinfo.split_once(':') {
+                if password.len() >= min_len {
+                    out.insert(password.to_string());
+                }
+                if userinfo.len() >= min_len {
+                    out.insert(userinfo.to_string());
+                }
+            }
+        }
+    }
+    out
+}

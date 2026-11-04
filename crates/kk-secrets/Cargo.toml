@@ -1,0 +1,11 @@
+[package]
+name = "kk-secrets"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "One shared secret detector for import, memory and release: provider token formats, keyword assignments with false-positive filters, URL passwords, wallet keys, and decoded segments"
+
+[dependencies]
+
+[lints]
+workspace = true

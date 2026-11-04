@@ -2594,6 +2594,7 @@ version = "0.0.1"
 dependencies = [
  "getrandom 0.3.4",
  "hmac 0.12.1",
+ "kk-secrets",
  "kk-types",
  "kk-vault",
  "sha2 0.10.9",
@@ -2628,6 +2629,7 @@ dependencies = [
  "kk-route",
  "kk-run",
  "kk-sandbox",
+ "kk-secrets",
  "kk-types",
  "serde_json",
  "sha2 0.10.9",
@@ -2666,6 +2668,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "kk-secrets"
+version = "0.0.1"
 
 [[package]]
 name = "kk-service"

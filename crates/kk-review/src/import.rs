@@ -47,16 +47,6 @@ const SECRET_NAMES: &[&str] = &[
     ".netrc",
 ];
 const SECRET_SUFFIXES: &[&str] = &[".pem", ".key", ".p12", ".pfx", ".env", ".keystore", ".jks"];
-const SECRET_MARKERS: &[&str] = &[
-    "-----BEGIN RSA PRIVATE KEY-----",
-    "-----BEGIN PRIVATE KEY-----",
-    "-----BEGIN OPENSSH PRIVATE KEY-----",
-    "-----BEGIN EC PRIVATE KEY-----",
-    "AKIA",
-    "sk_live_",
-    "ghp_",
-    "xoxb-",
-];
 const INJECTION_PHRASES: &[&str] = &[
     "ignore all previous instructions",
     "ignore previous instructions",
@@ -68,63 +58,6 @@ const INJECTION_PHRASES: &[&str] = &[
     "send its entire contents",
 ];
 
-fn looks_like_literal_secret(value: &str) -> bool {
-    let v = value.trim().trim_end_matches([',', ';']);
-    let inner = match v.chars().next() {
-        Some(q @ ('"' | '\'')) => {
-            let rest = &v[1..];
-            match rest.find(q) {
-                Some(end) => &rest[..end],
-                None => return false,
-            }
-        }
-        _ => v,
-    };
-    inner.len() >= 12
-        && !inner.contains("os.environ")
-        && !inner.contains("getenv")
-        && inner.chars().all(|c| {
-            c.is_ascii_alphanumeric()
-                || matches!(
-                    c,
-                    '/' | '+' | '_' | '.' | '-' | ':' | '@' | '=' | '!' | '#' | '%'
-                )
-        })
-}
-
-fn looks_like_secret_assignment(text: &str) -> bool {
-    let has_secret_key = text.lines().any(|l| {
-        if l.trim_start().starts_with('#') {
-            return false;
-        }
-        let Some((k, v)) = l.split_once('=') else {
-            return false;
-        };
-        let key = k.trim().to_ascii_uppercase();
-        let sensitive = [
-            "PASSWORD",
-            "SECRET",
-            "TOKEN",
-            "API_KEY",
-            "PRIVATE_KEY",
-            "ACCESS_KEY",
-        ]
-        .iter()
-        .any(|s| key.contains(s));
-        sensitive && looks_like_literal_secret(v)
-    });
-    let has_credential_url = text.lines().any(|l| {
-        l.split("://")
-            .nth(1)
-            .and_then(|r| r.split('/').next())
-            .is_some_and(|authority| {
-                authority.contains('@')
-                    && authority.split('@').next().is_some_and(|u| u.contains(':'))
-            })
-    });
-    has_secret_key || has_credential_url
-}
-
 fn classify(path: &str, text: Option<&str>, default_level: Level) -> (Label, Vec<String>) {
     let mut notes = Vec::new();
     let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
@@ -134,7 +67,7 @@ fn classify(path: &str, text: Option<&str>, default_level: Level) -> (Label, Vec
         notes.push("file name marks a secret".into());
     }
     if let Some(t) = text {
-        if SECRET_MARKERS.iter().any(|m| t.contains(m)) || looks_like_secret_assignment(t) {
+        if kk_secrets::looks_secret(t).is_some() {
             if !secret {
                 notes.push("content looks like a secret".into());
             }
