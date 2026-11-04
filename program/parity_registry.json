@@ -558,8 +558,8 @@
     "when a fact became true / stopped",
     "Graphiti Apache-2.0"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "kk-memory: validity windows and as-of recall, both edges mutation-checked (me03); library only, not yet wired into the service, review jobs or UI",
+   "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Time-aware memory",
    "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."
@@ -570,8 +570,8 @@
     "gmOS explain()",
     "gmOS Apache-2.0"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "kk-memory recall returns a why line (source, reason, validity) for every memory (me01); no UI yet",
+   "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Why do you remember this?",
    "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."
@@ -582,8 +582,8 @@
     "with erasure rules (01, 6.7)",
     "Letta Apache-2.0"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "kk-memory forget removes text, search index and the whole correction chain, leaves a keyed-hash tombstone and an audit entry without text (me05, me12, mutation-checked); no UI yet; file-level remnants of an encrypted database were not independently inspected",
+   "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Memory editing and forgetting",
    "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."
@@ -594,8 +594,8 @@
     "see N-record below",
     "Letta (idea)"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "kk-memory correct keeps history and replaces the current version atomically (me04); structured claim/wrong/corrected record (N14) not built; no UI",
+   "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Correction memory",
    "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."
@@ -630,8 +630,8 @@
     "per-compartment stores",
     "0G Memory (comparison)"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "memories carry labels and compartments enforced at recall (me02, mutation-checked); per-project scoping not built",
+   "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Private project memories",
    "trust_reason": "Memory lives in the encrypted local vault owned by the kernel; every surface reads and edits it through the kernel with the same labels and recovery rules."

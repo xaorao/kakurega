@@ -2457,6 +2457,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kk-memory"
+version = "0.0.1"
+dependencies = [
+ "getrandom 0.3.4",
+ "hmac 0.12.1",
+ "kk-types",
+ "kk-vault",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "kk-near"
 version = "0.0.1"
 dependencies = [

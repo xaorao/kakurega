@@ -16,6 +16,7 @@
     "kk-companion": 2,
     "kk-service": 6,
     "kk-cli": 7,
-    "kk-near": 1
+    "kk-near": 1,
+    "kk-memory": 2
   }
 }
