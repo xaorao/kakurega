@@ -65,6 +65,72 @@ function Item(props: { m: MemoryItem; onChange: (msg?: string) => void }) {
   );
 }
 
+const MAX_NOTE_CHARS = 20000;
+const MAX_NOTES = 500;
+
+function ImportNotes(props: { onDone: () => void }) {
+  const [source, setSource] = createSignal("other-assistant");
+  const [picked, setPicked] = createSignal<{ name: string; text: string }[]>([]);
+  const [skipped, setSkipped] = createSignal<string[]>([]);
+  const [busy, setBusy] = createSignal(false);
+  const [result, setResult] = createSignal("");
+  const [error, setError] = createSignal("");
+  const choose = async (files: FileList | null) => {
+    setResult("");
+    setError("");
+    const ok: { name: string; text: string }[] = [];
+    const bad: string[] = [];
+    for (const f of Array.from(files ?? [])) {
+      if (ok.length >= MAX_NOTES || f.size > MAX_NOTE_CHARS * 4 || !/\.(md|markdown|txt)$/i.test(f.name)) {
+        bad.push(f.name);
+        continue;
+      }
+      const text = (await f.text()).trim();
+      if (!text || text.length > MAX_NOTE_CHARS) bad.push(f.name);
+      else ok.push({ name: f.name, text });
+    }
+    setPicked(ok);
+    setSkipped(bad);
+  };
+  const run = async () => {
+    setBusy(true);
+    setError("");
+    setResult("");
+    try {
+      const r = await api.importNotes(source().trim(), picked());
+      setResult(t("mem.import.result", { added: r.added, known: r.already_known, refused: r.refused, instr: r.instruction_like }));
+      setPicked([]);
+      props.onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : t("mem.error"));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <details class="card stack" id="mem-import">
+      <summary>{t("mem.import.title")}</summary>
+      <p class="muted">{t("mem.import.lead")}</p>
+      <label for="imp-source">{t("mem.import.source")}</label>
+      <input id="imp-source" value={source()} maxlength="40" onInput={(e) => setSource(e.currentTarget.value)} />
+      <label for="imp-files">{t("mem.import.files")}</label>
+      <input id="imp-files" type="file" multiple accept=".md,.markdown,.txt" onChange={(e) => void choose(e.currentTarget.files)} />
+      <Show when={picked().length > 0}>
+        <p><strong>{t("mem.import.will", { n: picked().length })}</strong></p>
+        <ul class="plain"><For each={picked()}>{(p) => <li><code>{p.name}</code> <span class="muted">({p.text.length})</span></li>}</For></ul>
+      </Show>
+      <Show when={skipped().length > 0}>
+        <p class="muted">{t("mem.import.skipped", { list: skipped().join(", ") })}</p>
+      </Show>
+      <div class="actions">
+        <button class="primary" type="button" disabled={busy() || picked().length === 0 || !/^[A-Za-z0-9_-]{1,40}$/.test(source().trim())} onClick={run}>{t("mem.import.button")}</button>
+        <Show when={result()}><span role="status" class="ok">{result()}</span></Show>
+        <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
+      </div>
+    </details>
+  );
+}
+
 export function Memory() {
   const [query, setQuery] = createSignal("");
   const [items, { refetch }] = createResource(query, (q) => api.memories(q.trim() || undefined).then((r) => r.memories));
@@ -107,6 +173,7 @@ export function Memory() {
           <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
         </div>
       </form>
+      <ImportNotes onDone={() => void refetch()} />
       <Suggestions jobId="browser" heading="sug.browser.heading" lead="sug.browser.lead" onChange={() => void refetch()} />
       <div>
         <label class="sr" for="mem-search">{t("mem.search")}</label>

@@ -89,6 +89,15 @@ pub fn coverage(query: &BTreeSet<[char; 3]>, text: &BTreeSet<[char; 3]>) -> f64 
     query.intersection(text).count() as f64 / query.len() as f64
 }
 
+/// How alike two texts are by wording: shared pieces over all pieces, 1.0 for the same words in any order.
+pub fn jaccard(a: &BTreeSet<[char; 3]>, b: &BTreeSet<[char; 3]>) -> f64 {
+    let union = a.union(b).count();
+    if union == 0 {
+        return 0.0;
+    }
+    a.intersection(b).count() as f64 / union as f64
+}
+
 /// Notes whose wording is close enough to the query to be worth ranking, best first. Ties go to the lower index so the
 /// order never depends on hashing.
 pub fn rank_similar(query: &str, notes: &[(String, &str)], min: f64) -> Vec<String> {

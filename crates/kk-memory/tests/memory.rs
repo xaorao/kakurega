@@ -1128,3 +1128,150 @@ fn me28_vectors_from_another_model_are_not_compared_and_are_replaced() {
         "the new model embedded the note and the question"
     );
 }
+
+#[test]
+fn me29_a_suggestion_that_says_what_a_saved_note_or_another_suggestion_already_says_is_not_asked_twice(
+) {
+    let m = mem(&dir());
+    let lbl = Label::new(Level::Internal).untrusted();
+    m.remember(
+        1,
+        nm(
+            "Login sessions are kept in a dictionary in session.py",
+            internal(),
+        ),
+    )
+    .unwrap();
+    // reworded slightly: the same fact
+    for same in [
+        "Login sessions are kept in a dictionary in session.py.",
+        "login sessions are kept in a dictionary, in session.py",
+    ] {
+        assert!(
+            m.propose(2, "job-1", same, "x", &lbl).unwrap().is_none(),
+            "{same}"
+        );
+    }
+    // a changed fact is exactly what the owner must see, however close the wording
+    assert!(
+        m.propose(
+            2,
+            "job-1",
+            "Login sessions are kept in redis in session.py",
+            "x",
+            &lbl
+        )
+        .unwrap()
+        .is_some(),
+        "a contradiction is never hidden as a duplicate"
+    );
+    // a different fact about the same file is still worth asking
+    assert!(m
+        .propose(
+            3,
+            "job-1",
+            "The payments tests need PAYMENTS_TOKEN_SECRET set before they run",
+            "x",
+            &lbl
+        )
+        .unwrap()
+        .is_some());
+    assert!(m
+        .propose(
+            4,
+            "job-1",
+            "session.py also holds the cookie helpers",
+            "x",
+            &lbl
+        )
+        .unwrap()
+        .is_some());
+    // close wording that changes a number or flips yes and no is a changed fact
+    m.remember(
+        10,
+        nm(
+            "The staging server listens on port 8080 and logs requests to the console",
+            internal(),
+        ),
+    )
+    .unwrap();
+    assert!(
+        m.propose(
+            11,
+            "job-5",
+            "The staging server listens on port 8081 and logs requests to the console",
+            "x",
+            &lbl
+        )
+        .unwrap()
+        .is_some(),
+        "a different number"
+    );
+    m.remember(
+        12,
+        nm(
+            "Requests are retried automatically after a timeout in the payments client",
+            internal(),
+        ),
+    )
+    .unwrap();
+    assert!(
+        m.propose(
+            13,
+            "job-5",
+            "Requests are not retried automatically after a timeout in the payments client",
+            "x",
+            &lbl
+        )
+        .unwrap()
+        .is_some(),
+        "a flipped meaning"
+    );
+    assert!(
+        m.propose(
+            14,
+            "job-5",
+            "The staging server listens on port 8080 and logs requests to the console.",
+            "x",
+            &lbl
+        )
+        .unwrap()
+        .is_none(),
+        "the same number is the same claim"
+    );
+    // two suggestions of one review that say the same thing: only the first is asked
+    assert!(m
+        .propose(
+            5,
+            "job-2",
+            "Deploys go out through the blue green pipeline on Fridays",
+            "x",
+            &lbl
+        )
+        .unwrap()
+        .is_some());
+    assert!(m
+        .propose(
+            6,
+            "job-2",
+            "Deploys go out through the blue-green pipeline on Fridays.",
+            "x",
+            &lbl
+        )
+        .unwrap()
+        .is_none());
+    // the same wording in another review is that review's own question
+    assert!(m
+        .propose(
+            7,
+            "job-3",
+            "Deploys go out through the blue green pipeline on Fridays",
+            "x",
+            &lbl
+        )
+        .unwrap()
+        .is_some());
+    // empty and very short texts never match everything
+    assert!(m.propose(8, "job-4", "ok", "x", &lbl).unwrap().is_some());
+    assert!(m.propose(9, "job-4", "no", "x", &lbl).unwrap().is_some());
+}

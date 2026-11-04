@@ -248,6 +248,35 @@ fn fts_query(q: &str) -> Option<String> {
     }
 }
 
+/// Wording overlap at or above which a suggestion counts as already known.
+const NEAR_DUPLICATE: f64 = 0.8;
+
+/// Two close wordings can still disagree: a different number, or a flipped yes/no, is a changed fact and must be shown.
+fn same_claim(a: &str, b: &str) -> bool {
+    fn marks(s: &str) -> (std::collections::BTreeSet<String>, bool) {
+        let lower = s.to_lowercase();
+        let mut numbers = std::collections::BTreeSet::new();
+        let mut run = String::new();
+        for c in lower.chars().chain(std::iter::once(' ')) {
+            if c.is_ascii_digit() {
+                run.push(c);
+            } else if !run.is_empty() {
+                numbers.insert(std::mem::take(&mut run));
+            }
+        }
+        let negated = lower
+            .split(|c: char| !c.is_alphanumeric() && c != '\'')
+            .any(|w| {
+                matches!(
+                    w,
+                    "not" | "no" | "never" | "without" | "cannot" | "disabled" | "off"
+                ) || w.ends_with("n't")
+            });
+        (numbers, negated)
+    }
+    marks(a) == marks(b)
+}
+
 /// True when saved text reads like an instruction to an AI system. Such notes stay in memory but are never handed to a model as context.
 pub fn instruction_like(text: &str) -> bool {
     let t = text.to_lowercase();
@@ -837,7 +866,11 @@ impl Memories {
             params![job_id],
             |r| r.get(0),
         )?;
-        if blocked || count >= cap || secret::looks_secret(text).is_some() {
+        if blocked
+            || count >= cap
+            || secret::looks_secret(text).is_some()
+            || self.near_duplicate(text, job_id)?
+        {
             return Ok(None);
         }
         let id = new_id();
@@ -853,6 +886,28 @@ impl Memories {
         )?;
         self.event(now, "propose", &id, "suggested by a review")?;
         Ok(Some(id))
+    }
+
+    /// True when a suggestion says almost what a saved note, or another suggestion of the same review, already says. The
+    /// owner would only be asked to decide the same thing twice. Looks at the newest notes only, so the cost stays bounded.
+    fn near_duplicate(&self, text: &str, job_id: &str) -> Result<bool, MemoryError> {
+        let mine = fuse::trigrams(text);
+        let mut seen = Vec::new();
+        {
+            let mut st = self.conn().prepare("SELECT text FROM memories WHERE status = 'active' ORDER BY created_at DESC, rowid DESC LIMIT 2000")?;
+            for t in st.query_map([], |r| r.get::<_, String>(0))? {
+                seen.push(t?);
+            }
+            let mut st = self
+                .conn()
+                .prepare("SELECT text FROM proposals WHERE job_id = ?1 AND status = 'pending'")?;
+            for t in st.query_map(params![job_id], |r| r.get::<_, String>(0))? {
+                seen.push(t?);
+            }
+        }
+        Ok(seen.iter().any(|t| {
+            fuse::jaccard(&mine, &fuse::trigrams(t)) >= NEAR_DUPLICATE && same_claim(text, t)
+        }))
     }
 
     pub fn pending_proposals(&self, job_id: &str) -> Result<Vec<Proposal>, MemoryError> {

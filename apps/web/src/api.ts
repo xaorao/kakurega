@@ -174,6 +174,7 @@ export const api = {
   searchStatus: () => request<{ available: boolean; provider?: string; how_to_enable?: string }>("GET", "/api/search/status"),
   searchPropose: (query: string) => request<SearchProposal>("POST", "/api/search/propose", { query }),
   searchRun: (id: string, digest: string) => request<{ results: SearchHit[]; note: string }>("POST", `/api/search/${id}/run`, { approve: true, digest }),
+  importNotes: (source: string, notes: { text: string; name: string }[]) => request<{ added: number; already_known: number; refused: number; instruction_like: number; note: string }>("POST", "/api/memories/import-notes", { source, notes }),
   researchPropose: (urls: string[]) => request<ResearchProposal>("POST", "/api/research/propose", { urls }),
   researchFetch: (id: string, digest: string) => request<{ pages: ResearchPage[]; note: string }>("POST", `/api/research/${id}/fetch`, { approve: true, digest }),
   ask: (folder: string, question: string) => request<AskReply>("POST", "/api/ask", { folder, question }),
