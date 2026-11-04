@@ -7,6 +7,7 @@ import { Verify } from "./screens/Verify";
 import { Memory } from "./screens/Memory";
 import { Activity } from "./screens/Activity";
 import { Chat } from "./screens/Chat";
+import { Documents } from "./screens/Documents";
 import { applyLocale, LOCALES, locale, rich, setLocale, t, type Locale } from "./i18n";
 
 function useHash() {
@@ -198,6 +199,7 @@ export function App() {
           <div class="body">
             <nav class="side" aria-label={t("nav.label")}>
               <a class="primary" href="#/">{t("nav.new")}</a>
+              <a href="#/docs" class={hash() === "#/docs" ? "navlink active" : "navlink"}>{t("nav.docs")}</a>
               <a href="#/chat" class={hash() === "#/chat" ? "navlink active" : "navlink"}>{t("nav.chat")}</a>
               <a href="#/memory" class={hash() === "#/memory" ? "navlink active" : "navlink"}>{t("nav.memory")}</a>
               <a href="#/activity" class={hash() === "#/activity" ? "navlink active" : "navlink"}>{t("nav.activity")}</a>
@@ -229,7 +231,7 @@ export function App() {
             <main class="main">
               <Show when={config()}>
                 {(c) => (
-                  <Show when={hash() !== "#/memory" && hash() !== "#/activity" && hash() !== "#/chat"} fallback={hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : <Memory />}>
+                  <Show when={hash() !== "#/memory" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/docs"} fallback={hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/docs" ? <Documents /> : <Memory />}>
                     <Show when={jobId()} fallback={<NewReview config={c()} onStarted={(id) => { void refresh(); location.hash = `#/job/${id}`; }} />}>
                     {(id) => <ReviewView id={id()} config={c()} onUpdate={() => void refresh()} />}
                     </Show>

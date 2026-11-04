@@ -157,6 +157,26 @@ impl JobRunner for CannedRunner {
         &self,
         messages: Vec<kk_types::chat::ChatMessage>,
     ) -> Result<kk_service::ChatReply, String> {
+        if messages
+            .first()
+            .is_some_and(|m| m.content.contains("FILE markers"))
+        {
+            let user = &messages.last().unwrap().content;
+            let first = user.split("=== FILE ").nth(1).unwrap();
+            let name = first.split(" ===").next().unwrap().to_string();
+            let line = first.lines().nth(1).unwrap_or("").to_string();
+            let reply = if user.contains("Question: garbage") {
+                "I think the answer is probably in the contract, but I am not sure.".to_string()
+            } else {
+                json!({"answer": "See the cited passage.", "citations": [{"file": name, "quote": line}, {"file": name, "quote": "This sentence was invented by the model."}, {"file": "hr/secret.txt", "quote": "Restricted layoff list is here"}]}).to_string()
+            };
+            return Ok(kk_service::ChatReply {
+                text: reply,
+                route_id: "canned".into(),
+                class: "device_only".into(),
+                simulated: true,
+            });
+        }
         if self.confirm {
             let text = messages
                 .iter()
@@ -1963,4 +1983,107 @@ fn sv18_the_browser_extension_channel_is_narrow_paired_origin_pinned_and_can_onl
         );
     }
     let _ = base;
+}
+
+#[test]
+fn sv19_document_questions_return_answers_whose_quotes_are_checked_and_hide_restricted_files() {
+    let (root, _repo) = repo_copy("ask");
+    let docs = root.join("docs");
+    std::fs::create_dir_all(&docs).unwrap();
+    std::fs::write(docs.join("contract.md"), "The term of this agreement is twelve (12) months from the Effective Date.\nEither party may terminate with sixty (60) days notice.\n").unwrap();
+    std::fs::write(
+        docs.join(".env"),
+        format!("API_TOKEN={}{}\n", "sk_li", "ve_abcdefghijklmnop0123"),
+    )
+    .unwrap();
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    assert_eq!(
+        Web::new(c.addr)
+            .post("/api/ask", json!({"folder": "x", "question": "q"}))
+            .0,
+        401
+    );
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (st, r) = w.post(
+        "/api/ask",
+        json!({"folder": docs.to_string_lossy(), "question": "How long is the term?"}),
+    );
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["checkable"], true);
+    assert_eq!(r["files_used"], json!(["contract.md"]));
+    assert_eq!(
+        r["files_withheld"],
+        json!([".env"]),
+        "a secret file is withheld and reported, never sent"
+    );
+    let cites = r["citations"].as_array().unwrap();
+    assert_eq!(cites[0]["verdict"], "verified");
+    assert_eq!(cites[0]["line"], 1);
+    assert_eq!(
+        cites[1]["verdict"], "not_found",
+        "an invented quote is reported as not found"
+    );
+    assert_eq!(
+        cites[2]["verdict"], "unknown_file",
+        "a file the model was never given cannot be cited"
+    );
+    assert_eq!(r["verified"], 1);
+    let (_, plain) = w.post(
+        "/api/ask",
+        json!({"folder": docs.to_string_lossy(), "question": "garbage"}),
+    );
+    assert_eq!(plain["checkable"], false);
+    assert!(
+        plain["unchecked_text"]
+            .as_str()
+            .unwrap()
+            .contains("not sure")
+            && plain.get("answer").is_none()
+            && plain.get("citations").is_none(),
+        "an unstructured reply is shown only as unchecked text, never as an answer"
+    );
+    for bad in [
+        json!({"folder": docs.to_string_lossy(), "question": ""}),
+        json!({"folder": docs.to_string_lossy(), "question": "x".repeat(501)}),
+        json!({"folder": docs.to_string_lossy(), "question": "bad \u{1b}[2J"}),
+        json!({"folder": "/etc", "question": "q"}),
+        json!({"folder": docs.join("../../..").to_string_lossy(), "question": "q"}),
+        json!({"folder": docs.to_string_lossy(), "question": "q", "extra": 1}),
+    ] {
+        let (st, body) = w.post("/api/ask", bad.clone());
+        assert!(
+            st == 400 || st == 403 || st == 422,
+            "{bad} gave {st} {body}"
+        );
+    }
+    let empty = root.join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    assert_eq!(
+        w.post(
+            "/api/ask",
+            json!({"folder": empty.to_string_lossy(), "question": "q"})
+        )
+        .0,
+        502
+    );
+    let log = log_text(
+        &format!("http://127.0.0.1:{}", c.addr.port()),
+        c.security.admin_token(),
+    );
+    assert!(
+        log.contains("ask.turn") && !log.contains("twelve") && !log.contains("term?"),
+        "the log records that a question was asked, never what"
+    );
 }

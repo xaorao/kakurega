@@ -102,9 +102,9 @@
         },
         {
           "id": "II-04",
-          "text": "Electron chosen with measurements; Tauri not measured (recorded). Reviewer accepts or asks for a Tauri measurement",
+          "text": "Shell choice with a fair measurement: comparable Tauri v2 spike measured against Electron (docs/engineering-decisions/desktop-shell.md). Recommendation recorded: move to Tauri once it passes the same boundary checks and II-12 exists. The owner decides.",
           "kind": "human",
-          "evidence_needed": "Prateek accepts the Electron decision or asks for a Tauri build and measurement"
+          "evidence_needed": "Prateek accepts the recommendation (Tauri after boundary checks and approval binding), or keeps Electron"
         },
         {
           "id": "II-05",
@@ -136,7 +136,7 @@
         },
         {
           "id": "II-09",
-          "text": "Real workflows beyond code review (documents, research, memory, coding) run on the shared backend in web and desktop",
+          "text": "Workflows beyond code review on the shared backend. Built: private memory, private chat, document questions with checked quotes (web). Not built: research with live sources, coding mode, terminal and desktop surfaces for document questions.",
           "kind": "pending",
           "evidence_needed": "journeys and hostile tests per workflow; registry rows move to BUILT_TESTED"
         },
@@ -151,6 +151,32 @@
           "text": "Windows and Linux desktop only where their isolation tests pass; platform security claims each have a platform test",
           "kind": "pending",
           "evidence_needed": "per-platform isolation test results"
+        },
+        {
+          "id": "II-12",
+          "text": "Cryptographic approval binding: an approval signature over recipient, exact release bytes hash, policy version and a nonce, made with an OS-protected key after user presence, verified by the kernel before it will deliver; independent of the renderer and of the shell framework",
+          "kind": "pending",
+          "evidence_needed": "kernel contract and tests (replay, wrong digest, swapped recipient, duplicate approval), a native helper, physical-hardware Touch ID run"
+        },
+        {
+          "id": "II-13",
+          "text": "Shell boundary attack tests on the packaged app: DNS rebinding, cross-origin and CSRF (covered by companion tests), stolen session token, renderer XSS, IPC spoofing, duplicate approvals, production fuses and CSP, signed update path",
+          "kind": "pending",
+          "evidence_needed": "test results for the chosen shell's production build"
+        },
+        {
+          "id": "II-09a",
+          "text": "Document questions: strict answer parsing, quote verification, withheld files, hostile model output (kk-review ask01-ask04, mutation-checked) and the service endpoint",
+          "kind": "machine",
+          "command": "cargo test -p kk-review --test ask",
+          "expect": "test result: ok. 4 passed"
+        },
+        {
+          "id": "II-09b",
+          "text": "Document questions through the service: auth, bounds, withheld secret file, invented quote reported, unstructured reply shown only as unchecked",
+          "kind": "machine",
+          "command": "cargo test -p kk-service --test flow sv19",
+          "expect": "test result: ok. 1 passed"
         }
       ]
     },

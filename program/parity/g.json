@@ -215,7 +215,7 @@
   },
   "G7": {
    "status": "PARTIAL",
-   "evidence": "findings show file:line and a reproducer; clickable citation into the source viewer not built"
+   "evidence": "findings show file:line and a reproducer; clickable citation into the source viewer not built; quotes with file and line in the Documents screen (no click-through viewer yet)"
   },
   "G51": {
    "status": "PARTIAL",
@@ -248,6 +248,14 @@
   "G43": {
    "status": "NOT_BUILT",
    "evidence": null
+  },
+  "G6": {
+   "status": "PARTIAL",
+   "evidence": "document questions with source-grounded quotes verified verbatim against the named file: kk-review ask01-ask04 (eight deliberate breaks each failed a test), kk-service sv19, scripts/e2e Documents journey (axe clean), live local model run recorded in TESTING.md. Verification proves presence of text, not that the answer follows from it; no claim-by-claim entailment check"
+  },
+  "G23": {
+   "status": "PARTIAL",
+   "evidence": "the Documents answer lists files withheld, skipped for room, and suspected of aiming text at AI assistants; no 'missing source' reasoning"
   }
  }
 }

@@ -186,8 +186,8 @@
     "part of source manifest",
     "Docling"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "the Documents answer lists files withheld, skipped for room, and suspected of aiming text at AI assistants; no 'missing source' reasoning",
+   "status": "PARTIAL",
    "surface_class": "WEB_COMPANION",
    "title": "Missing source warning",
    "trust_reason": "Document intelligence reads private files, so it runs in the local kernel (companion or desktop) with files mounted read-only; hosted web only for data the organisation owns and attests."
@@ -666,8 +666,8 @@
     "answer must be entailed by the cited passage",
     "Ragas, Apache-2.0 (now vibrantlabsai/ragas)"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "document questions with source-grounded quotes verified verbatim against the named file: kk-review ask01-ask04 (eight deliberate breaks each failed a test), kk-service sv19, scripts/e2e Documents journey (axe clean), live local model run recorded in TESTING.md. Verification proves presence of text, not that the answer follows from it; no claim-by-claim entailment check",
+   "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Source-grounded verification",
    "trust_reason": "Verification runs on the same route class as the data inside the user's kernel; any surface only displays the result, and a hosted surface may run it only on a route eligible for the data label."
@@ -798,7 +798,7 @@
     "opens exact page/cell with highlight (see N15)",
     "NotebookLM (product page exists)"
    ],
-   "evidence": "findings show file:line and a reproducer; clickable citation into the source viewer not built",
+   "evidence": "findings show file:line and a reproducer; clickable citation into the source viewer not built; quotes with file and line in the Documents screen (no click-through viewer yet)",
    "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Clickable source citations",

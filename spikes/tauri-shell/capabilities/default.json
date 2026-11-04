@@ -1,0 +1,1 @@
+{ "$schema": "../gen/schemas/desktop-schema.json", "identifier": "default", "description": "No capability is granted to any window: pages loaded in the webview can call no native command.", "windows": [], "permissions": [] }

@@ -17,6 +17,9 @@ const root = join(work, "root");
 const project = join(root, "payments-service");
 cpSync(join(repo, "fixtures/synthetic-repo"), project, { recursive: true });
 renameSync(join(project, "_env"), join(project, ".env"));
+mkdirSync(join(root, "contracts"), { recursive: true });
+writeFileSync(join(root, "contracts/agreement.md"), "The term of this agreement is twelve (12) months from the Effective Date.\nEither party may terminate with sixty (60) days notice.\n");
+writeFileSync(join(root, "contracts/.env"), "API_TOKEN=" + "sk_" + "live_abcdefghijklmnop0123456789\n");
 const data = join(work, "data");
 
 const chrome = join(homedir(), "Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing");
@@ -239,6 +242,18 @@ try {
   await page.screenshot({ path: join(shots, "13-chat.png") });
   await page.getByRole("button", { name: "Clear" }).click();
   check("Clear forgets the conversation", (await page.locator(".msg").count()) === 0);
+  // documents: an answer whose quotes are checked against the files
+  await page.getByRole("link", { name: "Documents" }).click();
+  await page.getByRole("heading", { name: "Ask your documents", exact: true }).waitFor();
+  await page.getByRole("button", { name: "contracts" }).click();
+  await page.getByLabel("Your question").fill("How long is the term?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await page.getByRole("heading", { name: "Answer", exact: true }).waitFor();
+  const ans = await page.locator("#h-answer").locator("xpath=..").innerText();
+  check("the answer says it is not proof and shows one quote found with its line and one not found", ans.includes("not proof") && ans.includes("1 of 2 quote(s) found") && ans.includes("Found in the file (line 1)") && ans.includes("Not found: the file does not contain this text"), ans.replace(/\n/g, " | ").slice(0, 200));
+  check("the secret file is reported as not sent and its content is nowhere", ans.includes("Not sent to the model") && ans.includes(".env") && !ans.includes("sk_live"));
+  await axeCheck(page, "documents screen");
+  await page.screenshot({ path: join(shots, "14-documents.png") });
   // activity: the signed log lists what happened, downloads, and verifies offline with the CLI
   await page.getByRole("link", { name: "Activity" }).click();
   await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();

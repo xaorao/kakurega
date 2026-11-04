@@ -44,6 +44,8 @@ export interface LogEntry { seq: number; at: number; kind: string; subject: stri
 export interface LogSummary { count: number; head: string | null; public_key: string; recent: LogEntry[] }
 export interface ChatTurn { role: "user" | "assistant"; content: string }
 export interface ChatReply { reply: string; route: { id: string; class: string; simulated: boolean }; notes_used: number; notes_withheld: number }
+export interface AskCitation { file: string; quote: string; verdict: "verified" | "not_found" | "unknown_file" | "bad_length"; line: number | null }
+export interface AskReply { checkable: boolean; answer?: string; citations?: AskCitation[]; verified?: number; unchecked_text?: string; files_used: string[]; files_withheld: string[]; files_skipped: string[]; injection_suspects: string[]; route: { simulated: boolean } }
 export interface Withheld { path: string; notes: string[] }
 export interface Summary {
   imported: number;
@@ -104,6 +106,7 @@ export const api = {
   dismissSuggestion: (job: string, id: string) => request<{ dismissed: boolean }>("POST", `/api/jobs/${job}/memory-suggestions/${id}/dismiss`, {}),
   log: () => request<LogSummary>("GET", "/api/log"),
   chat: (message: string, history: ChatTurn[]) => request<ChatReply>("POST", "/api/chat", { message, history }),
+  ask: (folder: string, question: string) => request<AskReply>("POST", "/api/ask", { folder, question }),
   readiness: () => request<Readiness>("GET", "/api/readiness"),
   fs: (path?: string) => request<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>("GET", `/api/fs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   startJob: (repo: string, recipient: string) => request<{ id: string }>("POST", "/api/jobs", { repo, recipient }),

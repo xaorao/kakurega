@@ -42,3 +42,28 @@ Cost accepted: 253 MB bundle and about 450 MB memory. Tauri was NOT built or mea
 
 ## Not done
 Spike not started; source of OpenCode's desktop package not read; Windows and Linux not tested; disk is tight (about 5 GB free), so the spike builds with a shared target directory.
+
+
+## Second opinion and the comparable Tauri measurement (supersedes the "final for now" decision above)
+A reviewer's critique (GPT, pasted by the owner; treated as outside input, claims checked) made two corrections and asked for one fair comparison:
+1. Tauri on macOS CAN be automated: the official WebdriverIO docs (webdriver.io/docs/desktop-testing/tauri/platform-support, OBSERVED through a search of the official pages, not run here) describe an embedded WebDriver provider through the `tauri-plugin-wdio-webdriver` crate, registered only in debug builds. My earlier claim that Tauri would be less testable on macOS was wrong in that form; the remaining cost is rewriting the shell checks in WebdriverIO. NOT tried.
+2. `promptTouchID` proves user presence only. It does not bind consent to the exact release. Our flow ties the prompt text to the digest and the owner's confirmation to the typed or supplied digest prefix, but there is no cryptographic approval signature over recipient, bytes, policy version and a nonce with an OS-protected key. That is a real gap for either shell and is now a pending row (II-12).
+
+Measured on the same Apple-silicon Mac, service already running, same web app, same loopback companion, 5 runs each (`spikes/tauri-shell`, Tauri 2.12.5, release profile; Electron 45.2.2):
+
+| | Tauri v2 (system WKWebView) | Electron 45 |
+|---|---|---|
+| shell executable / bundle | 3.4 MB binary | 253 MB app |
+| time until the page's load event | median 260 ms (250 to 317) | median 229 ms (222 to 231; first run 968 ms cold) |
+| resident memory after 3 s (app and its helper processes) | median 202 MB, 4 processes | median 440 MB, 4 processes |
+
+Method notes: memory is `ps` resident size of the app and its WebKit XPC helpers (new since launch) for Tauri, and of the process tree for Electron; load time is the app's own start-to-load-event for Tauri and `performance.timing.loadEventEnd` minus the launch call for Electron. A first Tauri run showed 1.5 GB: that was my own bug (an observer that re-triggered itself by setting the title), removed and remeasured. Not measured: packaged .app or .dmg sizes, battery, long-run memory, update recovery, Windows and Linux webviews.
+
+What the Tauri spike has: a window on the loopback app with an origin-locked navigation handler, no capability granted to any window (a page can call no native command), and a native approval dialog that approves or refuses through the same admin API. What it does NOT have: Touch ID, signed approvals, hardening review of a packaged build.
+
+### Evidence-based reading (owner decides: II-04)
+- Efficiency: Tauri is about 75 times smaller and uses about 2.2 times less memory with equal perceived start-up. That is material for an app people leave running.
+- Boundary: with no capability granted, a page in the Tauri webview has no IPC at all; the shell is Rust like the kernel, with no second runtime. Electron needs its sandbox, preload, fuse and port-handoff discipline to reach a comparable position.
+- Cost of switching: re-do the 13 shell checks in WebdriverIO, add the native approval and Touch ID path (needed for both shells), and accept WKWebView differences, with Windows and Linux webviews untested.
+- Recommendation: move the shipping shell to Tauri v2 once it passes the same boundary checks and the approval binding (II-12) is built in Rust, keeping the Electron spike as the reference until then. This is a recommendation from measurement, not a decision: the owner accepts or rejects it.
+- Kernel and approval contracts stay framework-independent (`/admin/approvals` and the digest), so the choice can be changed without rebuilding the security architecture.

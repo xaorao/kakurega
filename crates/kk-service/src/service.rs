@@ -1194,6 +1194,119 @@ async fn ext_capture(
     }
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AskBody {
+    folder: String,
+    question: String,
+}
+
+async fn ask(axum::Extension(svc): Svc, Json(b): Json<AskBody>) -> Response {
+    let q = b.question.trim().to_string();
+    if q.is_empty() || q.chars().count() > 500 || !chat_clean(&q) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_QUESTION",
+            "write a question of 1 to 500 characters without control characters",
+        );
+    }
+    let Some(dir) = svc.allowed_dir(&b.folder) else {
+        return error(
+            StatusCode::FORBIDDEN,
+            "NOT_ALLOWED",
+            "that folder is not available",
+        );
+    };
+    let svc2 = svc.clone();
+    let out = tokio::task::spawn_blocking(move || {
+        let imported = kk_review::import::scan_tree(&dir, kk_types::label::Level::Internal);
+        let ctx = kk_review::ask::build_context(&imported.files);
+        if ctx.used.is_empty() {
+            return Err("there are no readable text documents in that folder".to_string());
+        }
+        let suspects: Vec<String> = imported
+            .files
+            .iter()
+            .filter(|f| f.notes.iter().any(|n| n.contains("injection")))
+            .map(|f| f.path.clone())
+            .collect();
+        let messages = vec![
+            kk_types::chat::ChatMessage::new("system", kk_review::ask::SYSTEM),
+            kk_types::chat::ChatMessage::new("user", &format!("{}\nQuestion: {q}", ctx.text)),
+        ];
+        let reply = svc2.runner.chat(messages)?;
+        Ok((reply, imported.files, ctx, suspects))
+    })
+    .await;
+    let (reply, files, ctx, suspects) = match out {
+        Ok(Ok(x)) => x,
+        Ok(Err(m)) => return error(StatusCode::BAD_GATEWAY, "NO_ANSWER", &m),
+        Err(_) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ASK_FAILED",
+                "the question stopped unexpectedly",
+            )
+        }
+    };
+    let route = json!({"id": reply.route_id, "class": reply.class, "simulated": reply.simulated});
+    let base = json!({"files_used": ctx.used, "files_withheld": ctx.withheld, "files_skipped": ctx.skipped_too_large, "injection_suspects": suspects, "route": route});
+    let mut body = base.as_object().cloned().unwrap_or_default();
+    match kk_review::ask::parse_answer(&reply.text) {
+        Some(a) => {
+            let checked = kk_review::ask::verify(&a, &files, &ctx.used);
+            let verified = checked
+                .iter()
+                .filter(|c| matches!(c.verdict, kk_review::ask::Verdict::Verified { .. }))
+                .count();
+            svc.log_event(
+                "ask.turn",
+                "documents",
+                &[
+                    ("files", ctx.used.len().into()),
+                    ("citations", checked.len().into()),
+                    ("verified", verified.into()),
+                ],
+            );
+            body.insert("checkable".into(), json!(true));
+            body.insert("answer".into(), json!(a.answer));
+            body.insert(
+                "citations".into(),
+                json!(checked.iter().map(|c| {
+                    let (verdict, line) = match &c.verdict {
+                        kk_review::ask::Verdict::Verified { line } => ("verified", Some(*line)),
+                        kk_review::ask::Verdict::NotFound => ("not_found", None),
+                        kk_review::ask::Verdict::UnknownFile => ("unknown_file", None),
+                        kk_review::ask::Verdict::BadLength => ("bad_length", None),
+                    };
+                    json!({"file": c.citation.file, "quote": c.citation.quote, "verdict": verdict, "line": line})
+                }).collect::<Vec<_>>()),
+            );
+            body.insert("verified".into(), json!(verified));
+        }
+        None => {
+            svc.log_event(
+                "ask.turn",
+                "documents",
+                &[
+                    ("files", ctx.used.len().into()),
+                    ("citations", 0usize.into()),
+                    ("verified", 0usize.into()),
+                ],
+            );
+            body.insert("checkable".into(), json!(false));
+            let t: String = reply
+                .text
+                .chars()
+                .filter(|c| !c.is_control() || *c == '\n')
+                .take(1500)
+                .collect();
+            body.insert("unchecked_text".into(), json!(t));
+        }
+    }
+    Json(Value::Object(body)).into_response()
+}
+
 async fn fs_list(axum::Extension(svc): Svc, Query(q): Query<PathQuery>) -> Response {
     let start = q.path.unwrap_or_else(|| {
         svc.roots
@@ -1837,6 +1950,7 @@ impl Extension for Routes {
             .route("/api/config", get(config))
             .route("/api/readiness", get(readiness))
             .route("/api/chat", post(chat))
+            .route("/api/ask", post(ask))
             .route("/api/log", get(log_summary))
             .route("/api/log/export", get(log_export))
             .route("/api/memories", get(memories_list).post(memory_add))

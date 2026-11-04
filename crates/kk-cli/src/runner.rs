@@ -92,6 +92,21 @@ impl JobRunner for ReviewRunner {
                 .last()
                 .map(|m| m.content.clone())
                 .unwrap_or_default();
+            if messages
+                .first()
+                .is_some_and(|m| m.content.contains("FILE markers"))
+            {
+                let first = last.split("=== FILE ").nth(1).unwrap_or("");
+                let name = first.split(" ===").next().unwrap_or("").to_string();
+                let line = first.lines().nth(1).unwrap_or("").to_string();
+                let text = json!({"answer": "Scripted test reply: see the passages below.", "citations": [{"file": name, "quote": line}, {"file": name, "quote": "This sentence was invented by the scripted model."}]}).to_string();
+                return Ok(kk_service::ChatReply {
+                    text,
+                    route_id: "scripted-test-model".into(),
+                    class: "device_only".into(),
+                    simulated: true,
+                });
+            }
             return Ok(kk_service::ChatReply {
                 text: format!("[test model] I received {} characters. This is a scripted reply, not a real model.", last.chars().count()),
                 route_id: "scripted-test-model".into(),
