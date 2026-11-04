@@ -67,6 +67,13 @@ struct Session {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WrittenArtifact {
+    pub job: JobKey,
+    pub handle: u64,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseDraft {
     pub session: SessionId,
     pub handles: Vec<u64>,
@@ -89,6 +96,7 @@ pub struct Broker {
     next_session: u64,
     pub audit: Vec<AuditEvent>,
     pub release_drafts: Vec<ReleaseDraft>,
+    pub written: Vec<WrittenArtifact>,
 }
 
 struct Failure {
@@ -147,6 +155,7 @@ impl Broker {
             next_session: 1,
             audit: Vec::new(),
             release_drafts: Vec::new(),
+            written: Vec::new(),
         }
     }
 
@@ -409,6 +418,11 @@ impl Broker {
                 code: ErrorCode::BadRequest,
                 detail: "step is closed".into(),
             })?;
+        self.written.push(WrittenArtifact {
+            job: job.clone(),
+            handle: h.index(),
+            kind: kind.to_string(),
+        });
         Ok(json!({"handle": h.index()}))
     }
 

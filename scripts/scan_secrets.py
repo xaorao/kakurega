@@ -12,6 +12,7 @@ PATTERNS = {
     "api key (sk- prefix)": re.compile(r"\bsk-[A-Za-z0-9_-]{24,}\b"),
     "huggingface token": re.compile(r"\bhf_[A-Za-z0-9]{30,}\b"),
     "github token": re.compile(r"\b(?:ghp|gho|ghs|github_pat)_[A-Za-z0-9_]{30,}\b"),
+    "stripe live key": re.compile(r"\bsk_live_[A-Za-z0-9]{16,}\b"),
     "aws access key": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     "env assignment of a secret": re.compile(
         r"(?im)^\s*(?:export\s+)?[A-Z0-9_]*(?:API_KEY|SECRET|TOKEN|PASSWORD|SEED|MNEMONIC)[A-Z0-9_]*\s*=\s*['\"]?[A-Za-z0-9+/_\-]{16,}"
@@ -19,6 +20,11 @@ PATTERNS = {
 }
 BLOCKED_PATH = re.compile(r"(^|/)(\.secrets/|\.env($|\.)|.*\.pem$|.*\.key$|id_rsa|id_ed25519)")
 SELF = {"scripts/scan_secrets.py"}
+FAKE_FIXTURE_PREFIX = "fixtures/synthetic-repo/"
+MARKER_FILES = {
+    "crates/kk-review/src/import.rs": {"private key block"},
+    "crates/kk-review/tests/import.rs": {"private key block"},
+}
 
 
 def scan_text(path, text):
@@ -28,8 +34,13 @@ def scan_text(path, text):
     if path in SELF:
         return hits
     for label, rx in PATTERNS.items():
-        if rx.search(text):
+        if label in MARKER_FILES.get(path, set()):
+            continue
+        for m in rx.finditer(text):
+            if path.startswith(FAKE_FIXTURE_PREFIX) and "fake" in m.group(0).lower():
+                continue
             hits.append((path, label))
+            break
     return hits
 
 
@@ -49,7 +60,12 @@ def selftest():
     assert scan_text("config/.env", "A=b")
     assert scan_text("x.txt", "NEAR_AI_API_KEY=" + "q" * 20)
     assert not scan_text("x.txt", "ordinary text with no secrets")
-    print("scan_secrets selftest: ok (6 cases)")
+    assert not scan_text("fixtures/synthetic-repo/_env", "PAYMENTS_API_KEY=sk_live_51NfakeFAKEfakeFAKE0000000000")
+    assert scan_text("fixtures/synthetic-repo/_env", "PAYMENTS_API_KEY=" + "Zq9" * 8)
+    assert scan_text("elsewhere.rs", "-----BEGIN " + "PRIVATE KEY-----")
+    assert not scan_text("crates/kk-review/src/import.rs", "-----BEGIN " + "PRIVATE KEY-----")
+    assert scan_text("elsewhere/_env", "PAYMENTS_API_KEY=sk_live_51NfakeFAKEfakeFAKE0000000000")
+    print("scan_secrets selftest: ok (11 cases)")
 
 
 def main():

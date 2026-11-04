@@ -3,4 +3,4 @@ set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 vm="${KK_VM:-kak}"
 limactl start "$vm" >/dev/null 2>&1 || true
-limactl shell "$vm" -- bash -lc ". \$HOME/.cargo/env; cd '$repo' && export CARGO_TARGET_DIR=\$HOME/kk-target && export RUSTUP_TOOLCHAIN=1.94.1; cargo build --locked -p kk-worker && export KK_WORKER_BIN=\$CARGO_TARGET_DIR/debug/kk-worker && cargo test --locked -p kk-sandbox -p kk-run -- --test-threads=1"
+limactl shell "$vm" -- bash -lc ". \$HOME/.cargo/env; cd '$repo' && export CARGO_TARGET_DIR=\$HOME/kk-target && export RUSTUP_TOOLCHAIN=1.94.1; cargo build --locked -p kk-worker && export KK_WORKER_BIN=\$CARGO_TARGET_DIR/debug/kk-worker && cargo test --locked -p kk-sandbox -p kk-run -p kk-review -- --test-threads=1"

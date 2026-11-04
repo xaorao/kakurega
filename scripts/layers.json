@@ -11,6 +11,7 @@
     "kk-effects": 2,
     "kk-broker": 3,
     "kk-worker": 2,
-    "kk-run": 4
+    "kk-run": 4,
+    "kk-review": 5
   }
 }

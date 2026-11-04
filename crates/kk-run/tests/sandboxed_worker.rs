@@ -5,7 +5,7 @@ use kk_kernel::{ArtifactHandle, JobKey};
 use kk_policy::{Engine, WorkerFacts};
 use kk_route::{Route, RouteClass, RouteSet, ScriptedRoute};
 use kk_run::{run_script, run_worker, WorkerLaunch};
-use kk_sandbox::{Exit, Limits};
+use kk_sandbox::{Exit, Limits, Transport};
 use kk_types::chat::{ChatMessage, ToolCall};
 use kk_types::label::{Label, Level};
 use serde_json::json;
@@ -102,6 +102,7 @@ fn s01_the_real_worker_binary_completes_a_review_inside_the_sandbox() {
         .to_string(),
         max_turns: 10,
         limits: limits(),
+        transport: Transport::Local,
     };
     let out = run_worker(&mut b, s, &launch).expect("sandbox run");
     assert_eq!(
@@ -150,7 +151,15 @@ say({"id": 4, "op": "log.note", "code": json.dumps(out).replace('"', "-").replac
     .unwrap();
     let mut b = broker(vec![]);
     let s = open(&mut b);
-    let out = run_script(&mut b, s, "/usr/bin/python3", &script, limits()).expect("run");
+    let out = run_script(
+        &mut b,
+        s,
+        "/usr/bin/python3",
+        &script,
+        limits(),
+        &Transport::Local,
+    )
+    .expect("run");
     assert_eq!(
         out.exit,
         Exit::Code(0),
@@ -185,7 +194,15 @@ fn s03_an_oversized_line_kills_the_worker_and_a_silent_worker_times_out() {
     std::fs::write(&flood, "import sys\nsys.stdout.write('x' * (9 * 1024 * 1024) + '\\n')\nsys.stdout.flush()\nimport time; time.sleep(30)\n").unwrap();
     let mut b = broker(vec![]);
     let s = open(&mut b);
-    let out = run_script(&mut b, s, "/usr/bin/python3", &flood, limits()).expect("run");
+    let out = run_script(
+        &mut b,
+        s,
+        "/usr/bin/python3",
+        &flood,
+        limits(),
+        &Transport::Local,
+    )
+    .expect("run");
     assert!(out.oversize_line, "{:?}", out.exit);
     assert!(
         b.audit.is_empty(),
@@ -198,7 +215,15 @@ fn s03_an_oversized_line_kills_the_worker_and_a_silent_worker_times_out() {
     let mut short = limits();
     short.wall = Duration::from_secs(2);
     let t = std::time::Instant::now();
-    let out2 = run_script(&mut b2, s2, "/usr/bin/python3", &silent, short).expect("run");
+    let out2 = run_script(
+        &mut b2,
+        s2,
+        "/usr/bin/python3",
+        &silent,
+        short,
+        &Transport::Local,
+    )
+    .expect("run");
     assert_eq!(out2.exit, Exit::TimedOut);
     assert!(t.elapsed() < Duration::from_secs(10));
 }

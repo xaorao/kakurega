@@ -2,4 +2,4 @@ pub mod broker;
 pub mod protocol;
 pub mod tools;
 
-pub use broker::{AuditEvent, Broker, BrokerConfig, SessionId};
+pub use broker::{AuditEvent, Broker, BrokerConfig, ReleaseDraft, SessionId, WrittenArtifact};

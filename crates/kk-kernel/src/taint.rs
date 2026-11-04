@@ -106,6 +106,13 @@ impl Kernel {
             .map(|a| a.label.clone())
     }
 
+    pub fn peek(&self, handle: &ArtifactHandle) -> Option<(Vec<u8>, Label)> {
+        self.jobs
+            .get(&handle.job)
+            .and_then(|s| s.artifacts.get(&handle.index))
+            .map(|a| (a.bytes.clone(), a.label.clone()))
+    }
+
     pub fn open_step(&mut self, job: &JobKey, clearance: Label) -> StepId {
         self.jobs.entry(job.clone()).or_default();
         let id = StepId(self.next_step);

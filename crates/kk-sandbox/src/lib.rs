@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::fmt;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -44,6 +44,7 @@ pub struct SandboxSpec {
     pub env: Vec<(String, String)>,
     pub binds: Vec<Bind>,
     pub limits: Limits,
+    pub chdir: Option<PathBuf>,
     pub weaken_for_self_test: Option<Weakening>,
 }
 
@@ -61,6 +62,7 @@ impl SandboxSpec {
             env: Vec::new(),
             binds: Vec::new(),
             limits: Limits::default(),
+            chdir: None,
             weaken_for_self_test: None,
         }
     }
@@ -161,7 +163,12 @@ pub fn bwrap_args(spec: &SandboxSpec) -> Vec<OsString> {
         a.push(b.inside.clone().into_os_string());
     }
     a.push(OsString::from("--chdir"));
-    a.push(OsString::from("/tmp"));
+    a.push(
+        spec.chdir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .into_os_string(),
+    );
     a.push(OsString::from("--"));
     a.push(spec.program.clone().into_os_string());
     a.extend(spec.args.iter().cloned());
@@ -332,10 +339,24 @@ fn scope_command(spec: &SandboxSpec) -> Result<(Command, String), SandboxError> 
 
 pub fn serve_lines(
     spec: &SandboxSpec,
+    handler: impl FnMut(&str) -> String,
+) -> Result<ServeOutcome, SandboxError> {
+    serve_lines_with(spec, &Transport::Local, handler)
+}
+
+pub fn serve_lines_with(
+    spec: &SandboxSpec,
+    transport: &Transport,
     mut handler: impl FnMut(&str) -> String,
 ) -> Result<ServeOutcome, SandboxError> {
-    selfcheck::verify_profile()?;
-    let (mut cmd, unit) = scope_command(spec)?;
+    let (mut cmd, unit) = match transport {
+        Transport::Local => {
+            selfcheck::verify_profile()?;
+            let (c, u) = scope_command(spec)?;
+            (c, Some(u))
+        }
+        Transport::Lima { vm, launcher } => (lima_command(vm, launcher, spec), None),
+    };
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -389,15 +410,17 @@ pub fn serve_lines(
             }
         }
     });
-    let stop_scope = |unit: &str| {
-        let _ = Command::new("systemctl")
-            .args(["--user", "stop", &format!("{unit}.scope")])
-            .env_clear()
-            .env(
-                "XDG_RUNTIME_DIR",
-                std::env::var("XDG_RUNTIME_DIR").unwrap_or_default(),
-            )
-            .output();
+    let stop_scope = |unit: &Option<String>| {
+        if let Some(unit) = unit {
+            let _ = Command::new("systemctl")
+                .args(["--user", "stop", &format!("{unit}.scope")])
+                .env_clear()
+                .env(
+                    "XDG_RUNTIME_DIR",
+                    std::env::var("XDG_RUNTIME_DIR").unwrap_or_default(),
+                )
+                .output();
+        }
     };
     let start = Instant::now();
     let mut served = 0u64;
@@ -447,4 +470,181 @@ pub fn serve_lines(
         lines_served: served,
         oversize_line: oversize,
     })
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct WireBind {
+    host: String,
+    inside: String,
+    writable: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct WireSpec {
+    program: String,
+    args: Vec<String>,
+    env: Vec<(String, String)>,
+    binds: Vec<WireBind>,
+    cpu_secs: u64,
+    memory_bytes: u64,
+    processes: u64,
+    file_bytes: u64,
+    open_files: u64,
+    wall_ms: u64,
+    output_bytes: usize,
+    #[serde(default)]
+    chdir: Option<String>,
+}
+
+impl SandboxSpec {
+    pub fn to_wire(&self) -> String {
+        let w = WireSpec {
+            program: self.program.to_string_lossy().into_owned(),
+            args: self
+                .args
+                .iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect(),
+            env: self.env.clone(),
+            binds: self
+                .binds
+                .iter()
+                .map(|b| WireBind {
+                    host: b.host.to_string_lossy().into_owned(),
+                    inside: b.inside.to_string_lossy().into_owned(),
+                    writable: b.writable,
+                })
+                .collect(),
+            cpu_secs: self.limits.cpu_secs,
+            memory_bytes: self.limits.memory_bytes,
+            processes: self.limits.processes,
+            file_bytes: self.limits.file_bytes,
+            open_files: self.limits.open_files,
+            wall_ms: self.limits.wall.as_millis() as u64,
+            output_bytes: self.limits.output_bytes,
+            chdir: self
+                .chdir
+                .as_ref()
+                .map(|c| c.to_string_lossy().into_owned()),
+        };
+        serde_json::to_string(&w).unwrap_or_default()
+    }
+
+    pub fn from_wire(text: &str) -> Result<SandboxSpec, SandboxError> {
+        let w: WireSpec =
+            serde_json::from_str(text).map_err(|e| SandboxError::Spawn(e.to_string()))?;
+        Ok(SandboxSpec {
+            program: PathBuf::from(w.program),
+            args: w.args.into_iter().map(OsString::from).collect(),
+            env: w.env,
+            binds: w
+                .binds
+                .into_iter()
+                .map(|b| Bind {
+                    host: PathBuf::from(b.host),
+                    inside: PathBuf::from(b.inside),
+                    writable: b.writable,
+                })
+                .collect(),
+            limits: Limits {
+                cpu_secs: w.cpu_secs,
+                memory_bytes: w.memory_bytes,
+                processes: w.processes,
+                file_bytes: w.file_bytes,
+                open_files: w.open_files,
+                wall: Duration::from_millis(w.wall_ms),
+                output_bytes: w.output_bytes,
+            },
+            chdir: w.chdir.map(PathBuf::from),
+            weaken_for_self_test: None,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Transport {
+    Local,
+    Lima { vm: String, launcher: PathBuf },
+}
+
+/// Linux side of a Lima transport: verify the profile, then replace this process with the sandboxed worker so stdin and stdout are the broker channel.
+pub fn exec_from_wire(wire: &str) -> SandboxError {
+    use std::os::unix::process::CommandExt;
+    if let Err(e) = selfcheck::verify_profile() {
+        return e;
+    }
+    let spec = match SandboxSpec::from_wire(wire) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match scope_command(&spec) {
+        Ok((mut cmd, _unit)) => {
+            let err = cmd.exec();
+            SandboxError::Spawn(err.to_string())
+        }
+        Err(e) => e,
+    }
+}
+
+pub fn lima_command(vm: &str, launcher: &Path, spec: &SandboxSpec) -> Command {
+    let mut cmd = Command::new("limactl");
+    cmd.args(["shell", "--tty=false", vm, "--"])
+        .arg(launcher)
+        .arg(spec.to_wire());
+    cmd
+}
+
+pub fn run_with(spec: &SandboxSpec, transport: &Transport) -> Result<Outcome, SandboxError> {
+    match transport {
+        Transport::Local => {
+            selfcheck::verify_profile()?;
+            run_unchecked(spec)
+        }
+        Transport::Lima { vm, launcher } => {
+            let mut cmd = lima_command(vm, launcher, spec);
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            let mut child = cmd
+                .spawn()
+                .map_err(|e| SandboxError::Spawn(e.to_string()))?;
+            let cap = spec.limits.output_bytes;
+            let out = child.stdout.take();
+            let err = child.stderr.take();
+            let t_out =
+                std::thread::spawn(move || out.map(|o| read_capped(o, cap)).unwrap_or_default());
+            let t_err =
+                std::thread::spawn(move || err.map(|o| read_capped(o, cap)).unwrap_or_default());
+            let start = Instant::now();
+            let exit = loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        use std::os::unix::process::ExitStatusExt;
+                        break match (status.code(), status.signal()) {
+                            (Some(c), _) => Exit::Code(c),
+                            (None, Some(sig)) => Exit::Signal(sig),
+                            _ => Exit::Code(-1),
+                        };
+                    }
+                    Ok(None) => {
+                        if start.elapsed() >= spec.limits.wall {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            break Exit::TimedOut;
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(e) => return Err(SandboxError::Spawn(e.to_string())),
+                }
+            };
+            let (stdout, t1) = t_out.join().unwrap_or_default();
+            let (stderr, t2) = t_err.join().unwrap_or_default();
+            Ok(Outcome {
+                exit,
+                stdout,
+                stderr,
+                truncated: t1 || t2,
+            })
+        }
+    }
 }

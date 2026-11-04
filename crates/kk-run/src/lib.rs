@@ -1,5 +1,7 @@
 use kk_broker::{Broker, SessionId};
-use kk_sandbox::{serve_lines, Bind, Limits, SandboxError, SandboxSpec, ServeOutcome};
+use kk_sandbox::{
+    serve_lines_with, Bind, Limits, SandboxError, SandboxSpec, ServeOutcome, Transport,
+};
 use std::path::{Path, PathBuf};
 
 pub struct WorkerLaunch {
@@ -9,6 +11,7 @@ pub struct WorkerLaunch {
     pub tools_json: String,
     pub max_turns: u32,
     pub limits: Limits,
+    pub transport: Transport,
 }
 
 pub fn run_worker(
@@ -29,7 +32,9 @@ pub fn run_worker(
         ("KK_MAX_TURNS".into(), launch.max_turns.to_string()),
     ];
     spec.limits = launch.limits.clone();
-    let outcome = serve_lines(&spec, |line| broker.handle_line(session, line));
+    let outcome = serve_lines_with(&spec, &launch.transport, |line| {
+        broker.handle_line(session, line)
+    });
     broker.close_session(session);
     outcome
 }
@@ -40,6 +45,7 @@ pub fn run_script(
     program: &str,
     script: &Path,
     limits: Limits,
+    transport: &Transport,
 ) -> Result<ServeOutcome, SandboxError> {
     let mut spec = SandboxSpec::new(program);
     spec.args = vec!["-I".into(), "/tmp/w.py".into()];
@@ -49,7 +55,7 @@ pub fn run_script(
         writable: false,
     });
     spec.limits = limits;
-    let outcome = serve_lines(&spec, |line| broker.handle_line(session, line));
+    let outcome = serve_lines_with(&spec, transport, |line| broker.handle_line(session, line));
     broker.close_session(session);
     outcome
 }
