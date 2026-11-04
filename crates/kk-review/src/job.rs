@@ -44,7 +44,19 @@ pub struct MemorySuggestion {
     pub label: Label,
 }
 
+#[derive(Debug, Clone)]
+pub struct ProposedFix {
+    pub finding_title: String,
+    pub fix: crate::check::Fix,
+    pub status: crate::check::FixStatus,
+    pub diff: String,
+    pub file_sha256: String,
+}
+
+pub const MAX_FIXES: usize = 10;
+
 pub struct JobReport {
+    pub fixes: Vec<ProposedFix>,
     pub memory_suggestions: Vec<MemorySuggestion>,
     pub files: Vec<crate::import::ImportedFile>,
     pub imported: usize,
@@ -94,6 +106,7 @@ pub fn run_job(
         ),
     );
     let mut report = JobReport {
+        fixes: Vec::new(),
         memory_suggestions: Vec::new(),
         files: files.clone(),
         imported: files.len(),
@@ -189,6 +202,43 @@ pub fn run_job(
             }
             None => report.unparsed_findings += 1,
         }
+    }
+    let fix_written: Vec<_> = broker
+        .written
+        .iter()
+        .filter(|w| w.kind == "fix")
+        .cloned()
+        .collect();
+    for w in fix_written.into_iter().take(MAX_FIXES) {
+        let Some((bytes, _label)) = broker.kernel.peek(&ArtifactHandle::of(&w.job, w.handle))
+        else {
+            continue;
+        };
+        let Some(fix) = crate::check::parse_fix(&bytes, &known) else {
+            continue;
+        };
+        let Some((finding, before)) = report
+            .findings
+            .iter()
+            .find(|(f, _)| f.title == fix.title)
+            .cloned()
+        else {
+            continue;
+        };
+        let status = crate::check::verify_fix(&finding, &before, &fix, &index, &env);
+        let orig = index
+            .get(&fix.file)
+            .map(|f| (f.bytes.clone(), f.sha256.clone()));
+        let (diff, file_sha256) = orig
+            .map(|(b, h)| (crate::check::unified_diff(&b, &fix), h))
+            .unwrap_or_default();
+        report.fixes.push(ProposedFix {
+            finding_title: finding.title.clone(),
+            fix,
+            status,
+            diff,
+            file_sha256,
+        });
     }
     let suggestions: Vec<_> = broker
         .written

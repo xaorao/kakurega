@@ -1,6 +1,6 @@
 use kk_review::check::{
-    clean_text, parse_finding, python_closure, run_reproducer, CheckEnv, CheckStatus, ClosureError,
-    Finding,
+    apply_fix, clean_text, parse_finding, parse_fix, python_closure, run_reproducer, unified_diff,
+    verify_fix, CheckEnv, CheckStatus, ClosureError, Finding, Fix, FixStatus,
 };
 use kk_review::import::{scan_tree, ImportedFile};
 use kk_sandbox::Transport;
@@ -197,4 +197,144 @@ fn c04_hostile_or_broken_reproducers_never_become_confirmations() {
             ),
         }
     }
+}
+
+fn fix(old: &str, new: &str) -> Fix {
+    Fix {
+        title: "Token not revoked".into(),
+        file: "payments/auth/session.py".into(),
+        old_text: old.into(),
+        new_text: new.into(),
+        explanation: String::new(),
+    }
+}
+
+const GOOD_OLD: &str = "    # Clears the browser cookie on the client side; the server keeps the entry.\n    cookie_jar = {\"session\": token}\n    cookie_jar.pop(\"session\", None)\n";
+const GOOD_NEW: &str = "    ACTIVE_TOKENS.pop(token, None)\n";
+
+#[test]
+fn f01_fixes_are_parsed_strictly_and_applied_only_as_one_exact_replacement() {
+    let known: BTreeSet<String> = ["a.py".to_string()].into();
+    let ok =
+        br#"{"title":"t","file":"a.py","old_text":"x = 1","new_text":"x = 2","explanation":"e"}"#;
+    assert!(parse_fix(ok, &known).is_some());
+    for bad in [
+        br#"{"title":"t","file":"b.py","old_text":"x","new_text":"y"}"#.as_slice(),
+        br#"{"title":"t","file":"a.py","old_text":"","new_text":"y"}"#,
+        br#"{"title":"t","file":"a.py","old_text":"x","new_text":"x"}"#,
+        br#"{"title":"t","file":"a.py","old_text":"x","new_text":"y","extra":1}"#,
+        br#"{"title":"t","file":"a.py","old_text":"x","new_text":"y\u0000z"}"#,
+        br#"{"title":"t","file":"a.py","old_text":"x","new_text":"a\u202eb"}"#,
+        b"not json",
+        b"[]",
+    ] {
+        assert!(
+            parse_fix(bad, &known).is_none(),
+            "{}",
+            String::from_utf8_lossy(bad)
+        );
+    }
+    let big = format!(
+        r#"{{"title":"t","file":"a.py","old_text":"x","new_text":"{}"}}"#,
+        "y".repeat(9000)
+    );
+    assert!(parse_fix(big.as_bytes(), &known).is_none());
+    let f = Fix {
+        title: "t".into(),
+        file: "a.py".into(),
+        old_text: "x = 1".into(),
+        new_text: "x = 2".into(),
+        explanation: String::new(),
+    };
+    assert_eq!(apply_fix(b"a\nx = 1\nb\n", &f).unwrap(), b"a\nx = 2\nb\n");
+    assert!(apply_fix(b"a\nb\n", &f).is_none(), "not found");
+    assert!(apply_fix(b"x = 1\nx = 1\n", &f).is_none(), "ambiguous");
+    assert!(apply_fix(&[0xff, 0xfe, 0x00], &f).is_none(), "not text");
+    let d = unified_diff(b"a\nx = 1\nb\n", &f);
+    assert!(
+        d.contains("--- a/a.py")
+            && d.contains("-x = 1")
+            && d.contains("+x = 2")
+            && d.contains("line 2")
+    );
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn f02_a_fix_is_only_called_good_when_the_reproducer_stops_reproducing_and_still_runs() {
+    let files = fixture_files();
+    let idx = index(&files);
+    let t = transport();
+    let env = CheckEnv {
+        transport: &t,
+        scratch: &scratch(),
+        python: "/usr/bin/python3",
+    };
+    let f = finding(REPRO);
+    let before = run_reproducer(&f, &idx, &env);
+    assert_eq!(before.status, CheckStatus::Reproduced);
+    assert_eq!(
+        verify_fix(&f, &before, &fix(GOOD_OLD, GOOD_NEW), &idx, &env),
+        FixStatus::FixesTheReproducer
+    );
+    let cosmetic = fix(
+        "    cookie_jar = {\"session\": token}\n",
+        "    cookie_jar = {\"session\": token}  # unchanged behaviour\n",
+    );
+    assert_eq!(
+        verify_fix(&f, &before, &cosmetic, &idx, &env),
+        FixStatus::StillReproduced,
+        "a change that does nothing is not a fix"
+    );
+    let disables = fix("    return token in ACTIVE_TOKENS\n", "    return False\n");
+    assert!(
+        matches!(
+            verify_fix(&f, &before, &disables, &idx, &env),
+            FixStatus::NotChecked(_)
+        ),
+        "making validate always fail breaks the reproducer's own login check and is not accepted"
+    );
+    let broken = fix(
+        "    ACTIVE_TOKENS[token] = user_id\n",
+        "    ACTIVE_TOKENS[token] = user_id +\n",
+    );
+    assert!(
+        matches!(
+            verify_fix(&f, &before, &broken, &idx, &env),
+            FixStatus::NotChecked(_)
+        ),
+        "code that no longer runs is not a fix"
+    );
+    assert!(matches!(
+        verify_fix(&f, &before, &fix("no such text", "x"), &idx, &env),
+        FixStatus::CouldNotApply(_)
+    ));
+    assert!(
+        matches!(
+            verify_fix(&f, &before, &fix("token", "tok"), &idx, &env),
+            FixStatus::CouldNotApply(_)
+        ),
+        "ambiguous text"
+    );
+    let mut other_file = fix(GOOD_OLD, GOOD_NEW);
+    other_file.file = "payments/util/backoff.py".into();
+    assert!(matches!(
+        verify_fix(&f, &before, &other_file, &idx, &env),
+        FixStatus::CouldNotApply(_)
+    ));
+    let unreproduced = run_reproducer(&finding("print('NOT REPRODUCED')"), &idx, &env);
+    assert!(matches!(
+        verify_fix(&f, &unreproduced, &fix(GOOD_OLD, GOOD_NEW), &idx, &env),
+        FixStatus::NotChecked(_)
+    ));
+    let original = idx["payments/auth/session.py"].bytes.clone();
+    assert_eq!(
+        files
+            .iter()
+            .find(|x| x.path == "payments/auth/session.py")
+            .unwrap()
+            .bytes,
+        original,
+        "verification never changes the project files"
+    );
 }

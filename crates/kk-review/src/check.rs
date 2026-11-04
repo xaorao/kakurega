@@ -299,3 +299,124 @@ pub fn run_reproducer(
         sample_paths,
     }
 }
+
+pub const MAX_FIX_TEXT: usize = 8_000;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fix {
+    pub title: String,
+    pub file: String,
+    pub old_text: String,
+    pub new_text: String,
+    pub explanation: String,
+}
+
+pub fn parse_fix(bytes: &[u8], known_files: &BTreeSet<String>) -> Option<Fix> {
+    let v: Value = serde_json::from_slice(bytes).ok()?;
+    let o = v.as_object()?;
+    if o.keys()
+        .any(|k| !["title", "file", "old_text", "new_text", "explanation"].contains(&k.as_str()))
+    {
+        return None;
+    }
+    let file = o.get("file")?.as_str()?.to_string();
+    if !known_files.contains(&file) {
+        return None;
+    }
+    let old_text = o.get("old_text")?.as_str()?.to_string();
+    let new_text = o.get("new_text")?.as_str()?.to_string();
+    if old_text.is_empty()
+        || old_text == new_text
+        || old_text.len() > MAX_FIX_TEXT
+        || new_text.len() > MAX_FIX_TEXT
+    {
+        return None;
+    }
+    if new_text.chars().any(|c| {
+        (c.is_control() && !matches!(c, '\n' | '\t'))
+            || matches!(c as u32, 0x202a..=0x202e | 0x2066..=0x2069 | 0x200b..=0x200f | 0xfeff)
+    }) {
+        return None;
+    }
+    Some(Fix {
+        title: clean_text(o.get("title")?.as_str()?, MAX_TITLE),
+        file,
+        old_text,
+        new_text,
+        explanation: clean_text(
+            o.get("explanation").and_then(Value::as_str).unwrap_or(""),
+            MAX_EXPLANATION,
+        ),
+    })
+}
+
+/// Exactly one occurrence of `old_text` is replaced; anything else is not a fix.
+pub fn apply_fix(original: &[u8], fix: &Fix) -> Option<Vec<u8>> {
+    let text = std::str::from_utf8(original).ok()?;
+    if text.matches(fix.old_text.as_str()).count() != 1 {
+        return None;
+    }
+    let out = text.replacen(fix.old_text.as_str(), &fix.new_text, 1);
+    (out.len() <= original.len() + MAX_FIX_TEXT).then(|| out.into_bytes())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FixStatus {
+    /// The reproducer printed REPRODUCED before the change and does not after it.
+    FixesTheReproducer,
+    StillReproduced,
+    CouldNotApply(String),
+    NotChecked(String),
+}
+
+/// Checks a proposed fix against the finding it claims to fix. This establishes only that this reproducer stops
+/// reproducing; it does not run the project's tests and does not prove the change is correct or complete.
+pub fn verify_fix(
+    finding: &Finding,
+    before: &CheckResult,
+    fix: &Fix,
+    files: &BTreeMap<String, &ImportedFile>,
+    env: &CheckEnv<'_>,
+) -> FixStatus {
+    if before.status != CheckStatus::Reproduced {
+        return FixStatus::NotChecked("the finding it belongs to was not reproduced".into());
+    }
+    let Some(orig) = files.get(&fix.file) else {
+        return FixStatus::CouldNotApply("the file is not in the project".into());
+    };
+    let Some(patched_bytes) = apply_fix(&orig.bytes, fix) else {
+        return FixStatus::CouldNotApply(
+            "the text to replace must appear exactly once in the file".into(),
+        );
+    };
+    let mut patched = (*orig).clone();
+    patched.bytes = patched_bytes;
+    let mut map: BTreeMap<String, &ImportedFile> = files.clone();
+    map.insert(fix.file.clone(), &patched);
+    let after = run_reproducer(finding, &map, env);
+    match after.status {
+        CheckStatus::NotReproduced => FixStatus::FixesTheReproducer,
+        CheckStatus::Reproduced => FixStatus::StillReproduced,
+        other => FixStatus::NotChecked(format!(
+            "the check after the change could not be trusted: {other:?}"
+        )),
+    }
+}
+
+/// A plain unified diff of the one replacement, for people to read; applying uses `apply_fix`, never this text.
+pub fn unified_diff(original: &[u8], fix: &Fix) -> String {
+    let text = String::from_utf8_lossy(original);
+    let at = text.find(fix.old_text.as_str()).unwrap_or(0);
+    let first_line = text[..at].matches('\n').count() + 1;
+    let mut out = format!(
+        "--- a/{}\n+++ b/{}\n@@ line {} @@\n",
+        fix.file, fix.file, first_line
+    );
+    for l in fix.old_text.lines() {
+        out.push_str(&format!("-{l}\n"));
+    }
+    for l in fix.new_text.lines() {
+        out.push_str(&format!("+{l}\n"));
+    }
+    out
+}

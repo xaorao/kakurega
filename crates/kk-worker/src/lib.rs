@@ -149,6 +149,24 @@ pub fn finding_tool() -> ToolSpec {
     }
 }
 
+pub fn fix_tool() -> ToolSpec {
+    ToolSpec {
+        name: "propose_fix".into(),
+        description: "Propose a fix for a finding you already reported. Give the finding's exact title, the file, the exact existing text to replace (it must appear exactly once in that file) and the new text. The kernel checks the change against your reproducer; it is shown to the owner only and never sent to anyone else.".into(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "file": {"type": "string"},
+                "old_text": {"type": "string"},
+                "new_text": {"type": "string"},
+                "explanation": {"type": "string"}
+            },
+            "required": ["title", "file", "old_text", "new_text"]
+        }),
+    }
+}
+
 pub fn memory_tool() -> ToolSpec {
     ToolSpec {
         name: "suggest_memory".into(),
@@ -224,6 +242,25 @@ fn run_local_tool(link: &mut dyn Link, call: &ToolCall) -> Result<Value, WorkerE
                 serde_json::to_vec(&finding).map_err(|e| WorkerError::Link(e.to_string()))?;
             let r = ok_result(link.call(json!({"op": "write.artifact", "bytes_b64": b64::encode(&bytes), "kind": "finding"}))?)?;
             Ok(json!({"recorded": true, "handle": r["handle"]}))
+        }
+        "propose_fix" => {
+            let a = &call.arguments;
+            let (Some(title), Some(file), Some(old), Some(new)) = (
+                a["title"].as_str(),
+                a["file"].as_str(),
+                a["old_text"].as_str(),
+                a["new_text"].as_str(),
+            ) else {
+                return Ok(
+                    json!({"error": "propose_fix needs title, file, old_text and new_text"}),
+                );
+            };
+            let bytes = serde_json::to_vec(&json!({"title": title, "file": file, "old_text": old, "new_text": new, "explanation": a["explanation"].as_str().unwrap_or("")}))
+                .map_err(|e| WorkerError::Link(e.to_string()))?;
+            let r = ok_result(link.call(
+                json!({"op": "write.artifact", "bytes_b64": b64::encode(&bytes), "kind": "fix"}),
+            )?)?;
+            Ok(json!({"proposed": true, "handle": r["handle"]}))
         }
         "suggest_memory" => {
             let a = &call.arguments;

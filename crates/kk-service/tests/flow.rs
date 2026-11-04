@@ -98,7 +98,44 @@ impl JobRunner for CannedRunner {
             imp.files.iter().map(|f| (f.path.clone(), f)).collect();
         let findings = vec![(finding, check)];
         let draft = assemble(&findings, &index, recipient, "policy-1", now, 86_400);
+        let fixes = if recipient == "fixer" {
+            let sess = index["payments/auth/session.py"];
+            let old = "    # Clears the browser cookie on the client side; the server keeps the entry.\n    cookie_jar = {\"session\": token}\n    cookie_jar.pop(\"session\", None)\n";
+            let mk = |old: &str, new: &str, status: kk_review::check::FixStatus| {
+                let fix = kk_review::check::Fix {
+                    title: "Token not revoked".into(),
+                    file: "payments/auth/session.py".into(),
+                    old_text: old.into(),
+                    new_text: new.into(),
+                    explanation: "remove the server-side entry".into(),
+                };
+                kk_review::job::ProposedFix {
+                    finding_title: "Token not revoked".into(),
+                    diff: kk_review::check::unified_diff(&sess.bytes, &fix),
+                    file_sha256: sess.sha256.clone(),
+                    fix,
+                    status,
+                }
+            };
+            vec![
+                mk(
+                    old,
+                    "    ACTIVE_TOKENS.pop(token, None)\n",
+                    kk_review::check::FixStatus::FixesTheReproducer,
+                ),
+                mk(
+                    "return token in ACTIVE_TOKENS",
+                    "return False",
+                    kk_review::check::FixStatus::NotChecked(
+                        "breaks the reproducer's own login check".into(),
+                    ),
+                ),
+            ]
+        } else {
+            Vec::new()
+        };
         JobReport {
+            fixes,
             memory_suggestions: if recipient == "suggester" {
                 let l = kk_types::label::Label::new(kk_types::label::Level::Internal).untrusted();
                 vec![
@@ -2454,5 +2491,157 @@ fn sv21_memory_backup_exports_everything_and_import_refuses_secrets_and_junk() {
         )
         .0,
         401
+    );
+}
+
+#[test]
+fn sv22_a_checked_fix_is_applied_to_the_owners_file_only_when_nothing_has_changed() {
+    let (root, repo) = repo_copy("fixes");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let session = repo.join("payments/auth/session.py");
+    let start_job = |w: &Web| -> String {
+        let (_, s) = w.post(
+            "/api/jobs",
+            json!({"repo": repo.to_string_lossy(), "recipient": "fixer"}),
+        );
+        let job = s["id"].as_str().unwrap().to_string();
+        wait_for(w, &job, &["ready"]);
+        job
+    };
+    let original = std::fs::read_to_string(&session).unwrap();
+    let job = start_job(&w);
+    let (_, list) = w.get(&format!("/api/jobs/{job}/fixes"));
+    let fixes = list["fixes"].as_array().unwrap();
+    assert_eq!(fixes.len(), 2);
+    assert_eq!(
+        (fixes[0]["verified"].clone(), fixes[1]["verified"].clone()),
+        (json!(true), json!(false))
+    );
+    assert!(fixes[0]["diff"]
+        .as_str()
+        .unwrap()
+        .contains("+    ACTIVE_TOKENS.pop(token, None)"));
+    assert!(fixes[0]["established"]
+        .as_str()
+        .unwrap()
+        .contains("project's own tests were not run"));
+    let url = |n: usize| format!("/api/jobs/{job}/fixes/{n}/apply");
+    assert_eq!(
+        std::fs::read_to_string(&session).unwrap(),
+        original,
+        "listing never changes a file"
+    );
+    assert_eq!(
+        w.post(&url(1), json!({"file": "payments/auth/session.py"}))
+            .0,
+        409,
+        "an unverified fix cannot be applied"
+    );
+    assert_eq!(w.post(&url(7), json!({"file": "x"})).0, 404);
+    assert_eq!(
+        w.post(&url(0), json!({"file": "payments/other.py"})).0,
+        400,
+        "the file must be named"
+    );
+    assert_eq!(
+        w.post(
+            &url(0),
+            json!({"file": "payments/auth/session.py", "extra": 1})
+        )
+        .0,
+        422
+    );
+    let unpaired = raw(
+        &format!("http://127.0.0.1:{}", c.addr.port()),
+        "POST",
+        &url(0),
+        &[],
+        Some(json!({"file": "payments/auth/session.py"})),
+    )
+    .0;
+    assert!([401, 403].contains(&unpaired), "unpaired: {unpaired}");
+    assert_eq!(std::fs::read_to_string(&session).unwrap(), original);
+    let (st, r) = w.post(&url(0), json!({"file": "payments/auth/session.py"}));
+    assert_eq!(st, 200, "{r}");
+    let after = std::fs::read_to_string(&session).unwrap();
+    assert!(
+        after.contains("ACTIVE_TOKENS.pop(token, None)")
+            && !after.contains("cookie_jar")
+            && after.contains("def validate"),
+        "{after}"
+    );
+    assert_eq!(
+        r["sha256_after"].as_str().unwrap(),
+        kk_evidence::capsule::sha256_hex(after.as_bytes())
+    );
+    assert_eq!(
+        w.post(&url(0), json!({"file": "payments/auth/session.py"}))
+            .0,
+        409,
+        "a second apply is refused"
+    );
+    let (_, list) = w.get(&format!("/api/jobs/{job}/fixes"));
+    assert_eq!(list["fixes"][0]["applied"], true);
+    let leftovers: Vec<_> = std::fs::read_dir(repo.join("payments/auth"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().contains("kakurega-fix"))
+        .collect();
+    assert!(leftovers.is_empty(), "no temporary file is left behind");
+    // the file changed after the review: the checked fix no longer applies
+    std::fs::write(&session, &original).unwrap();
+    let job2 = start_job(&w);
+    std::fs::write(&session, format!("{original}\n# edited after the review\n")).unwrap();
+    let edited = std::fs::read_to_string(&session).unwrap();
+    let (st, r) = w.post(
+        &format!("/api/jobs/{job2}/fixes/0/apply"),
+        json!({"file": "payments/auth/session.py"}),
+    );
+    assert_eq!(
+        (st, r["error"]["code"].as_str()),
+        (409, Some("CHANGED_SINCE_REVIEW"))
+    );
+    assert_eq!(
+        std::fs::read_to_string(&session).unwrap(),
+        edited,
+        "nothing was written"
+    );
+    // a symlink put in place of the file is never followed
+    std::fs::write(&session, &original).unwrap();
+    let job3 = start_job(&w);
+    let target = root.join("outside.py");
+    std::fs::write(&target, &original).unwrap();
+    std::fs::remove_file(&session).unwrap();
+    std::os::unix::fs::symlink(&target, &session).unwrap();
+    let (st, r) = w.post(
+        &format!("/api/jobs/{job3}/fixes/0/apply"),
+        json!({"file": "payments/auth/session.py"}),
+    );
+    assert_eq!((st, r["error"]["code"].as_str()), (403, Some("BAD_PATH")));
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        original,
+        "the file outside the project is untouched"
+    );
+    let log = log_text(
+        &format!("http://127.0.0.1:{}", c.addr.port()),
+        c.security.admin_token(),
+    );
+    assert!(
+        log.contains("fix.applied") && !log.contains("ACTIVE_TOKENS.pop"),
+        "the log records the file and hash, never the code"
     );
 }

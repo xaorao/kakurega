@@ -1523,6 +1523,154 @@ async fn findings(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Re
     }
 }
 
+fn fix_applied(svc: &Service, id: &str, n: usize) -> bool {
+    let g = svc.inner.lock().expect("lock");
+    g.jobs.get(id).is_some_and(|j| {
+        j.events
+            .iter()
+            .any(|e| e.stage == "fix_applied" && e.detail == n.to_string())
+    })
+}
+
+async fn fixes_list(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    match snap_of(&svc, &id) {
+        Err(r) => r,
+        Ok(s) => Json(json!({"fixes": s.fixes.iter().enumerate().map(|(i, f)| json!({
+            "index": i, "title": f.title, "file": f.file, "explanation": f.explanation, "status": f.status,
+            "verified": f.verified, "diff": f.diff, "applied": fix_applied(&svc, &id, i),
+            "established": "Only that the finding's reproducer stops reproducing after this change. The project's own tests were not run and the change is not proven correct or complete.",
+        })).collect::<Vec<_>>()}))
+        .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApplyFixBody {
+    file: String,
+}
+
+async fn fix_apply(
+    axum::Extension(svc): Svc,
+    UrlPath((id, n)): UrlPath<(String, usize)>,
+    Json(b): Json<ApplyFixBody>,
+) -> Response {
+    let s = match snap_of(&svc, &id) {
+        Err(r) => return r,
+        Ok(s) => s,
+    };
+    let Some(f) = s.fixes.get(n) else {
+        return error(StatusCode::NOT_FOUND, "NO_FIX", "no such proposed fix");
+    };
+    if !f.verified {
+        return error(
+            StatusCode::CONFLICT,
+            "NOT_VERIFIED",
+            "only a fix that stops the reproducer can be applied",
+        );
+    }
+    if b.file != f.file {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "FILE_MISMATCH",
+            "name the file you are changing",
+        );
+    }
+    let repo = {
+        let g = svc.inner.lock().expect("lock");
+        g.jobs.get(&id).map(|j| j.repo.clone())
+    };
+    let Some(repo) = repo.and_then(|r| svc.allowed_dir(&r.to_string_lossy())) else {
+        return error(
+            StatusCode::FORBIDDEN,
+            "NOT_ALLOWED",
+            "the project folder is no longer available",
+        );
+    };
+    if Path::new(&f.file)
+        .components()
+        .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_PATH",
+            "the file path is not allowed",
+        );
+    }
+    let full = repo.join(&f.file);
+    let Ok(meta) = std::fs::symlink_metadata(&full) else {
+        return error(
+            StatusCode::CONFLICT,
+            "FILE_MISSING",
+            "the file is no longer there",
+        );
+    };
+    if !meta.is_file()
+        || meta.file_type().is_symlink()
+        || !full.canonicalize().is_ok_and(|c| c.starts_with(&repo))
+    {
+        return error(
+            StatusCode::FORBIDDEN,
+            "BAD_PATH",
+            "the file is not a plain file inside the project",
+        );
+    }
+    if fix_applied(&svc, &id, n) {
+        return error(
+            StatusCode::CONFLICT,
+            "ALREADY_APPLIED",
+            "this fix was already applied",
+        );
+    }
+    let Ok(current) = std::fs::read(&full) else {
+        return error(
+            StatusCode::CONFLICT,
+            "FILE_MISSING",
+            "the file could not be read",
+        );
+    };
+    if kk_evidence::capsule::sha256_hex(&current) != f.file_sha256 {
+        return error(StatusCode::CONFLICT, "CHANGED_SINCE_REVIEW", "the file has changed since the review, so the checked fix no longer applies; review again");
+    }
+    let fix = kk_review::check::Fix {
+        title: f.title.clone(),
+        file: f.file.clone(),
+        old_text: f.old_text.clone(),
+        new_text: f.new_text.clone(),
+        explanation: String::new(),
+    };
+    let Some(updated) = kk_review::check::apply_fix(&current, &fix) else {
+        return error(
+            StatusCode::CONFLICT,
+            "CANNOT_APPLY",
+            "the text to replace is no longer there exactly once",
+        );
+    };
+    let tmp = full.with_file_name(format!(".kakurega-fix-{}.tmp", std::process::id()));
+    let written = std::fs::write(&tmp, &updated)
+        .and_then(|_| std::fs::set_permissions(&tmp, meta.permissions()))
+        .and_then(|_| std::fs::rename(&tmp, &full));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "WRITE_FAILED",
+            "the file could not be written; nothing was changed",
+        );
+    }
+    let after = kk_evidence::capsule::sha256_hex(&updated);
+    svc.push_event(&id, "fix_applied", &n.to_string());
+    svc.log_event(
+        "fix.applied",
+        &id,
+        &[
+            ("file", f.file.clone().into()),
+            ("sha256_after", after.clone().into()),
+        ],
+    );
+    Json(json!({"applied": true, "file": f.file, "sha256_after": after})).into_response()
+}
+
 fn draft_json(s: &Snapshot) -> Value {
     match s.release_draft() {
         Some(d) => json!({
@@ -2304,6 +2452,8 @@ impl Extension for Routes {
             .route("/api/jobs/{id}/file", get(file))
             .route("/api/jobs/{id}/audit", get(audit))
             .route("/api/jobs/{id}/findings", get(findings))
+            .route("/api/jobs/{id}/fixes", get(fixes_list))
+            .route("/api/jobs/{id}/fixes/{n}/apply", post(fix_apply))
             .route("/api/jobs/{id}/release", get(release))
             .route(
                 "/api/jobs/{id}/approval",

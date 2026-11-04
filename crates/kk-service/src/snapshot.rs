@@ -41,6 +41,19 @@ pub struct SnapFinding {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct SnapFix {
+    pub title: String,
+    pub file: String,
+    pub old_text: String,
+    pub new_text: String,
+    pub explanation: String,
+    pub status: String,
+    pub verified: bool,
+    pub diff: String,
+    pub file_sha256: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SnapAudit {
     pub request: u64,
     pub op: String,
@@ -65,6 +78,8 @@ pub struct Snapshot {
     pub summary: Value,
     pub files: Vec<SnapFile>,
     pub findings: Vec<SnapFinding>,
+    #[serde(default)]
+    pub fixes: Vec<SnapFix>,
     pub unparsed: usize,
     pub audit: Vec<SnapAudit>,
     pub draft: Option<SnapDraft>,
@@ -147,6 +162,30 @@ impl Snapshot {
                     reproduced: c.status == CheckStatus::Reproduced,
                     output: c.stdout.clone(),
                     sample: c.sample_paths.clone(),
+                })
+                .collect(),
+            fixes: r
+                .fixes
+                .iter()
+                .map(|f| SnapFix {
+                    title: f.finding_title.clone(),
+                    file: f.fix.file.clone(),
+                    old_text: f.fix.old_text.clone(),
+                    new_text: f.fix.new_text.clone(),
+                    explanation: f.fix.explanation.clone(),
+                    status: match &f.status {
+                        kk_review::check::FixStatus::FixesTheReproducer => {
+                            "fixes_the_reproducer".into()
+                        }
+                        kk_review::check::FixStatus::StillReproduced => "still_reproduced".into(),
+                        kk_review::check::FixStatus::CouldNotApply(m) => {
+                            format!("could_not_apply: {m}")
+                        }
+                        kk_review::check::FixStatus::NotChecked(m) => format!("not_checked: {m}"),
+                    },
+                    verified: f.status == kk_review::check::FixStatus::FixesTheReproducer,
+                    diff: f.diff.clone(),
+                    file_sha256: f.file_sha256.clone(),
                 })
                 .collect(),
             unparsed: r.unparsed_findings,

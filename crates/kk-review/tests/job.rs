@@ -413,3 +413,67 @@ fn j07_suggested_memories_carry_the_kernel_label_and_are_capped() {
     }
     assert!(report.draft.is_err(), "suggesting memory releases nothing");
 }
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn j08_proposed_fixes_are_checked_against_the_reproducer_stay_with_the_owner_and_never_enter_the_release(
+) {
+    use kk_review::check::FixStatus;
+    let old = "    # Clears the browser cookie on the client side; the server keeps the entry.\n    cookie_jar = {\"session\": token}\n    cookie_jar.pop(\"session\", None)\n";
+    let title = "Token still valid after logout";
+    let finding = json!({"title": title, "file": "payments/auth/session.py", "line": 15, "explanation": "logout() only pops a local dict.", "reproducer": REPRO});
+    let (routes, ev) = scripted(vec![
+        calls(vec![("report_finding", finding)]),
+        calls(vec![
+            (
+                "propose_fix",
+                json!({"title": title, "file": "payments/auth/session.py", "old_text": old, "new_text": "    ACTIVE_TOKENS.pop(token, None)\n", "explanation": "remove the server-side entry"}),
+            ),
+            (
+                "propose_fix",
+                json!({"title": title, "file": "payments/auth/session.py", "old_text": "return token in ACTIVE_TOKENS", "new_text": "return False", "explanation": "makes validate useless"}),
+            ),
+            (
+                "propose_fix",
+                json!({"title": "A finding nobody reported", "file": "payments/auth/session.py", "old_text": "ACTIVE_TOKENS = {}", "new_text": "ACTIVE_TOKENS = {1: 2}"}),
+            ),
+            (
+                "propose_fix",
+                json!({"title": title, "file": ".env", "old_text": "x", "new_text": "y"}),
+            ),
+        ]),
+        ChatMessage::new("assistant", "done"),
+    ]);
+    let report = run_job(&config("j08"), routes, ev, &|_, _| {});
+    assert_eq!(report.error, None);
+    assert_eq!(
+        report.fixes.len(),
+        2,
+        "only fixes for a reported finding in a readable file are kept: {:?}",
+        report.fixes.iter().map(|f| &f.status).collect::<Vec<_>>()
+    );
+    assert_eq!(report.fixes[0].status, FixStatus::FixesTheReproducer);
+    assert!(report.fixes[0]
+        .diff
+        .contains("+    ACTIVE_TOKENS.pop(token, None)"));
+    assert!(
+        matches!(report.fixes[1].status, FixStatus::NotChecked(_)),
+        "a change that disables validation is not accepted"
+    );
+    let draft = report.draft.expect("the finding still releases");
+    assert!(
+        !draft
+            .files
+            .keys()
+            .any(|k| k.contains("fix") && k != "finding-1.txt"),
+        "{:?}",
+        draft.files.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        !draft
+            .files
+            .values()
+            .any(|b| String::from_utf8_lossy(b).contains("ACTIVE_TOKENS.pop")),
+        "the fix text is for the owner and is not in what the recipient gets"
+    );
+}

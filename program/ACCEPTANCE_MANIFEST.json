@@ -136,7 +136,7 @@
         },
         {
           "id": "II-09",
-          "text": "Workflows beyond code review on the shared backend. Built: private memory, private chat, document questions with checked quotes (web and terminal /ask). Not built: research with live sources, coding mode, desktop surface for document questions. Deliberately not in MCP: it returns counts only, and document-derived answers would cross that boundary.",
+          "text": "Workflows beyond code review on the shared backend. Built: private memory with backup export and import, private chat, document questions with checked quotes (web, terminal, desktop), proposed fixes verified against the finding's reproducer and applied to the owner's files only when nothing changed (service; web screen NOT yet built). Not built: research with live sources (needs an egress and privacy decision), coding beyond reproducer-verified fixes, MCP exposure of fixes.",
           "kind": "pending",
           "evidence_needed": "journeys and hostile tests per workflow; registry rows move to BUILT_TESTED"
         },
@@ -188,9 +188,10 @@
         },
         {
           "id": "II-12c",
-          "text": "Secure Enclave approver key with presence required on every signature, verified by the owner on physical hardware. Built and machine-verified without the presence prompt: enclave key, P-256 proofs, terminal and Electron signing. Missing: the owner's presence prompt run.",
-          "kind": "pending",
-          "evidence_needed": "owner runs: spikes/enclave/build.sh; kaku approver enroll --enclave --presence; then approves a release and types the account password or uses Touch ID once"
+          "text": "Secure Enclave approver key requires user presence: the enclave itself refuses to sign a presence-gated key when the user cannot be asked (tests/e2e/enclave_helper.py), and an attended run on this Mac mini signed after the dialog and the proof verified. Not observed by me: the password or Touch ID prompt itself (see II-12f).",
+          "kind": "machine",
+          "command": "python3 tests/e2e/enclave_helper.py",
+          "expect": "enclave helper checks passed"
         },
         {
           "id": "II-09c",
@@ -226,6 +227,26 @@
           "kind": "machine",
           "command": "node tests/e2e/desktop_fuses.mjs",
           "expect": "fuse checks passed"
+        },
+        {
+          "id": "II-12f",
+          "text": "Owner (or a person) sees the macOS password or Touch ID prompt after the helper dialog on the shipped helper",
+          "kind": "human",
+          "evidence_needed": "owner runs python3 spikes/enclave/presence-check.py and reports the last line"
+        },
+        {
+          "id": "II-09d",
+          "text": "Coding fixes: strict parsing, exact single replacement, verification by re-running the reproducer in the sandbox (cosmetic, disabling, broken and ambiguous fixes refused), fixes stay out of the release",
+          "kind": "machine",
+          "command": "scripts/test-lima",
+          "expect": "f02_a_fix_is_only_called_good"
+        },
+        {
+          "id": "II-09e",
+          "text": "Applying a checked fix: hash guard, symlink refusal, once only, no temp files, log without code",
+          "kind": "machine",
+          "command": "cargo test -p kk-service --test flow sv22",
+          "expect": "test result: ok. 1 passed"
         }
       ]
     },

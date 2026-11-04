@@ -128,6 +128,9 @@ case "approve":
     lines.append("Your Mac will then ask for Touch ID or your account password. Approving is final for this release.")
     guard confirm(title: "Approve this release to \(f[6])?", body: lines.joined(separator: "\n"), approve: "Approve...") else { fail("cancelled: nothing was signed", 5) }
     let ctx = LAContext()
+    #if KAKU_TEST_AUTOCONFIRM
+    if ProcessInfo.processInfo.environment["KAKU_TEST_NOINTERACT"] != nil { ctx.interactionNotAllowed = true }
+    #endif
     ctx.localizedReason = "Approve release \(f[1].prefix(12)) to \(f[6])"
     do { print(try envelope("application/vnd.kakurega.approval+json", Data(st.utf8), load(path, ctx))) }
     catch { fail("signing was refused or failed: \(error)", 4) }
