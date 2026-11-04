@@ -291,6 +291,12 @@ async fn admin_ping() -> Json<Value> {
     Json(json!({"ok": true}))
 }
 
+async fn admin_pairing(State(state): State<AppState>) -> Json<Value> {
+    Json(
+        json!({"code": state.sec.issue_pairing_code(), "url": format!("{}/#pair=", state.origin())}),
+    )
+}
+
 fn content_type(path: &Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
         "html" => "text/html; charset=utf-8",
@@ -373,6 +379,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/logout", post(logout))
         .route("/api/sessions/revoke-all", post(revoke_all))
         .route("/admin/ping", get(admin_ping))
+        .route("/admin/pairing", post(admin_pairing))
         .merge(extra)
         .fallback(static_files)
         .layer(DefaultBodyLimit::max(BODY_LIMIT))

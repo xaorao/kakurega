@@ -37,6 +37,7 @@ pub struct JobConfig {
 }
 
 pub struct JobReport {
+    pub files: Vec<crate::import::ImportedFile>,
     pub imported: usize,
     pub skipped: Vec<(String, String)>,
     pub withheld: Vec<(String, Vec<String>)>,
@@ -54,7 +55,13 @@ pub struct JobReport {
     pub error: Option<String>,
 }
 
-pub fn run_job(cfg: &JobConfig, routes: RouteSet, route_evidence: Vec<RouteEvidence>) -> JobReport {
+pub fn run_job(
+    cfg: &JobConfig,
+    routes: RouteSet,
+    route_evidence: Vec<RouteEvidence>,
+    progress: &dyn Fn(&str, &str),
+) -> JobReport {
+    progress("import", "reading the project");
     let Imported { files, skipped } = scan_tree(&cfg.repo, cfg.default_level);
     let man = manifest(&files);
     let commitment = keyed_commitment(&cfg.commitment_key, &man);
@@ -68,7 +75,16 @@ pub fn run_job(cfg: &JobConfig, routes: RouteSet, route_evidence: Vec<RouteEvide
         .filter(|f| f.notes.iter().any(|n| n.contains("prompt injection")))
         .map(|f| f.path.clone())
         .collect();
+    progress(
+        "protect",
+        &format!(
+            "{} files labelled, {} withheld",
+            files.len(),
+            withheld.len()
+        ),
+    );
     let mut report = JobReport {
+        files: files.clone(),
         imported: files.len(),
         skipped: skipped
             .iter()
@@ -118,6 +134,7 @@ pub fn run_job(cfg: &JobConfig, routes: RouteSet, route_evidence: Vec<RouteEvide
         },
         transport: cfg.transport.clone(),
     };
+    progress("review", "the agent is reading the project in the sandbox");
     match run_worker(&mut broker, session, &launch) {
         Ok(out) => {
             report.worker_exit = Some(out.exit);
@@ -162,6 +179,7 @@ pub fn run_job(cfg: &JobConfig, routes: RouteSet, route_evidence: Vec<RouteEvide
             None => report.unparsed_findings += 1,
         }
     }
+    progress("release", "preparing the release");
     report.draft = assemble(
         &report.findings,
         &index,

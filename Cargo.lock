@@ -1259,6 +1259,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "kk-service"
+version = "0.0.1"
+dependencies = [
+ "axum",
+ "getrandom 0.3.4",
+ "kk-companion",
+ "kk-effects",
+ "kk-evidence",
+ "kk-review",
+ "kk-route",
+ "kk-sandbox",
+ "kk-types",
+ "kk-vault",
+ "serde",
+ "serde_json",
+ "tokio",
+ "ureq",
+]
+
+[[package]]
 name = "kk-types"
 version = "0.0.1"
 dependencies = [

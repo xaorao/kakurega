@@ -121,7 +121,7 @@ fn j01_a_full_review_finds_checks_releases_and_signs_the_real_defect() {
         )]),
         ChatMessage::new("assistant", "One defect found."),
     ]);
-    let report = run_job(&cfg, routes, ev);
+    let report = run_job(&cfg, routes, ev, &|_, _| {});
     assert_eq!(report.error, None);
     assert_eq!(
         report.worker_exit,
@@ -209,7 +209,7 @@ fn j02_a_model_that_obeys_the_hostile_readme_reaches_nothing_and_releases_nothin
         )]),
         ChatMessage::new("assistant", "No issues found."),
     ]);
-    let report = run_job(&cfg, routes, ev);
+    let report = run_job(&cfg, routes, ev, &|_, _| {});
     assert_eq!(
         report.worker_exit,
         Some(Exit::Code(0)),
@@ -251,7 +251,7 @@ fn j03_live_local_model_reviews_the_synthetic_repository() {
     .expect("route");
     let ev = vec![route.evidence()];
     let routes = RouteSet::new(vec![Box::new(route) as Box<dyn Route>]);
-    let report = run_job(&cfg, routes, ev);
+    let report = run_job(&cfg, routes, ev, &|_, _| {});
     println!(
         "exit: {:?} stderr: {}",
         report.worker_exit, report.worker_stderr

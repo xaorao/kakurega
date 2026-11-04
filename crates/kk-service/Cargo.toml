@@ -1,0 +1,27 @@
+[package]
+name = "kk-service"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "The product service: review jobs, approvals and delivery behind the companion's HTTP interface"
+
+[dependencies]
+kk-types = { path = "../kk-types" }
+kk-evidence = { path = "../kk-evidence" }
+kk-vault = { path = "../kk-vault" }
+kk-effects = { path = "../kk-effects" }
+kk-review = { path = "../kk-review" }
+kk-route = { path = "../kk-route" }
+kk-companion = { path = "../kk-companion" }
+kk-sandbox = { path = "../kk-sandbox" }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+getrandom = "0.3"
+
+[dev-dependencies]
+ureq = { version = "3", default-features = false, features = ["json"] }
+
+[lints]
+workspace = true
