@@ -600,6 +600,13 @@ impl App {
 
     /// Moves the cursor one line up or down inside a multi-line message. False when there is no such line, so the
     /// key falls through to history.
+    fn history_may_replace(&self) -> bool {
+        self.input.is_empty()
+            || self
+                .hist_pos
+                .is_some_and(|p| self.history.get(p).is_some_and(|h| *h == self.input))
+    }
+
     fn move_line(&mut self, delta: i64) -> bool {
         if !self.input.contains('\n') {
             return false;
@@ -917,8 +924,15 @@ impl App {
             KeyCode::End => self.cursor = n,
             KeyCode::Up if self.move_line(-1) => {}
             KeyCode::Down if self.move_line(1) => {}
+            // history only replaces an empty composer or a line it put there itself: Up must never throw away a draft
+            KeyCode::Up if !self.history_may_replace() => {}
+            KeyCode::Down if !self.history_may_replace() => {}
             KeyCode::Up => {
                 if !self.history.is_empty() {
+                    // an emptied composer starts from the newest entry again, wherever the last walk stopped
+                    if self.input.is_empty() {
+                        self.hist_pos = None;
+                    }
                     let p = match self.hist_pos {
                         None => self.history.len() - 1,
                         Some(p) => p.saturating_sub(1),

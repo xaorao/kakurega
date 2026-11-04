@@ -1775,3 +1775,38 @@ fn tu39_the_first_esc_only_arms_and_the_arming_runs_out() {
         "the hint goes away with the answer"
     );
 }
+
+#[test]
+fn tu40_arrow_keys_recall_history_but_never_replace_a_draft_or_edits_to_a_recalled_line() {
+    let mut a = booted();
+    enter(&mut a, "/status");
+    enter(&mut a, "/reviews");
+    // an empty composer walks the history
+    a.handle(key(KeyCode::Up));
+    assert_eq!(a.input, "/reviews");
+    a.handle(key(KeyCode::Up));
+    assert_eq!(a.input, "/status");
+    a.handle(key(KeyCode::Down));
+    assert_eq!(a.input, "/reviews");
+    // editing a recalled line makes it a draft: Up and Down leave it alone
+    typed(&mut a, " now");
+    a.handle(key(KeyCode::Up));
+    assert_eq!(a.input, "/reviews now", "Up does not throw the edit away");
+    a.handle(key(KeyCode::Down));
+    assert_eq!(a.input, "/reviews now", "Down does not clear it");
+    // a fresh draft is never replaced
+    a.handle(key(KeyCode::Esc));
+    assert!(a.input.is_empty());
+    typed(&mut a, "half a thought");
+    a.handle(key(KeyCode::Up));
+    assert_eq!(a.input, "half a thought");
+    a.handle(key(KeyCode::Down));
+    assert_eq!(a.input, "half a thought");
+    // clearing the composer brings history back
+    a.handle(key(KeyCode::Esc));
+    a.handle(key(KeyCode::Up));
+    assert_eq!(a.input, "/reviews");
+    // Down past the newest entry empties the composer, as before
+    a.handle(key(KeyCode::Down));
+    assert!(a.input.is_empty());
+}
