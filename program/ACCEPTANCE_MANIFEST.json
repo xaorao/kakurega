@@ -136,7 +136,7 @@
         },
         {
           "id": "II-09",
-          "text": "Workflows beyond code review on the shared backend. Built: private memory with backup export and import, private chat, document questions with checked quotes (web, terminal, desktop), proposed fixes verified against the finding's reproducer and applied to the owner's files only when nothing changed (service and web screen). Not built: research with live sources (needs an egress and privacy decision), coding beyond reproducer-verified fixes, MCP exposure of fixes.",
+          "text": "Workflows beyond code review on the shared backend. Built: private memory with backup export and import, private chat, document questions with checked quotes (web, terminal, desktop), proposed fixes verified against the finding's reproducer and applied to the owner's files only when nothing changed (service, web screen and terminal /fixes and /applyfix). Not built: research with live sources (needs an egress and privacy decision), coding beyond reproducer-verified fixes, MCP exposure of fixes.",
           "kind": "pending",
           "evidence_needed": "journeys and hostile tests per workflow; registry rows move to BUILT_TESTED"
         },
@@ -254,6 +254,13 @@
           "kind": "machine",
           "command": "scripts/e2e",
           "expect": "checks passed"
+        },
+        {
+          "id": "II-09g",
+          "text": "Terminal /fixes and /applyfix: diff and limit shown, unaccepted fix refused, apply needs listing first and y",
+          "kind": "machine",
+          "command": "cargo test -p kk-tui tu18",
+          "expect": "test result: ok. 1 passed"
         }
       ]
     },

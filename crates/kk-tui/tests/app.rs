@@ -761,3 +761,77 @@ fn tu17_ask_sends_folder_and_question_and_shows_every_citation_verdict() {
         .join("\n");
     assert!(text.contains("trust none of it") && text.contains("free text"));
 }
+
+#[test]
+fn tu18_fixes_are_listed_with_their_limit_and_applied_only_after_listing_then_y() {
+    let mut a = booted();
+    a.jobs.push(kk_tui::app::JobRow {
+        id: "job-4".into(),
+        recipient: "x".into(),
+        state: "ready".into(),
+    });
+    for bad in [
+        "/applyfix",
+        "/applyfix 0",
+        "/applyfix x",
+        "/applyfix 1 2 3",
+        "/applyfix 100",
+    ] {
+        assert!(enter(&mut a, bad).is_empty(), "{bad}");
+    }
+    assert!(
+        enter(&mut a, "/applyfix 1").is_empty(),
+        "applying before listing is refused"
+    );
+    assert!(matches!(a.mode, Mode::Normal));
+    let r = enter(&mut a, "/fixes");
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0].path, "/api/jobs/job-4/fixes");
+    a.handle(ok(&r[0], 200, json!({"fixes": [
+        {"index": 0, "title": "t", "file": "payments/auth/session.py", "explanation": "remove the entry", "status": "fixes_the_reproducer", "verified": true, "diff": "--- a/x\n+++ b/x\n-old\n+new\n", "applied": false},
+        {"index": 1, "title": "t", "file": "payments/auth/session.py", "explanation": "bad", "status": "not_checked: breaks the login check", "verified": false, "diff": "-a\n+b\n", "applied": false}]})));
+    let text = a
+        .cards
+        .iter()
+        .flat_map(|c| c.lines.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains("+new")
+            && text.contains("tests were not run")
+            && text.contains("/applyfix 1")
+            && text.contains("NOT accepted")
+    );
+    assert!(
+        enter(&mut a, "/applyfix 2").is_empty(),
+        "an unaccepted fix cannot be applied"
+    );
+    assert!(matches!(a.mode, Mode::Normal));
+    assert!(enter(&mut a, "/applyfix 1").is_empty());
+    let Mode::Confirm(c) = &a.mode else {
+        panic!("a confirmation is required")
+    };
+    assert!(c.prompt.contains("edits your own file"));
+    assert!(a.handle(key(KeyCode::Char('n'))).is_empty());
+    assert!(matches!(a.mode, Mode::Normal), "anything but y cancels");
+    enter(&mut a, "/applyfix 1");
+    let r = a.handle(key(KeyCode::Char('y')));
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0].path, "/api/jobs/job-4/fixes/0/apply");
+    assert_eq!(
+        r[0].body.as_ref().unwrap(),
+        &json!({"file": "payments/auth/session.py"})
+    );
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"applied": true, "file": "payments/auth/session.py"}),
+    ));
+    let text = a
+        .cards
+        .iter()
+        .flat_map(|c| c.lines.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("Applied to payments/auth/session.py."));
+}

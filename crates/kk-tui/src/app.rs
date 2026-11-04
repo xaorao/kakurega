@@ -58,6 +58,8 @@ enum Intent {
     StartReview,
     Poll(String),
     Findings,
+    Fixes(String),
+    ApplyFix(String),
     Release,
     ApproveRequest(String),
     ApproveJob(String),
@@ -91,6 +93,7 @@ pub struct ApprovalView {
 pub struct ConfirmView {
     pub prompt: String,
     pub forget_id: String,
+    pub apply: Option<(String, usize, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +130,7 @@ pub struct App {
     pub chat_history: Vec<(String, String)>,
     chat_waiting: bool,
     pub approver: Option<kk_evidence::approval::ApproverKey>,
+    pub fixes_seen: Vec<(String, usize, String, bool)>,
 }
 
 pub fn clean(s: &str) -> String {
@@ -184,6 +188,7 @@ impl App {
             chat_history: Vec::new(),
             chat_waiting: false,
             approver: None,
+            fixes_seen: Vec::new(),
         }
     }
 
@@ -377,7 +382,19 @@ impl App {
             }
             Mode::Confirm(c) => {
                 let id = c.forget_id.clone();
+                let apply = c.apply.clone();
                 match k.code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') if !ctrl && apply.is_some() => {
+                        self.mode = Mode::Normal;
+                        let (job, n, file) = apply.expect("checked");
+                        vec![self.req(
+                            Intent::ApplyFix(file.clone()),
+                            false,
+                            Method::Post,
+                            &format!("/api/jobs/{job}/fixes/{}/apply", n - 1),
+                            Some(json!({"file": file})),
+                        )]
+                    }
                     KeyCode::Char('y') | KeyCode::Char('Y') if !ctrl => {
                         self.mode = Mode::Normal;
                         vec![self.req(
@@ -390,7 +407,14 @@ impl App {
                     }
                     _ => {
                         self.mode = Mode::Normal;
-                        self.say(Kind::Info, "Cancelled. Nothing was forgotten.");
+                        self.say(
+                            Kind::Info,
+                            if apply.is_some() {
+                                "Cancelled. Your file was not changed."
+                            } else {
+                                "Cancelled. Nothing was forgotten."
+                            },
+                        );
                         Vec::new()
                     }
                 }
@@ -589,6 +613,7 @@ impl App {
                         "/reviews                       list reviews".into(),
                         "/open [JOB]                    show a review's progress".into(),
                         "/findings [JOB]  /release [JOB]   what the kernel confirmed, and what would be sent".into(),
+                        "/fixes [JOB]  /applyfix N       proposed fixes, checked against the reproducer".into(),
                         "/approve [JOB]                 look at the exact files, then approve or refuse".into(),
                         "/deliver [JOB]                 sign and deliver an approved release".into(),
                         "/memory [WORDS]  /remember TEXT  /correct ID TEXT  /forget ID".into(),
@@ -632,6 +657,23 @@ impl App {
                 let Some(j) = self.job_or_latest(j, &["ready", "nothing_to_release"], "show findings for") else { return Vec::new() };
                 vec![self.req(Intent::Findings, false, Method::Get, &format!("/api/jobs/{j}/findings"), None)]
             }
+            Command::Fixes(j) => {
+                let Some(j) = self.job_or_latest(j, &["ready", "nothing_to_release"], "show fixes for") else { return Vec::new() };
+                vec![self.req(Intent::Fixes(j.clone()), false, Method::Get, &format!("/api/jobs/{j}/fixes"), None)]
+            }
+            Command::ApplyFix { n, job } => {
+                let Some(j) = self.job_or_latest(job, &["ready", "nothing_to_release"], "apply a fix for") else { return Vec::new() };
+                let Some((_, _, file, verified)) = self.fixes_seen.iter().find(|(fj, fnum, _, _)| *fj == j && *fnum == n).cloned() else {
+                    self.say(Kind::Warn, "Run /fixes first and read the change; then /applyfix N.");
+                    return Vec::new();
+                };
+                if !verified {
+                    self.say(Kind::Warn, "That fix was not accepted by the reproducer check, so it cannot be applied.");
+                    return Vec::new();
+                }
+                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Change {file} on this computer now? This edits your own file. [y/N]"), forget_id: String::new(), apply: Some((j, n, file)) });
+                Vec::new()
+            }
             Command::Release(j) => {
                 let Some(j) = self.job_or_latest(j, &["ready"], "show a release for") else { return Vec::new() };
                 vec![self.req(Intent::Release, false, Method::Get, &format!("/api/jobs/{j}/release"), None)]
@@ -662,7 +704,7 @@ impl App {
             Command::Remember(t) => vec![self.req(Intent::Remember, false, Method::Post, "/api/memories", Some(json!({"text": t, "level": "internal", "reason": "you added it in the terminal"})))],
             Command::Correct { id, text } => vec![self.req(Intent::Correct, false, Method::Post, &format!("/api/memories/{id}/correct"), Some(json!({"text": text, "reason": "you corrected it in the terminal"})))],
             Command::Forget(id) => {
-                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id });
+                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id, apply: None });
                 Vec::new()
             }
             Command::Log => vec![self.req(Intent::Log, false, Method::Get, "/api/log", None)],
@@ -1211,6 +1253,66 @@ impl App {
                     if ok { Kind::Ok } else { Kind::Error },
                     if ok {
                         "Corrected. The old wording stays in history.".to_string()
+                    } else {
+                        err_text(status, &body)
+                    },
+                );
+                Vec::new()
+            }
+            Intent::Fixes(job) => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let list = body["fixes"].as_array().cloned().unwrap_or_default();
+                self.fixes_seen.retain(|(j, _, _, _)| *j != job);
+                if list.is_empty() {
+                    self.push(
+                        Kind::Info,
+                        Some("Fixes"),
+                        vec!["The agent proposed no fixes.".into()],
+                    );
+                }
+                for (i, f) in list.iter().enumerate() {
+                    let n = i + 1;
+                    let file = clean(f["file"].as_str().unwrap_or("?"));
+                    let verified = f["verified"] == true;
+                    self.fixes_seen.push((
+                        job.clone(),
+                        n,
+                        file.clone(),
+                        verified && f["applied"] != true,
+                    ));
+                    let mut lines = vec![format!(
+                        "{file}: {}",
+                        clean(f["title"].as_str().unwrap_or(""))
+                    )];
+                    lines.extend(text_lines(&clean(f["explanation"].as_str().unwrap_or(""))));
+                    lines.push(String::new());
+                    for l in f["diff"].as_str().unwrap_or("").lines().take(60) {
+                        lines.push(clean(l));
+                    }
+                    lines.push(String::new());
+                    lines.push(if f["applied"] == true {
+                        "Already applied.".to_string()
+                    } else if verified {
+                        format!("The reproducer stops reproducing. Your project's tests were not run. /applyfix {n} to apply.")
+                    } else {
+                        format!("NOT accepted: {}", clean(&f["status"].as_str().unwrap_or("").chars().take(160).collect::<String>()))
+                    });
+                    self.push(
+                        if verified { Kind::Ok } else { Kind::Warn },
+                        Some(&format!("Fix {n}")),
+                        lines,
+                    );
+                }
+                Vec::new()
+            }
+            Intent::ApplyFix(file) => {
+                self.say(
+                    if ok { Kind::Ok } else { Kind::Error },
+                    if ok {
+                        format!("Applied to {file}.")
                     } else {
                         err_text(status, &body)
                     },

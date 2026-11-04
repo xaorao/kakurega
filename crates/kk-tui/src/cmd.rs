@@ -6,6 +6,8 @@ pub enum Command {
     Reviews,
     Open(Option<String>),
     Findings(Option<String>),
+    Fixes(Option<String>),
+    ApplyFix { n: usize, job: Option<String> },
     Release(Option<String>),
     Approve(Option<String>),
     Deliver(Option<String>),
@@ -21,8 +23,9 @@ pub enum Command {
 }
 
 pub const NAMES: &[&str] = &[
-    "help", "status", "review", "reviews", "open", "findings", "release", "approve", "deliver",
-    "memory", "ask", "remember", "correct", "forget", "log", "verify", "clear", "quit",
+    "help", "status", "review", "reviews", "open", "findings", "fixes", "applyfix", "release",
+    "approve", "deliver", "memory", "ask", "remember", "correct", "forget", "log", "verify",
+    "clear", "quit",
 ];
 
 pub fn usage(name: &str) -> &'static str {
@@ -30,6 +33,8 @@ pub fn usage(name: &str) -> &'static str {
         "review" => "/review FOLDER for RECIPIENT",
         "open" => "/open [JOB]",
         "findings" => "/findings [JOB]",
+        "fixes" => "/fixes [JOB]",
+        "applyfix" => "/applyfix N [JOB]",
         "release" => "/release [JOB]",
         "approve" => "/approve [JOB]",
         "deliver" => "/deliver [JOB]",
@@ -90,6 +95,19 @@ pub fn parse(line: &str) -> Result<Command, String> {
         }
         "open" => job_arg(rest).map(Command::Open),
         "findings" => job_arg(rest).map(Command::Findings),
+        "fixes" => job_arg(rest).map(Command::Fixes),
+        "applyfix" => {
+            let mut parts = rest.split_whitespace();
+            let n = parts
+                .next()
+                .and_then(|x| x.parse::<usize>().ok())
+                .filter(|n| *n >= 1 && *n <= 99);
+            let job = job_arg(parts.next().unwrap_or(""))?;
+            match (n, parts.next()) {
+                (Some(n), None) => Ok(Command::ApplyFix { n, job }),
+                _ => Err(format!("usage: {}", usage("applyfix"))),
+            }
+        }
         "release" => job_arg(rest).map(Command::Release),
         "approve" => job_arg(rest).map(Command::Approve),
         "deliver" => job_arg(rest).map(Command::Deliver),
