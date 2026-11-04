@@ -91,6 +91,10 @@ enum Intent {
     Forget,
     Log,
     Chat,
+    SearchPropose,
+    SearchRun,
+    ReadPropose,
+    ReadFetch,
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +116,8 @@ pub struct ConfirmView {
     pub forget_id: String,
     pub apply: Option<(String, usize, String)>,
     pub undo: bool,
+    /// A web request waiting for a yes: ("search" or "read", request id, digest of exactly what was shown).
+    pub web: Option<(String, String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -164,6 +170,10 @@ pub struct App {
     chat_waiting: bool,
     pub approver: Option<kk_evidence::approval::ApproverKey>,
     pub fixes_seen: Vec<(String, usize, String, bool)>,
+    /// Addresses suggested by the last search, numbered from 1 for /read.
+    pub search_hits: Vec<String>,
+    /// Pages the owner approved in this conversation: (page id, address). They go to the model as untrusted sources.
+    pub web_pages: Vec<(String, String)>,
 }
 
 pub fn clean(s: &str) -> String {
@@ -232,6 +242,8 @@ impl App {
             chat_waiting: false,
             approver: None,
             fixes_seen: Vec::new(),
+            search_hits: Vec::new(),
+            web_pages: Vec::new(),
         }
     }
 
@@ -716,7 +728,29 @@ impl App {
                 let id = c.forget_id.clone();
                 let apply = c.apply.clone();
                 let undo = c.undo;
+                let web = c.web.clone();
                 match k.code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') if !ctrl && web.is_some() => {
+                        self.mode = Mode::Normal;
+                        let (kind, rid, digest) = web.expect("checked");
+                        let (intent, path) = if kind == "search" {
+                            (Intent::SearchRun, format!("/api/search/{rid}/run"))
+                        } else {
+                            (Intent::ReadFetch, format!("/api/research/{rid}/fetch"))
+                        };
+                        vec![self.req(
+                            intent,
+                            false,
+                            Method::Post,
+                            &path,
+                            Some(json!({"approve": true, "digest": digest})),
+                        )]
+                    }
+                    _ if web.is_some() => {
+                        self.mode = Mode::Normal;
+                        self.say(Kind::Info, "Cancelled. Nothing was sent.");
+                        Vec::new()
+                    }
                     KeyCode::Char('y') | KeyCode::Char('Y') if !ctrl && apply.is_some() => {
                         self.mode = Mode::Normal;
                         let (job, n, file) = apply.expect("checked");
@@ -1009,6 +1043,8 @@ impl App {
             }
             Command::Clear | Command::NewChat => {
                 self.chat_history.clear();
+                self.web_pages.clear();
+                self.search_hits.clear();
                 self.queued.clear();
                 let was_kept = self.session.take().is_some();
                 self.say(
@@ -1029,6 +1065,37 @@ impl App {
             Command::Gateway => {
                 self.say(Kind::Info, "Checking the proof of NEAR AI Cloud's gateway (front door). Nothing of yours is sent.");
                 vec![self.req(Intent::GatewayProof, false, Method::Post, "/api/route/gateway", Some(json!({})))]
+            }
+            Command::Search(words) => {
+                vec![self.req(Intent::SearchPropose, false, Method::Post, "/api/search/propose", Some(json!({"query": words})))]
+            }
+            Command::Read(arg) => {
+                let mut urls = Vec::new();
+                for p in arg.split_whitespace() {
+                    match p.parse::<usize>() {
+                        Ok(n) => match self.search_hits.get(n.wrapping_sub(1)) {
+                            Some(u) => urls.push(u.clone()),
+                            None => {
+                                self.say(Kind::Warn, format!("There is no search result number {n}. Run /search first."));
+                                return Vec::new();
+                            }
+                        },
+                        Err(_) => urls.push(p.to_string()),
+                    }
+                }
+                vec![self.req(Intent::ReadPropose, false, Method::Post, "/api/research/propose", Some(json!({"urls": urls})))]
+            }
+            Command::Web(clear) => {
+                if clear {
+                    self.web_pages.clear();
+                    self.say(Kind::Info, "Forgot the web pages in this conversation.");
+                } else if self.web_pages.is_empty() {
+                    self.say(Kind::Info, "No web pages in this conversation. /search finds addresses; /read adds pages you approve.");
+                } else {
+                    let lines: Vec<String> = self.web_pages.iter().map(|(_, u)| u.clone()).collect();
+                    self.push(Kind::Info, Some("Web pages in this conversation (untrusted)"), lines);
+                }
+                Vec::new()
             }
             Command::ClearHistory => {
                 self.history.clear();
@@ -1094,7 +1161,7 @@ impl App {
                     self.say(Kind::Warn, "That fix was not accepted by the reproducer check, so it cannot be applied.");
                     return Vec::new();
                 }
-                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Change {file} on this computer now? This edits your own file. [y/N]"), forget_id: String::new(), apply: Some((j, n, file)), undo: false });
+                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Change {file} on this computer now? This edits your own file. [y/N]"), forget_id: String::new(), apply: Some((j, n, file)), undo: false, web: None });
                 Vec::new()
             }
             Command::UndoFix { n, job } => {
@@ -1103,7 +1170,7 @@ impl App {
                     self.say(Kind::Warn, "Run /fixes first; then /undofix N.");
                     return Vec::new();
                 };
-                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Restore the original {file} on this computer now? [y/N]"), forget_id: String::new(), apply: Some((j, n, file)), undo: true });
+                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Restore the original {file} on this computer now? [y/N]"), forget_id: String::new(), apply: Some((j, n, file)), undo: true, web: None });
                 Vec::new()
             }
             Command::Release(j) => {
@@ -1136,7 +1203,7 @@ impl App {
             Command::Remember(t) => vec![self.req(Intent::Remember, false, Method::Post, "/api/memories", Some(json!({"text": t, "level": "internal", "reason": "you added it in the terminal"})))],
             Command::Correct { id, text } => vec![self.req(Intent::Correct, false, Method::Post, &format!("/api/memories/{id}/correct"), Some(json!({"text": text, "reason": "you corrected it in the terminal"})))],
             Command::Forget(id) => {
-                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id, apply: None, undo: false });
+                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id, apply: None, undo: false, web: None });
                 Vec::new()
             }
             Command::Log => vec![self.req(Intent::Log, false, Method::Get, "/api/log", None)],
@@ -1172,9 +1239,19 @@ impl App {
             false,
             Method::Post,
             "/api/chat/stream",
-            Some(match &self.session {
-                Some(id) => json!({"message": message, "history": history, "session": id}),
-                None => json!({"message": message, "history": history}),
+            Some({
+                let mut body = json!({"message": message, "history": history});
+                if let Some(id) = &self.session {
+                    body["session"] = json!(id);
+                }
+                if !self.web_pages.is_empty() {
+                    body["sources"] = json!(self
+                        .web_pages
+                        .iter()
+                        .map(|(p, _)| p.clone())
+                        .collect::<Vec<_>>());
+                }
+                body
             }),
         );
         req.stream = true;
@@ -1840,6 +1917,167 @@ impl App {
                     lines.push("Some documents contain text that tries to give the model orders; they were treated as data.".into());
                 }
                 self.push(Kind::Info, Some("Documents"), lines);
+                Vec::new()
+            }
+            Intent::SearchPropose | Intent::ReadPropose => {
+                let search = matches!(intent, Intent::SearchPropose);
+                if !ok {
+                    let mut lines = text_lines(&err_text(status, &body));
+                    if let Some(items) = body["items"].as_array() {
+                        for i in items {
+                            lines.push(format!(
+                                "{} {}",
+                                clean(i["url"].as_str().unwrap_or("?")),
+                                clean(i["reason"].as_str().unwrap_or(""))
+                            ));
+                        }
+                    }
+                    self.push(
+                        Kind::Warn,
+                        Some(if search { "Search" } else { "Read" }),
+                        lines,
+                    );
+                    return Vec::new();
+                }
+                let (Some(id), Some(digest)) = (body["id"].as_str(), body["digest"].as_str())
+                else {
+                    self.say(
+                        Kind::Error,
+                        "The service gave an unexpected answer; nothing was sent.",
+                    );
+                    return Vec::new();
+                };
+                let mut lines = Vec::new();
+                if search {
+                    lines.push(format!(
+                        "These words would be sent to {}:",
+                        clean(body["will_send_to"].as_str().unwrap_or("?"))
+                    ));
+                    lines.push(format!("  {}", clean(body["query"].as_str().unwrap_or(""))));
+                } else {
+                    lines.push("These exact addresses would be requested:".into());
+                    for i in body["items"].as_array().into_iter().flatten() {
+                        let u = clean(i["url"].as_str().unwrap_or("?"));
+                        if i["allowed"] == true {
+                            lines.push(format!("  {u}"));
+                        } else {
+                            lines.push(format!(
+                                "  {u}  (not allowed: {})",
+                                clean(i["reason"].as_str().unwrap_or(""))
+                            ));
+                        }
+                    }
+                }
+                lines.push(clean(body["stays_here"].as_str().unwrap_or("")));
+                self.push(
+                    Kind::Info,
+                    Some(if search {
+                        "Search (not sent yet)"
+                    } else {
+                        "Read (not requested yet)"
+                    }),
+                    lines,
+                );
+                self.mode = Mode::Confirm(ConfirmView {
+                    prompt: if search {
+                        "Send exactly these words to that site? [y/N]".into()
+                    } else {
+                        "Request exactly these addresses? [y/N]".into()
+                    },
+                    forget_id: String::new(),
+                    apply: None,
+                    undo: false,
+                    web: Some((
+                        if search { "search" } else { "read" }.into(),
+                        id.to_string(),
+                        digest.to_string(),
+                    )),
+                });
+                Vec::new()
+            }
+            Intent::SearchRun => {
+                if !ok {
+                    self.push(
+                        Kind::Error,
+                        Some("Search"),
+                        text_lines(&err_text(status, &body)),
+                    );
+                    return Vec::new();
+                }
+                self.search_hits.clear();
+                let mut lines = vec!["Suggestions from the search site (untrusted). Nothing has been requested from them.".to_string()];
+                for h in body["results"].as_array().into_iter().flatten() {
+                    let url = h["url"].as_str().unwrap_or("").to_string();
+                    if url.is_empty() {
+                        continue;
+                    }
+                    self.search_hits.push(url.clone());
+                    let n = self.search_hits.len();
+                    if h["withheld"] == true {
+                        lines.push(format!(
+                            "{n}. {}  (text withheld: reads like instructions)",
+                            clean(&url)
+                        ));
+                    } else {
+                        lines.push(format!(
+                            "{n}. {}  {}",
+                            clean(&url),
+                            clean(h["title"].as_str().unwrap_or(""))
+                        ));
+                        let sn = clean(h["snippet"].as_str().unwrap_or(""));
+                        if !sn.is_empty() {
+                            lines.push(format!("     {sn}"));
+                        }
+                    }
+                }
+                if self.search_hits.is_empty() {
+                    lines.push("No usable results.".into());
+                } else {
+                    lines.push(
+                        "Read some with /read 1 2 (you will see the addresses and approve first)."
+                            .into(),
+                    );
+                }
+                self.push(Kind::Info, Some("Search results"), lines);
+                Vec::new()
+            }
+            Intent::ReadFetch => {
+                if !ok {
+                    self.push(
+                        Kind::Error,
+                        Some("Read"),
+                        text_lines(&err_text(status, &body)),
+                    );
+                    return Vec::new();
+                }
+                let mut lines = Vec::new();
+                for p in body["pages"].as_array().into_iter().flatten() {
+                    let url = clean(p["final_url"].as_str().or(p["url"].as_str()).unwrap_or("?"));
+                    if let Some(e) = p["error"].as_str() {
+                        lines.push(format!("{url}  could not be read: {}", clean(e)));
+                    } else if p["looks_like_instructions"] == true {
+                        lines.push(format!(
+                            "{url}  not given to the model: it reads like instructions"
+                        ));
+                    } else if let Some(id) = p["page_id"].as_str() {
+                        if self.web_pages.len() < 5 {
+                            self.web_pages.push((id.to_string(), url.clone()));
+                            lines.push(format!(
+                                "{url}  added ({})",
+                                clean(p["title"].as_str().unwrap_or(""))
+                            ));
+                        } else {
+                            lines.push(format!(
+                                "{url}  not added: five pages is the limit; /web clear first"
+                            ));
+                        }
+                    }
+                }
+                lines.push(
+                    "Pages are untrusted data for the model. Your next messages can use them."
+                        .into(),
+                );
+                self.push(Kind::Info, Some("Read"), lines);
                 Vec::new()
             }
             Intent::Chat => {

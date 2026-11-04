@@ -1451,7 +1451,7 @@ fn tu31_typing_a_slash_offers_matching_commands_that_can_be_chosen_completed_or_
     a.handle(key(KeyCode::Up));
     a.handle(key(KeyCode::Tab));
     assert_eq!(
-        a.input, "/verify ",
+        a.input, "/web ",
         "Up from the first wraps to the last alphabetical command that is not quit... "
     );
 }
@@ -1536,4 +1536,119 @@ fn tu34_the_footer_shows_the_context_estimate_and_older_turns_left_out() {
         1,
         "no figure is invented when the service sent none"
     );
+}
+
+#[test]
+fn tu35_search_and_read_show_exactly_what_goes_out_send_nothing_without_a_yes_and_add_only_approved_pages(
+) {
+    let mut a = booted();
+    // proposing sends nothing yet: the only request is the proposal to the local service
+    let r = enter(&mut a, "/search tokio async runtime");
+    assert_eq!((r.len(), r[0].path.as_str()), (1, "/api/search/propose"));
+    assert_eq!(r[0].body.as_ref().unwrap()["query"], "tokio async runtime");
+    let r = a.handle(ok(&r[0], 200, json!({"id": "search-1", "digest": "d1", "query": "tokio async runtime", "will_send_to": "search.example", "stays_here": "Only these words go to this one site. Nothing has been sent yet."})));
+    assert!(r.is_empty());
+    let t = text(&a);
+    assert!(
+        t.contains("search.example")
+            && t.contains("tokio async runtime")
+            && t.contains("Nothing has been sent yet"),
+        "{t}"
+    );
+    assert!(matches!(a.mode, Mode::Confirm(_)));
+    // anything but y cancels and sends nothing
+    assert!(a.handle(key(KeyCode::Char('n'))).is_empty());
+    assert!(matches!(a.mode, Mode::Normal) && text(&a).contains("Cancelled. Nothing was sent."));
+    // y sends exactly the approved digest
+    let r = enter(&mut a, "/search tokio async runtime");
+    a.handle(ok(&r[0], 200, json!({"id": "search-2", "digest": "d2", "query": "tokio async runtime", "will_send_to": "search.example", "stays_here": "x"})));
+    let r = a.handle(key(KeyCode::Char('y')));
+    assert_eq!(
+        (r.len(), r[0].path.as_str()),
+        (1, "/api/search/search-2/run")
+    );
+    assert_eq!(
+        r[0].body.as_ref().unwrap(),
+        &json!({"approve": true, "digest": "d2"})
+    );
+    a.handle(ok(&r[0], 200, json!({"results": [
+        {"title": "Tokio tutorial", "snippet": "Learn async Rust.", "url": "https://tokio.rs/tutorial", "host": "tokio.rs", "withheld": false},
+        {"title": "", "snippet": "", "url": "https://evil.example/p", "host": "evil.example", "withheld": true}
+    ]})));
+    let t = text(&a);
+    assert!(
+        t.contains("1. https://tokio.rs/tutorial")
+            && t.contains("Learn async Rust.")
+            && t.contains("2. https://evil.example/p")
+            && t.contains("reads like instructions")
+            && t.contains("Nothing has been requested"),
+        "{t}"
+    );
+    // a number refers to a result; a number that is not there is refused locally
+    let r = enter(&mut a, "/read 9");
+    assert!(r.is_empty() && text(&a).contains("no search result number 9"));
+    let r = enter(&mut a, "/read 1");
+    assert_eq!((r.len(), r[0].path.as_str()), (1, "/api/research/propose"));
+    assert_eq!(
+        r[0].body.as_ref().unwrap()["urls"],
+        json!(["https://tokio.rs/tutorial"])
+    );
+    a.handle(ok(&r[0], 200, json!({"id": "research-3", "digest": "d3", "items": [{"url": "https://tokio.rs/tutorial", "allowed": true}], "will_request": ["https://tokio.rs/tutorial"], "stays_here": "Only these exact addresses are requested."})));
+    let r = a.handle(key(KeyCode::Char('y')));
+    assert_eq!(r[0].path, "/api/research/research-3/fetch");
+    a.handle(ok(&r[0], 200, json!({"pages": [
+        {"page_id": "page-4", "url": "https://tokio.rs/tutorial", "final_url": "https://tokio.rs/tutorial", "title": "Tokio", "looks_like_instructions": false},
+        {"page_id": "page-5", "url": "https://x.example/", "final_url": "https://x.example/", "title": "Bad", "looks_like_instructions": true},
+        {"url": "https://gone.example/", "error": "Status(404)"}
+    ]})));
+    assert_eq!(
+        a.web_pages,
+        vec![(
+            "page-4".to_string(),
+            "https://tokio.rs/tutorial".to_string()
+        )],
+        "only the clean page is added"
+    );
+    let t = text(&a);
+    assert!(
+        t.contains("not given to the model") && t.contains("could not be read"),
+        "{t}"
+    );
+    // the next chat message carries the approved page and nothing else
+    let r = enter(&mut a, "what does it say?");
+    assert_eq!(r[0].body.as_ref().unwrap()["sources"], json!(["page-4"]));
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"done": true, "reply": "ok", "route": {"simulated": true}, "notes_used": 0}),
+    ));
+    // /web clear forgets them, and a new chat starts without them
+    enter(&mut a, "/web clear");
+    let r = enter(&mut a, "and now?");
+    assert!(r[0].body.as_ref().unwrap().get("sources").is_none());
+}
+
+#[test]
+fn tu36_search_and_read_refusals_from_the_service_are_shown_and_nothing_is_pending() {
+    let mut a = booted();
+    let r = enter(&mut a, "/search my secret words");
+    a.handle(ok(&r[0], 409, json!({"error": {"code": "NO_SEARCH_PROVIDER", "message": "web search is not set up: set KAKUREGA_SEARCH_URL"}})));
+    assert!(text(&a).contains("KAKUREGA_SEARCH_URL") && matches!(a.mode, Mode::Normal));
+    let r = enter(
+        &mut a,
+        "/read http://insecure.example/ https://127.0.0.1/admin",
+    );
+    a.handle(ok(&r[0], 400, json!({"error": {"code": "NOTHING_TO_FETCH", "message": "none of those addresses can be fetched"}, "items": [{"url": "http://insecure.example/", "allowed": false, "reason": "NotHttps"}]})));
+    let t = text(&a);
+    assert!(
+        t.contains("none of those addresses")
+            && t.contains("insecure.example")
+            && matches!(a.mode, Mode::Normal),
+        "{t}"
+    );
+    for bad in ["/search", "/read", "/web now"] {
+        let r = enter(&mut a, bad);
+        assert!(r.is_empty(), "{bad}");
+    }
+    assert!(text(&a).contains("usage: /search WORDS"));
 }

@@ -24,6 +24,9 @@ pub enum Command {
     ClearHistory,
     Proof(Option<String>),
     Gateway,
+    Search(String),
+    Read(String),
+    Web(bool),
     Sessions,
     NewChat,
     Verify(String),
@@ -55,6 +58,9 @@ pub const NAMES: &[&str] = &[
     "clearhistory",
     "proof",
     "gateway",
+    "search",
+    "read",
+    "web",
     "sessions",
     "resume",
     "newchat",
@@ -90,6 +96,9 @@ pub fn describe(name: &str) -> &'static str {
         "clearhistory" => "forget the saved command history",
         "proof" => "hardware proof of a NEAR confidential model",
         "gateway" => "hardware proof of the NEAR gateway",
+        "search" => "search the web (you approve the words first)",
+        "read" => "read web pages you approve, as untrusted sources",
+        "web" => "list the pages in this conversation (/web clear forgets them)",
         "sessions" => "pick a kept conversation or a review",
         "resume" => "same as /sessions",
         "newchat" => "leave this conversation and start a new one",
@@ -140,6 +149,8 @@ pub fn usage(name: &str) -> &'static str {
         "forget" => "/forget ID",
         "verify" => "/verify FILE",
         "proof" => "/proof [MODEL]",
+        "search" => "/search WORDS",
+        "read" => "/read ADDRESS_OR_NUMBER ...",
         _ => "/help",
     }
 }
@@ -181,6 +192,27 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "pop" => Ok(Command::Stash(false)),
         "clearhistory" => Ok(Command::ClearHistory),
         "gateway" => Ok(Command::Gateway),
+        "search" => {
+            let w = rest.trim();
+            if w.is_empty() || w.chars().count() > 200 || w.chars().any(char::is_control) {
+                Err(format!("usage: {}", usage("search")))
+            } else {
+                Ok(Command::Search(w.to_string()))
+            }
+        }
+        "read" => {
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            if parts.is_empty() || parts.len() > 5 || parts.iter().any(|p| p.len() > 2000) {
+                Err(format!("usage: {}", usage("read")))
+            } else {
+                Ok(Command::Read(parts.join(" ")))
+            }
+        }
+        "web" => match rest.trim() {
+            "" => Ok(Command::Web(false)),
+            "clear" => Ok(Command::Web(true)),
+            _ => Err("usage: /web  or  /web clear".into()),
+        },
         "proof" => {
             if rest.len() > 80
                 || rest.contains(char::is_whitespace)

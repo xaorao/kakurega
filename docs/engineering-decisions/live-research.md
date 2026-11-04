@@ -18,7 +18,7 @@
 - Hermes validates hostnames and re-applies the policy at connect; ours pins the connection to the validated set so a second DNS answer cannot be used. Mixed public/private answers are refused rather than filtered.
 
 ## Limits (stated, not hidden)
-- NOT BUILT: a built-in search provider (none is bundled on purpose, see Search), a terminal surface for research and search (web only so far), robots.txt handling, PDF and other non-text types, JavaScript-rendered pages, per-site allow lists, a request budget, persistent saved research.
+- NOT BUILT: a built-in search provider (none is bundled on purpose, see Search), robots.txt handling, PDF and other non-text types, JavaScript-rendered pages, per-site allow lists, a request budget, persistent saved research.
 - Pinning relies on `ureq`'s resolver hook; TLS certificate validation uses the library defaults (webpki roots). Not tested against hostile TLS servers.
 - Text extraction is a reader, not an HTML parser; unusual markup yields less text.
 - `looks_like_instructions` uses the same phrase list as memory; it is a filter, not a guarantee.
@@ -32,3 +32,4 @@
 - The answer goes through the same hardened fetch path as pages (public-address pinning, redirects re-checked, JSON only, 1 MiB). Hits keep only addresses that could be fetched, deduplicated, at most 8, with cleaned and capped titles and snippets; instruction-like hits lose their text. Hits are suggestions: reading any of them still needs the research approval for those exact addresses.
 - Limits: SearXNG response shape only; other providers (Brave, Tavily) would need their own parsers and keys; result quality is the provider's; NOT tested against a live SearXNG instance (no public instance was queried).
 - Acceptance: fe07-fe09, sv42 (four guards mutation-checked: digest binding, secret refusal, id-space separation, instruction-like withholding), browser checks against a mocked run.
+- Terminal (added): `/search WORDS`, `/read ADDRESS_OR_NUMBER ...`, `/web [clear]`. Each shows what would go out and waits for y; any other key sends nothing. Approved pages go to the model as untrusted `sources` on later messages (five at most); `/clear` and `/web clear` drop them. Acceptance: tu35, tu36 (digest binding, withheld-page and cancel paths mutation-checked). A real-terminal (pty) run of these commands against a live service was not done.
