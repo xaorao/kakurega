@@ -266,6 +266,8 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, title TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS session_turns(session TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (session, seq));
              CREATE TABLE IF NOT EXISTS prompt_history(id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS schedules(id TEXT PRIMARY KEY, repo TEXT NOT NULL, recipient TEXT NOT NULL, every_secs INTEGER NOT NULL, next_at INTEGER NOT NULL, created INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS schedule_runs(id INTEGER PRIMARY KEY AUTOINCREMENT, schedule TEXT NOT NULL, at INTEGER NOT NULL, outcome TEXT NOT NULL, job TEXT);
              CREATE TABLE IF NOT EXISTS approvers(key_id TEXT PRIMARY KEY, public BLOB NOT NULL, label TEXT NOT NULL, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);",
         )
@@ -518,7 +520,7 @@ impl Service {
             "kakurega",
             &[("version", env!("CARGO_PKG_VERSION").into())],
         );
-        Ok(Arc::new(Service {
+        let svc = Arc::new(Service {
             data_dir: data_dir.to_path_buf(),
             roots,
             runner,
@@ -539,7 +541,100 @@ impl Service {
             attest_cooldown: Mutex::new(std::time::Duration::from_secs(3)),
             research: Mutex::new(Research::default()),
             test_mode,
-        }))
+        });
+        // the scheduler wakes once a minute and holds the service only weakly, so dropping the service ends it
+        let weak = Arc::downgrade(&svc);
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            let Some(svc) = weak.upgrade() else { return };
+            svc.run_due(now());
+        });
+        Ok(svc)
+    }
+
+    /// Starts every schedule that is due, at most one review per schedule, and never while the last one is still running.
+    /// After downtime a schedule runs once, not once per missed period, and the gap is written to the run ledger.
+    /// A scheduled review only ever produces a review waiting for the owner; nothing is approved or sent.
+    pub fn run_due(self: &Arc<Self>, at: i64) -> usize {
+        let due: Vec<(String, String, String, i64)> = {
+            let store = self.store.lock().expect("lock");
+            let c = store.connection();
+            let Ok(mut st) = c.prepare("SELECT id, repo, recipient, every_secs FROM schedules WHERE next_at <= ?1 ORDER BY next_at, id") else { return 0 };
+            st.query_map([at], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+                .map(|it| it.flatten().collect())
+                .unwrap_or_default()
+        };
+        let mut started = 0;
+        for (id, repo, recipient, every) in due {
+            let missed: i64 = {
+                let store = self.store.lock().expect("lock");
+                store
+                    .connection()
+                    .query_row("SELECT next_at FROM schedules WHERE id = ?1", [&id], |r| {
+                        r.get::<_, i64>(0)
+                    })
+                    .map(|n| ((at - n) / every.max(1)).max(0))
+                    .unwrap_or(0)
+            };
+            let busy = {
+                let g = self.inner.lock().expect("lock");
+                g.jobs.values().any(|j| {
+                    matches!(j.state, JobState::Running)
+                        && j.events
+                            .iter()
+                            .any(|e| e.stage == "scheduled" && e.detail == id)
+                })
+            };
+            let (outcome, job) = if busy {
+                ("skipped_still_running".to_string(), None)
+            } else {
+                match self.start_job(&repo, &recipient) {
+                    Ok(job) => {
+                        self.push_event(&job, "scheduled", &id);
+                        started += 1;
+                        (
+                            if missed > 0 {
+                                format!("started_after_{missed}_missed")
+                            } else {
+                                "started".to_string()
+                            },
+                            Some(job),
+                        )
+                    }
+                    Err(e) => (
+                        format!(
+                            "could_not_start: {}",
+                            e.chars().take(80).collect::<String>()
+                        ),
+                        None,
+                    ),
+                }
+            };
+            let store = self.store.lock().expect("lock");
+            let c = store.connection();
+            let _ = c.execute(
+                "UPDATE schedules SET next_at = ?2 WHERE id = ?1",
+                kk_vault::rusqlite::params![id, at + every],
+            );
+            let _ = c.execute(
+                "INSERT INTO schedule_runs(schedule, at, outcome, job) VALUES (?1, ?2, ?3, ?4)",
+                kk_vault::rusqlite::params![id, at, outcome, job],
+            );
+            let _ = c.execute(
+                "DELETE FROM schedule_runs WHERE id <= (SELECT max(id) FROM schedule_runs) - 100",
+                [],
+            );
+            drop(store);
+            self.log_event(
+                "schedule.ran",
+                &id,
+                &[(
+                    "outcome",
+                    outcome.split(':').next().unwrap_or("").to_string().into(),
+                )],
+            );
+        }
+        started
     }
 
     pub fn signer_public(&self) -> [u8; 32] {
@@ -1634,6 +1729,97 @@ async fn history_clear(axum::Extension(svc): Svc) -> Response {
     }
     svc.log_event("history.cleared", "history", &[]);
     Json(json!({"cleared": true})).into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScheduleNew {
+    repo: String,
+    recipient: String,
+    every_hours: i64,
+}
+
+const MAX_SCHEDULES: i64 = 10;
+
+async fn schedules_list(axum::Extension(svc): Svc) -> Response {
+    let store = svc.store.lock().expect("lock");
+    let c = store.connection();
+    let schedules: Vec<Value> = c
+        .prepare("SELECT id, repo, recipient, every_secs, next_at FROM schedules ORDER BY created, id")
+        .ok()
+        .map(|mut st| st.query_map([], |r| Ok(json!({"id": r.get::<_, String>(0)?, "repo": r.get::<_, String>(1)?, "recipient": r.get::<_, String>(2)?, "every_hours": r.get::<_, i64>(3)? / 3600, "next_at": r.get::<_, i64>(4)?}))).map(|it| it.flatten().collect()).unwrap_or_default())
+        .unwrap_or_default();
+    let runs: Vec<Value> = c
+        .prepare("SELECT schedule, at, outcome, job FROM schedule_runs ORDER BY id DESC LIMIT 30")
+        .ok()
+        .map(|mut st| st.query_map([], |r| Ok(json!({"schedule": r.get::<_, String>(0)?, "at": r.get::<_, i64>(1)?, "outcome": r.get::<_, String>(2)?, "job": r.get::<_, Option<String>>(3)?}))).map(|it| it.flatten().collect()).unwrap_or_default())
+        .unwrap_or_default();
+    Json(json!({"schedules": schedules, "runs": runs, "note": "A scheduled review is only started. It waits in your inbox; nothing is approved or sent without you."})).into_response()
+}
+
+async fn schedule_new(axum::Extension(svc): Svc, Json(b): Json<ScheduleNew>) -> Response {
+    if !(1..=168).contains(&b.every_hours) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_INTERVAL",
+            "repeat every 1 to 168 hours",
+        );
+    }
+    let Some(dir) = svc.allowed_dir(&b.repo) else {
+        return error(
+            StatusCode::FORBIDDEN,
+            "NOT_ALLOWED",
+            "that folder is not available",
+        );
+    };
+    let rec = b.recipient.trim().to_string();
+    if rec.is_empty() || rec.len() > 128 || rec.chars().any(|c| c.is_control()) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_RECIPIENT",
+            "name the recipient in 1 to 128 characters",
+        );
+    }
+    let mut raw = [0u8; 4];
+    getrandom::fill(&mut raw).expect("operating system randomness");
+    let id = format!(
+        "sched-{}",
+        raw.iter().map(|x| format!("{x:02x}")).collect::<String>()
+    );
+    {
+        let store = svc.store.lock().expect("lock");
+        let c = store.connection();
+        let n: i64 = c
+            .query_row("SELECT count(*) FROM schedules", [], |r| r.get(0))
+            .unwrap_or(i64::MAX);
+        if n >= MAX_SCHEDULES {
+            return error(StatusCode::CONFLICT, "TOO_MANY", "remove a schedule first");
+        }
+        let t = now();
+        let every = b.every_hours * 3600;
+        let _ = c.execute("INSERT INTO schedules(id, repo, recipient, every_secs, next_at, created) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", kk_vault::rusqlite::params![id, dir.to_string_lossy(), rec, every, t + every, t]);
+    }
+    svc.log_event(
+        "schedule.created",
+        &id,
+        &[("every_hours", (b.every_hours as usize).into())],
+    );
+    (StatusCode::CREATED, Json(json!({"id": id}))).into_response()
+}
+
+async fn schedule_delete(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    let n = {
+        let store = svc.store.lock().expect("lock");
+        let c = store.connection();
+        let _ = c.execute("DELETE FROM schedule_runs WHERE schedule = ?1", [&id]);
+        c.execute("DELETE FROM schedules WHERE id = ?1", [&id])
+            .unwrap_or(0)
+    };
+    if n == 0 {
+        return error(StatusCode::NOT_FOUND, "NO_SCHEDULE", "no such schedule");
+    }
+    svc.log_event("schedule.removed", &id, &[]);
+    Json(json!({"removed": true})).into_response()
 }
 
 const MAX_SESSIONS: i64 = 200;
@@ -3875,6 +4061,8 @@ impl Extension for Routes {
                 post(suggestion_dismiss),
             )
             .route("/api/fs", get(fs_list))
+            .route("/api/schedules", get(schedules_list).post(schedule_new))
+            .route("/api/schedules/{id}/delete", post(schedule_delete))
             .route("/api/events", get(events))
             .route("/api/inbox", get(inbox))
             .route("/api/jobs", get(list).post(start))

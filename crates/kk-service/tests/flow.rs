@@ -4354,3 +4354,182 @@ fn sv37_the_event_stream_says_something_changed_without_content_needs_a_session_
         std::thread::sleep(std::time::Duration::from_millis(300));
     }
 }
+
+#[test]
+fn sv38_scheduled_reviews_start_on_time_collapse_missed_periods_never_overlap_and_never_approve() {
+    let (root, repo) = repo_copy("data-schedule");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    assert_eq!(Web::new(c.addr).get("/api/schedules").0, 401);
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let r = repo.to_string_lossy().to_string();
+    for bad in [
+        json!({"repo": r, "recipient": "x", "every_hours": 0}),
+        json!({"repo": r, "recipient": "x", "every_hours": 169}),
+        json!({"repo": "/etc", "recipient": "x", "every_hours": 2}),
+        json!({"repo": r, "recipient": " ", "every_hours": 2}),
+    ] {
+        assert!([400, 403].contains(&w.post("/api/schedules", bad).0));
+    }
+    let (st, made) = w.post(
+        "/api/schedules",
+        json!({"repo": r, "recipient": "nightly-recipient", "every_hours": 2}),
+    );
+    assert_eq!(st, 201);
+    let id = made["id"].as_str().unwrap().to_string();
+    let listed = w.get("/api/schedules").1;
+    let next = listed["schedules"][0]["next_at"].as_i64().unwrap();
+    assert_eq!(listed["schedules"][0]["every_hours"], 2);
+    // not due yet: nothing starts
+    assert_eq!(svc.run_due(next - 1), 0);
+    assert_eq!(w.get("/api/jobs").1["jobs"].as_array().unwrap().len(), 0);
+    // due: one review starts, tagged as scheduled, and it only waits for the owner
+    assert_eq!(svc.run_due(next), 1);
+    let jobs = w.get("/api/jobs").1;
+    let job = jobs["jobs"][0]["id"].as_str().unwrap().to_string();
+    wait_for(&w, &job, &["ready", "nothing_to_release"]);
+    let j = w.get(&format!("/api/jobs/{job}")).1;
+    assert!(
+        j["events"].to_string().contains(&id),
+        "the review says which schedule started it"
+    );
+    assert!(
+        j["approval"].is_null() && j["delivered"].is_null(),
+        "a scheduled review is never approved or delivered"
+    );
+    let inbox = w.get("/api/inbox").1;
+    assert!(
+        inbox["items"].to_string().contains("ready_to_review"),
+        "it lands in the inbox"
+    );
+    // the service was off for five periods: it runs once, not five times, and the ledger says what was missed
+    let late = next + 5 * 2 * 3600 + 10;
+    assert_eq!(svc.run_due(late), 1);
+    let runs = w.get("/api/schedules").1["runs"].clone();
+    assert!(
+        runs[0]["outcome"]
+            .as_str()
+            .unwrap()
+            .starts_with("started_after_4_missed"),
+        "{runs}"
+    );
+    // a second tick at the same moment finds nothing due (the next run moved on)
+    assert_eq!(svc.run_due(late), 0);
+    // removal ends it
+    assert_eq!(
+        w.post(&format!("/api/schedules/{id}/delete"), json!({})).0,
+        200
+    );
+    assert_eq!(
+        w.post(&format!("/api/schedules/{id}/delete"), json!({})).0,
+        404
+    );
+    assert_eq!(svc.run_due(late + 100 * 3600), 0);
+    assert_eq!(
+        w.get("/api/schedules").1["schedules"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    // at most ten schedules
+    for i in 0..10 {
+        assert_eq!(
+            w.post(
+                "/api/schedules",
+                json!({"repo": r, "recipient": format!("r{i}"), "every_hours": 24})
+            )
+            .0,
+            201
+        );
+    }
+    assert_eq!(
+        w.post(
+            "/api/schedules",
+            json!({"repo": r, "recipient": "eleven", "every_hours": 24})
+        )
+        .1["error"]["code"],
+        "TOO_MANY"
+    );
+    let log = log_text(
+        &format!("http://127.0.0.1:{}", c.addr.port()),
+        c.security.admin_token(),
+    );
+    assert!(
+        log.contains("schedule.created")
+            && log.contains("schedule.ran")
+            && log.contains("schedule.removed")
+    );
+}
+
+struct SleepyRunner(CannedRunner);
+
+impl JobRunner for SleepyRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        self.0.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        self.0.route_info()
+    }
+}
+
+#[test]
+fn sv39_a_scheduled_review_is_skipped_while_the_last_one_of_the_same_schedule_is_still_running() {
+    let (root, repo) = repo_copy("data-schedule-busy");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(SleepyRunner(CannedRunner { confirm: true })),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (_, made) = w.post(
+        "/api/schedules",
+        json!({"repo": repo.to_string_lossy(), "recipient": "busy", "every_hours": 1}),
+    );
+    let id = made["id"].as_str().unwrap().to_string();
+    let t0 = w.get("/api/schedules").1["schedules"][0]["next_at"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(svc.run_due(t0), 1);
+    assert_eq!(
+        svc.run_due(t0 + 3600),
+        0,
+        "the first review is still running, so this run is skipped"
+    );
+    let runs = w.get("/api/schedules").1["runs"].clone();
+    assert_eq!(runs[0]["outcome"], "skipped_still_running", "{runs}");
+    assert_eq!(
+        w.get("/api/jobs").1["jobs"].as_array().unwrap().len(),
+        1,
+        "no second review was started"
+    );
+    let _ = id;
+}

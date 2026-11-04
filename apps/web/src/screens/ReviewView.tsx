@@ -40,7 +40,9 @@ function Progress(props: { job: Job }) {
         }}
       </For>
       <Show when={props.job.state === "failed"}>
-        <li class="fail"><span class="mark">!</span><span>{t("progress.stopped")}</span><span class="sub">{props.job.note}</span></li>
+        <li class="fail"><span class="mark">!</span><span>{t("progress.stopped")}</span><span class="sub">{props.job.note}</span>
+          <span class="actions"><button type="button" onClick={async () => { try { const r = await api.startJob(props.job.repo, props.job.recipient); location.hash = `#/job/${r.id}`; } catch { /* the folder may no longer be available; the old review stays as it was */ } }}>{t("progress.again")}</button></span>
+        </li>
       </Show>
     </ol>
   );

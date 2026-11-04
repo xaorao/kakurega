@@ -318,6 +318,39 @@ try {
   await page.waitForLoadState("load");
   await page.reload();
   await page.waitForLoadState("load");
+  // repeating reviews: add one for a chosen folder and recipient, see it listed, remove it
+  await page.getByRole("link", { name: "New review" }).click();
+  await page.getByRole("button", { name: "payments-service" }).click();
+  await page.locator("#recipient").fill("Nightly auditor");
+  await page.getByText("Repeat this review automatically").click();
+  await page.getByRole("button", { name: "Add this schedule" }).click();
+  await page.getByText("every 24 h").waitFor();
+  check("a repeating review is listed with its folder, recipient and cadence, and the card says nothing is approved or sent without the owner", (await page.locator("#schedules").innerText()).includes("Nightly auditor") && (await page.locator("#schedules").innerText()).includes("nothing is approved or sent without you"));
+  await axeCheck(page, "repeat review card");
+  await page.locator("#schedules").getByRole("button", { name: "Remove" }).click();
+  await page.getByText("No repeating reviews.").waitFor();
+  check("removing the schedule empties the list", true);
+  // an interrupted review can be run again with the same folder and recipient
+  const dead = { id: "job-77", repo: "/some/folder", recipient: "Acme", created: 1, state: "failed", note: "the service stopped while this review was running; start it again", events: [{ at: 1, stage: "interrupted", detail: "the service stopped" }], summary: null, approval: null, delivered: null };
+  let startedAgain = null;
+  await page.route("**/api/jobs**", async (route) => {
+    const req = route.request();
+    if (req.method() === "POST") {
+      startedAgain = JSON.parse(req.postData() ?? "{}");
+      return route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ id: "job-78" }) });
+    }
+    if (req.url().endsWith("/api/jobs")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ jobs: [dead] }) });
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(dead) });
+  });
+  await page.goto(base + "/#/job/job-77");
+  await page.reload();
+  await page.getByRole("button", { name: "Run this review again" }).click();
+  await page.waitForURL(/#\/job\/job-78/);
+  check("an interrupted review offers to run again and starts the same folder for the same recipient", startedAgain?.repo === "/some/folder" && startedAgain?.recipient === "Acme");
+  await page.goto(base + "/#/");
+  await page.getByRole("heading", { name: "Review a project" }).waitFor();
+  await page.unroute("**/api/jobs**");
+  await page.reload();
   // command palette: keyboard-driven, focus returns where it was, and it can change settings
   await page.getByRole("button", { name: "Commands" }).focus();
   await page.keyboard.press("Control+Shift+P");

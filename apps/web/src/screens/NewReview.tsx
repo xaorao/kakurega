@@ -21,6 +21,26 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
       setRepairError(e instanceof ApiError ? e.message : t("setup.repairFailed"));
     }
   };
+  const [every, setEvery] = createSignal("24");
+  const [sched, { refetch: refetchSched }] = createResource(() => api.schedules().catch(() => null));
+  const [schedError, setSchedError] = createSignal("");
+  const addSched = async () => {
+    setSchedError("");
+    try {
+      await api.addSchedule(chosen(), recipient().trim(), Number(every()));
+      await refetchSched();
+    } catch (e) {
+      setSchedError(e instanceof ApiError ? e.message : t("sched.error"));
+    }
+  };
+  const removeSched = async (id: string) => {
+    try {
+      await api.removeSchedule(id);
+      await refetchSched();
+    } catch {
+      /* the list still shows it, so nothing is hidden */
+    }
+  };
   const poll = setInterval(() => {
     if (ready()?.checks.some((c) => c.repair?.state === "running")) void refetch();
   }, 1500);
@@ -91,6 +111,33 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
         <button class="primary" disabled={busy() || blocked() || !chosen() || recipient().trim().length === 0} onClick={start}>{t("new.start")}</button>
         <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
       </div>
+      <details class="card stack" id="schedules">
+        <summary>{t("sched.title")}</summary>
+        <p class="muted">{t("sched.lead")}</p>
+        <div class="actions">
+          <label for="every">{t("sched.every")}</label>
+          <select id="every" value={every()} onChange={(e) => setEvery(e.currentTarget.value)}>
+            <option value="1">{t("sched.hour")}</option>
+            <option value="6">{t("sched.hours", { n: 6 })}</option>
+            <option value="24">{t("sched.day")}</option>
+            <option value="168">{t("sched.week")}</option>
+          </select>
+          <button type="button" disabled={!chosen() || recipient().trim().length === 0} onClick={addSched}>{t("sched.add")}</button>
+          <Show when={schedError()}><span role="alert" class="bad">{schedError()}</span></Show>
+        </div>
+        <Show when={(sched()?.schedules ?? []).length > 0} fallback={<p class="muted">{t("sched.none")}</p>}>
+          <ul class="plain stack">
+            <For each={sched()?.schedules}>
+              {(x) => (
+                <li class="actions">
+                  <span><code>{x.repo}</code> → {x.recipient} · {t("sched.cadence", { n: x.every_hours })}</span>
+                  <button type="button" onClick={() => removeSched(x.id)}>{t("sched.remove")}</button>
+                </li>
+              )}
+            </For>
+          </ul>
+        </Show>
+      </details>
       <p class="muted">{rich("new.model", { model: props.config.route.model ?? props.config.route.id, where: props.config.route.simulated ? t("new.model.scripted") : t("new.model.local") })}</p>
     </section>
   );
