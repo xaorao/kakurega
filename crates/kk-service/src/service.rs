@@ -1419,6 +1419,8 @@ struct ChatRun {
     body: ChatBody,
     kept: Option<String>,
     message_to_keep: String,
+    /// Earlier turns of a kept conversation that were not sent because only the latest ones fit.
+    history_dropped: usize,
 }
 
 /// Checks a chat request and resolves a kept conversation to its stored history.
@@ -1448,6 +1450,7 @@ fn chat_validate(svc: &Service, b: ChatBody) -> Result<ChatRun, Box<Response>> {
             body: b,
             kept: None,
             message_to_keep,
+            history_dropped: 0,
         });
     };
     if !kk_secrets::scan(&b.message).is_empty() || kk_secrets::looks_secret(&b.message).is_some() {
@@ -1460,6 +1463,7 @@ fn chat_validate(svc: &Service, b: ChatBody) -> Result<ChatRun, Box<Response>> {
             "there is no such kept conversation",
         )));
     };
+    let history_dropped = turns.len().saturating_sub(18);
     let history = turns
         .into_iter()
         .rev()
@@ -1471,6 +1475,7 @@ fn chat_validate(svc: &Service, b: ChatBody) -> Result<ChatRun, Box<Response>> {
         body: ChatBody { history, ..b },
         kept: Some(id),
         message_to_keep,
+        history_dropped,
     })
 }
 
@@ -1480,6 +1485,7 @@ struct ChatContext {
     untrusted_notes: usize,
     notes_withheld: usize,
     web_used: usize,
+    history_sent: usize,
 }
 
 /// Gathers the notes and chosen web pages and builds the model's messages.
@@ -1546,8 +1552,10 @@ fn chat_context(svc: &Service, b: &ChatBody) -> ChatContext {
         messages.push(kk_types::chat::ChatMessage::new(&t.role, &t.content));
     }
     messages.push(kk_types::chat::ChatMessage::new("user", &b.message));
+    let history_sent = b.history.len();
     ChatContext {
         messages,
+        history_sent,
         notes_used: used,
         untrusted_notes: untrusted_used,
         notes_withheld: withheld,
@@ -1571,7 +1579,11 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
         .kept
         .as_ref()
         .is_some_and(|id| session_append(svc, id, &run.message_to_keep, &r.text));
-    json!({"reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated}, "notes_used": ctx.notes_used, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "web_sources_used": ctx.web_used, "saved": saved})
+    // A rough size (four characters to a token) of everything sent to the model for this turn, so the owner can see when a
+    // conversation is getting long. It is an estimate, not the model's own count.
+    let sent_chars: usize = ctx.messages.iter().map(|m| m.content.chars().count()).sum();
+    let usage = json!({"context_tokens_estimate": sent_chars / 4, "reply_tokens_estimate": r.text.chars().count() / 4, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "estimate": true});
+    json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated}, "notes_used": ctx.notes_used, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "web_sources_used": ctx.web_used, "saved": saved})
 }
 
 async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {

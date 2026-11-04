@@ -1513,3 +1513,27 @@ fn tu33_a_half_typed_line_can_be_put_aside_and_brought_back_without_losing_what_
         .iter()
         .all(|r| r.path == "/api/history"));
 }
+
+#[test]
+fn tu34_the_footer_shows_the_context_estimate_and_older_turns_left_out() {
+    let mut a = booted();
+    let r = enter(&mut a, "hello");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": true}, "notes_used": 0, "usage": {"context_tokens_estimate": 1240, "history_turns_dropped": 6}})));
+    let t = text(&a);
+    assert!(
+        t.contains("about 1240 tokens of context sent")
+            && t.contains("6 older message(s) were not sent"),
+        "{t}"
+    );
+    let r = enter(&mut a, "again");
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"done": true, "reply": "hi", "route": {"simulated": true}, "notes_used": 0}),
+    ));
+    assert_eq!(
+        text(&a).matches("tokens of context sent").count(),
+        1,
+        "no figure is invented when the service sent none"
+    );
+}

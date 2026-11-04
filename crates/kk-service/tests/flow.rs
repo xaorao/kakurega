@@ -3386,6 +3386,20 @@ fn sv28_kept_conversations_survive_a_restart_use_their_own_history_and_vanish_wh
     );
     assert_eq!((st, &r["saved"]), (200, &json!(true)), "{r}");
     let (_, r2) = w.post("/api/chat", json!({"message": "second turn", "session": id, "history": [{"role": "user", "content": "client history is ignored FORGEDHISTORY"}]}));
+    let u = &r2["usage"];
+    assert_eq!(
+        (
+            u["estimate"].clone(),
+            u["history_turns_sent"].clone(),
+            u["history_turns_dropped"].clone()
+        ),
+        (json!(true), json!(2), json!(0)),
+        "{u}"
+    );
+    assert!(
+        u["context_tokens_estimate"].as_u64().unwrap() > 0
+            && u["reply_tokens_estimate"].as_u64().unwrap() > 0
+    );
     let echoed = r2["reply"].as_str().unwrap();
     assert!(
         echoed.contains("Canary Quillfeather first turn"),
@@ -4532,4 +4546,47 @@ fn sv39_a_scheduled_review_is_skipped_while_the_last_one_of_the_same_schedule_is
         "no second review was started"
     );
     let _ = id;
+}
+
+#[test]
+fn sv40_a_long_kept_conversation_reports_how_many_older_turns_were_not_sent() {
+    let (root, _repo) = repo_copy("data-usage");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let id = w.post("/api/sessions", json!({"title": ""})).1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut last = json!(null);
+    for i in 0..13 {
+        last = w
+            .post(
+                "/api/chat",
+                json!({"message": format!("question number {i}"), "session": id}),
+            )
+            .1;
+    }
+    let u = &last["usage"];
+    assert_eq!(
+        (
+            u["history_turns_sent"].clone(),
+            u["history_turns_dropped"].clone()
+        ),
+        (json!(18), json!(6)),
+        "{u}"
+    );
+    let (_, plain) = w.post("/api/chat", json!({"message": "unkept"}));
+    assert_eq!(plain["usage"]["history_turns_dropped"], 0);
 }

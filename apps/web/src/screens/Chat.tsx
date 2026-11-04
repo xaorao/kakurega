@@ -142,6 +142,10 @@ export function Chat() {
         return;
       }
       const foot = [r.route.simulated ? t("chat.test") : t("chat.private"), t("chat.notesUsed", { n: r.notes_used })];
+      if (r.usage) {
+        foot.push(t("chat.context", { n: r.usage.context_tokens_estimate }));
+        if (r.usage.history_turns_dropped > 0) foot.push(t("chat.dropped", { n: r.usage.history_turns_dropped }));
+      }
       if (session()) foot.push(r.saved ? t("chat.saved") : t("chat.notSaved"));
       if (r.web_sources_used > 0) foot.push(t("web.used", { n: r.web_sources_used }));
       if (r.notes_withheld > 0) foot.push(t("chat.withheld", { n: r.notes_withheld }));

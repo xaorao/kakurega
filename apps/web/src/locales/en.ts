@@ -205,6 +205,8 @@ export const en = {
   "sched.cadence": "every {n} h",
   "sched.remove": "Remove",
   "sched.error": "Could not add the schedule.",
+  "chat.context": "about {n} tokens of context sent",
+  "chat.dropped": "{n} older message(s) were not sent because the conversation is long",
   "chat.error": "The assistant could not answer.",
   "nav.docs": "Documents",
   "docs.title": "Ask your documents",

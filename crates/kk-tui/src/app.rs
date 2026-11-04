@@ -1874,6 +1874,13 @@ impl App {
                     },
                     body["notes_used"]
                 )];
+                if let Some(n) = body["usage"]["context_tokens_estimate"].as_u64() {
+                    foot.push(format!("about {n} tokens of context sent"));
+                    let dropped = body["usage"]["history_turns_dropped"].as_u64().unwrap_or(0);
+                    if dropped > 0 {
+                        foot.push(format!("{dropped} older message(s) were not sent because the conversation is long"));
+                    }
+                }
                 if self.session.is_some() {
                     foot.push(if body["saved"] == true {
                         "saved in the encrypted store".into()

@@ -69,7 +69,7 @@ page.on("requestfailed", async (r) => {
   // Also classified as a harness artifact: an idempotent GET that the browser cancelled because the page was reloaded or
   // navigated while it was in flight (the screens poll /api/fs, /api/readiness and /api/jobs). A POST or any other failure
   // still counts.
-  if (r.method() === "GET" && r.failure()?.errorText === "net::ERR_ABORTED" && /\/(api\/(fs|readiness|jobs|sessions|memories|inbox|events)|favicon\.svg)(\?|$)/.test(new URL(r.url()).pathname + new URL(r.url()).search)) return;
+  if (r.method() === "GET" && r.failure()?.errorText === "net::ERR_ABORTED" && /\/(api\/(fs|readiness|jobs|sessions|memories|inbox|events|schedules)|favicon\.svg)(\?|$)/.test(new URL(r.url()).pathname + new URL(r.url()).search)) return;
   problems.push("requestfailed: " + r.url() + " " + r.failure()?.errorText);
 });
 page.on("response", (r) => r.status() >= 500 && problems.push("http " + r.status() + " " + r.url()));
