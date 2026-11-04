@@ -1,0 +1,14 @@
+{
+  "name": "@kakurega/desktop",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "src/main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "electron": "45.2.2"
+  }
+}
