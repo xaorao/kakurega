@@ -826,3 +826,120 @@ fn me20_recall_is_not_starved_by_notes_the_caller_may_not_see() {
     );
     assert!(got[0].memory.text.contains("invoices"));
 }
+
+#[test]
+fn me21_recall_finds_plurals_and_small_typos_that_keyword_search_misses_and_explains_why() {
+    let m = mem(&dir());
+    m.remember(
+        1,
+        nm(
+            "Supplier invoices are paid on the fifth of the month",
+            internal(),
+        ),
+    )
+    .unwrap();
+    m.remember(2, nm("Tomatoes need staking in June", internal()))
+        .unwrap();
+    let got = m.recall("invoice payd", &internal(), 9, 5).unwrap();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert!(got[0].memory.text.contains("invoices"));
+    assert!(
+        got[0].why.contains("matched by similar wording"),
+        "{}",
+        got[0].why
+    );
+    let both = m.recall("invoices paid", &internal(), 9, 5).unwrap();
+    assert!(
+        both[0].why.contains("keywords and by similar wording"),
+        "{}",
+        both[0].why
+    );
+    assert!(
+        m.recall("quantum chromodynamics", &internal(), 9, 5)
+            .unwrap()
+            .is_empty(),
+        "unrelated words match nothing"
+    );
+    assert!(m
+        .recall("of the and is", &internal(), 9, 5)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn me22_similar_wording_never_shows_a_note_the_caller_may_not_see_or_one_that_is_forgotten() {
+    let m = mem(&dir());
+    let restricted = Label::new(kk_types::label::Level::Restricted);
+    m.remember(
+        1,
+        nm("Layoff list for the autumn restructuring", restricted),
+    )
+    .unwrap();
+    let id = m
+        .remember(
+            2,
+            nm(
+                "Autumn restructuring budget approved by finance",
+                internal(),
+            ),
+        )
+        .unwrap();
+    let got = m.recall("restructure layoffs", &internal(), 9, 5).unwrap();
+    assert!(
+        got.iter().all(|r| !r.memory.text.contains("Layoff")),
+        "{got:?}"
+    );
+    assert_eq!(got.len(), 1);
+    let id = self::id(id);
+    m.forget(3, &id, "test").unwrap();
+    assert!(
+        m.recall("restructure", &internal(), 9, 5)
+            .unwrap()
+            .is_empty(),
+        "a forgotten note is gone from both rankings"
+    );
+    let m2 = mem(&dir());
+    m2.remember(
+        1,
+        NewMemory {
+            valid_to: Some(5),
+            ..nm("Old pricing is five euros per seat", internal())
+        },
+    )
+    .unwrap();
+    assert!(
+        m2.recall("price", &internal(), 9, 5).unwrap().is_empty(),
+        "an expired note is gone from both rankings"
+    );
+    assert_eq!(m2.recall("price", &internal(), 3, 5).unwrap().len(), 1);
+}
+
+#[test]
+fn me23_recall_order_is_the_same_every_time() {
+    let m = mem(&dir());
+    for i in 0..12 {
+        m.remember(
+            i,
+            nm(
+                &format!("Harbor delivery schedule revision {i}"),
+                internal(),
+            ),
+        )
+        .unwrap();
+    }
+    let first: Vec<String> = m
+        .recall("harbor schedule", &internal(), 99, 12)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.memory.id)
+        .collect();
+    for _ in 0..20 {
+        let again: Vec<String> = m
+            .recall("harbor schedule", &internal(), 99, 12)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.memory.id)
+            .collect();
+        assert_eq!(again, first);
+    }
+}

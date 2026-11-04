@@ -1,3 +1,4 @@
+mod fuse;
 mod secret;
 
 use hmac::{Hmac, Mac};
@@ -196,9 +197,8 @@ const STOPWORDS: &[&str] = &[
     "give", "show", "know",
 ];
 
-fn fts_query(q: &str) -> Option<String> {
-    let terms: Vec<String> = q
-        .split(|c: char| !c.is_alphanumeric())
+fn significant_terms(q: &str) -> Vec<String> {
+    q.split(|c: char| !c.is_alphanumeric())
         .filter(|t| !t.is_empty())
         .filter(|t| {
             let l = t.to_lowercase();
@@ -209,6 +209,13 @@ fn fts_query(q: &str) -> Option<String> {
             }
         })
         .take(12)
+        .map(str::to_string)
+        .collect()
+}
+
+fn fts_query(q: &str) -> Option<String> {
+    let terms: Vec<String> = significant_terms(q)
+        .into_iter()
         .map(|t| format!("\"{}\"", t.replace('"', "")))
         .collect();
     if terms.is_empty() {
@@ -546,6 +553,9 @@ impl Memories {
         Ok(n > 0)
     }
 
+    /// Notes relevant to `query` that `clearance` may read, best first. Two rankings are merged: keyword relevance
+    /// (BM25) and closeness of wording (tolerates plurals and small typos). Both are limited by the same date and
+    /// label rules inside the query, so a note the caller may not see can never take a place.
     pub fn recall(
         &self,
         query: &str,
@@ -553,39 +563,70 @@ impl Memories {
         as_of: i64,
         limit: usize,
     ) -> Result<Vec<Recalled>, MemoryError> {
-        let Some(q) = fts_query(query) else {
-            return Ok(Vec::new());
-        };
-        let mut st = self.conn().prepare(
-            "SELECT m.* FROM memories_fts f JOIN memories m ON m.rowid = f.rowid
-             WHERE memories_fts MATCH ?1 AND m.status = 'active'
-               AND (m.valid_from IS NULL OR m.valid_from <= ?2) AND (m.valid_to IS NULL OR m.valid_to > ?2)
-               AND m.level <= ?4
-             ORDER BY bm25(memories_fts) LIMIT ?3",
-        )?;
-        // The level filter is in the query so notes the caller may not see cannot crowd out ones it may; compartments
-        // are checked afterwards, so the candidate pool stays generous.
-        let rows = st.query_map(
-            params![
-                q,
-                as_of,
-                (limit.clamp(1, 50) * 4).max(512) as i64,
-                level_to_int(clearance.level)
-            ],
-            row_to_memory,
-        )?;
-        let mut out = Vec::new();
-        for r in rows {
-            let r = r?;
-            if r.m.label.confidentiality_within(clearance) {
-                out.push(Recalled {
-                    why: explain(&r.m),
-                    untrusted: r.untrusted,
-                    memory: r.m,
-                });
-                if out.len() >= limit.clamp(1, 50) {
-                    break;
+        let limit = limit.clamp(1, 50);
+        let pool = fuse::pool_for_limit(limit).max(512);
+        let level = level_to_int(clearance.level);
+        let mut keyword: Vec<String> = Vec::new();
+        let mut by_id: std::collections::HashMap<String, Row> = std::collections::HashMap::new();
+        if let Some(q) = fts_query(query) {
+            let mut st = self.conn().prepare(
+                "SELECT m.* FROM memories_fts f JOIN memories m ON m.rowid = f.rowid
+                 WHERE memories_fts MATCH ?1 AND m.status = 'active'
+                   AND (m.valid_from IS NULL OR m.valid_from <= ?2) AND (m.valid_to IS NULL OR m.valid_to > ?2)
+                   AND m.level <= ?4
+                 ORDER BY bm25(memories_fts) LIMIT ?3",
+            )?;
+            let rows = st.query_map(params![q, as_of, pool as i64, level], row_to_memory)?;
+            for r in rows {
+                let r = r?;
+                keyword.push(r.m.id.clone());
+                by_id.insert(r.m.id.clone(), r);
+            }
+        }
+        let similar: Vec<String> = {
+            let mut st = self.conn().prepare(
+                "SELECT m.* FROM memories m
+                 WHERE m.status = 'active'
+                   AND (m.valid_from IS NULL OR m.valid_from <= ?1) AND (m.valid_to IS NULL OR m.valid_to > ?1)
+                   AND m.level <= ?2
+                 ORDER BY m.created_at DESC, m.id LIMIT 2000",
+            )?;
+            let rows: Vec<Row> = st
+                .query_map(params![as_of, level], row_to_memory)?
+                .collect::<Result<_, _>>()?;
+            let texts: Vec<(String, &str)> = rows
+                .iter()
+                .map(|r| (r.m.id.clone(), r.m.text.as_str()))
+                .collect();
+            let ranked = fuse::rank_similar(&significant_terms(query).join(" "), &texts, 0.5);
+            let ranked: Vec<String> = ranked.into_iter().take(pool).collect();
+            for r in rows {
+                if ranked.contains(&r.m.id) && !by_id.contains_key(&r.m.id) {
+                    by_id.insert(r.m.id.clone(), r);
                 }
+            }
+            ranked
+        };
+        let mut out = Vec::new();
+        for f in fuse::fuse(&[keyword, similar]) {
+            let Some(r) = by_id.remove(&f.id) else {
+                continue;
+            };
+            if !r.m.label.confidentiality_within(clearance) {
+                continue;
+            }
+            let how = match (f.ranks[0], f.ranks[1]) {
+                (Some(_), Some(_)) => "matched by keywords and by similar wording",
+                (Some(_), None) => "matched by keywords",
+                _ => "matched by similar wording",
+            };
+            out.push(Recalled {
+                why: format!("{}; {how}", explain(&r.m)),
+                untrusted: r.untrusted,
+                memory: r.m,
+            });
+            if out.len() >= limit {
+                break;
             }
         }
         Ok(out)
