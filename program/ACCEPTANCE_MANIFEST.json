@@ -395,9 +395,8 @@
         },
         {
           "id": "III-07c",
-          "text": "Real Telegram: the owner pairs the real bot and receives a real notification",
-          "kind": "human",
-          "evidence_needed": "Prateek runs `kaku telegram pair`, sends /pair CODE to the bot, runs `kaku telegram`, and a review notification arrives on the phone"
+          "text": "Real Telegram check by the owner: paired a private chat with @kakugaraibot with a one-time code and received the bridge's /status reply (counts only) from a real phone. Done 5 Nov session via screenshot and pasted reply. Notification messages for a finished review are checked separately in the next step.",
+          "kind": "human_done"
         },
         {
           "id": "III-09b",

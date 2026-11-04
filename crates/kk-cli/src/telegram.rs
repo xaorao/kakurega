@@ -12,7 +12,7 @@ pub trait Admin {
 
 pub struct Bridge {
     pub bound_chat: Option<i64>,
-    pairing_code: Option<(String, Instant)>,
+    pairing_code: Option<(String, Instant, u8)>,
     seen_states: BTreeMap<String, String>,
     seen_approvals: BTreeMap<String, bool>,
     primed: bool,
@@ -53,7 +53,20 @@ impl Bridge {
     }
 
     pub fn set_pairing_code(&mut self, code: &str) {
-        self.pairing_code = Some((code.to_string(), Instant::now()));
+        self.set_pairing_code_aged(code, Duration::ZERO);
+    }
+
+    /// `age` is how long ago the code was issued, so a code read from disk keeps its real five-minute window.
+    pub fn set_pairing_code_aged(&mut self, code: &str, age: Duration) {
+        if self
+            .pairing_code
+            .as_ref()
+            .is_some_and(|(c, _, _)| c == code)
+        {
+            return;
+        }
+        let issued = Instant::now().checked_sub(age).unwrap_or_else(Instant::now);
+        self.pairing_code = Some((code.to_string(), issued, 0));
     }
 
     pub fn handle_update(
@@ -75,15 +88,23 @@ impl Bridge {
         match self.bound_chat {
             None => {
                 if word == "/pair" {
-                    let given = text.split_whitespace().nth(1).unwrap_or("");
-                    let ok = self.pairing_code.as_ref().is_some_and(|(c, t)| {
-                        !given.is_empty() && c == given && t.elapsed() < Duration::from_secs(300)
-                    });
-                    if ok {
+                    let given = text.split_whitespace().nth(1).unwrap_or("").to_string();
+                    let Some((code, issued, attempts)) = self.pairing_code.clone() else {
+                        return (vec![], None);
+                    };
+                    let fresh = issued.elapsed() < Duration::from_secs(300);
+                    if fresh && !given.is_empty() && code == given {
                         self.pairing_code = None;
                         self.bound_chat = Some(chat);
                         return (vec![Out { chat, text: "Paired. I will tell you when a review finishes or an approval is waiting. I never send file contents. Commands: /status /reviews /help.".into() }], Some(chat));
                     }
+                    // While a pairing window is open the owner needs to know why it did not work. Five wrong tries close it.
+                    if !fresh || attempts + 1 >= 5 {
+                        self.pairing_code = None;
+                    } else {
+                        self.pairing_code = Some((code, issued, attempts + 1));
+                    }
+                    return (vec![Out { chat, text: "That pairing code is wrong or has expired. Run `kaku telegram pair` again for a new one.".into() }], None);
                 }
                 (vec![], None)
             }
@@ -244,13 +265,23 @@ pub fn run(args: &[String]) -> u8 {
         .build()
         .into();
     let mut bridge = Bridge::new(load_bound(&dir));
-    if let Ok(code) = std::fs::read_to_string(dir.join("telegram.pairing")) {
-        bridge.set_pairing_code(code.trim());
-    }
+    let reload_code = |bridge: &mut Bridge| {
+        let path = dir.join("telegram.pairing");
+        if let Ok(code) = std::fs::read_to_string(&path) {
+            let age = std::fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .unwrap_or(Duration::from_secs(301));
+            bridge.set_pairing_code_aged(code.trim(), age);
+        }
+    };
+    reload_code(&mut bridge);
     println!("Telegram bridge running. It sends counts and ids only, never file contents. Ctrl-C stops it.");
     let mut offset: i64 = 0;
     let mut last_poll = Instant::now() - Duration::from_secs(10);
     loop {
+        reload_code(&mut bridge);
         let url = format!("{api}/bot{token}/getUpdates?timeout=2&offset={offset}&allowed_updates=%5B%22message%22%5D");
         match agent.get(&url).call() {
             Ok(mut r) if r.status().as_u16() == 200 => {
@@ -356,10 +387,11 @@ mod tests {
             b.handle_update(&mut f, &msg(111, "/status")).0.is_empty(),
             "unpaired chats get no answer"
         );
-        assert!(b
-            .handle_update(&mut f, &msg(111, "/pair wrong"))
-            .0
-            .is_empty());
+        let wrong = b.handle_update(&mut f, &msg(111, "/pair wrong")).0;
+        assert!(
+            wrong.len() == 1 && wrong[0].text.contains("wrong or has expired"),
+            "while a pairing window is open a wrong code is explained"
+        );
         assert!(b.handle_update(&mut f, &json!({"update_id": 2, "message": {"chat": {"id": -5, "type": "group"}, "text": "/pair abcd1234"}})).0.is_empty(), "groups cannot pair");
         let (out, bound) = b.handle_update(&mut f, &msg(111, "/pair abcd1234"));
         assert_eq!(bound, Some(111));
@@ -544,6 +576,62 @@ mod tests {
                 .all(|p| p.starts_with("/admin/jobs") || p.starts_with("/admin/overview")),
             "{:?}",
             f.asked
+        );
+    }
+
+    #[test]
+    fn tg16_pairing_codes_expire_close_after_five_wrong_tries_and_a_newer_code_replaces_an_older_one(
+    ) {
+        let mut f = fake();
+        let mut b = Bridge::new(None);
+        b.set_pairing_code_aged("oldcode1", Duration::from_secs(301));
+        let r = b.handle_update(&mut f, &msg(111, "/pair oldcode1")).0;
+        assert!(
+            r.len() == 1 && r[0].text.contains("expired") && b.bound_chat.is_none(),
+            "an expired code never pairs, even when typed right"
+        );
+        assert!(
+            b.handle_update(&mut f, &msg(111, "/pair oldcode1"))
+                .0
+                .is_empty(),
+            "and the dead window is silent again"
+        );
+        b.set_pairing_code("newcode22");
+        for i in 0..4 {
+            let r = b
+                .handle_update(&mut f, &msg(111, &format!("/pair guess{i}")))
+                .0;
+            assert_eq!(r.len(), 1);
+        }
+        let r = b.handle_update(&mut f, &msg(111, "/pair guess4")).0;
+        assert_eq!(r.len(), 1);
+        assert!(
+            b.handle_update(&mut f, &msg(111, "/pair newcode22"))
+                .0
+                .is_empty(),
+            "after five wrong tries even the right code is dead"
+        );
+        assert!(b.bound_chat.is_none());
+        b.set_pairing_code("first111");
+        b.set_pairing_code("second22");
+        assert!(
+            b.handle_update(&mut f, &msg(111, "/pair first111"))
+                .1
+                .is_none(),
+            "the older code is replaced"
+        );
+        b.set_pairing_code("second22");
+        assert_eq!(
+            b.handle_update(&mut f, &msg(111, "/pair second22")).1,
+            Some(111)
+        );
+        b.set_pairing_code("same3333");
+        b.set_pairing_code_aged("same3333", Duration::from_secs(400));
+        assert!(
+            b.handle_update(&mut f, &msg(222, "/pair same3333"))
+                .1
+                .is_none()
+                || b.bound_chat == Some(111)
         );
     }
 }
