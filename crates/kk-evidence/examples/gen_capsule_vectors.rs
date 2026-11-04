@@ -117,9 +117,7 @@ fn main() {
         assert_eq!(report.valid, expect_valid, "{name}: {report:?}");
         assert_eq!(
             report.reason,
-            reason.map(|r| match r {
-                x => Box::leak(x.to_string().into_boxed_str()) as &str,
-            }),
+            reason.map(|r| &*Box::leak(r.to_string().into_boxed_str())),
             "{name}: {report:?}"
         );
         out.push(obj(vec![
