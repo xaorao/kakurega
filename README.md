@@ -11,6 +11,9 @@ Status: working prototype on macOS and Linux. Not a finished product: see [docs/
 - A signed capsule the recipient verifies offline, in a browser at `/verify` or with `kaku verify`, with a second independent verifier in JavaScript.
 - Private memory and chat on your computer: notes with privacy labels, a reason and a history; forgetting deletes the text for good; chat uses notes as data and keeps instruction-like notes away from the model.
 - A signed, hash-chained activity log you can verify anywhere (`kaku log verify`).
+- Web research you approve first: you see the exact addresses (or the exact search words and the one site that would receive them) before anything is requested; pages and search results reach the model only as untrusted data. Search needs a provider you choose (`KAKUREGA_SEARCH_URL`, a SearXNG-style endpoint); none is bundled.
+- An encrypted backup of all your data with a recovery key (`kaku backup`, `kaku restore`), notes brought in from other assistants (web Memory screen or `kaku memory import`), notes that belong to one project, and recall by meaning when an embedding model is installed (`ollama pull nomic-embed-text`).
+- Signed update announcements that can be checked offline (`kaku update check|verify-file`). Nothing downloads or installs updates yet.
 - Surfaces: browser workspace (English and Hindi), full-screen terminal workspace (`kaku`), desktop app (Electron), MCP server (`kaku mcp`, counts only), a minimum-permission browser extension, a read-only Telegram bridge.
 - Models: a local model through Ollama. NEAR AI Cloud model attestation is verified for real; NEAR completions, encrypted inference and signed responses need an API key and are not wired yet.
 
@@ -30,8 +33,9 @@ Desktop: `cd apps/desktop && pnpm install && pnpm start` with `KAKU_BIN` pointin
 ## Check it
 
 ```
-scripts/test                         # build, lints, unit and integration tests, layer rule, secret scan
+scripts/test                         # lints, unit and integration tests, layer rule, secret scan (not the end-to-end scripts)
 scripts/e2e                          # a real browser drives a full review, approval, memory, chat and log
+scripts/e2e-all                      # every end-to-end script: browser, terminal, MCP, Telegram, extension, desktop, signed approvals
 scripts/test-lima                    # the sandbox and worker tests inside the Linux VM
 python3 scripts/verify_program.py I  # the acceptance gate for a milestone (also II and III)
 ```
