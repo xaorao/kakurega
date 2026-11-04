@@ -128,7 +128,8 @@ mod tests {
         let rd = expected_report_data(&NONCE, &TLS);
         let ok = quote("m-good", &rd, false, 1000);
         assert!(check(&policy(), &Fake, &ok, &NONCE, &TLS, 1100).is_ok());
-        let cases: Vec<(&str, Vec<u8>, [u8; 32], [u8; 32], i64, GateError)> = vec![
+        type Case = (&'static str, Vec<u8>, [u8; 32], [u8; 32], i64, GateError);
+        let cases: Vec<Case> = vec![
             (
                 "unknown build",
                 quote("m-evil", &rd, false, 1000),
