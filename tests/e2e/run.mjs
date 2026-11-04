@@ -300,6 +300,22 @@ try {
   await page.waitForLoadState("networkidle");
   await page.reload();
   await page.waitForLoadState("networkidle");
+  // waiting-for-you screen: empty state from the real service, then items in the shape the service tests produce
+  await page.getByRole("link", { name: /Waiting for you/ }).click();
+  await page.getByRole("heading", { name: "Waiting for you", exact: true }).waitFor();
+  await page.getByText("Nothing is waiting for you.").waitFor();
+  check("with nothing to decide the inbox says so", true);
+  await axeCheck(page, "waiting for you screen (empty)");
+  await page.route("**/api/inbox", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ count: 2, items: [{ kind: "approval_waiting", job: "job-9", recipient: "Acme", since: 5, what: "An approval is waiting for your decision." }, { kind: "failed", job: "job-8", recipient: "Beta", since: 4, what: "The review failed. Open it to see why." }] }) }));
+  await page.reload();
+  await page.getByText("Approval waiting").waitFor();
+  const itemsText = await page.locator("main").innerText();
+  check("each waiting item names what it is, who it is for and links to the review", itemsText.includes("Approval waiting") && itemsText.includes("Acme") && itemsText.includes("Failed") && (await page.getByRole("link", { name: "Open" }).first().getAttribute("href")) === "#/job/job-9");
+  await axeCheck(page, "waiting for you screen (items)");
+  await page.unroute("**/api/inbox");
+  await page.waitForLoadState("networkidle");
+  await page.reload();
+  await page.waitForLoadState("networkidle");
   // command palette: keyboard-driven, focus returns where it was, and it can change settings
   await page.getByRole("button", { name: "Commands" }).focus();
   await page.keyboard.press("Control+Shift+P");

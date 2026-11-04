@@ -4209,3 +4209,62 @@ fn sv35_a_cited_passage_can_be_read_in_place_but_withheld_files_and_odd_requests
         403
     );
 }
+
+#[test]
+fn sv36_the_inbox_lists_what_waits_on_the_owner_and_nothing_else() {
+    let (root, repo) = repo_copy("data-inbox");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    assert_eq!(Web::new(c.addr).get("/api/inbox").0, 401);
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    assert_eq!(w.get("/api/inbox").1["count"], 0, "an empty inbox says so");
+    let (_, s) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "inbox-recipient"}),
+    );
+    let job = s["id"].as_str().unwrap().to_string();
+    wait_for(&w, &job, &["ready"]);
+    let kinds = |v: &Value| {
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["kind"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    let inbox = w.get("/api/inbox").1;
+    assert!(
+        kinds(&inbox).contains(&"ready_to_review".to_string()),
+        "{inbox}"
+    );
+    assert!(inbox["items"][0]["what"]
+        .as_str()
+        .unwrap()
+        .contains("before anything is"));
+    // once an approval is asked for, the item changes into a waiting approval
+    assert_eq!(
+        w.post(&format!("/api/jobs/{job}/approval"), json!({})).0,
+        202
+    );
+    let inbox = w.get("/api/inbox").1;
+    assert!(
+        kinds(&inbox).contains(&"approval_waiting".to_string())
+            && !kinds(&inbox).contains(&"ready_to_review".to_string()),
+        "{inbox}"
+    );
+    // no file text, memory text or recipient secrets beyond the name the owner typed
+    assert!(
+        !inbox.to_string().contains("cookie_jar") && !inbox.to_string().contains("ACTIVE_TOKENS")
+    );
+}

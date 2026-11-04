@@ -8,6 +8,7 @@ import { Memory } from "./screens/Memory";
 import { Activity } from "./screens/Activity";
 import { Chat } from "./screens/Chat";
 import { Documents } from "./screens/Documents";
+import { Inbox } from "./screens/Inbox";
 import { Palette, type PaletteItem } from "./components/Palette";
 import { applyLocale, LOCALES, locale, rich, setLocale, t, type Locale } from "./i18n";
 
@@ -140,6 +141,7 @@ export function App() {
   const [query, setQuery] = createSignal("");
   const [unreachable, setUnreachable] = createSignal(false);
   const [failures, setFailures] = createSignal(0);
+  const [waiting, setWaiting] = createSignal(0);
   const [paletteOpen, setPaletteOpen] = createSignal(false);
   let searchBox: HTMLInputElement | undefined;
   const shown = createMemo(() => {
@@ -191,6 +193,7 @@ export function App() {
     try {
       setJobs((await api.jobs()).jobs);
       setFailures(0);
+      setWaiting((await api.inbox().catch(() => ({ count: 0 }))).count);
     } catch {
       // keep the last state on screen, say so after three misses in a row, and keep trying
       setFailures((n) => n + 1);
@@ -205,6 +208,7 @@ export function App() {
     };
     const screens: PaletteItem[] = [
       { id: "new", label: t("nav.new"), group: t("palette.screens"), run: go("#/") },
+      { id: "inbox", label: t("nav.inbox"), group: t("palette.screens"), run: go("#/inbox") },
       { id: "docs", label: t("nav.docs"), group: t("palette.screens"), run: go("#/docs") },
       { id: "chat", label: t("nav.chat"), group: t("palette.screens"), run: go("#/chat") },
       { id: "memory", label: t("nav.memory"), group: t("palette.screens"), run: go("#/memory") },
@@ -244,6 +248,7 @@ export function App() {
           <div class="body">
             <nav class="side" aria-label={t("nav.label")}>
               <a class="primary" href="#/">{t("nav.new")}</a>
+              <a href="#/inbox" class={hash() === "#/inbox" ? "navlink active" : "navlink"}>{t("nav.inbox")}{waiting() > 0 ? <span class="count" aria-label={t("nav.inboxCount", { n: waiting() })}> ({waiting()})</span> : null}</a>
               <a href="#/docs" class={hash() === "#/docs" ? "navlink active" : "navlink"}>{t("nav.docs")}</a>
               <a href="#/chat" class={hash() === "#/chat" ? "navlink active" : "navlink"}>{t("nav.chat")}</a>
               <a href="#/memory" class={hash() === "#/memory" ? "navlink active" : "navlink"}>{t("nav.memory")}</a>
@@ -277,7 +282,7 @@ export function App() {
               <ErrorBoundary fallback={(_err, reset) => <section class="card stack" role="alert"><p>{t("app.crashed")}</p><button onClick={reset}>{t("app.reload")}</button></section>}>
               <Show when={config()}>
                 {(c) => (
-                  <Show when={hash() !== "#/memory" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/docs"} fallback={hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/docs" ? <Documents /> : <Memory />}>
+                  <Show when={hash() !== "#/memory" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/docs" && hash() !== "#/inbox"} fallback={hash() === "#/inbox" ? <Inbox /> : hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/docs" ? <Documents /> : <Memory />}>
                     <Show when={jobId()} fallback={<NewReview config={c()} onStarted={(id) => { void refresh(); location.hash = `#/job/${id}`; }} />}>
                     {(id) => <ReviewView id={id()} config={c()} onUpdate={() => void refresh()} />}
                     </Show>

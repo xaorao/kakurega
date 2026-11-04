@@ -85,6 +85,7 @@ export interface KeptChat { id: string; title: string; created: number; updated:
 export interface ModelProof { verified: boolean; model: string; checked_at?: number; means?: string[]; does_not_mean?: string[]; deployments?: { signer: string; tcb: string; advisories: string[]; gpu_verified: boolean; compose_hash: string | null; os_image_hash: string | null; nonce: string }[] }
 export interface GatewayProofResult { verified: boolean; gateway?: { signer: string; tcb: string; advisories: string[]; compose_hash: string | null; tls_bound: boolean; tls_fingerprint: string | null; nonce: string }; means?: string[]; does_not_mean?: string[] }
 export interface Passage { file: string; start: number; focus: number; lines: string[] }
+export interface InboxItem { kind: "approval_waiting" | "ready_to_review" | "ready_to_deliver" | "failed" | "suggestions"; job: string; recipient: string; since: number; what: string; count?: number }
 export interface ResearchItem { url: string; host?: string; allowed: boolean; reason?: string }
 export interface ResearchProposal { id: string; digest: string; items: ResearchItem[]; will_request: string[]; stays_here: string }
 export interface ResearchPage { page_id?: string; url: string; final_url?: string; title?: string; sha256?: string; truncated?: boolean; looks_like_instructions?: boolean; error?: string }
@@ -155,6 +156,7 @@ export const api = {
   log: () => request<LogSummary>("GET", "/api/log"),
   chat: (message: string, history: ChatTurn[], sources: string[] = [], session?: string) => request<ChatReply>("POST", "/api/chat", session ? { message, history, sources, session } : { message, history, sources }),
   passage: (folder: string, file: string, line: number) => request<Passage>("POST", "/api/ask/excerpt", { folder, file, line }),
+  inbox: () => request<{ items: InboxItem[]; count: number }>("GET", "/api/inbox"),
   repair: (id: string) => request<{ started: boolean }>("POST", "/api/readiness/repair", { id }),
   attestGateway: () => request<GatewayProofResult>("POST", "/api/route/gateway", {}),
   attestModel: (model: string) => request<ModelProof>("POST", "/api/route/attest", { model }),

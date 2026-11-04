@@ -2549,6 +2549,74 @@ async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -> Response 
     }
 }
 
+/// A review as the inbox sees it: id, recipient, created, state, approval (state, refused) and whether it was delivered.
+type InboxJob = (
+    String,
+    String,
+    i64,
+    &'static str,
+    Option<(String, bool)>,
+    bool,
+);
+
+/// Everything waiting on the owner, newest first. Each item names what to do and where; none contains file text.
+async fn inbox(axum::Extension(svc): Svc) -> Json<Value> {
+    let jobs: Vec<InboxJob> = {
+        let g = svc.inner.lock().expect("lock");
+        g.jobs
+            .values()
+            .map(|j| {
+                let state = match &j.state {
+                    JobState::Running => "running",
+                    JobState::Ready => "ready",
+                    JobState::NothingToRelease(_) => "nothing",
+                    JobState::Failed(_) => "failed",
+                };
+                (
+                    j.id.clone(),
+                    j.recipient.clone(),
+                    j.created,
+                    state,
+                    j.approval
+                        .as_ref()
+                        .and_then(|a| g.approvals.get(a))
+                        .map(|a| (a.state.clone(), a.denied)),
+                    j.delivered.is_some(),
+                )
+            })
+            .collect()
+    };
+    let mut items: Vec<Value> = Vec::new();
+    for (id, recipient, created, state, approval, delivered) in jobs {
+        let to = |kind: &str, what: &str| json!({"kind": kind, "job": id, "recipient": recipient, "since": created, "what": what});
+        if state == "ready" && !delivered {
+            match approval {
+                Some((st, false)) if st == "waiting" => items.push(to("approval_waiting", "An approval is waiting for your decision. Look at the exact files, then approve or refuse.")),
+                Some((_, false)) => items.push(to("ready_to_deliver", "Approved. Deliver it to sign and send the capsule.")),
+                _ => items.push(to(
+                    "ready_to_review",
+                    "The review is ready. Look at what would be sent before anything is.",
+                )),
+            }
+        }
+        if state == "failed" {
+            items.push(to("failed", "The review failed. Open it to see why."));
+        }
+        let pending = svc
+            .memory
+            .lock()
+            .expect("lock")
+            .pending_proposals(&id)
+            .map(|p| p.len())
+            .unwrap_or(0);
+        if pending > 0 {
+            items.push(json!({"kind": "suggestions", "job": id, "recipient": recipient, "since": created, "count": pending, "what": format!("{pending} suggested note(s) to keep or dismiss.")}));
+        }
+    }
+    items.sort_by(|a, b| b["since"].as_i64().cmp(&a["since"].as_i64()));
+    Json(json!({"items": items, "count": items.len()}))
+}
+
 async fn list(axum::Extension(svc): Svc) -> Json<Value> {
     let g = svc.inner.lock().expect("lock");
     Json(
@@ -3705,6 +3773,7 @@ impl Extension for Routes {
                 post(suggestion_dismiss),
             )
             .route("/api/fs", get(fs_list))
+            .route("/api/inbox", get(inbox))
             .route("/api/jobs", get(list).post(start))
             .route("/api/jobs/{id}", get(get_job))
             .route("/api/jobs/{id}/files", get(files))
