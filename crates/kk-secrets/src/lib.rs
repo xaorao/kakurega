@@ -5,6 +5,8 @@
 //! The provider formats follow the public token layouts that the MIT-licensed gitleaks rule set also covers (prefix,
 //! alphabet and length); the matcher, the false-positive filters and the wallet rules are written here. See NOTICE.md.
 
+pub mod pii;
+
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -2691,6 +2691,17 @@ pub fn release_lines(d: &Value) -> Vec<String> {
         lines.push("  (none)".into());
     }
     lines.extend(removed);
+    if let Some(pd) = d["personal_data"].as_array().filter(|a| !a.is_empty()) {
+        lines.push(String::new());
+        lines.push("Personal data noticed in these files (counts only; this blocks nothing, check you mean to send it):".into());
+        for x in pd {
+            lines.push(format!(
+                "  {}: {}",
+                clean(x["file"].as_str().unwrap_or("")),
+                clean(x["found"].as_str().unwrap_or(""))
+            ));
+        }
+    }
     lines.push(String::new());
     lines.push("This release does not establish:".into());
     for n in d["not_established"].as_array().into_iter().flatten() {

@@ -138,6 +138,7 @@ export interface Release {
   removed?: { what: string; why: string }[];
   not_confirmed: { title: string; why: string }[];
   not_established?: string[];
+  personal_data?: { file: string; found: string }[];
 }
 
 export const api = {

@@ -1810,3 +1810,29 @@ fn tu40_arrow_keys_recall_history_but_never_replace_a_draft_or_edits_to_a_recall
     a.handle(key(KeyCode::Down));
     assert!(a.input.is_empty());
 }
+
+#[test]
+fn tu41_the_release_view_lists_personal_data_counts_between_what_is_withheld_and_what_is_not_established(
+) {
+    let lines = kk_tui::app::release_lines(&json!({
+        "available": true, "digest": "abc", "recipient": "acme", "files": [{"name": "sample-1.json", "bytes": 10, "sha256": "x"}],
+        "removed": [], "not_confirmed": [], "not_established": ["That no other defects exist."],
+        "personal_data": [{"file": "sample-1.json", "found": "2 email addresses, 1 payment card number"}]
+    }));
+    let text = lines.join("\n");
+    let w = text.find("Withheld and never released").unwrap();
+    let p = text.find("Personal data noticed in these files").unwrap();
+    let n = text.find("This release does not establish").unwrap();
+    assert!(w < p && p < n, "{text}");
+    assert!(
+        text.contains("sample-1.json: 2 email addresses, 1 payment card number")
+            && text.contains("blocks nothing")
+    );
+    let none = kk_tui::app::release_lines(&json!({"available": true, "digest": "abc", "recipient": "a", "files": [], "removed": [], "not_confirmed": [], "not_established": [], "personal_data": []})).join("\n");
+    assert!(
+        !none.contains("Personal data noticed"),
+        "nothing is said when nothing was noticed"
+    );
+    let hostile = kk_tui::app::release_lines(&json!({"available": true, "digest": "a", "recipient": "a", "files": [], "removed": [], "not_confirmed": [], "not_established": [], "personal_data": [{"file": "a\u{1b}[2Jb", "found": "x\u{7}y"}]})).join("\n");
+    assert!(!hostile.contains('\u{1b}') && !hostile.contains('\u{7}'));
+}

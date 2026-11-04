@@ -3534,6 +3534,11 @@ fn draft_json(s: &Snapshot) -> Value {
             "files": d.files.iter().map(|(n, b)| json!({"name": n, "bytes": b.len(), "sha256": kk_evidence::capsule::sha256_hex(b), "text": if n.ends_with(".txt") || n.ends_with(".py") || n.ends_with(".json") { Value::String(String::from_utf8_lossy(b).into_owned()) } else { Value::Null }})).collect::<Vec<_>>(),
             "removed": d.removed.iter().map(|x| json!({"what": x.what, "why": x.why})).collect::<Vec<_>>(),
             "not_confirmed": d.not_confirmed.iter().map(|(t, w)| json!({"title": t, "why": w})).collect::<Vec<_>>(),
+            // personal data seen in the exact bytes being released, counts only; a notice for the owner, never a block
+            "personal_data": d.files.iter().filter_map(|(n, b)| {
+                let found = kk_secrets::pii::scan(&String::from_utf8_lossy(b));
+                (!found.is_empty()).then(|| json!({"file": n, "found": kk_secrets::pii::describe(&found)}))
+            }).collect::<Vec<_>>(),
             "not_established": kk_review::release::standard_not_established(),
         }),
         None => {

@@ -352,6 +352,8 @@ export const en = {
   "rel.heldBack": "Held back",
   "rel.nothingHeld": "Nothing.",
   "rel.notConfirmed": "Not confirmed, so not included",
+  "rel.personal": "Personal data noticed in these files",
+  "rel.personalLead": "Counts only, found by checking the exact bytes you are about to approve. This does not block anything: check that you mean to send it.",
   "rel.notEstablished": "This release does not establish",
   "disc.heading": "Cumulative disclosure",
   "disc.summary": "{files} of this project's {total} files would have been shown to this recipient after this release ({before} earlier release(s)).",

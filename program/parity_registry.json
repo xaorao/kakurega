@@ -294,8 +294,8 @@
     "helper only",
     "Presidio MIT; TEE `openai/privacy-filter` as second opinion (E10)"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "Counts of personal data per file at release time (email, payment card, IBAN, Indian PAN, Aadhaar, US SSN, phone), shown to the owner in the web release tab and the terminal release view as a notice that blocks nothing: kk-secrets pi01-pi06, kk-service sv44-sv45, kk-tui tu41. Not built: names and addresses, a scan of documents before import, redaction or pseudonymisation (G30), the browser release tab driven with personal data.",
+   "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "PII scanner",
    "trust_reason": "Helpers that advise; enforcement stays with labels, grants and the sandbox. Run in the kernel so detection never needs a third-party processor."

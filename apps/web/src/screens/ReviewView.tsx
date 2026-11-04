@@ -336,6 +336,11 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
               <For each={r().files!.filter((f) => f.name.startsWith("finding-"))}>{(f) => <details open><summary>{f.name}</summary><pre tabindex="0"><code>{f.text}</code></pre></details>}</For>
               <h3>{t("rel.heldBack")}</h3>
               <ul class="plain"><For each={r().removed} fallback={<li class="muted">{t("rel.nothingHeld")}</li>}>{(x) => <li>{x.what}: <span class="muted">{x.why}</span></li>}</For></ul>
+              <Show when={(r().personal_data ?? []).length > 0}>
+                <h3>{t("rel.personal")}</h3>
+                <p class="muted">{t("rel.personalLead")}</p>
+                <ul class="plain"><For each={r().personal_data}>{(x) => <li><code>{x.file}</code>: {x.found}</li>}</For></ul>
+              </Show>
               <Show when={r().not_confirmed.length > 0}>
                 <h3>{t("rel.notConfirmed")}</h3>
                 <ul class="plain"><For each={r().not_confirmed}>{(x) => <li>{x.title} <span class="muted">({x.why})</span></li>}</For></ul>

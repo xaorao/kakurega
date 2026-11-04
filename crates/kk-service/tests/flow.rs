@@ -5063,3 +5063,76 @@ fn sv43_project_notes_reach_only_reviews_of_that_project_and_never_a_conversatio
         422
     );
 }
+
+#[test]
+fn sv44_the_release_view_tells_the_owner_which_files_hold_personal_data_by_count_only_and_blocks_nothing(
+) {
+    let (root, repo) = repo_copy("pii");
+    let session = repo.join("payments/auth/session.py");
+    let mut text = std::fs::read_to_string(&session).unwrap();
+    text.push_str("\n# contact ops@acme-payments.com or ops2@acme-payments.com, test card 4111 1111 1111 1111\n");
+    std::fs::write(&session, text).unwrap();
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (_, s) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "acme-audit"}),
+    );
+    let job = s["id"].as_str().unwrap().to_string();
+    wait_for(&w, &job, &["ready"]);
+    let (st, rel) = w.get(&format!("/api/jobs/{job}/release"));
+    assert_eq!(st, 200, "{rel}");
+    let pd = rel["personal_data"].as_array().unwrap();
+    let hit = pd
+        .iter()
+        .find(|x| x["file"] == "sample-1.json")
+        .unwrap_or_else(|| panic!("{pd:?}"));
+    assert_eq!(hit["found"], "2 email addresses, 1 payment card number");
+    let shown = rel["personal_data"].to_string();
+    assert!(
+        !shown.contains("acme-payments") && !shown.contains("4111"),
+        "values never appear in the notice: {shown}"
+    );
+    // a notice does not stop the release from being offered, approved or delivered
+    assert_eq!(rel["available"], true);
+    assert!(w.post(&format!("/api/jobs/{job}/approval"), json!({})).0 == 202);
+}
+
+#[test]
+fn sv45_a_release_without_personal_data_has_an_empty_notice() {
+    let (root, repo) = repo_copy("nopii");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (_, s) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "acme-audit"}),
+    );
+    let job = s["id"].as_str().unwrap().to_string();
+    wait_for(&w, &job, &["ready"]);
+    let (_, rel) = w.get(&format!("/api/jobs/{job}/release"));
+    assert_eq!(rel["personal_data"], json!([]), "{rel}");
+}
