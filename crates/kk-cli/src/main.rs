@@ -4,6 +4,7 @@ mod backup;
 mod extension;
 mod log;
 mod mcp;
+mod memory_import;
 mod runner;
 mod serve;
 mod telegram;
@@ -26,6 +27,7 @@ Usage:
   kaku extension pair|status|revoke  connect the browser extension (it can only queue suggestions)
   kaku backup [--out FILE]          save an encrypted copy of all your data; prints a recovery key once
   kaku restore FILE [--data-dir DIR] restore a backup into an empty folder (asks for the recovery key)
+  kaku memory import DIR [--source NAME]   add notes from another assistant's markdown files as untrusted notes
   kaku log export [--out FILE]      save the signed event log
   kaku log verify FILE [--pin KEY] [--anchor COUNT:HEAD]   check a saved log offline
   kaku verify CAPSULE [--pin KEY]   check a capsule offline (KEY: base64url public key)
@@ -42,6 +44,9 @@ fn main() -> ExitCode {
         Some("mcp") => mcp::run(&args[1..]),
         Some("backup") => backup::make(&args[1..]),
         Some("restore") => backup::restore(&args[1..]),
+        Some("memory") if args.get(1).map(String::as_str) == Some("import") => {
+            memory_import::run(&args[2..])
+        }
         Some("log") => log::run(&args[1..]),
         Some("extension") => extension::run(&args[1..]),
         Some("approver") => approver::run(&args[1..]),

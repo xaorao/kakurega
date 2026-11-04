@@ -983,6 +983,102 @@ async fn memories_import(axum::Extension(svc): Svc, Json(b): Json<ImportBody>) -
     Json(json!({"added": added, "already_known": known, "refused": refused})).into_response()
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NoteIn {
+    text: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    kind: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NotesImport {
+    source: String,
+    notes: Vec<NoteIn>,
+}
+
+/// Notes brought in from another assistant's files. They arrive as untrusted data at the Internal level: shown with their
+/// origin, usable as facts, never as instructions, and refused if they look like secrets. The owner can correct or forget
+/// each one like any other note.
+async fn memories_import_notes(axum::Extension(svc): Svc, Json(b): Json<NotesImport>) -> Response {
+    let src_ok = !b.source.is_empty()
+        && b.source.len() <= 40
+        && b.source
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
+    if !src_ok || b.notes.is_empty() || b.notes.len() > 500 {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_NOTES",
+            "name the source (letters, digits, - _) and send 1 to 500 notes",
+        );
+    }
+    let (mut added, mut known, mut refused, mut instruction_like) =
+        (0usize, 0usize, 0usize, 0usize);
+    for n in b.notes {
+        let text = n.text.trim().to_string();
+        if text.is_empty() || text.len() > 20_000 {
+            refused += 1;
+            continue;
+        }
+        if kk_memory::instruction_like(&text) {
+            instruction_like += 1;
+        }
+        let label_name: String = n
+            .name
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ' '))
+            .take(80)
+            .collect();
+        let kind: String = n
+            .kind
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .take(20)
+            .collect();
+        let m = kk_memory::NewMemory {
+            text,
+            label: kk_types::label::Label::new(kk_types::label::Level::Internal).untrusted(),
+            subject: None,
+            reason: format!(
+                "imported from {}{}{}",
+                b.source,
+                if label_name.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({label_name})")
+                },
+                if kind.is_empty() {
+                    String::new()
+                } else {
+                    format!(", type {kind}")
+                }
+            ),
+            source: kk_memory::Source::User,
+            valid_from: None,
+            valid_to: None,
+        };
+        match svc.memory.lock().expect("lock").remember(now(), m) {
+            Ok(kk_memory::Remembered::Added(_)) => added += 1,
+            Ok(_) => known += 1,
+            Err(_) => refused += 1,
+        }
+    }
+    svc.log_event(
+        "memory.imported_notes",
+        "memory",
+        &[
+            ("source", b.source.clone().into()),
+            ("added", added.into()),
+            ("refused", refused.into()),
+        ],
+    );
+    Json(json!({"added": added, "already_known": known, "refused": refused, "instruction_like": instruction_like, "note": "Imported notes are marked untrusted. Notes that read like instructions are kept but never given to a model."})).into_response()
+}
+
 async fn memory_add(axum::Extension(svc): Svc, Json(b): Json<MemoryBody>) -> Response {
     let Some(level) = level_from(b.level.as_deref()) else {
         return error(
@@ -3537,6 +3633,7 @@ impl Extension for Routes {
             .route("/api/memories", get(memories_list).post(memory_add))
             .route("/api/memories/export", get(memories_export))
             .route("/api/memories/import", post(memories_import))
+            .route("/api/memories/import-notes", post(memories_import_notes))
             .route("/api/memories/{id}/correct", post(memory_correct))
             .route("/api/memories/{id}/forget", post(memory_forget))
             .route("/api/memories/{id}/history", get(memory_history))
