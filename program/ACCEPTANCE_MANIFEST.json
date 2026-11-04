@@ -188,9 +188,9 @@
         },
         {
           "id": "II-12c",
-          "text": "Secure Enclave or Keychain key with user presence behind a native helper, verified on physical hardware",
+          "text": "Secure Enclave approver key with presence required on every signature, verified by the owner on physical hardware. Built and machine-verified without the presence prompt: enclave key, P-256 proofs, terminal and Electron signing. Missing: the owner's presence prompt run.",
           "kind": "pending",
-          "evidence_needed": "native helper, hardware Touch ID run by the owner"
+          "evidence_needed": "owner runs: spikes/enclave/build.sh; kaku approver enroll --enclave --presence; then approves a release and types the account password or uses Touch ID once"
         },
         {
           "id": "II-09c",
@@ -198,6 +198,20 @@
           "kind": "machine",
           "command": "cargo test -p kk-tui tu17",
           "expect": "test result: ok. 1 passed"
+        },
+        {
+          "id": "II-12d",
+          "text": "Real Secure Enclave key through the real binaries (no presence prompt): enrol, p256 listing, signed approval, missing helper, damaged blob",
+          "kind": "machine",
+          "command": "python3 tests/e2e/signed_approval_enclave.py",
+          "expect": "secure-enclave approval checks passed"
+        },
+        {
+          "id": "II-12e",
+          "text": "Secure Enclave helper is a trusted approval step: fetches the release from the kernel, native dialog, no signing oracle, 48 hostile checks",
+          "kind": "machine",
+          "command": "python3 tests/e2e/enclave_helper.py",
+          "expect": "enclave helper checks passed"
         }
       ]
     },

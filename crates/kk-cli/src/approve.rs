@@ -224,7 +224,7 @@ pub fn run(args: &[String]) -> u8 {
     }
     let mut body = json!({"ack": ack});
     if d["requires_proof"] == true {
-        let signer = match kk_evidence::approval::load_key(&crate::approver::key_path(args)) {
+        let signer = match kk_evidence::approval::load_approver(&crate::data_dir(args)) {
             Ok(Some(s)) => s,
             _ => {
                 eprintln!("This service requires a signed approval, and this terminal has no usable approver key. Run `kaku approver enroll` on this computer first.");
@@ -241,7 +241,16 @@ pub fn run(args: &[String]) -> u8 {
             expires: st["expires"].as_i64().unwrap_or(0),
             nonce: st["nonce"].as_str().unwrap_or("").into(),
         };
-        body["proof"] = json!(kk_evidence::approval::sign(&signer, &statement));
+        if signer.is_hardware() {
+            println!("Waiting for your Mac to confirm with Touch ID or your password...");
+        }
+        match signer.sign_statement(&statement) {
+            Ok(p) => body["proof"] = json!(p),
+            Err(e) => {
+                eprintln!("The approval was not signed ({e}). Nothing was approved.");
+                return 1;
+            }
+        }
     }
     match admin.post(&format!("/admin/approvals/{id}/approve"), body) {
         Ok((200, _)) => {

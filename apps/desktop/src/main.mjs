@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, shell, systemPreferences, session } from "electron";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -11,6 +12,16 @@ const dataDir = process.env.KAKUREGA_DATA_DIR ?? join(homedir(), ".kakurega");
 const kakuBin = process.env.KAKU_BIN;
 let child = null;
 let window = null;
+
+function enclaveSigner() {
+  const blob = join(dataDir, "approver.enclave");
+  const helper = process.env.KAKU_ENCLAVE_BIN ?? (kakuBin ? join(kakuBin, "..", "kaku-enclave") : null);
+  if (!existsSync(blob) || !helper || !existsSync(helper)) return null;
+  return (approvalId) =>
+    new Promise((resolve, reject) => {
+      execFile(helper, ["approve", "--blob", blob, "--data-dir", dataDir, "--approval", approvalId], { timeout: 300000, maxBuffer: 65536 }, (err, out) => (err ? reject(err) : resolve(String(out).trim())));
+    });
+}
 
 async function waitForAdmin() {
   for (let i = 0; i < 100; i++) {
@@ -77,7 +88,7 @@ async function start() {
   window.once("ready-to-show", () => window.show());
   await window.loadURL(`${admin.origin}/#pair=${pairing.json.code}`);
 
-  const pollOnce = createApprover({ client, confirm, authenticate });
+  const pollOnce = createApprover({ client, confirm, authenticate, sign: (id) => { const f = enclaveSigner(); return f ? f(id) : Promise.reject(new Error("no Secure Enclave approver key is enrolled on this Mac")); } });
   setInterval(() => pollOnce().catch(() => {}), 1000);
 }
 

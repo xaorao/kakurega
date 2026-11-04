@@ -44,7 +44,7 @@ fn event_loop(http: Http, data_dir: &Path) -> Result<(), String> {
     let mut term = Terminal::new(CrosstermBackend::new(stdout())).map_err(|e| e.to_string())?;
     let theme = Theme::from_env();
     let mut app = App::new();
-    app.approver = kk_evidence::approval::load_key(&data_dir.join("approver.key"))
+    app.approver = kk_evidence::approval::load_approver(data_dir)
         .ok()
         .flatten();
     let (req_tx, req_rx) = mpsc::channel::<Req>();

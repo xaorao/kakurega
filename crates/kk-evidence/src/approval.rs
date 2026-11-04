@@ -1,8 +1,15 @@
 use crate::b64;
 use crate::canon::{self, Value};
 use crate::dsse;
-use crate::keys::{KeyId, Signer, TrustedKeys};
+use crate::hw;
+use crate::keys::{Signer, TrustedKeys};
 use std::path::Path;
+
+#[derive(Debug, Clone, Default)]
+pub struct Approvers {
+    pub ed: TrustedKeys,
+    pub p256: Vec<hw::P256Public>,
+}
 
 pub const APPROVAL_TYPE: &str = "application/vnd.kakurega.approval+json";
 
@@ -45,22 +52,52 @@ pub fn sign_action(signer: &Signer, a: &Action) -> String {
 }
 
 /// The signed statement must name the action and subject, be at most ACTION_WINDOW_SECS old (or that far in the future), and come from a trusted key.
-pub fn verify_action(
-    proof: &str,
-    trusted: &TrustedKeys,
-    action: &str,
-    subject: &str,
-    now: i64,
-) -> Result<KeyId, Reject> {
+fn hw_reject(e: hw::HwReject) -> Reject {
+    match e {
+        hw::HwReject::NotAnEnvelope => Reject::NotAnEnvelope,
+        hw::HwReject::WrongType => Reject::WrongType,
+        hw::HwReject::UnknownKey => Reject::UnknownKey,
+        hw::HwReject::BadSignature => Reject::BadSignature,
+    }
+}
+
+fn check(proof: &str, kind: &str, trusted: &Approvers) -> Result<(Vec<u8>, String), Reject> {
+    if proof.contains(hw::ALG) {
+        let p = hw::verify(proof, kind, &trusted.p256).map_err(hw_reject)?;
+        return Ok((p.payload, hw::key_id(&p.public)));
+    }
     let env = dsse::decode(proof.as_bytes()).map_err(|_| Reject::NotAnEnvelope)?;
-    let verified = dsse::verify(&env, trusted, &[ACTION_TYPE]).map_err(|e| match e {
+    let verified = dsse::verify(&env, &trusted.ed, &[kind]).map_err(|e| match e {
         dsse::VerifyError::UnknownPayloadType => Reject::WrongType,
         dsse::VerifyError::WrongSignatureCount => Reject::WrongSignatureCount,
         dsse::VerifyError::UnknownKey => Reject::UnknownKey,
         dsse::VerifyError::BadSignature => Reject::BadSignature,
         dsse::VerifyError::PayloadNotCanonical => Reject::NotCanonical,
     })?;
-    let text = std::str::from_utf8(&env.payload).map_err(|_| Reject::NotCanonical)?;
+    Ok((env.payload, verified.key_id.as_str().to_string()))
+}
+
+pub fn verify(proof: &str, trusted: &Approvers, expected: &Statement) -> Result<String, Reject> {
+    let (payload, id) = check(proof, APPROVAL_TYPE, trusted)?;
+    if payload != canonical(expected).as_bytes() {
+        return Err(Reject::DifferentStatement);
+    }
+    Ok(id)
+}
+
+pub fn verify_action(
+    proof: &str,
+    trusted: &Approvers,
+    action: &str,
+    subject: &str,
+    now: i64,
+) -> Result<String, Reject> {
+    let (payload, id) = check(proof, ACTION_TYPE, trusted)?;
+    let text = std::str::from_utf8(&payload).map_err(|_| Reject::NotCanonical)?;
+    match canon::canonicalize(text.as_bytes()) {
+        Ok(c) if c == text => {}
+        _ => return Err(Reject::NotCanonical),
+    }
     let Ok(Value::Object(m)) = canon::parse_strict(text.as_bytes()) else {
         return Err(Reject::NotCanonical);
     };
@@ -73,7 +110,7 @@ pub fn verify_action(
     if a != action || sub != subject || (now - at).abs() > ACTION_WINDOW_SECS {
         return Err(Reject::DifferentStatement);
     }
-    Ok(verified.key_id)
+    Ok(id)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,19 +141,130 @@ pub fn sign(signer: &Signer, s: &Statement) -> String {
     dsse::encode(&dsse::sign(APPROVAL_TYPE, canonical(s).as_bytes(), signer))
 }
 
-pub fn verify(proof: &str, trusted: &TrustedKeys, expected: &Statement) -> Result<KeyId, Reject> {
-    let env = dsse::decode(proof.as_bytes()).map_err(|_| Reject::NotAnEnvelope)?;
-    let verified = dsse::verify(&env, trusted, &[APPROVAL_TYPE]).map_err(|e| match e {
-        dsse::VerifyError::UnknownPayloadType => Reject::WrongType,
-        dsse::VerifyError::WrongSignatureCount => Reject::WrongSignatureCount,
-        dsse::VerifyError::UnknownKey => Reject::UnknownKey,
-        dsse::VerifyError::BadSignature => Reject::BadSignature,
-        dsse::VerifyError::PayloadNotCanonical => Reject::NotCanonical,
-    })?;
-    if env.payload != canonical(expected).as_bytes() {
-        return Err(Reject::DifferentStatement);
+#[derive(Debug, Clone)]
+pub struct EnclaveKey {
+    pub helper: std::path::PathBuf,
+    pub blob: std::path::PathBuf,
+    pub data_dir: std::path::PathBuf,
+}
+
+impl EnclaveKey {
+    fn run(&self, args: &[&str]) -> Result<String, String> {
+        use std::process::{Command, Stdio};
+        let child = Command::new(&self.helper)
+            .args(args)
+            .arg("--blob")
+            .arg(&self.blob)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("could not start {}: {e}", self.helper.display()))?;
+        let out = child.wait_with_output().map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr)
+                .trim()
+                .chars()
+                .take(300)
+                .collect());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
-    Ok(verified.key_id)
+
+    pub fn public(&self) -> Result<hw::P256Public, String> {
+        let text = self.run(&["public"])?;
+        b64::decode(&text)
+            .ok()
+            .and_then(|p| hw::valid_public(&p))
+            .ok_or_else(|| "the helper returned an invalid public key".to_string())
+    }
+}
+
+#[derive(Debug)]
+pub enum ApproverKey {
+    Software(Signer),
+    Enclave(EnclaveKey),
+}
+
+impl ApproverKey {
+    pub fn public_bytes(&self) -> Result<Vec<u8>, String> {
+        match self {
+            ApproverKey::Software(s) => Ok(s.public().to_vec()),
+            ApproverKey::Enclave(e) => Ok(e.public()?.to_vec()),
+        }
+    }
+
+    pub fn key_id(&self) -> Result<String, String> {
+        match self {
+            ApproverKey::Software(s) => Ok(s.key_id().as_str().to_string()),
+            ApproverKey::Enclave(e) => Ok(hw::key_id(&e.public()?)),
+        }
+    }
+
+    pub fn is_hardware(&self) -> bool {
+        matches!(self, ApproverKey::Enclave(_))
+    }
+
+    /// The Secure Enclave helper fetches the release from the kernel itself and shows its own dialog:
+    /// the only thing a caller supplies is the approval id, never bytes to sign.
+    pub fn sign_statement(&self, s: &Statement) -> Result<String, String> {
+        match self {
+            ApproverKey::Software(sw) => Ok(dsse::encode(&dsse::sign(
+                APPROVAL_TYPE,
+                canonical(s).as_bytes(),
+                sw,
+            ))),
+            ApproverKey::Enclave(e) => {
+                let dir = e.data_dir.to_string_lossy().to_string();
+                e.run(&["approve", "--data-dir", &dir, "--approval", &s.approval])
+            }
+        }
+    }
+
+    pub fn sign_change(&self, a: &Action) -> Result<String, String> {
+        match self {
+            ApproverKey::Software(sw) => Ok(sign_action(sw, a)),
+            ApproverKey::Enclave(e) => {
+                let dir = e.data_dir.to_string_lossy().to_string();
+                e.run(&[
+                    "change",
+                    "--data-dir",
+                    &dir,
+                    "--action",
+                    &a.action,
+                    "--subject",
+                    &a.subject,
+                ])
+            }
+        }
+    }
+}
+
+pub fn find_helper() -> Option<std::path::PathBuf> {
+    if let Ok(p) = std::env::var("KAKU_ENCLAVE_BIN") {
+        return Some(p.into());
+    }
+    let beside = std::env::current_exe().ok()?.parent()?.join("kaku-enclave");
+    beside.is_file().then_some(beside)
+}
+
+/// Prefers a Secure Enclave key (`approver.enclave`) over a software key (`approver.key`).
+pub fn load_approver(dir: &Path) -> Result<Option<ApproverKey>, KeyFileError> {
+    let blob = dir.join("approver.enclave");
+    if blob.is_file() {
+        let helper = find_helper().ok_or_else(|| {
+            KeyFileError::Io(
+                "the Secure Enclave helper kaku-enclave was not found (set KAKU_ENCLAVE_BIN)"
+                    .into(),
+            )
+        })?;
+        return Ok(Some(ApproverKey::Enclave(EnclaveKey {
+            helper,
+            blob,
+            data_dir: dir.to_path_buf(),
+        })));
+    }
+    Ok(load_key(&dir.join("approver.key"))?.map(ApproverKey::Software))
 }
 
 #[derive(Debug)]
@@ -175,9 +323,9 @@ mod tests {
         }
     }
 
-    fn trusted(s: &Signer) -> TrustedKeys {
-        let mut t = TrustedKeys::new();
-        t.add(&s.public()).unwrap();
+    fn trusted(s: &Signer) -> Approvers {
+        let mut t = Approvers::default();
+        t.ed.add(&s.public()).unwrap();
         t
     }
 
@@ -185,7 +333,10 @@ mod tests {
     fn ap01_a_proof_verifies_only_for_the_exact_statement_it_signed() {
         let s = Signer::from_seed([5; 32]);
         let proof = sign(&s, &st());
-        assert_eq!(verify(&proof, &trusted(&s), &st()), Ok(s.key_id()));
+        assert_eq!(
+            verify(&proof, &trusted(&s), &st()),
+            Ok(s.key_id().as_str().to_string())
+        );
         for (name, other) in [
             (
                 "approval",
@@ -276,7 +427,7 @@ mod tests {
             Err(Reject::WrongType),
             "a signature made for another purpose cannot be replayed as an approval"
         );
-        let empty = TrustedKeys::new();
+        let empty = Approvers::default();
         assert_eq!(verify(&proof, &empty, &st()), Err(Reject::UnknownKey));
     }
 
@@ -295,11 +446,11 @@ mod tests {
         );
         assert_eq!(
             verify_action(&proof, &t, "enroll", "key-A", 1000),
-            Ok(s.key_id())
+            Ok(s.key_id().as_str().to_string())
         );
         assert_eq!(
             verify_action(&proof, &t, "enroll", "key-A", 1120),
-            Ok(s.key_id()),
+            Ok(s.key_id().as_str().to_string()),
             "inside the window"
         );
         assert_eq!(
@@ -349,6 +500,57 @@ mod tests {
             verify(&proof, &t, &st()),
             Err(Reject::WrongType),
             "and an approver action is not an approval"
+        );
+    }
+
+    #[test]
+    fn ap05_a_hardware_p256_key_can_approve_and_authorise_changes_like_an_ed25519_key() {
+        use p256::ecdsa::signature::Signer as _;
+        use p256::ecdsa::{Signature, SigningKey};
+        let sk = SigningKey::from_slice(&[9; 32]).unwrap();
+        let public: hw::P256Public = sk
+            .verifying_key()
+            .to_encoded_point(false)
+            .as_bytes()
+            .try_into()
+            .unwrap();
+        let sign_hw = |kind: &str, payload: &str| {
+            let sig: Signature = sk.sign(&crate::dsse::pae(kind, payload.as_bytes()));
+            hw::envelope(kind, payload.as_bytes(), &public, &sig.to_bytes().into())
+        };
+        let mut a = Approvers::default();
+        a.p256.push(public);
+        let proof = sign_hw(APPROVAL_TYPE, &canonical(&st()));
+        assert_eq!(verify(&proof, &a, &st()), Ok(hw::key_id(&public)));
+        let other = Statement {
+            recipient: "x".into(),
+            ..st()
+        };
+        assert_eq!(verify(&proof, &a, &other), Err(Reject::DifferentStatement));
+        assert_eq!(
+            verify(&proof, &Approvers::default(), &st()),
+            Err(Reject::UnknownKey)
+        );
+        let act = sign_hw(
+            ACTION_TYPE,
+            &canonical_action(&Action {
+                action: "enroll".into(),
+                subject: "k".into(),
+                at: 1000,
+            }),
+        );
+        assert_eq!(
+            verify_action(&act, &a, "enroll", "k", 1000),
+            Ok(hw::key_id(&public))
+        );
+        assert_eq!(
+            verify_action(&act, &a, "enroll", "k", 2000),
+            Err(Reject::DifferentStatement)
+        );
+        assert_eq!(
+            verify_action(&proof, &a, "enroll", "k", 1000),
+            Err(Reject::WrongType),
+            "an approval is not an action"
         );
     }
 

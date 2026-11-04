@@ -20,7 +20,7 @@ export function describe(a) {
   ].join("\n");
 }
 
-export function createApprover({ client, confirm, authenticate, seen = new Set() }) {
+export function createApprover({ client, confirm, authenticate, sign = null, seen = new Set() }) {
   return async function pollOnce() {
     const list = await client.get("/admin/approvals");
     if (list.status !== 200) return [];
@@ -31,19 +31,30 @@ export function createApprover({ client, confirm, authenticate, seen = new Set()
       const detail = await client.get(`/admin/approvals/${item.id}`);
       if (detail.status !== 200) continue;
       const a = detail.json;
-      const yes = await confirm(describe(a), a);
+      const yes = a.requires_proof ? true : await confirm(describe(a), a);
       if (!yes) {
         await client.post(`/admin/approvals/${item.id}/deny`);
         done.push({ id: item.id, outcome: "denied" });
         continue;
       }
-      const proven = await authenticate(`Approve release ${String(a.digest).slice(0, 12)} to ${a.recipient}`);
-      if (!proven) {
-        await client.post(`/admin/approvals/${item.id}/deny`);
-        done.push({ id: item.id, outcome: "authentication_failed" });
-        continue;
+      const body = { ack: String(a.digest).slice(0, 12) };
+      if (a.requires_proof) {
+        const proof = sign ? await sign(item.id).catch(() => null) : null;
+        if (typeof proof !== "string" || !proof) {
+          await client.post(`/admin/approvals/${item.id}/deny`);
+          done.push({ id: item.id, outcome: "signing_failed" });
+          continue;
+        }
+        body.proof = proof;
+      } else {
+        const proven = await authenticate(`Approve release ${String(a.digest).slice(0, 12)} to ${a.recipient}`);
+        if (!proven) {
+          await client.post(`/admin/approvals/${item.id}/deny`);
+          done.push({ id: item.id, outcome: "authentication_failed" });
+          continue;
+        }
       }
-      const r = await client.post(`/admin/approvals/${item.id}/approve`, { ack: String(a.digest).slice(0, 12) });
+      const r = await client.post(`/admin/approvals/${item.id}/approve`, body);
       done.push({ id: item.id, outcome: r.status === 200 ? "approved" : "refused" });
     }
     return done;

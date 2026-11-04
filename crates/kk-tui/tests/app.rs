@@ -634,7 +634,7 @@ fn tu15_a_refused_secret_is_scrubbed_from_the_transcript_and_the_command_history
 fn tu16_when_the_service_requires_a_signed_approval_the_terminal_signs_the_exact_statement_or_refuses_to_send(
 ) {
     use kk_evidence::approval::{verify, Statement};
-    use kk_evidence::keys::{Signer, TrustedKeys};
+    use kk_evidence::keys::Signer;
     let statement = json!({"approval": "appr-9", "job": "job-4", "digest": "abcdef0123456789abcdef", "recipient": "acme-audit", "policy": "policy-1", "expires": 1_700_086_400, "nonce": "n-123"});
     let open = |app: &mut App| {
         app.jobs.push(kk_tui::app::JobRow {
@@ -667,15 +667,17 @@ fn tu16_when_the_service_requires_a_signed_approval_the_terminal_signs_the_exact
     // with a key: the request carries a proof over exactly this statement
     let signer = Signer::from_seed([31; 32]);
     let mut b = booted();
-    b.approver = Some(Signer::from_seed([31; 32]));
+    b.approver = Some(kk_evidence::approval::ApproverKey::Software(
+        Signer::from_seed([31; 32]),
+    ));
     open(&mut b);
     typed(&mut b, "abcdef012345");
     let r = b.handle(key(KeyCode::Enter));
     assert_eq!(r.len(), 1);
     let body = r[0].body.as_ref().unwrap();
     assert_eq!(body["ack"], "abcdef012345");
-    let mut trusted = TrustedKeys::new();
-    trusted.add(&signer.public()).unwrap();
+    let mut trusted = kk_evidence::approval::Approvers::default();
+    trusted.ed.add(&signer.public()).unwrap();
     let expected = Statement {
         approval: "appr-9".into(),
         job: "job-4".into(),
@@ -687,11 +689,13 @@ fn tu16_when_the_service_requires_a_signed_approval_the_terminal_signs_the_exact
     };
     assert_eq!(
         verify(body["proof"].as_str().unwrap(), &trusted, &expected),
-        Ok(signer.key_id())
+        Ok(signer.key_id().as_str().to_string())
     );
     // a service that does not require proof gets no proof field
     let mut c = booted();
-    c.approver = Some(Signer::from_seed([31; 32]));
+    c.approver = Some(kk_evidence::approval::ApproverKey::Software(
+        Signer::from_seed([31; 32]),
+    ));
     c.jobs.push(kk_tui::app::JobRow {
         id: "job-4".into(),
         recipient: "x".into(),

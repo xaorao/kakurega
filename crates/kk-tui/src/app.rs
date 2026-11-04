@@ -126,7 +126,7 @@ pub struct App {
     inflight_polls: BTreeSet<String>,
     pub chat_history: Vec<(String, String)>,
     chat_waiting: bool,
-    pub approver: Option<kk_evidence::keys::Signer>,
+    pub approver: Option<kk_evidence::approval::ApproverKey>,
 }
 
 pub fn clean(s: &str) -> String {
@@ -338,10 +338,13 @@ impl App {
                                 nonce: st["nonce"].as_str().unwrap_or("").into(),
                             };
                             match &self.approver {
-                                Some(signer) => {
-                                    body["proof"] =
-                                        json!(kk_evidence::approval::sign(signer, &statement))
-                                }
+                                Some(signer) => match signer.sign_statement(&statement) {
+                                    Ok(p) => body["proof"] = json!(p),
+                                    Err(e) => {
+                                        v.error = Some(format!("The approval was not signed ({e}). Nothing was approved."));
+                                        return Vec::new();
+                                    }
+                                },
                                 None => {
                                     v.error = Some("This service requires a signed approval and this terminal has no approver key. Run `kaku approver enroll` first. Nothing was approved.".into());
                                     return Vec::new();

@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { _electron as electron } from "playwright-core";
 import { cpSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -29,6 +30,7 @@ const app = await electron.launch({
   env: {
     ...process.env,
     KAKU_BIN: join(repo, "target/debug/kaku"),
+    KAKU_ENCLAVE_BIN: join(repo, "target/debug/kaku-enclave-test"),
     KAKUREGA_DATA_DIR: data,
     KAKU_ARGS: `--root ${root} --scripted ${join(here, "script.json")} --ui-dir ${join(repo, "apps/web/dist")}`,
   },
@@ -85,6 +87,22 @@ try {
   await page.getByRole("button", { name: "Sign and deliver the capsule" }).click();
   await page.getByText("Delivered.").waitFor({ timeout: 20000 });
   check("after native approval the release is signed and delivered", true);
+  // second round: a Secure Enclave approver key is enrolled, so the shell must sign inside the enclave
+  const enr = spawnSync(join(repo, "target/debug/kaku"), ["approver", "enroll", "--enclave", "--data-dir", data, "--label", "e2e enclave"], { encoding: "utf8", env: { ...process.env, KAKU_ENCLAVE_BIN: join(repo, "target/debug/kaku-enclave-test") } });
+  check("a Secure Enclave approver key is enrolled", enr.status === 0, (enr.stdout + enr.stderr).trim().slice(0, 100));
+  await app.evaluate(() => { globalThis.__shown.length = 0; });
+  await page.goto(origin + "/");
+  await page.getByRole("button", { name: "payments-service" }).click();
+  await page.getByLabel("Recipient name").fill("enclave-audit");
+  await page.getByRole("button", { name: "Start review" }).click();
+  await page.getByRole("heading", { name: "The exact release" }).waitFor({ timeout: 120000 });
+  await page.getByRole("button", { name: "Request approval" }).click();
+  await page.getByRole("button", { name: "Sign and deliver the capsule" }).waitFor({ timeout: 30000 });
+  const shown2 = await app.evaluate(() => globalThis.__shown);
+  check("the shell asked nothing itself: the Secure Enclave helper owns the dialog and the signature, and the Touch ID stub was not used", shown2.length === 0, JSON.stringify(shown2.map((x) => x.kind)));
+  await page.getByRole("button", { name: "Sign and deliver the capsule" }).click();
+  await page.getByText("Delivered.").waitFor({ timeout: 20000 });
+  check("the enclave-signed approval delivered", true);
   await page.getByRole("link", { name: "Documents" }).click();
   await page.getByRole("heading", { name: "Ask your documents", exact: true }).waitFor({ timeout: 20000 });
   const first = page.getByRole("button", { name: /payments|contracts|docs/i }).first();

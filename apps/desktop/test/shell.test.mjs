@@ -68,3 +68,21 @@ test("ds06 the approval text lists exact files, withheld items and what is not e
   for (const s of ["5 of 11 project files", "2 earlier release(s)", "over the review threshold", "combined excerpts"]) assert.ok(t.includes(s), s);
   for (const s of ["acme-audit", "abcdef0123456789ffff", "finding-1.txt", "secret.env (secret)", "model quality"]) assert.ok(t.includes(s), s);
 });
+
+test("ds-proof when the service requires a proof the shell hands the signer only the approval id, shows no dialog of its own, and refuses if it cannot sign", async () => {
+  const calls = [];
+  const a = { ...sample, requires_proof: true, statement_canonical: '{"approval":"ap1"}' };
+  const signed = [];
+  const poll = createApprover({ client: fakeClient([a], calls), confirm: async () => { throw new Error("the helper owns the dialog"); }, authenticate: async () => { throw new Error("must not prompt twice"); }, sign: async (...args) => (signed.push(args), "PROOF") });
+  assert.equal((await poll())[0].outcome, "approved");
+  assert.deepEqual(signed[0], ["ap1"], "no bytes, no recipient: only the id");
+  assert.ok(calls.some((c) => c[0].endsWith("/approve") && c[1]?.proof === "PROOF"));
+  const calls2 = [];
+  const noSigner = createApprover({ client: fakeClient([{ ...a }], calls2), confirm: async () => true, authenticate: async () => true });
+  assert.equal((await noSigner())[0].outcome, "signing_failed");
+  assert.ok(!calls2.some((c) => c[0].endsWith("/approve")), "nothing is approved without a signature");
+  const calls3 = [];
+  const refuses = createApprover({ client: fakeClient([{ ...a }], calls3), confirm: async () => true, authenticate: async () => true, sign: async () => { throw new Error("denied"); } });
+  assert.equal((await refuses())[0].outcome, "signing_failed");
+  assert.ok(calls3.some((c) => c[0].endsWith("/deny")));
+});

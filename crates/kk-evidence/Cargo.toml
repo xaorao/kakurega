@@ -10,6 +10,7 @@ kk-types = { path = "../kk-types" }
 sha2 = "0.10"
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "zeroize"] }
 zeroize = { version = "1", features = ["derive"] }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
 
 [lints]
 workspace = true

@@ -1866,6 +1866,7 @@ async fn admin_show(axum::Extension(svc): Svc, UrlPath(aid): UrlPath<String>) ->
             let mut d = draft_json(&s);
             d["approval"] = json!(aid);
             d["statement"] = svc.statement_json(&aid);
+            d["statement_canonical"] = svc.statement_canonical(&aid);
             d["requires_proof"] = json!(svc.approvers_enrolled());
             d["disclosure"] = svc.disclosure_json(&job, &s).0;
             d["job"] = json!(job);
@@ -1883,14 +1884,16 @@ struct AckBody {
 }
 
 impl Service {
-    fn approver_keys(&self) -> kk_evidence::keys::TrustedKeys {
-        let mut trusted = kk_evidence::keys::TrustedKeys::new();
+    fn approver_keys(&self) -> kk_evidence::approval::Approvers {
+        let mut trusted = kk_evidence::approval::Approvers::default();
         let store = self.store.lock().expect("lock");
         if let Ok(mut st) = store.connection().prepare("SELECT public FROM approvers") {
             if let Ok(rows) = st.query_map([], |r| r.get::<_, Vec<u8>>(0)) {
                 for raw in rows.flatten() {
-                    if let Ok(k) = <[u8; 32]>::try_from(raw) {
-                        trusted.add(&k);
+                    if let Ok(k) = <[u8; 32]>::try_from(raw.clone()) {
+                        trusted.ed.add(&k);
+                    } else if let Some(k) = kk_evidence::hw::valid_public(&raw) {
+                        trusted.p256.push(k);
                     }
                 }
             }
@@ -1909,6 +1912,14 @@ impl Service {
 }
 
 impl Service {
+    fn statement_canonical(&self, aid: &str) -> Value {
+        let g = self.inner.lock().expect("lock");
+        match g.approvals.get(aid) {
+            Some(a) => json!(kk_evidence::approval::canonical(&statement_of(aid, a))),
+            None => Value::Null,
+        }
+    }
+
     fn statement_json(&self, aid: &str) -> Value {
         let g = self.inner.lock().expect("lock");
         match g.approvals.get(aid) {
@@ -1942,23 +1953,25 @@ struct EnrollBody {
 }
 
 async fn admin_approver_enroll(axum::Extension(svc): Svc, Json(b): Json<EnrollBody>) -> Response {
-    let Some(public) = kk_evidence::b64::decode(&b.public_key)
-        .ok()
-        .and_then(|r| <[u8; 32]>::try_from(r).ok())
-    else {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "BAD_KEY",
-            "public_key must be a base64url Ed25519 public key (32 bytes)",
-        );
+    let Some(raw) = kk_evidence::b64::decode(&b.public_key).ok() else {
+        return error(StatusCode::BAD_REQUEST, "BAD_KEY", "public_key must be base64url: an Ed25519 key (32 bytes) or a P-256 key (65 bytes, uncompressed)");
     };
-    let mut probe = kk_evidence::keys::TrustedKeys::new();
-    let Some(id) = probe.add(&public) else {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "WEAK_KEY",
-            "that key is not acceptable",
-        );
+    let id: String = if let Ok(public) = <[u8; 32]>::try_from(raw.clone()) {
+        let mut probe = kk_evidence::keys::TrustedKeys::new();
+        match probe.add(&public) {
+            Some(id) => id.as_str().to_string(),
+            None => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "WEAK_KEY",
+                    "that key is not acceptable",
+                )
+            }
+        }
+    } else if let Some(public) = kk_evidence::hw::valid_public(&raw) {
+        kk_evidence::hw::key_id(&public)
+    } else {
+        return error(StatusCode::BAD_REQUEST, "BAD_KEY", "public_key must be an Ed25519 key (32 bytes) or a valid P-256 point (65 bytes, uncompressed)");
     };
     if b.label.is_empty() || b.label.len() > 64 || b.label.chars().any(|c| c.is_control()) {
         return error(
@@ -1989,7 +2002,7 @@ async fn admin_approver_enroll(axum::Extension(svc): Svc, Json(b): Json<EnrollBo
             );
         }
     }
-    let n = svc.store.lock().expect("lock").connection().execute("INSERT OR REPLACE INTO approvers(key_id, public, label, created) VALUES (?1, ?2, ?3, ?4)", kk_vault::rusqlite::params![id.as_str(), public.to_vec(), b.label, now()]).unwrap_or(0);
+    let n = svc.store.lock().expect("lock").connection().execute("INSERT OR REPLACE INTO approvers(key_id, public, label, created) VALUES (?1, ?2, ?3, ?4)", kk_vault::rusqlite::params![id, raw, b.label, now()]).unwrap_or(0);
     if n == 0 {
         return error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -2005,7 +2018,7 @@ async fn admin_approver_enroll(axum::Extension(svc): Svc, Json(b): Json<EnrollBo
             ("label", b.label.into()),
         ],
     );
-    Json(json!({"key_id": id.as_str(), "signed_approvals_required": true})).into_response()
+    Json(json!({"key_id": id, "signed_approvals_required": true})).into_response()
 }
 
 async fn admin_approver_list(axum::Extension(svc): Svc) -> Response {
