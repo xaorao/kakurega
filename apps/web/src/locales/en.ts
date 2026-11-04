@@ -226,6 +226,7 @@ export const en = {
   "web.searchSend": "Send this search",
   "web.searchResults": "Suggestions from the search site (untrusted)",
   "web.searchUse": "Add to addresses",
+  "chat.whichNotes": "Notes used for this answer ({n})",
   "chat.error": "The assistant could not answer.",
   "nav.docs": "Documents",
   "docs.title": "Ask your documents",

@@ -2427,6 +2427,16 @@ impl App {
                         "not saved (this conversation is full)".to_string()
                     });
                 }
+                for n in body["notes"].as_array().into_iter().flatten() {
+                    foot.push(format!(
+                        "note: {} ({})",
+                        clean(n["text"].as_str().unwrap_or(""))
+                            .chars()
+                            .take(120)
+                            .collect::<String>(),
+                        clean(n["why"].as_str().unwrap_or(""))
+                    ));
+                }
                 if body["notes_withheld"].as_u64().unwrap_or(0) > 0 {
                     foot.push(format!("{} note(s) were not given to the model because they look like instructions.", body["notes_withheld"]));
                 }

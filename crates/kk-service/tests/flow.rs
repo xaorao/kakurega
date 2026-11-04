@@ -5053,6 +5053,21 @@ fn sv43_project_notes_reach_only_reviews_of_that_project_and_never_a_conversatio
         json!({"message": "Where are login sessions kept?"}),
     );
     assert_eq!(exact["notes_used"], 1, "{exact}");
+    let listed = exact["notes"].as_array().unwrap();
+    assert_eq!(
+        listed.len(),
+        1,
+        "the reply says which note was used: {exact}"
+    );
+    assert!(listed[0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Sessions are kept in a dictionary"));
+    assert!(
+        listed[0]["why"].as_str().unwrap().contains("matched"),
+        "and why: {exact}"
+    );
+    assert!(listed[0]["id"].as_str().is_some());
     // bad project names are refused
     assert_eq!(
         w.post(

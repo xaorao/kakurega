@@ -472,6 +472,8 @@ try {
   await page.waitForLoadState("load");
   const reply = await page.locator(".msg.assistant").innerText();
   check("Enter sends and an answer appears marked as a test model with the notes used", reply.includes("[test model]") && reply.includes("Test model") && /1 note\(s\) used/.test(reply), reply.replace(/\n/g, " | ").slice(0, 500));
+  await page.locator(".msg.assistant").getByText("Notes used for this answer (1)").click();
+  check("the answer says which note was used and why", (await page.locator(".msg.assistant .notes-used").innerText()).includes("in-process dictionary") && (await page.locator(".msg.assistant .notes-used").innerText()).includes("matched"));
   await axeCheck(page, "chat screen");
   await page.screenshot({ path: join(shots, "13-chat.png") });
   await page.getByRole("button", { name: "Clear" }).click();

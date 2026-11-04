@@ -5,6 +5,7 @@ import { Markdown } from "../components/Markdown";
 
 interface Shown extends ChatTurn {
   foot?: string[];
+  notes?: { id: string; text: string; why: string; untrusted: boolean; project?: string | null }[];
 }
 
 export function Chat() {
@@ -181,7 +182,7 @@ export function Chat() {
       if (session()) foot.push(r.saved ? t("chat.saved") : t("chat.notSaved"));
       if (r.web_sources_used > 0) foot.push(t("web.used", { n: r.web_sources_used }));
       if (r.notes_withheld > 0) foot.push(t("chat.withheld", { n: r.notes_withheld }));
-      setTurns([...turns(), { role: "assistant", content: r.reply, foot }]);
+      setTurns([...turns(), { role: "assistant", content: r.reply, foot, notes: r.notes }]);
       if (session()) await refetch();
     } catch (err) {
       setTurns(turns().slice(0, -1));
@@ -225,6 +226,12 @@ export function Chat() {
               <strong>{m.role === "user" ? t("chat.you") : t("chat.assistant")}</strong>
               {m.role === "assistant" ? <Markdown text={m.content} /> : <p class="mem-text">{m.content}</p>}
               <Show when={m.foot}>{(f) => <p class="muted">{f().join(" · ")}</p>}</Show>
+              <Show when={(m.notes ?? []).length > 0}>
+                <details class="notes-used">
+                  <summary>{t("chat.whichNotes", { n: m.notes!.length })}</summary>
+                  <ul class="plain"><For each={m.notes}>{(n) => <li><span>{n.text}</span> <span class="muted">({n.why}{n.untrusted ? `; ${t("mem.untrusted")}` : ""})</span></li>}</For></ul>
+                </details>
+              </Show>
             </li>
           )}
         </For>

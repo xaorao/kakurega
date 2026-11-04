@@ -1548,6 +1548,8 @@ fn chat_validate(svc: &Service, b: ChatBody) -> Result<ChatRun, Box<Response>> {
 struct ChatContext {
     messages: Vec<kk_types::chat::ChatMessage>,
     notes_used: usize,
+    /// Which notes went to the model, so the owner can see exactly what shaped an answer.
+    notes_list: Vec<Value>,
     untrusted_notes: usize,
     notes_withheld: usize,
     web_used: usize,
@@ -1556,7 +1558,7 @@ struct ChatContext {
 
 /// Gathers the notes and chosen web pages and builds the model's messages.
 fn chat_context(svc: &Service, b: &ChatBody) -> ChatContext {
-    let (notes, used, untrusted_used, withheld) = {
+    let (notes, used, untrusted_used, withheld, notes_list) = {
         let mem = svc.memory.lock().expect("lock");
         let clearance = mem
             .owner_clearance()
@@ -1578,11 +1580,24 @@ fn chat_context(svc: &Service, b: &ChatBody) -> ChatContext {
                 }
             ));
         }
+        let list: Vec<Value> = hits
+            .iter()
+            .map(|h| {
+                json!({
+                    "id": h.memory.id,
+                    "text": h.memory.text.chars().take(200).collect::<String>(),
+                    "why": h.why,
+                    "untrusted": h.untrusted,
+                    "project": h.memory.project,
+                })
+            })
+            .collect();
         (
             text,
             hits.len(),
             hits.iter().filter(|h| h.untrusted).count(),
             withheld,
+            list,
         )
     };
     let (web_text, web_used) = {
@@ -1623,6 +1638,7 @@ fn chat_context(svc: &Service, b: &ChatBody) -> ChatContext {
         messages,
         history_sent,
         notes_used: used,
+        notes_list,
         untrusted_notes: untrusted_used,
         notes_withheld: withheld,
         web_used,
@@ -1649,7 +1665,7 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
     // conversation is getting long. It is an estimate, not the model's own count.
     let sent_chars: usize = ctx.messages.iter().map(|m| m.content.chars().count()).sum();
     let usage = json!({"context_tokens_estimate": sent_chars / 4, "reply_tokens_estimate": r.text.chars().count() / 4, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "estimate": true});
-    json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated}, "notes_used": ctx.notes_used, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "web_sources_used": ctx.web_used, "saved": saved})
+    json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated}, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "web_sources_used": ctx.web_used, "saved": saved})
 }
 
 async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {

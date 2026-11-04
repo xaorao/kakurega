@@ -1928,3 +1928,15 @@ fn tu43_while_the_owner_is_approving_here_the_watch_does_not_interfere() {
     assert!(text(&a).contains("Approved. The files are fixed."));
     assert!(!text(&a).contains("Approval closed"));
 }
+
+#[test]
+fn tu44_a_chat_answer_lists_the_notes_that_shaped_it() {
+    let mut a = booted();
+    let r = enter(&mut a, "what is the staging port?");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "8081", "route": {"simulated": true}, "notes_used": 1, "notes": [{"id": "m1", "text": "The staging server listens on port 8081", "why": "you asked to remember it; matched by keywords", "untrusted": false, "project": null}]})));
+    let t = text(&a);
+    assert!(t.contains("1 note(s) used") && t.contains("note: The staging server listens on port 8081 (you asked to remember it; matched by keywords)"), "{t}");
+    let r = enter(&mut a, "again");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "ok", "route": {"simulated": true}, "notes_used": 1, "notes": [{"id": "m2", "text": "x\u{1b}[31mred", "why": "w\u{7}", "untrusted": true}]})));
+    assert!(!text(&a).contains('\u{1b}') && !text(&a).contains('\u{7}'));
+}
