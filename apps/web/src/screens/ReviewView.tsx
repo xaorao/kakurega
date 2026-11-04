@@ -1,29 +1,30 @@
 import { createEffect, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError, type Config, type Job } from "../api";
+import { rich, t, type Key } from "../i18n";
 
 type Tab = "progress" | "protected" | "source" | "findings" | "release";
 
-const STAGES: [string, string][] = [
-  ["import", "Read the project"],
-  ["protect", "Label files and withhold secrets"],
-  ["review", "Agent reviews in the sandbox"],
-  ["check", "Kernel re-runs each reproducer"],
-  ["release", "Prepare the release"],
+const STAGES: [string, Key][] = [
+  ["import", "stage.import"],
+  ["protect", "stage.protect"],
+  ["review", "stage.review"],
+  ["check", "stage.check"],
+  ["release", "stage.release"],
 ];
 
 function statusText(s: string): [string, string] {
-  if (s === "reproduced") return ["Confirmed by the kernel", "ok"];
-  if (s === "not_reproduced") return ["Not reproduced", "bad"];
-  if (s === "nondeterministic") return ["Result changed between runs", "bad"];
-  if (s.startsWith("unavailable")) return ["Could not be checked: " + s.slice(13), "warn"];
-  return ["Check failed: " + s.slice(8), "bad"];
+  if (s === "reproduced") return [t("status.reproduced"), "ok"];
+  if (s === "not_reproduced") return [t("status.not_reproduced"), "bad"];
+  if (s === "nondeterministic") return [t("status.nondeterministic"), "bad"];
+  if (s.startsWith("unavailable")) return [t("status.unavailable", { why: s.slice(13) }), "warn"];
+  return [t("status.failed", { why: s.slice(8) }), "bad"];
 }
 
 function Progress(props: { job: Job }) {
   const reached = () => new Set(props.job.events.map((e) => e.stage));
   const finished = () => reached().has("finished");
   return (
-    <ol class="steps" aria-label="Progress">
+    <ol class="steps" aria-label={t("progress.label")}>
       <For each={STAGES}>
         {([key, label]) => {
           const done = () => reached().has(key) && (finished() || STAGES.findIndex(([k]) => k === key) < STAGES.findIndex(([k]) => !reached().has(k)));
@@ -31,14 +32,14 @@ function Progress(props: { job: Job }) {
           return (
             <li class={done() ? "done" : active() ? "active" : ""}>
               <span class="mark" aria-hidden="true">{done() ? "✓" : active() ? "…" : ""}</span>
-              <span>{label}</span>
+              <span>{t(label)}</span>
               <span class="sub">{props.job.events.filter((e) => e.stage === key).map((e) => e.detail).join(" ")}</span>
             </li>
           );
         }}
       </For>
       <Show when={props.job.state === "failed"}>
-        <li class="fail"><span class="mark">!</span><span>The review stopped</span><span class="sub">{props.job.note}</span></li>
+        <li class="fail"><span class="mark">!</span><span>{t("progress.stopped")}</span><span class="sub">{props.job.note}</span></li>
       </Show>
     </ol>
   );
@@ -49,44 +50,44 @@ function Protected(props: { job: Job }) {
   const s = () => props.job.summary;
   return (
     <div class="stack">
-      <Show when={s()} fallback={<p class="muted">Available when the review finishes.</p>}>
+      <Show when={s()} fallback={<p class="muted">{t("review.when")}</p>}>
         {(sum) => (
           <>
             <div class="card stack">
-              <h2>What the agent could not see</h2>
-              <Show when={sum().withheld.length > 0} fallback={<p class="muted">No secret files were found.</p>}>
+              <h2>{t("prot.cannotSee")}</h2>
+              <Show when={sum().withheld.length > 0} fallback={<p class="muted">{t("prot.noSecrets")}</p>}>
                 <ul class="plain">
-                  <For each={sum().withheld}>{(w) => <li><code>{w.path}</code> <span class="chip bad">withheld</span> <span class="muted">{w.notes.join("; ")}</span></li>}</For>
+                  <For each={sum().withheld}>{(w) => <li><code>{w.path}</code> <span class="chip bad">{t("prot.withheld")}</span> <span class="muted">{w.notes.join("; ")}</span></li>}</For>
                 </ul>
               </Show>
               <Show when={sum().skipped.length > 0}>
-                <p class="muted">Skipped: {sum().skipped.map((x) => `${x.path} (${x.reason})`).join(", ")}</p>
+                <p class="muted">{t("prot.skipped", { list: sum().skipped.map((x) => `${x.path} (${x.reason})`).join(", ") })}</p>
               </Show>
             </div>
             <div class="card stack">
-              <h2>Text addressed to AI tools</h2>
-              <Show when={sum().injection_suspects.length > 0} fallback={<p class="muted">None found.</p>}>
-                <p>These files contain instructions aimed at AI assistants. They were treated as data and nothing in them was followed.</p>
-                <ul class="plain"><For each={sum().injection_suspects}>{(p) => <li><code>{p}</code> <span class="chip warn">possible prompt injection</span></li>}</For></ul>
+              <h2>{t("prot.aiTitle")}</h2>
+              <Show when={sum().injection_suspects.length > 0} fallback={<p class="muted">{t("prot.none")}</p>}>
+                <p>{t("prot.aiBody")}</p>
+                <ul class="plain"><For each={sum().injection_suspects}>{(p) => <li><code>{p}</code> <span class="chip warn">{t("prot.injection")}</span></li>}</For></ul>
               </Show>
             </div>
             <div class="card stack">
-              <h2>Where the data went</h2>
-              <For each={sum().route}>{(r) => <p>Model <strong>{r.model}</strong> on route <strong>{r.class.replace("_", " ")}</strong> at <code>{r.endpoint}</code>{r.simulated ? <span class="chip warn">simulated</span> : <span class="chip ok">real model</span>}</p>}</For>
-              <Show when={sum().final_taint}>{(t) => <p>Everything the agent produced is labelled <strong>{t().level}</strong>{t().integrity === "untrusted" ? " and untrusted (it came from content that could contain instructions)" : ""}.</p>}</Show>
-              <p class="muted">Source manifest digest <code>{sum().manifest_digest.slice(0, 16)}</code> over {sum().files_in_manifest} files. Only a keyed commitment to it is signed into the capsule.</p>
+              <h2>{t("prot.dataWent")}</h2>
+              <For each={sum().route}>{(r) => <p>{rich("prot.route", { model: r.model, route: r.class.replace("_", " "), endpoint: r.endpoint })}{r.simulated ? <span class="chip warn">{t("prot.simulated")}</span> : <span class="chip ok">{t("prot.real")}</span>}</p>}</For>
+              <Show when={sum().final_taint}>{(t_) => <p>{rich("prot.taint", { level: t_().level, untrusted: t_().integrity === "untrusted" ? t("prot.untrusted") : "" })}</p>}</Show>
+              <p class="muted">{rich("prot.manifest", { digest: sum().manifest_digest.slice(0, 16), count: sum().files_in_manifest })}</p>
             </div>
           </>
         )}
       </Show>
       <div class="card stack">
-        <h2>Every request the agent made</h2>
-        <Show when={audit()} fallback={<p class="muted">Loading…</p>}>
+        <h2>{t("prot.requests")}</h2>
+        <Show when={audit()} fallback={<p class="muted">{t("review.loading")}</p>}>
           {(a) => (
             <table>
-              <thead><tr><th>#</th><th>Operation</th><th>Result</th></tr></thead>
+              <thead><tr><th>#</th><th>{t("prot.col.op")}</th><th>{t("prot.col.result")}</th></tr></thead>
               <tbody>
-                <For each={a()}>{(e) => <tr class={e.outcome === "ok" ? "" : "refused"}><td>{e.request}</td><td><code>{e.op}</code></td><td>{e.outcome === "ok" ? "allowed" : `refused: ${e.outcome}`}</td></tr>}</For>
+                <For each={a()}>{(e) => <tr class={e.outcome === "ok" ? "" : "refused"}><td>{e.request}</td><td><code>{e.op}</code></td><td>{e.outcome === "ok" ? t("prot.allowed") : t("prot.refused", { why: e.outcome })}</td></tr>}</For>
               </tbody>
             </table>
           )}
@@ -102,23 +103,23 @@ function Source(props: { job: Job }) {
   const [content] = createResource(selected, (p) => (p ? api.file(props.job.id, p) : Promise.resolve(null)));
   return (
     <div class="split">
-      <ul class="tree" aria-label="Files">
+      <ul class="tree" aria-label={t("src.files")}>
         <For each={files()}>
           {(f) => (
             <li>
               <button class={selected() === f.path ? "row active" : "row"} onClick={() => setSelected(f.path)}>
                 <span class="fname">{f.path}</span>
-                <span class={`chip ${f.withheld ? "bad" : f.level === "internal" ? "" : "warn"}`}>{f.withheld ? "withheld" : f.level}</span>
+                <span class={`chip ${f.withheld ? "bad" : f.level === "internal" ? "" : "warn"}`}>{f.withheld ? t("prot.withheld") : f.level}</span>
               </button>
             </li>
           )}
         </For>
       </ul>
       <div class="viewer" aria-live="polite">
-        <Show when={selected()} fallback={<p class="muted">Choose a file. Files marked <em>withheld</em> were never shown to the agent and are not shown here.</p>}>
+        <Show when={selected()} fallback={<p class="muted">{rich("src.choose")}</p>}>
           <Show when={content()}>
             {(c) => (
-              <Show when={!c().withheld} fallback={<div class="redacted"><strong>Withheld.</strong> This file is labelled restricted. The agent could not read it and it will not be released.</div>}>
+              <Show when={!c().withheld} fallback={<div class="redacted">{rich("src.withheld")}</div>}>
                 <pre tabindex="0"><code>{c().text}</code></pre>
               </Show>
             )}
@@ -133,29 +134,29 @@ function Findings(props: { job: Job }) {
   const [data] = createResource(() => props.job.id, (id) => api.findings(id));
   return (
     <div class="stack">
-      <Show when={data()} fallback={<p class="muted">Loading…</p>}>
+      <Show when={data()} fallback={<p class="muted">{t("review.loading")}</p>}>
         {(d) => (
           <>
             <Show when={d().findings.length === 0}>
-              <div class="card"><p>The agent reported no findings.</p><p class="muted">That is not proof the project is free of defects; it only means nothing was reported and confirmed.</p></div>
+              <div class="card"><p>{t("find.none")}</p><p class="muted">{t("find.noneNote")}</p></div>
             </Show>
             <For each={d().findings}>
               {(f) => {
-                const [t, cls] = statusText(f.status);
+                const [statusLabel, cls] = statusText(f.status);
                 return (
                   <article class="card stack">
-                    <header class="between"><h2>{f.title}</h2><span class={`chip ${cls}`}>{t}</span></header>
+                    <header class="between"><h2>{f.title}</h2><span class={`chip ${cls}`}>{statusLabel}</span></header>
                     <p><code>{f.file}:{f.line}</code></p>
                     <p>{f.explanation}</p>
                     <Show when={f.reproducer}>
-                      <details><summary>Reproducer the kernel ran</summary><pre tabindex="0"><code>{f.reproducer}</code></pre><Show when={f.output}><p class="muted">Output</p><pre tabindex="0"><code>{f.output}</code></pre></Show></details>
+                      <details><summary>{t("find.repro")}</summary><pre tabindex="0"><code>{f.reproducer}</code></pre><Show when={f.output}><p class="muted">{t("find.output")}</p><pre tabindex="0"><code>{f.output}</code></pre></Show></details>
                     </Show>
-                    <Show when={f.sample.length > 0}><p class="muted">Checked on a minimal sample of {f.sample.length} files: {f.sample.join(", ")}</p></Show>
+                    <Show when={f.sample.length > 0}><p class="muted">{t("find.sample", { count: f.sample.length, files: f.sample.join(", ") })}</p></Show>
                   </article>
                 );
               }}
             </For>
-            <Show when={d().unparsed > 0}><p class="muted">{d().unparsed} report(s) from the agent were malformed and ignored.</p></Show>
+            <Show when={d().unparsed > 0}><p class="muted">{t("find.malformed", { count: d().unparsed })}</p></Show>
           </>
         )}
       </Show>
@@ -191,7 +192,7 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
       setHow(r.how);
       await poll();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not request approval.");
+      setError(e instanceof ApiError ? e.message : t("appr.requestError"));
     } finally {
       setBusy(false);
     }
@@ -204,7 +205,7 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
       props.onChange();
       await poll();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Delivery failed.");
+      setError(e instanceof ApiError ? e.message : t("appr.deliverError"));
     } finally {
       setBusy(false);
     }
@@ -212,55 +213,55 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
 
   return (
     <div class="stack">
-      <Show when={release()} fallback={<p class="muted">Loading…</p>}>
+      <Show when={release()} fallback={<p class="muted">{t("review.loading")}</p>}>
         {(r) => (
           <Show when={r().available} fallback={
             <div class="card stack">
-              <h2>Nothing to release</h2>
-              <p>No finding was confirmed by the kernel, so nothing can be sent. This is the safe result.</p>
+              <h2>{t("rel.nothing")}</h2>
+              <p>{t("rel.nothingBody")}</p>
               <For each={r().not_confirmed}>{(n) => <p class="muted">{n.title}: {n.why}</p>}</For>
             </div>
           }>
             <div class="card stack">
-              <h2>The exact release</h2>
-              <p>For <strong>{r().recipient}</strong>. Digest <code>{r().digest}</code></p>
+              <h2>{t("rel.exact")}</h2>
+              <p>{rich("rel.for", { recipient: r().recipient ?? "", digest: r().digest ?? "" })}</p>
               <table>
-                <thead><tr><th>File</th><th>Size</th><th>SHA-256</th></tr></thead>
-                <tbody><For each={r().files}>{(f) => <tr><td><code>{f.name}</code></td><td>{f.bytes} bytes</td><td><code>{f.sha256.slice(0, 16)}</code></td></tr>}</For></tbody>
+                <thead><tr><th>{t("rel.col.file")}</th><th>{t("rel.col.size")}</th><th>SHA-256</th></tr></thead>
+                <tbody><For each={r().files}>{(f) => <tr><td><code>{f.name}</code></td><td>{t("rel.bytes", { n: f.bytes })}</td><td><code>{f.sha256.slice(0, 16)}</code></td></tr>}</For></tbody>
               </table>
               <For each={r().files!.filter((f) => f.name.startsWith("finding-"))}>{(f) => <details open><summary>{f.name}</summary><pre tabindex="0"><code>{f.text}</code></pre></details>}</For>
-              <h3>Held back</h3>
-              <ul class="plain"><For each={r().removed} fallback={<li class="muted">Nothing.</li>}>{(x) => <li>{x.what}: <span class="muted">{x.why}</span></li>}</For></ul>
+              <h3>{t("rel.heldBack")}</h3>
+              <ul class="plain"><For each={r().removed} fallback={<li class="muted">{t("rel.nothingHeld")}</li>}>{(x) => <li>{x.what}: <span class="muted">{x.why}</span></li>}</For></ul>
               <Show when={r().not_confirmed.length > 0}>
-                <h3>Not confirmed, so not included</h3>
+                <h3>{t("rel.notConfirmed")}</h3>
                 <ul class="plain"><For each={r().not_confirmed}>{(x) => <li>{x.title} <span class="muted">({x.why})</span></li>}</For></ul>
               </Show>
-              <h3>This release does not establish</h3>
+              <h3>{t("rel.notEstablished")}</h3>
               <ul class="plain"><For each={r().not_established}>{(x) => <li>{x}</li>}</For></ul>
             </div>
             <div class="card stack" aria-live="polite">
-              <h2>Approval</h2>
+              <h2>{t("appr.title")}</h2>
               <Show when={approval().state === "none"}>
-                <p>The browser cannot approve a release by itself. You approve in a terminal on this computer, where you see the exact bytes again.</p>
-                <button class="primary" disabled={busy()} onClick={ask}>Request approval</button>
+                <p>{t("appr.intro")}</p>
+                <button class="primary" disabled={busy()} onClick={ask}>{t("appr.request")}</button>
               </Show>
               <Show when={approval().state === "waiting"}>
-                <p><strong>Waiting for you.</strong> Run this in a terminal on this computer:</p>
+                <p>{rich("appr.waiting")}</p>
                 <pre class="cmd" tabindex="0"><code>kaku approve {approval().approval}</code></pre>
-                <p class="muted">Type the first 12 characters of the digest shown there. {how()}</p>
+                <p class="muted">{t("appr.typeDigest", { how: how() })}</p>
               </Show>
               <Show when={approval().state === "approved"}>
-                <p class="ok">Approved in the terminal. The files are fixed; delivery re-checks that nothing changed.</p>
-                <button class="primary" disabled={busy()} onClick={deliver}>Sign and deliver the capsule</button>
+                <p class="ok">{t("appr.approved")}</p>
+                <button class="primary" disabled={busy()} onClick={deliver}>{t("appr.deliver")}</button>
               </Show>
-              <Show when={approval().state === "denied" || approval().state === "revoked"}><p class="bad">The release was refused. Nothing was sent.</p></Show>
-              <Show when={approval().state === "uncertain"}><p class="warn">Delivery was interrupted and its outcome is unknown. It will not be retried automatically.</p></Show>
+              <Show when={approval().state === "denied" || approval().state === "revoked"}><p class="bad">{t("appr.refused")}</p></Show>
+              <Show when={approval().state === "uncertain"}><p class="warn">{t("appr.uncertain")}</p></Show>
               <Show when={props.job.delivered}>
                 {(d) => (
                   <div class="stack">
-                    <p class="ok"><strong>Delivered.</strong> Capsule <code>{d().name}</code> signed by <code>{d().signer.slice(0, 24)}…</code></p>
-                    <p><a class="button" href={`/api/jobs/${props.job.id}/capsule`} download="review.kkg">Download the capsule</a></p>
-                    <p class="muted">Give the recipient the file. They can check it offline at <a href="/verify" target="_blank" rel="noopener">/verify</a> or with <code>kaku verify</code>.</p>
+                    <p class="ok">{rich("appr.delivered", { name: d().name, signer: d().signer.slice(0, 24) + "…" })}</p>
+                    <p><a class="button" href={`/api/jobs/${props.job.id}/capsule`} download="review.kkg">{t("appr.download")}</a></p>
+                    <p class="muted">{rich("appr.giveRecipient")}</p>
                   </div>
                 )}
               </Show>
@@ -299,26 +300,26 @@ export function ReviewView(props: { id: string; config: Config; onUpdate?: () =>
     const t = setInterval(load, 700);
     onCleanup(() => clearInterval(t));
   });
-  const tabs: [Tab, string][] = [["progress", "Progress"], ["protected", "Protection"], ["source", "Source"], ["findings", "Findings"], ["release", "Release"]];
+  const tabs: [Tab, Key][] = [["progress", "tab.progress"], ["protected", "tab.protected"], ["source", "tab.source"], ["findings", "tab.findings"], ["release", "tab.release"]];
   return (
-    <Show when={job()} fallback={<p class="muted">Loading…</p>}>
+    <Show when={job()} fallback={<p class="muted">{t("review.loading")}</p>}>
       {(j) => (
         <section class="stack wide" aria-labelledby="h-job">
           <header class="between">
             <div>
               <h1 id="h-job">{j().repo.split("/").pop()}</h1>
-              <p class="muted">for {j().recipient} · <span class={`state-text ${j().state}`}>{j().state.replace(/_/g, " ")}</span></p>
+              <p class="muted">{t("review.forRecipient", { recipient: j().recipient })}<span class={`state-text ${j().state}`}>{t(`state.${j().state}` as Key)}</span></p>
             </div>
           </header>
           <div class="tabs" role="tablist">
-            <For each={tabs}>{([k, label]) => <button role="tab" aria-selected={tab() === k} class={tab() === k ? "tab active" : "tab"} onClick={() => setTab(k)}>{label}</button>}</For>
+            <For each={tabs}>{([k, label]) => <button role="tab" aria-selected={tab() === k} class={tab() === k ? "tab active" : "tab"} onClick={() => setTab(k)}>{t(label)}</button>}</For>
           </div>
           <div role="tabpanel">
             <Show when={tab() === "progress"}><Progress job={j()} /></Show>
             <Show when={tab() === "protected"}><Protected job={j()} /></Show>
-            <Show when={tab() === "source"}><Show when={j().summary} fallback={<p class="muted">Available when the review finishes.</p>}><Source job={j()} /></Show></Show>
-            <Show when={tab() === "findings"}><Show when={j().summary} fallback={<p class="muted">Available when the review finishes.</p>}><Findings job={j()} /></Show></Show>
-            <Show when={tab() === "release"}><Show when={j().summary} fallback={<p class="muted">Available when the review finishes.</p>}><ReleaseTab job={j()} onChange={load} /></Show></Show>
+            <Show when={tab() === "source"}><Show when={j().summary} fallback={<p class="muted">{t("review.when")}</p>}><Source job={j()} /></Show></Show>
+            <Show when={tab() === "findings"}><Show when={j().summary} fallback={<p class="muted">{t("review.when")}</p>}><Findings job={j()} /></Show></Show>
+            <Show when={tab() === "release"}><Show when={j().summary} fallback={<p class="muted">{t("review.when")}</p>}><ReleaseTab job={j()} onChange={load} /></Show></Show>
           </div>
         </section>
       )}

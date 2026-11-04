@@ -141,6 +141,18 @@ try {
   await new Promise((r) => setTimeout(r, 400));
   await page.screenshot({ path: join(shots, "09-dark-review.png") });
   await axeCheck(page, "review release tab, dark theme");
+  await page.getByLabel("Language").selectOption("hi");
+  await page.getByRole("heading", { name: "सटीक रिलीज़" }).waitFor();
+  check("choosing Hindi renders the release screen in Hindi", (await page.getByRole("tab", { name: "रिलीज़" }).count()) === 1 && (await page.getByRole("button", { name: "कैप्सूल पर हस्ताक्षर करके भेजें" }).count()) <= 1);
+  check("the page language attribute follows the choice", (await page.evaluate(() => document.documentElement.lang)) === "hi");
+  await new Promise((r) => setTimeout(r, 400));
+  await page.screenshot({ path: join(shots, "10-hindi-release.png") });
+  await axeCheck(page, "review release tab, Hindi, dark theme");
+  const leftover = await page.evaluate(() => [...document.querySelectorAll("h1,h2,h3,button,th,label,summary")].map((e) => e.textContent.trim()).filter((x) => /^[A-Za-z][A-Za-z ,.']{3,}$/.test(x) && !["SHA-256"].includes(x)));
+  check("no English interface headings or buttons remain on the Hindi release screen", leftover.length === 0, leftover.join(" | "));
+  await page.getByLabel("भाषा").selectOption("en");
+  await page.getByRole("heading", { name: "The exact release" }).waitFor();
+  check("switching back restores English", (await page.evaluate(() => document.documentElement.lang)) === "en");
   await page.getByLabel("Theme").selectOption("system");
   check("Match system removes the override", (await page.evaluate(() => document.documentElement.getAttribute("data-theme"))) === null);
   await page.screenshot({ path: join(shots, "06-delivered.png"), fullPage: true });

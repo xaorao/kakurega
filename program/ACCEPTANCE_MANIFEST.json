@@ -122,9 +122,10 @@
         },
         {
           "id": "II-07",
-          "text": "Localisation scaffolding: strings extracted, one extra language rendered",
-          "kind": "pending",
-          "evidence_needed": "journey in second language, no missing keys"
+          "text": "Localisation scaffolding: all interface strings in typed catalogs, Hindi renders the main screens (journey checks in scripts/e2e), catalogs cannot drift (keys, placeholders, tags). Hindi text is machine-written and needs a native review; server-originated text stays English.",
+          "kind": "machine",
+          "command": "pnpm --filter @kakurega/web test",
+          "expect": "pass 3"
         }
       ]
     },

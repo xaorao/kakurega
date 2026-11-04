@@ -4,6 +4,7 @@ void ApiError;
 import { NewReview } from "./screens/NewReview";
 import { ReviewView } from "./screens/ReviewView";
 import { Verify } from "./screens/Verify";
+import { applyLocale, LOCALES, locale, rich, setLocale, t, type Locale } from "./i18n";
 
 function useHash() {
   const [hash, setHash] = createSignal(location.hash);
@@ -44,11 +45,22 @@ function ThemePicker() {
   };
   return (
     <label class="theme">
-      <span class="sr">Theme</span>
+      <span class="sr">{t("theme.label")}</span>
       <select value={theme()} onChange={(e) => choose(e.currentTarget.value as Theme)}>
-        <option value="system">Match system</option>
-        <option value="light">Light</option>
-        <option value="dark">Dark</option>
+        <option value="system">{t("theme.system")}</option>
+        <option value="light">{t("theme.light")}</option>
+        <option value="dark">{t("theme.dark")}</option>
+      </select>
+    </label>
+  );
+}
+
+function LanguagePicker() {
+  return (
+    <label class="theme">
+      <span class="sr">{t("lang.label")}</span>
+      <select value={locale()} onChange={(e) => setLocale(e.currentTarget.value as Locale)}>
+        <For each={LOCALES}>{([code, name]) => <option value={code}>{name}</option>}</For>
       </select>
     </label>
   );
@@ -67,7 +79,7 @@ function Pair(props: { onDone: () => void }) {
       history.replaceState(null, "", location.pathname);
       props.onDone();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not reach the local service.");
+      setError(e instanceof ApiError ? e.message : t("pair.unreachable"));
     } finally {
       setBusy(false);
     }
@@ -76,8 +88,8 @@ function Pair(props: { onDone: () => void }) {
   if (fromLink) queueMicrotask(() => submit(fromLink));
   return (
     <main class="center">
-      <h1>Pair this browser</h1>
-      <p class="muted">Run <code>kaku pair</code> in a terminal on this computer and open the link it prints, or paste the code here.</p>
+      <h1>{t("pair.title")}</h1>
+      <p class="muted">{rich("pair.intro")}</p>
       <form
         class="stack"
         onSubmit={(e) => {
@@ -85,9 +97,9 @@ function Pair(props: { onDone: () => void }) {
           submit(code());
         }}
       >
-        <label for="code">One-time code</label>
+        <label for="code">{t("pair.label")}</label>
         <input id="code" autocomplete="off" spellcheck={false} value={code()} onInput={(e) => setCode(e.currentTarget.value)} />
-        <button type="submit" disabled={busy() || code().trim().length === 0}>Pair</button>
+        <button type="submit" disabled={busy() || code().trim().length === 0}>{t("pair.button")}</button>
         <Show when={error()}>
           <p role="alert" class="bad">{error()}</p>
         </Show>
@@ -100,10 +112,10 @@ function Badge(props: { config: Config }) {
   const r = () => props.config.route;
   return (
     <div class="badges">
-      <span class="badge ok" title="The model runs on this computer. Your files are not sent anywhere.">
-        <span class="dot" /> Private: model runs on this computer
+      <span class="badge ok" title={t("badge.private.title")}>
+        <span class="dot" /> {t("badge.private")}
       </span>
-      <span class="badge" title="The agent runs in a sealed sandbox with no network.">
+      <span class="badge" title={t("badge.sandbox.title")}>
         {r().transport ?? "sandbox"}
       </span>
       <span class="badge">{r().model ?? r().id}</span>
@@ -131,6 +143,7 @@ export function App() {
       searchBox?.select();
     }
   };
+  applyLocale();
   window.addEventListener("keydown", onKey);
   onCleanup(() => window.removeEventListener("keydown", onKey));
 
@@ -166,40 +179,41 @@ export function App() {
   const jobId = () => /^#\/job\/([\w-]+)/.exec(hash())?.[1] ?? null;
 
   return (
-    <Show when={paired() !== null} fallback={<main class="center"><p class="muted">Connecting…</p></main>}>
+    <Show when={paired() !== null} fallback={<main class="center"><p class="muted">{t("app.connecting")}</p></main>}>
       <Show when={paired()} fallback={<Pair onDone={() => { setPaired(null); }} />}>
         <div class="shell">
           <header class="top">
             <a class="brand" href="#/">kakurega</a>
             <Show when={config()}>{(c) => <Badge config={c()} />}</Show>
+            <LanguagePicker />
             <ThemePicker />
-            <button class="link" onClick={async () => { await api.logout(); setPaired(false); }}>Sign out</button>
+            <button class="link" onClick={async () => { await api.logout(); setPaired(false); }}>{t("top.signout")}</button>
           </header>
           <Show when={config()?.test_mode}>
-            <div class="banner" role="status">TEST MODE: the model is scripted. Results below do not show what a real model finds.</div>
+            <div class="banner" role="status">{t("banner.test")}</div>
           </Show>
           <div class="body">
-            <nav class="side" aria-label="Reviews">
-              <a class="primary" href="#/">New review</a>
-              <label class="sr" for="search">Search reviews</label>
+            <nav class="side" aria-label={t("nav.label")}>
+              <a class="primary" href="#/">{t("nav.new")}</a>
+              <label class="sr" for="search">{t("nav.search.label")}</label>
               <input
                 id="search"
                 type="search"
-                placeholder="Search reviews (Cmd+K)"
+                placeholder={t("nav.search.placeholder")}
                 ref={searchBox}
                 value={query()}
                 onInput={(e) => setQuery(e.currentTarget.value)}
                 onKeyDown={(e) => { if (e.key === "Escape") { setQuery(""); e.currentTarget.blur(); } }}
               />
-              <h2>Reviews</h2>
+              <h2>{t("nav.heading")}</h2>
               <ul class="list">
-                <For each={shown()} fallback={<li class="muted">{jobs().length === 0 ? "None yet." : "No review matches."}</li>}>
+                <For each={shown()} fallback={<li class="muted">{jobs().length === 0 ? t("nav.none") : t("nav.nomatch")}</li>}>
                   {(j) => (
                     <li>
                       <a href={`#/job/${j.id}`} class={jobId() === j.id ? "active" : ""}>
                         <span class={`state ${j.state}`} aria-hidden="true" />
                         <span class="name">{j.repo.split("/").pop()}</span>
-                        <span class="sub">{j.state.replace(/_/g, " ")} · for {j.recipient}</span>
+                        <span class="sub">{t("nav.sub", { state: t(`state.${j.state}` as never), recipient: j.recipient })}</span>
                       </a>
                     </li>
                   )}
