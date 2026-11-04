@@ -2429,8 +2429,8 @@
     "OpenClaw and Hermes already work this way; owner request",
     "EXPANSION (sequenced after the hero; part of the PRD)"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "Telegram bridge (counts, ids, notifications; pairing; read-only) tested against a fake Telegram server: kk-cli tg01-tg05 (seven deliberate breaks, two survivors exposed missing tests which were added), tests/e2e/telegram_fake.py 23 checks. Own-PC always-on daemon not built; real Telegram unverified",
+   "status": "PARTIAL",
    "surface_class": "MOBILE",
    "title": "Own-PC daemon and Telegram bridge: headless always-on mode on the user's PC, outbound connection to Telegram (then other chat apps), pairing",
    "trust_reason": "Chat services and phones are untrusted transports; consequential approvals need a passkey with an exact-bytes summary on the device, and the kernel stays on the user's machine."
@@ -2605,7 +2605,7 @@
     "same",
     "EXPANSION"
    ],
-   "evidence": null,
+   "evidence": "deliberately not through chat: a chat service would receive the exact bytes; needs a native passkey app (docs/engineering-decisions/telegram-bridge.md)",
    "status": "NOT_BUILT",
    "surface_class": "MOBILE",
    "title": "Mobile and messaging approvals and notifications: passkey approval with an exact-bytes summary, revoke, recovery; chat bridges stay public-c",

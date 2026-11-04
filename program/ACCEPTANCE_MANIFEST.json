@@ -201,9 +201,10 @@
         },
         {
           "id": "III-07",
-          "text": "Daemon and chat bridges (Telegram) with passkey approvals",
-          "kind": "pending",
-          "evidence_needed": "bridge tests, approval-on-phone tests"
+          "text": "Telegram bridge: one-time pairing, one bound private chat, counts-and-ids-only commands, notifications, read-only by construction, token never printed; tested against a real service and a fake Telegram server. Real Telegram delivery is unverified; phone approvals are deliberately NOT done through chat (docs/engineering-decisions/telegram-bridge.md) and a native passkey approval app is not built.",
+          "kind": "machine",
+          "command": "python3 tests/e2e/telegram_fake.py",
+          "expect": "Telegram checks passed"
         },
         {
           "id": "III-08",
@@ -238,6 +239,19 @@
           "kind": "machine",
           "command": "cargo test -p kk-service --test flow sv18",
           "expect": "test result: ok. 1 passed"
+        },
+        {
+          "id": "III-07b",
+          "text": "Bridge unit tests: pairing, allowlist silence, templates without private text, notification de-duplication and no replay, token scrubbing, read-only",
+          "kind": "machine",
+          "command": "cargo test -p kk-cli telegram",
+          "expect": "test result: ok. 5 passed"
+        },
+        {
+          "id": "III-07c",
+          "text": "Real Telegram: the owner pairs the real bot and receives a real notification",
+          "kind": "human",
+          "evidence_needed": "Prateek runs `kaku telegram pair`, sends /pair CODE to the bot, runs `kaku telegram`, and a review notification arrives on the phone"
         }
       ]
     }
