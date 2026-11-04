@@ -2493,6 +2493,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kk-backup"
+version = "0.0.1"
+dependencies = [
+ "chacha20poly1305",
+ "getrandom 0.3.4",
+ "hkdf 0.12.4",
+ "sha2 0.10.9",
+ "zeroize",
+]
+
+[[package]]
 name = "kk-broker"
 version = "0.0.1"
 dependencies = [
@@ -2688,6 +2699,7 @@ dependencies = [
  "axum",
  "crossterm",
  "getrandom 0.3.4",
+ "kk-backup",
  "kk-companion",
  "kk-disclosure",
  "kk-effects",

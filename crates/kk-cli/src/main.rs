@@ -1,5 +1,6 @@
 mod approve;
 mod approver;
+mod backup;
 mod extension;
 mod log;
 mod mcp;
@@ -23,6 +24,8 @@ Usage:
   kaku telegram pair | kaku telegram   notifications and counts on your phone (never contents)
   kaku approver enroll|list|revoke   key that signs approvals (required once enrolled)
   kaku extension pair|status|revoke  connect the browser extension (it can only queue suggestions)
+  kaku backup [--out FILE]          save an encrypted copy of all your data; prints a recovery key once
+  kaku restore FILE [--data-dir DIR] restore a backup into an empty folder (asks for the recovery key)
   kaku log export [--out FILE]      save the signed event log
   kaku log verify FILE [--pin KEY] [--anchor COUNT:HEAD]   check a saved log offline
   kaku verify CAPSULE [--pin KEY]   check a capsule offline (KEY: base64url public key)
@@ -37,6 +40,8 @@ fn main() -> ExitCode {
         Some("approve") => approve::run(&args[1..]),
         Some("verify") => verify::run(&args[1..]),
         Some("mcp") => mcp::run(&args[1..]),
+        Some("backup") => backup::make(&args[1..]),
+        Some("restore") => backup::restore(&args[1..]),
         Some("log") => log::run(&args[1..]),
         Some("extension") => extension::run(&args[1..]),
         Some("approver") => approver::run(&args[1..]),

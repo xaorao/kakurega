@@ -22,6 +22,7 @@
     "kk-eventlog": 2,
     "kk-tui": 2,
     "kk-secrets": 1,
-    "kk-fetch": 1
+    "kk-fetch": 1,
+    "kk-backup": 1
   }
 }

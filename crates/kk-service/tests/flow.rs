@@ -3170,3 +3170,161 @@ fn sv26_live_research_shows_the_exact_addresses_first_binds_the_approval_and_tre
         "no page text, question or path in the log"
     );
 }
+
+#[test]
+fn sv27_a_backup_taken_while_running_restores_the_data_into_an_empty_folder_and_refuses_everything_else(
+) {
+    let (root, repo) = repo_copy("backup");
+    let data = root.join("data");
+    let svc = Service::new(
+        &data,
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    w.post(
+        "/api/memories",
+        json!({"text": "Quokkafinch contract renews in March", "level": "confidential"}),
+    );
+    let (_, s) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "backupper"}),
+    );
+    wait_for(
+        &w,
+        s["id"].as_str().unwrap(),
+        &["ready", "nothing_to_release"],
+    );
+    // the service is still running while the backup is taken
+    let made = kk_service::backup::make(&data).unwrap();
+    assert!(made.databases >= 5, "{}", made.databases);
+    assert!(made.recovery_key.starts_with("KKRK-"));
+    let key_hex = std::fs::read_to_string(data.join("vault.key")).unwrap();
+    assert!(
+        !made.file.windows(10).any(|w| w == b"Quokkafinch"),
+        "no note text in the file"
+    );
+    assert!(
+        !made
+            .file
+            .windows(64)
+            .any(|w| w == key_hex.trim().as_bytes()),
+        "the vault key is not readable in the file"
+    );
+    // restore into an empty folder and open it as a service
+    let fresh = root.join("restored");
+    let r = kk_service::backup::restore(&made.file, &made.recovery_key, &fresh).unwrap();
+    assert_eq!(r.databases, made.databases);
+    assert_eq!(
+        std::fs::read_to_string(fresh.join("vault.key"))
+            .unwrap()
+            .trim(),
+        key_hex.trim()
+    );
+    assert!(
+        std::fs::read_dir(&fresh)
+            .unwrap()
+            .flatten()
+            .all(|e| !e.file_name().to_string_lossy().starts_with(".restore")),
+        "no staging left behind"
+    );
+    let svc2 = Service::new(
+        &fresh,
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c2 = start(Options {
+        extension: Arc::new(Routes(svc2.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w2 = Web::new(c2.addr);
+    w2.pair(&c2.security.issue_pairing_code());
+    let (_, mem) = w2.get("/api/memories");
+    assert!(
+        mem.to_string()
+            .contains("Quokkafinch contract renews in March"),
+        "{mem}"
+    );
+    let (_, jobs) = w2.get("/api/jobs");
+    assert!(
+        jobs.to_string().contains("backupper"),
+        "the review history came back: {jobs}"
+    );
+    // everything else is refused and writes nothing
+    let other = root.join("other");
+    let wrong = kk_backup::key_to_text(&kk_backup::new_key());
+    assert!(kk_service::backup::restore(&made.file, &wrong, &other).is_err());
+    assert!(kk_service::backup::restore(&made.file, "KKRK-nonsense", &other).is_err());
+    let mut tampered = made.file.clone();
+    let mid = tampered.len() / 2;
+    tampered[mid] ^= 1;
+    assert!(kk_service::backup::restore(&tampered, &made.recovery_key, &other).is_err());
+    assert!(
+        !other.exists() || std::fs::read_dir(&other).unwrap().next().is_none(),
+        "a refused restore leaves nothing behind"
+    );
+    let err = kk_service::backup::restore(&made.file, &made.recovery_key, &fresh).unwrap_err();
+    assert!(err.contains("already holds Kakurega data"), "{err}");
+    let before = std::fs::read(fresh.join("memory.db")).unwrap();
+    let _ = kk_service::backup::restore(&made.file, &made.recovery_key, &fresh);
+    assert_eq!(
+        std::fs::read(fresh.join("memory.db")).unwrap(),
+        before,
+        "an existing folder is never overwritten"
+    );
+    assert!(kk_service::backup::make(&root.join("nothing-here")).is_err());
+
+    // a sealed archive with a database that does not open with its own key, or an unknown file, is refused before anything is placed
+    let k = kk_backup::new_key();
+    let kt = kk_backup::key_to_text(&k);
+    let bad_db = root.join("bad-db");
+    let sealed = kk_backup::seal(
+        &[
+            ("memory.db".into(), b"this is not a database".to_vec()),
+            ("vault.key".into(), key_hex.trim().as_bytes().to_vec()),
+        ],
+        &k,
+        1,
+    )
+    .unwrap();
+    assert!(kk_service::backup::restore(&sealed, &kt, &bad_db)
+        .unwrap_err()
+        .contains("memory.db"));
+    assert!(
+        std::fs::read_dir(&bad_db)
+            .map(|mut d| d.next().is_none())
+            .unwrap_or(true),
+        "nothing placed"
+    );
+    let unknown = kk_backup::seal(
+        &[
+            ("evil.sh".into(), b"x".to_vec()),
+            ("vault.key".into(), key_hex.trim().as_bytes().to_vec()),
+        ],
+        &k,
+        1,
+    )
+    .unwrap();
+    assert!(
+        kk_service::backup::restore(&unknown, &kt, &root.join("unk"))
+            .unwrap_err()
+            .contains("evil.sh")
+    );
+    let nokey = kk_backup::seal(&[("memory.db".into(), vec![1])], &k, 1).unwrap();
+    assert!(kk_service::backup::restore(&nokey, &kt, &root.join("nk"))
+        .unwrap_err()
+        .contains("no vault key"));
+    let shortkey = kk_backup::seal(&[("vault.key".into(), b"abcd".to_vec())], &k, 1).unwrap();
+    assert!(kk_service::backup::restore(&shortkey, &kt, &root.join("sk")).is_err());
+}

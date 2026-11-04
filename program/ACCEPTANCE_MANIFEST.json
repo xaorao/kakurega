@@ -355,6 +355,13 @@
           "text": "Retrospective capability recovery for the Web, desktop and workflow components: high-value applicable capabilities found in source review are implemented and verified, or carry a written justified exclusion; the capability trace is current (KAKUREGA_MASTER_GOAL.md 8c). Matrices alone are not PASS.",
           "kind": "pending",
           "evidence_needed": "for each component, every high-value matrix row implemented with test evidence or excluded with a reason; docs/engineering-decisions/capability-trace.md rows with FULL reading depth"
+        },
+        {
+          "id": "II-09k",
+          "text": "Encrypted backup and restore: recovery key, authenticated envelope, restore only into an empty folder after every database verifies (CLI)",
+          "kind": "machine",
+          "command": "cargo test -p kk-service --test flow sv27",
+          "expect": "test result: ok. 1 passed"
         }
       ]
     },

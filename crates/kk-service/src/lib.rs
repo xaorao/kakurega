@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod deliver;
 pub mod keys;
 pub mod service;
