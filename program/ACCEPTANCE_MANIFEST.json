@@ -168,7 +168,7 @@
         },
         {
           "id": "II-13",
-          "text": "Remaining packaged-shell work: Developer ID signing and notarisation, a signed update path (no updater exists), and Tauri packaging with its own integrity story. Done and tested: Electron II-13a/b/c, Tauri attack suite II-13d.",
+          "text": "Remaining packaged-shell work: Developer ID signing and notarisation, a signed update path (the verification half is built and tested, docs/engineering-decisions/updater.md; downloading and replacing the app is not, and needs the signed build), and Tauri packaging with its own integrity story. Done and tested: Electron II-13a/b/c, Tauri attack suite II-13d.",
           "kind": "pending",
           "evidence_needed": "Developer ID certificate (owner), update-path tests, Tauri attack suite"
         },

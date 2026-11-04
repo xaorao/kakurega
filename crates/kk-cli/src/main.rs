@@ -9,6 +9,7 @@ mod runner;
 mod serve;
 mod telegram;
 mod tui;
+mod update;
 mod verify;
 
 use std::process::ExitCode;
@@ -28,6 +29,7 @@ Usage:
   kaku backup [--out FILE]          save an encrypted copy of all your data; prints a recovery key once
   kaku restore FILE [--data-dir DIR] restore a backup into an empty folder (asks for the recovery key)
   kaku memory import DIR [--source NAME]   add notes from another assistant's markdown files as untrusted notes
+  kaku update check|verify-file|keygen|sign   signed update announcements (nothing is downloaded or installed)
   kaku log export [--out FILE]      save the signed event log
   kaku log verify FILE [--pin KEY] [--anchor COUNT:HEAD]   check a saved log offline
   kaku verify CAPSULE [--pin KEY]   check a capsule offline (KEY: base64url public key)
@@ -52,6 +54,7 @@ fn main() -> ExitCode {
         Some("approver") => approver::run(&args[1..]),
         Some("telegram") => telegram::run(&args[1..]),
         Some("tui") => tui::run(&args[1..]),
+        Some("update") => update::run(&args[1..]),
         None if std::io::IsTerminal::is_terminal(&std::io::stdout())
             && std::io::IsTerminal::is_terminal(&std::io::stdin()) =>
         {

@@ -1,0 +1,15 @@
+[package]
+name = "kk-update"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Signed update manifests: who may announce a new version, and what a downloaded file must match"
+
+[dependencies]
+kk-evidence = { path = "../kk-evidence" }
+kk-fetch = { path = "../kk-fetch" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints]
+workspace = true

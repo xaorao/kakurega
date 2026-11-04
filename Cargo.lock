@@ -2532,6 +2532,7 @@ dependencies = [
  "kk-service",
  "kk-tui",
  "kk-types",
+ "kk-update",
  "rmcp",
  "serde_json",
  "tokio",
@@ -2745,6 +2746,16 @@ name = "kk-types"
 version = "0.0.1"
 dependencies = [
  "proptest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "kk-update"
+version = "0.0.1"
+dependencies = [
+ "kk-evidence",
+ "kk-fetch",
  "serde",
  "serde_json",
 ]
