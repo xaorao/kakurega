@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, shell, systemPreferences, session } from "electron";
+import { app, BrowserWindow, dialog, shell, systemPreferences, session, Notification } from "electron";
 import { spawn, execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -7,11 +7,22 @@ import { homedir } from "node:os";
 import { readAdmin, adminClient } from "./admin.mjs";
 import { createApprover } from "./approval.mjs";
 import { isAppUrl, allowPermission, mayOpenExternally, windowOptions } from "./policy.mjs";
+import { createRestartPolicy, rendererCrashed } from "./recovery.mjs";
 
 const dataDir = process.env.KAKUREGA_DATA_DIR ?? join(homedir(), ".kakurega");
 const kakuBin = process.env.KAKU_BIN;
 let child = null;
 let window = null;
+// The companion listens on a new port every time it starts, so everything that talks to it reads the current one.
+let current = null;
+const companionPolicy = createRestartPolicy();
+const rendererPolicy = createRestartPolicy({ baseDelayMs: 0 });
+
+function tell(title, body) {
+  try {
+    if (Notification.isSupported()) new Notification({ title, body }).show();
+  } catch {}
+}
 
 function enclaveSigner() {
   const blob = join(dataDir, "approver.enclave");
@@ -69,18 +80,41 @@ async function confirm(text) {
   return r.response === 1;
 }
 
-async function start() {
-  if (kakuBin) {
-    child = spawn(kakuBin, ["serve", "--data-dir", dataDir, ...(process.env.KAKU_ARGS ? process.env.KAKU_ARGS.split(" ") : [])], { stdio: "ignore" });
-    child.on("exit", () => {
-      if (!app.isQuitting) dialog.showErrorBox("Kakurega stopped", "The local companion exited. Restart the app.");
-    });
-  }
+async function connect() {
   const admin = await waitForAdmin();
   const client = adminClient(admin);
   const pairing = await client.post("/admin/pairing");
   if (pairing.status !== 200) throw new Error("could not get a pairing link");
+  current = { admin, client, code: pairing.json.code };
+}
 
+function launchCompanion() {
+  child = spawn(kakuBin, ["serve", "--data-dir", dataDir, ...(process.env.KAKU_ARGS ? process.env.KAKU_ARGS.split(" ") : [])], { stdio: "ignore" });
+  const mine = child;
+  mine.on("exit", () => {
+    if (app.isQuitting || child !== mine) return;
+    const d = companionPolicy.next();
+    if (!d.restart) {
+      dialog.showErrorBox("Kakurega stopped", "The local companion keeps stopping, so it was not started again. Your data is safe. Quit and open Kakurega again; if it keeps happening, check the activity log.");
+      return;
+    }
+    setTimeout(async () => {
+      try {
+        launchCompanion();
+        await connect();
+        await window?.loadURL(`${current.admin.origin}/#pair=${current.code}`);
+        tell("Kakurega restarted", "The local companion stopped and was started again. Anything that was running at that moment was stopped; nothing was sent anywhere.");
+      } catch (e) {
+        dialog.showErrorBox("Kakurega stopped", `The local companion could not be restarted: ${e.message ?? e}`);
+      }
+    }, d.delayMs);
+  });
+}
+
+async function start() {
+  if (kakuBin) launchCompanion();
+  await connect();
+  const { admin, code } = current;
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(allowPermission()));
   session.defaultSession.setPermissionCheckHandler(() => allowPermission());
   session.defaultSession.setDevicePermissionHandler(() => false);
@@ -91,31 +125,49 @@ async function start() {
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event, url) => {
-    if (isAppUrl(url, admin.origin)) return;
+    if (isAppUrl(url, current.admin.origin)) return;
     event.preventDefault();
     if (mayOpenExternally(url)) shell.openExternal(url);
   });
   window.webContents.on("will-redirect", (event, url) => {
-    if (!isAppUrl(url, admin.origin)) event.preventDefault();
+    if (!isAppUrl(url, current.admin.origin)) event.preventDefault();
   });
   window.webContents.on("will-frame-navigate", (event) => {
-    if (!isAppUrl(event.url, admin.origin)) event.preventDefault();
+    if (!isAppUrl(event.url, current.admin.origin)) event.preventDefault();
   });
   // will-navigate and will-frame-navigate do not fire for every target (about:blank slips through), so any
   // top-level page that is not the app is replaced at once.
   window.webContents.on("did-navigate", (_e, url) => {
-    if (!isAppUrl(url, admin.origin)) window.loadURL(`${admin.origin}/`).catch(() => {});
+    if (!isAppUrl(url, current.admin.origin)) window.loadURL(`${current.admin.origin}/`).catch(() => {});
   });
   window.webContents.on("will-attach-webview", (event) => event.preventDefault());
   window.once("ready-to-show", () => window.show());
-  await window.loadURL(`${admin.origin}/#pair=${pairing.json.code}`);
+  window.webContents.on("render-process-gone", (_e, details) => {
+    if (!rendererCrashed(details) || app.isQuitting) return;
+    const d = rendererPolicy.next();
+    if (!d.restart) {
+      dialog.showErrorBox("Kakurega window stopped", "The window keeps crashing, so it was not reloaded again. Quit and open Kakurega again.");
+      return;
+    }
+    window.webContents.reload();
+    tell("Kakurega reloaded the window", "The window crashed and was reloaded. Your data and any running reviews were not affected.");
+  });
+  let asking = false;
+  window.on("unresponsive", async () => {
+    if (asking || app.isQuitting) return;
+    asking = true;
+    const r = await dialog.showMessageBox(window, { type: "warning", title: "Kakurega is not responding", message: "The window is not responding.", buttons: ["Wait", "Reload the window"], defaultId: 0, cancelId: 0 });
+    asking = false;
+    if (r.response === 1) window.webContents.reload();
+  });
+  await window.loadURL(`${admin.origin}/#pair=${code}`);
 
   const signer = (id) => {
     const f = enclaveSigner() ?? softwareSigner();
     return f ? f(id) : Promise.reject(new Error("no approver key is enrolled on this computer"));
   };
   Object.defineProperty(signer, "ownsDialog", { get: () => enclaveSigner() !== null });
-  const pollOnce = createApprover({ client, confirm, authenticate, sign: signer });
+  const pollOnce = createApprover({ client: { get: (p) => current.client.get(p), post: (p, b) => current.client.post(p, b) }, confirm, authenticate, sign: signer });
   setInterval(() => pollOnce().catch(() => {}), 1000);
 }
 
@@ -138,6 +190,8 @@ app.whenReady().then(() => (app.isQuitting ? undefined : start())).catch((e) => 
 });
 app.on("before-quit", () => {
   app.isQuitting = true;
-  child?.kill();
+  const c = child;
+  child = null;
+  c?.kill();
 });
 app.on("window-all-closed", () => app.quit());

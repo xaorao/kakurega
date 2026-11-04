@@ -17,4 +17,5 @@ cd '$repo' && cargo build -p kk-cli >/dev/null
 export ELECTRON_BIN=\$HOME/kk-desktop/node_modules/electron/dist/electron DESKTOP_APP_DIR=\$HOME/kk-desktop KAKU_BIN=\$HOME/kk-target/debug/kaku
 KK_WORK=/tmp/kk-attack timeout 400 xvfb-run -a node tests/e2e/desktop_attack.mjs
 KK_WORK=/tmp/kk-linux timeout 500 xvfb-run -a node tests/e2e/desktop_linux.mjs
+KK_WORK=/tmp/kk-recovery timeout 500 xvfb-run -a node tests/e2e/desktop_recovery.mjs
 "

@@ -101,3 +101,19 @@ test("ds-sw a signer that does not own the dialog gets the shell's confirmation 
   assert.equal((await no())[0].outcome, "denied");
   assert.deepEqual(asked2, [], "nothing was signed after a refusal");
 });
+
+import { createRestartPolicy, rendererCrashed } from "../src/recovery.mjs";
+
+test("ds10 a crashing part is restarted a few times with growing waits, then reported instead of looping", () => {
+  const p = createRestartPolicy({ max: 3, windowMs: 1000, baseDelayMs: 100 });
+  assert.deepEqual([p.next(0), p.next(10), p.next(20)].map((d) => d.delayMs), [100, 200, 400]);
+  assert.equal(p.next(30).restart, false);
+  assert.equal(p.next(900).restart, false, "still inside the window");
+  assert.equal(p.next(1021).restart, true, "old crashes age out, so a part that was fine for a while gets another chance");
+});
+
+test("ds11 only a real crash counts: a window closing normally does not", () => {
+  assert.equal(rendererCrashed({ reason: "clean-exit" }), false);
+  for (const reason of ["crashed", "oom", "killed", "launch-failed", "integrity-failure", "abnormal-exit"]) assert.equal(rendererCrashed({ reason }), true, reason);
+  assert.equal(rendererCrashed(undefined), false);
+});
