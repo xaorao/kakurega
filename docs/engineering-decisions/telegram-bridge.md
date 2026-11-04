@@ -28,4 +28,6 @@ Real Telegram delivery, group chats, webhooks, media, rate limits imposed by Tel
 
 ## Update (retrospective audit, matrix C rows 3.4 and 3.7)
 - Built: a flood limit (at most five commands from the bound chat in ten seconds, then silence and no admin requests; strangers do not count) tg20; the phone's `/` menu is set once at start to exactly the three commands the bridge answers (`setMyCommands`; MENU test tg21 and a fake-server check in `telegram_fake.py`); `kaku telegram doctor` (token file is a regular, non-linked file readable only by the owner; Telegram accepts the token; no webhook; chat paired; no stale code) and the bridge now refuses a linked token file (tg22).
-- Still not built: the status file and `kaku telegram status`, approval-notification hygiene (updating a stale "approval waiting" message), non-consequential buttons, using the vault for the token.
+- Still not built: the status file and `kaku telegram status`, non-consequential buttons, using the vault for the token.
+
+- Built (approval-notice hygiene): the bridge used to treat any approval the service reported (including approved and denied ones) as "waiting"; it now announces only the state `waiting`. A notice it sent is remembered by message id for this run (at most 100); when that approval stops waiting, the same message is edited to say so, once (tg24-tg26, `telegram_fake.py` 28/28 with a fake `editMessageText`). After a bridge restart an older notice cannot be edited (no id), so nothing is sent for it. Mutations of the state rule and the untracked-edit skip fail tests.

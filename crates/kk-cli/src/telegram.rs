@@ -30,10 +30,19 @@ pub struct Bridge {
     recent: std::collections::VecDeque<Instant>,
 }
 
+/// How a message relates to earlier ones: `Track` remembers the sent message under a key so a later `Edit` with the same key
+/// can replace its text (an "approval is waiting" notice that stops being true should not keep saying so).
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Note {
+    Track(String),
+    Edit(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Out {
     pub chat: i64,
     pub text: String,
+    pub note: Option<Note>,
 }
 
 fn plain(id: &str) -> String {
@@ -110,7 +119,7 @@ impl Bridge {
                     if fresh && !given.is_empty() && code == given {
                         self.pairing_code = None;
                         self.bound_chat = Some(chat);
-                        return (vec![Out { chat, text: "Paired. I will tell you when a review finishes or an approval is waiting. I never send file contents. Commands: /status /reviews /help.".into() }], Some(chat));
+                        return (vec![Out { chat, text: "Paired. I will tell you when a review finishes or an approval is waiting. I never send file contents. Commands: /status /reviews /help.".into(), ..Default::default() }], Some(chat));
                     }
                     // While a pairing window is open the owner needs to know why it did not work. Five wrong tries close it.
                     if !fresh || attempts + 1 >= 5 {
@@ -118,7 +127,7 @@ impl Bridge {
                     } else {
                         self.pairing_code = Some((code, issued, attempts + 1));
                     }
-                    return (vec![Out { chat, text: "That pairing code is wrong or has expired. Run `kaku telegram pair` again for a new one.".into() }], None);
+                    return (vec![Out { chat, text: "That pairing code is wrong or has expired. Run `kaku telegram pair` again for a new one.".into(), ..Default::default() }], None);
                 }
                 (vec![], None)
             }
@@ -160,6 +169,7 @@ impl Bridge {
                     vec![Out {
                         chat,
                         text: reply.chars().take(MAX_MESSAGE).collect(),
+                        ..Default::default()
                     }],
                     None,
                 )
@@ -190,12 +200,23 @@ impl Bridge {
                         state_word(&state),
                         j["findings_confirmed"].as_u64().unwrap_or(0)
                     ),
+                    ..Default::default()
                 });
             }
-            let waiting = j["approval"].as_str().is_some() && j["delivered"].is_null();
+            // the service reports the approval's state here: only "waiting" means the owner still has to decide
+            let waiting = j["approval"].as_str() == Some("waiting") && j["delivered"].is_null();
             let was = self.seen_approvals.insert(id.clone(), waiting);
             if self.primed && waiting && was != Some(true) {
-                out.push(Out { chat, text: format!("An approval for {id} is waiting on your computer. Nothing is sent until you approve there.") });
+                out.push(Out { chat, text: format!("An approval for {id} is waiting on your computer. Nothing is sent until you approve there."), note: Some(Note::Track(format!("approval:{id}"))) });
+            }
+            if self.primed && !waiting && was == Some(true) {
+                out.push(Out {
+                    chat,
+                    text: format!(
+                        "The approval notice for {id} is out of date: it is no longer waiting."
+                    ),
+                    note: Some(Note::Edit(format!("approval:{id}"))),
+                });
             }
         }
         self.primed = true;
@@ -380,6 +401,7 @@ pub fn run(args: &[String]) -> u8 {
     println!("Telegram bridge running. It sends counts and ids only, never file contents. Ctrl-C stops it.");
     let mut offset: i64 = 0;
     let mut outbox = Outbox::default();
+    let mut tracked: BTreeMap<String, i64> = BTreeMap::new();
     let mut last_poll = Instant::now() - Duration::from_secs(10);
     let mut status = Status::default();
     let mut status_written = Instant::now() - Duration::from_secs(60);
@@ -392,7 +414,7 @@ pub fn run(args: &[String]) -> u8 {
             eprintln!("the chat binding was removed: no further messages will be sent");
         }
         outbox.flush(Instant::now(), &mut |o| {
-            let r = send_once(&agent, &api, &token, o);
+            let r = deliver(&agent, &api, &token, o, &mut tracked);
             match &r {
                 SendOutcome::Delivered => status.last_send_ok = Some(unix_now()),
                 SendOutcome::RetryAfter(_) => {
@@ -657,7 +679,69 @@ pub fn classify_send(status: u16, body: &str) -> SendOutcome {
     }
 }
 
-fn send_once(agent: &ureq::Agent, api: &str, token: &str, o: &Out) -> SendOutcome {
+/// The id Telegram gave a sent message, if the answer holds one.
+pub fn message_id_of(body: &str) -> Option<i64> {
+    serde_json::from_str::<Value>(body)
+        .ok()?
+        .get("result")?
+        .get("message_id")?
+        .as_i64()
+}
+
+/// Remembers at most this many sent notices that may still be edited.
+pub const MAX_TRACKED: usize = 100;
+
+/// The message an edit applies to: none when that notice was never sent by this bridge run.
+pub fn edit_target(o: &Out, tracked: &BTreeMap<String, i64>) -> Option<i64> {
+    match &o.note {
+        Some(Note::Edit(key)) => tracked.get(key).copied(),
+        _ => None,
+    }
+}
+
+/// Sends one message, or edits an earlier one. A notice that was never sent (or was sent before this bridge started) has
+/// nothing to edit, so editing it is quietly done.
+fn deliver(
+    agent: &ureq::Agent,
+    api: &str,
+    token: &str,
+    o: &Out,
+    tracked: &mut BTreeMap<String, i64>,
+) -> SendOutcome {
+    if let Some(Note::Edit(key)) = &o.note {
+        let Some(mid) = edit_target(o, tracked) else {
+            return SendOutcome::Delivered;
+        };
+        let url = format!("{api}/bot{token}/editMessageText");
+        let r = match agent.post(&url).send_json(json!({"chat_id": o.chat, "message_id": mid, "text": o.text, "disable_web_page_preview": true})) {
+            Ok(mut r) => {
+                let status = r.status().as_u16();
+                let body = r.body_mut().read_to_string().unwrap_or_default();
+                classify_send(status, &body)
+            }
+            Err(e) => {
+                eprintln!("could not reach Telegram to edit a message: {}", scrub(&e.to_string(), token));
+                SendOutcome::Retry
+            }
+        };
+        if matches!(r, SendOutcome::Delivered | SendOutcome::Drop(_)) {
+            tracked.remove(key);
+        }
+        return r;
+    }
+    let (r, id) = send_once(agent, api, token, o);
+    if let (SendOutcome::Delivered, Some(Note::Track(key)), Some(id)) = (&r, &o.note, id) {
+        if tracked.len() >= MAX_TRACKED {
+            if let Some(first) = tracked.keys().next().cloned() {
+                tracked.remove(&first);
+            }
+        }
+        tracked.insert(key.clone(), id);
+    }
+    r
+}
+
+fn send_once(agent: &ureq::Agent, api: &str, token: &str, o: &Out) -> (SendOutcome, Option<i64>) {
     let url = format!("{api}/bot{token}/sendMessage");
     match agent
         .post(&url)
@@ -666,14 +750,14 @@ fn send_once(agent: &ureq::Agent, api: &str, token: &str, o: &Out) -> SendOutcom
         Ok(mut r) => {
             let status = r.status().as_u16();
             let body = r.body_mut().read_to_string().unwrap_or_default();
-            classify_send(status, &body)
+            (classify_send(status, &body), message_id_of(&body))
         }
         Err(e) => {
             eprintln!(
                 "could not reach Telegram to send a message: {}",
                 scrub(&e.to_string(), token)
             );
-            SendOutcome::Retry
+            (SendOutcome::Retry, None)
         }
     }
 }
@@ -902,7 +986,7 @@ mod tests {
             n[0].text
         );
         assert!(b.poll_notifications(&mut f).is_empty(), "no repeat");
-        f.jobs = json!({"jobs": [{"id": "job-1", "state": "ready", "approval": "appr-1", "delivered": null, "findings_confirmed": 2}]});
+        f.jobs = json!({"jobs": [{"id": "job-1", "state": "ready", "approval": "waiting", "delivered": null, "findings_confirmed": 2}]});
         let n = b.poll_notifications(&mut f);
         assert_eq!(n.len(), 1);
         assert!(
@@ -913,20 +997,21 @@ mod tests {
                     .contains("Nothing is sent until you approve there")
         );
         assert!(b.poll_notifications(&mut f).is_empty());
-        f.jobs = json!({"jobs": [{"id": "job-1", "state": "ready", "approval": "appr-1", "delivered": {"name": "x"}, "findings_confirmed": 2}, {"id": "job-2\u{1b}[2J<b>", "state": "failed", "approval": null, "delivered": null}]});
+        f.jobs = json!({"jobs": [{"id": "job-1", "state": "ready", "approval": "waiting", "delivered": {"name": "x"}, "findings_confirmed": 2}, {"id": "job-2\u{1b}[2J<b>", "state": "failed", "approval": null, "delivered": null}]});
         let n = b.poll_notifications(&mut f);
         assert_eq!(
             n.len(),
-            1,
-            "a delivered release is not an approval waiting, a new failure is one message"
+            2,
+            "the old approval notice is corrected, and a new failure is one message"
         );
+        assert!(matches!(&n[0].note, Some(Note::Edit(k)) if k == "approval:job-1"));
         assert!(
-            !n[0].text.contains('\u{1b}') && !n[0].text.contains('<'),
+            !n[1].text.contains('\u{1b}') && !n[1].text.contains('<'),
             "ids are reduced to safe characters: {}",
-            n[0].text
+            n[1].text
         );
         let mut late = Bridge::new(Some(7));
-        f.jobs = json!({"jobs": [{"id": "job-9", "state": "ready", "approval": "appr-9", "delivered": null, "findings_confirmed": 1}]});
+        f.jobs = json!({"jobs": [{"id": "job-9", "state": "ready", "approval": "waiting", "delivered": null, "findings_confirmed": 1}]});
         assert!(
             late.poll_notifications(&mut f).is_empty(),
             "a bridge that starts after things happened does not replay old news"
@@ -1066,6 +1151,7 @@ mod tests {
         let out = |t: &str| Out {
             chat: 1,
             text: t.into(),
+            ..Default::default()
         };
         let t0 = Instant::now() + Duration::from_secs(1);
         let mut box_ = Outbox::default();
@@ -1260,7 +1346,100 @@ mod tests {
         o.push(Out {
             chat: 1,
             text: "x".into(),
+            ..Default::default()
         });
         assert_eq!(o.depth(), 1);
+    }
+
+    #[test]
+    fn tg24_an_approval_notice_that_stops_being_true_is_corrected_once_under_the_same_key() {
+        let mut f = fake();
+        let mut b = Bridge::new(Some(7));
+        b.poll_notifications(&mut f);
+        let job = |approval: Value, delivered: Value| json!({"jobs": [{"id": "job-1", "state": "ready", "approval": approval, "delivered": delivered, "findings_confirmed": 1}]});
+        f.jobs = job(json!("waiting"), Value::Null);
+        let n = b.poll_notifications(&mut f);
+        assert!(
+            n.iter()
+                .any(|o| o.note == Some(Note::Track("approval:job-1".into()))),
+            "the waiting notice is tracked"
+        );
+        assert!(b.poll_notifications(&mut f).is_empty());
+        // the approval is withdrawn without delivery: the notice is corrected
+        f.jobs = job(Value::Null, Value::Null);
+        let n = b.poll_notifications(&mut f);
+        assert_eq!(n.len(), 1);
+        assert_eq!(n[0].note, Some(Note::Edit("approval:job-1".into())));
+        assert!(
+            n[0].text.contains("no longer waiting") && !n[0].text.contains("approve there"),
+            "{}",
+            n[0].text
+        );
+        assert!(
+            b.poll_notifications(&mut f).is_empty(),
+            "corrected once, not every poll"
+        );
+        // an approval that was granted is not waiting either, and a state the bridge does not know is not announced
+        f.jobs = job(json!("waiting"), Value::Null);
+        assert_eq!(b.poll_notifications(&mut f).len(), 1);
+        f.jobs = job(json!("approved"), Value::Null);
+        let n = b.poll_notifications(&mut f);
+        assert_eq!(n.len(), 1);
+        assert_eq!(n[0].note, Some(Note::Edit("approval:job-1".into())));
+        f.jobs = job(json!("denied"), Value::Null);
+        assert!(b.poll_notifications(&mut f).is_empty());
+        f.jobs = job(json!("something-new"), Value::Null);
+        assert!(b.poll_notifications(&mut f).is_empty());
+        // a later approval for the same job is a new notice with its own tracking
+        f.jobs = job(json!("waiting"), Value::Null);
+        let n = b.poll_notifications(&mut f);
+        assert_eq!(n.len(), 1);
+        assert_eq!(n[0].note, Some(Note::Track("approval:job-1".into())));
+        // a job that never had an approval notice is never "corrected"
+        let mut fresh = Bridge::new(Some(7));
+        f.jobs = job(Value::Null, Value::Null);
+        fresh.poll_notifications(&mut f);
+        assert!(fresh.poll_notifications(&mut f).is_empty());
+    }
+
+    #[test]
+    fn tg25_the_message_id_is_read_from_telegrams_answer_and_nothing_else_is() {
+        assert_eq!(
+            message_id_of(r#"{"ok":true,"result":{"message_id":42,"chat":{"id":7}}}"#),
+            Some(42)
+        );
+        for bad in [
+            "",
+            "not json",
+            r#"{"ok":true}"#,
+            r#"{"result":{"message_id":"x"}}"#,
+            r#"{"result":[]}"#,
+        ] {
+            assert_eq!(message_id_of(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn tg26_an_edit_applies_only_to_a_notice_this_run_sent() {
+        let mut tracked = BTreeMap::new();
+        let edit = Out {
+            chat: 1,
+            text: "x".into(),
+            note: Some(Note::Edit("approval:job-1".into())),
+        };
+        assert_eq!(
+            edit_target(&edit, &tracked),
+            None,
+            "nothing to edit after a restart"
+        );
+        tracked.insert("approval:job-1".to_string(), 77);
+        assert_eq!(edit_target(&edit, &tracked), Some(77));
+        let other = Out {
+            note: Some(Note::Edit("approval:job-2".into())),
+            ..edit.clone()
+        };
+        assert_eq!(edit_target(&other, &tracked), None);
+        let plain = Out { note: None, ..edit };
+        assert_eq!(edit_target(&plain, &tracked), None);
     }
 }

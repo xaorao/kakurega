@@ -68,13 +68,21 @@ class H(BaseHTTPRequestHandler):
             self.reply({"ok": True, "result": True})
         elif self.path == f"/bot{TOKEN}/sendMessage":
             with lock:
+                msg_ids[0] += 1
+                body["_message_id"] = msg_ids[0]
                 sent.append(body)
+            self.reply({"ok": True, "result": {"message_id": msg_ids[0]}})
+        elif self.path == f"/bot{TOKEN}/editMessageText":
+            with lock:
+                edits.append(body)
             self.reply({"ok": True, "result": {}})
         else:
             self.send_response(404); self.end_headers()
 
 
 menus = []
+edits = []
+msg_ids = [100]
 fake = HTTPServer(("127.0.0.1", 0), H)
 threading.Thread(target=fake.serve_forever, daemon=True).start()
 api = f"http://127.0.0.1:{fake.server_port}"
@@ -155,6 +163,19 @@ try:
     m = wait_sent(lambda m: "approval for " + job in m["text"])
     check("a waiting approval is announced and says to decide on the computer", m is not None and "Nothing is sent until you approve there" in m["text"])
 
+    aid = ap.get("id") or ap.get("approval") or ap.get("approval_id")
+    adm(f"/admin/approvals/{aid}/deny", {})
+    e = None
+    end = time.time() + 20
+    while time.time() < end and e is None:
+        with lock:
+            e = next((x for x in edits if x.get("message_id") == m["_message_id"]), None)
+        time.sleep(0.2)
+    check("when the approval stops waiting, the earlier notice is edited in place, not followed by a new message", e is not None and "no longer waiting" in e["text"] and "approve there" not in e["text"], str(e)[:140])
+    time.sleep(3)
+    with lock:
+        again = [x for x in edits if x.get("message_id") == m["_message_id"]]
+    check("and it is edited only once", len(again) == 1, str(len(again)))
     b1.terminate(); b1.wait(timeout=10)
     n_before = len(sent)
     b2 = start_bridge()
