@@ -153,6 +153,26 @@ pub fn run(args: &[String]) -> u8 {
             }
         }
     }
+    if let Some(dis) = d.get("disclosure").filter(|v| v.is_object()) {
+        println!(
+            "\nCumulative disclosure: {} of {} project files would have been shown to this recipient ({} earlier release(s)).",
+            dis["files_after"], dis["project_files"], dis["releases_before"]
+        );
+        for r in dis["reasons"].as_array().into_iter().flatten() {
+            println!("  ! {}", r.as_str().unwrap_or(""));
+        }
+        println!(
+            "  Not checked: {}",
+            dis["not_checked"]
+                .as_array()
+                .map(|a| a
+                    .iter()
+                    .filter_map(|x| x.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" "))
+                .unwrap_or_default()
+        );
+    }
     println!("\nWithheld and never released:");
     for r in d["removed"].as_array().into_iter().flatten() {
         println!(

@@ -125,6 +125,7 @@ pub struct Service {
     store: Mutex<Vault>,
     ledger: Mutex<Ledger<SystemClock>>,
     memory: Mutex<kk_memory::Memories>,
+    disclosure: Mutex<kk_disclosure::Ledger>,
     pub test_mode: bool,
 }
 
@@ -145,6 +146,53 @@ fn init_store(v: &Vault) -> Result<(), String> {
 }
 
 impl Service {
+    fn plan_for(repo: &std::path::Path, recipient: &str, s: &Snapshot) -> kk_disclosure::Plan {
+        let mut paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for f in s.findings.iter().filter(|f| f.reproduced) {
+            paths.extend(f.sample.iter().cloned());
+        }
+        let project_files = s
+            .files
+            .iter()
+            .filter(|f| !f.withheld && !f.path.starts_with("kakurega-memory/"))
+            .count();
+        kk_disclosure::Plan {
+            recipient: recipient.to_string(),
+            source_paths: paths.into_iter().collect(),
+            project_files,
+            project: repo.to_string_lossy().into_owned(),
+        }
+    }
+
+    fn disclosure_plan(&self, job_id: &str, s: &Snapshot) -> Option<kk_disclosure::Plan> {
+        let g = self.inner.lock().expect("lock");
+        let j = g.jobs.get(job_id)?;
+        Some(Self::plan_for(&j.repo, &j.recipient, s))
+    }
+
+    fn disclosure_json(&self, job_id: &str, s: &Snapshot) -> (Value, kk_disclosure::Verdict) {
+        let Some(plan) = self.disclosure_plan(job_id, s) else {
+            return (Value::Null, kk_disclosure::Verdict::Allow);
+        };
+        match self.disclosure.lock().expect("lock").assess(now(), &plan) {
+            Ok(a) => {
+                let v = a.verdict.clone();
+                (
+                    json!({
+                        "verdict": match a.verdict { kk_disclosure::Verdict::Allow => "allow", kk_disclosure::Verdict::Escalate => "review", kk_disclosure::Verdict::Block => "block" },
+                        "reasons": a.reasons, "checked": a.checked, "not_checked": a.not_checked,
+                        "files_after": a.files_after, "project_files": plan.project_files, "releases_before": a.releases_before,
+                    }),
+                    v,
+                )
+            }
+            Err(_) => (
+                json!({"verdict": "block", "reasons": ["the disclosure ledger could not be read, so the release is held"], "checked": [], "not_checked": []}),
+                kk_disclosure::Verdict::Block,
+            ),
+        }
+    }
+
     fn memory_files(&self) -> Vec<kk_review::import::ImportedFile> {
         let mem = self.memory.lock().expect("lock");
         let Ok(clearance) = mem.owner_clearance() else {
@@ -186,6 +234,11 @@ impl Service {
             .map_err(|e| e.to_string())?;
         let store = open_vault(data_dir, "jobs.db")?;
         init_store(&store)?;
+        let disclosure = kk_disclosure::Ledger::open(
+            open_vault(data_dir, "disclosure.db")?,
+            kk_disclosure::Policy::default(),
+        )
+        .map_err(|e| e.to_string())?;
         let memory = {
             use sha2::{Digest, Sha256};
             let mut h = Sha256::new();
@@ -269,6 +322,7 @@ impl Service {
             store: Mutex::new(store),
             ledger: Mutex::new(ledger),
             memory: Mutex::new(memory),
+            disclosure: Mutex::new(disclosure),
             test_mode,
         }))
     }
@@ -814,7 +868,11 @@ fn draft_json(s: &Snapshot) -> Value {
 async fn release(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
     match snap_of(&svc, &id) {
         Err(r) => r,
-        Ok(s) => Json(draft_json(&s)).into_response(),
+        Ok(s) => {
+            let mut d = draft_json(&s);
+            d["disclosure"] = svc.disclosure_json(&id, &s).0;
+            Json(d).into_response()
+        }
     }
 }
 
@@ -830,6 +888,10 @@ async fn request_approval(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String
             "there is nothing to approve",
         );
     };
+    let (dj, verdict) = svc.disclosure_json(&id, &s);
+    if verdict == kk_disclosure::Verdict::Block {
+        return (StatusCode::CONFLICT, Json(json!({"error": {"code": "DISCLOSURE_BLOCKED", "message": dj["reasons"].as_array().map(|r| r.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" ")).unwrap_or_default()}, "disclosure": dj}))).into_response();
+    }
     let (aid, rec, job) = {
         let mut g = svc.inner.lock().expect("lock");
         if g.jobs.get(&id).and_then(|j| j.approval.as_ref()).is_some() {
@@ -893,6 +955,9 @@ async fn do_deliver(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> 
             "there is nothing to deliver",
         );
     };
+    if svc.disclosure_json(&id, &s).1 == kk_disclosure::Verdict::Block {
+        return error(StatusCode::CONFLICT, "DISCLOSURE_BLOCKED", "other releases to this recipient since the approval put the total over the disclosure limit; nothing was sent");
+    }
     let (aid, digest) = {
         let mut g = svc.inner.lock().expect("lock");
         let Some(aid) = g.jobs.get(&id).and_then(|j| j.approval.clone()) else {
@@ -962,11 +1027,22 @@ async fn do_deliver(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> 
     );
     let (response, rec, job) = {
         let mut g = svc.inner.lock().expect("lock");
+        let disclosure_plan = g
+            .jobs
+            .get(&id)
+            .map(|j| Service::plan_for(&j.repo, &j.recipient, &s));
         let a = g.approvals.get_mut(&aid).expect("approval exists");
         let mut lease = a.lease();
         let mut job_out = None;
         let response = match outcome {
             Ok(EffState::Confirmed) => {
+                if let Some(plan) = &disclosure_plan {
+                    let _ =
+                        svc.disclosure
+                            .lock()
+                            .expect("lock")
+                            .record_delivered(now(), plan, &digest);
+                }
                 let _ = lease.complete();
                 a.set(&lease);
                 let signer = kk_evidence::keys::KeyId::of(&svc.signer_public())
@@ -1070,6 +1146,7 @@ async fn admin_show(axum::Extension(svc): Svc, UrlPath(aid): UrlPath<String>) ->
         Ok(s) => {
             let mut d = draft_json(&s);
             d["approval"] = json!(aid);
+            d["disclosure"] = svc.disclosure_json(&job, &s).0;
             d["job"] = json!(job);
             d["digest"] = json!(digest);
             Json(d).into_response()

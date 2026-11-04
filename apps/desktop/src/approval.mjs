@@ -2,6 +2,8 @@ export function describe(a) {
   const files = (a.files ?? []).map((f) => `  ${f.name}  ${f.bytes} bytes  sha256 ${String(f.sha256 ?? "").slice(0, 16)}`);
   const removed = (a.removed ?? []).map((r) => `  ${r.what} (${r.why})`);
   const notEstablished = (a.not_established ?? []).map((n) => `  - ${n}`);
+  const d = a.disclosure;
+  const disclosure = d ? [`Cumulative disclosure: ${d.files_after} of ${d.project_files} project files would have been shown to this recipient (${d.releases_before} earlier release(s)).`, ...(d.reasons ?? []).map((r) => `  ! ${r}`), `  Not checked: ${(d.not_checked ?? []).join(" ")}`, ""] : [];
   return [
     `Recipient: ${a.recipient}`,
     `Digest: ${a.digest}`,
@@ -9,6 +11,7 @@ export function describe(a) {
     "These exact files will be signed and handed over, nothing else:",
     ...files,
     "",
+    ...disclosure,
     "Withheld and never released:",
     ...(removed.length ? removed : ["  (none)"]),
     "",

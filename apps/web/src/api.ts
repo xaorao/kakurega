@@ -70,7 +70,9 @@ export interface FileEntry { path: string; bytes: number; level: string; compart
 export interface Finding { title: string; file: string; line: number; explanation: string; reproducer: string; status: string; output: string; sample: string[] }
 export interface AuditEntry { request: number; op: string; outcome: string; detail: string }
 export interface ReleaseFile { name: string; bytes: number; sha256: string; text: string | null }
+export interface Disclosure { verdict: "allow" | "review" | "block"; reasons: string[]; checked: string[]; not_checked: string[]; files_after: number; project_files: number; releases_before: number }
 export interface Release {
+  disclosure?: Disclosure;
   available: boolean;
   reason?: string;
   digest?: string;

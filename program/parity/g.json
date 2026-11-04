@@ -199,7 +199,7 @@
   },
   "G29": {
    "status": "PARTIAL",
-   "evidence": "release preview before approval; no pre-send impact estimate of arbitrary text yet"
+   "evidence": "release preview before approval; no pre-send impact estimate of arbitrary text yet; cumulative disclosure card on the release tab"
   },
   "G44": {
    "status": "PARTIAL",
@@ -240,6 +240,10 @@
   "G56": {
    "status": "NOT_BUILT",
    "evidence": null
+  },
+  "G36": {
+   "status": "PARTIAL",
+   "evidence": "kk-disclosure per-recipient ledger of delivered releases: distinct project files shown (aliases linked), review and block thresholds, 24-hour budget, recorded once on delivery (dc01-dc07; mutation-checked); service integration sv14 (aliases, review then block, approver sees the same assessment, another recipient separate); release tab and approval text show it; scripts/e2e. Only source-file coverage and rate are checked (no differencing or cohort checks); thresholds are fixed defaults without a settings screen"
   }
  }
 }

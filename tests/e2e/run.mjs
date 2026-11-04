@@ -75,6 +75,12 @@ try {
   await page.getByRole("button", { name: "Start review" }).click();
   await page.getByRole("tab", { name: "Release" }).waitFor({ timeout: 120000 });
   await page.getByRole("heading", { name: "The exact release" }).waitFor({ timeout: 120000 });
+  const disc = page.getByRole("region", { name: "Cumulative disclosure" });
+  await disc.waitFor();
+  check("the release tab shows how much of the project this recipient has now seen", /\d+ of this project's \d+ files would have been shown/.test(await disc.innerText()));
+  await disc.locator("summary").click();
+  check("and says what was not checked", (await disc.innerText()).includes("combined excerpts"));
+  await axeCheck(page, "release tab with the disclosure card");
   check("review runs in the sandbox and opens on the release", true);
   await page.screenshot({ path: join(shots, "02-release.png"), fullPage: true });
   await axeCheck(page, "release");

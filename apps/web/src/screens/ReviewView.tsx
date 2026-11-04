@@ -273,6 +273,22 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
               <h3>{t("rel.notEstablished")}</h3>
               <ul class="plain"><For each={r().not_established}>{(x) => <li>{x}</li>}</For></ul>
             </div>
+            <Show when={r().disclosure}>
+              {(d) => (
+                <div class="card stack" role="region" aria-label={t("disc.heading")}>
+                  <h2>{t("disc.heading")}</h2>
+                  <p>{t("disc.summary", { files: d().files_after, total: d().project_files, before: d().releases_before })}</p>
+                  <p class={d().verdict === "allow" ? "ok" : d().verdict === "block" ? "bad" : "warn"}><strong>{t(`disc.${d().verdict}` as Key)}</strong></p>
+                  <For each={d().reasons}>{(x) => <p class="warn">{x}</p>}</For>
+                  <details>
+                    <summary>{t("disc.checked")}</summary>
+                    <ul class="plain"><For each={d().checked}>{(x) => <li>{x}</li>}</For></ul>
+                    <p class="muted">{t("disc.notChecked")}</p>
+                    <ul class="plain"><For each={d().not_checked}>{(x) => <li>{x}</li>}</For></ul>
+                  </details>
+                </div>
+              )}
+            </Show>
             <div class="card stack" aria-live="polite">
               <h2>{t("appr.title")}</h2>
               <Show when={approval().state === "none"}>

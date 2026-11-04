@@ -16,6 +16,7 @@ use std::time::Duration;
 
 const REPRO: &str = "from payments.auth import session\nt = session.login('alice')\nassert session.validate(t)\nsession.logout(t)\nprint('REPRODUCED' if session.validate(t) else 'NOT REPRODUCED')\n";
 
+static WALK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 type Seen = Vec<(String, Vec<(String, String, String)>)>;
 static SEEN: std::sync::Mutex<Seen> = std::sync::Mutex::new(Vec::new());
 
@@ -58,6 +59,24 @@ impl JobRunner for CannedRunner {
             explanation: "logout() leaves the token valid".into(),
             reproducer: REPRO.into(),
         };
+        let walker_sample: Option<Vec<String>> =
+            if recipient.to_ascii_lowercase().starts_with("walker") {
+                let mut names: Vec<String> = imp
+                    .files
+                    .iter()
+                    .filter(|f| f.label.level < Level::Restricted && f.path.ends_with(".py"))
+                    .map(|f| f.path.clone())
+                    .collect();
+                names.sort();
+                let step = WALK.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let session = "payments/auth/session.py".to_string();
+                names.retain(|n| n != &session && n != "payments/config.py");
+                let mut sample = vec![session];
+                sample.extend(names.iter().cycle().skip(step).take(1).cloned());
+                Some(sample)
+            } else {
+                None
+            };
         let status = if self.confirm {
             CheckStatus::Reproduced
         } else {
@@ -66,12 +85,14 @@ impl JobRunner for CannedRunner {
         let check = CheckResult {
             status,
             stdout: "REPRODUCED\n".into(),
-            sample_paths: vec![
-                "payments/__init__.py".into(),
-                "payments/auth/__init__.py".into(),
-                "payments/auth/session.py".into(),
-                "payments/auth/tokens.py".into(),
-            ],
+            sample_paths: walker_sample.unwrap_or_else(|| {
+                vec![
+                    "payments/__init__.py".into(),
+                    "payments/auth/__init__.py".into(),
+                    "payments/auth/session.py".into(),
+                    "payments/auth/tokens.py".into(),
+                ]
+            }),
         };
         let index: BTreeMap<String, &kk_review::import::ImportedFile> =
             imp.files.iter().map(|f| (f.path.clone(), f)).collect();
@@ -956,5 +977,113 @@ fn sv13_review_suggestions_wait_for_the_owner_and_stay_flagged_untrusted() {
             .as_array()
             .unwrap()
             .is_empty()
+    );
+}
+
+#[test]
+fn sv14_cumulative_disclosure_reviews_then_blocks_as_a_recipient_sees_more_of_the_project() {
+    let (root, repo) = repo_copy("disclose");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let token = c.security.admin_token().to_string();
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    let names = [
+        "Walker-Audit",
+        "walker audit",
+        "WALKER_audit",
+        "walker-audit ",
+        "walkeraudit",
+        "Walker.Audit",
+        "walker--audit",
+        "WALKERAUDIT",
+    ];
+    let mut verdicts = Vec::new();
+    let mut blocked_at = None;
+    for (i, who) in names.iter().enumerate() {
+        let (_, started) = w.post(
+            "/api/jobs",
+            json!({"repo": repo.to_string_lossy(), "recipient": who}),
+        );
+        let job = started["id"].as_str().unwrap().to_string();
+        wait_for(&w, &job, &["ready"]);
+        let (_, rel) = w.get(&format!("/api/jobs/{job}/release"));
+        let d = rel["disclosure"].clone();
+        assert!(
+            d["checked"].as_array().unwrap().len() >= 2
+                && d["not_checked"].as_array().unwrap().len() >= 3,
+            "{d}"
+        );
+        assert_eq!(
+            d["releases_before"], i as u64,
+            "every spelling lands in the same account: {d}"
+        );
+        verdicts.push(d["verdict"].as_str().unwrap().to_string());
+        let (st, req) = w.post(&format!("/api/jobs/{job}/approval"), json!({}));
+        if d["verdict"] == "block" {
+            assert_eq!(st, 409, "{req}");
+            assert_eq!(req["error"]["code"], "DISCLOSURE_BLOCKED");
+            assert!(
+                req["error"]["message"].as_str().unwrap().contains("files"),
+                "{req}"
+            );
+            blocked_at = Some(i);
+            break;
+        }
+        assert_eq!(st, 202, "{req}");
+        let aid = req["approval"].as_str().unwrap().to_string();
+        let (_, shown) = admin(
+            &base,
+            &token,
+            "GET",
+            &format!("/admin/approvals/{aid}"),
+            None,
+        );
+        assert_eq!(
+            shown["disclosure"]["verdict"], d["verdict"],
+            "the approver sees the same assessment"
+        );
+        let digest = shown["digest"].as_str().unwrap().to_string();
+        admin(
+            &base,
+            &token,
+            "POST",
+            &format!("/admin/approvals/{aid}/approve"),
+            Some(json!({"ack": &digest[..12]})),
+        );
+        assert_eq!(
+            w.post(&format!("/api/jobs/{job}/deliver"), json!({})).0,
+            200
+        );
+    }
+    let blocked_at = blocked_at.expect("the account must reach the limit");
+    assert_eq!(verdicts[0], "allow", "{verdicts:?}");
+    assert!(
+        verdicts.iter().any(|v| v == "review"),
+        "a review step comes before the block: {verdicts:?}"
+    );
+    let first_review = verdicts.iter().position(|v| v == "review").unwrap();
+    assert!(first_review < blocked_at);
+    let (_, other) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "someone-else"}),
+    );
+    let other = other["id"].as_str().unwrap().to_string();
+    wait_for(&w, &other, &["ready"]);
+    assert_eq!(
+        w.get(&format!("/api/jobs/{other}/release")).1["disclosure"]["releases_before"],
+        0,
+        "another recipient starts with an empty account"
     );
 }

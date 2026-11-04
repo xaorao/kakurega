@@ -183,6 +183,10 @@
   "N55": {
    "status": "NOT_BUILT",
    "evidence": null
+  },
+  "N24": {
+   "status": "NOT_BUILT",
+   "evidence": null
   }
  }
 }

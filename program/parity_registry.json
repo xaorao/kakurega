@@ -258,7 +258,7 @@
     "exact text and artifacts a route or recipient will receive, with route properties",
     "Presidio, MIT (for PII hints)"
    ],
-   "evidence": "release preview before approval; no pre-send impact estimate of arbitrary text yet",
+   "evidence": "release preview before approval; no pre-send impact estimate of arbitrary text yet; cumulative disclosure card on the release tab",
    "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Privacy impact preview",
@@ -354,8 +354,8 @@
     "DisclosureAccount (01, 6.5). NIST SP 800-226 is about *differential privacy* evaluation; its composition idea is relevant but our ledger is not DP",
     "NIST SP 800-226 (page exists)"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "kk-disclosure per-recipient ledger of delivered releases: distinct project files shown (aliases linked), review and block thresholds, 24-hour budget, recorded once on delivery (dc01-dc07; mutation-checked); service integration sv14 (aliases, review then block, approver sees the same assessment, another recipient separate); release tab and approval text show it; scripts/e2e. Only source-file coverage and rate are checked (no differencing or cohort checks); thresholds are fixed defaults without a settings screen",
+   "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "Cumulative disclosure budget",
    "trust_reason": "These are the privacy controls themselves: enforced by the kernel outside the model, so no surface may bypass or weaken them; surfaces only render and relay the user's decision."
@@ -1734,8 +1734,8 @@
     "6.5",
     "DA01-DA06"
    ],
-   "evidence": null,
-   "status": "NOT_BUILT",
+   "evidence": "see G36: ledger, thresholds, block and recording are built and tested; differencing, cohort-size and amendment checks (DA02 beyond aliases, DA03-DA05) are not built",
+   "status": "PARTIAL",
    "surface_class": "KERNEL_ALL_SURFACES",
    "title": "DisclosureAccount (cumulative leakage)",
    "trust_reason": "Core security and proof machinery; by definition one implementation shared by every surface so that boundaries, approvals and evidence agree under hostile tests."
