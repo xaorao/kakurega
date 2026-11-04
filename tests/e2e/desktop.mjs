@@ -92,7 +92,9 @@ try {
   await page.getByLabel("Your question").fill("What does this folder describe?");
   await page.getByRole("button", { name: "Ask", exact: true }).click();
   await page.getByRole("heading", { name: /Answer|Unchecked/i }).first().waitFor({ timeout: 60000 });
-  check("document questions work in the desktop window and show a checked or clearly unchecked answer", true);
+  const card = await page.locator("#h-answer").locator("xpath=..").innerText().catch(() => "");
+  check("document questions work in the desktop window and show a checked or clearly unchecked answer", /not proof|not a checked|unchecked/i.test(card) || card.length > 40, card.replace(/\n/g, " | ").slice(0, 160));
+  await page.locator("#h-answer").scrollIntoViewIfNeeded().catch(() => {});
   await page.screenshot({ path: join(shots, "desktop-03-documents.png") });
   check("no console or page errors after the full flow", problems.length === 0, problems.join(" | "));
 } finally {
