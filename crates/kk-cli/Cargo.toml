@@ -1,0 +1,24 @@
+[package]
+name = "kk-cli"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "The kaku command line: serve the local workspace, approve releases in the terminal, verify capsules"
+
+[[bin]]
+name = "kaku"
+path = "src/main.rs"
+
+[dependencies]
+kk-evidence = { path = "../kk-evidence" }
+kk-companion = { path = "../kk-companion" }
+kk-service = { path = "../kk-service" }
+kk-review = { path = "../kk-review" }
+kk-route = { path = "../kk-route" }
+kk-sandbox = { path = "../kk-sandbox" }
+kk-types = { path = "../kk-types" }
+serde_json = "1"
+ureq = { version = "3", default-features = false, features = ["json"] }
+
+[lints]
+workspace = true

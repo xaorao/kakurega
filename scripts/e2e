@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$repo"
+vm="${KK_VM:-kak}"
+limactl start "$vm" >/dev/null 2>&1 || true
+limactl shell "$vm" -- bash -lc ". \$HOME/.cargo/env; cd '$repo' && export CARGO_TARGET_DIR=\$HOME/kk-target RUSTUP_TOOLCHAIN=1.94.1; cargo build --locked -p kk-worker -p kk-sandbox"
+cargo build -p kk-cli
+pnpm --filter @kakurega/web run build
+node tests/e2e/run.mjs

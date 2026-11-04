@@ -1,0 +1,146 @@
+use crate::runner::ReviewRunner;
+use kk_companion::{start, Options};
+use kk_sandbox::Transport;
+use kk_service::{Routes, Service};
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::Arc;
+
+fn vm_home(vm: &str) -> Result<String, String> {
+    let out = Command::new("limactl")
+        .args(["shell", vm, "--", "bash", "-lc", "echo $HOME"])
+        .output()
+        .map_err(|e| format!("limactl is not available: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.lines()
+        .last()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .ok_or_else(|| "could not read the VM home directory".to_string())
+}
+
+pub fn run(args: &[String]) -> u8 {
+    match serve(args) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("kaku serve: {e}");
+            1
+        }
+    }
+}
+
+fn serve(args: &[String]) -> Result<(), String> {
+    let data = crate::data_dir(args);
+    std::fs::create_dir_all(&data).map_err(|e| e.to_string())?;
+    let home = PathBuf::from(std::env::var("HOME").map_err(|_| "HOME is not set")?);
+    let mut roots: Vec<PathBuf> = crate::flags(args, "--root")
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+    if roots.is_empty() {
+        roots.push(home.clone());
+    }
+    let model = crate::flag(args, "--model").unwrap_or_else(|| "qwen2.5:1.5b".into());
+    let ollama = crate::flag(args, "--ollama").unwrap_or_else(|| "http://127.0.0.1:11434".into());
+    let default_transport = if cfg!(target_os = "linux") {
+        "local"
+    } else {
+        "lima"
+    };
+    let transport_name =
+        crate::flag(args, "--transport").unwrap_or_else(|| default_transport.into());
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_default();
+    let (transport, worker_binary) = match transport_name.as_str() {
+        "local" => (
+            Transport::Local,
+            crate::flag(args, "--worker-bin")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| exe_dir.join("kk-worker")),
+        ),
+        "lima" => {
+            let vm = crate::flag(args, "--vm").unwrap_or_else(|| "kak".into());
+            let vh = vm_home(&vm)?;
+            (
+                Transport::Lima {
+                    vm: vm.clone(),
+                    launcher: crate::flag(args, "--launcher")
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| {
+                            PathBuf::from(format!("{vh}/kk-target/debug/kk-sandbox-launch"))
+                        }),
+                },
+                crate::flag(args, "--worker-bin")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from(format!("{vh}/kk-target/debug/kk-worker"))),
+            )
+        }
+        other => return Err(format!("unknown transport `{other}` (use lima or local)")),
+    };
+    let scratch = data.join("scratch");
+    std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
+    let keys = kk_service::keys::load_keys(&data)?;
+    let runner = Arc::new(ReviewRunner {
+        model,
+        ollama,
+        transport,
+        worker_binary,
+        scratch,
+        commitment_key: keys.commitment_key,
+        max_turns: 20,
+        scripted: crate::flag(args, "--scripted").map(PathBuf::from),
+    });
+    drop(keys);
+    let test_mode = crate::flag(args, "--scripted").is_some();
+    let service = Service::new(&data, roots, runner, test_mode)?;
+    let ui_dir = crate::flag(args, "--ui-dir")
+        .map(PathBuf::from)
+        .or_else(|| {
+            [
+                exe_dir.join("../../apps/web/dist"),
+                PathBuf::from("apps/web/dist"),
+            ]
+            .into_iter()
+            .find(|p| p.join("index.html").exists())
+        });
+    let companion = start(Options {
+        ui_dir: ui_dir.clone(),
+        extension: Arc::new(Routes(service.clone())),
+        ..Options::default()
+    })
+    .map_err(|e| e.to_string())?;
+    let admin = serde_json::json!({"port": companion.addr.port(), "token": companion.security.admin_token()});
+    let admin_path = data.join("admin.json");
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let _ = std::fs::remove_file(&admin_path);
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&admin_path)
+            .map_err(|e| e.to_string())?;
+        f.write_all(admin.to_string().as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+    let code = companion.security.issue_pairing_code();
+    println!("Kakurega is running.");
+    println!(
+        "  Open (valid 5 minutes, works once):  http://127.0.0.1:{}/#pair={}",
+        companion.addr.port(),
+        code
+    );
+    println!("  New link later:                      kaku pair");
+    println!("  Approve a release in this terminal:  kaku approve");
+    match &ui_dir {
+        Some(d) => println!("  Web interface from:                  {}", d.display()),
+        None => println!("  No web interface build found (apps/web/dist); only the API is served."),
+    }
+    println!("Press Ctrl-C to stop.");
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(3600));
+    }
+}

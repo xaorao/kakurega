@@ -1152,6 +1152,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "kk-cli"
+version = "0.0.1"
+dependencies = [
+ "kk-companion",
+ "kk-evidence",
+ "kk-review",
+ "kk-route",
+ "kk-sandbox",
+ "kk-service",
+ "kk-types",
+ "serde_json",
+ "ureq",
+]
+
+[[package]]
 name = "kk-companion"
 version = "0.0.1"
 dependencies = [

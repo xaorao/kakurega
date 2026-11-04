@@ -226,7 +226,22 @@ async function run(bytes, pinned, now, expectedRecipient) {
       if (!names.has(item)) stop("claim_evidence_missing");
     }
   }
-  return { valid: true, reason: null, signer, recipient, bindingLevel: level, route, notEstablished, signerPinned: isPinned };
+  return {
+    valid: true,
+    reason: null,
+    signer,
+    recipient,
+    bindingLevel: level,
+    route,
+    notEstablished,
+    signerPinned: isPinned,
+    fileCount: names.size,
+    claimCount: claims.length,
+    created: Number(created),
+    expires: Number(expires),
+    policyVersion,
+    capsuleId,
+  };
 }
 
 function decodeEnvelope(v) {

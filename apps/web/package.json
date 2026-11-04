@@ -1,0 +1,20 @@
+{
+  "name": "@kakurega/web",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "tsc --noEmit && vite build",
+    "test": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kakurega/verifier": "workspace:*",
+    "solid-js": "1.9.9"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vite": "7.1.12",
+    "vite-plugin-solid": "2.11.9"
+  }
+}

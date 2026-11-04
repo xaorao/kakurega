@@ -14,6 +14,7 @@
     "kk-run": 4,
     "kk-review": 5,
     "kk-companion": 2,
-    "kk-service": 6
+    "kk-service": 6,
+    "kk-cli": 7
   }
 }

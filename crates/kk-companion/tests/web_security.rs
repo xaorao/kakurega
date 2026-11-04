@@ -152,7 +152,7 @@ fn ws11_other_origins_cannot_use_the_service_even_from_localhost() {
     let cross = raw(
         &c,
         "GET",
-        "/api/session",
+        "/api/whoami",
         None,
         &[("Cookie", &cookie), ("Sec-Fetch-Site", "cross-site")],
         None,
@@ -161,7 +161,7 @@ fn ws11_other_origins_cannot_use_the_service_even_from_localhost() {
     let same_site_other_port = raw(
         &c,
         "GET",
-        "/api/session",
+        "/api/whoami",
         None,
         &[("Cookie", &cookie), ("Origin", "http://127.0.0.1:9")],
         None,
@@ -203,23 +203,15 @@ fn ws14_sessions_live_on_the_server_and_can_be_revoked_at_once() {
     let (cookie, csrf) = paired(&c);
     let (cookie2, csrf2) = paired(&c);
     assert_eq!(
-        raw(
-            &c,
-            "GET",
-            "/api/session",
-            None,
-            &[("Cookie", &cookie)],
-            None
-        )
-        .status,
+        raw(&c, "GET", "/api/whoami", None, &[("Cookie", &cookie)], None).status,
         200
     );
-    assert_eq!(raw(&c, "GET", "/api/session", None, &[], None).status, 401);
+    assert_eq!(raw(&c, "GET", "/api/whoami", None, &[], None).status, 401);
     assert_eq!(
         raw(
             &c,
             "GET",
-            "/api/session",
+            "/api/whoami",
             None,
             &[("Cookie", "kk_session_1=abc")],
             None
@@ -259,15 +251,7 @@ fn ws14_sessions_live_on_the_server_and_can_be_revoked_at_once() {
     );
     assert_eq!(out.status, 204);
     assert_eq!(
-        raw(
-            &c,
-            "GET",
-            "/api/session",
-            None,
-            &[("Cookie", &cookie)],
-            None
-        )
-        .status,
+        raw(&c, "GET", "/api/whoami", None, &[("Cookie", &cookie)], None).status,
         401,
         "revoked at once"
     );
@@ -275,7 +259,7 @@ fn ws14_sessions_live_on_the_server_and_can_be_revoked_at_once() {
         raw(
             &c,
             "GET",
-            "/api/session",
+            "/api/whoami",
             None,
             &[("Cookie", &cookie2)],
             None
@@ -296,7 +280,7 @@ fn ws14_sessions_live_on_the_server_and_can_be_revoked_at_once() {
         raw(
             &c,
             "GET",
-            "/api/session",
+            "/api/whoami",
             None,
             &[("Cookie", &cookie2)],
             None
@@ -327,7 +311,7 @@ fn ws06_every_response_carries_the_security_headers_even_errors() {
     let c = start(Options::default()).unwrap();
     let replies = [
         raw(&c, "GET", "/api/health", None, &[], None),
-        raw(&c, "GET", "/api/session", None, &[], None),
+        raw(&c, "GET", "/api/whoami", None, &[], None),
         raw(&c, "GET", "/api/health", Some("evil.example"), &[], None),
         raw(&c, "GET", "/nothing", None, &[], None),
     ];
@@ -409,7 +393,7 @@ fn ws07_the_admin_interface_is_for_local_tools_only() {
         raw(
             &c,
             "GET",
-            "/api/session",
+            "/api/whoami",
             None,
             &[("Authorization", &format!("Bearer {token}"))],
             None
@@ -486,5 +470,43 @@ fn ws09_oversized_bodies_are_refused() {
         pair_with(&c, &c.security.issue_pairing_code()).status,
         200,
         "the service is still healthy"
+    );
+}
+
+#[test]
+fn ws15_the_session_status_endpoint_never_errors_and_never_leaks_a_token_without_a_session() {
+    let c = start(Options::default()).unwrap();
+    let anon = raw(&c, "GET", "/api/session", None, &[], None);
+    assert_eq!(anon.status, 200);
+    assert!(
+        anon.body.contains("\"paired\":false") && !anon.body.contains("csrf"),
+        "{}",
+        anon.body
+    );
+    let (cookie, csrf) = paired(&c);
+    let with = raw(
+        &c,
+        "GET",
+        "/api/session",
+        None,
+        &[("Cookie", &cookie)],
+        None,
+    );
+    assert!(
+        with.body.contains("\"paired\":true") && with.body.contains(&csrf),
+        "{}",
+        with.body
+    );
+    let cross = raw(
+        &c,
+        "GET",
+        "/api/session",
+        None,
+        &[("Cookie", &cookie), ("Sec-Fetch-Site", "cross-site")],
+        None,
+    );
+    assert_eq!(
+        cross.status, 403,
+        "the status endpoint is still protected from cross-site pages"
     );
 }

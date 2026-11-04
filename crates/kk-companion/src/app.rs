@@ -173,7 +173,7 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
             }
             _ => {}
         }
-        let open_api = matches!(path.as_str(), "/api/health" | "/api/pair");
+        let open_api = matches!(path.as_str(), "/api/health" | "/api/pair" | "/api/session");
         if path.starts_with("/api/") && !open_api {
             let Some(token) = cookie_value(req.headers(), &state.cookie_name()) else {
                 return secure(error(
@@ -249,13 +249,13 @@ async fn pair(State(state): State<AppState>, Json(body): Json<PairBody>) -> Resp
     }
 }
 
-async fn session(req: Request) -> Response {
-    let auth = req
-        .extensions()
-        .get::<Authenticated>()
-        .cloned()
-        .expect("guard set the session");
-    Json(json!({"paired": true, "csrf": auth.info.csrf})).into_response()
+async fn session(State(state): State<AppState>, req: Request) -> Response {
+    let info =
+        cookie_value(req.headers(), &state.cookie_name()).and_then(|t| state.sec.session(&t));
+    match info {
+        Some(i) => Json(json!({"paired": true, "csrf": i.csrf})).into_response(),
+        None => Json(json!({"paired": false})).into_response(),
+    }
 }
 
 fn clear_cookie(state: &AppState) -> HeaderValue {
@@ -264,6 +264,10 @@ fn clear_cookie(state: &AppState) -> HeaderValue {
         state.cookie_name()
     ))
     .expect("cookie is ascii")
+}
+
+async fn whoami() -> Json<Value> {
+    Json(json!({"ok": true}))
 }
 
 async fn logout(State(state): State<AppState>, req: Request) -> Response {
@@ -376,6 +380,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/health", get(health))
         .route("/api/pair", post(pair))
         .route("/api/session", get(session))
+        .route("/api/whoami", get(whoami))
         .route("/api/logout", post(logout))
         .route("/api/sessions/revoke-all", post(revoke_all))
         .route("/admin/ping", get(admin_ping))
