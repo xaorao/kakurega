@@ -257,3 +257,72 @@ async fn live_tampered_or_replayed_evidence_is_rejected() {
         "a changed compose file must not match the measured hash: {r:?}"
     );
 }
+
+#[tokio::test]
+#[ignore]
+async fn live_the_gateway_proves_it_runs_in_a_tee_and_that_this_tls_connection_ends_inside_it() {
+    let g = kk_near::attest_gateway(&NearPolicy::default())
+        .await
+        .expect("verified");
+    println!("{g:#?}");
+    assert_eq!(g.tcb_status, "UpToDate");
+    assert!(!g.signer_address.is_empty() && !g.nonce.is_empty());
+    assert!(
+        g.tls_bound,
+        "the quote binds the TLS certificate of this very connection"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_gateway_evidence_replayed_or_pointed_at_another_connection_is_rejected() {
+    use kk_near::sdk::{
+        verify_gateway_attestation, AttestationClient, AttestationPolicy, AttestationVerifiers,
+        DefaultTdxQuoteVerifier, GatewayAttestationFetchOptions, GatewayClientBinding,
+    };
+    let fetched = AttestationClient::new(None)
+        .fetch_gateway_attestation(GatewayAttestationFetchOptions::default())
+        .await
+        .expect("fetch");
+    let tdx = DefaultTdxQuoteVerifier::default();
+    let policy = AttestationPolicy {
+        accepted_tcb_statuses: None,
+    };
+    let run = |binding: GatewayClientBinding| {
+        let a = fetched.attestation.clone();
+        let tdx = &tdx;
+        let policy = &policy;
+        async move {
+            verify_gateway_attestation(
+                &a,
+                &binding,
+                Some(policy),
+                AttestationVerifiers {
+                    tdx_quote: Some(tdx),
+                    deployment: None,
+                },
+            )
+            .await
+        }
+    };
+    assert!(
+        run(fetched.client_binding.clone()).await.is_ok(),
+        "control: the untouched evidence verifies"
+    );
+    let replay = GatewayClientBinding {
+        nonce: "0".repeat(64),
+        ..fetched.client_binding.clone()
+    };
+    assert!(
+        run(replay).await.is_err(),
+        "evidence answered to another challenge is a replay"
+    );
+    let other_peer = GatewayClientBinding {
+        spki_fingerprint: Some("f".repeat(64)),
+        ..fetched.client_binding.clone()
+    };
+    assert!(
+        run(other_peer).await.is_err(),
+        "a different TLS certificate than the one the quote binds is a man in the middle"
+    );
+}

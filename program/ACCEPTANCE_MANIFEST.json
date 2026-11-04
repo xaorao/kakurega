@@ -376,6 +376,13 @@
           "kind": "machine",
           "command": "cargo test -p kk-service --test flow sv31 -- --ignored",
           "expect": "test result: ok. 1 passed"
+        },
+        {
+          "id": "II-09n",
+          "text": "LIVE gateway proof: TLS-bound TDX attestation verified, replay and wrong-certificate rejected (keyless)",
+          "kind": "machine",
+          "command": "cargo test -p kk-near -- --ignored live_the_gateway live_gateway",
+          "expect": "test result: ok. 2 passed"
         }
       ]
     },

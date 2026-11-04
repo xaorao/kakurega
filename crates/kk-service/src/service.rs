@@ -182,6 +182,7 @@ pub trait WebFetch: Send + Sync {
 /// Checks a confidential model's hardware proof. Tests replace it; the real one is `kk_near`.
 pub trait Attester: Send + Sync {
     fn attest(&self, model: &str) -> Result<Vec<kk_near::RouteAttestation>, String>;
+    fn attest_gateway(&self) -> Result<kk_near::GatewayProof, String>;
 }
 
 struct RealAttester;
@@ -194,6 +195,12 @@ impl Attester for RealAttester {
                 model,
                 &kk_near::NearPolicy::default(),
             ))
+            .map_err(|e| e.to_string())
+    }
+
+    fn attest_gateway(&self) -> Result<kk_near::GatewayProof, String> {
+        tokio::runtime::Handle::current()
+            .block_on(kk_near::attest_gateway(&kk_near::NearPolicy::default()))
             .map_err(|e| e.to_string())
     }
 }
@@ -1593,6 +1600,69 @@ async fn route_attest(axum::Extension(svc): Svc, Json(b): Json<AttestBody>) -> R
         Err(m) => {
             svc.log_event("route.attested", &model, &[("ok", 0usize.into())]);
             (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"verified": false, "model": model, "error": {"code": "NOT_VERIFIED", "message": m}, "does_not_mean": does_not_mean}))).into_response()
+        }
+    }
+}
+
+/// Checks, on demand, the proof of NEAR AI Cloud's gateway: the front door every request passes through. It shows
+/// whether the encrypted connection used for this very check ends inside verified confidential software.
+async fn route_gateway(axum::Extension(svc): Svc) -> Response {
+    {
+        let mut last = svc.last_attest.lock().expect("lock");
+        if last.is_some_and(|t| t.elapsed() < *svc.attest_cooldown.lock().expect("lock")) {
+            return error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "TOO_FAST",
+                "wait a few seconds between checks",
+            );
+        }
+        *last = Some(std::time::Instant::now());
+    }
+    let attester = svc.attester.lock().expect("lock").clone();
+    let result = tokio::task::spawn_blocking(move || attester.attest_gateway()).await;
+    let Ok(result) = result else {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ATTEST_FAILED",
+            "the check stopped unexpectedly",
+        );
+    };
+    match result {
+        Ok(g) => {
+            svc.log_event(
+                "route.gateway_attested",
+                "gateway",
+                &[
+                    ("ok", 1usize.into()),
+                    ("tls_bound", usize::from(g.tls_bound).into()),
+                ],
+            );
+            Json(json!({
+                "verified": true, "checked_at": now(),
+                "gateway": {"signer": g.signer_address, "tcb": g.tcb_status, "advisories": g.advisories, "compose_hash": g.compose_hash, "os_image_hash": g.os_image_hash, "tls_bound": g.tls_bound, "tls_fingerprint": g.tls_fingerprint, "nonce": g.nonce},
+                "means": [
+                    "A fresh random challenge was answered by the gateway, so this is not a replay.",
+                    "Intel TDX hardware vouched for the software the gateway runs, at an up-to-date patch level.",
+                    if g.tls_bound { "The certificate used by this very connection is the one the verified software vouched for, so the encrypted channel ends inside it and not at a proxy in front of it." } else { "The report did not include a certificate binding, so only the software identity was checked, not where the encrypted channel ends." }
+                ],
+                "does_not_mean": [
+                    "It does not prove what the gateway did with a particular request; signed answers do, and that check needs a NEAR API key.",
+                    "It does not prove anything about the model servers behind the gateway; the model check does."
+                ]
+            }))
+            .into_response()
+        }
+        Err(m) => {
+            svc.log_event(
+                "route.gateway_attested",
+                "gateway",
+                &[("ok", 0usize.into())],
+            );
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({"verified": false, "error": {"code": "NOT_VERIFIED", "message": m}})),
+            )
+                .into_response()
         }
     }
 }
@@ -3303,6 +3373,7 @@ impl Extension for Routes {
             .route("/api/sessions/{id}", get(session_get))
             .route("/api/sessions/{id}/forget", post(session_forget))
             .route("/api/route/attest", post(route_attest))
+            .route("/api/route/gateway", post(route_gateway))
             .route("/api/research/propose", post(research_propose))
             .route("/api/research/{id}/fetch", post(research_fetch))
             .route("/api/log", get(log_summary))

@@ -317,6 +317,13 @@ try {
   const proofText = await proofRegion.innerText();
   check("a verified model shows the patch level, GPU evidence, signing key and challenge, and what the result does not prove", proofText.includes("Verified") && proofText.includes("UpToDate") && proofText.includes("NVIDIA GPU evidence verified") && proofText.includes("0xsignerAAA") && proofText.includes("nonce777") && proofText.includes("What this does not show") && proofText.includes("does not prove that a particular answer"));
   await axeCheck(page, "model proof panel");
+  await page.route("**/api/route/gateway", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ verified: true, gateway: { signer: "gwkey1", tcb: "UpToDate", advisories: [], compose_hash: "c1", tls_bound: true, tls_fingerprint: "fp", nonce: "gwnonce9" }, means: ["The certificate used by this very connection is the one the verified software vouched for."], does_not_mean: ["It does not prove what the gateway did with a particular request."] }) }));
+  await page.getByRole("button", { name: "Check the gateway (front door)" }).click();
+  const gwRegion = page.getByRole("region", { name: "Gateway proof result" });
+  await gwRegion.waitFor();
+  const gwText = await gwRegion.innerText();
+  check("the gateway proof says whether this connection's encryption ends inside the verified software and what it does not prove", gwText.includes("Verified") && gwText.includes("encryption ends inside the verified software") && gwText.includes("gwnonce9") && gwText.includes("does not prove what the gateway did"));
+  await axeCheck(page, "gateway proof panel");
   await page.getByLabel("Model name").fill("bad/model");
   await page.getByRole("button", { name: "Check now" }).click();
   await page.getByRole("alert").filter({ hasText: "refuses it" }).waitFor();

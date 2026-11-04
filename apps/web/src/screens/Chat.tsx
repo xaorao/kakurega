@@ -1,5 +1,5 @@
 import { createResource, createSignal, For, Show } from "solid-js";
-import { api, ApiError, streamChat, type ChatTurn, type KeptChat, type ModelProof, type ResearchPage, type ResearchProposal } from "../api";
+import { api, ApiError, streamChat, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal } from "../api";
 import { t } from "../i18n";
 import { Markdown } from "../components/Markdown";
 
@@ -62,6 +62,7 @@ export function Chat() {
   };
   const [proofModel, setProofModel] = createSignal("Qwen/Qwen3.8-27B");
   const [proof, setProof] = createSignal<ModelProof | null>(null);
+  const [gateway, setGateway] = createSignal<GatewayProofResult | null>(null);
   const [proofBusy, setProofBusy] = createSignal(false);
   const [proofError, setProofError] = createSignal("");
   const checkProof = async () => {
@@ -70,6 +71,18 @@ export function Chat() {
     setProof(null);
     try {
       setProof(await api.attestModel(proofModel().trim()));
+    } catch (err) {
+      setProofError(err instanceof ApiError ? err.message : t("proof.error"));
+    } finally {
+      setProofBusy(false);
+    }
+  };
+  const checkGateway = async () => {
+    setProofBusy(true);
+    setProofError("");
+    setGateway(null);
+    try {
+      setGateway(await api.attestGateway());
     } catch (err) {
       setProofError(err instanceof ApiError ? err.message : t("proof.error"));
     } finally {
@@ -189,8 +202,30 @@ export function Chat() {
         <input id="proof-model" type="text" value={proofModel()} onInput={(e) => setProofModel(e.currentTarget.value)} />
         <div class="actions">
           <button type="button" disabled={proofBusy() || proofModel().trim().length === 0} onClick={checkProof}>{proofBusy() ? t("proof.checking") : t("proof.check")}</button>
+          <button type="button" disabled={proofBusy()} onClick={checkGateway}>{t("proof.checkGateway")}</button>
           <Show when={proofError()}><span role="alert" class="bad">{proofError()}</span></Show>
         </div>
+        <Show when={gateway()}>
+          {(g) => (
+            <div class="stack" role="region" aria-label={t("proof.gatewayResult")}>
+              <p><span class={`chip ${g().verified ? "ok" : "bad"}`}>{g().verified ? t("proof.verified") : t("proof.notVerified")}</span> {t("proof.gateway")}</p>
+              <Show when={g().gateway}>
+                {(d) => (
+                  <ul class="plain">
+                    <li>{t("proof.tcb", { v: d().tcb })}</li>
+                    <li>{d().tls_bound ? t("proof.tlsYes") : t("proof.tlsNo")}</li>
+                    <li>{t("proof.signer")} <code>{d().signer}</code></li>
+                    <li>{t("proof.nonce")} <code>{d().nonce}</code></li>
+                  </ul>
+                )}
+              </Show>
+              <p><strong>{t("proof.means")}</strong></p>
+              <ul><For each={g().means ?? []}>{(m) => <li>{m}</li>}</For></ul>
+              <p><strong>{t("proof.notMeans")}</strong></p>
+              <ul><For each={g().does_not_mean ?? []}>{(m) => <li>{m}</li>}</For></ul>
+            </div>
+          )}
+        </Show>
         <Show when={proof()}>
           {(p) => (
             <div class="stack" role="region" aria-label={t("proof.result")}>

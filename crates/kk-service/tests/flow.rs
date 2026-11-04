@@ -3658,6 +3658,19 @@ fn sv29_streamed_chat_delivers_pieces_then_the_whole_reply_and_a_dropped_connect
 struct FakeAttester;
 
 impl kk_service::service::Attester for FakeAttester {
+    fn attest_gateway(&self) -> Result<kk_near::GatewayProof, String> {
+        Ok(kk_near::GatewayProof {
+            signer_address: "gwsignerK5".into(),
+            tcb_status: "UpToDate".into(),
+            advisories: vec![],
+            compose_hash: Some("gc1".into()),
+            os_image_hash: None,
+            tls_bound: true,
+            tls_fingerprint: Some("fp".into()),
+            nonce: "gwnonceM3".into(),
+        })
+    }
+
     fn attest(&self, model: &str) -> Result<Vec<kk_near::RouteAttestation>, String> {
         match model {
             "good/model" => Ok(vec![kk_near::RouteAttestation { model: model.into(), signer_address: "0xsignerQ7".into(), tcb_status: "UpToDate".into(), advisories: vec![], gpu_verified: true, compose_hash: Some("c0".into()), os_image_hash: None, nonce: "nonceZ9".into() }]),
@@ -3772,6 +3785,12 @@ fn sv31_live_the_real_model_proof_check_verifies_a_real_confidential_model_throu
         d["gpu_verified"] == true
             && d["tcb"] == "UpToDate"
             && d["signer"].as_str().unwrap().starts_with("0x")
+    );
+    let (st, g) = w.post("/api/route/gateway", json!({}));
+    assert_eq!(st, 200, "{g}");
+    assert!(
+        g["gateway"]["tls_bound"] == true && g["gateway"]["tcb"] == "UpToDate",
+        "{g}"
     );
     let (st, bad) = w.post("/api/route/attest", json!({"model": "no/such-model-9f3a"}));
     assert_eq!((st, bad["verified"].clone()), (422, json!(false)), "{bad}");

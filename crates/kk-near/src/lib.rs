@@ -1,7 +1,8 @@
 use nearai_inference_sdk::{
-    verify_model_attestation, AttestationClient, DefaultTdxQuoteVerifier, GpuEvidenceRequirement,
-    GpuEvidenceStatus, ModelAttestationPolicy, ModelAttestationVerifiers, NrasGpuEvidenceVerifier,
-    TcbStatus, VerifiedModelAttestation,
+    verify_gateway_attestation, verify_model_attestation, AttestationClient, AttestationPolicy,
+    AttestationVerifiers, DefaultTdxQuoteVerifier, GatewayAttestationFetchOptions,
+    GatewayTlsBinding, GpuEvidenceRequirement, GpuEvidenceStatus, ModelAttestationPolicy,
+    ModelAttestationVerifiers, NrasGpuEvidenceVerifier, TcbStatus, VerifiedModelAttestation,
 };
 use std::fmt;
 
@@ -156,4 +157,64 @@ pub async fn attest_model(
         );
     }
     Ok(out)
+}
+
+/// What the gateway (the front door every request passes through) proved about itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatewayProof {
+    pub signer_address: String,
+    pub tcb_status: String,
+    pub advisories: Vec<String>,
+    pub compose_hash: Option<String>,
+    pub os_image_hash: Option<String>,
+    /// True when the quote binds the TLS certificate this very connection used, so the encrypted channel ends inside the
+    /// verified software rather than at a proxy in front of it.
+    pub tls_bound: bool,
+    pub tls_fingerprint: Option<String>,
+    pub nonce: String,
+}
+
+/// Fetches fresh Gateway evidence with a random challenge, records the TLS peer of that request, verifies the Intel
+/// TDX chain through the official SDK, and applies the policy's patch-level rule. Needs no API key.
+pub async fn attest_gateway(policy: &NearPolicy) -> Result<GatewayProof, NearError> {
+    let client = AttestationClient::new(None);
+    let fetched = client
+        .fetch_gateway_attestation(GatewayAttestationFetchOptions::default())
+        .await
+        .map_err(|e| NearError::Fetch(format!("{e:?}")))?;
+    let tdx = DefaultTdxQuoteVerifier::default();
+    let v = verify_gateway_attestation(
+        &fetched.attestation,
+        &fetched.client_binding,
+        Some(&AttestationPolicy {
+            accepted_tcb_statuses: Some(policy.accepted_tcb.clone()),
+        }),
+        AttestationVerifiers {
+            tdx_quote: Some(&tdx),
+            deployment: None,
+        },
+    )
+    .await
+    .map_err(|e| NearError::Verification(format!("{e:?}")))?;
+    let m = &v.evidence.deployment.runtime_measurements;
+    let (tls_bound, fp) = match &v.tls_binding {
+        GatewayTlsBinding::Attested { spki_fingerprint } => (true, Some(spki_fingerprint.clone())),
+        GatewayTlsBinding::None => (false, None),
+    };
+    if !policy.accepted_tcb.contains(&v.evidence.tcb_status) {
+        return Err(NearError::Policy(Rejection::TcbNotAccepted(format!(
+            "{:?}",
+            v.evidence.tcb_status
+        ))));
+    }
+    Ok(GatewayProof {
+        signer_address: v.evidence.signer.signing_address.clone(),
+        tcb_status: format!("{:?}", v.evidence.tcb_status),
+        advisories: v.evidence.advisory_ids.clone(),
+        compose_hash: m.compose_hash.clone(),
+        os_image_hash: m.os_image_hash.clone(),
+        tls_bound,
+        tls_fingerprint: fp,
+        nonce: fetched.client_binding.nonce.clone(),
+    })
 }
