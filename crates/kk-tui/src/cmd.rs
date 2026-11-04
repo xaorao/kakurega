@@ -11,6 +11,7 @@ pub enum Command {
     Deliver(Option<String>),
     Memory(Option<String>),
     Remember(String),
+    Ask { folder: String, question: String },
     Correct { id: String, text: String },
     Forget(String),
     Log,
@@ -21,7 +22,7 @@ pub enum Command {
 
 pub const NAMES: &[&str] = &[
     "help", "status", "review", "reviews", "open", "findings", "release", "approve", "deliver",
-    "memory", "remember", "correct", "forget", "log", "verify", "clear", "quit",
+    "memory", "ask", "remember", "correct", "forget", "log", "verify", "clear", "quit",
 ];
 
 pub fn usage(name: &str) -> &'static str {
@@ -34,6 +35,7 @@ pub fn usage(name: &str) -> &'static str {
         "deliver" => "/deliver [JOB]",
         "memory" => "/memory [WORDS]",
         "remember" => "/remember TEXT",
+        "ask" => "/ask FOLDER : QUESTION",
         "correct" => "/correct ID NEW TEXT",
         "forget" => "/forget ID",
         "verify" => "/verify FILE",
@@ -96,6 +98,13 @@ pub fn parse(line: &str) -> Result<Command, String> {
         } else {
             Some(rest.to_string())
         })),
+        "ask" => match rest.split_once(" : ") {
+            Some((f, q)) if !f.trim().is_empty() && !q.trim().is_empty() => Ok(Command::Ask {
+                folder: f.trim().to_string(),
+                question: q.trim().to_string(),
+            }),
+            _ => Err(format!("usage: {}", usage("ask"))),
+        },
         "remember" => {
             if rest.is_empty() {
                 Err(format!("usage: {}", usage("remember")))

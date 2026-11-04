@@ -67,6 +67,7 @@ enum Intent {
     Deliver,
     MemoryList,
     Remember,
+    Ask,
     Correct,
     Forget,
     Log,
@@ -588,6 +589,7 @@ impl App {
                         "/approve [JOB]                 look at the exact files, then approve or refuse".into(),
                         "/deliver [JOB]                 sign and deliver an approved release".into(),
                         "/memory [WORDS]  /remember TEXT  /correct ID TEXT  /forget ID".into(),
+                        "/ask FOLDER : QUESTION         ask about documents; every quote is checked".into(),
                         "/log                           the signed activity log".into(),
                         "/verify FILE                   check a capsule offline".into(),
                         "/clear                         forget this conversation (it is never saved)".into(),
@@ -645,6 +647,14 @@ impl App {
                     None => "/api/memories".to_string(),
                 };
                 vec![self.req(Intent::MemoryList, false, Method::Get, &path, None)]
+            }
+            Command::Ask { folder, question } => {
+                if self.chat_waiting {
+                    self.say(Kind::Warn, "Still waiting for the last answer.");
+                    return Vec::new();
+                }
+                self.chat_waiting = true;
+                vec![self.req(Intent::Ask, false, Method::Post, "/api/ask", Some(json!({"folder": folder, "question": question})))]
             }
             Command::Remember(t) => vec![self.req(Intent::Remember, false, Method::Post, "/api/memories", Some(json!({"text": t, "level": "internal", "reason": "you added it in the terminal"})))],
             Command::Correct { id, text } => vec![self.req(Intent::Correct, false, Method::Post, &format!("/api/memories/{id}/correct"), Some(json!({"text": text, "reason": "you corrected it in the terminal"})))],
@@ -1213,6 +1223,53 @@ impl App {
                         err_text(status, &body)
                     },
                 );
+                Vec::new()
+            }
+            Intent::Ask => {
+                self.chat_waiting = false;
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let mut lines = Vec::new();
+                if body["checkable"] == true {
+                    lines.extend(text_lines(body["answer"].as_str().unwrap_or("")));
+                    lines.push(String::new());
+                    for c in body["citations"].as_array().into_iter().flatten() {
+                        let mark = match c["verdict"].as_str() {
+                            Some("verified") => format!("verified, line {}", c["line"]),
+                            Some("not_found") => {
+                                "NOT FOUND in that file: do not rely on it".to_string()
+                            }
+                            Some("unknown_file") => {
+                                "NOT A FILE the model was shown: do not rely on it".to_string()
+                            }
+                            _ => "could not be checked".to_string(),
+                        };
+                        lines.push(format!(
+                            "{}: \"{}\" ({mark})",
+                            clean(c["file"].as_str().unwrap_or("?")),
+                            clean(c["quote"].as_str().unwrap_or(""))
+                        ));
+                    }
+                } else {
+                    lines.push("The model did not give a checkable answer. Unchecked text follows; trust none of it:".into());
+                    lines.extend(text_lines(body["unchecked_text"].as_str().unwrap_or("")));
+                }
+                lines.push(String::new());
+                lines.push(format!(
+                    "{} file(s) read, {} withheld, {} too large",
+                    body["files_used"].as_array().map_or(0, |a| a.len()),
+                    body["files_withheld"].as_array().map_or(0, |a| a.len()),
+                    body["files_skipped"].as_array().map_or(0, |a| a.len())
+                ));
+                if body["injection_suspects"]
+                    .as_array()
+                    .is_some_and(|a| !a.is_empty())
+                {
+                    lines.push("Some documents contain text that tries to give the model orders; they were treated as data.".into());
+                }
+                self.push(Kind::Info, Some("Documents"), lines);
                 Vec::new()
             }
             Intent::Chat => {

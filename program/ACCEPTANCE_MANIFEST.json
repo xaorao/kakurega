@@ -136,7 +136,7 @@
         },
         {
           "id": "II-09",
-          "text": "Workflows beyond code review on the shared backend. Built: private memory, private chat, document questions with checked quotes (web). Not built: research with live sources, coding mode, terminal and desktop surfaces for document questions.",
+          "text": "Workflows beyond code review on the shared backend. Built: private memory, private chat, document questions with checked quotes (web and terminal /ask). Not built: research with live sources, coding mode, desktop surface for document questions. Deliberately not in MCP: it returns counts only, and document-derived answers would cross that boundary.",
           "kind": "pending",
           "evidence_needed": "journeys and hostile tests per workflow; registry rows move to BUILT_TESTED"
         },
@@ -191,6 +191,13 @@
           "text": "Secure Enclave or Keychain key with user presence behind a native helper, verified on physical hardware",
           "kind": "pending",
           "evidence_needed": "native helper, hardware Touch ID run by the owner"
+        },
+        {
+          "id": "II-09c",
+          "text": "Terminal /ask: usage errors send nothing, one question at a time, every citation verdict shown, unchecked text labelled",
+          "kind": "machine",
+          "command": "cargo test -p kk-tui tu17",
+          "expect": "test result: ok. 1 passed"
         }
       ]
     },

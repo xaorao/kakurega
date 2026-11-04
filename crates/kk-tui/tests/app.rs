@@ -710,3 +710,50 @@ fn tu16_when_the_service_requires_a_signed_approval_the_terminal_signs_the_exact
     let r = c.handle(key(KeyCode::Enter));
     assert!(r[0].body.as_ref().unwrap().get("proof").is_none());
 }
+
+#[test]
+fn tu17_ask_sends_folder_and_question_and_shows_every_citation_verdict() {
+    let mut a = booted();
+    assert!(a.handle(key(KeyCode::Enter)).is_empty());
+    for bad in ["/ask", "/ask docs", "/ask : why", "/ask docs : "] {
+        let r = enter(&mut a, bad);
+        assert!(r.is_empty(), "{bad} must not send anything");
+    }
+    let r = enter(&mut a, "/ask /Users/me/docs : What is the notice period?");
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0].path, "/api/ask");
+    assert_eq!(
+        r[0].body.as_ref().unwrap(),
+        &json!({"folder": "/Users/me/docs", "question": "What is the notice period?"})
+    );
+    assert!(
+        enter(&mut a, "/ask /x : again").is_empty(),
+        "one question at a time"
+    );
+    a.handle(ok(&r[0], 200, json!({"checkable": true, "answer": "Thirty days.", "citations": [
+        {"file": "contract.txt", "quote": "thirty (30) days", "verdict": "verified", "line": 12},
+        {"file": "contract.txt", "quote": "invented words", "verdict": "not_found", "line": null},
+        {"file": "other.txt", "quote": "x", "verdict": "unknown_file", "line": null}],
+        "files_used": ["contract.txt"], "files_withheld": [".env"], "files_skipped": [], "injection_suspects": ["notes.txt"]})));
+    let text = a
+        .cards
+        .iter()
+        .flat_map(|c| c.lines.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains("verified, line 12")
+            && text.contains("NOT FOUND")
+            && text.contains("NOT A FILE")
+    );
+    assert!(text.contains("1 withheld") && text.contains("orders"));
+    let r2 = enter(&mut a, "/ask /x : second");
+    a.handle(ok(&r2[0], 200, json!({"checkable": false, "unchecked_text": "free text", "files_used": [], "files_withheld": [], "files_skipped": [], "injection_suspects": []})));
+    let text = a
+        .cards
+        .iter()
+        .flat_map(|c| c.lines.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("trust none of it") && text.contains("free text"));
+}
