@@ -197,3 +197,20 @@ button.danger { background: var(--redline); border-color: var(--redline); color:
 
 .msg.user { border-left: 3px solid var(--ink); }
 .msg.assistant { border-left: 3px solid var(--cipher); }
+
+.palette-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); display: flex; justify-content: center; align-items: flex-start; padding: 12vh 16px 0; z-index: 50; }
+.palette { width: min(560px, 100%); padding: 12px; display: grid; gap: 8px; max-height: 70vh; overflow: hidden; }
+.palette input { width: 100%; }
+.palette ul { margin: 0; padding: 0; overflow-y: auto; max-height: 50vh; }
+.pal-item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.pal-item.sel { background: var(--veil); color: var(--ink); outline: 2px solid var(--cipher); outline-offset: -2px; }
+.pal-item.sel .muted { color: var(--stone); }
+
+.md p { margin: 0 0 0.6em; overflow-wrap: anywhere; }
+.md ul, .md ol { margin: 0 0 0.6em 1.2em; padding: 0; }
+.md blockquote { margin: 0 0 0.6em; padding-left: 10px; border-left: 3px solid var(--line); color: var(--stone); }
+.md code { font-family: var(--mono, ui-monospace, monospace); background: var(--veil); padding: 0 4px; border-radius: 4px; }
+.codeblock { margin: 0 0 0.6em; border: 1px solid var(--line); border-radius: 6px; }
+.codeblock .actions { justify-content: space-between; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.codeblock pre { margin: 0; padding: 8px; overflow-x: auto; }
+.codeblock code { background: none; padding: 0; }

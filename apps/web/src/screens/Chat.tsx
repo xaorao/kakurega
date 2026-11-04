@@ -1,6 +1,7 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, streamChat, type ChatTurn, type KeptChat, type ResearchPage, type ResearchProposal } from "../api";
 import { t } from "../i18n";
+import { Markdown } from "../components/Markdown";
 
 interface Shown extends ChatTurn {
   foot?: string[];
@@ -157,12 +158,12 @@ export function Chat() {
           {(m) => (
             <li class={`card stack msg ${m.role}`}>
               <strong>{m.role === "user" ? t("chat.you") : t("chat.assistant")}</strong>
-              <p class="mem-text">{m.content}</p>
+              {m.role === "assistant" ? <Markdown text={m.content} /> : <p class="mem-text">{m.content}</p>}
               <Show when={m.foot}>{(f) => <p class="muted">{f().join(" · ")}</p>}</Show>
             </li>
           )}
         </For>
-        <Show when={busy() && live()}><li class="card stack msg assistant"><strong>{t("chat.assistant")}</strong><p class="mem-text">{live()}</p></li></Show>
+        <Show when={busy() && live()}><li class="card stack msg assistant"><strong>{t("chat.assistant")}</strong><Markdown text={live()} /></li></Show>
         <Show when={busy() && !live()}><li class="muted" role="status">{t("chat.thinking")}</li></Show>
       </ul>
       <details class="card stack" id="web-research">

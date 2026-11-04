@@ -8,6 +8,7 @@ import { Memory } from "./screens/Memory";
 import { Activity } from "./screens/Activity";
 import { Chat } from "./screens/Chat";
 import { Documents } from "./screens/Documents";
+import { Palette, type PaletteItem } from "./components/Palette";
 import { applyLocale, LOCALES, locale, rich, setLocale, t, type Locale } from "./i18n";
 
 function useHash() {
@@ -34,19 +35,22 @@ function storedTheme(): Theme {
   }
 }
 
+const [theme, setTheme] = createSignal<Theme>(storedTheme());
+
+function chooseTheme(t: Theme) {
+  setTheme(t);
+  applyTheme(t);
+  try {
+    if (t === "system") localStorage.removeItem("kk-theme");
+    else localStorage.setItem("kk-theme", t);
+  } catch {
+    /* the choice still applies for this visit */
+  }
+}
+
 function ThemePicker() {
-  const [theme, setTheme] = createSignal<Theme>(storedTheme());
   onMount(() => applyTheme(theme()));
-  const choose = (t: Theme) => {
-    setTheme(t);
-    applyTheme(t);
-    try {
-      if (t === "system") localStorage.removeItem("kk-theme");
-      else localStorage.setItem("kk-theme", t);
-    } catch {
-      /* the choice still applies for this visit */
-    }
-  };
+  const choose = chooseTheme;
   return (
     <label class="theme">
       <span class="sr">{t("theme.label")}</span>
@@ -136,6 +140,7 @@ export function App() {
   const [query, setQuery] = createSignal("");
   const [unreachable, setUnreachable] = createSignal(false);
   const [failures, setFailures] = createSignal(0);
+  const [paletteOpen, setPaletteOpen] = createSignal(false);
   let searchBox: HTMLInputElement | undefined;
   const shown = createMemo(() => {
     const q = query().trim().toLowerCase();
@@ -143,6 +148,11 @@ export function App() {
     return jobs().filter((j) => `${j.repo} ${j.recipient} ${j.state.replace(/_/g, " ")}`.toLowerCase().includes(q));
   });
   const onKey = (e: KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "p") {
+      e.preventDefault();
+      if (paired()) setPaletteOpen(!paletteOpen());
+      return;
+    }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
       e.preventDefault();
       searchBox?.focus();
@@ -189,17 +199,40 @@ export function App() {
   const timer = setInterval(() => paired() && void refresh(), 1500);
   onCleanup(() => clearInterval(timer));
 
+  const paletteItems = createMemo<PaletteItem[]>(() => {
+    const go = (hash: string) => () => {
+      location.hash = hash;
+    };
+    const screens: PaletteItem[] = [
+      { id: "new", label: t("nav.new"), group: t("palette.screens"), run: go("#/") },
+      { id: "docs", label: t("nav.docs"), group: t("palette.screens"), run: go("#/docs") },
+      { id: "chat", label: t("nav.chat"), group: t("palette.screens"), run: go("#/chat") },
+      { id: "memory", label: t("nav.memory"), group: t("palette.screens"), run: go("#/memory") },
+      { id: "activity", label: t("nav.activity"), group: t("palette.screens"), run: go("#/activity") },
+    ];
+    const reviews: PaletteItem[] = jobs().map((j) => ({ id: `job-${j.id}`, label: t("nav.sub", { state: t(`state.${j.state}` as never), recipient: j.recipient }) + ` · ${j.id}`, group: t("palette.reviews"), run: go(`#/job/${j.id}`) }));
+    const settings: PaletteItem[] = [
+      { id: "theme-light", label: t("theme.light"), group: t("palette.theme"), run: () => chooseTheme("light") },
+      { id: "theme-dark", label: t("theme.dark"), group: t("palette.theme"), run: () => chooseTheme("dark") },
+      { id: "theme-system", label: t("theme.system"), group: t("palette.theme"), run: () => chooseTheme("system") },
+      { id: "signout", label: t("top.signout"), group: t("palette.account"), run: () => void api.logout().then(() => setPaired(false)) },
+    ];
+    return [...screens, ...reviews, ...settings];
+  });
+
   const jobId = () => /^#\/job\/([\w-]+)/.exec(hash())?.[1] ?? null;
 
   return (
     <Show when={paired() !== null} fallback={<main class="center"><p class="muted">{t("app.connecting")}</p></main>}>
       <Show when={paired()} fallback={<Show when={unreachable()} fallback={<Pair onDone={() => { setPaired(null); }} />}><main class="center"><p role="alert" class="bad">{t("app.unreachable")}</p><button onClick={() => { setUnreachable(false); setPaired(null); }}>{t("app.retry")}</button></main></Show>}>
+        <Palette open={paletteOpen()} items={paletteItems()} onClose={() => setPaletteOpen(false)} />
         <div class="shell">
           <header class="top">
             <a class="brand" href="#/">kakurega</a>
             <Show when={config()}>{(c) => <Badge config={c()} />}</Show>
             <LanguagePicker />
             <ThemePicker />
+            <button class="link" onClick={() => setPaletteOpen(true)} aria-keyshortcuts="Control+Shift+P Meta+Shift+P">{t("palette.open")}</button>
             <button class="link" onClick={async () => { await api.logout(); setPaired(false); }}>{t("top.signout")}</button>
           </header>
           <Show when={failures() >= 3}>

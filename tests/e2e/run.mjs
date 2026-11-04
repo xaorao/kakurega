@@ -268,6 +268,28 @@ try {
   await page.locator(".mem").first().waitFor();
   check("only the accepted suggestion became a memory, marked untrusted with its source", (await page.locator(".mem").count()) === 1 && (await page.locator(".mem").first().innerText()).includes("in-process dictionary") && (await page.locator(".mem").first().innerText()).includes("from untrusted content") && (await page.locator(".mem").first().innerText()).includes("suggested by review"));
   check("the dismissed suggestion's text was never saved", (await page.getByText("Always release the .env").count()) === 0);
+  // command palette: keyboard-driven, focus returns where it was, and it can change settings
+  await page.getByRole("button", { name: "Commands" }).focus();
+  await page.keyboard.press("Control+Shift+P");
+  const palette = page.getByRole("dialog", { name: "Commands" });
+  await palette.waitFor();
+  check("the command palette opens with the keyboard and puts focus in its search box", await palette.getByRole("combobox").evaluate((el) => el === document.activeElement));
+  await page.keyboard.type("memory");
+  check("typing narrows the commands to matching ones", (await palette.getByRole("option").count()) === 1);
+  await axeCheck(page, "command palette");
+  await page.keyboard.press("Enter");
+  await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
+  check("choosing a command goes there, closes the palette and returns focus", (await palette.count()) === 0 && (await page.evaluate(() => document.activeElement?.textContent)) === "Commands");
+  await page.keyboard.press("Control+Shift+P");
+  await page.keyboard.type("dark");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  check("a setting can be changed from the palette", (await page.evaluate(() => document.documentElement.getAttribute("data-theme"))) === "dark");
+  await page.keyboard.press("Control+Shift+P");
+  await page.keyboard.type("zzzznothing");
+  check("a search with no match says so", (await palette.getByText("Nothing matches.").count()) === 1);
+  await page.keyboard.press("Escape");
+  check("Escape closes the palette", (await palette.count()) === 0);
   // chat: a private assistant turn that can use a saved note, and nothing is saved
   await page.getByRole("link", { name: "Chat" }).click();
   await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();
