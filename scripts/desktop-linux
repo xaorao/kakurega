@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Runs the Electron shell attack suite and the no-Touch-ID approval flow on Linux inside the Lima VM (virtual display).
+set -euo pipefail
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+vm="${KK_VM:-kak}"
+limactl start "$vm" >/dev/null 2>&1 || true
+limactl shell "$vm" -- bash -lc "
+set -e
+mkdir -p ~/kk-desktop && cd ~/kk-desktop
+rm -rf src && cp -r '$repo/apps/desktop/src' . && cp '$repo/apps/desktop/package.json' .
+node -e 'const p=require(\"./package.json\");p.devDependencies={electron:p.devDependencies.electron};require(\"fs\").writeFileSync(\"package.json\",JSON.stringify(p))'
+[ -d node_modules/electron ] || npm install --no-audit --no-fund >/dev/null
+[ -d node_modules/electron/dist ] || node node_modules/electron/install.js
+sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+. \$HOME/.cargo/env; export CARGO_TARGET_DIR=\$HOME/kk-target RUSTUP_TOOLCHAIN=1.94.1
+cd '$repo' && cargo build -p kk-cli >/dev/null
+export ELECTRON_BIN=\$HOME/kk-desktop/node_modules/electron/dist/electron DESKTOP_APP_DIR=\$HOME/kk-desktop KAKU_BIN=\$HOME/kk-target/debug/kaku
+KK_WORK=/tmp/kk-attack timeout 400 xvfb-run -a node tests/e2e/desktop_attack.mjs
+KK_WORK=/tmp/kk-linux timeout 500 xvfb-run -a node tests/e2e/desktop_linux.mjs
+"
