@@ -11,6 +11,7 @@ use std::fmt;
 pub const MAX_TEXT: usize = 4096;
 pub const MAX_REASON: usize = 512;
 pub const MAX_SUBJECT: usize = 128;
+pub const MAX_PROPOSALS_PER_JOB: i64 = 5;
 
 #[derive(Debug)]
 pub enum MemoryError {
@@ -125,6 +126,19 @@ CREATE TABLE IF NOT EXISTS tombstones (
     fingerprint BLOB PRIMARY KEY,
     reason TEXT NOT NULL,
     forgotten_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS proposals (
+    id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    fingerprint BLOB NOT NULL,
+    why TEXT NOT NULL,
+    level INTEGER NOT NULL,
+    compartments TEXT NOT NULL,
+    untrusted INTEGER NOT NULL,
+    unknown_sensitivity INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS memory_events (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -505,6 +519,142 @@ impl Memories {
         Ok(out)
     }
 
+    pub fn propose(
+        &self,
+        now: i64,
+        job_id: &str,
+        text: &str,
+        why: &str,
+        label: &Label,
+    ) -> Result<Option<String>, MemoryError> {
+        let why = if why.trim().is_empty() {
+            "the review agent suggested it"
+        } else {
+            why
+        };
+        if text.trim().is_empty()
+            || text.len() > MAX_TEXT
+            || why.len() > MAX_REASON
+            || has_hidden_chars(text)
+            || has_hidden_chars(why)
+        {
+            return Ok(None);
+        }
+        let fp = self.fingerprint(text);
+        let blocked: bool = self
+            .conn()
+            .query_row(
+                "SELECT 1 FROM tombstones WHERE fingerprint = ?1",
+                params![fp],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some()
+            || self
+                .conn()
+                .query_row(
+                    "SELECT 1 FROM memories WHERE fingerprint = ?1 AND status = 'active'",
+                    params![fp],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some()
+            || self
+                .conn()
+                .query_row(
+                    "SELECT 1 FROM proposals WHERE job_id = ?1 AND fingerprint = ?2",
+                    params![job_id, fp],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+        let count: i64 = self.conn().query_row(
+            "SELECT count(*) FROM proposals WHERE job_id = ?1",
+            params![job_id],
+            |r| r.get(0),
+        )?;
+        if blocked || count >= MAX_PROPOSALS_PER_JOB || secret::looks_secret(text).is_some() {
+            return Ok(None);
+        }
+        let id = new_id();
+        let comps = label
+            .compartments
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\u{1f}");
+        self.conn().execute(
+            "INSERT INTO proposals(id, job_id, text, fingerprint, why, level, compartments, untrusted, unknown_sensitivity, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'pending', ?10)",
+            params![id, job_id, text, fp, why, level_to_int(label.level), comps, (label.integrity == Integrity::Untrusted) as i64, label.sensitivity_unknown as i64, now],
+        )?;
+        self.event(now, "propose", &id, "suggested by a review")?;
+        Ok(Some(id))
+    }
+
+    pub fn pending_proposals(&self, job_id: &str) -> Result<Vec<Proposal>, MemoryError> {
+        let mut st = self.conn().prepare("SELECT id, text, why, level, compartments, untrusted, unknown_sensitivity FROM proposals WHERE job_id = ?1 AND status = 'pending' ORDER BY created_at, rowid")?;
+        let rows = st.query_map(params![job_id], |r| {
+            let comps: String = r.get(4)?;
+            let mut label = Label::new(int_to_level(r.get(3)?));
+            for c in comps.split('\u{1f}').filter(|c| !c.is_empty()) {
+                label = label.with_compartment(c);
+            }
+            if r.get::<_, i64>(5)? != 0 {
+                label = label.untrusted();
+            }
+            if r.get::<_, i64>(6)? != 0 {
+                label = label.unknown_sensitivity();
+            }
+            Ok(Proposal {
+                id: r.get(0)?,
+                text: r.get(1)?,
+                why: r.get(2)?,
+                label,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn accept_proposal(
+        &self,
+        now: i64,
+        id: &str,
+        job_id: &str,
+    ) -> Result<Remembered, MemoryError> {
+        let p = self
+            .pending_proposals(job_id)?
+            .into_iter()
+            .find(|p| p.id == id)
+            .ok_or(MemoryError::NotFound)?;
+        let r = self.remember(
+            now,
+            NewMemory {
+                text: p.text.clone(),
+                label: p.label.clone(),
+                subject: None,
+                reason: format!("suggested by review {job_id}: {}", p.why),
+                source: Source::Review(job_id.to_string()),
+                valid_from: None,
+                valid_to: None,
+            },
+        )?;
+        self.conn().execute(
+            "UPDATE proposals SET status = 'accepted' WHERE id = ?1",
+            params![id],
+        )?;
+        self.event(now, "accept_proposal", id, "accepted by the owner")?;
+        Ok(r)
+    }
+
+    pub fn dismiss_proposal(&self, now: i64, id: &str, job_id: &str) -> Result<(), MemoryError> {
+        let n = self.conn().execute("UPDATE proposals SET status = 'dismissed', text = '', why = '' WHERE id = ?1 AND job_id = ?2 AND status = 'pending'", params![id, job_id])?;
+        if n == 0 {
+            return Err(MemoryError::NotFound);
+        }
+        self.event(now, "dismiss_proposal", id, "dismissed by the owner")?;
+        Ok(())
+    }
+
     pub fn owner_clearance(&self) -> Result<Label, MemoryError> {
         let mut label = Label::new(Level::Restricted);
         let mut st = self
@@ -600,6 +750,14 @@ impl Memories {
         let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Proposal {
+    pub id: String,
+    pub text: String,
+    pub why: String,
+    pub label: Label,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

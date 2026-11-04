@@ -39,6 +39,7 @@ export interface ReadinessCheck { id: string; label: string; ok: boolean; detail
 export interface Readiness { ready: boolean; checks: ReadinessCheck[] }
 export interface MemoryItem { id: string; text: string; why: string; untrusted: boolean; level: string; compartments: string[]; created_at: number; valid_to: number | null; source: string }
 export interface MemoryVersion { id: string; text: string; reason: string; created_at: number; current: boolean }
+export interface Suggestion { id: string; text: string; why: string; level: string; untrusted: boolean }
 export interface Withheld { path: string; notes: string[] }
 export interface Summary {
   imported: number;
@@ -92,6 +93,9 @@ export const api = {
   correctMemory: (id: string, b: { text: string; reason?: string }) => request<{ id: string }>("POST", `/api/memories/${id}/correct`, b),
   forgetMemory: (id: string, reason?: string) => request<{ forgotten: boolean }>("POST", `/api/memories/${id}/forget`, { reason }),
   memoryHistory: (id: string) => request<{ versions: MemoryVersion[] }>("GET", `/api/memories/${id}/history`),
+  suggestions: (job: string) => request<{ suggestions: Suggestion[] }>("GET", `/api/jobs/${job}/memory-suggestions`),
+  acceptSuggestion: (job: string, id: string) => request<{ id: string; added: boolean }>("POST", `/api/jobs/${job}/memory-suggestions/${id}/accept`, {}),
+  dismissSuggestion: (job: string, id: string) => request<{ dismissed: boolean }>("POST", `/api/jobs/${job}/memory-suggestions/${id}/dismiss`, {}),
   readiness: () => request<Readiness>("GET", "/api/readiness"),
   fs: (path?: string) => request<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>("GET", `/api/fs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   startJob: (repo: string, recipient: string) => request<{ id: string }>("POST", "/api/jobs", { repo, recipient }),

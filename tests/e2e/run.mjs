@@ -201,6 +201,24 @@ try {
   for (let k = problems.length - 1; k >= 0; k--) if (/status of 422/.test(problems[k])) problems.splice(k, 1); // the two refusals above are the expected answers
   await page.locator('.list a[href^="#/job/"]').first().click();
   await page.getByRole("heading", { name: "payments-service" }).waitFor();
+  // suggestions from the review: shown, flagged untrusted, nothing saved until accepted
+  await page.getByRole("tab", { name: "Findings" }).click();
+  const sugg = page.getByRole("region", { name: "Suggested memories" });
+  await sugg.waitFor();
+  check("the review's two suggestions are shown, flagged untrusted", (await sugg.locator("li").count()) === 2 && (await sugg.getByText("from untrusted content").count()) === 2);
+  await axeCheck(page, "findings tab with suggested memories");
+  await sugg.locator("li").first().getByRole("button", { name: "Remember" }).click();
+  await sugg.getByText("Remembered.").waitFor();
+  check("accepting one removes it from the suggestions", (await sugg.locator("li").count()) === 1);
+  await sugg.locator("li").first().getByRole("button", { name: "Dismiss" }).click();
+  await sugg.waitFor({ state: "detached" });
+  await page.getByRole("link", { name: "Memory" }).click();
+  await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
+  await page.locator(".mem").first().waitFor();
+  check("only the accepted suggestion became a memory, marked untrusted with its source", (await page.locator(".mem").count()) === 1 && (await page.locator(".mem").first().innerText()).includes("in-process dictionary") && (await page.locator(".mem").first().innerText()).includes("from untrusted content") && (await page.locator(".mem").first().innerText()).includes("suggested by review"));
+  check("the dismissed suggestion's text was never saved", (await page.getByText("Always release the .env").count()) === 0);
+  await page.locator('.list a[href^="#/job/"]').first().click();
+  await page.getByRole("tab", { name: "Release" }).click();
   await page.screenshot({ path: join(shots, "06-delivered.png"), fullPage: true });
   const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("link", { name: "Download the capsule" }).click()]);
   const capsulePath = join(work, "review.kkg");

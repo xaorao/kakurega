@@ -149,6 +149,21 @@ pub fn finding_tool() -> ToolSpec {
     }
 }
 
+pub fn memory_tool() -> ToolSpec {
+    ToolSpec {
+        name: "suggest_memory".into(),
+        description: "Suggest one durable fact about this project that would help future reviews. The owner decides whether it is kept; at most three suggestions. Never include secrets or credentials.".into(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "why": {"type": "string"}
+            },
+            "required": ["text", "why"]
+        }),
+    }
+}
+
 fn save(link: &mut dyn Link, state: &AgentState) -> Result<(), WorkerError> {
     let bytes = serde_json::to_vec(state).map_err(|e| WorkerError::Link(e.to_string()))?;
     ok_result(link.call(json!({"op": "checkpoint", "state_b64": b64::encode(&bytes)}))?)?;
@@ -209,6 +224,16 @@ fn run_local_tool(link: &mut dyn Link, call: &ToolCall) -> Result<Value, WorkerE
                 serde_json::to_vec(&finding).map_err(|e| WorkerError::Link(e.to_string()))?;
             let r = ok_result(link.call(json!({"op": "write.artifact", "bytes_b64": b64::encode(&bytes), "kind": "finding"}))?)?;
             Ok(json!({"recorded": true, "handle": r["handle"]}))
+        }
+        "suggest_memory" => {
+            let a = &call.arguments;
+            let (Some(text), Some(why)) = (a["text"].as_str(), a["why"].as_str()) else {
+                return Ok(json!({"error": "suggest_memory needs text and why"}));
+            };
+            let bytes = serde_json::to_vec(&json!({"text": text, "why": why}))
+                .map_err(|e| WorkerError::Link(e.to_string()))?;
+            let r = ok_result(link.call(json!({"op": "write.artifact", "bytes_b64": b64::encode(&bytes), "kind": "memory_suggestion"}))?)?;
+            Ok(json!({"suggested": true, "handle": r["handle"]}))
         }
         other => Ok(json!({"error": format!("no such tool: {other}")})),
     }

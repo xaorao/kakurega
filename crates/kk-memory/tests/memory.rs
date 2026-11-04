@@ -541,3 +541,130 @@ fn me13_listing_is_newest_first_label_gated_and_the_owner_clearance_sees_every_c
         "superseded versions are not listed"
     );
 }
+
+#[test]
+fn me14_a_suggestion_never_becomes_a_memory_until_the_owner_accepts_and_keeps_its_untrusted_label()
+{
+    let m = mem(&dir());
+    let lbl = Label::new(Level::Internal).untrusted();
+    let p = m
+        .propose(
+            5,
+            "job-1",
+            "Payments service uses Redis for sessions",
+            "seen in session.py",
+            &lbl,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(
+        m.recall("Redis", &internal(), 9, 5).unwrap().is_empty(),
+        "a suggestion is not a memory"
+    );
+    assert_eq!(m.pending_proposals("job-1").unwrap().len(), 1);
+    assert!(m.pending_proposals("job-2").unwrap().is_empty());
+    assert!(
+        matches!(
+            m.accept_proposal(6, &p, "job-2"),
+            Err(MemoryError::NotFound)
+        ),
+        "only through the job it came from"
+    );
+    assert!(matches!(
+        m.accept_proposal(6, &p, "job-1"),
+        Ok(Remembered::Added(_))
+    ));
+    let got = m.recall("Redis", &internal(), 9, 5).unwrap();
+    assert_eq!(got.len(), 1);
+    assert!(
+        got[0].untrusted,
+        "memory that came from a review stays flagged as untrusted"
+    );
+    assert_eq!(got[0].memory.source, Source::Review("job-1".into()));
+    assert!(
+        got[0].why.contains("suggested by review job-1")
+            && got[0].why.contains("seen in session.py")
+    );
+    assert!(m.pending_proposals("job-1").unwrap().is_empty());
+    assert!(
+        matches!(
+            m.accept_proposal(7, &p, "job-1"),
+            Err(MemoryError::NotFound)
+        ),
+        "no double accept"
+    );
+}
+
+#[test]
+fn me15_dismissed_suggestions_lose_their_text_and_forgotten_or_known_text_is_not_suggested() {
+    let m = mem(&dir());
+    let lbl = Label::new(Level::Internal).untrusted();
+    let p = m
+        .propose(1, "job-1", "xylophonequartz detail", "why", &lbl)
+        .unwrap()
+        .unwrap();
+    m.dismiss_proposal(2, &p, "job-1").unwrap();
+    let c = m.connection_for_tests();
+    let left: i64 = c.query_row("SELECT count(*) FROM proposals WHERE instr(text, 'xylophonequartz') > 0 OR instr(why, 'why') > 0", [], |r| r.get(0)).unwrap();
+    assert_eq!(left, 0, "a dismissed suggestion keeps no text");
+    assert!(matches!(
+        m.dismiss_proposal(3, &p, "job-1"),
+        Err(MemoryError::NotFound)
+    ));
+    let known = id(m.remember(4, nm("already known fact", internal())).unwrap());
+    assert!(
+        m.propose(5, "job-1", "Already   KNOWN fact", "x", &lbl)
+            .unwrap()
+            .is_none(),
+        "known text is not suggested again"
+    );
+    m.forget(6, &known, "no").unwrap();
+    assert!(
+        m.propose(7, "job-1", "already known fact", "x", &lbl)
+            .unwrap()
+            .is_none(),
+        "forgotten text is never suggested"
+    );
+}
+
+#[test]
+fn me16_suggestions_are_bounded_and_secrets_and_hidden_characters_are_dropped() {
+    let m = mem(&dir());
+    let lbl = Label::new(Level::Internal).untrusted();
+    for i in 0..9 {
+        let _ = m
+            .propose(
+                1,
+                "job-1",
+                &format!("distinct suggestion number {i}"),
+                "w",
+                &lbl,
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        m.pending_proposals("job-1").unwrap().len(),
+        5,
+        "at most five per review"
+    );
+    assert!(m
+        .propose(1, "job-2", "the password is hunter2hunter2", "w", &lbl)
+        .unwrap()
+        .is_none());
+    assert!(m
+        .propose(1, "job-2", "evil \u{202e}text", "w", &lbl)
+        .unwrap()
+        .is_none());
+    assert!(m
+        .propose(1, "job-2", &"a ".repeat(3000), "w", &lbl)
+        .unwrap()
+        .is_none());
+    assert!(m.pending_proposals("job-2").unwrap().is_empty());
+    let a = m.propose(1, "job-3", "same text twice", "w", &lbl).unwrap();
+    assert!(
+        a.is_some()
+            && m.propose(1, "job-3", "Same  text twice", "w", &lbl)
+                .unwrap()
+                .is_none()
+    );
+}

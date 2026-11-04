@@ -231,11 +231,15 @@
   },
   "G54": {
    "status": "PARTIAL",
-   "evidence": "Memory screen correction keeps history and the privacy level: kk-memory me04, kk-service sv11, scripts/e2e; structured wrong/corrected/source record (N14) not built"
+   "evidence": "Memory screen correction keeps history and the privacy level: kk-memory me04, kk-service sv11, scripts/e2e; structured wrong/corrected/source record (N14) not built; N14 not built"
   },
   "G57": {
    "status": "PARTIAL",
-   "evidence": "labels enforced at recall (me02, me13); remembered notes enter every review as labelled files, so the existing label and taint rules apply: kk-service sv12 (labels kept), kk-review j06 in the sandbox VM (Internal note readable; Confidential and Restricted look absent; mutation-checked); per-project scoping and the agent writing memory back are not built"
+   "evidence": "labels enforced at recall (me02, me13); remembered notes enter every review as labelled files, so the existing label and taint rules apply: kk-service sv12 (labels kept), kk-review j06 in the sandbox VM (Internal note readable; Confidential and Restricted look absent; mutation-checked); per-project scoping and the agent writing memory back are not built; agent-suggested memories need owner approval and stay untrusted: kk-memory me14-me16 (mutation-checked), kk-review j07 in the VM sandbox, kk-service sv13, scripts/e2e suggestion journey"
+  },
+  "G56": {
+   "status": "NOT_BUILT",
+   "evidence": null
   }
  }
 }

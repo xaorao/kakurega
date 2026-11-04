@@ -369,6 +369,12 @@ impl Service {
                 let mut snap_out = None;
                 match report {
                     Ok(r) => {
+                        {
+                            let mem = svc.memory.lock().expect("lock");
+                            for sg in &r.memory_suggestions {
+                                let _ = mem.propose(now(), &jid, &sg.text, &sg.why, &sg.label);
+                            }
+                        }
                         let snap = Snapshot::from_report(&r);
                         job.state = match (&snap.error, &snap.draft) {
                             (Some(e), _) => JobState::Failed(e.clone()),
@@ -617,6 +623,53 @@ async fn memory_history(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>)
     match mem.owner_clearance().and_then(|c| mem.history(&id, &c)) {
         Ok(h) if h.is_empty() => error(StatusCode::NOT_FOUND, "NO_MEMORY", "no such memory"),
         Ok(h) => Json(json!({"versions": h.iter().map(|m| json!({"id": m.id, "text": m.text, "reason": m.reason, "created_at": m.created_at, "current": m.superseded_by.is_none()})).collect::<Vec<_>>()})).into_response(),
+        Err(e) => memory_error(e),
+    }
+}
+
+async fn suggestions_list(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    match svc.memory.lock().expect("lock").pending_proposals(&id) {
+        Ok(items) => Json(json!({"suggestions": items.iter().map(|p| json!({
+            "id": p.id, "text": p.text, "why": p.why,
+            "level": format!("{:?}", p.label.level).to_lowercase(),
+            "untrusted": p.label.integrity == kk_types::label::Integrity::Untrusted,
+        })).collect::<Vec<_>>()}))
+        .into_response(),
+        Err(e) => memory_error(e),
+    }
+}
+
+async fn suggestion_accept(
+    axum::Extension(svc): Svc,
+    UrlPath((id, sid)): UrlPath<(String, String)>,
+) -> Response {
+    match svc
+        .memory
+        .lock()
+        .expect("lock")
+        .accept_proposal(now(), &sid, &id)
+    {
+        Ok(kk_memory::Remembered::Added(m)) => {
+            Json(json!({"id": m, "added": true})).into_response()
+        }
+        Ok(kk_memory::Remembered::AlreadyKnown(m)) => {
+            Json(json!({"id": m, "added": false})).into_response()
+        }
+        Err(e) => memory_error(e),
+    }
+}
+
+async fn suggestion_dismiss(
+    axum::Extension(svc): Svc,
+    UrlPath((id, sid)): UrlPath<(String, String)>,
+) -> Response {
+    match svc
+        .memory
+        .lock()
+        .expect("lock")
+        .dismiss_proposal(now(), &sid, &id)
+    {
+        Ok(()) => Json(json!({"dismissed": true})).into_response(),
         Err(e) => memory_error(e),
     }
 }
@@ -1145,6 +1198,15 @@ impl Extension for Routes {
             .route("/api/memories/{id}/correct", post(memory_correct))
             .route("/api/memories/{id}/forget", post(memory_forget))
             .route("/api/memories/{id}/history", get(memory_history))
+            .route("/api/jobs/{id}/memory-suggestions", get(suggestions_list))
+            .route(
+                "/api/jobs/{id}/memory-suggestions/{sid}/accept",
+                post(suggestion_accept),
+            )
+            .route(
+                "/api/jobs/{id}/memory-suggestions/{sid}/dismiss",
+                post(suggestion_dismiss),
+            )
             .route("/api/fs", get(fs_list))
             .route("/api/jobs", get(list).post(start))
             .route("/api/jobs/{id}", get(get_job))

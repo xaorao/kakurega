@@ -1,6 +1,7 @@
 use kk_types::chat::ToolSpec;
 use kk_worker::{
-    finding_tool, load_state, run, AgentConfig, AgentState, Outcome, StdioLink, WorkerError,
+    finding_tool, load_state, memory_tool, run, AgentConfig, AgentState, Outcome, StdioLink,
+    WorkerError,
 };
 use serde_json::json;
 use std::io::{stdin, stdout, BufReader};
@@ -28,7 +29,7 @@ fn real_main() -> i32 {
     };
     let config = AgentConfig {
         tools: tool_specs,
-        local_tools: vec![finding_tool()],
+        local_tools: vec![finding_tool(), memory_tool()],
         max_turns,
         max_tokens: 1024,
     };
