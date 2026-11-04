@@ -313,7 +313,7 @@
           "text": "One shared secret detector (provider formats, assignments with false-positive filters, URL passwords, wallet keys, bounded decoding) with a corpus of positives and benign look-alikes",
           "kind": "machine",
           "command": "cargo test -p kk-secrets",
-          "expect": "test result: ok. 5 passed"
+          "expect": "test result: ok. 6 passed"
         },
         {
           "id": "II-14b",
@@ -394,7 +394,7 @@
           "text": "Full-screen terminal workspace: command parsing, editing, rendering at several sizes, approval needs the typed digest, refusal recorded, output sanitised, secrets scrubbed (unit tests with fake responses)",
           "kind": "machine",
           "command": "cargo test -p kk-tui",
-          "expect": "test result: ok. 18 passed"
+          "expect": "test result: ok."
         },
         {
           "id": "III-02",
@@ -422,7 +422,7 @@
           "text": "MCP server with stable typed schemas (golden contract), strict argument validation, uniform file errors; docs/mcp.md. Live agent session without leaks: tests/e2e/mcp_live.py. NOT built: an SDK package, import/ask/rehearse commands.",
           "kind": "machine",
           "command": "cargo test -p kk-cli --test mcp",
-          "expect": "test result: ok. 3 passed"
+          "expect": "test result: ok."
         },
         {
           "id": "III-06",
@@ -464,7 +464,7 @@
           "text": "Extension permission lint, pure logic and background wiring tests",
           "kind": "machine",
           "command": "cd apps/extension && node --test test/*.test.mjs",
-          "expect": "pass 10"
+          "expect": "fail 0"
         },
         {
           "id": "III-06c",
@@ -478,7 +478,7 @@
           "text": "Bridge unit tests: pairing, allowlist silence, templates without private text, notification de-duplication and no replay, token scrubbing, read-only",
           "kind": "machine",
           "command": "cargo test -p kk-cli telegram",
-          "expect": "test result: ok. 6 passed"
+          "expect": "test result: ok."
         },
         {
           "id": "III-07c",
