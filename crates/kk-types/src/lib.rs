@@ -1,3 +1,4 @@
+pub mod chat;
 pub mod label;
 
 pub const PRODUCT: &str = "kakurega";

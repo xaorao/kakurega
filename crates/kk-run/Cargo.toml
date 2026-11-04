@@ -1,0 +1,22 @@
+[package]
+name = "kk-run"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Runs a job: puts a worker in the sandbox and serves its broker requests"
+
+[dependencies]
+kk-types = { path = "../kk-types" }
+kk-sandbox = { path = "../kk-sandbox" }
+kk-broker = { path = "../kk-broker" }
+kk-policy = { path = "../kk-policy" }
+kk-kernel = { path = "../kk-kernel" }
+serde_json = "1"
+
+[dev-dependencies]
+kk-route = { path = "../kk-route" }
+kk-evidence = { path = "../kk-evidence" }
+kk-worker = { path = "../kk-worker" }
+
+[lints]
+workspace = true

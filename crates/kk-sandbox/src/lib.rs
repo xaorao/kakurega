@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::fmt;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -295,4 +295,156 @@ pub mod selfcheck;
 pub fn run(spec: &SandboxSpec) -> Result<Outcome, SandboxError> {
     selfcheck::verify_profile()?;
     run_unchecked(spec)
+}
+
+pub const MAX_LINE: usize = 8 << 20;
+
+pub struct ServeOutcome {
+    pub exit: Exit,
+    pub stderr: Vec<u8>,
+    pub lines_served: u64,
+    pub oversize_line: bool,
+}
+
+fn scope_command(spec: &SandboxSpec) -> Result<(Command, String), SandboxError> {
+    if !cfg!(target_os = "linux") {
+        return Err(SandboxError::Unsupported(
+            "the bubblewrap sandbox runs on Linux only",
+        ));
+    }
+    let unit = format!(
+        "kk-worker-{}-{}",
+        std::process::id(),
+        UNIT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") else {
+        return Err(SandboxError::Unsupported(
+            "a systemd user session (XDG_RUNTIME_DIR) is required for cgroup limits",
+        ));
+    };
+    let mut cmd = Command::new("systemd-run");
+    cmd.args(scope_args(&spec.limits, &unit));
+    cmd.arg("prlimit").args(prlimit_args(&spec.limits));
+    cmd.arg("--").arg("bwrap").args(bwrap_args(spec));
+    cmd.env_clear().env("XDG_RUNTIME_DIR", dir);
+    Ok((cmd, unit))
+}
+
+pub fn serve_lines(
+    spec: &SandboxSpec,
+    mut handler: impl FnMut(&str) -> String,
+) -> Result<ServeOutcome, SandboxError> {
+    selfcheck::verify_profile()?;
+    let (mut cmd, unit) = scope_command(spec)?;
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| SandboxError::Spawn(e.to_string()))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| SandboxError::Spawn("no stdin".into()))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| SandboxError::Spawn("no stdout".into()))?;
+    let stderr = child.stderr.take();
+    let cap = spec.limits.output_bytes;
+    let t_err = std::thread::spawn(move || stderr.map(|o| read_capped(o, cap)).unwrap_or_default());
+    let (tx, rx) = std::sync::mpsc::channel::<Result<String, ()>>();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        loop {
+            let mut buf = Vec::new();
+            let n = match reader
+                .by_ref()
+                .take(MAX_LINE as u64 + 1)
+                .read_until(b'\n', &mut buf)
+            {
+                Ok(n) => n,
+                Err(_) => break,
+            };
+            if n == 0 {
+                break;
+            }
+            if buf.len() > MAX_LINE {
+                let _ = tx.send(Err(()));
+                break;
+            }
+            if buf.last() == Some(&b'\n') {
+                buf.pop();
+            }
+            match String::from_utf8(buf) {
+                Ok(line) => {
+                    if tx.send(Ok(line)).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => {
+                    let _ = tx.send(Err(()));
+                    break;
+                }
+            }
+        }
+    });
+    let stop_scope = |unit: &str| {
+        let _ = Command::new("systemctl")
+            .args(["--user", "stop", &format!("{unit}.scope")])
+            .env_clear()
+            .env(
+                "XDG_RUNTIME_DIR",
+                std::env::var("XDG_RUNTIME_DIR").unwrap_or_default(),
+            )
+            .output();
+    };
+    let start = Instant::now();
+    let mut served = 0u64;
+    let mut oversize = false;
+    let exit = loop {
+        match rx.recv_timeout(Duration::from_millis(20)) {
+            Ok(Ok(line)) => {
+                served += 1;
+                let reply = handler(&line);
+                if writeln!(stdin, "{reply}").is_err() || stdin.flush().is_err() {
+                    // the worker is gone; the exit status is collected below
+                }
+            }
+            Ok(Err(())) => {
+                oversize = true;
+                stop_scope(&unit);
+                let _ = child.kill();
+                let _ = child.wait();
+                break Exit::Signal(9);
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            use std::os::unix::process::ExitStatusExt;
+            while let Ok(Ok(line)) = rx.try_recv() {
+                served += 1;
+                let _ = handler(&line);
+            }
+            break match (status.code(), status.signal()) {
+                (Some(c), _) => Exit::Code(c),
+                (None, Some(sig)) => Exit::Signal(sig),
+                _ => Exit::Code(-1),
+            };
+        }
+        if start.elapsed() >= spec.limits.wall {
+            stop_scope(&unit);
+            let _ = child.kill();
+            let _ = child.wait();
+            break Exit::TimedOut;
+        }
+    };
+    let (stderr_bytes, _) = t_err.join().unwrap_or_default();
+    Ok(ServeOutcome {
+        exit,
+        stderr: stderr_bytes,
+        lines_served: served,
+        oversize_line: oversize,
+    })
 }

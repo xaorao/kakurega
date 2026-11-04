@@ -1017,6 +1017,7 @@ dependencies = [
  "kk-policy",
  "kk-route",
  "kk-types",
+ "kk-worker",
  "serde",
  "serde_json",
 ]
@@ -1070,6 +1071,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "kk-run"
+version = "0.0.1"
+dependencies = [
+ "kk-broker",
+ "kk-evidence",
+ "kk-kernel",
+ "kk-policy",
+ "kk-route",
+ "kk-sandbox",
+ "kk-types",
+ "kk-worker",
+ "serde_json",
+]
+
+[[package]]
 name = "kk-sandbox"
 version = "0.0.1"
 dependencies = [
@@ -1081,6 +1097,8 @@ name = "kk-types"
 version = "0.0.1"
 dependencies = [
  "proptest",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1091,6 +1109,16 @@ dependencies = [
  "kk-types",
  "rusqlite",
  "zeroize",
+]
+
+[[package]]
+name = "kk-worker"
+version = "0.0.1"
+dependencies = [
+ "kk-evidence",
+ "kk-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -31,6 +31,7 @@ impl Default for BrokerConfig {
                 "model.complete",
                 "tool.call",
                 "checkpoint",
+                "checkpoint.load",
                 "log.note",
                 "release.propose",
             ]
@@ -60,7 +61,6 @@ struct Session {
     calls: u32,
     bytes_read: u64,
     model_tokens: u64,
-    checkpoint: Option<Vec<u8>>,
     human_approved: bool,
     open: bool,
     config: BrokerConfig,
@@ -73,8 +73,14 @@ pub struct ReleaseDraft {
     pub recipient: String,
 }
 
+struct StoredCheckpoint {
+    bytes: Vec<u8>,
+    taint: kk_types::label::Label,
+}
+
 pub struct Broker {
     pub kernel: Kernel,
+    checkpoints: HashMap<JobKey, StoredCheckpoint>,
     policy: Engine,
     routes: RouteSet,
     tools: BTreeMap<String, Box<dyn Tool>>,
@@ -132,6 +138,7 @@ impl Broker {
         }
         Broker {
             kernel: Kernel::new(),
+            checkpoints: HashMap::new(),
             policy,
             routes,
             tools,
@@ -181,7 +188,6 @@ impl Broker {
                 calls: 0,
                 bytes_read: 0,
                 model_tokens: 0,
-                checkpoint: None,
                 human_approved: false,
                 open: true,
                 config,
@@ -198,7 +204,8 @@ impl Broker {
     }
 
     pub fn checkpoint_of(&self, id: SessionId) -> Option<&[u8]> {
-        self.sessions.get(&id).and_then(|s| s.checkpoint.as_deref())
+        let job = &self.sessions.get(&id)?.job;
+        self.checkpoints.get(job).map(|c| c.bytes.as_slice())
     }
 
     pub fn taint_of(&self, id: SessionId) -> Option<kk_types::label::Label> {
@@ -297,6 +304,7 @@ impl Broker {
                 args,
             } => self.op_tool(id, &request_id, &name, &args),
             Request::Checkpoint { state_b64 } => self.op_checkpoint(id, &state_b64),
+            Request::CheckpointLoad {} => self.op_checkpoint_load(id),
             Request::LogNote { code } => {
                 if code.len() > 64
                     || !code
@@ -509,8 +517,36 @@ impl Broker {
         if bytes.len() > max {
             return fail(ErrorCode::BudgetExceeded, "checkpoint too large");
         }
-        self.sessions.get_mut(&id).expect("session").checkpoint = Some(bytes);
+        let (job, taint) = {
+            let s = &self.sessions[&id];
+            (
+                s.job.clone(),
+                self.kernel
+                    .taint(s.step)
+                    .cloned()
+                    .unwrap_or_else(kk_types::label::Label::bottom),
+            )
+        };
+        self.checkpoints
+            .insert(job, StoredCheckpoint { bytes, taint });
         Ok(json!({}))
+    }
+
+    fn op_checkpoint_load(&mut self, id: SessionId) -> Result<Value, Failure> {
+        let (job, step) = {
+            let s = &self.sessions[&id];
+            (s.job.clone(), s.step)
+        };
+        let Some(stored) = self.checkpoints.get(&job) else {
+            return Ok(json!({"state_b64": Value::Null}));
+        };
+        self.kernel
+            .absorb(step, &stored.taint)
+            .map_err(|_| Failure {
+                code: ErrorCode::LabelExceedsClearance,
+                detail: "the saved state holds data above this worker's clearance".into(),
+            })?;
+        Ok(json!({"state_b64": b64::encode(&stored.bytes)}))
     }
 
     fn op_propose(

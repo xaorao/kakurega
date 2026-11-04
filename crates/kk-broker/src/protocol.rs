@@ -48,6 +48,8 @@ pub enum Request {
     },
     #[serde(rename = "checkpoint")]
     Checkpoint { state_b64: String },
+    #[serde(rename = "checkpoint.load")]
+    CheckpointLoad {},
     #[serde(rename = "log.note")]
     LogNote { code: String },
     #[serde(rename = "release.propose")]
@@ -65,6 +67,7 @@ impl Request {
             Request::ModelComplete { .. } => "model.complete",
             Request::ToolCall { .. } => "tool.call",
             Request::Checkpoint { .. } => "checkpoint",
+            Request::CheckpointLoad { .. } => "checkpoint.load",
             Request::LogNote { .. } => "log.note",
             Request::ReleasePropose { .. } => "release.propose",
         }
