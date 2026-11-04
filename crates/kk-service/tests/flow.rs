@@ -3873,6 +3873,15 @@ fn sv32_prompt_history_survives_a_restart_skips_secrets_and_repeats_is_bounded_a
         (200, json!("line number 229")),
         "bounded at 200, newest kept"
     );
+    let stored: i64 = kk_service::keys::open_vault(&data, "jobs.db")
+        .unwrap()
+        .connection()
+        .query_row("SELECT count(*) FROM prompt_history", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        stored, 200,
+        "older lines are deleted from the store, not just hidden"
+    );
     assert_eq!(w2.post("/api/history/clear", json!({})).0, 200);
     assert_eq!(
         w2.get("/api/history").1["lines"].as_array().unwrap().len(),
