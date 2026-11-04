@@ -31,3 +31,6 @@ Independent discovery: each investigator must also search for strong references 
 
 ## Evidence required to close a cluster
 Matrix reviewed by me; every REUSE, ADAPT, IMPROVE or BUILD decision implemented or scheduled with a reason; tests including hostile cases; a run of the strongest reference on an equivalent task where behaviour is the point; `NOTICE.md` updated for anything adapted; the owed list for the component empty or justified.
+
+## Ghast parity program (owner's stated intent, 2026-11-04)
+The owner wants a Ghast-level product with every meaningful Ghast feature, built properly here and running on NEAR. Cluster G produces the full Ghast capability inventory. Every capability becomes a backlog row with: what it does for the user, how it works (architecture and UX, from legitimately observable behaviour and from the three permissively licensed repositories), the Kakurega surface where it belongs, and the NEAR-backed or kernel-mediated way to deliver it. Where Ghast's own code is MIT or Apache (Anamnesis, companion_service, ghast-memory-os) it is adapted with notices. Where it is unlicensed or closed (desktop app, plugins, registry, extension, site) the behaviour, structure and UX are reproduced from observation with our own code, never copied text, assets or code. Nothing in the inventory is dropped for being outside the earlier catalog.

@@ -504,6 +504,11 @@ impl Memories {
                 let Some(fp) = fp else { continue };
                 found = true;
                 self.conn().execute("INSERT OR REPLACE INTO tombstones(fingerprint, reason, forgotten_at) VALUES (?1, ?2, ?3)", params![fp, reason, now])?;
+                // Any review suggestion holding the same text is part of the same forget decision.
+                self.conn().execute(
+                    "UPDATE proposals SET text = '', why = '', status = CASE WHEN status = 'pending' THEN 'dismissed' ELSE status END WHERE fingerprint = ?1",
+                    params![fp],
+                )?;
                 self.conn().execute(
                     "UPDATE memories SET text = '', subject = NULL, reason = '' WHERE id = ?1",
                     params![mid],
@@ -555,10 +560,18 @@ impl Memories {
             "SELECT m.* FROM memories_fts f JOIN memories m ON m.rowid = f.rowid
              WHERE memories_fts MATCH ?1 AND m.status = 'active'
                AND (m.valid_from IS NULL OR m.valid_from <= ?2) AND (m.valid_to IS NULL OR m.valid_to > ?2)
+               AND m.level <= ?4
              ORDER BY bm25(memories_fts) LIMIT ?3",
         )?;
+        // The level filter is in the query so notes the caller may not see cannot crowd out ones it may; compartments
+        // are checked afterwards, so the candidate pool stays generous.
         let rows = st.query_map(
-            params![q, as_of, (limit.clamp(1, 50) * 4) as i64],
+            params![
+                q,
+                as_of,
+                (limit.clamp(1, 50) * 4).max(512) as i64,
+                level_to_int(clearance.level)
+            ],
             row_to_memory,
         )?;
         let mut out = Vec::new();
@@ -709,8 +722,9 @@ impl Memories {
                 valid_to: None,
             },
         )?;
+        // The memory now holds the text; the suggestion row keeps no second copy.
         self.conn().execute(
-            "UPDATE proposals SET status = 'accepted' WHERE id = ?1",
+            "UPDATE proposals SET status = 'accepted', text = '', why = '' WHERE id = ?1",
             params![id],
         )?;
         self.event(now, "accept_proposal", id, "accepted by the owner")?;

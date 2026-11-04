@@ -742,3 +742,87 @@ fn me18_everyday_words_do_not_make_unrelated_notes_match() {
     assert_eq!(m.recall("invoices", &internal(), 9, 5).unwrap().len(), 1);
     assert_eq!(m.recall("Acme", &internal(), 9, 5).unwrap().len(), 1);
 }
+
+#[test]
+fn me19_forgetting_also_clears_the_review_suggestion_rows_that_held_the_same_text() {
+    let m = mem(&dir());
+    let label = internal();
+    let pending = m
+        .propose(
+            1,
+            "job-1",
+            "quokkaquarry supplier is Contoso",
+            "seen in a review",
+            &label,
+        )
+        .unwrap()
+        .unwrap();
+    let accepted_text = "quokkaquarry payment terms are net 45";
+    let p2 = m
+        .propose(2, "job-1", accepted_text, "seen in a review", &label)
+        .unwrap()
+        .unwrap();
+    let remembered = m.accept_proposal(3, &p2, "job-1").unwrap();
+    let c = m_conn(&m);
+    let held = |c: &kk_vault::rusqlite::Connection| -> i64 {
+        c.query_row("SELECT count(*) FROM proposals WHERE instr(lower(text), 'quokkaquarry') > 0 OR instr(lower(why), 'quokkaquarry') > 0", [], |r| r.get(0)).unwrap()
+    };
+    assert_eq!(held(&c), 1, "control: the still-pending suggestion holds its text, the accepted one must not keep a second copy");
+    let mem_id = id(remembered);
+    m.forget(4, &mem_id, "private").unwrap();
+    assert_eq!(
+        held(&c),
+        1,
+        "forgetting one memory must not touch an unrelated pending suggestion"
+    );
+    m.dismiss_proposal(5, &pending, "job-1").unwrap();
+    assert_eq!(held(&c), 0);
+    // a pending suggestion whose text is later forgotten through an identical memory is cleared too
+    let t = "quokkaquarry warehouse code is 7731";
+    let p3 = m.propose(6, "job-2", t, "x", &label).unwrap().unwrap();
+    let mem2 = id(m.remember(7, nm(t, internal())).unwrap());
+    m.forget(8, &mem2, "private").unwrap();
+    assert_eq!(
+        held(&c),
+        0,
+        "the suggestion with the same text is cleared when that text is forgotten: {p3}"
+    );
+}
+
+#[test]
+fn me20_recall_is_not_starved_by_notes_the_caller_may_not_see() {
+    let m = mem(&dir());
+    let restricted = Label::new(kk_types::label::Level::Restricted);
+    for i in 0..150 {
+        m.remember(
+            1,
+            NewMemory {
+                text: format!(
+                    "harborlight confidential payroll detail number {i} harborlight harborlight"
+                ),
+                label: restricted.clone(),
+                subject: None,
+                reason: "x".into(),
+                source: Source::User,
+                valid_from: None,
+                valid_to: None,
+            },
+        )
+        .unwrap();
+    }
+    m.remember(
+        2,
+        nm(
+            "harborlight supplier invoices are paid on the fifth",
+            internal(),
+        ),
+    )
+    .unwrap();
+    let got = m.recall("harborlight", &internal(), 9, 5).unwrap();
+    assert_eq!(
+        got.len(),
+        1,
+        "the one note the caller may see must be found behind 150 it may not: {got:?}"
+    );
+    assert!(got[0].memory.text.contains("invoices"));
+}
