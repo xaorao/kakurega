@@ -23,7 +23,7 @@ def violations(metadata, layers):
             continue
         for dep in pkg["dependencies"]:
             dname = dep["name"]
-            if dname not in names:
+            if dname == name or dname not in names:
                 continue
             if dname not in layers:
                 found.append("%s depends on %s which has no layer" % (name, dname))
@@ -59,8 +59,10 @@ def selftest():
     assert violations(ok, layers) == [], "clean graph must pass"
     assert violations(up, layers), "upward dependency must fail"
     assert violations(sideways, layers), "same-layer dependency must fail"
+    selfdep = {"packages": [{"name": "kk-types", "dependencies": [{"name": "kk-types"}]}]}
+    assert violations(selfdep, {"kk-types": 0}) == [], "a crate enabling its own features is not an edge"
     assert violations(unassigned, {}), "unassigned crate must fail"
-    print("check_layers selftest: ok (4 cases)")
+    print("check_layers selftest: ok (5 cases)")
 
 
 def main():
