@@ -7,6 +7,7 @@
     "kk-kernel": 1,
     "kk-sandbox": 1,
     "kk-policy": 1,
+    "kk-route": 1,
     "kk-effects": 2
   }
 }
