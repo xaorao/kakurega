@@ -274,6 +274,28 @@ try {
   await page.locator(".mem").first().waitFor();
   check("only the accepted suggestion became a memory, marked untrusted with its source", (await page.locator(".mem").count()) === 1 && (await page.locator(".mem").first().innerText()).includes("in-process dictionary") && (await page.locator(".mem").first().innerText()).includes("from untrusted content") && (await page.locator(".mem").first().innerText()).includes("suggested by review"));
   check("the dismissed suggestion's text was never saved", (await page.getByText("Always release the .env").count()) === 0);
+  // setup panel: a failing check that the service says it can fix shows a button and the progress, never a quiet success
+  await page.getByRole("link", { name: "New review" }).click();
+  await page.waitForLoadState("networkidle");
+  let repairState = null;
+  await page.route("**/api/readiness**", async (route) => {
+    if (route.request().method() === "POST") {
+      repairState = { state: "running", detail: "pulling 40%" };
+      return route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ started: true }) });
+    }
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ready: false, checks: [{ id: "model", label: "Model", ok: false, detail: "m is not installed", fix: "Run in a terminal: ollama pull m", repairable: true, ...(repairState ? { repair: repairState } : {}) }] }) });
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Fix this now" }).click();
+  await page.getByText("Working: pulling 40%").waitFor();
+  check("a failing check that can be fixed offers a button, then shows the progress of the fix", (await page.getByRole("button", { name: "Fix this now" }).count()) === 0);
+  repairState = { state: "failed", detail: "could not install m: disk full" };
+  await page.getByText("Could not fix it: could not install m: disk full").waitFor({ timeout: 10000 });
+  check("a failed fix shows its reason", true);
+  await page.unroute("**/api/readiness**");
+  await page.waitForLoadState("networkidle");
+  await page.reload();
+  await page.waitForLoadState("networkidle");
   // command palette: keyboard-driven, focus returns where it was, and it can change settings
   await page.getByRole("button", { name: "Commands" }).focus();
   await page.keyboard.press("Control+Shift+P");

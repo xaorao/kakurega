@@ -3893,3 +3893,143 @@ fn sv32_prompt_history_survives_a_restart_skips_secrets_and_repeats_is_bounded_a
     );
     assert!(log.contains("history.cleared") && !log.contains("Marmot"));
 }
+
+struct RepairRunner {
+    inner: CannedRunner,
+    installed: std::sync::atomic::AtomicBool,
+    fail: std::sync::atomic::AtomicBool,
+    runs: std::sync::atomic::AtomicUsize,
+}
+
+impl JobRunner for RepairRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        self.inner.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        self.inner.route_info()
+    }
+    fn readiness(&self) -> Vec<Value> {
+        let ok = self.installed.load(std::sync::atomic::Ordering::SeqCst);
+        vec![
+            json!({"id": "model", "label": "Model", "ok": ok, "detail": "x", "fix": "Run in a terminal: ollama pull m"}),
+            json!({"id": "sandbox", "label": "Sandbox", "ok": false, "detail": "x", "fix": "install it"}),
+        ]
+    }
+    fn repairable(&self) -> Vec<String> {
+        vec!["model".into()]
+    }
+    fn repair(&self, id: &str, progress: &dyn Fn(&str)) -> Result<String, String> {
+        assert_eq!(id, "model");
+        self.runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        progress("pulling 40%");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("could not install m: disk full".into());
+        }
+        self.installed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok("m is installed".into())
+    }
+}
+
+#[test]
+fn sv33_a_failing_check_can_be_fixed_in_the_background_only_when_the_runner_says_so_and_only_one_at_a_time(
+) {
+    use std::sync::atomic::Ordering;
+    let (root, _repo) = repo_copy("data-repair");
+    let runner = Arc::new(RepairRunner {
+        inner: CannedRunner { confirm: true },
+        installed: Default::default(),
+        fail: Default::default(),
+        runs: Default::default(),
+    });
+    let svc = Service::new(&root.join("data"), vec![root.clone()], runner.clone(), true).unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    assert_eq!(
+        Web::new(c.addr)
+            .post("/api/readiness/repair", json!({"id": "model"}))
+            .0,
+        401
+    );
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let checks = w.get("/api/readiness").1["checks"].clone();
+    assert_eq!(
+        (
+            checks[0]["repairable"].clone(),
+            checks[1]["repairable"].clone()
+        ),
+        (json!(true), json!(false)),
+        "{checks}"
+    );
+    assert_eq!(
+        w.post("/api/readiness/repair", json!({"id": "sandbox"})).1["error"]["code"],
+        "NOT_REPAIRABLE",
+        "the runner did not offer it"
+    );
+    assert_eq!(
+        w.post("/api/readiness/repair", json!({"id": "nonsense"})).0,
+        409
+    );
+    runner.fail.store(true, Ordering::SeqCst);
+    assert_eq!(
+        w.post("/api/readiness/repair", json!({"id": "model"})).0,
+        202
+    );
+    assert_eq!(
+        w.post("/api/readiness/repair", json!({"id": "model"})).1["error"]["code"],
+        "BUSY",
+        "one fix at a time"
+    );
+    let state = || w.get("/api/readiness").1["checks"][0]["repair"].clone();
+    assert_eq!(state()["state"], "running");
+    assert!(state()["detail"].as_str().unwrap().contains("40%"));
+    let wait = |want: &str| {
+        let t0 = std::time::Instant::now();
+        while state()["state"] != want && t0.elapsed() < std::time::Duration::from_secs(5) {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    };
+    wait("failed");
+    assert!(
+        state()["detail"].as_str().unwrap().contains("disk full"),
+        "the failure reason is shown, never a quiet success"
+    );
+    runner.fail.store(false, Ordering::SeqCst);
+    assert_eq!(
+        w.post("/api/readiness/repair", json!({"id": "model"})).0,
+        202,
+        "a failed fix can be tried again"
+    );
+    wait("done");
+    assert_eq!(state()["state"], "done");
+    let after = w.get("/api/readiness").1;
+    assert_eq!(after["checks"][0]["ok"], true);
+    assert_eq!(
+        after["checks"][0]["repairable"], false,
+        "a passing check offers nothing"
+    );
+    assert_eq!(
+        w.post("/api/readiness/repair", json!({"id": "model"})).1["error"]["code"],
+        "NOT_REPAIRABLE",
+        "nothing to fix now"
+    );
+    assert_eq!(runner.runs.load(Ordering::SeqCst), 2);
+    let log = log_text(
+        &format!("http://127.0.0.1:{}", c.addr.port()),
+        c.security.admin_token(),
+    );
+    assert!(log.contains("readiness.repair_started") && log.contains("readiness.repair_finished"));
+}

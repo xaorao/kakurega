@@ -1,4 +1,4 @@
-import { createResource, createSignal, For, Show } from "solid-js";
+import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError, type Config, type Readiness } from "../api";
 import { rich, t } from "../i18n";
 
@@ -11,6 +11,20 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
   const chosen = () => listing()?.path ?? "";
   const [ready, { refetch }] = createResource<Readiness | null>(() => api.readiness().catch(() => null));
   const blocked = () => ready()?.ready === false;
+  const [repairError, setRepairError] = createSignal("");
+  const fixNow = async (id: string) => {
+    setRepairError("");
+    try {
+      await api.repair(id);
+      await refetch();
+    } catch (e) {
+      setRepairError(e instanceof ApiError ? e.message : t("setup.repairFailed"));
+    }
+  };
+  const poll = setInterval(() => {
+    if (ready()?.checks.some((c) => c.repair?.state === "running")) void refetch();
+  }, 1500);
+  onCleanup(() => clearInterval(poll));
 
   const start = async () => {
     setBusy(true);
@@ -40,10 +54,15 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
                   <li>
                     <span class={c.ok ? "ok-text" : "bad"}>{c.ok ? t("setup.ok") : t("setup.attention")}</span> <strong>{c.label}</strong>: {c.detail}
                     <Show when={c.fix}><div class="fix"><code>{c.fix}</code></div></Show>
+                    <Show when={c.repairable && c.repair?.state !== "running"}>
+                      <div class="actions"><button type="button" onClick={() => fixNow(c.id)}>{t("setup.fixNow")}</button> <span class="muted">{t("setup.fixNote")}</span></div>
+                    </Show>
+                    <Show when={c.repair}>{(rp) => <p role="status" class={rp().state === "failed" ? "bad" : "muted"}>{rp().state === "running" ? t("setup.fixRunning", { d: rp().detail }) : rp().state === "failed" ? t("setup.fixFailed", { d: rp().detail }) : t("setup.fixDone")}</p>}</Show>
                   </li>
                 )}
               </For>
             </ul>
+            <Show when={repairError()}><p role="alert" class="bad">{repairError()}</p></Show>
             <Show when={!r().ready}>
               <div class="actions"><button onClick={() => refetch()}>{t("setup.recheck")}</button></div>
             </Show>

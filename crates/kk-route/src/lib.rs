@@ -329,6 +329,61 @@ impl OllamaRoute {
     }
 }
 
+impl OllamaRoute {
+    /// Asks the local Ollama to download this model. Ollama fetches it from its own registry; nothing of the owner's is
+    /// sent. `on_progress` gets the step name and the percentage when known, and returns `false` to give up waiting.
+    pub fn pull(
+        &self,
+        on_progress: &mut dyn FnMut(&str, Option<u8>) -> bool,
+    ) -> Result<(), RouteError> {
+        use std::io::{BufRead, Read};
+        let mut resp = self
+            .agent
+            .post(&format!("{}/api/pull", self.base))
+            .send_json(json!({"model": self.model, "stream": true}))
+            .map_err(|e| RouteError::Unreachable(e.to_string()))?;
+        if !resp.status().is_success() {
+            return Err(RouteError::BadResponse(format!("status {}", resp.status())));
+        }
+        let mut reader = std::io::BufReader::new(resp.body_mut().as_reader());
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let n = reader
+                .by_ref()
+                .take(1 << 20)
+                .read_line(&mut line)
+                .map_err(|e| RouteError::BadResponse(e.to_string()))?;
+            if n == 0 {
+                return Err(RouteError::BadResponse(
+                    "the download stopped before it finished".into(),
+                ));
+            }
+            if line.trim().is_empty() {
+                continue;
+            }
+            let v: Value = serde_json::from_str(line.trim())
+                .map_err(|e| RouteError::BadResponse(format!("unreadable progress line: {e}")))?;
+            if let Some(err) = v["error"].as_str() {
+                return Err(RouteError::BadResponse(err.to_string()));
+            }
+            let status = v["status"].as_str().unwrap_or("");
+            let pct = match (v["completed"].as_u64(), v["total"].as_u64()) {
+                (Some(c), Some(t)) if t > 0 => Some(((c.min(t) * 100) / t) as u8),
+                _ => None,
+            };
+            if !on_progress(status, pct) {
+                return Err(RouteError::BadResponse(
+                    "stopped waiting for the download".into(),
+                ));
+            }
+            if status == "success" {
+                return Ok(());
+            }
+        }
+    }
+}
+
 /// The most text one streamed reply may hold.
 pub const MAX_STREAMED_BYTES: usize = 256 * 1024;
 

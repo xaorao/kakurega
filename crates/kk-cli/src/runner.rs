@@ -180,6 +180,31 @@ impl JobRunner for ReviewRunner {
         })
     }
 
+    fn repairable(&self) -> Vec<String> {
+        if self.scripted.is_some() {
+            Vec::new()
+        } else {
+            vec!["model".to_string()]
+        }
+    }
+
+    fn repair(&self, id: &str, progress: &dyn Fn(&str)) -> Result<String, String> {
+        if id != "model" || self.scripted.is_some() {
+            return Err("this check cannot be fixed automatically".into());
+        }
+        let route = OllamaRoute::new(&self.ollama, &self.model).map_err(|e| e.to_string())?;
+        route
+            .pull(&mut |status, pct| {
+                progress(&match pct {
+                    Some(p) => format!("{status} {p}%"),
+                    None => status.to_string(),
+                });
+                true
+            })
+            .map_err(|e| format!("could not install {}: {e}", self.model))?;
+        Ok(format!("{} is installed", self.model))
+    }
+
     fn readiness(&self) -> Vec<Value> {
         let check = |id: &str, label: &str, ok: bool, detail: String, fix: &str| json!({"id": id, "label": label, "ok": ok, "detail": detail, "fix": if ok { "" } else { fix }});
         let mut out = Vec::new();

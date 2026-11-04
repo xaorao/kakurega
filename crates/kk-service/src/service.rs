@@ -35,6 +35,14 @@ pub trait JobRunner: Send + Sync {
     fn chat(&self, _messages: Vec<kk_types::chat::ChatMessage>) -> Result<ChatReply, String> {
         Err("chat is not available in this configuration".into())
     }
+    /// Checks whose failure this runner can fix on its own, by id.
+    fn repairable(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// Fixes one failed check. `progress` receives short status text. Runs on a background thread.
+    fn repair(&self, _id: &str, _progress: &dyn Fn(&str)) -> Result<String, String> {
+        Err("this check cannot be fixed automatically".into())
+    }
     /// Like `chat`, handing the reply over in pieces as it is written. `on_chunk` returns `false` to stop. The default
     /// answers in one piece, so a runner that cannot stream still works.
     fn chat_stream(
@@ -168,6 +176,7 @@ pub struct Service {
     ext_fail: Mutex<(u32, Option<std::time::Instant>)>,
     web: Mutex<Arc<dyn WebFetch>>,
     attester: Mutex<Arc<dyn Attester>>,
+    repairs: Mutex<std::collections::HashMap<String, Value>>,
     last_attest: Mutex<Option<std::time::Instant>>,
     attest_cooldown: Mutex<std::time::Duration>,
     research: Mutex<Research>,
@@ -523,6 +532,7 @@ impl Service {
             ext_fail: Mutex::new((0, None)),
             web: Mutex::new(Arc::new(RealWeb)),
             attester: Mutex::new(Arc::new(RealAttester)),
+            repairs: Mutex::new(std::collections::HashMap::new()),
             last_attest: Mutex::new(None),
             attest_cooldown: Mutex::new(std::time::Duration::from_secs(3)),
             research: Mutex::new(Research::default()),
@@ -731,11 +741,87 @@ async fn config(axum::Extension(svc): Svc) -> Json<Value> {
 
 async fn readiness(axum::Extension(svc): Svc) -> Json<Value> {
     let svc2 = svc.clone();
-    let checks = tokio::task::spawn_blocking(move || svc2.runner.readiness())
-        .await
-        .unwrap_or_default();
+    let (checks, repairable) =
+        tokio::task::spawn_blocking(move || (svc2.runner.readiness(), svc2.runner.repairable()))
+            .await
+            .unwrap_or_default();
     let ready = checks.iter().all(|c| c["ok"] == true);
+    let repairs = svc.repairs.lock().expect("lock").clone();
+    let checks: Vec<Value> = checks
+        .into_iter()
+        .map(|mut c| {
+            let id = c["id"].as_str().unwrap_or("").to_string();
+            c["repairable"] = json!(c["ok"] != true && repairable.contains(&id));
+            if let Some(state) = repairs.get(&id) {
+                c["repair"] = state.clone();
+            }
+            c
+        })
+        .collect();
     Json(json!({"ready": ready, "checks": checks}))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RepairBody {
+    id: String,
+}
+
+/// Starts fixing one failed check in the background. Only checks the runner declares repairable, only when they are
+/// failing, and only one repair at a time.
+async fn readiness_repair(axum::Extension(svc): Svc, Json(b): Json<RepairBody>) -> Response {
+    let svc2 = svc.clone();
+    let id = b.id.clone();
+    let (checks, repairable) =
+        tokio::task::spawn_blocking(move || (svc2.runner.readiness(), svc2.runner.repairable()))
+            .await
+            .unwrap_or_default();
+    let failing = checks
+        .iter()
+        .any(|c| c["id"] == id.as_str() && c["ok"] != true);
+    if !repairable.contains(&id) || !failing {
+        return error(
+            StatusCode::CONFLICT,
+            "NOT_REPAIRABLE",
+            "that check is not failing or cannot be fixed automatically",
+        );
+    }
+    {
+        let mut r = svc.repairs.lock().expect("lock");
+        if r.values().any(|v| v["state"] == "running") {
+            return error(
+                StatusCode::CONFLICT,
+                "BUSY",
+                "another fix is already running",
+            );
+        }
+        r.insert(
+            id.clone(),
+            json!({"state": "running", "detail": "starting"}),
+        );
+    }
+    svc.log_event("readiness.repair_started", &id, &[]);
+    let svc3 = svc.clone();
+    std::thread::spawn(move || {
+        let progress = |text: &str| {
+            let t: String = text.chars().filter(|c| !c.is_control()).take(120).collect();
+            svc3.repairs
+                .lock()
+                .expect("lock")
+                .insert(id.clone(), json!({"state": "running", "detail": t}));
+        };
+        let result = svc3.runner.repair(&id, &progress);
+        let (state, detail, ok) = match result {
+            Ok(m) => ("done", m, 1usize),
+            Err(m) => ("failed", m, 0usize),
+        };
+        svc3.repairs.lock().expect("lock").insert(
+            id.clone(),
+            json!({"state": state, "detail": detail.chars().take(300).collect::<String>()}),
+        );
+        svc3.log_event("readiness.repair_finished", &id, &[("ok", ok.into())]);
+    });
+    (StatusCode::ACCEPTED, Json(json!({"started": true}))).into_response()
 }
 
 fn memory_json(r: &kk_memory::Recalled) -> Value {
@@ -3433,6 +3519,7 @@ impl Extension for Routes {
         Router::new()
             .route("/api/config", get(config))
             .route("/api/readiness", get(readiness))
+            .route("/api/readiness/repair", post(readiness_repair))
             .route("/api/chat", post(chat))
             .route("/api/chat/stream", post(chat_stream))
             .route("/api/ask", post(ask))

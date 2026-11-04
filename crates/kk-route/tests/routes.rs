@@ -319,4 +319,52 @@ mod streaming {
             .stream(&req(), &mut |_| true);
         assert!(matches!(r, Err(RouteError::BadResponse(m)) if m.contains("longer than allowed")));
     }
+
+    #[test]
+    fn st04_pull_reports_progress_ends_on_success_and_treats_errors_and_cut_streams_as_failures() {
+        let ok_lines = vec![
+            "{\"status\":\"pulling manifest\"}".to_string(),
+            "{\"status\":\"pulling abc\",\"total\":200,\"completed\":50}".to_string(),
+            "{\"status\":\"pulling abc\",\"total\":200,\"completed\":999}".to_string(),
+            "{\"status\":\"success\"}".to_string(),
+        ];
+        let (url, _) = serve(ok_lines);
+        let mut seen: Vec<(String, Option<u8>)> = Vec::new();
+        OllamaRoute::new(&url, "m")
+            .unwrap()
+            .pull(&mut |s, p| {
+                seen.push((s.to_string(), p));
+                true
+            })
+            .unwrap();
+        assert_eq!(seen[0], ("pulling manifest".to_string(), None));
+        assert_eq!(seen[1].1, Some(25));
+        assert_eq!(seen[2].1, Some(100), "more than the total is capped at 100");
+        assert_eq!(seen.last().unwrap().0, "success");
+        for (label, lines) in [
+            (
+                "model error",
+                vec!["{\"error\":\"pull model manifest: file does not exist\"}".to_string()],
+            ),
+            (
+                "cut off",
+                vec!["{\"status\":\"pulling manifest\"}".to_string()],
+            ),
+            ("not json", vec!["nonsense".to_string()]),
+        ] {
+            let (url, _) = serve(lines);
+            let r = OllamaRoute::new(&url, "m").unwrap().pull(&mut |_, _| true);
+            assert!(
+                matches!(r, Err(RouteError::BadResponse(_))),
+                "{label}: {r:?}"
+            );
+        }
+        let (url, _) = serve(
+            (0..40)
+                .map(|i| format!("{{\"status\":\"step {i}\"}}"))
+                .collect(),
+        );
+        let r = OllamaRoute::new(&url, "m").unwrap().pull(&mut |_, _| false);
+        assert!(matches!(r, Err(RouteError::BadResponse(m)) if m.contains("stopped waiting")));
+    }
 }

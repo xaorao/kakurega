@@ -72,7 +72,7 @@ export interface Config {
   signer: string;
   signer_public: string;
 }
-export interface ReadinessCheck { id: string; label: string; ok: boolean; detail: string; fix: string }
+export interface ReadinessCheck { id: string; label: string; ok: boolean; detail: string; fix: string; repairable?: boolean; repair?: { state: "running" | "done" | "failed"; detail: string } }
 export interface Readiness { ready: boolean; checks: ReadinessCheck[] }
 export interface MemoryItem { id: string; text: string; why: string; untrusted: boolean; level: string; compartments: string[]; created_at: number; valid_to: number | null; source: string }
 export interface MemoryVersion { id: string; text: string; reason: string; created_at: number; current: boolean }
@@ -153,6 +153,7 @@ export const api = {
   dismissSuggestion: (job: string, id: string) => request<{ dismissed: boolean }>("POST", `/api/jobs/${job}/memory-suggestions/${id}/dismiss`, {}),
   log: () => request<LogSummary>("GET", "/api/log"),
   chat: (message: string, history: ChatTurn[], sources: string[] = [], session?: string) => request<ChatReply>("POST", "/api/chat", session ? { message, history, sources, session } : { message, history, sources }),
+  repair: (id: string) => request<{ started: boolean }>("POST", "/api/readiness/repair", { id }),
   attestGateway: () => request<GatewayProofResult>("POST", "/api/route/gateway", {}),
   attestModel: (model: string) => request<ModelProof>("POST", "/api/route/attest", { model }),
   keptChats: () => request<{ sessions: KeptChat[] }>("GET", "/api/sessions"),
