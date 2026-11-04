@@ -8,6 +8,7 @@
     "kk-sandbox": 1,
     "kk-policy": 1,
     "kk-route": 1,
-    "kk-effects": 2
+    "kk-effects": 2,
+    "kk-broker": 3
   }
 }

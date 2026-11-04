@@ -1008,6 +1008,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "kk-broker"
+version = "0.0.1"
+dependencies = [
+ "kk-effects",
+ "kk-evidence",
+ "kk-kernel",
+ "kk-policy",
+ "kk-route",
+ "kk-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "kk-effects"
 version = "0.0.1"
 dependencies = [

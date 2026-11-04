@@ -1,0 +1,19 @@
+[package]
+name = "kk-broker"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "The only door between an untrusted worker and anything else: typed operations, policy, taint, routes and tools"
+
+[dependencies]
+kk-types = { path = "../kk-types" }
+kk-kernel = { path = "../kk-kernel" }
+kk-policy = { path = "../kk-policy" }
+kk-route = { path = "../kk-route" }
+kk-effects = { path = "../kk-effects" }
+kk-evidence = { path = "../kk-evidence" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints]
+workspace = true
