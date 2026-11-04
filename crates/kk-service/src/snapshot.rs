@@ -181,6 +181,10 @@ impl Snapshot {
                         kk_review::check::FixStatus::CouldNotApply(m) => {
                             format!("could_not_apply: {m}")
                         }
+                        kk_review::check::FixStatus::NotChecked(m) if m.contains("Failed(") => {
+                            "not_checked: the reproducer no longer runs correctly after this change"
+                                .to_string()
+                        }
                         kk_review::check::FixStatus::NotChecked(m) => format!("not_checked: {m}"),
                     },
                     verified: f.status == kk_review::check::FixStatus::FixesTheReproducer,

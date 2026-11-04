@@ -216,6 +216,28 @@ try {
   await sugg.waitFor();
   check("the review's two suggestions are shown, flagged untrusted", (await sugg.locator("li").count()) === 2 && (await sugg.getByText("from untrusted content").count()) === 2);
   await axeCheck(page, "findings tab with suggested memories");
+  // proposed fixes: kept for the owner, one accepted by the reproducer and one refused, applied only after a second confirmation
+  const fixesCard = page.getByRole("region", { name: "Proposed fixes" });
+  await fixesCard.waitFor();
+  const fixText = await fixesCard.innerText();
+  check("two proposed fixes are shown with the limit stated, one accepted by the reproducer and one not accepted", (await fixesCard.locator("li").count()) === 2 && fixText.includes("project's own tests were not run") && fixText.includes("The reproducer stops reproducing") && fixText.includes("Not accepted"));
+  await fixesCard.locator("details").first().locator("summary").click();
+  check("the change is shown as a readable diff", (await fixesCard.locator("pre").first().innerText()).includes("+    ACTIVE_TOKENS.pop(token, None)"));
+  check("only the accepted fix offers Apply", (await fixesCard.getByRole("button", { name: /^Apply to/ }).count()) === 1);
+  await axeCheck(page, "findings tab with proposed fixes");
+  await page.screenshot({ path: join(shots, "15-fixes.png"), fullPage: true });
+  const sessionPath = join(project, "payments/auth/session.py");
+  const beforeFix = readFileSync(sessionPath, "utf8");
+  await fixesCard.getByRole("button", { name: /^Apply to/ }).click();
+  await fixesCard.getByRole("alertdialog").waitFor();
+  await fixesCard.getByRole("button", { name: "Cancel" }).click();
+  check("cancelling the second confirmation changes nothing", readFileSync(sessionPath, "utf8") === beforeFix);
+  await fixesCard.getByRole("button", { name: /^Apply to/ }).click();
+  await fixesCard.getByRole("button", { name: "Yes, change the file" }).click();
+  await fixesCard.getByText("Applied to payments/auth/session.py.").waitFor();
+  const afterFix = readFileSync(sessionPath, "utf8");
+  check("applying edits the file on disk exactly as shown and nothing else", afterFix.includes("ACTIVE_TOKENS.pop(token, None)") && !afterFix.includes("cookie_jar") && afterFix.includes("def validate") && afterFix.length < beforeFix.length);
+  check("the card then shows it as applied and offers no second apply", (await fixesCard.getByRole("button", { name: /^Apply to/ }).count()) === 0 && (await fixesCard.getByText("Applied", { exact: true }).count()) === 1);
   await sugg.locator("li").first().getByRole("button", { name: "Remember" }).click();
   await sugg.getByText("Remembered.").waitFor();
   check("accepting one removes it from the suggestions", (await sugg.locator("li").count()) === 1);

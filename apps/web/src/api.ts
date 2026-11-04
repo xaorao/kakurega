@@ -73,6 +73,7 @@ export interface Job {
   delivered: { name: string; digest: string; signer: string } | null;
 }
 export interface FileEntry { path: string; bytes: number; level: string; compartments: string[]; withheld: boolean; notes: string[] }
+export interface Fix { index: number; title: string; file: string; explanation: string; status: string; verified: boolean; diff: string; applied: boolean }
 export interface Finding { title: string; file: string; line: number; explanation: string; reproducer: string; status: string; output: string; sample: string[] }
 export interface AuditEntry { request: number; op: string; outcome: string; detail: string }
 export interface ReleaseFile { name: string; bytes: number; sha256: string; text: string | null }
@@ -101,6 +102,8 @@ export const api = {
   correctMemory: (id: string, b: { text: string; reason?: string }) => request<{ id: string }>("POST", `/api/memories/${id}/correct`, b),
   forgetMemory: (id: string, reason?: string) => request<{ forgotten: boolean }>("POST", `/api/memories/${id}/forget`, { reason }),
   memoryHistory: (id: string) => request<{ versions: MemoryVersion[] }>("GET", `/api/memories/${id}/history`),
+  fixes: (job: string) => request<{ fixes: Fix[] }>("GET", `/api/jobs/${job}/fixes`),
+  applyFix: (job: string, n: number, file: string) => request<{ applied: boolean; file: string }>("POST", `/api/jobs/${job}/fixes/${n}/apply`, { file }),
   suggestions: (job: string) => request<{ suggestions: Suggestion[] }>("GET", `/api/jobs/${job}/memory-suggestions`),
   acceptSuggestion: (job: string, id: string) => request<{ id: string; added: boolean }>("POST", `/api/jobs/${job}/memory-suggestions/${id}/accept`, {}),
   dismissSuggestion: (job: string, id: string) => request<{ dismissed: boolean }>("POST", `/api/jobs/${job}/memory-suggestions/${id}/dismiss`, {}),

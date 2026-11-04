@@ -1,5 +1,5 @@
 import { createEffect, createResource, createSignal, For, onCleanup, Show } from "solid-js";
-import { api, ApiError, type Config, type Job } from "../api";
+import { api, ApiError, type Config, type Fix, type Job } from "../api";
 import { rich, t, type Key } from "../i18n";
 
 type Tab = "progress" | "protected" | "source" | "findings" | "release";
@@ -164,11 +164,66 @@ export function Suggestions(props: { jobId: string; heading?: Key; lead?: Key; o
   );
 }
 
+function Fixes(props: { jobId: string }) {
+  const [items, { refetch }] = createResource(() => props.jobId, (id) => api.fixes(id).then((r) => r.fixes));
+  const [asking, setAsking] = createSignal<number | null>(null);
+  const [note, setNote] = createSignal("");
+  const [err, setErr] = createSignal("");
+  const apply = async (f: Fix) => {
+    setErr("");
+    try {
+      await api.applyFix(props.jobId, f.index, f.file);
+      setNote(t("fix.applied", { file: f.file }));
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : String(e));
+    }
+    setAsking(null);
+    await refetch();
+  };
+  return (
+    <Show when={(items() ?? []).length > 0}>
+      <div class="card stack" role="region" aria-label={t("fix.heading")}>
+        <h2>{t("fix.heading")}</h2>
+        <p class="muted">{t("fix.lead")}</p>
+        <p class="muted">{t("fix.limit")}</p>
+        <ul class="plain stack">
+          <For each={items()}>
+            {(f) => (
+              <li class="stack">
+                <p><code>{f.file}</code> · {f.title}</p>
+                <p>{f.explanation}</p>
+                <details><summary>{t("fix.change")}</summary><pre tabindex="0"><code>{f.diff}</code></pre></details>
+                <p><span class={`chip ${f.verified ? "ok" : "bad"}`}>{f.verified ? t("fix.ok") : t("fix.notAccepted")}</span></p>
+                <Show when={!f.verified}><p class="muted wrap">{t("fix.why", { why: f.status.replace(/^[a-z_]+: ?/, "").replace(/\s+/g, " ").slice(0, 240) })}</p></Show>
+                <Show when={f.verified && !f.applied}>
+                  <Show when={asking() === f.index} fallback={<div class="actions"><button onClick={() => setAsking(f.index)}>{t("fix.apply", { file: f.file })}</button></div>}>
+                    <div class="stack" role="alertdialog" aria-label={t("fix.confirm", { file: f.file })}>
+                      <p>{t("fix.confirm", { file: f.file })}</p>
+                      <div class="actions">
+                        <button class="primary" onClick={() => apply(f)}>{t("fix.yes")}</button>
+                        <button onClick={() => setAsking(null)}>{t("fix.cancel")}</button>
+                      </div>
+                    </div>
+                  </Show>
+                </Show>
+                <Show when={f.applied}><p><span class="chip ok">{t("fix.done")}</span></p></Show>
+              </li>
+            )}
+          </For>
+        </ul>
+        <Show when={note()}><p role="status" class="ok">{note()}</p></Show>
+        <Show when={err()}><p role="alert" class="bad">{err()}</p></Show>
+      </div>
+    </Show>
+  );
+}
+
 function Findings(props: { job: Job }) {
   const [data] = createResource(() => props.job.id, (id) => api.findings(id));
   return (
     <div class="stack">
       <Suggestions jobId={props.job.id} />
+      <Fixes jobId={props.job.id} />
       <Show when={data()} fallback={<p class="muted">{t("review.loading")}</p>}>
         {(d) => (
           <>
