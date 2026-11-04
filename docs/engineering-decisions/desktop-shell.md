@@ -67,3 +67,12 @@ What the Tauri spike has: a window on the loopback app with an origin-locked nav
 - Cost of switching: re-do the 13 shell checks in WebdriverIO, add the native approval and Touch ID path (needed for both shells), and accept WKWebView differences, with Windows and Linux webviews untested.
 - Recommendation: move the shipping shell to Tauri v2 once it passes the same boundary checks and the approval binding (II-12) is built in Rust, keeping the Electron spike as the reference until then. This is a recommendation from measurement, not a decision: the owner accepts or rejects it.
 - Kernel and approval contracts stay framework-independent (`/admin/approvals` and the digest), so the choice can be changed without rebuilding the security architecture.
+
+## Same attacks on both candidates (II-13)
+
+Both shells were run through the same renderer-compromise script (session cookie, admin endpoints, CSP, native-command access, window.open, navigation). Electron: `node tests/e2e/desktop_attack.mjs` (19 checks) driven through Playwright. Tauri: `python3 tests/e2e/tauri_attack.py` (9 checks) driven by a test-only feature that evaluates the script inside the real WKWebView and reports through the URL fragment (the window title does not mirror document.title).
+
+- Result: the page is equally contained in both. Every admin endpoint refuses it, the CSP blocks inline script, eval, remote scripts and beacons, no window opens, and navigation is refused or reversed. In Tauri the page can see `__TAURI_INTERNALS__` but every native command (dialog, window, app, fs, an unknown command) is refused because no capability grants anything.
+- Difference found: Electron let a page navigate to `about:blank` (fixed with a did-navigate guard); Tauri's `on_navigation` refused it by default.
+- Not equal yet: Electron has asar integrity validation, fuses and a tested tamper response (II-13b, II-13c). Tauri has no counterpart built or tested (code signing of the binary, integrity of the frontend, update path). That gap, not the attack surface of the page, is what remains to compare.
+- The decision (II-04) is still the owner's.

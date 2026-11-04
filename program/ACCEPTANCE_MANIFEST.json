@@ -161,7 +161,7 @@
         },
         {
           "id": "II-13",
-          "text": "Remaining packaged-shell work: Developer ID signing and notarisation, a signed update path (no updater exists), and the same attack suite on the Tauri candidate. Done and tested on Electron: II-13a (attack suite), II-13b (fuses), II-13c (asar packaging with integrity validation).",
+          "text": "Remaining packaged-shell work: Developer ID signing and notarisation, a signed update path (no updater exists), and Tauri packaging with its own integrity story. Done and tested: Electron II-13a/b/c, Tauri attack suite II-13d.",
           "kind": "pending",
           "evidence_needed": "Developer ID certificate (owner), update-path tests, Tauri attack suite"
         },
@@ -268,6 +268,13 @@
           "kind": "machine",
           "command": "node tests/e2e/desktop_packaged.mjs",
           "expect": "packaged-app checks passed"
+        },
+        {
+          "id": "II-13d",
+          "text": "Tauri candidate under the same renderer-compromise attacks: session unreadable, admin endpoints unreachable, CSP, no native command callable from the page, window.open and navigation refused",
+          "kind": "machine",
+          "command": "python3 tests/e2e/tauri_attack.py",
+          "expect": "tauri attack checks passed"
         }
       ]
     },
