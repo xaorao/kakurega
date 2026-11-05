@@ -4419,6 +4419,56 @@ fn sv37_the_event_stream_says_something_changed_without_content_needs_a_session_
 }
 
 #[test]
+fn sv37b_a_quiet_event_stream_sends_a_named_ping_well_inside_the_page_idle_limit() {
+    use std::io::{BufRead, BufReader};
+    let (root, _repo) = repo_copy("data-events-ping");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let mut r = w
+        .agent
+        .get(&format!("{}/api/events", w.base))
+        .header("Cookie", &w.cookie)
+        .call()
+        .unwrap();
+    let mut reader = BufReader::new(r.body_mut().as_reader());
+    let started = std::time::Instant::now();
+    let (mut got, mut line) = (String::new(), String::new());
+    while !got.contains("event: ping") && started.elapsed() < std::time::Duration::from_secs(25) {
+        line.clear();
+        if reader.read_line(&mut line).unwrap() == 0 {
+            break;
+        }
+        got.push_str(&line);
+    }
+    assert!(got.contains(": connected"), "{got}");
+    assert!(
+        got.contains("event: ping\n"),
+        "a quiet stream must say it is alive: {got}"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(20),
+        "the page treats 45 seconds of silence as a dead connection, so pings must come much sooner: {:?}",
+        started.elapsed()
+    );
+    assert!(
+        !got.contains("data: changed"),
+        "a ping is not a change, so the page does not refetch on it: {got}"
+    );
+}
+
+#[test]
 fn sv38_scheduled_reviews_start_on_time_collapse_missed_periods_never_overlap_and_never_approve() {
     let (root, repo) = repo_copy("data-schedule");
     let svc = Service::new(

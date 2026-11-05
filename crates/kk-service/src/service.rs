@@ -3061,7 +3061,7 @@ async fn events(axum::Extension(svc): Svc) -> Response {
                 ticks += 1;
                 if ticks >= 37 {
                     return Some((
-                        Ok(axum::body::Bytes::from_static(b": still here\n\n")),
+                        Ok(axum::body::Bytes::from_static(b"event: ping\ndata: 1\n\n")),
                         (svc, slot, last, 0, false),
                     ));
                 }

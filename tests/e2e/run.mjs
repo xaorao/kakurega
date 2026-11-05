@@ -49,6 +49,21 @@ const base = new URL(link).origin;
 const problems = [];
 const browser = await chromium.launch({ executablePath: chrome, headless: true });
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+await ctx.addInitScript(() => {
+  const Native = window.EventSource;
+  const count = { opened: 0, closed: 0 };
+  window.__es = count;
+  window.EventSource = class extends Native {
+    constructor(...args) {
+      super(...args);
+      count.opened++;
+    }
+    close() {
+      count.closed++;
+      super.close();
+    }
+  };
+});
 const page = await ctx.newPage();
 const requestOrigins = new Set();
 page.on("request", (r) => { try { requestOrigins.add(new URL(r.url()).origin); } catch { /* data: urls */ } });
@@ -82,6 +97,11 @@ try {
   check("a correctly set up machine says Ready to review and lists every check as ready", (await page.getByRole("region", { name: "Setup check" }).innerText()).split("Needs attention").length === 1);
   await page.screenshot({ path: join(shots, "01-new-review.png") });
   await axeCheck(page, "new review");
+  const live0 = await page.evaluate(() => ({ ...window.__es }));
+  check("signed in, the page holds exactly one live connection to the service", live0.opened - live0.closed === 1, JSON.stringify(live0));
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  const live1 = await page.evaluate(() => ({ ...window.__es }));
+  check("when the network comes back the page replaces its live connection with a fresh one and still holds exactly one", live1.opened === live0.opened + 1 && live1.closed === live0.closed + 1 && live1.opened - live1.closed === 1, JSON.stringify(live1));
 
   const other = await browser.newContext();
   const reuse = await other.newPage();

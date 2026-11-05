@@ -10,6 +10,7 @@ import { Chat } from "./screens/Chat";
 import { Documents } from "./screens/Documents";
 import { Inbox } from "./screens/Inbox";
 import { Palette, type PaletteItem } from "./components/Palette";
+import { createLive } from "./live";
 import { applyLocale, LOCALES, locale, rich, setLocale, t, type Locale } from "./i18n";
 
 function useHash() {
@@ -202,21 +203,33 @@ export function App() {
   // Changes arrive as server-sent events; the timer is only a slow safety net in case the stream is unavailable.
   const timer = setInterval(() => paired() && void refresh(), 10000);
   onCleanup(() => clearInterval(timer));
-  let stream: EventSource | null = null;
+  const live =
+    typeof EventSource === "undefined"
+      ? null
+      : createLive({
+          open: () => new EventSource("/api/events"),
+          onChange: () => {
+            void refresh();
+            window.dispatchEvent(new Event("kk-changed"));
+          },
+        });
+  const watch = setInterval(() => live?.check(), 1000);
+  const onVisible = () => {
+    if (document.visibilityState === "visible") live?.foreground();
+  };
+  const onOnline = () => live?.online();
+  document.addEventListener("visibilitychange", onVisible);
+  window.addEventListener("online", onOnline);
   createEffect(() => {
-    if (paired() && !stream && typeof EventSource !== "undefined") {
-      stream = new EventSource("/api/events");
-      stream.onmessage = () => {
-        void refresh();
-        window.dispatchEvent(new Event("kk-changed"));
-      };
-    }
-    if (!paired() && stream) {
-      stream.close();
-      stream = null;
-    }
+    if (paired()) live?.start();
+    else live?.stop();
   });
-  onCleanup(() => stream?.close());
+  onCleanup(() => {
+    clearInterval(watch);
+    document.removeEventListener("visibilitychange", onVisible);
+    window.removeEventListener("online", onOnline);
+    live?.stop();
+  });
 
   const paletteItems = createMemo<PaletteItem[]>(() => {
     const go = (hash: string) => () => {
