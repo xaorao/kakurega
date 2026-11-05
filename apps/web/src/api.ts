@@ -81,6 +81,7 @@ export interface LogEntry { seq: number; at: number; kind: string; subject: stri
 export interface LogSummary { count: number; head: string | null; public_key: string; recent: LogEntry[] }
 export interface ChatTurn { role: "user" | "assistant"; content: string }
 export interface ChatReply { project?: string | null; reply: string; route: { id: string; class: string; simulated: boolean }; notes_used: number; notes?: { id: string; text: string; why: string; untrusted: boolean; project?: string | null }[]; notes_withheld: number; notes_left_out?: number; web_sources_used: number; web_sources_trimmed?: number; web_sources_left_out?: number; saved?: boolean; not_saved?: "full" | "forgotten" | "error" | null; usage?: { context_tokens?: number; context_window?: number | null; estimate?: boolean; context_tokens_estimate: number; reply_tokens_estimate: number; history_turns_sent: number; history_turns_dropped: number; history_turns_summarized?: number; summary_text?: string | null; compacted_now?: boolean; compaction_failed?: string | null } }
+export interface SimilarMemories { groups: MemoryItem[][]; scanned: number; complete: boolean; note: string }
 export interface KeptChat { id: string; title: string; created: number; updated: number; turns: number; project?: string | null }
 export interface ModelProof { verified: boolean; model: string; checked_at?: number; means?: string[]; does_not_mean?: string[]; deployments?: { signer: string; tcb: string; advisories: string[]; gpu_verified: boolean; compose_hash: string | null; os_image_hash: string | null; nonce: string }[] }
 export interface GatewayProofResult { verified: boolean; gateway?: { signer: string; tcb: string; advisories: string[]; compose_hash: string | null; tls_bound: boolean; tls_fingerprint: string | null; nonce: string }; means?: string[]; does_not_mean?: string[] }
@@ -168,6 +169,7 @@ export const api = {
   repair: (id: string) => request<{ started: boolean }>("POST", "/api/readiness/repair", { id }),
   attestGateway: () => request<GatewayProofResult>("POST", "/api/route/gateway", {}),
   attestModel: (model: string) => request<ModelProof>("POST", "/api/route/attest", { model }),
+  similarMemories: () => request<SimilarMemories>("GET", "/api/memories/similar"),
   keptChats: () => request<{ sessions: KeptChat[] }>("GET", "/api/sessions"),
   keepChat: (title: string, project?: string) => request<{ id: string }>("POST", "/api/sessions", project ? { title, project } : { title }),
   keptChat: (id: string) => request<{ id: string; project?: string | null; turns: ChatTurn[]; summary?: { covered: number; text: string } | null }>("GET", `/api/sessions/${id}`),

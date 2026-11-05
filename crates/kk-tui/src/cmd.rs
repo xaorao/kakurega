@@ -49,6 +49,8 @@ pub enum Command {
     NewChat,
     /// `/project` shows the project of this conversation, `/project NAME` sets it and `/project none` clears it.
     Project(Option<String>),
+    /// `/similar` lists saved notes that say almost the same thing.
+    Similar,
     Verify(String),
     Quit,
 }
@@ -85,6 +87,7 @@ pub const NAMES: &[&str] = &[
     "resume",
     "newchat",
     "project",
+    "similar",
     "quit",
 ];
 
@@ -124,6 +127,7 @@ pub fn describe(name: &str) -> &'static str {
         "resume" => "same as /sessions",
         "newchat" => "leave this conversation and start a new one",
         "project" => "show or set the project this conversation is about",
+        "similar" => "list saved notes that say almost the same thing",
         "quit" => "leave Kakurega",
         _ => "",
     }
@@ -167,6 +171,7 @@ pub fn usage(name: &str) -> &'static str {
         "memory" => "/memory [WORDS]",
         "remember" => "/remember [in PROJECT:] TEXT",
         "project" => "/project [NAME | none]",
+        "similar" => "/similar",
         "ask" => "/ask FOLDER : QUESTION",
         "correct" => "/correct ID NEW TEXT",
         "forget" => "/forget ID",
@@ -250,6 +255,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
         }
         "sessions" | "resume" => Ok(Command::Sessions),
         "newchat" => Ok(Command::NewChat),
+        "similar" => Ok(Command::Similar),
         "project" => {
             if rest.is_empty() {
                 Ok(Command::Project(None))

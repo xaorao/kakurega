@@ -1493,3 +1493,330 @@ fn me32_a_vault_made_before_project_notes_existed_opens_and_keeps_its_notes() {
         "opening twice does not break the column"
     );
 }
+
+#[test]
+fn me29b_the_same_words_in_a_different_order_are_a_changed_fact_and_are_shown_while_plain_rewordings_are_not(
+) {
+    let m = mem(&dir());
+    let lbl = Label::new(Level::Internal).untrusted();
+    for (saved, swapped) in [
+        (
+            "Prefer tabs over spaces in all Rust code",
+            "Prefer spaces over tabs in all Rust code",
+        ),
+        (
+            "Dates are stored in UTC and displayed in local time",
+            "Dates are stored in local time and displayed in UTC",
+        ),
+        (
+            "The client retries before the server times out",
+            "The server retries before the client times out",
+        ),
+        (
+            "Staging deploys go to the blue cluster and production deploys go to the green cluster",
+            "Staging deploys go to the green cluster and production deploys go to the blue cluster",
+        ),
+    ] {
+        m.remember(1, nm(saved, internal())).unwrap();
+        assert!(
+            m.propose(2, "job-1", swapped, "x", &lbl).unwrap().is_some(),
+            "swapped meaning must reach the owner: {swapped}"
+        );
+    }
+    // case, spacing and punctuation alone are still the same fact
+    for (saved, same) in [
+        (
+            "Prefer tabs over spaces in all Rust code",
+            "prefer  tabs over spaces, in all Rust code.",
+        ),
+        (
+            "The client retries before the server times out",
+            "The client retries before the server times out!",
+        ),
+    ] {
+        assert!(
+            m.propose(3, "job-2", same, "x", &lbl).unwrap().is_none(),
+            "plain rewording is not asked twice: {same}"
+        );
+        let _ = saved;
+    }
+}
+
+#[test]
+fn me29c_only_small_words_and_near_identical_spellings_may_differ_in_a_same_claim() {
+    let m = mem(&dir());
+    let lbl = Label::new(Level::Internal).untrusted();
+    m.remember(
+        1,
+        nm(
+            "Login sessions are kept in a dictionary inside the session module",
+            internal(),
+        ),
+    )
+    .unwrap();
+    // small words added or dropped, a plural, a typo: still the same fact
+    for same in [
+        "Login sessions kept in dictionary inside session module",
+        "Login session are kept in a dictionary inside the session module",
+        "Login sessions are kept in a dictionry inside the session module",
+        "The login sessions are kept in a dictionary, inside the session module.",
+    ] {
+        assert!(
+            m.propose(2, "job-1", same, "x", &lbl).unwrap().is_none(),
+            "should not be asked twice: {same}"
+        );
+    }
+    // another content word, or a different one in its place, is shown to the owner
+    for different in [
+        "Login sessions are kept in a dictionary inside the session module and expire hourly",
+        "Login sessions are stored in a dictionary inside the session module",
+        "Login sessions are kept in a database inside the session module",
+        "Login sessions are kept in a dictionary inside the cookie module",
+    ] {
+        assert!(
+            m.propose(3, "job-2", different, "x", &lbl)
+                .unwrap()
+                .is_some(),
+            "should reach the owner: {different}"
+        );
+    }
+}
+
+#[test]
+fn me29d_in_a_long_note_one_added_or_dropped_content_word_is_still_a_change() {
+    let m = mem(&dir());
+    let lbl = Label::new(Level::Internal).untrusted();
+    let long = "Every deploy of the payments service goes through the staging cluster first, is smoke tested by the on call engineer, and only then is promoted to the production cluster by the release manager";
+    m.remember(1, nm(long, internal())).unwrap();
+    // the same words, only small words and punctuation changed
+    assert!(m
+        .propose(2, "job-1", "Every deploy of the payments service goes through the staging cluster first, is smoke tested by an on call engineer and only then is promoted to the production cluster by the release manager.", "x", &lbl)
+        .unwrap()
+        .is_none());
+    // one content word added, or dropped: the overlap is still very high, but it is a different statement
+    for changed in [
+        "Every deploy of the payments service goes through the staging cluster first, is smoke tested by the on call engineer, and only then is promoted to the production cluster by the release manager manually",
+        "Every deploy of the payments service goes through the staging cluster first, is smoke tested by the on call engineer, and only then is promoted to the production cluster by the manager",
+    ] {
+        assert!(
+            m.propose(3, "job-2", changed, "x", &lbl).unwrap().is_some(),
+            "{changed}"
+        );
+    }
+}
+
+fn project_nm(text: &str, project: &str) -> NewMemory {
+    NewMemory {
+        project: Some(project.into()),
+        ..nm(text, internal())
+    }
+}
+
+fn texts(g: &[kk_memory::Recalled]) -> Vec<String> {
+    g.iter().map(|r| r.memory.text.clone()).collect()
+}
+
+#[test]
+fn me32_notes_that_say_almost_the_same_thing_are_grouped_newest_first_and_changed_facts_are_not() {
+    let m = mem(&dir());
+    let base = "Login sessions are kept in a dictionary inside the session module";
+    for (t, text) in [
+        (1, base),
+        (
+            2,
+            "Login sessions kept in a dictionary inside the session module.",
+        ),
+        (
+            3,
+            "login session are kept in a dictionary, inside the session module",
+        ),
+        // a different fact about the same thing, and the same words with the meaning turned round
+        (
+            4,
+            "Login sessions are kept in redis inside the session module",
+        ),
+        (5, "Prefer tabs over spaces in all Rust code"),
+        (6, "Prefer spaces over tabs in all Rust code"),
+        (7, "Quarterly invoices are sent on the second business day"),
+    ] {
+        m.remember(t, nm(text, internal())).unwrap();
+    }
+    let found = m.similar_notes(&internal(), 100, Scope::All).unwrap();
+    assert_eq!(
+        found.groups.len(),
+        1,
+        "{:?}",
+        found.groups.iter().map(|g| texts(g)).collect::<Vec<_>>()
+    );
+    let g = texts(&found.groups[0]);
+    assert_eq!(g.len(), 3, "{g:?}");
+    assert!(
+        g[0].starts_with("login session are kept"),
+        "newest first: {g:?}"
+    );
+    assert!(g.iter().all(|t| !t.contains("redis")), "{g:?}");
+    assert!(found.scanned == 7 && found.complete);
+    // nothing was changed by looking
+    assert_eq!(m.list(&internal(), 100, 50).unwrap().len(), 7);
+}
+
+#[test]
+fn me33_the_same_note_in_two_projects_is_not_a_duplicate_and_short_notes_are_not_compared() {
+    let m = mem(&dir());
+    let t = "Deploys go through the blue pipeline after the smoke tests pass";
+    m.remember(1, project_nm(t, "alpha")).unwrap();
+    m.remember(2, project_nm(t, "beta")).unwrap();
+    m.remember(
+        3,
+        nm(
+            "Deploys go through the blue pipeline after the smoke tests pass.",
+            internal(),
+        ),
+    )
+    .unwrap();
+    m.remember(4, nm("Use tabs", internal())).unwrap();
+    m.remember(5, nm("use tabs.", internal())).unwrap();
+    let found = m.similar_notes(&internal(), 100, Scope::All).unwrap();
+    assert!(
+        found.groups.is_empty(),
+        "different projects, and a note with no project, are not look-alikes; two-word notes are too short: {:?}",
+        found.groups.iter().map(|g| texts(g)).collect::<Vec<_>>()
+    );
+    // the same project does group
+    m.remember(
+        6,
+        project_nm(
+            "Deploys go through the blue pipeline after the smoke tests pass.",
+            "alpha",
+        ),
+    )
+    .unwrap();
+    let found = m.similar_notes(&internal(), 100, Scope::All).unwrap();
+    assert_eq!(found.groups.len(), 1);
+    assert!(found.groups[0]
+        .iter()
+        .all(|r| r.memory.project.as_deref() == Some("alpha")));
+}
+
+#[test]
+fn me34_a_note_the_caller_may_not_see_forgotten_notes_and_replaced_notes_are_never_grouped() {
+    let m = mem(&dir());
+    let restricted = Label::new(Level::Restricted);
+    let t = "The acquisition target list is kept in the legal share under the deal room folder";
+    m.remember(1, nm(t, restricted)).unwrap();
+    m.remember(
+        2,
+        nm(
+            "The acquisition target list is kept in the legal share under the deal room folder.",
+            internal(),
+        ),
+    )
+    .unwrap();
+    // only one visible copy: no group
+    assert!(m
+        .similar_notes(&internal(), 100, Scope::All)
+        .unwrap()
+        .groups
+        .is_empty());
+    // a forgotten copy is not a copy
+    let a = id(m
+        .remember(
+            3,
+            nm(
+                "Backups run nightly at two in the morning and are kept for thirty days",
+                internal(),
+            ),
+        )
+        .unwrap());
+    let b = id(m
+        .remember(
+            4,
+            nm(
+                "Backups run nightly at two in the morning and are kept for thirty days.",
+                internal(),
+            ),
+        )
+        .unwrap());
+    assert_eq!(
+        m.similar_notes(&internal(), 100, Scope::All)
+            .unwrap()
+            .groups
+            .len(),
+        1
+    );
+    m.forget(5, &a, "wrong").unwrap();
+    assert!(m
+        .similar_notes(&internal(), 100, Scope::All)
+        .unwrap()
+        .groups
+        .is_empty());
+    let _ = b;
+}
+
+#[test]
+fn me35_only_the_newest_notes_are_compared_and_the_result_says_so() {
+    let m = mem(&dir());
+    for i in 0..(kk_memory::SIMILAR_SCAN + 5) {
+        m.remember(
+            i as i64,
+            nm(
+                &format!(
+                    "Distinct note number {i} about subject {i} with enough different words {i}{i}"
+                ),
+                internal(),
+            ),
+        )
+        .unwrap();
+    }
+    let found = m.similar_notes(&internal(), 1_000_000, Scope::All).unwrap();
+    assert_eq!(found.scanned, kk_memory::SIMILAR_SCAN);
+    assert!(!found.complete, "more notes exist than were compared");
+}
+
+#[test]
+fn me36_two_hundred_long_different_notes_are_compared_quickly() {
+    let m = mem(&dir());
+    // long notes from a shared vocabulary: many words in common, but nothing near-identical
+    let mut seed = 12345u64;
+    let mut next = || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (seed >> 33) as usize
+    };
+    for i in 0..kk_memory::SIMILAR_SCAN {
+        let text: String = (0..240).map(|_| format!("w{} ", next() % 300)).collect();
+        m.remember(i as i64, nm(text.trim(), internal())).unwrap();
+    }
+    let t0 = std::time::Instant::now();
+    let found = m.similar_notes(&internal(), 1_000_000, Scope::All).unwrap();
+    let took = t0.elapsed();
+    assert!(found.groups.is_empty());
+    assert!(took.as_secs_f64() < 6.0, "took {took:?}");
+}
+
+#[test]
+fn me37_asking_for_every_note_returns_every_note_not_just_the_newest_two_hundred() {
+    let m = mem(&dir());
+    let n = 230;
+    for i in 0..n {
+        m.remember(
+            i as i64,
+            nm(
+                &format!(
+                    "Distinct note number {i} about subject {i} with enough different words {i}{i}"
+                ),
+                internal(),
+            ),
+        )
+        .unwrap();
+    }
+    let all = m
+        .list_scoped(&internal(), 1_000_000, 100_000, Scope::All)
+        .unwrap();
+    assert_eq!(
+        all.len(),
+        n,
+        "a backup asks for everything and must get everything"
+    );
+}

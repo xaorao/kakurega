@@ -6546,3 +6546,158 @@ fn sv58_a_conversation_about_a_project_gets_that_project_s_notes_and_no_other_pr
         before
     );
 }
+
+#[test]
+fn sv59_a_memory_backup_holds_every_note_and_restores_every_note_however_many_there_are() {
+    let notes = 210;
+    let (root_a, _r) = repo_copy("bk-a");
+    let a = Service::new(
+        &root_a.join("data"),
+        vec![root_a.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let ca = start(Options {
+        extension: Arc::new(Routes(a.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut wa = Web::new(ca.addr);
+    wa.pair(&ca.security.issue_pairing_code());
+    for i in 0..notes {
+        let t = format!(
+            "Backup note number {i} says something different about subject {i} in the {i}th place"
+        );
+        assert_eq!(
+            wa.post("/api/memories", json!({"text": t, "level": "internal"}))
+                .0,
+            201,
+            "{t}"
+        );
+    }
+    let (st, backup) = wa.get("/api/memories/export");
+    assert_eq!(st, 200);
+    assert_eq!(
+        backup["memories"].as_array().unwrap().len(),
+        notes,
+        "the backup must hold every note, not only the newest 200"
+    );
+    // a fresh store restores all of them
+    let (root_b, _r2) = repo_copy("bk-b");
+    let b = Service::new(
+        &root_b.join("data"),
+        vec![root_b.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let cb = start(Options {
+        extension: Arc::new(Routes(b.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut wb = Web::new(cb.addr);
+    wb.pair(&cb.security.issue_pairing_code());
+    let (st, r) = wb.post("/api/memories/import", backup);
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["added"], json!(notes), "{r}");
+    assert_eq!(r["refused"], json!(0), "{r}");
+    let (_, again) = wb.get("/api/memories/export");
+    assert_eq!(again["memories"].as_array().unwrap().len(), notes);
+}
+
+#[test]
+fn sv60_the_owner_can_list_notes_that_say_almost_the_same_thing_and_nothing_is_changed_by_looking()
+{
+    let (root, _repo) = repo_copy("similar");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    // not paired: no note text
+    let anon = Web::new(c.addr);
+    let (st, body) = anon.get("/api/memories/similar");
+    assert!(st == 401 || st == 403, "{st} {body}");
+    assert!(!body.to_string().contains("Login sessions"), "{body}");
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let mut ids = Vec::new();
+    for (t, p) in [
+        (
+            "Login sessions are kept in a dictionary inside the session module",
+            None,
+        ),
+        (
+            "Login sessions kept in a dictionary inside the session module.",
+            None,
+        ),
+        (
+            "Login sessions are kept in redis inside the session module",
+            None,
+        ),
+        ("Prefer tabs over spaces in all Rust code", None),
+        ("Prefer spaces over tabs in all Rust code", None),
+        (
+            "Login sessions are kept in a dictionary inside the session module",
+            Some("alpha"),
+        ),
+    ] {
+        let mut body = json!({"text": t, "level": "internal"});
+        if let Some(p) = p {
+            body["project"] = json!(p);
+        }
+        let (st, r) = w.post("/api/memories", body);
+        assert_eq!(st, 201, "{t}");
+        ids.push(r["id"].as_str().unwrap().to_string());
+    }
+    let before = w.get("/api/memories").1["memories"]
+        .as_array()
+        .unwrap()
+        .len();
+    let (st, found) = w.get("/api/memories/similar");
+    assert_eq!(st, 200, "{found}");
+    let groups = found["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 1, "{found}");
+    let texts: Vec<&str> = groups[0]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(texts.len(), 2, "{texts:?}");
+    assert!(texts.iter().all(|t| t.contains("dictionary")), "{texts:?}");
+    assert_eq!(found["scanned"], json!(6));
+    assert_eq!(found["complete"], json!(true));
+    assert!(found["note"]
+        .as_str()
+        .unwrap()
+        .contains("Nothing is merged"));
+    // looking changed nothing
+    assert_eq!(
+        w.get("/api/memories").1["memories"]
+            .as_array()
+            .unwrap()
+            .len(),
+        before
+    );
+    // forgetting one copy ends the group
+    let first = groups[0][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        w.post(&format!("/api/memories/{first}/forget"), json!({}))
+            .0,
+        200
+    );
+    assert!(w.get("/api/memories/similar").1["groups"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}

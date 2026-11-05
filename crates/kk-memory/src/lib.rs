@@ -285,6 +285,19 @@ fn fts_query(q: &str) -> Option<String> {
     }
 }
 
+/// How many of the newest notes are compared when looking for notes that say almost the same thing.
+pub const SIMILAR_SCAN: usize = 200;
+
+/// Groups of look-alike notes, and how much of the store was compared.
+#[derive(Debug, Clone)]
+pub struct SimilarNotes {
+    /// Newest note first inside each group.
+    pub groups: Vec<Vec<Recalled>>,
+    pub scanned: usize,
+    /// False when there were more notes than were compared.
+    pub complete: bool,
+}
+
 /// Wording overlap at or above which a suggestion counts as already known.
 const NEAR_DUPLICATE: f64 = 0.8;
 
@@ -311,8 +324,82 @@ fn same_claim(a: &str, b: &str) -> bool {
             });
         (numbers, negated)
     }
-    marks(a) == marks(b)
+    marks(a) == marks(b) && same_order(a, b)
 }
+
+/// The words of a text, lowercased, in order.
+fn word_sequence(s: &str) -> Vec<String> {
+    s.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// Wording overlap that ignores order says "prefer tabs over spaces" and "prefer spaces over tabs" are the same note. They are
+/// opposites. Two texts count as the same claim only when, after lining their words up in order, every word that is left over
+/// is a small word or a near-identical spelling of a word left over on the other side (a plural, a typo). A word that merely
+/// moved is never "near identical": the same word turning up in a different place is a changed meaning. When unsure the
+/// owner is shown the suggestion: a duplicate asked twice costs a click, a changed fact that was hidden costs a wrong note.
+fn same_order(a: &str, b: &str) -> bool {
+    let (x, y) = (word_sequence(a), word_sequence(b));
+    let (n, m) = (x.len(), y.len());
+    // longest common subsequence of words, kept whole so the words left over can be named
+    let mut table = vec![vec![0usize; m + 1]; n + 1];
+    for i in 0..n {
+        for j in 0..m {
+            table[i + 1][j + 1] = if x[i] == y[j] {
+                table[i][j] + 1
+            } else {
+                table[i][j + 1].max(table[i + 1][j])
+            };
+        }
+    }
+    let (mut in_x, mut in_y) = (vec![false; n], vec![false; m]);
+    let (mut i, mut j) = (n, m);
+    while i > 0 && j > 0 {
+        if x[i - 1] == y[j - 1] {
+            in_x[i - 1] = true;
+            in_y[j - 1] = true;
+            i -= 1;
+            j -= 1;
+        } else if table[i - 1][j] >= table[i][j - 1] {
+            i -= 1;
+        } else {
+            j -= 1;
+        }
+    }
+    let small = |w: &str| w.chars().count() < 3 || STOPWORDS.contains(&w);
+    let left_x: Vec<&String> = x
+        .iter()
+        .zip(&in_x)
+        .filter(|(w, k)| !**k && !small(w))
+        .map(|(w, _)| w)
+        .collect();
+    let left_y: Vec<&String> = y
+        .iter()
+        .zip(&in_y)
+        .filter(|(w, k)| !**k && !small(w))
+        .map(|(w, _)| w)
+        .collect();
+    if left_x.len() != left_y.len() {
+        return false;
+    }
+    let mut taken = vec![false; left_y.len()];
+    for w in left_x {
+        let tw = fuse::trigrams(w);
+        let partner = left_y.iter().enumerate().find(|(k, v)| {
+            !taken[*k] && ***v != *w && fuse::jaccard(&tw, &fuse::trigrams(v)) >= NEAR_SPELLING
+        });
+        match partner {
+            Some((k, _)) => taken[k] = true,
+            None => return false,
+        }
+    }
+    true
+}
+
+/// How alike two single words must be, by their letter trigrams, to count as the same word spelled differently.
+const NEAR_SPELLING: f64 = 0.5;
 
 /// True when saved text reads like an instruction to an AI system. Such notes stay in memory but are never handed to a model as context.
 pub fn instruction_like(text: &str) -> bool {
@@ -1114,12 +1201,65 @@ impl Memories {
                     untrusted: r.untrusted,
                     memory: r.m,
                 });
-                if out.len() >= limit.clamp(1, 200) {
+                if out.len() >= limit.max(1) {
                     break;
                 }
             }
         }
         Ok(out)
+    }
+
+    /// Saved notes that say almost the same thing, for the owner to look at. Read-only: nothing is merged, forgotten or
+    /// changed. The newest 200 notes the caller may see are compared. Each group is anchored on its newest note and holds
+    /// only notes that match that anchor directly (the same overlap and the same claim as the suggestion check), so a chain
+    /// of look-alikes never pulls two unrelated notes into one group. Notes for different projects are not look-alikes of
+    /// each other, and a note of fewer than four words is too short to compare.
+    pub fn similar_notes(
+        &self,
+        clearance: &Label,
+        as_of: i64,
+        scope: Scope,
+    ) -> Result<SimilarNotes, MemoryError> {
+        let notes = self.list_scoped(clearance, as_of, SIMILAR_SCAN, scope)?;
+        let scanned = notes.len();
+        struct Anchor {
+            grams: std::collections::BTreeSet<[char; 3]>,
+            first: usize,
+        }
+        let mut anchors: Vec<Anchor> = Vec::new();
+        let mut members: Vec<Vec<usize>> = Vec::new();
+        for (i, n) in notes.iter().enumerate() {
+            let words = word_sequence(&n.memory.text).len();
+            if words < 4 {
+                continue;
+            }
+            let grams = fuse::trigrams(&n.memory.text);
+            let home = anchors.iter().position(|a| {
+                let first = &notes[a.first].memory;
+                first.project == n.memory.project
+                    && fuse::jaccard(&a.grams, &grams) >= NEAR_DUPLICATE
+                    && same_claim(&first.text, &n.memory.text)
+            });
+            match home {
+                Some(g) => members[g].push(i),
+                None => {
+                    anchors.push(Anchor { grams, first: i });
+                    members.push(vec![i]);
+                }
+            }
+        }
+        let mut groups: Vec<Vec<Recalled>> = members
+            .into_iter()
+            .filter(|g| g.len() >= 2)
+            .map(|g| g.into_iter().map(|i| notes[i].clone()).collect())
+            .collect();
+        // the largest groups first; the newest note decides ties, as the list is already newest first
+        groups.sort_by_key(|g| std::cmp::Reverse(g.len()));
+        Ok(SimilarNotes {
+            groups,
+            scanned,
+            complete: scanned < SIMILAR_SCAN,
+        })
     }
 
     pub fn history(&self, id: &str, clearance: &Label) -> Result<Vec<Memory>, MemoryError> {

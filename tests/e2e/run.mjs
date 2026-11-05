@@ -539,6 +539,22 @@ try {
   await page.getByRole("button", { name: "Remember" }).click();
   await page.locator(".mem", { hasText: "Zorblax" }).waitFor();
   await page.getByLabel("Only for this project (optional folder name)").fill("");
+  // notes that say almost the same thing are listed, the opposite meaning is not grouped with them, and forgetting a copy ends the group
+  for (const t of ["Quibblex invoices are rounded half up in all reports", "Quibblex invoices are rounded half up in all reports.", "Quibblex prefers tabs over spaces in all Rust code", "Quibblex prefers spaces over tabs in all Rust code"]) {
+    await page.getByLabel("What should be remembered").fill(t);
+    await page.getByRole("button", { name: "Remember" }).click();
+    await page.locator(".mem", { hasText: t }).first().waitFor();
+  }
+  await page.getByText("Notes that say almost the same thing").click();
+  await page.getByText("2 notes say almost the same").waitFor();
+  check("two copies of one note are listed as a group, and the swapped meaning is not in it", (await page.getByText("2 notes say almost the same").count()) === 1 && (await page.getByText("3 notes say almost the same").count()) === 0 && (await page.getByText("notes compared").first().isVisible()));
+  await page.screenshot({ path: join(shots, "11b-memory-similar.png") });
+  const group = page.locator("details", { hasText: "Notes that say almost the same thing" }).locator(".mem").first();
+  await group.getByRole("button", { name: "Forget", exact: true }).click();
+  await group.getByRole("button", { name: "Yes, forget it" }).click();
+  await page.getByText("No notes say almost the same thing.").waitFor();
+  check("forgetting one copy ends the group", await page.getByText("No notes say almost the same thing.").isVisible());
+  await page.getByText("Notes that say almost the same thing").click();
   await page.getByRole("link", { name: "Chat" }).click();
   await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();
   check("the chat says what the project field does", await page.getByText("Notes you saved for this project are offered in this conversation").isVisible());

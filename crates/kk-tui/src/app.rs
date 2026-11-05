@@ -86,6 +86,7 @@ enum Intent {
     Deny,
     Deliver,
     MemoryList,
+    Similar,
     Remember,
     Ask,
     Correct,
@@ -1466,6 +1467,15 @@ impl App {
                 };
                 vec![self.req(Intent::MemoryList, false, Method::Get, &path, None)]
             }
+            Command::Similar => {
+                vec![self.req(
+                    Intent::Similar,
+                    false,
+                    Method::Get,
+                    "/api/memories/similar",
+                    None,
+                )]
+            }
             Command::Ask { folder, question } => {
                 if self.chat_waiting {
                     self.say(Kind::Warn, "Still waiting for the last answer.");
@@ -2085,6 +2095,46 @@ impl App {
                 if !lines.is_empty() {
                     self.push(Kind::Info, Some("Memory"), lines);
                 }
+                Vec::new()
+            }
+            Intent::Similar => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let groups = body["groups"].as_array().cloned().unwrap_or_default();
+                let scanned = body["scanned"].as_u64().unwrap_or(0);
+                let mut lines: Vec<String> = Vec::new();
+                for g in &groups {
+                    let notes = g.as_array().cloned().unwrap_or_default();
+                    lines.push(format!("{} notes say almost the same:", notes.len()));
+                    for m in &notes {
+                        lines.push(format!(
+                            "  {}{}  {}",
+                            clean(m["id"].as_str().unwrap_or("?")),
+                            m["project"]
+                                .as_str()
+                                .map(|p| format!(" [project {}]", clean(p)))
+                                .unwrap_or_default(),
+                            clean(m["text"].as_str().unwrap_or(""))
+                        ));
+                    }
+                }
+                if groups.is_empty() {
+                    lines.push(format!(
+                        "No notes say almost the same thing ({scanned} notes compared)."
+                    ));
+                } else {
+                    lines.push(format!(
+                        "{scanned} notes compared. Nothing was merged or forgotten. /forget ID drops a copy you do not want."
+                    ));
+                }
+                if body["complete"] == false {
+                    lines.push(format!(
+                        "There are more notes than that: only the newest {scanned} were compared."
+                    ));
+                }
+                self.push(Kind::Info, Some("Similar notes"), lines);
                 Vec::new()
             }
             Intent::Remember => {

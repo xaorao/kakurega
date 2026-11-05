@@ -136,6 +136,38 @@ function ImportNotes(props: { onDone: () => void }) {
   );
 }
 
+function Similar(props: { onChange: (msg?: string) => void }) {
+  const [open, setOpen] = createSignal(false);
+  const [found, { refetch }] = createResource(open, (on) => (on ? api.similarMemories() : Promise.resolve(null)));
+  return (
+    <details class="card stack" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>{t("mem.similar.title")}</summary>
+      <Show when={open()}>
+        <p class="muted">{t("mem.similar.lead")}</p>
+        <Show when={found()} fallback={<p class="muted">{t("review.loading")}</p>}>
+          {(f) => (
+            <>
+              <p class="muted">{t("mem.similar.checked", { n: f().scanned })}{" "}{f().complete ? "" : t("mem.similar.partial", { n: f().scanned })}</p>
+              <Show when={f().groups.length > 0} fallback={<p>{t("mem.similar.none")}</p>}>
+                <For each={f().groups}>
+                  {(g) => (
+                    <div class="stack">
+                      <p><strong>{t("mem.similar.group", { n: g.length })}</strong></p>
+                      <ul class="plain stack">
+                        <For each={g}>{(m) => <Item m={m} onChange={(msg) => { props.onChange(msg); void refetch(); }} />}</For>
+                      </ul>
+                    </div>
+                  )}
+                </For>
+              </Show>
+            </>
+          )}
+        </Show>
+      </Show>
+    </details>
+  );
+}
+
 export function Memory() {
   const [query, setQuery] = createSignal("");
   const [items, { refetch }] = createResource(query, (q) => api.memories(q.trim() || undefined).then((r) => r.memories));
@@ -188,6 +220,7 @@ export function Memory() {
         <label class="sr" for="mem-search">{t("mem.search")}</label>
         <input id="mem-search" type="search" placeholder={t("mem.search")} value={query()} onInput={(e) => setQuery(e.currentTarget.value)} />
       </div>
+      <Similar onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <ul class="plain stack">
         <For each={items()} fallback={<li class="muted">{items.loading ? t("review.loading") : query().trim() ? t("mem.nomatch") : t("mem.none")}</li>}>
           {(m) => <Item m={m} onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />}

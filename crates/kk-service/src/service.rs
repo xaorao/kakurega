@@ -1081,6 +1081,25 @@ async fn memories_list(axum::Extension(svc): Svc, Query(q): Query<MemoryQuery>) 
     }
 }
 
+/// Saved notes that say almost the same thing, for the owner's Memory screen. Read-only: nothing is merged or forgotten
+/// here; the owner chooses what to forget.
+async fn memories_similar(axum::Extension(svc): Svc) -> Response {
+    let mem = svc.memory.lock().expect("lock");
+    let res = mem
+        .owner_clearance()
+        .and_then(|c| mem.similar_notes(&c, now(), kk_memory::Scope::All));
+    match res {
+        Ok(found) => Json(json!({
+            "groups": found.groups.iter().map(|g| g.iter().map(memory_json).collect::<Vec<_>>()).collect::<Vec<_>>(),
+            "scanned": found.scanned,
+            "complete": found.complete,
+            "note": "Nothing is merged or forgotten for you. Forget the copies you do not want; notes for different projects are never compared with each other.",
+        }))
+        .into_response(),
+        Err(e) => memory_error(e),
+    }
+}
+
 async fn memories_export(axum::Extension(svc): Svc) -> Response {
     let mem = svc.memory.lock().expect("lock");
     let res = mem
@@ -4946,6 +4965,7 @@ impl Extension for Routes {
             .route("/api/log", get(log_summary))
             .route("/api/log/export", get(log_export))
             .route("/api/memories", get(memories_list).post(memory_add))
+            .route("/api/memories/similar", get(memories_similar))
             .route("/api/memories/export", get(memories_export))
             .route("/api/memories/import", post(memories_import))
             .route("/api/memories/import-notes", post(memories_import_notes))

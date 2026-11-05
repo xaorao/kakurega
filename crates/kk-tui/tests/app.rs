@@ -1862,6 +1862,59 @@ fn tu55_opening_a_kept_conversation_takes_its_project_and_one_without_clears_it(
     );
 }
 
+#[test]
+fn tu56_similar_lists_look_alike_notes_changes_nothing_and_says_how_much_was_compared() {
+    let mut a = booted();
+    let r = enter(&mut a, "/similar");
+    assert_eq!(
+        (r[0].method, r[0].path.as_str()),
+        (Method::Get, "/api/memories/similar")
+    );
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({
+            "groups": [[
+                {"id": "m-2", "text": "Login sessions kept in a dictionary.", "project": null},
+                {"id": "m-1", "text": "Login sessions are kept in a dictionary", "project": "alpha"}
+            ]],
+            "scanned": 7, "complete": true, "note": "x"
+        }),
+    ));
+    let t = text(&a);
+    assert!(t.contains("2 notes say almost the same"), "{t}");
+    assert!(
+        t.contains("m-2") && t.contains("m-1") && t.contains("[project alpha]"),
+        "{t}"
+    );
+    assert!(
+        t.contains("7 notes compared") && t.contains("Nothing was merged or forgotten"),
+        "{t}"
+    );
+    assert!(!t.contains("only the newest"), "{t}");
+    // an empty answer says what was compared, and a partial scan says so
+    let r = enter(&mut a, "/similar");
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"groups": [], "scanned": 200, "complete": false, "note": "x"}),
+    ));
+    let t = text(&a);
+    assert!(
+        t.contains("No notes say almost the same thing (200 notes compared)"),
+        "{t}"
+    );
+    assert!(t.contains("only the newest 200 were compared"), "{t}");
+    // a failure is shown, not hidden
+    let r = enter(&mut a, "/similar");
+    a.handle(ok(
+        &r[0],
+        500,
+        json!({"error": {"code": "STORE", "message": "disk trouble"}}),
+    ));
+    assert!(text(&a).contains("disk trouble"));
+}
+
 fn footer_text(a: &App) -> String {
     let mut term = Terminal::new(TestBackend::new(110, 30)).unwrap();
     term.draw(|f| draw(f, a, &Theme::from_env())).unwrap();
