@@ -304,6 +304,22 @@ try {
   await fixesCard.getByRole("button", { name: /^Apply to/ }).click();
   await fixesCard.getByRole("button", { name: "Yes, change the file" }).click();
   await fixesCard.getByText("Applied to payments/auth/session.py.").waitFor();
+  await page.route("**/api/jobs/*/fixes", async (route) => {
+    const real = await route.fetch();
+    const body = await real.json();
+    body.fixes[0] = { ...body.fixes[0], applied: false, state: "attention", attention: "payments/auth/tokens.py" };
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  });
+  await page.getByRole("tab", { name: "Release" }).click();
+  await page.getByRole("tab", { name: "Findings" }).click();
+  const attentionCard = page.getByRole("region", { name: "Proposed fixes" });
+  await attentionCard.getByRole("alert").waitFor();
+  check("a fix whose files are not as Kakurega left them names them and offers neither Apply nor Undo", (await attentionCard.getByRole("alert").innerText()).includes("payments/auth/tokens.py") && (await attentionCard.getByRole("button", { name: /^Apply to/ }).count()) === 0 && (await attentionCard.getByRole("button", { name: /^Undo/ }).count()) === 0);
+  await axeCheck(page, "findings tab with a fix that needs attention");
+  await page.unroute("**/api/jobs/*/fixes");
+  await page.getByRole("tab", { name: "Release" }).click();
+  await page.getByRole("tab", { name: "Findings" }).click();
+  await fixesCard.waitFor();
   check("the card then shows it as applied and offers no second apply", (await fixesCard.getByRole("button", { name: /^Apply to/ }).count()) === 0 && (await fixesCard.getByText("Applied", { exact: true }).count()) === 1);
   await sugg.locator("li").first().getByRole("button", { name: "Remember" }).click();
   await sugg.getByText("Remembered.").waitFor();
@@ -515,9 +531,18 @@ try {
   check("opening the kept conversation brings back both sides of the exchange", (await page.locator(".msg").count()) === 2);
   await page.getByRole("button", { name: "Forget", exact: true }).click();
   check("Forget asks for a second press before removing anything", (await page.getByRole("button", { name: "Press again to forget" }).count()) === 1 && (await page.locator(".msg").count()) === 2);
+  // the list of kept conversations is answered slowly, so a screen that clears the text before the list catches up is seen every time
+  await page.route("**/api/sessions", async (route) => {
+    if (route.request().method() === "GET") await new Promise((r) => setTimeout(r, 900));
+    await route.continue();
+  });
+  const slowList = page.waitForResponse((r) => r.url().endsWith("/api/sessions") && r.request().method() === "GET");
   await page.getByRole("button", { name: "Press again to forget" }).click();
   await page.getByRole("button", { name: "Keep this conversation" }).waitFor();
-  check("after Forget the conversation is gone from the list and the screen", (await page.getByRole("button", { name: "Open" }).count()) === 0 && (await page.locator(".msg").count()) === 0);
+  check("after Forget the conversation is gone from the list and the screen, even while the list is still being fetched", (await page.getByRole("button", { name: "Open" }).count()) === 0 && (await page.locator(".msg").count()) === 0);
+  await slowList;
+  await page.unroute("**/api/sessions");
+  check("and the refreshed list agrees: nothing is kept", (await page.getByRole("button", { name: "Open" }).count()) === 0);
   // documents: an answer whose quotes are checked against the files
   await page.getByRole("link", { name: "Documents" }).click();
   await page.getByRole("heading", { name: "Ask your documents", exact: true }).waitFor();

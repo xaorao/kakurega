@@ -1940,3 +1940,32 @@ fn tu44_a_chat_answer_lists_the_notes_that_shaped_it() {
     a.handle(ok(&r[0], 200, json!({"done": true, "reply": "ok", "route": {"simulated": true}, "notes_used": 1, "notes": [{"id": "m2", "text": "x\u{1b}[31mred", "why": "w\u{7}", "untrusted": true}]})));
     assert!(!text(&a).contains('\u{1b}') && !text(&a).contains('\u{7}'));
 }
+
+#[test]
+fn tu45_a_fix_whose_files_need_attention_is_listed_with_the_files_named_and_no_instruction_to_apply(
+) {
+    let mut a = booted();
+    a.jobs.push(kk_tui::app::JobRow {
+        id: "job-4".into(),
+        recipient: "x".into(),
+        state: "ready".into(),
+    });
+    let r = enter(&mut a, "/fixes");
+    a.handle(ok(&r[0], 200, json!({"fixes": [
+        {"index": 0, "title": "t", "file": "a.py", "explanation": "e", "status": "fixes_the_reproducer", "verified": true, "diff": "-a\n+b\n", "applied": false, "state": "attention", "attention": "payments/auth/tokens.py\u{1b}[31m"},
+        {"index": 1, "title": "t", "file": "b.py", "explanation": "e", "status": "fixes_the_reproducer", "verified": true, "diff": "-a\n+b\n", "applied": false, "state": "applying", "attention": null}]})));
+    let t = text(&a);
+    assert!(
+        t.contains("not as Kakurega left them: payments/auth/tokens.py")
+            && t.contains("A change to your files is being made right now"),
+        "{t}"
+    );
+    assert!(
+        !t.contains("to apply."),
+        "no invitation to apply a fix that needs attention: {t}"
+    );
+    assert!(
+        !t.contains('\u{1b}'),
+        "file names from the service are cleaned before they reach the screen"
+    );
+}

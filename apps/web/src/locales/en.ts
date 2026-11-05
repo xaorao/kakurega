@@ -331,6 +331,8 @@ export const en = {
   "fix.done": "Applied",
   "fix.undo": "Undo (restore the original)",
   "fix.undone": "Restored {file}.",
+  "fix.attention": "These files are not as Kakurega left them: {files}. Make each one match its original or its fixed text again, or remove whatever stops it being written, then open this review again. Nothing is changed until then.",
+  "fix.working": "A change to your files is being made right now.",
   "fix.change": "The change",
   "find.none": "The agent reported no findings.",
   "find.noneNote": "That is not proof the project is free of defects; it only means nothing was reported and confirmed.",

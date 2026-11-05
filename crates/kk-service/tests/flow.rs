@@ -5201,3 +5201,352 @@ fn sv45_a_release_without_personal_data_has_an_empty_notice() {
     let (_, rel) = w.get(&format!("/api/jobs/{job}/release"));
     assert_eq!(rel["personal_data"], json!([]), "{rel}");
 }
+
+struct Files {
+    sess: PathBuf,
+    tok: PathBuf,
+    sess0: Vec<u8>,
+    tok0: Vec<u8>,
+    sess1: Vec<u8>,
+    tok1: Vec<u8>,
+}
+
+type Restarted = (kk_companion::Companion, Web, String, Files, PathBuf);
+
+fn stray_temp_files(dir: &Path) -> usize {
+    fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(".kakurega-fix-")
+        })
+        .count()
+}
+
+fn fix_list(w: &Web, job: &str) -> Value {
+    w.get(&format!("/api/jobs/{job}/fixes")).1["fixes"][0].clone()
+}
+
+/// Applies fix 0 of a review, then stops the service the way a dying process would: the saved events are rewritten so the
+/// change looks cut short (when `cut_short`), each statement of `sql` runs against the saved data, `damage` shapes the
+/// files, and a new service starts on the same data.
+fn restarted_after_apply(
+    tag: &str,
+    cut_short: bool,
+    sql: &[&str],
+    damage: &dyn Fn(&Files),
+) -> Restarted {
+    let (root, repo) = repo_copy(tag);
+    let data = root.join("data");
+    let sess = repo.join("payments/auth/session.py");
+    let tok = repo.join("payments/auth/tokens.py");
+    let (sess0, tok0) = (fs::read(&sess).unwrap(), fs::read(&tok).unwrap());
+    let job;
+    let sess1;
+    let tok1;
+    {
+        let svc = Service::new(
+            &data,
+            vec![root.clone()],
+            Arc::new(CannedRunner { confirm: true }),
+            true,
+        )
+        .unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        let (_, s) = w.post(
+            "/api/jobs",
+            json!({"repo": repo.to_string_lossy(), "recipient": "multifixer"}),
+        );
+        job = s["id"].as_str().unwrap().to_string();
+        wait_for(&w, &job, &["ready"]);
+        let (st, r) = w.post(
+            &format!("/api/jobs/{job}/fixes/0/apply"),
+            json!({"file": "payments/auth/session.py"}),
+        );
+        assert_eq!(st, 200, "{r}");
+        sess1 = fs::read(&sess).unwrap();
+        tok1 = fs::read(&tok).unwrap();
+        drop(c);
+    }
+    let waited = std::time::Instant::now();
+    while waited.elapsed() < Duration::from_secs(5)
+        && Service::new(
+            &data,
+            vec![root.clone()],
+            Arc::new(CannedRunner { confirm: true }),
+            true,
+        )
+        .is_err()
+    {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    {
+        let store = kk_service::keys::open_vault(&data, "jobs.db").unwrap();
+        if cut_short {
+            store
+                .connection()
+                .execute(
+                    "UPDATE jobs SET meta = replace(meta, '\"stage\":\"fix_applied\"', '\"stage\":\"fix_applying\"') WHERE id = ?1",
+                    [&job],
+                )
+                .unwrap();
+        }
+        for q in sql {
+            store.connection().execute(q, [&job]).unwrap();
+        }
+    }
+    let files = Files {
+        sess,
+        tok,
+        sess0,
+        tok0,
+        sess1,
+        tok1,
+    };
+    damage(&files);
+    let svc = Service::new(
+        &data,
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .expect("restart");
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    (c, w, job, files, repo)
+}
+
+#[test]
+fn sv46_a_change_cut_short_by_a_stop_is_settled_from_the_files_at_the_next_start() {
+    let file = json!({"file": "payments/auth/session.py"});
+    let bytes = |f: &Files| (fs::read(&f.sess).unwrap(), fs::read(&f.tok).unwrap());
+
+    // both files were written but the end of the change was never recorded: it counts as applied and can be undone
+    let (c, w, job, f, repo) = restarted_after_apply("settle-done", true, &[], &|_| {});
+    let log = log_text(
+        &format!("http://127.0.0.1:{}", c.addr.port()),
+        c.security.admin_token(),
+    );
+    assert!(
+        log.contains("fix.settled"),
+        "the cut-short change was settled when the service started, before anything was listed: {log}"
+    );
+    let fix = fix_list(&w, &job);
+    assert_eq!(
+        (fix["state"].clone(), fix["applied"].clone()),
+        (json!("applied"), json!(true)),
+        "{fix}"
+    );
+    assert_eq!(bytes(&f), (f.sess1.clone(), f.tok1.clone()));
+    assert_eq!(
+        w.post(&format!("/api/jobs/{job}/fixes/0/undo"), file.clone())
+            .0,
+        200
+    );
+    assert_eq!(bytes(&f), (f.sess0.clone(), f.tok0.clone()));
+    assert_eq!(stray_temp_files(&repo.join("payments/auth")), 0);
+
+    // no file was written yet: it counts as not applied, and applies normally afterwards
+    let (_c, w, job, f, _repo) = restarted_after_apply("settle-none", true, &[], &|f| {
+        fs::write(&f.sess, &f.sess0).unwrap();
+        fs::write(&f.tok, &f.tok0).unwrap();
+    });
+    let fix = fix_list(&w, &job);
+    assert_eq!(
+        (fix["state"].clone(), fix["applied"].clone()),
+        (json!("not_applied"), json!(false)),
+        "{fix}"
+    );
+    assert_eq!(bytes(&f), (f.sess0.clone(), f.tok0.clone()));
+    assert_eq!(
+        w.post(&format!("/api/jobs/{job}/fixes/0/apply"), file.clone())
+            .0,
+        200
+    );
+    assert_eq!(bytes(&f), (f.sess1.clone(), f.tok1.clone()));
+
+    // only one of the two files was written: the written one is put back, so the project is whole again
+    let (_c, w, job, f, repo) = restarted_after_apply("settle-half", true, &[], &|f| {
+        fs::write(&f.tok, &f.tok0).unwrap();
+    });
+    let fix = fix_list(&w, &job);
+    assert_eq!(fix["state"], "not_applied", "{fix}");
+    assert_eq!(bytes(&f), (f.sess0.clone(), f.tok0.clone()));
+    assert_eq!(stray_temp_files(&repo.join("payments/auth")), 0);
+}
+
+#[test]
+fn sv46b_a_file_the_owner_edited_in_the_meantime_is_named_never_overwritten_and_blocks_both_directions(
+) {
+    let file = json!({"file": "payments/auth/session.py"});
+    let (_c, w, job, f, _repo) = restarted_after_apply("settle-edited", true, &[], &|f| {
+        fs::write(&f.tok, [f.tok1.clone(), b"# mine\n".to_vec()].concat()).unwrap();
+    });
+    let mine = [f.tok1.clone(), b"# mine\n".to_vec()].concat();
+    let fix = fix_list(&w, &job);
+    assert_eq!(
+        (
+            fix["state"].clone(),
+            fix["attention"].clone(),
+            fix["applied"].clone()
+        ),
+        (
+            json!("attention"),
+            json!("payments/auth/tokens.py"),
+            json!(false)
+        ),
+        "{fix}"
+    );
+    for what in ["apply", "undo"] {
+        let (st, r) = w.post(&format!("/api/jobs/{job}/fixes/0/{what}"), file.clone());
+        assert_eq!(
+            (st, r["error"]["code"].as_str()),
+            (409, Some("NEEDS_ATTENTION")),
+            "{what}: {r}"
+        );
+        assert!(
+            r["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("payments/auth/tokens.py"),
+            "the message names the file: {r}"
+        );
+    }
+    assert_eq!(
+        fs::read(&f.sess).unwrap(),
+        f.sess1,
+        "the other file was not touched"
+    );
+    assert_eq!(
+        fs::read(&f.tok).unwrap(),
+        mine,
+        "the owner's edit was not touched"
+    );
+    // the owner puts the file back as the fix left it: the fix reads as applied again and can be undone
+    fs::write(&f.tok, &f.tok1).unwrap();
+    let fix = fix_list(&w, &job);
+    assert_eq!(fix["state"], "applied", "{fix}");
+    assert_eq!(
+        w.post(&format!("/api/jobs/{job}/fixes/0/undo"), file.clone())
+            .0,
+        200
+    );
+    assert_eq!(
+        (fs::read(&f.sess).unwrap(), fs::read(&f.tok).unwrap()),
+        (f.sess0.clone(), f.tok0.clone())
+    );
+}
+
+#[test]
+fn sv47_a_change_that_cannot_be_written_says_so_leaves_no_trace_and_unsafe_files_are_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    let (root, repo) = repo_copy("data-fixfail");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (_, s) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "multifixer"}),
+    );
+    let job = s["id"].as_str().unwrap().to_string();
+    wait_for(&w, &job, &["ready"]);
+    let dir = repo.join("payments/auth");
+    let sess = dir.join("session.py");
+    let sess0 = fs::read(&sess).unwrap();
+    let file = json!({"file": "payments/auth/session.py"});
+    let apply = format!("/api/jobs/{job}/fixes/0/apply");
+    let undo = format!("/api/jobs/{job}/fixes/0/undo");
+
+    // a folder that refuses new files: the change fails as a whole, says nothing was changed and leaves no trace
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+    let ignores_permissions = fs::write(dir.join(".probe"), b"x").is_ok();
+    let (st, r) = w.post(&apply, file.clone());
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+    let _ = fs::remove_file(dir.join(".probe"));
+    if ignores_permissions {
+        assert_eq!(st, 200, "{r}");
+        assert_eq!(w.post(&undo, file.clone()).0, 200);
+    } else {
+        assert_eq!(
+            (st, r["error"]["code"].as_str()),
+            (500, Some("WRITE_FAILED")),
+            "{r}"
+        );
+        assert_eq!(fs::read(&sess).unwrap(), sess0);
+        assert_eq!(stray_temp_files(&dir), 0);
+        let events = w.get(&format!("/api/jobs/{job}")).1["events"].to_string();
+        assert!(
+            events.find("fix_applying").unwrap() < events.find("fix_apply_failed").unwrap(),
+            "the change was written down before it was tried, and its failure after: {events}"
+        );
+        assert_eq!(fix_list(&w, &job)["state"], "not_applied");
+    }
+
+    // a file with a second name would lose the link when replaced: refused, nothing written
+    let alias = repo.join("alias-of-session.py");
+    fs::hard_link(&sess, &alias).unwrap();
+    let (st, r) = w.post(&apply, file.clone());
+    assert_eq!(
+        (st, r["error"]["code"].as_str()),
+        (403, Some("BAD_PATH")),
+        "{r}"
+    );
+    assert_eq!(fs::read(&sess).unwrap(), sess0);
+    fs::remove_file(&alias).unwrap();
+
+    // with the folder writable and no second name, the same fix applies and undoes
+    assert_eq!(w.post(&apply, file.clone()).0, 200);
+    assert_eq!(fix_list(&w, &job)["state"], "applied");
+    assert_eq!(w.post(&undo, file.clone()).0, 200);
+    assert_eq!(fs::read(&sess).unwrap(), sess0);
+    assert_eq!(stray_temp_files(&dir), 0);
+}
+
+#[test]
+fn sv48_a_damaged_saved_original_is_never_written_over_the_owners_file() {
+    let (_c, w, job, f, _repo) = restarted_after_apply(
+        "damaged-original",
+        false,
+        &["UPDATE fix_files SET orig = CAST('tampered' AS BLOB) WHERE job = ?1"],
+        &|_| {},
+    );
+    let (st, r) = w.post(
+        &format!("/api/jobs/{job}/fixes/0/undo"),
+        json!({"file": "payments/auth/session.py"}),
+    );
+    assert_eq!(
+        (st, r["error"]["code"].as_str()),
+        (409, Some("SNAPSHOT_DAMAGED")),
+        "{r}"
+    );
+    assert_eq!(
+        (fs::read(&f.sess).unwrap(), fs::read(&f.tok).unwrap()),
+        (f.sess1.clone(), f.tok1.clone()),
+        "the files still hold the fix"
+    );
+    assert_eq!(fix_list(&w, &job)["state"], "applied");
+}

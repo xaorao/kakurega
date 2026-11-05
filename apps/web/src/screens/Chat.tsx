@@ -1,4 +1,4 @@
-import { createResource, createSignal, For, Show } from "solid-js";
+import { batch, createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, streamChat, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
 import { t } from "../i18n";
 import { Markdown } from "../components/Markdown";
@@ -17,7 +17,7 @@ export function Chat() {
   const [error, setError] = createSignal("");
   const [session, setSession] = createSignal<string | null>(null);
   const [confirmForget, setConfirmForget] = createSignal<string | null>(null);
-  const [kept, { refetch }] = createResource<KeptChat[]>(async () => {
+  const [kept, { refetch, mutate }] = createResource<KeptChat[]>(async () => {
     try {
       return (await api.keptChats()).sessions;
     } catch {
@@ -52,10 +52,14 @@ export function Chat() {
     setConfirmForget(null);
     try {
       await api.forgetChat(id);
-      if (session() === id) {
-        setSession(null);
-        setTurns([]);
-      }
+      // the list and the screen change together: the forgotten conversation is never listed once its text is gone
+      batch(() => {
+        mutate((list) => (list ?? []).filter((k) => k.id !== id));
+        if (session() === id) {
+          setSession(null);
+          setTurns([]);
+        }
+      });
       await refetch();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("chat.error"));

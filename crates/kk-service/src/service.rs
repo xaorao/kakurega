@@ -1,4 +1,5 @@
 use crate::deliver::{capsule_dir, deliver, CapsuleFile};
+use crate::fixfiles::{self, Change, Outcome, Where};
 use crate::keys::{load_keys, open_vault, Keys};
 use crate::snapshot::Snapshot;
 use axum::extract::{Path as UrlPath, Query};
@@ -186,6 +187,7 @@ pub struct Service {
     last_attest: Mutex<Option<std::time::Instant>>,
     attest_cooldown: Mutex<std::time::Duration>,
     research: Mutex<Research>,
+    fix_locks: fixfiles::JobLocks,
     pub test_mode: bool,
 }
 
@@ -582,8 +584,10 @@ impl Service {
             last_attest: Mutex::new(None),
             attest_cooldown: Mutex::new(std::time::Duration::from_secs(3)),
             research: Mutex::new(Research::default()),
+            fix_locks: fixfiles::JobLocks::default(),
             test_mode,
         });
+        settle_all_fixes(&svc);
         // the scheduler wakes once a minute and holds the service only weakly, so dropping the service ends it
         let weak = Arc::downgrade(&svc);
         std::thread::spawn(move || loop {
@@ -683,14 +687,18 @@ impl Service {
         self.keys.signer.public()
     }
 
-    fn persist_job(&self, job: &Job, snap: Option<&Snapshot>) {
+    fn persist_job(&self, job: &Job, snap: Option<&Snapshot>) -> bool {
         let meta = serde_json::to_string(job).unwrap_or_default();
         let snap_text = snap.and_then(|s| serde_json::to_string(s).ok());
-        if let Ok(v) = self.store.lock() {
-            let _ = v.connection().execute(
-                "INSERT INTO jobs(id, meta, snap) VALUES (?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET meta = excluded.meta, snap = COALESCE(excluded.snap, jobs.snap)",
-                (&job.id, &meta, &snap_text),
-            );
+        match self.store.lock() {
+            Ok(v) => v
+                .connection()
+                .execute(
+                    "INSERT INTO jobs(id, meta, snap) VALUES (?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET meta = excluded.meta, snap = COALESCE(excluded.snap, jobs.snap)",
+                    (&job.id, &meta, &snap_text),
+                )
+                .is_ok(),
+            Err(_) => false,
         }
     }
 
@@ -710,17 +718,24 @@ impl Service {
     }
 
     fn push_event(self: &Arc<Self>, id: &str, stage: &str, detail: &str) {
+        self.push_event_durable(id, stage, detail);
+    }
+
+    /// Adds an event to the review and reports whether it reached the store. A change to the owner's files is written
+    /// down this way before it is made.
+    fn push_event_durable(self: &Arc<Self>, id: &str, stage: &str, detail: &str) -> bool {
         let mut g = self.inner.lock().expect("lock");
-        if let Some(j) = g.jobs.get_mut(id) {
-            j.events.push(Event {
-                at: now(),
-                stage: stage.into(),
-                detail: detail.into(),
-            });
-            let j = j.clone();
-            drop(g);
-            self.persist_job(&j, None);
-        }
+        let Some(j) = g.jobs.get_mut(id) else {
+            return false;
+        };
+        j.events.push(Event {
+            at: now(),
+            stage: stage.into(),
+            detail: detail.into(),
+        });
+        let j = j.clone();
+        drop(g);
+        self.persist_job(&j, None)
     }
 
     pub fn start_job(self: &Arc<Self>, repo: &str, recipient: &str) -> Result<String, String> {
@@ -3226,30 +3241,81 @@ async fn findings(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Re
     }
 }
 
-/// Applied unless the most recent of `fix_applied` and `fix_undone` for this fix is an undo.
-fn fix_applied(svc: &Service, id: &str, n: usize) -> bool {
+/// Where a fix stands, from the events kept for the review. A change is written down before any file is touched, so a fix
+/// whose change was cut short is found and settled instead of being forgotten.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum FixState {
+    NotApplied,
+    Applying,
+    Applied,
+    Undoing,
+    /// Files whose state is not known; the text names them for the owner.
+    Attention(String),
+}
+
+fn fix_event(e: &Event) -> Option<(usize, &str, &str)> {
+    if !e.stage.starts_with("fix_") {
+        return None;
+    }
+    let (number, rest) = e.detail.split_once(':').unwrap_or((e.detail.as_str(), ""));
+    Some((number.parse().ok()?, e.stage.as_str(), rest))
+}
+
+fn fix_state(svc: &Service, id: &str, n: usize) -> FixState {
     let g = svc.inner.lock().expect("lock");
-    g.jobs.get(id).is_some_and(|j| {
-        j.events
-            .iter()
-            .rev()
-            .find(|e| {
-                (e.stage == "fix_applied" || e.stage == "fix_undone") && e.detail == n.to_string()
-            })
-            .is_some_and(|e| e.stage == "fix_applied")
-    })
+    let Some(job) = g.jobs.get(id) else {
+        return FixState::NotApplied;
+    };
+    for (m, stage, rest) in job.events.iter().rev().filter_map(fix_event) {
+        if m != n {
+            continue;
+        }
+        return match stage {
+            "fix_applied" | "fix_undo_failed" => FixState::Applied,
+            "fix_applying" => FixState::Applying,
+            "fix_undoing" => FixState::Undoing,
+            "fix_attention" => FixState::Attention(rest.to_string()),
+            _ => FixState::NotApplied,
+        };
+    }
+    FixState::NotApplied
+}
+
+/// Applied while the files hold the fix: after it was applied, and while an undo is running.
+fn fix_applied(svc: &Service, id: &str, n: usize) -> bool {
+    matches!(fix_state(svc, id, n), FixState::Applied | FixState::Undoing)
+}
+
+fn fix_state_name(svc: &Service, id: &str, n: usize) -> &'static str {
+    match fix_state(svc, id, n) {
+        FixState::NotApplied => "not_applied",
+        FixState::Applying => "applying",
+        FixState::Applied => "applied",
+        FixState::Undoing => "undoing",
+        FixState::Attention(_) => "attention",
+    }
+}
+
+fn fix_attention_text(svc: &Service, id: &str, n: usize) -> Value {
+    match fix_state(svc, id, n) {
+        FixState::Attention(files) => Value::String(files),
+        _ => Value::Null,
+    }
 }
 
 async fn fixes_list(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
     match snap_of(&svc, &id) {
         Err(r) => r,
-        Ok(s) => Json(json!({"fixes": s.fixes.iter().enumerate().map(|(i, f)| json!({
+        Ok(s) => {
+            settle_listed(&svc, &id, &s);
+            Json(json!({"fixes": s.fixes.iter().enumerate().map(|(i, f)| json!({
             "index": i, "title": f.title, "file": f.file, "explanation": f.explanation, "status": f.status,
-            "files": fix_edits(f).iter().map(|e| e.0.clone()).collect::<Vec<_>>(), "verified": f.verified, "diff": f.diff, "applied": fix_applied(&svc, &id, i),
+            "files": fix_edits(f).iter().map(|e| e.0.clone()).collect::<Vec<_>>(), "verified": f.verified, "diff": f.diff, "applied": fix_applied(&svc, &id, i), "state": fix_state_name(&svc, &id, i), "attention": fix_attention_text(&svc, &id, i),
             "tests": f.tests,
             "established": if f.tests.contains("passed before and after") { "That the finding's reproducer stops reproducing after this change and that the project's own unittest tests, which passed before, still pass. The change is not proven correct or complete." } else { "Only that the finding's reproducer stops reproducing after this change. The project's own tests were not run, or could not be, and the change is not proven correct or complete." },
         })).collect::<Vec<_>>()}))
-        .into_response(),
+            .into_response()
+        }
     }
 }
 
@@ -3309,34 +3375,180 @@ fn plain_file(repo: &Path, file: &str) -> Result<(PathBuf, std::fs::Metadata), R
             "a file of this fix is not a plain file inside the project",
         ));
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if meta.nlink() > 1 {
+            return Err(error(
+                StatusCode::FORBIDDEN,
+                "BAD_PATH",
+                "a file of this fix has more than one name (a hard link); replacing it would break the link, so it is left alone",
+            ));
+        }
+    }
     Ok((full, meta))
 }
 
-/// Writes every (path, bytes) or none: each goes through a temporary file and a rename, and if a later one fails the
-/// earlier ones are put back from the bytes held in memory.
-fn write_all_or_none(items: &[(PathBuf, Vec<u8>, std::fs::Permissions, Vec<u8>)]) -> bool {
-    let mut done: Vec<usize> = Vec::new();
-    for (i, (full, bytes, perms, _)) in items.iter().enumerate() {
-        let tmp = full.with_file_name(format!(".kakurega-fix-{}-{i}.tmp", std::process::id()));
-        let ok = std::fs::write(&tmp, bytes)
-            .and_then(|_| std::fs::set_permissions(&tmp, perms.clone()))
-            .and_then(|_| std::fs::rename(&tmp, full));
-        if ok.is_err() {
-            let _ = std::fs::remove_file(&tmp);
-            for j in done {
-                let (path, _, p, before) = &items[j];
-                let tmp =
-                    path.with_file_name(format!(".kakurega-fix-{}-undo.tmp", std::process::id()));
-                let _ = std::fs::write(&tmp, before)
-                    .and_then(|_| std::fs::set_permissions(&tmp, p.clone()))
-                    .and_then(|_| std::fs::rename(&tmp, path));
-                let _ = std::fs::remove_file(&tmp);
-            }
-            return false;
-        }
-        done.push(i);
+fn fix_busy() -> Response {
+    error(
+        StatusCode::CONFLICT,
+        "FIX_BUSY",
+        "another change to this review's files is still running; try again in a moment",
+    )
+}
+
+fn needs_attention(files: &str) -> Response {
+    error(
+        StatusCode::CONFLICT,
+        "NEEDS_ATTENTION",
+        &format!("these files are not as Kakurega left them: {files}. Make each one match its original or its fixed text again, or remove whatever stops it being written, then try again; nothing was changed now"),
+    )
+}
+
+fn short(text: String) -> String {
+    text.chars().take(300).collect()
+}
+
+/// The folders that hold the files of a fix.
+fn fix_dirs(repo: &Path, f: &crate::snapshot::SnapFix) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = fix_edits(f)
+        .iter()
+        .filter_map(|e| repo.join(&e.0).parent().map(Path::to_path_buf))
+        .collect();
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
+/// What was kept for each file of a fix: its original bytes and the checksum of the text the fix wrote.
+fn kept_files(
+    svc: &Service,
+    id: &str,
+    n: usize,
+    repo: &Path,
+    f: &crate::snapshot::SnapFix,
+) -> Vec<(String, Option<fixfiles::Tracked>)> {
+    let store = svc.store.lock().expect("lock");
+    fix_edits(f)
+        .into_iter()
+        .map(|(file, ..)| {
+            let kept: Option<(Vec<u8>, String)> = store
+                .connection()
+                .query_row(
+                    "SELECT orig, sha_after FROM fix_files WHERE job = ?1 AND n = ?2 AND file = ?3",
+                    kk_vault::rusqlite::params![id, n as i64, file],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .ok();
+            let tracked = kept.map(|(original, fixed_sha)| fixfiles::Tracked {
+                path: repo.join(&file),
+                original,
+                fixed_sha,
+            });
+            (file, tracked)
+        })
+        .collect()
+}
+
+/// Settles a fix whose change was cut short (the service stopped, or a rollback could not finish) by looking at the
+/// files themselves. All as they were: not applied. All as the fix wrote them: applied. Some of each: the fixed ones are
+/// put back. Anything else, such as a file the owner edited, is left alone and named.
+fn settle_fix(svc: &Arc<Service>, id: &str, n: usize, s: &Snapshot, repo: &Path) {
+    let Some(f) = s.fixes.get(n) else { return };
+    let before = fix_state(svc, id, n);
+    if matches!(before, FixState::NotApplied | FixState::Applied) {
+        return;
     }
-    true
+    for dir in fix_dirs(repo, f) {
+        fixfiles::sweep_stale(&dir, std::time::Duration::from_secs(600));
+    }
+    let kept = kept_files(svc, id, n, repo, f);
+    let kinds: Vec<Where> = kept
+        .iter()
+        .map(|(_, t)| t.as_ref().map_or(Where::Other, fixfiles::classify))
+        .collect();
+    let others: Vec<PathBuf> = kept
+        .iter()
+        .zip(&kinds)
+        .filter(|(_, k)| **k == Where::Other)
+        .map(|((file, _), _)| repo.join(file))
+        .collect();
+    let (stage, detail, result) = if kinds.iter().all(|k| *k == Where::Original) {
+        ("fix_reverted", n.to_string(), "not_applied")
+    } else if kinds.iter().all(|k| *k == Where::Fixed) {
+        match before {
+            FixState::Undoing => ("fix_undo_failed", n.to_string(), "applied"),
+            _ => ("fix_applied", n.to_string(), "applied"),
+        }
+    } else if !others.is_empty() {
+        (
+            "fix_attention",
+            format!("{n}:{}", short(fixfiles::describe_files(repo, &others))),
+            "attention",
+        )
+    } else {
+        let tracked: Vec<fixfiles::Tracked> = kept.into_iter().filter_map(|(_, t)| t).collect();
+        let failed = fixfiles::restore_fixed(&tracked);
+        if failed.is_empty() {
+            ("fix_reverted", n.to_string(), "not_applied")
+        } else {
+            (
+                "fix_attention",
+                format!("{n}:{}", short(fixfiles::describe_files(repo, &failed))),
+                "attention",
+            )
+        }
+    };
+    if let FixState::Attention(previous) = &before {
+        if stage == "fix_attention" && detail == format!("{n}:{previous}") {
+            return;
+        }
+    }
+    svc.push_event_durable(id, stage, &detail);
+    svc.log_event(
+        "fix.settled",
+        id,
+        &[("fix", n.into()), ("result", result.into())],
+    );
+}
+
+/// Settles every unfinished fix of one review, unless a change to its files is running right now.
+fn settle_listed(svc: &Arc<Service>, id: &str, s: &Snapshot) {
+    if (0..s.fixes.len()).all(|n| {
+        matches!(
+            fix_state(svc, id, n),
+            FixState::NotApplied | FixState::Applied
+        )
+    }) {
+        return;
+    }
+    let repo = {
+        let g = svc.inner.lock().expect("lock");
+        g.jobs.get(id).map(|j| j.repo.clone())
+    };
+    let Some(repo) = repo.and_then(|r| svc.allowed_dir(&r.to_string_lossy())) else {
+        return;
+    };
+    let Some(_busy) = svc.fix_locks.try_lock(id) else {
+        return;
+    };
+    for n in 0..s.fixes.len() {
+        settle_fix(svc, id, n, s, &repo);
+    }
+}
+
+/// At start: every review whose fix was cut short by a stop is brought to a known state before anything is shown.
+fn settle_all_fixes(svc: &Arc<Service>) {
+    let reviews: Vec<(String, Arc<Snapshot>)> = {
+        let g = svc.inner.lock().expect("lock");
+        g.snaps
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    };
+    for (id, s) in reviews {
+        settle_listed(svc, &id, &s);
+    }
 }
 
 async fn fix_undo(
@@ -3358,13 +3570,6 @@ async fn fix_undo(
             "name the file you are restoring",
         );
     }
-    if !fix_applied(&svc, &id, n) {
-        return error(
-            StatusCode::CONFLICT,
-            "NOT_APPLIED",
-            "this fix is not applied, so there is nothing to undo",
-        );
-    }
     let repo = {
         let g = svc.inner.lock().expect("lock");
         g.jobs.get(&id).map(|j| j.repo.clone())
@@ -3376,8 +3581,24 @@ async fn fix_undo(
             "the project folder is no longer available",
         );
     };
+    let Some(_busy) = svc.fix_locks.try_lock(&id) else {
+        return fix_busy();
+    };
+    settle_fix(&svc, &id, n, &s, &repo);
+    match fix_state(&svc, &id, n) {
+        FixState::Applied => {}
+        FixState::NotApplied => {
+            return error(
+                StatusCode::CONFLICT,
+                "NOT_APPLIED",
+                "this fix is not applied, so there is nothing to undo",
+            )
+        }
+        FixState::Attention(files) => return needs_attention(&files),
+        FixState::Applying | FixState::Undoing => return fix_busy(),
+    }
     let mut items = Vec::new();
-    for (file, ..) in fix_edits(f) {
+    for (file, _, _, reviewed_sha) in fix_edits(f) {
         let snap: Option<(Vec<u8>, String)> = {
             let store = svc.store.lock().expect("lock");
             store
@@ -3396,6 +3617,13 @@ async fn fix_undo(
                 "the original copy is not available",
             );
         };
+        if kk_evidence::capsule::sha256_hex(&orig) != reviewed_sha {
+            return error(
+                StatusCode::CONFLICT,
+                "SNAPSHOT_DAMAGED",
+                "the saved original of a file is not the version that was reviewed, so nothing was restored",
+            );
+        }
         let (full, meta) = match plain_file(&repo, &file) {
             Ok(x) => x,
             Err(r) => return r,
@@ -3410,14 +3638,45 @@ async fn fix_undo(
         if kk_evidence::capsule::sha256_hex(&current) != sha_after {
             return error(StatusCode::CONFLICT, "CHANGED_SINCE_APPLY", "a file has been edited since the fix was applied, so restoring the original would erase those edits; restore it by hand");
         }
-        items.push((full, orig, meta.permissions(), current));
+        items.push(Change {
+            path: full,
+            before: current,
+            after: orig,
+            perms: meta.permissions(),
+        });
     }
-    if !write_all_or_none(&items) {
+    if !svc.push_event_durable(&id, "fix_undoing", &n.to_string()) {
+        svc.push_event(&id, "fix_undo_failed", &n.to_string());
         return error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "WRITE_FAILED",
-            "a file could not be written; nothing was changed",
+            "JOURNAL_FAILED",
+            "could not write down the change before making it, so nothing was changed",
         );
+    }
+    match fixfiles::write_all_or_none(&items) {
+        Outcome::Done => {}
+        Outcome::RolledBack => {
+            svc.push_event(&id, "fix_undo_failed", &n.to_string());
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "WRITE_FAILED",
+                "a file could not be written; nothing was changed",
+            );
+        }
+        Outcome::Stuck(paths) => {
+            let names = short(fixfiles::describe_files(&repo, &paths));
+            svc.push_event(&id, "fix_attention", &format!("{n}:{names}"));
+            svc.log_event(
+                "fix.attention",
+                &id,
+                &[("fix", n.into()), ("files", paths.len().into())],
+            );
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "WRITE_STUCK",
+                &format!("these files could not be put back and were left as they are: {names}"),
+            );
+        }
     }
     svc.push_event(&id, "fix_undone", &n.to_string());
     svc.log_event("fix.undone", &id, &[("files", items.len().into())]);
@@ -3461,12 +3720,21 @@ async fn fix_apply(
             "the project folder is no longer available",
         );
     };
-    if fix_applied(&svc, &id, n) {
-        return error(
-            StatusCode::CONFLICT,
-            "ALREADY_APPLIED",
-            "this fix was already applied",
-        );
+    let Some(_busy) = svc.fix_locks.try_lock(&id) else {
+        return fix_busy();
+    };
+    settle_fix(&svc, &id, n, &s, &repo);
+    match fix_state(&svc, &id, n) {
+        FixState::NotApplied => {}
+        FixState::Applied | FixState::Undoing => {
+            return error(
+                StatusCode::CONFLICT,
+                "ALREADY_APPLIED",
+                "this fix was already applied",
+            )
+        }
+        FixState::Attention(files) => return needs_attention(&files),
+        FixState::Applying => return fix_busy(),
     }
     // check every file first; nothing is written unless all of them are as they were when the fix was checked
     let mut plan = Vec::new();
@@ -3512,23 +3780,48 @@ async fn fix_apply(
             }
         }
     }
-    let items: Vec<_> = plan
-        .iter()
-        .map(|(_, full, updated, perms, current)| {
-            (
-                full.clone(),
-                updated.clone(),
-                perms.clone(),
-                current.clone(),
-            )
-        })
-        .collect();
-    if !write_all_or_none(&items) {
+    // the change is written down before any file is touched, so a stop in the middle is found and settled at the next start
+    if !svc.push_event_durable(&id, "fix_applying", &n.to_string()) {
+        svc.push_event(&id, "fix_apply_failed", &n.to_string());
         return error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "WRITE_FAILED",
-            "a file could not be written; nothing was changed",
+            "JOURNAL_FAILED",
+            "could not write down the change before making it, so nothing was changed",
         );
+    }
+    let changes: Vec<Change> = plan
+        .iter()
+        .map(|(_, full, updated, perms, current)| Change {
+            path: full.clone(),
+            before: current.clone(),
+            after: updated.clone(),
+            perms: perms.clone(),
+        })
+        .collect();
+    match fixfiles::write_all_or_none(&changes) {
+        Outcome::Done => {}
+        Outcome::RolledBack => {
+            svc.push_event(&id, "fix_apply_failed", &n.to_string());
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "WRITE_FAILED",
+                "a file could not be written; nothing was changed",
+            );
+        }
+        Outcome::Stuck(paths) => {
+            let names = short(fixfiles::describe_files(&repo, &paths));
+            svc.push_event(&id, "fix_attention", &format!("{n}:{names}"));
+            svc.log_event(
+                "fix.attention",
+                &id,
+                &[("fix", n.into()), ("files", paths.len().into())],
+            );
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "WRITE_STUCK",
+                &format!("these files could not be put back and were left as they are: {names}"),
+            );
+        }
     }
     svc.push_event(&id, "fix_applied", &n.to_string());
     let after_first = kk_evidence::capsule::sha256_hex(&plan[0].2);
@@ -4384,58 +4677,5 @@ impl Extension for Routes {
             .route("/admin/approvals/{id}/approve", post(admin_approve))
             .route("/admin/approvals/{id}/deny", post(admin_deny))
             .layer(axum::Extension(self.0.clone()))
-    }
-}
-
-#[cfg(test)]
-mod multi_write_tests {
-    use super::write_all_or_none;
-    use std::os::unix::fs::PermissionsExt;
-
-    #[test]
-    fn mw01_a_failed_second_write_puts_the_first_file_back() {
-        let d = std::env::temp_dir().join(format!("kk-mw-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(d.join("a")).unwrap();
-        std::fs::create_dir_all(d.join("b")).unwrap();
-        let (fa, fb) = (d.join("a/one.txt"), d.join("b/two.txt"));
-        std::fs::write(&fa, b"one before").unwrap();
-        std::fs::write(&fb, b"two before").unwrap();
-        let perms = std::fs::metadata(&fa).unwrap().permissions();
-        std::fs::set_permissions(d.join("b"), std::fs::Permissions::from_mode(0o555)).unwrap();
-        let items = vec![
-            (
-                fa.clone(),
-                b"one after".to_vec(),
-                perms.clone(),
-                b"one before".to_vec(),
-            ),
-            (
-                fb.clone(),
-                b"two after".to_vec(),
-                perms.clone(),
-                b"two before".to_vec(),
-            ),
-        ];
-        let ok = write_all_or_none(&items);
-        std::fs::set_permissions(d.join("b"), std::fs::Permissions::from_mode(0o755)).unwrap();
-        if std::process::id() == 0 {
-            return; // root ignores directory permissions; nothing to prove then
-        }
-        assert!(!ok, "the second file could not be written");
-        assert_eq!(
-            std::fs::read(&fa).unwrap(),
-            b"one before",
-            "the first file was restored"
-        );
-        assert_eq!(std::fs::read(&fb).unwrap(), b"two before");
-        assert!(
-            write_all_or_none(&items),
-            "with permissions back both are written"
-        );
-        assert_eq!(
-            (std::fs::read(&fa).unwrap(), std::fs::read(&fb).unwrap()),
-            (b"one after".to_vec(), b"two after".to_vec())
-        );
     }
 }

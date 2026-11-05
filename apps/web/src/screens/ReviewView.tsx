@@ -209,7 +209,7 @@ function Fixes(props: { jobId: string }) {
                 <p><span class={`chip ${f.verified ? "ok" : "bad"}`}>{f.verified ? t("fix.ok") : t("fix.notAccepted")}</span></p>
                 <Show when={f.tests}><p class="muted wrap">{f.tests}</p></Show>
                 <Show when={!f.verified}><p class="muted wrap">{t("fix.why", { why: f.status.replace(/^[a-z_]+: ?/, "").replace(/\s+/g, " ").slice(0, 240) })}</p></Show>
-                <Show when={f.verified && !f.applied}>
+                <Show when={f.verified && !f.applied && f.state !== "attention" && f.state !== "applying"}>
                   <Show when={asking() === f.index} fallback={<div class="actions"><button onClick={() => setAsking(f.index)}>{t("fix.apply", { file: (f.files ?? [f.file]).length > 1 ? t("fix.nFiles", { n: (f.files ?? []).length }) : f.file })}</button></div>}>
                     <div class="stack" role="alertdialog" aria-label={t("fix.confirm", { file: (f.files ?? [f.file]).length > 1 ? (f.files ?? []).join(", ") : f.file })}>
                       <p>{t("fix.confirm", { file: (f.files ?? [f.file]).length > 1 ? (f.files ?? []).join(", ") : f.file })}</p>
@@ -220,6 +220,8 @@ function Fixes(props: { jobId: string }) {
                     </div>
                   </Show>
                 </Show>
+                <Show when={f.state === "attention"}><p role="alert" class="bad wrap">{t("fix.attention", { files: f.attention ?? "" })}</p></Show>
+                <Show when={f.state === "applying"}><p role="status" class="muted">{t("fix.working")}</p></Show>
                 <Show when={f.applied}><p><span class="chip ok">{t("fix.done")}</span> <button onClick={() => undo(f)}>{t("fix.undo")}</button></p></Show>
               </li>
             )}

@@ -2100,6 +2100,7 @@ impl App {
                         _ => file.clone(),
                     };
                     let verified = f["verified"] == true;
+                    let state = f["state"].as_str().unwrap_or("");
                     self.fixes_seen.push((
                         job.clone(),
                         n,
@@ -2116,7 +2117,14 @@ impl App {
                         lines.push(clean(l));
                     }
                     lines.push(String::new());
-                    lines.push(if f["applied"] == true {
+                    lines.push(if state == "attention" {
+                        format!(
+                            "Needs your attention: these files are not as Kakurega left them: {}. Make each one match its original or its fixed text again, or remove whatever stops it being written, then run /fixes again. Nothing is changed until then.",
+                            clean(f["attention"].as_str().unwrap_or(""))
+                        )
+                    } else if state == "applying" {
+                        "A change to your files is being made right now. Run /fixes again in a moment.".to_string()
+                    } else if f["applied"] == true {
                         "Already applied.".to_string()
                     } else if verified {
                         format!("The reproducer stops reproducing. Your project's tests were not run. /applyfix {n} to apply.")
@@ -2124,7 +2132,11 @@ impl App {
                         format!("NOT accepted: {}", clean(&f["status"].as_str().unwrap_or("").chars().take(160).collect::<String>()))
                     });
                     self.push(
-                        if verified { Kind::Ok } else { Kind::Warn },
+                        if verified && state != "attention" {
+                            Kind::Ok
+                        } else {
+                            Kind::Warn
+                        },
                         Some(&format!("Fix {n}")),
                         lines,
                     );
