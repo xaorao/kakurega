@@ -926,7 +926,10 @@ async fn readiness(axum::Extension(svc): Svc) -> Json<Value> {
         tokio::task::spawn_blocking(move || (svc2.runner.readiness(), svc2.runner.repairable()))
             .await
             .unwrap_or_default();
-    let ready = checks.iter().all(|c| c["ok"] == true);
+    // a check marked `"required": false` is reported with its fix but does not stop the machine being ready; anything else is required
+    let ready = checks
+        .iter()
+        .all(|c| c["ok"] == true || c["required"] == false);
     let repairs = svc.repairs.lock().expect("lock").clone();
     let checks: Vec<Value> = checks
         .into_iter()
@@ -3584,7 +3587,7 @@ async fn findings(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Re
         Err(r) => r,
         Ok(s) => Json(json!({"findings": s.findings.iter().map(|f| json!({
             "title": f.title, "file": f.file, "line": f.line, "explanation": f.explanation, "reproducer": f.reproducer,
-            "status": f.status, "output": f.output, "sample": f.sample,
+            "language": f.language, "status": f.status, "output": f.output, "sample": f.sample,
         })).collect::<Vec<_>>(), "unparsed": s.unparsed}))
         .into_response(),
     }

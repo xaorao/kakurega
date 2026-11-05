@@ -72,7 +72,7 @@ export interface Config {
   signer: string;
   signer_public: string;
 }
-export interface ReadinessCheck { id: string; label: string; ok: boolean; detail: string; fix: string; repairable?: boolean; repair?: { state: "running" | "done" | "failed"; detail: string } }
+export interface ReadinessCheck { id: string; label: string; ok: boolean; required?: boolean; detail: string; fix: string; repairable?: boolean; repair?: { state: "running" | "done" | "failed"; detail: string } }
 export interface Readiness { ready: boolean; checks: ReadinessCheck[] }
 export interface MemoryItem { id: string; text: string; why: string; untrusted: boolean; level: string; compartments: string[]; created_at: number; valid_to: number | null; source: string; project?: string | null }
 export interface MemoryVersion { id: string; text: string; reason: string; created_at: number; current: boolean }
@@ -125,7 +125,7 @@ export interface Job {
 }
 export interface FileEntry { path: string; bytes: number; level: string; compartments: string[]; withheld: boolean; notes: string[] }
 export interface Fix { index: number; title: string; file: string; files?: string[]; explanation: string; status: string; tests?: string; verified: boolean; diff: string; applied: boolean; state?: "not_applied" | "applying" | "applied" | "undoing" | "attention"; attention?: string | null }
-export interface Finding { title: string; file: string; line: number; explanation: string; reproducer: string; status: string; output: string; sample: string[] }
+export interface Finding { title: string; file: string; line: number; explanation: string; reproducer: string; language?: string; status: string; output: string; sample: string[] }
 export interface AuditEntry { request: number; op: string; outcome: string; detail: string }
 export interface ReleaseFile { name: string; bytes: number; sha256: string; text: string | null }
 export interface Disclosure { verdict: "allow" | "review" | "block"; reasons: string[]; checked: string[]; not_checked: string[]; files_after: number; project_files: number; releases_before: number }

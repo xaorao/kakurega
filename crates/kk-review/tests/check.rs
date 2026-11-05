@@ -1,9 +1,9 @@
 use kk_review::check::{
     apply_all, apply_fix, clean_text, compare_test_runs, is_test_path, js_closure, missing_package,
-    names_sandbox_path, parse_finding, parse_fix, parse_node_test, parse_unittest, python_closure,
-    run_project_tests, run_project_tests_for, run_reproducer, unified_diff, unified_diff_all,
-    verify_fix, verify_fix_with_tests, CheckEnv, CheckStatus, ClosureError, Edit, Finding, Fix,
-    FixStatus, Language, TestRun, TestVerdict,
+    names_sandbox_path, node_major, parse_finding, parse_fix, parse_node_test, parse_unittest,
+    python_closure, run_project_tests, run_project_tests_for, run_reproducer, unified_diff,
+    unified_diff_all, verify_fix, verify_fix_with_tests, CheckEnv, CheckStatus, ClosureError, Edit,
+    Finding, Fix, FixStatus, Language, TestRun, TestVerdict,
 };
 use kk_review::import::{scan_tree, ImportedFile};
 use kk_sandbox::{Exit, Transport};
@@ -1507,4 +1507,36 @@ fn e01_what_the_sandbox_confirmed_is_what_the_recipients_own_machine_reproduces_
     let (ok, text) = run("run-check.py");
     assert!(ok, "{text}");
     assert_eq!(text.matches("OK   ").count(), 2, "{text}");
+}
+
+#[test]
+fn rd01_the_node_version_is_read_from_its_own_answer_and_nothing_else_counts() {
+    assert_eq!(node_major("v22.22.1\n"), Some(22));
+    assert_eq!(node_major("v22.0.0"), Some(22));
+    assert_eq!(node_major("v25.5.0"), Some(25));
+    assert_eq!(node_major("v8.17.0\n"), Some(8));
+    assert_eq!(node_major("v100.1.2"), Some(100));
+    for bad in [
+        "",
+        "22.1.0",
+        "v",
+        "vx.1.2",
+        "v.1.2",
+        "node v22",
+        "v22",
+        "v22.1",
+        " v22.1.1",
+        "v22.1.1 extra",
+        "v-22.1.1",
+        "v022.1.1x",
+        "v2e2.1.1",
+        "bash: node: command not found",
+        "v99999999999.0.0",
+        "v22.1.1.1",
+        "v22.1.1.",
+        "v22.1.1\n\n",
+        "v22..1",
+    ] {
+        assert_eq!(node_major(bad), None, "{bad:?}");
+    }
 }

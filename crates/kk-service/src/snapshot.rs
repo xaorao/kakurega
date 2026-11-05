@@ -34,10 +34,17 @@ pub struct SnapFinding {
     pub line: i64,
     pub explanation: String,
     pub reproducer: String,
+    /// "python" or "javascript"; reviews stored before the field existed read as python.
+    #[serde(default = "python_name")]
+    pub language: String,
     pub status: String,
     pub reproduced: bool,
     pub output: String,
     pub sample: Vec<String>,
+}
+
+fn python_name() -> String {
+    "python".into()
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -171,6 +178,7 @@ impl Snapshot {
                     line: f.line,
                     explanation: f.explanation.clone(),
                     reproducer: f.reproducer.clone(),
+                    language: f.language.as_str().into(),
                     status: status_text(&c.status),
                     reproduced: c.status == CheckStatus::Reproduced,
                     output: c.stdout.clone(),

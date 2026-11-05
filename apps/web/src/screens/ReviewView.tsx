@@ -13,6 +13,13 @@ const STAGES: [string, Key][] = [
   ["release", "stage.release"],
 ];
 
+/** Names a finding's check language; a review stored before the field existed reads as Python, anything unknown is not repeated. */
+function languageName(language?: string): string {
+  if (language === undefined || language === "python") return t("find.lang.python");
+  if (language === "javascript") return t("find.lang.javascript");
+  return t("find.lang.unknown");
+}
+
 function statusText(s: string): [string, string] {
   if (s === "reproduced") return [t("status.reproduced"), "ok"];
   if (s === "not_reproduced") return [t("status.not_reproduced"), "bad"];
@@ -255,7 +262,7 @@ function Findings(props: { job: Job }) {
                     <p><code>{f.file}:{f.line}</code></p>
                     <p>{f.explanation}</p>
                     <Show when={f.reproducer}>
-                      <details><summary>{t("find.repro")}</summary><pre tabindex="0"><code>{f.reproducer}</code></pre><Show when={f.output}><p class="muted">{t("find.output")}</p><pre tabindex="0"><code>{f.output}</code></pre></Show></details>
+                      <details><summary>{t("find.reproIn", { language: languageName(f.language) })}</summary><pre tabindex="0"><code>{f.reproducer}</code></pre><Show when={f.output}><p class="muted">{t("find.output")}</p><pre tabindex="0"><code>{f.output}</code></pre></Show></details>
                     </Show>
                     <Show when={f.sample.length > 0}><p class="muted">{t("find.sample", { count: f.sample.length, files: f.sample.join(", ") })}</p></Show>
                   </article>

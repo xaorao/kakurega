@@ -97,7 +97,25 @@ impl JobRunner for CannedRunner {
         };
         let index: BTreeMap<String, &kk_review::import::ImportedFile> =
             imp.files.iter().map(|f| (f.path.clone(), f)).collect();
-        let findings = vec![(finding, check)];
+        let mut findings = vec![(finding, check)];
+        if recipient == "js-audit" {
+            findings.push((
+                Finding {
+                    title: "Token never expires".into(),
+                    file: "web/session.js".into(),
+                    line: 7,
+                    explanation: "the token has no expiry".into(),
+                    reproducer: "console.log('CONTROL_OK');\nconsole.log('NOT REPRODUCED');\n"
+                        .into(),
+                    language: kk_review::check::Language::JavaScript,
+                },
+                CheckResult {
+                    status: CheckStatus::NotReproduced,
+                    stdout: "CONTROL_OK\nNOT REPRODUCED\n".into(),
+                    sample_paths: vec![],
+                },
+            ));
+        }
         let draft = assemble(&findings, &index, recipient, "policy-1", now, 86_400);
         let fixes = if recipient == "fixer" {
             let sess = index["payments/auth/session.py"];
@@ -6794,4 +6812,130 @@ fn sv60_the_owner_can_list_notes_that_say_almost_the_same_thing_and_nothing_is_c
         .as_array()
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn sv60_each_finding_reports_the_language_its_check_ran_in() {
+    let (root, repo) = repo_copy("lang");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (_, started) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "js-audit"}),
+    );
+    let job = started["id"].as_str().unwrap().to_string();
+    wait_for(&w, &job, &["ready"]);
+    let (_, f) = w.get(&format!("/api/jobs/{job}/findings"));
+    let list = f["findings"].as_array().unwrap();
+    assert_eq!(list.len(), 2, "{f}");
+    let lang = |title: &str| {
+        list.iter()
+            .find(|x| x["title"] == title)
+            .map(|x| x["language"].as_str().unwrap_or("MISSING").to_string())
+    };
+    assert_eq!(lang("Token not revoked").as_deref(), Some("python"));
+    assert_eq!(lang("Token never expires").as_deref(), Some("javascript"));
+    // an older stored review, written before the field existed, reads as Python
+    let old: kk_service::snapshot::SnapFinding = serde_json::from_value(json!({
+        "title": "t", "file": "f.py", "line": 1, "explanation": "e", "reproducer": "r",
+        "status": "reproduced", "reproduced": true, "output": "", "sample": []
+    }))
+    .unwrap();
+    assert_eq!(old.language, "python");
+}
+
+struct ChecksRunner {
+    inner: CannedRunner,
+    checks: Vec<Value>,
+}
+
+impl JobRunner for ChecksRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> JobReport {
+        self.inner.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        self.inner.route_info()
+    }
+    fn readiness(&self) -> Vec<Value> {
+        self.checks.clone()
+    }
+}
+
+#[test]
+fn sv61_an_optional_check_that_fails_is_reported_but_does_not_make_the_machine_not_ready() {
+    let ready_with = |checks: Vec<Value>| -> (bool, Value) {
+        let (root, _repo) = repo_copy("optional-check");
+        let runner = Arc::new(ChecksRunner {
+            inner: CannedRunner { confirm: true },
+            checks,
+        });
+        let svc = Service::new(&root.join("data"), vec![root.clone()], runner, true).unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        let (_, r) = w.get("/api/readiness");
+        (r["ready"].as_bool().unwrap(), r["checks"].clone())
+    };
+    let ok = json!({"id": "a", "label": "A", "ok": true, "detail": "", "fix": ""});
+    let bad = json!({"id": "b", "label": "B", "ok": false, "detail": "x", "fix": "do it"});
+    let optional_bad = json!({"id": "n", "label": "N", "ok": false, "required": false, "detail": "x", "fix": "do it"});
+    assert!(
+        ready_with(vec![ok.clone(), optional_bad.clone()]).0,
+        "an optional failure does not block"
+    );
+    assert!(ready_with(vec![optional_bad.clone()]).0);
+    assert!(
+        !ready_with(vec![ok.clone(), bad.clone()]).0,
+        "a required failure blocks"
+    );
+    assert!(!ready_with(vec![bad.clone(), optional_bad.clone()]).0);
+    assert!(
+        !ready_with(vec![
+            ok.clone(),
+            json!({"id": "n", "label": "N", "ok": false, "required": true, "detail": "", "fix": ""})
+        ])
+        .0
+    );
+    // only a real `false` makes a check optional; anything else is required
+    for odd in [json!("false"), json!(0), json!(null)] {
+        let c =
+            json!({"id": "n", "label": "N", "ok": false, "required": odd, "detail": "", "fix": ""});
+        assert!(!ready_with(vec![ok.clone(), c]).0, "{odd}");
+    }
+    // and the failing optional check is still listed, with its fix
+    let (_, checks) = ready_with(vec![ok, optional_bad]);
+    let n = checks
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "n")
+        .unwrap();
+    assert_eq!(
+        (n["ok"].clone(), n["fix"].as_str()),
+        (json!(false), Some("do it"))
+    );
 }

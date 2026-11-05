@@ -1,0 +1,2 @@
+SESSION_SIGNING_KEY=sk_test_synthetic_0123456789abcdefghijklmnop
+DATABASE_URL=postgres://orders:hunter2-synthetic@db.internal/orders

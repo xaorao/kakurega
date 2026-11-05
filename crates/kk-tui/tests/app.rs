@@ -2375,3 +2375,73 @@ fn tu52_the_footer_shows_the_summary_the_model_is_sent_in_place_of_the_oldest_me
         "no summary is shown when none stands in for anything"
     );
 }
+
+#[test]
+fn tu60_a_finding_says_which_language_its_check_ran_in_and_never_trusts_the_name() {
+    let mut app = booted();
+    app.jobs.push(kk_tui::app::JobRow {
+        id: "job-7".into(),
+        recipient: "x".into(),
+        state: "ready".into(),
+    });
+    let r = enter(&mut app, "/findings job-7");
+    app.handle(ok(&r[0], 200, json!({"findings": [
+        {"title": "Py", "file": "a.py", "line": 1, "status": "reproduced", "explanation": "e", "reproducer": "print(1)", "language": "python"},
+        {"title": "Js", "file": "a.js", "line": 2, "status": "reproduced", "explanation": "e", "reproducer": "x", "language": "javascript"},
+        {"title": "Old", "file": "b.py", "line": 3, "status": "reproduced", "explanation": "e", "reproducer": "x"},
+        {"title": "None", "file": "c.js", "line": 4, "status": "not_reproduced", "explanation": "e", "reproducer": "", "language": "javascript"},
+        {"title": "Odd", "file": "d.x", "line": 5, "status": "reproduced", "explanation": "e", "reproducer": "x", "language": "ru\u{1b}[31mby\u{202e}"}
+    ]})));
+    let card = |title: &str| {
+        let c = app
+            .cards
+            .iter()
+            .find(|c| c.title.as_deref() == Some(title))
+            .unwrap_or_else(|| panic!("no card {title}"));
+        c.lines.join("\n")
+    };
+    assert!(card("Py").contains("Checked with Python"), "{}", card("Py"));
+    assert!(
+        card("Js").contains("Checked with JavaScript"),
+        "{}",
+        card("Js")
+    );
+    assert!(
+        card("Old").contains("Checked with Python"),
+        "a service that does not say reads as python: {}",
+        card("Old")
+    );
+    assert!(
+        !card("None").contains("Checked with"),
+        "no reproducer, no language line: {}",
+        card("None")
+    );
+    let odd = card("Odd");
+    assert!(odd.contains("Checked with unknown language"), "{odd}");
+    assert!(
+        !odd.chars().any(|c| c.is_control() && c != '\n')
+            && !odd.contains('\u{202e}')
+            && !odd.contains("ruby"),
+        "{odd}"
+    );
+}
+
+#[test]
+fn tu61_an_optional_check_that_fails_is_marked_optional_not_todo() {
+    let mut app = booted();
+    let r = enter(&mut app, "/status");
+    app.handle(ok(&r[0], 200, json!({"ready": true, "checks": [
+        {"id": "a", "label": "Model", "ok": true, "detail": "m", "fix": ""},
+        {"id": "node", "label": "JavaScript checks", "required": false, "ok": false, "detail": "Node.js was not found", "fix": "Install Node.js 22"},
+        {"id": "b", "label": "Sandbox", "ok": false, "detail": "none", "fix": "install it"},
+        {"id": "c", "label": "Odd", "required": "false", "ok": false, "detail": "x", "fix": "y"}
+    ]})));
+    let t = text(&app);
+    assert!(t.contains("[ok]   Model"), "{t}");
+    assert!(t.contains("[optional] JavaScript checks"), "{t}");
+    assert!(t.contains("[todo] Sandbox"), "{t}");
+    assert!(
+        t.contains("[todo] Odd"),
+        "only a real false makes a check optional: {t}"
+    );
+}

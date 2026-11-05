@@ -1700,7 +1700,13 @@ impl App {
                                 .flat_map(|c| {
                                     let mut v = vec![format!(
                                         "{} {}: {}",
-                                        if c["ok"] == true { "[ok]  " } else { "[todo]" },
+                                        if c["ok"] == true {
+                                            "[ok]  "
+                                        } else if c["required"] == false {
+                                            "[optional]"
+                                        } else {
+                                            "[todo]"
+                                        },
                                         clean(c["label"].as_str().unwrap_or("?")),
                                         clean(c["detail"].as_str().unwrap_or(""))
                                     )];
@@ -1881,6 +1887,15 @@ impl App {
                         format!("{}:{}", clean(f["file"].as_str().unwrap_or("?")), f["line"]),
                         label.to_string(),
                     ];
+                    if !f["reproducer"].as_str().unwrap_or("").is_empty() {
+                        // a service that does not say reads as python, as stored reviews from before the field did
+                        let language = match f["language"].as_str() {
+                            None | Some("python") => "Python".to_string(),
+                            Some("javascript") => "JavaScript".to_string(),
+                            Some(_) => "unknown language".to_string(),
+                        };
+                        lines.push(format!("Checked with {language}"));
+                    }
                     lines.extend(text_lines(f["explanation"].as_str().unwrap_or("")));
                     self.push(
                         if status == "reproduced" {

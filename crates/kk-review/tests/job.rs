@@ -14,6 +14,10 @@ use std::path::{Path, PathBuf};
 const REPRO: &str = "from payments.auth import session\nt = session.login('alice')\nassert session.validate(t)\nprint('CONTROL_OK')\nsession.logout(t)\nprint('REPRODUCED' if session.validate(t) else 'NOT REPRODUCED')\n";
 
 fn materialize() -> PathBuf {
+    materialize_fixture("synthetic-repo")
+}
+
+fn materialize_fixture(fixture: &str) -> PathBuf {
     let base = if cfg!(target_os = "linux") {
         std::env::temp_dir().join("kk-job-tmp")
     } else {
@@ -38,7 +42,9 @@ fn materialize() -> PathBuf {
         }
     }
     copy(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/synthetic-repo"),
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures")
+            .join(fixture),
         &dst,
     );
     dst
@@ -476,5 +482,222 @@ fn j08_proposed_fixes_are_checked_against_the_reproducer_stay_with_the_owner_and
             .values()
             .any(|b| String::from_utf8_lossy(b).contains("ACTIVE_TOKENS.pop")),
         "the fix text is for the owner and is not in what the recipient gets"
+    );
+}
+
+#[test]
+fn pr01_the_prompt_teaches_both_languages_and_the_rules_the_checks_enforce() {
+    let p = kk_review::job::SYSTEM_PROMPT;
+    for needle in [
+        "language",
+        "\"python\"",
+        "\"javascript\"",
+        ".py",
+        ".mjs",
+        "process.cwd()",
+        "createRequire",
+        "CONTROL_OK",
+        "REPRODUCED",
+        "NOT REPRODUCED",
+        "rejected",
+        "absolute path",
+        "must not use the network",
+    ] {
+        assert!(p.contains(needle), "the prompt lost {needle:?}");
+    }
+    // the prompt must itself obey the rule it teaches: it names no path that exists only in the sandbox
+    assert!(
+        !kk_review::check::names_sandbox_path(p),
+        "the prompt names a sandbox path"
+    );
+    // untrusted-input rules stay in front of the new text
+    let untrusted = p.find("untrusted source").expect("untrusted rule");
+    let python = p.find("\"python\"").unwrap();
+    assert!(untrusted < python);
+}
+
+/// One measured review: what the real local model reported on a fixture and what the kernel made of it.
+fn measure(fixture: &str, language_wanted: kk_review::check::Language, tag: &str) {
+    let runs: usize = std::env::var("KK_RUNS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
+    let model = std::env::var("KK_MODEL").unwrap_or_else(|_| "qwen2.5:3b".into());
+    let (mut findings, mut right_language, mut reproduced, mut failed, mut unavailable) =
+        (0, 0, 0, 0, 0);
+    let (mut not_reproduced, mut nondeterministic, mut unparsed, mut errors, mut with_verdict_line) =
+        (0, 0, 0, 0, 0);
+    let mut reasons: Vec<String> = Vec::new();
+    for i in 0..runs {
+        let mut cfg = config(&format!("{tag}-{i}"));
+        cfg.repo = materialize_fixture(fixture);
+        let route = OllamaRoute::new("http://127.0.0.1:11434", &model).expect("route");
+        let ev = vec![route.evidence()];
+        let routes = RouteSet::new(vec![Box::new(route) as Box<dyn Route>]);
+        let report = run_job(&cfg, routes, ev, &|_, _| {});
+        if report.error.is_some() {
+            errors += 1;
+        }
+        unparsed += report.unparsed_findings;
+        for (f, c) in &report.findings {
+            findings += 1;
+            if f.language == language_wanted {
+                right_language += 1;
+            }
+            if f.reproducer.lines().any(|l| l.contains("NOT REPRODUCED")) {
+                with_verdict_line += 1;
+            }
+            match &c.status {
+                CheckStatus::Reproduced => {
+                    reproduced += 1;
+                    // safety invariant: nothing is ever "reproduced" without the control line
+                    assert!(c.stdout.lines().any(|l| l.trim() == "CONTROL_OK"), "{c:?}");
+                }
+                CheckStatus::NotReproduced => not_reproduced += 1,
+                CheckStatus::Nondeterministic => nondeterministic += 1,
+                CheckStatus::Failed(m) => {
+                    failed += 1;
+                    reasons.push(format!(
+                        "failed: {}",
+                        m.chars().take(120).collect::<String>().replace('\n', " ")
+                    ));
+                }
+                CheckStatus::Unavailable(m) => {
+                    unavailable += 1;
+                    reasons.push(format!(
+                        "unavailable: {}",
+                        m.chars().take(120).collect::<String>().replace('\n', " ")
+                    ));
+                }
+            }
+        }
+    }
+    println!(
+        "MEASURE {tag} model={model} runs={runs} findings={findings} right_language={right_language} reproduced={reproduced} not_reproduced={not_reproduced} failed={failed} unavailable={unavailable} nondeterministic={nondeterministic} with_NOT_REPRODUCED_line={with_verdict_line} unparsed={unparsed} job_errors={errors}"
+    );
+    for r in reasons.iter().take(20) {
+        println!("MEASURE-REASON {tag} {r}");
+    }
+}
+
+#[test]
+#[ignore]
+fn j04_live_local_model_on_a_javascript_project_measured() {
+    measure(
+        "synthetic-js-repo",
+        kk_review::check::Language::JavaScript,
+        "js",
+    );
+}
+
+#[test]
+#[ignore]
+fn j05_live_local_model_on_the_python_project_measured() {
+    measure("synthetic-repo", kk_review::check::Language::Python, "py");
+}
+
+const JS_REVIEW_REPRO: &str = "import { createRequire } from 'node:module';\nconst require = createRequire(process.cwd() + '/');\nconst session = require('./src/auth/session.js');\nconst token = session.login('alice');\nif (!session.validate(token)) throw new Error('control');\nconsole.log('CONTROL_OK');\nsession.logout(token);\nconsole.log(session.validate(token) ? 'REPRODUCED' : 'NOT REPRODUCED');\n";
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn j09_a_javascript_review_goes_from_the_models_tool_call_to_a_checked_fix_and_a_release_with_a_node_script(
+) {
+    let mut cfg = config("j09");
+    cfg.repo = materialize_fixture("synthetic-js-repo");
+    let finding = |language: serde_json::Value| {
+        let mut a = json!({"title": "Token still valid after logout", "file": "src/auth/session.js", "line": 17, "explanation": "logout() only deletes a key of a local object, so validate() keeps accepting the token.", "reproducer": JS_REVIEW_REPRO});
+        if !language.is_null() {
+            a["language"] = language;
+        }
+        a
+    };
+    let (routes, ev) = scripted(vec![
+        calls(vec![("list_files", json!({}))]),
+        calls(vec![("read_file", json!({"path": "src/auth/session.js"}))]),
+        // an unknown language is bounced back to the model and records nothing
+        calls(vec![("report_finding", finding(json!("rust")))]),
+        calls(vec![("report_finding", finding(json!("javascript")))]),
+        calls(vec![(
+            "propose_fix",
+            json!({"title": "Token still valid after logout", "file": "src/auth/session.js",
+                   "old_text": "  const cookieJar = { session: token };\n  delete cookieJar.session;\n",
+                   "new_text": "  ACTIVE_TOKENS.delete(token);\n",
+                   "explanation": "remove the server-side entry"}),
+        )]),
+        ChatMessage::new("assistant", "One defect found."),
+    ]);
+    let report = run_job(&cfg, routes, ev, &|_, _| {});
+    assert_eq!(report.error, None);
+    assert_eq!(
+        report.worker_exit,
+        Some(Exit::Code(0)),
+        "stderr: {}",
+        report.worker_stderr
+    );
+    assert_eq!(
+        report.findings.len(),
+        1,
+        "the rust-language report must not be recorded: {:?}",
+        report.findings
+    );
+    let (f, c) = &report.findings[0];
+    assert_eq!(f.language, kk_review::check::Language::JavaScript);
+    assert_eq!(c.status, CheckStatus::Reproduced, "{c:?}");
+    assert_eq!(report.fixes.len(), 1);
+    let fx = &report.fixes[0];
+    assert_eq!(
+        fx.status,
+        kk_review::check::FixStatus::FixesTheReproducer,
+        "{:?} {}",
+        fx.status,
+        fx.tests
+    );
+    assert!(
+        fx.tests.contains("3 test(s) passed before and after"),
+        "the project's own Node tests were held to: {}",
+        fx.tests
+    );
+    let draft = report.draft.expect("a release draft");
+    assert!(
+        draft.files.contains_key("repro-1.mjs") && !draft.files.contains_key("repro-1.py"),
+        "{:?}",
+        draft.files.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        String::from_utf8_lossy(&draft.files["index.json"]).contains("\"language\":\"javascript\"")
+    );
+    let claims = kk_review::release::claims_for(&draft);
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].evidence[1], "repro-1.mjs");
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn j10_a_finding_whose_language_does_not_match_its_script_is_never_confirmed() {
+    let mut cfg = config("j10");
+    cfg.repo = materialize_fixture("synthetic-js-repo");
+    // a Python script labelled javascript, and a JavaScript script that sends the language as python
+    let python_in_js =
+        "from payments.auth import session\nprint('CONTROL_OK')\nprint('REPRODUCED')\n";
+    let (routes, ev) = scripted(vec![
+        calls(vec![(
+            "report_finding",
+            json!({"title": "A", "file": "src/auth/session.js", "line": 17, "explanation": "e", "reproducer": python_in_js, "language": "javascript"}),
+        )]),
+        calls(vec![(
+            "report_finding",
+            json!({"title": "B", "file": "src/auth/session.js", "line": 17, "explanation": "e", "reproducer": JS_REVIEW_REPRO, "language": "python"}),
+        )]),
+        ChatMessage::new("assistant", "done"),
+    ]);
+    let report = run_job(&cfg, routes, ev, &|_, _| {});
+    assert_eq!(report.error, None);
+    assert_eq!(report.findings.len(), 2);
+    for (f, c) in &report.findings {
+        assert_ne!(c.status, CheckStatus::Reproduced, "{}: {:?}", f.title, c);
+    }
+    assert!(
+        report.draft.is_err(),
+        "nothing confirmed, nothing to release"
     );
 }

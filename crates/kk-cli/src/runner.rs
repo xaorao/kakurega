@@ -341,6 +341,13 @@ impl JobRunner for ReviewRunner {
                     },
                     "Install bubblewrap with your package manager",
                 ));
+                let node = std::process::Command::new("/usr/bin/node")
+                    .arg("--version")
+                    .output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+                out.push(node_check(node.as_deref()));
             }
             Transport::Lima { vm, .. } => {
                 let status = std::process::Command::new("limactl")
@@ -374,6 +381,13 @@ impl JobRunner for ReviewRunner {
                         self.worker_binary.display().to_string(),
                         worker_fix,
                     ));
+                    let node = std::process::Command::new("limactl")
+                        .args(["shell", vm, "--", "/usr/bin/node", "--version"])
+                        .output()
+                        .ok()
+                        .filter(|o| o.status.success())
+                        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+                    out.push(node_check(node.as_deref()));
                 } else {
                     out.push(check(
                         "worker",
@@ -536,5 +550,67 @@ mod live {
             found.len() >= 3,
             "at least three of the four facts survive: {found:?}"
         );
+    }
+}
+
+/// The readiness entry for JavaScript checks. Optional: Python findings do not need Node.js, so a machine without it is
+/// still ready, and the entry only says what is missing.
+fn node_check(version_text: Option<&str>) -> Value {
+    let (ok, detail) = match version_text {
+        None => (false, "Node.js was not found in the sandbox".to_string()),
+        Some(t) => match kk_review::check::node_major(t) {
+            Some(m) if m >= 22 => (true, format!("Node.js {}", t.trim_end())),
+            Some(_) => (
+                false,
+                format!(
+                    "Node.js {} is too old (22 or newer is needed)",
+                    t.trim_end()
+                ),
+            ),
+            None => (
+                false,
+                "Node.js gave an answer that was not a version".to_string(),
+            ),
+        },
+    };
+    json!({
+        "id": "node", "label": "JavaScript checks (Node.js 22 or newer, optional)", "required": false,
+        "ok": ok, "detail": detail,
+        "fix": if ok { "" } else { "Install Node.js 22 or newer in the sandbox to check JavaScript findings; Python findings do not need it." },
+    })
+}
+
+#[cfg(test)]
+mod node_check_tests {
+    use super::node_check;
+
+    #[test]
+    fn nc01_the_node_entry_is_optional_and_says_what_is_wrong() {
+        let ok = node_check(Some("v22.22.1\n"));
+        assert_eq!(
+            (ok["ok"].clone(), ok["required"].clone()),
+            (true.into(), false.into())
+        );
+        assert_eq!(ok["detail"], "Node.js v22.22.1");
+        assert_eq!(ok["fix"], "");
+        for (text, want) in [
+            (None, "was not found"),
+            (Some("v18.19.0\n"), "too old"),
+            (Some("v21.9.9"), "too old"),
+            (Some("not a version"), "not a version"),
+            (Some("v22.1.1 \u{1b}[31mred"), "not a version"),
+        ] {
+            let c = node_check(text);
+            assert_eq!(c["ok"], false, "{text:?}");
+            assert_eq!(
+                c["required"], false,
+                "an optional entry stays optional when it fails"
+            );
+            assert!(
+                c["detail"].as_str().unwrap().contains(want),
+                "{text:?}: {c}"
+            );
+            assert!(c["fix"].as_str().unwrap().contains("Node.js 22"), "{c}");
+        }
     }
 }

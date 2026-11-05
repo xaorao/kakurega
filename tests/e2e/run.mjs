@@ -96,6 +96,15 @@ try {
   await page.getByRole("heading", { name: "Ready to review" }).waitFor({ timeout: 20000 });
   check("a correctly set up machine says Ready to review and lists every check as ready", (await page.getByRole("region", { name: "Setup check" }).innerText()).split("Needs attention").length === 1);
   await page.screenshot({ path: join(shots, "01-new-review.png") });
+  await page.route("**/api/readiness", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ready: true, checks: [{ id: "model", label: "Model", ok: true, detail: "m", fix: "" }, { id: "node", label: "JavaScript checks", required: false, ok: false, detail: "Node.js was not found", fix: "Install Node.js 22" }] }) }));
+  await page.reload();
+  await page.getByRole("heading", { name: "Ready to review" }).waitFor({ timeout: 20000 });
+  const optionalSetup = await page.getByRole("region", { name: "Setup check" }).innerText();
+  check("an optional check that fails is labelled Optional with its fix, and the machine still reads Ready to review", optionalSetup.includes("Optional") && optionalSetup.includes("Install Node.js 22") && !optionalSetup.includes("Needs attention"));
+  await axeCheck(page, "setup with an optional check");
+  await page.unroute("**/api/readiness");
+  await page.reload();
+  await page.getByRole("heading", { name: "Ready to review" }).waitFor({ timeout: 20000 });
   await axeCheck(page, "new review");
   const live0 = await page.evaluate(() => ({ ...window.__es }));
   check("signed in, the page holds exactly one live connection to the service", live0.opened - live0.closed === 1, JSON.stringify(live0));
@@ -167,6 +176,7 @@ try {
   await page.getByRole("tab", { name: "Findings" }).click();
   await page.getByText("Confirmed by the kernel").waitFor();
   check("finding is confirmed by the kernel", true);
+  check("the finding says which language its check ran in", (await page.getByText("Reproducer the kernel ran (Python)").count()) === 1);
 
   await page.getByRole("tab", { name: "Protection" }).click();
   await page.getByText("possible prompt injection").first().waitFor();

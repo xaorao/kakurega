@@ -72,7 +72,7 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
               <For each={r().checks}>
                 {(c) => (
                   <li>
-                    <span class={c.ok ? "ok-text" : "bad"}>{c.ok ? t("setup.ok") : t("setup.attention")}</span> <strong>{c.label}</strong>: {c.detail}
+                    <span class={c.ok ? "ok-text" : c.required === false ? "muted" : "bad"}>{c.ok ? t("setup.ok") : c.required === false ? t("setup.optional") : t("setup.attention")}</span> <strong>{c.label}</strong>: {c.detail}
                     <Show when={c.fix}><div class="fix"><code>{c.fix}</code></div></Show>
                     <Show when={c.repairable && c.repair?.state !== "running"}>
                       <div class="actions"><button type="button" onClick={() => fixNow(c.id)}>{t("setup.fixNow")}</button> <span class="muted">{t("setup.fixNote")}</span></div>

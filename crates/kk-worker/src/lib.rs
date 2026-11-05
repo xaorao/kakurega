@@ -134,7 +134,7 @@ pub struct AgentConfig {
 pub fn finding_tool() -> ToolSpec {
     ToolSpec {
         name: "report_finding".into(),
-        description: "Record one confirmed defect. Give the file, the line, a short title, why it is a defect and, if you can, a reproducer script.".into(),
+        description: "Record one confirmed defect. Give the file, the line, a short title, why it is a defect and, if you can, a reproducer script in the language named by `language` (python for .py files, javascript for .js, .mjs and .cjs files).".into(),
         parameters: json!({
             "type": "object",
             "properties": {
@@ -142,7 +142,8 @@ pub fn finding_tool() -> ToolSpec {
                 "file": {"type": "string"},
                 "line": {"type": "integer"},
                 "explanation": {"type": "string"},
-                "reproducer": {"type": "string"}
+                "reproducer": {"type": "string"},
+                "language": {"type": "string", "enum": ["python", "javascript"], "description": "The language of the reproducer; python if omitted."}
             },
             "required": ["title", "file", "line", "explanation"]
         }),
@@ -222,27 +223,43 @@ fn fatal(code: &str) -> bool {
     )
 }
 
+/// The finding artifact for a `report_finding` call, or the message to send back to the model. The language is passed on only
+/// when the model named one of the two known ones; anything else is sent back to be corrected, never guessed.
+pub fn build_finding(a: &Value) -> Result<Value, String> {
+    let (Some(title), Some(file), Some(line), Some(explanation)) = (
+        a["title"].as_str(),
+        a["file"].as_str(),
+        a["line"].as_i64(),
+        a["explanation"].as_str(),
+    ) else {
+        return Err("report_finding needs title, file, line and explanation".into());
+    };
+    let mut finding = json!({
+        "title": title,
+        "file": file,
+        "line": line,
+        "explanation": explanation,
+        "reproducer": a["reproducer"].as_str().unwrap_or(""),
+    });
+    if let Some(language) = a.get("language") {
+        match language.as_str() {
+            Some(l @ ("python" | "javascript")) => finding["language"] = json!(l),
+            _ => return Err(
+                "language must be exactly \"python\" or \"javascript\" (or left out for python)"
+                    .into(),
+            ),
+        }
+    }
+    Ok(finding)
+}
+
 fn run_local_tool(link: &mut dyn Link, call: &ToolCall) -> Result<Value, WorkerError> {
     match call.name.as_str() {
         "report_finding" => {
-            let a = &call.arguments;
-            let (Some(title), Some(file), Some(line), Some(explanation)) = (
-                a["title"].as_str(),
-                a["file"].as_str(),
-                a["line"].as_i64(),
-                a["explanation"].as_str(),
-            ) else {
-                return Ok(
-                    json!({"error": "report_finding needs title, file, line and explanation"}),
-                );
+            let finding = match build_finding(&call.arguments) {
+                Ok(f) => f,
+                Err(message) => return Ok(json!({"error": message})),
             };
-            let finding = json!({
-                "title": title,
-                "file": file,
-                "line": line,
-                "explanation": explanation,
-                "reproducer": a["reproducer"].as_str().unwrap_or(""),
-            });
             let bytes =
                 serde_json::to_vec(&finding).map_err(|e| WorkerError::Link(e.to_string()))?;
             let r = ok_result(link.call(json!({"op": "write.artifact", "bytes_b64": b64::encode(&bytes), "kind": "finding"}))?)?;

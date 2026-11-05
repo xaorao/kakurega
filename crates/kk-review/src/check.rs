@@ -277,6 +277,23 @@ pub struct CheckEnv<'a> {
     pub node: &'a str,
 }
 
+/// The major version in the answer of `node --version` (`v22.22.1`), or nothing if the answer is anything else. The answer is
+/// read strictly: it is shown to the owner and compared against the version the JavaScript checks need.
+pub fn node_major(text: &str) -> Option<u32> {
+    let body = text.strip_suffix('\n').unwrap_or(text).strip_prefix('v')?;
+    let mut parts = body.split('.');
+    let mut next = || {
+        let p = parts.next()?;
+        (!p.is_empty() && p.len() <= 4 && p.bytes().all(|b| b.is_ascii_digit())).then_some(p)
+    };
+    let (major, minor, patch) = (next()?, next()?, next()?);
+    let _ = (minor, patch);
+    if parts.next().is_some() {
+        return None;
+    }
+    major.parse().ok()
+}
+
 /// Whether a script names a path that exists only inside our sandbox (`/sample` is the project, `/repro` the script). A check
 /// that does can only be re-run here, so it is not accepted: the script must use the current folder instead. A path counts
 /// only when it starts at a root (not `src/sample`, `https://x/sample`, `../sample`, `~/sample`) and the name ends there
