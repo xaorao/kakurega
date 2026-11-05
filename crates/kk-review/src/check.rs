@@ -393,6 +393,21 @@ pub fn run_reproducer(
             Ok(o) => {
                 if o.exit != Exit::Code(0) {
                     let _ = fs::remove_dir_all(&dir);
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    if let Some(pkg) = missing_package(finding.language, &stderr) {
+                        let in_project = files.keys().any(|p| {
+                            p == &format!("{pkg}.py") || p.starts_with(&format!("{pkg}/"))
+                        });
+                        if !in_project {
+                            return CheckResult {
+                                status: CheckStatus::Unavailable(format!(
+                                    "the script needs the package '{pkg}', which is not in the sandbox (it has no installed packages and no network), so this cannot be checked here"
+                                )),
+                                stdout: String::new(),
+                                sample_paths,
+                            };
+                        }
+                    }
                     return CheckResult {
                         status: CheckStatus::Failed(format!(
                             "the reproducer ended with {:?}: {}",
@@ -691,6 +706,128 @@ fn looks_like_test(path: &str) -> bool {
     name.ends_with(".py") && (name.starts_with("test") || name.ends_with("_test.py"))
 }
 
+/// Whether a path is part of a project's tests: a test file by name, a helper such as `conftest.py`, or anything inside a
+/// folder named `tests`, `test` or `__tests__`. A fix may not change these, because a fix that edits the tests it must pass
+/// proves nothing.
+pub fn is_test_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    let mut parts: Vec<&str> = lower.split('/').collect();
+    let name = parts.pop().unwrap_or_default();
+    if parts
+        .iter()
+        .any(|d| matches!(*d, "tests" | "test" | "__tests__"))
+    {
+        return true;
+    }
+    let (stem, ext) = name.rsplit_once('.').unwrap_or((name, ""));
+    match ext {
+        "py" => stem.starts_with("test") || stem.ends_with("_test") || stem == "conftest",
+        "js" | "mjs" | "cjs" | "ts" | "mts" | "cts" | "jsx" | "tsx" => {
+            stem.ends_with(".test") || stem.ends_with(".spec") || stem.ends_with("_test")
+        }
+        _ => false,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TestVerdict {
+    /// The tests that passed before still run and pass.
+    Maintained(String),
+    /// A test that passed before no longer runs or no longer passes.
+    Broken(String),
+    /// The run after the change could not be done, so nothing can be said.
+    Inconclusive(String),
+    /// The tests did not pass before the change, so there is nothing to keep.
+    NotComparable(String),
+}
+
+/// The project's tests before and after a change. Passing is not enough: a change that makes fewer tests run (a deleted
+/// test, a module that no longer loads, a suite that stops early) has not kept the tests passing.
+pub fn compare_test_runs(before: &TestRun, after: &TestRun) -> TestVerdict {
+    let TestRun::Passed(had) = before else {
+        return TestVerdict::NotComparable(format!("before the change: {}", before.describe()));
+    };
+    match after {
+        TestRun::Passed(now) if now >= had => TestVerdict::Maintained(format!(
+            "the project's {now} test(s) passed before and after this change"
+        )),
+        TestRun::Passed(now) => TestVerdict::Broken(format!(
+            "{had} test(s) passed before this change but only {now} ran after it"
+        )),
+        TestRun::Failed(m) => TestVerdict::Broken(format!(
+            "the project's tests passed before this change and fail after it: {m}"
+        )),
+        TestRun::NoTests => TestVerdict::Broken(
+            "the project's tests passed before this change and none ran after it".into(),
+        ),
+        TestRun::Unavailable(_) => {
+            TestVerdict::Inconclusive(format!("after the change: {}", after.describe()))
+        }
+    }
+}
+
+/// The package a failed script was missing, read from the interpreter's own error. Only a plain package name is ever
+/// returned (never text taken from the error), so it is safe to show.
+pub fn missing_package(language: Language, stderr: &str) -> Option<String> {
+    // a Python module name is identifier segments joined by dots; only the top segment is repeated
+    let python_name = |s: &str| -> Option<String> {
+        let segments_ok = !s.is_empty()
+            && s.len() <= 120
+            && s.split('.').all(|seg| {
+                !seg.is_empty() && seg.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            });
+        segments_ok.then(|| s.split('.').next().unwrap_or_default().to_string())
+    };
+    // an npm package name: letters, digits and `_ - .`, optionally `@scope/name`; never a path
+    let npm_name = |s: &str| -> Option<String> {
+        let body = s.strip_prefix('@').map_or(s, |r| r);
+        let parts: Vec<&str> = body.split('/').collect();
+        let part_ok = |p: &&str| {
+            !p.is_empty()
+                && !p.starts_with('.')
+                && p.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+        };
+        let shape_ok = if s.starts_with('@') {
+            parts.len() == 2
+        } else {
+            parts.len() == 1
+        };
+        (s.len() <= 80 && shape_ok && parts.iter().all(part_ok)).then(|| s.to_string())
+    };
+    for line in stderr.lines() {
+        match language {
+            Language::Python => {
+                if let Some(rest) = line
+                    .trim()
+                    .strip_prefix("ModuleNotFoundError: No module named '")
+                {
+                    let Some((name, _)) = rest.split_once('\'') else {
+                        continue;
+                    };
+                    if let Some(p) = python_name(name) {
+                        return Some(p);
+                    }
+                }
+            }
+            Language::JavaScript => {
+                for marker in ["Cannot find package '", "Cannot find module '"] {
+                    if let Some(at) = line.find(marker) {
+                        let rest = &line[at + marker.len()..];
+                        let Some((name, _)) = rest.split_once('\'') else {
+                            continue;
+                        };
+                        if let Some(p) = npm_name(name) {
+                            return Some(p);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Runs the project's own `unittest` tests over every file the review may see. Only called when a test file exists.
 pub fn run_project_tests(files: &BTreeMap<String, &ImportedFile>, env: &CheckEnv<'_>) -> TestRun {
     if !files.keys().any(|p| looks_like_test(p)) {
@@ -757,15 +894,15 @@ pub fn verify_fix_with_tests(
         return (status, String::new());
     }
     let before_tests = run_project_tests(files, env);
-    let TestRun::Passed(_) = before_tests else {
+    let Some(new_bytes) = apply_all(files, fix) else {
+        return (status, String::new());
+    };
+    if !matches!(before_tests, TestRun::Passed(_)) {
         return (
             status,
             format!("before the change: {}", before_tests.describe()),
         );
-    };
-    let Some(new_bytes) = apply_all(files, fix) else {
-        return (status, String::new());
-    };
+    }
     let patched: Vec<ImportedFile> = new_bytes
         .into_iter()
         .map(|(f, bytes)| {
@@ -779,16 +916,10 @@ pub fn verify_fix_with_tests(
         map.insert(p.path.clone(), p);
     }
     let after_tests = run_project_tests(&map, env);
-    match after_tests {
-        TestRun::Passed(n) => (
-            status,
-            format!("the project's {n} test(s) passed before and after this change"),
-        ),
-        TestRun::Failed(m) => (
-            FixStatus::BreaksTests(m.clone()),
-            format!("the project's tests passed before this change and fail after it: {m}"),
-        ),
-        other => (status, format!("after the change: {}", other.describe())),
+    match compare_test_runs(&before_tests, &after_tests) {
+        TestVerdict::Maintained(note) => (status, note),
+        TestVerdict::Broken(note) => (FixStatus::BreaksTests(note.clone()), note),
+        TestVerdict::Inconclusive(note) | TestVerdict::NotComparable(note) => (status, note),
     }
 }
 
@@ -806,6 +937,12 @@ pub fn verify_fix(
     }
     if fix.edits().iter().any(|e| !files.contains_key(&e.file)) {
         return FixStatus::CouldNotApply("a file the fix names is not in the project".into());
+    }
+    if let Some(e) = fix.edits().iter().find(|e| is_test_path(&e.file)) {
+        return FixStatus::CouldNotApply(format!(
+            "a fix may not change a test file ({}): a change to the tests it must pass proves nothing",
+            e.file
+        ));
     }
     let Some(new_bytes) = apply_all(files, fix) else {
         return FixStatus::CouldNotApply(

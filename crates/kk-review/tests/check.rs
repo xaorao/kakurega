@@ -1,8 +1,8 @@
 use kk_review::check::{
-    apply_all, apply_fix, clean_text, js_closure, parse_finding, parse_fix, parse_unittest,
-    python_closure, run_project_tests, run_reproducer, unified_diff, unified_diff_all, verify_fix,
-    verify_fix_with_tests, CheckEnv, CheckStatus, ClosureError, Edit, Finding, Fix, FixStatus,
-    Language, TestRun,
+    apply_all, apply_fix, clean_text, compare_test_runs, is_test_path, js_closure, missing_package,
+    parse_finding, parse_fix, parse_unittest, python_closure, run_project_tests, run_reproducer,
+    unified_diff, unified_diff_all, verify_fix, verify_fix_with_tests, CheckEnv, CheckStatus,
+    ClosureError, Edit, Finding, Fix, FixStatus, Language, TestRun, TestVerdict,
 };
 use kk_review::import::{scan_tree, ImportedFile};
 use kk_sandbox::Transport;
@@ -815,4 +815,260 @@ fn c22_javascript_reproducers_confirm_a_real_defect_and_hostile_ones_never_pass(
             ),
         }
     }
+}
+
+#[test]
+fn f08_a_fix_may_not_change_a_test_file_and_is_refused_before_anything_runs() {
+    for t in [
+        "tests/test_a.py",
+        "test_a.py",
+        "pkg/a_test.py",
+        "pkg/tests/helpers.py",
+        "pkg/test/data.py",
+        "TESTS/x.py",
+        "conftest.py",
+        "web/__tests__/a.js",
+        "web/a.test.js",
+        "web/a.spec.mjs",
+        "web/a.test.ts",
+        "test/helper.js",
+        "web/a_test.js",
+    ] {
+        assert!(is_test_path(t), "{t} is a test file");
+    }
+    for n in [
+        "payments/auth/session.py",
+        "latest.py",
+        "contest.py",
+        "attestation.py",
+        "protest/a.py",
+        "web/contest.js",
+        "docs/tests.md",
+        "src/a.testing.js",
+    ] {
+        // names that merely contain the word are ordinary source
+        assert!(!is_test_path(n), "{n} is not a test file");
+    }
+    let mut files = fixture_files();
+    let tests_bytes = b"import unittest\n\nclass T(unittest.TestCase):\n    def test_it(self):\n        self.fail('real failure')\n".to_vec();
+    files.push(ImportedFile {
+        path: "payments/auth/test_session.py".into(),
+        sha256: kk_evidence::capsule::sha256_hex(&tests_bytes),
+        bytes: tests_bytes,
+        label: files[0].label.clone(),
+        notes: vec![],
+    });
+    let idx = index(&files);
+    let t = Transport::Local;
+    let scratch = std::env::temp_dir();
+    let env = CheckEnv {
+        transport: &t,
+        scratch: &scratch,
+        python: "/nonexistent/python",
+        node: "/nonexistent/node",
+    };
+    let f = finding(REPRO);
+    let reproduced = kk_review::check::CheckResult {
+        status: CheckStatus::Reproduced,
+        stdout: String::new(),
+        sample_paths: vec![],
+    };
+    let mut hide_failure = fix("self.fail('real failure')", "pass");
+    hide_failure.file = "payments/auth/test_session.py".into();
+    let refused = |fx: &Fix| match verify_fix(&f, &reproduced, fx, &idx, &env) {
+        FixStatus::CouldNotApply(m) => m,
+        other => panic!("not refused: {other:?}"),
+    };
+    assert!(refused(&hide_failure).contains("test file"));
+    // the same change tucked into the second place of an otherwise ordinary fix
+    let mut sneaky = fix(GOOD_OLD, GOOD_NEW);
+    sneaky.also = vec![Edit {
+        file: "payments/auth/test_session.py".into(),
+        old_text: "self.fail('real failure')".into(),
+        new_text: "pass".into(),
+    }];
+    assert!(refused(&sneaky).contains("payments/auth/test_session.py"));
+    // an ordinary fix is not refused for this reason (it goes on to run the reproducer, which this machine does not have)
+    let ordinary = verify_fix(&f, &reproduced, &fix(GOOD_OLD, GOOD_NEW), &idx, &env);
+    assert!(
+        !matches!(&ordinary, FixStatus::CouldNotApply(m) if m.contains("test file")),
+        "{ordinary:?}"
+    );
+}
+
+#[test]
+fn f09_a_fix_must_keep_every_passing_test_running_not_only_passing() {
+    let n = TestRun::Passed(5);
+    let note = |v: TestVerdict| match v {
+        TestVerdict::Maintained(m)
+        | TestVerdict::Broken(m)
+        | TestVerdict::Inconclusive(m)
+        | TestVerdict::NotComparable(m) => m,
+    };
+    assert!(matches!(
+        compare_test_runs(&n, &TestRun::Passed(5)),
+        TestVerdict::Maintained(_)
+    ));
+    assert!(note(compare_test_runs(&n, &TestRun::Passed(5)))
+        .contains("5 test(s) passed before and after"));
+    assert!(
+        matches!(
+            compare_test_runs(&n, &TestRun::Passed(7)),
+            TestVerdict::Maintained(_)
+        ),
+        "more tests is fine"
+    );
+    let fewer = compare_test_runs(&n, &TestRun::Passed(4));
+    assert!(matches!(fewer, TestVerdict::Broken(_)));
+    assert!(
+        note(fewer).contains("5") && note(compare_test_runs(&n, &TestRun::Passed(4))).contains("4")
+    );
+    assert!(matches!(
+        compare_test_runs(&n, &TestRun::NoTests),
+        TestVerdict::Broken(_)
+    ));
+    assert!(matches!(
+        compare_test_runs(&n, &TestRun::Failed("boom".into())),
+        TestVerdict::Broken(_)
+    ));
+    assert!(note(compare_test_runs(&n, &TestRun::Failed("boom".into())))
+        .contains("passed before this change and fail after it: boom"));
+    assert!(matches!(
+        compare_test_runs(&n, &TestRun::Unavailable("no sandbox".into())),
+        TestVerdict::Inconclusive(_)
+    ));
+    for before in [
+        TestRun::NoTests,
+        TestRun::Failed("x".into()),
+        TestRun::Unavailable("y".into()),
+    ] {
+        let v = compare_test_runs(&before, &TestRun::Passed(3));
+        assert!(matches!(v, TestVerdict::NotComparable(_)), "{before:?}");
+        assert!(note(v).starts_with("before the change: "));
+    }
+}
+
+#[test]
+fn c23_a_missing_package_is_read_from_the_error_and_nothing_else_is() {
+    let py = |s: &str| missing_package(Language::Python, s);
+    let js = |s: &str| missing_package(Language::JavaScript, s);
+    assert_eq!(py("Traceback (most recent call last):\n  File \"/repro/repro.py\", line 1\nModuleNotFoundError: No module named 'requests'\n"), Some("requests".into()));
+    assert_eq!(
+        py("ModuleNotFoundError: No module named 'yaml.constructor'"),
+        Some("yaml".into())
+    );
+    assert_eq!(
+        py("ModuleNotFoundError: No module named 'numpy'; 'numpy' is not a package"),
+        Some("numpy".into())
+    );
+    assert_eq!(py("ImportError: cannot import name 'x' from 'y'"), None);
+    assert_eq!(py("AssertionError"), None);
+    assert_eq!(py(""), None);
+    // hostile text: only a plain name is ever repeated back
+    assert_eq!(py("ModuleNotFoundError: No module named 'a\nb'"), None);
+    assert_eq!(
+        py("ModuleNotFoundError: No module named '../../etc/passwd'"),
+        None
+    );
+    assert_eq!(
+        py(&format!(
+            "ModuleNotFoundError: No module named '{}'",
+            "x".repeat(200)
+        )),
+        None
+    );
+    assert_eq!(py("ModuleNotFoundError: No module named 'ünï'"), None);
+    assert_eq!(py("ModuleNotFoundError: No module named ''"), None);
+    assert_eq!(py("ModuleNotFoundError: No module named 'a/../etc'"), None);
+    assert_eq!(py("ModuleNotFoundError: No module named 'x..y'"), None);
+    assert_eq!(js("Error: Cannot find package 'a/../b'"), None);
+    assert_eq!(py("ModuleNotFoundError: No module named 'a/b'"), None);
+    assert_eq!(
+        js("Error: Cannot find package 'a/b'"),
+        None,
+        "an unscoped name has one part"
+    );
+    assert_eq!(js("Error: Cannot find package '@scope'"), None);
+    assert_eq!(js("Error: Cannot find package '@a/b/c'"), None);
+    assert_eq!(js("Error: Cannot find package '.hidden'"), None);
+    assert_eq!(js("Error: Cannot find package '@/x'"), None);
+    assert_eq!(
+        js(&format!("Error: Cannot find package '{}'", "x".repeat(100))),
+        None
+    );
+    assert_eq!(
+        js("Error: Cannot find package 'lodash"),
+        None,
+        "no closing quote"
+    );
+    assert_eq!(js("Error: Cannot find module 'lodash"), None);
+    assert_eq!(js("Error: Cannot find package 'a b'"), None);
+    assert_eq!(js("Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'lodash' imported from /repro/repro.mjs"), Some("lodash".into()));
+    assert_eq!(
+        js("Error: Cannot find module 'left-pad'\nRequire stack:\n- /repro/repro.mjs"),
+        Some("left-pad".into())
+    );
+    assert_eq!(js("Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@scope/pkg' imported from /repro/repro.mjs"), Some("@scope/pkg".into()));
+    assert_eq!(js("Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/sample/lib/gone.js' imported from /repro/repro.mjs"), None, "a missing project file is not a package");
+    assert_eq!(js("Error: Cannot find module './gone.js'"), None);
+    assert_eq!(js("Error: Cannot find package 'node:nonsense'"), None);
+    assert_eq!(js("Error: Cannot find package '../up'"), None);
+    assert_eq!(js("TypeError: x is not a function"), None);
+    assert_eq!(
+        py("Error: Cannot find module 'left-pad'"),
+        None,
+        "each language reads its own error"
+    );
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn c24_a_missing_third_party_package_is_unavailable_and_a_mistake_about_the_projects_own_code_is_not(
+) {
+    let files = fixture_files();
+    let idx = index(&files);
+    let t = transport();
+    let env = CheckEnv {
+        transport: &t,
+        scratch: &scratch(),
+        python: "/usr/bin/python3",
+        node: "/usr/bin/node",
+    };
+    let run = |f: &Finding| run_reproducer(f, &idx, &env).status;
+    let py = |code: &str| finding(code);
+    // a package that is not installed in the sandbox: nothing can be said about the code
+    match run(&py(
+        "import requests_not_installed_here\nprint('CONTROL_OK')\n",
+    )) {
+        CheckStatus::Unavailable(m) => assert!(m.contains("'requests_not_installed_here'"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+    // a mistake about the project's own package is a bad reproducer, never "unavailable"
+    for code in [
+        "import payments.no_such_module\nprint('CONTROL_OK')\n",
+        "from payments.auth import no_such_name\nprint('CONTROL_OK')\n",
+        "raise SystemExit(3)\n",
+    ] {
+        assert!(matches!(run(&py(code)), CheckStatus::Failed(_)), "{code}");
+    }
+    // a script that merely prints the error text is not a failure of any kind
+    assert_eq!(
+        run(&py("print(\"ModuleNotFoundError: No module named 'x'\")\n")),
+        CheckStatus::NotReproduced
+    );
+    let jsfiles = js_files();
+    let jidx = index(&jsfiles);
+    let jrun = |code: &str| run_reproducer(&js_finding(code), &jidx, &env).status;
+    match jrun("import leftPad from 'left-pad';\nconsole.log('CONTROL_OK');\n") {
+        CheckStatus::Unavailable(m) => assert!(m.contains("'left-pad'"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+    assert!(
+        matches!(
+            jrun("import x from './no_such_file.js';\nconsole.log('CONTROL_OK');\n"),
+            CheckStatus::Failed(_)
+        ),
+        "a missing project file is a bad reproducer"
+    );
+    assert!(matches!(jrun("process.exit(3);\n"), CheckStatus::Failed(_)));
 }

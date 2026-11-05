@@ -1,7 +1,7 @@
 # Reproducers beyond Python
 
 ## Status (honest)
-Steps 1 and 2 are built and tested (a `language` field on a finding; JavaScript closure and runner, mutation-checked). **They were built before any reference was read, which breaks the source-first rule: READING OWED.** No claim of "best" or "comparable to the strongest tools" is made for this feature until the references named under "References and what they teach" are read in full along their execution paths and this record is updated with what they showed. Steps 3 to 5 do not start until then.
+Reading is done (see "References read"). Built and tested: a `language` field on a finding; the JavaScript closure and runner; and, from the reading, three corrections to fix checking that apply to both languages (a fix may not change a test file, the project's tests must still all run, and a missing package is "cannot check here", not a failed reproducer). Still to build: the JavaScript test oracle, the release scripts for JavaScript, the prompt and screens, the readiness check, and the measurement on the real local model. No claim of "best" or "comparable to the strongest tools" is made; the comparison below says where ours is stricter and where it is not.
 
 ## Why this matters
 
@@ -32,12 +32,31 @@ Kakurega confirms it with the same three-run, negative-control rules; a proposed
 of the release can re-run the check with the language's own interpreter. The words "reproduced", "not reproduced",
 "nondeterministic", "unavailable" mean the same in every language, and the screens say which language a check used.
 
-## References and what they teach
+## References read (by me)
+- **SWE-bench** (`SWE-bench/SWE-bench` commit 02e7a74, MIT): `swebench/harness/grading.py` in full (393 lines); `infra_failure.py` in full; `log_parsers/__init__.py`, `rust.py`, `go.py` and the TAP parser of `javascript.py`; `run_evaluation.py` lines 296-432 and `utils.py` 200-250 (patch apply, test run, timeout, exit-code capture). NOT READ: the image builder, the 40 other per-project parsers, the Modal path.
+- **Agentless** (`OpenAutoCoder/Agentless` commit 5ce5888, MIT): `agentless/test/generate_reproduction_tests.py` lines 1-260 (the prompt that asks for "Issue reproduced / resolved / Other issues"), `run_reproduction_tests.py` in full, `run_tests.py` lines 50-80, 165-210, 440-488 (how a reproduction is judged). NOT READ: the repair and localisation stages, test selection.
+- **Semgrep** (`semgrep/semgrep` commit 692bfae, LGPL-2.1, ideas only): `cli/src/semgrep/test.py` lines 55-270, 444-470, 590-670 (expected-versus-reported line sets, autofix compared with an expected file). NOT READ: the engine, the language registry, taint mode.
+- **Codex** (`openai/codex` commit f2b94ef, Apache-2.0): the sandbox, see `linux-sandbox.md` (seccomp.rs in full, bwrap.rs lines 225-415).
+- **OpenHands** software-agent-sdk (commit 2f2cd2b, MIT): `openhands-sdk/.../critic/base.py`, `impl/agent_finished.py`, `impl/empty_patch.py`, `impl/pass_critic.py` in full; `openhands-workspace/.../docker/workspace.py` lines 205-270. NOT READ: the API critic (`impl/api/`), the agent server, the remote workspaces.
+- **Cline** SDK (commit e68a6dd, Apache-2.0): `sdk/packages/core/src/extensions/tools/command-guard.ts` lines 1-140 of 521. NOT READ: the rest of it and the tool runtime.
+- **CodeQL**: engine closed; one documentation page ("Testing custom queries") read, REPORTED not VERIFIED.
 
-Not yet studied for this feature. Owed before building: how Semgrep, CodeQL and agent harnesses (OpenHands, Codex, Cline)
-decide that a finding is real, which languages their sandboxes cover, and how they run project tests. Kakurega's
-reproducer-with-negative-control is a stricter evidence rule than most; the goal is to keep that rule, not to weaken it for
-convenience. Recording this gap here so it is not mistaken for done.
+## What the references showed (VERIFIED in the code above unless marked)
+- **SWE-bench's grading rules are a list of past spoofing and false-pass bugs.** An empty set of parsed results is not a pass: the log must show evidence the suite ran, with non-zero counts (karma printing "Executed 0 of 0" had scored unrun suites as resolved). The log is cross-checked with the test command's own exit status, recorded outside the parsed region, because a patch can print its own "PASSED" lines. A skipped test that should have failed is not a fix. Environment faults (browser failed to launch, out of memory, no network, module not found, no tests collected, timeout) are classified separately and never scored as a wrong patch. The tests are the project's own and a patch cannot change them: test files are reset to the trusted version before the run. Failing tests that must now pass, and passing tests that must still pass, are both required.
+- **Its weakness:** about fifty per-project log parsers keyed by test name (a name repeated in two files overwrites; the Rust parser ignores `ignored`; truncated parameter ids need a prefix hack). Parsing arbitrary runner output does not scale. Our reproducers print markers we control, which avoids that, but the project test oracle does parse runner output and must be written with these lessons.
+- **Agentless** decides a fix "resolved" when the whole log merely *contains* "Issue resolved" and none of the other phrases, from a single run: no negative control, no repeated run, no exit-code check, and the log also contains repository text from `git show` and `git diff`, so matching text can spoof it. Its three-state prompt is the same idea as our REPRODUCED / CONTROL_OK.
+- **Semgrep** tests every rule against positive and negative examples and requires the reported set to equal the expected set exactly, so extra hits fail too. Ours is the executable form: the normal-behaviour check plus the emptied-file control. Its autofix test needs a stored expected file, which model-written fixes do not have.
+- **OpenHands'** critic is a heuristic (finished with a non-empty patch) or a trained model that predicts success; it never runs the code. **Cline's** command guard calls itself a blacklist that "will not catch every possible mutation". Neither is evidence in our sense.
+- **CodeQL** (REPORTED): queries are validated against exact stored expected results per language.
+
+## Ours compared
+- Stricter than Agentless on every point listed. At least equal to SWE-bench on: exit code must be 0 (with `CONTROL_OK` required, so "never ran" is not a pass); markers are whole lines, not substrings; two runs must agree; negative control with the cited file emptied; timeouts and limits are a failure, never a pass.
+- Gaps the reading found in ours, now fixed (tests c23, c24, f08, f09, all mutation-checked):
+  1. A fix could edit any imported file, including test files. A fix that weakens the tests it must pass proves nothing, so a fix touching a test file is now refused (`is_test_path`: test file names, `conftest.py`, anything under `tests`, `test`, `__tests__`).
+  2. We compared only pass versus fail. The count now matters: a fix after which fewer tests run, none run, or the run fails is `BreaksTests`; more tests is fine (`compare_test_runs`).
+  3. A missing third-party package read as a failed reproducer. SWE-bench separates "the environment broke" from "the code is wrong". It is now `Unavailable`, naming the package, unless the missing name is part of the project itself (then the reproducer is wrong, `Failed`). Only a plain package name from the interpreter's own error is ever shown.
+- **Known limit, same as every reference (NOT fixed):** code under test runs in the same process as the reproducer and can print the marker words itself. The negative control catches code that prints them *only because it is there* only when the reproducer fails without it; a cited file that prints both markers at import can still produce a false "reproduced". The owner always sees the reproducer and its output. A per-run secret word was considered and excluded for now: code in the same process can read it from the environment, and it would make small local models far less reliable at writing reproducers.
+- **Same limit for the project test oracle:** a changed module can print "Ran N tests / OK" and exit 0. The exit status check (SWE-bench's guard) is there, but a forged zero exit is possible; the fix diff is shown to the owner.
 
 ## Chosen approach
 
