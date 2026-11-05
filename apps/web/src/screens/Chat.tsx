@@ -3,7 +3,7 @@ import { api, ApiError, streamChat, type ChatTurn, type KeptChat, type GatewayPr
 import { t } from "../i18n";
 import { Markdown } from "../components/Markdown";
 import { draftKey, forgetDraft, forgetSent, historyKey, historyStep, idleHistory, loadDraft, rememberSent, retagSent, saveDraft, sentHistory, stopsReply } from "../composer";
-import { meterLine, noteNotes, pageNotes, savedLine } from "../meter";
+import { meterLine, noteNotes, pageNotes, savedLine, summaryNotes } from "../meter";
 
 interface Shown extends ChatTurn {
   foot?: string[];
@@ -266,6 +266,7 @@ export function Chat() {
         const m = meterLine(r.usage);
         foot.push(t(m.key, { n: m.n, max: m.max ?? 0, pct: m.pct ?? 0 }));
         if (m.near) foot.push(t("chat.contextNear"));
+        for (const s of summaryNotes(r.usage)) foot.push(t(s.key, { n: s.n }));
         if (r.usage.history_turns_dropped > 0) foot.push(t("chat.dropped", { n: r.usage.history_turns_dropped }));
       }
       if (session()) foot.push(t(savedLine(r)));

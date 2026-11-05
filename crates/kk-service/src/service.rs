@@ -36,6 +36,11 @@ pub trait JobRunner: Send + Sync {
     fn chat(&self, _messages: Vec<kk_types::chat::ChatMessage>) -> Result<ChatReply, String> {
         Err("chat is not available in this configuration".into())
     }
+    /// Writes a summary of the older turns of a kept conversation. A runner that cannot says so, and the chat then leaves
+    /// the oldest turns out as it always did.
+    fn summarize(&self, _messages: Vec<kk_types::chat::ChatMessage>) -> Result<String, String> {
+        Err("summaries are not available in this configuration".into())
+    }
     /// Checks whose failure this runner can fix on its own, by id.
     fn repairable(&self) -> Vec<String> {
         Vec::new()
@@ -292,6 +297,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS fix_snapshots(job TEXT NOT NULL, n INTEGER NOT NULL, file TEXT NOT NULL, orig BLOB NOT NULL, sha_after TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (job, n));
              CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, title TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS session_turns(session TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (session, seq));
+             CREATE TABLE IF NOT EXISTS session_summaries(session TEXT PRIMARY KEY, upto INTEGER NOT NULL, text TEXT NOT NULL, at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS prompt_history(id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS schedules(id TEXT PRIMARY KEY, repo TEXT NOT NULL, recipient TEXT NOT NULL, every_secs INTEGER NOT NULL, next_at INTEGER NOT NULL, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS schedule_runs(id INTEGER PRIMARY KEY AUTOINCREMENT, schedule TEXT NOT NULL, at INTEGER NOT NULL, outcome TEXT NOT NULL, job TEXT);
@@ -1504,6 +1510,21 @@ struct ChatRun {
     message_to_keep: String,
     /// Earlier turns of a kept conversation that were not sent because only the latest ones fit.
     history_dropped: usize,
+    /// The summary standing in for the first `summarized` turns of a kept conversation.
+    summary: Option<String>,
+    summarized: usize,
+    /// A summary to write before answering, when the conversation has outgrown its room.
+    compact: Option<CompactPlan>,
+    compacted_now: bool,
+    compaction_failed: Option<&'static str>,
+}
+
+struct CompactPlan {
+    previous: Option<String>,
+    older: Vec<(String, String)>,
+    kept: Vec<(String, String)>,
+    /// How many turns, counted from the start, the new summary covers.
+    covered: usize,
 }
 
 /// Checks a chat request and resolves a kept conversation to its stored history.
@@ -1534,6 +1555,11 @@ fn chat_validate(svc: &Service, b: ChatBody) -> Result<ChatRun, Box<Response>> {
             kept: None,
             message_to_keep,
             history_dropped: 0,
+            summary: None,
+            summarized: 0,
+            compact: None,
+            compacted_now: false,
+            compaction_failed: None,
         });
     };
     if !kk_secrets::scan(&b.message).is_empty() || kk_secrets::looks_secret(&b.message).is_some() {
@@ -1546,20 +1572,126 @@ fn chat_validate(svc: &Service, b: ChatBody) -> Result<ChatRun, Box<Response>> {
             "there is no such kept conversation",
         )));
     };
-    let history_dropped = turns.len().saturating_sub(18);
-    let history = turns
-        .into_iter()
+    let (covered, summary) = match session_summary(svc, &id) {
+        Some((upto, text)) if upto <= turns.len() => (upto, Some(text)),
+        _ => (0, None),
+    };
+    let rest = &turns[covered..];
+    // A conversation outgrows its room when it has more than 18 unsummarised turns, or they take more than half of what the
+    // window leaves after the reply's reserve (6000 tokens when the window is not known).
+    let window = svc.runner.route_info()["context_tokens"]
+        .as_u64()
+        .filter(|w| *w > 0);
+    let room = window.map_or(6_000, |w| {
+        w.saturating_sub(crate::budget::reply_reserve(w)) / 2
+    });
+    let used: u64 = rest
+        .iter()
+        .map(|t| kk_route::tokens::estimate_text(&t.1) + 6)
+        .sum();
+    let older = if rest.len() > 18 || used > room {
+        crate::compaction::older_count(rest, room / 2, 18)
+    } else {
+        0
+    };
+    let compact = (older > 0).then(|| CompactPlan {
+        previous: summary.clone(),
+        older: rest[..older].to_vec(),
+        kept: rest[older..].to_vec(),
+        covered: covered + older,
+    });
+    // What is sent if no new summary is written: the summary so far and the latest 18 turns after it.
+    let history_dropped = rest.len().saturating_sub(18);
+    let history = rest
+        .iter()
         .rev()
         .take(18)
         .rev()
-        .map(|(role, content)| ChatTurn { role, content })
+        .map(|(role, content)| ChatTurn {
+            role: role.clone(),
+            content: content.clone(),
+        })
         .collect();
     Ok(ChatRun {
         body: ChatBody { history, ..b },
         kept: Some(id),
         message_to_keep,
         history_dropped,
+        summarized: if summary.is_some() { covered } else { 0 },
+        summary,
+        compact,
+        compacted_now: false,
+        compaction_failed: None,
     })
+}
+
+/// Reads the summary of a kept conversation: how many turns it covers, and its text.
+fn session_summary(svc: &Service, id: &str) -> Option<(usize, String)> {
+    let store = svc.store.lock().expect("lock");
+    store
+        .connection()
+        .query_row(
+            "SELECT upto, text FROM session_summaries WHERE session = ?1",
+            [id],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+        )
+        .ok()
+        .map(|(upto, text)| (usize::try_from(upto).unwrap_or(0), text))
+}
+
+/// Keeps a summary, unless the conversation was forgotten meanwhile or a summary covering more turns is already there.
+fn store_summary(svc: &Service, id: &str, covered: usize, text: &str) -> bool {
+    let store = svc.store.lock().expect("lock");
+    let c = store.connection();
+    if c.query_row("SELECT 1 FROM sessions WHERE id = ?1", [id], |_| Ok(()))
+        .is_err()
+    {
+        return false;
+    }
+    c.execute(
+        "INSERT INTO session_summaries(session, upto, text, at) VALUES (?1, ?2, ?3, ?4) \
+         ON CONFLICT(session) DO UPDATE SET upto = excluded.upto, text = excluded.text, at = excluded.at \
+         WHERE excluded.upto > session_summaries.upto",
+        kk_vault::rusqlite::params![id, covered as i64, text, now()],
+    )
+    .is_ok()
+}
+
+/// Writes the summary a conversation needs before it is answered. On any failure the chat goes on as it always did, with
+/// the oldest turns left out, and the reply says that no summary was written and why.
+fn prepare_history(svc: &Service, run: &mut ChatRun) {
+    let Some(plan) = run.compact.take() else {
+        return;
+    };
+    let Some(id) = run.kept.clone() else {
+        return;
+    };
+    let request = crate::compaction::summary_request(plan.previous.as_deref(), &plan.older);
+    let written = svc
+        .runner
+        .summarize(request)
+        .map_err(|_| "unavailable")
+        .and_then(|text| crate::compaction::accept(&text).map_err(|r| r.as_str()));
+    match written {
+        Ok(text) if store_summary(svc, &id, plan.covered, &text) => {
+            run.body.history = plan
+                .kept
+                .into_iter()
+                .map(|(role, content)| ChatTurn { role, content })
+                .collect();
+            run.summary = Some(text);
+            run.summarized = plan.covered;
+            run.history_dropped = 0;
+            run.compacted_now = true;
+            svc.log_event(
+                "chat.compacted",
+                "chat",
+                &[("turns_covered", plan.covered.into())],
+            );
+        }
+        Ok(_) => run.compaction_failed = Some("not_saved"),
+        Err(why) => run.compaction_failed = Some(why),
+    }
 }
 
 struct ChatContext {
@@ -1579,7 +1711,7 @@ struct ChatContext {
 }
 
 /// Gathers the notes and chosen web pages and builds the model's messages.
-fn chat_context(svc: &Service, b: &ChatBody) -> ChatContext {
+fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatContext {
     // Notes get at most a third of the room the window leaves after the reply's reserve, in the order they were recalled.
     // A note that does not fit is left out whole: a note cut short can say something it never said.
     let window = svc.runner.route_info()["context_tokens"]
@@ -1662,6 +1794,12 @@ fn chat_context(svc: &Service, b: &ChatBody) -> ChatContext {
             &format!("Notes the owner asked to remember (data):\n{notes}"),
         ));
     }
+    if let Some(summary) = summary {
+        messages.push(kk_types::chat::ChatMessage::new(
+            "system",
+            &crate::compaction::summary_block(summary),
+        ));
+    }
     for t in &b.history {
         messages.push(kk_types::chat::ChatMessage::new(&t.role, &t.content));
     }
@@ -1729,7 +1867,7 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
     let window = svc.runner.route_info()["context_tokens"].as_u64();
     let estimated = kk_route::tokens::estimate_messages(&ctx.messages);
     let measured = r.prompt_tokens.filter(|n| *n > 0);
-    let usage = json!({"context_tokens": measured.unwrap_or(estimated), "context_tokens_estimate": estimated, "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "estimate": measured.is_none()});
+    let usage = json!({"context_tokens": measured.unwrap_or(estimated), "context_tokens_estimate": estimated, "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "history_turns_summarized": run.summarized, "compacted_now": run.compacted_now, "compaction_failed": run.compaction_failed, "estimate": measured.is_none()});
     json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated}, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "saved": saved, "not_saved": not_saved})
 }
 
@@ -1740,7 +1878,9 @@ async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
     };
     let svc2 = svc.clone();
     let out = tokio::task::spawn_blocking(move || {
-        let ctx = chat_context(&svc2, &run.body);
+        let mut run = run;
+        prepare_history(&svc2, &mut run);
+        let ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
         let reply = svc2.runner.chat(ctx.messages.clone());
         (run, ctx, reply)
     })
@@ -1774,7 +1914,9 @@ async fn chat_stream(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Resp
             b.push(b'\n');
             b
         };
-        let ctx = chat_context(&svc2, &run.body);
+        let mut run = run;
+        prepare_history(&svc2, &mut run);
+        let ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
         let mut gone = false;
         let result = svc2.runner.chat_stream(ctx.messages.clone(), &mut |piece| {
             if tx.send(line(json!({"delta": piece}))).is_err() {
@@ -2128,6 +2270,7 @@ async fn session_forget(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>)
         let store = svc.store.lock().expect("lock");
         let c = store.connection();
         let _ = c.execute("DELETE FROM session_turns WHERE session = ?1", [&id]);
+        let _ = c.execute("DELETE FROM session_summaries WHERE session = ?1", [&id]);
         c.execute("DELETE FROM sessions WHERE id = ?1", [&id])
             .unwrap_or(0)
     };

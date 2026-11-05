@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { meterLine, noteNotes, pageNotes, savedLine } from "../src/meter.ts";
+import { meterLine, noteNotes, pageNotes, savedLine, summaryNotes } from "../src/meter.ts";
 
 test("mt01 the model's own count is shown and labelled as counted, with the window and percent", () => {
   assert.deepEqual(meterLine({ context_tokens: 4321, context_tokens_estimate: 5000, context_window: 16384, estimate: false }), { key: "chat.contextCountedWindow", n: 4321, max: 16384, pct: 26, near: false });
@@ -48,4 +48,11 @@ test("mt08 the footer names the real reason an exchange was not saved", () => {
   assert.equal(savedLine({ saved: false, not_saved: "forgotten" }), "chat.notSavedForgotten");
   assert.equal(savedLine({ saved: false, not_saved: "error" }), "chat.notSavedError");
   assert.equal(savedLine({ saved: false }), "chat.notSaved", "an older service that gives no reason keeps the old wording");
+});
+
+test("mt09 the footer says when older messages are replaced by a summary, when one was just written, and when none could be", () => {
+  assert.deepEqual(summaryNotes({ history_turns_summarized: 12, compacted_now: true }), [{ key: "chat.summarisedNow", n: 12 }]);
+  assert.deepEqual(summaryNotes({ history_turns_summarized: 12, compacted_now: false }), [{ key: "chat.summarised", n: 12 }]);
+  assert.deepEqual(summaryNotes({ history_turns_summarized: 0, compaction_failed: "unavailable" }), [{ key: "chat.summaryFailed", n: 0 }]);
+  assert.deepEqual(summaryNotes({}), [], "an older service or an unkept chat says nothing");
 });

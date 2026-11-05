@@ -2453,6 +2453,19 @@ impl App {
                         }
                         None => foot.push(format!("about {n} tokens of context sent")),
                     }
+                    let summarised = body["usage"]["history_turns_summarized"]
+                        .as_u64()
+                        .unwrap_or(0);
+                    if summarised > 0 {
+                        foot.push(if body["usage"]["compacted_now"] == true {
+                            format!("The oldest {summarised} messages were just summarised to make room. You can still open them in full.")
+                        } else {
+                            format!("The oldest {summarised} messages are replaced by a summary. You can still open them in full.")
+                        });
+                    }
+                    if !body["usage"]["compaction_failed"].is_null() {
+                        foot.push("The oldest messages could not be summarised, so they were left out of this answer.".into());
+                    }
                     let dropped = body["usage"]["history_turns_dropped"].as_u64().unwrap_or(0);
                     if dropped > 0 {
                         foot.push(format!("{dropped} older message(s) were not sent because the conversation is long"));

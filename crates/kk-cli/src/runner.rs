@@ -153,6 +153,22 @@ impl JobRunner for ReviewRunner {
         })
     }
 
+    fn summarize(&self, messages: Vec<kk_types::chat::ChatMessage>) -> Result<String, String> {
+        if self.scripted.is_some() {
+            return Ok("Goal: (test model summary of the earlier conversation)".into());
+        }
+        let route = self.route().map_err(|e| e.to_string())?;
+        route
+            .complete(&kk_route::CompletionRequest {
+                messages,
+                tools: Vec::new(),
+                max_tokens: 700,
+                temperature: 0.1,
+            })
+            .map(|done| done.message.content)
+            .map_err(model_failure)
+    }
+
     fn chat_stream(
         &self,
         messages: Vec<kk_types::chat::ChatMessage>,
@@ -476,6 +492,48 @@ mod live {
             (counted as f64) < (estimated as f64) * 3.0
                 && (counted as f64) > (estimated as f64) / 3.0,
             "estimate {estimated} and count {counted} are in the same range"
+        );
+    }
+
+    /// Needs a local Ollama with qwen2.5:3b. Writes a real summary of a real conversation and checks it is accepted and
+    /// keeps the facts that matter.
+    #[test]
+    #[ignore]
+    fn live_a_real_summary_keeps_the_facts_and_passes_the_safety_checks() {
+        let runner = ReviewRunner {
+            model: "qwen2.5:3b".into(),
+            ollama: "http://127.0.0.1:11434".into(),
+            transport: Transport::Local,
+            worker_binary: PathBuf::new(),
+            scratch: std::env::temp_dir(),
+            commitment_key: [0; 32],
+            max_turns: 1,
+            scripted: None,
+            context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
+        };
+        let older: Vec<(String, String)> = [
+            ("user", "I am planning a trip to Lisbon in March with my sister Maria. Our budget is 800 pounds in total."),
+            ("assistant", "Lisbon in March is mild. With 800 pounds you could book a guesthouse in Alfama and travel by tram."),
+            ("user", "We want to avoid flying on Fridays. Also Maria is vegetarian."),
+            ("assistant", "Then midweek flights are cheaper, and Lisbon has many vegetarian restaurants near Principe Real."),
+            ("user", "Please remember the booking reference is KX-4471, and we decided on the guesthouse near the tram line 28."),
+            ("assistant", "Noted: booking reference KX-4471, guesthouse near tram line 28."),
+        ]
+        .iter()
+        .map(|(r, c)| (r.to_string(), c.to_string()))
+        .collect();
+        let request = kk_service::compaction_request_for_tests(None, &older);
+        let text = runner.summarize(request).expect("the local model answers");
+        println!("summary ({} chars):\n{text}", text.chars().count());
+        let kept = kk_service::compaction_accept_for_tests(&text)
+            .expect("a real summary passes the safety checks");
+        let lower = kept.to_lowercase();
+        let facts = ["lisbon", "800", "maria", "kx-4471"];
+        let found: Vec<&&str> = facts.iter().filter(|f| lower.contains(**f)).collect();
+        println!("facts kept: {found:?} of {facts:?}");
+        assert!(
+            found.len() >= 3,
+            "at least three of the four facts survive: {found:?}"
         );
     }
 }

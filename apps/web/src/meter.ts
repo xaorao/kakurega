@@ -55,3 +55,14 @@ export function savedLine(r: { saved?: boolean; not_saved?: string | null }): Sa
   if (r.not_saved === "error") return "chat.notSavedError";
   return "chat.notSaved";
 }
+
+export type SummaryKey = "chat.summarisedNow" | "chat.summarised" | "chat.summaryFailed";
+
+/** What the footer says about the summary standing in for the oldest turns of a kept conversation. */
+export function summaryNotes(u: { history_turns_summarized?: number; compacted_now?: boolean; compaction_failed?: string | null }): { key: SummaryKey; n: number }[] {
+  const n = u.history_turns_summarized ?? 0;
+  const out: { key: SummaryKey; n: number }[] = [];
+  if (n > 0) out.push({ key: u.compacted_now ? "chat.summarisedNow" : "chat.summarised", n });
+  if (u.compaction_failed) out.push({ key: "chat.summaryFailed", n: 0 });
+  return out;
+}

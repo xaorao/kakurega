@@ -2054,3 +2054,32 @@ fn tu49_a_kept_exchange_that_was_not_saved_names_the_real_reason() {
         assert!(text(&a).contains(expected), "{expected}: {}", text(&a));
     }
 }
+
+#[test]
+fn tu50_the_footer_says_when_older_messages_are_summarised_or_could_not_be() {
+    let mut a = booted();
+    let r = enter(&mut a, "hello");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": true}, "notes_used": 0, "usage": {"context_tokens_estimate": 900, "history_turns_summarized": 12, "compacted_now": true, "history_turns_dropped": 0}})));
+    assert!(
+        text(&a).contains("The oldest 12 messages were just summarised"),
+        "{}",
+        text(&a)
+    );
+    let r = enter(&mut a, "again");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": true}, "notes_used": 0, "usage": {"context_tokens_estimate": 900, "history_turns_summarized": 12, "compacted_now": false, "history_turns_dropped": 0}})));
+    assert!(
+        text(&a).contains("The oldest 12 messages are replaced by a summary"),
+        "{}",
+        text(&a)
+    );
+    let r = enter(&mut a, "third");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": true}, "notes_used": 0, "usage": {"context_tokens_estimate": 900, "history_turns_summarized": 0, "compaction_failed": "unavailable", "history_turns_dropped": 2}})));
+    assert!(text(&a).contains("could not be summarised"), "{}", text(&a));
+    let r = enter(&mut a, "fourth");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": true}, "notes_used": 0, "usage": {"context_tokens_estimate": 900, "history_turns_dropped": 0}})));
+    assert_eq!(
+        text(&a).matches("could not be summarised").count(),
+        1,
+        "nothing is said when nothing was summarised"
+    );
+}
