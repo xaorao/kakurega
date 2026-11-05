@@ -534,7 +534,19 @@ try {
   await page.getByText("note(s) used").first().waitFor();
   await page.getByRole("button", { name: "Stop" }).waitFor({ state: "detached" });
   check("after a reply the cursor is back in the message box", await page.evaluate(() => document.activeElement?.id === "chat-input"));
+  // Up in an empty box brings back the last message sent from this page; Down returns to the empty box
+  await page.getByLabel("Your message").press("ArrowUp");
+  check("Up in an empty box brings back the last message sent", (await page.getByLabel("Your message").inputValue()) === "draftcanary unsent words");
+  await page.getByLabel("Your message").press("ArrowDown");
+  check("Down returns to what was being written", (await page.getByLabel("Your message").inputValue()) === "");
+  await page.getByLabel("Your message").fill("half written");
+  await page.getByLabel("Your message").press("Home");
+  await page.getByLabel("Your message").press("ArrowUp");
+  check("Up never replaces a message being written", (await page.getByLabel("Your message").inputValue()) === "half written");
+  await page.getByLabel("Your message").fill("");
   await page.getByRole("button", { name: "Clear" }).click();
+  await page.getByLabel("Your message").press("ArrowUp");
+  check("after Clear, Up brings back nothing from the forgotten conversation", (await page.getByLabel("Your message").inputValue()) === "");
   // a kept conversation survives a reload, can be opened again, and is gone after Forget
   await page.getByRole("button", { name: "Keep this conversation" }).click();
   await page.getByText("Kept", { exact: true }).waitFor();
@@ -564,6 +576,17 @@ try {
   await slowList;
   await page.unroute("**/api/sessions");
   check("and the refreshed list agrees: nothing is kept", (await page.getByRole("button", { name: "Open" }).count()) === 0);
+  // a message sent in a kept conversation is not brought back by Up once that conversation is forgotten
+  await page.getByRole("button", { name: "Keep this conversation" }).click();
+  await page.getByText("Kept", { exact: true }).waitFor();
+  await page.getByLabel("Your message").fill("forgetcanary words");
+  await page.getByLabel("Your message").press("Enter");
+  await page.getByText("Saved in the encrypted store").waitFor();
+  await page.getByRole("button", { name: "Forget", exact: true }).click();
+  await page.getByRole("button", { name: "Press again to forget" }).click();
+  await page.getByRole("button", { name: "Keep this conversation" }).waitFor();
+  await page.getByLabel("Your message").press("ArrowUp");
+  check("after Forget, Up never brings back a message from the forgotten conversation", !(await page.getByLabel("Your message").inputValue()).includes("forgetcanary"));
   // documents: an answer whose quotes are checked against the files
   await page.getByRole("link", { name: "Documents" }).click();
   await page.getByRole("heading", { name: "Ask your documents", exact: true }).waitFor();

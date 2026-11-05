@@ -2,7 +2,7 @@ import { batch, createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, streamChat, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
 import { t } from "../i18n";
 import { Markdown } from "../components/Markdown";
-import { draftKey, forgetDraft, loadDraft, saveDraft, stopsReply } from "../composer";
+import { draftKey, forgetDraft, forgetSent, historyKey, historyStep, idleHistory, loadDraft, rememberSent, retagSent, saveDraft, sentHistory, stopsReply } from "../composer";
 import { meterLine, pageNotes } from "../meter";
 
 interface Shown extends ChatTurn {
@@ -26,10 +26,13 @@ export function Chat() {
   };
   // Bumped whenever another conversation is put on screen, so a reply that arrives late never lands in the wrong one.
   let view = 0;
+  // Where Up and Down are in the messages sent from this page.
+  let hist = idleHistory();
   let box: HTMLTextAreaElement | undefined;
   const show = (next: string | null, nextTurns: Shown[]) => {
     if (busy()) abort?.abort();
     view++;
+    hist = idleHistory();
     batch(() => {
       setSession(next);
       setTurns(nextTurns);
@@ -56,6 +59,7 @@ export function Chat() {
       const r = await api.keepChat("");
       const carried = text();
       forgetDraft(draftKey(session()));
+      retagSent(draftKey(session()), draftKey(r.id));
       setSession(r.id);
       saveDraft(draftKey(r.id), carried);
       await refetch();
@@ -84,6 +88,8 @@ export function Chat() {
       batch(() => {
         mutate((list) => (list ?? []).filter((k) => k.id !== id));
         forgetDraft(draftKey(id));
+        forgetSent(draftKey(id));
+        hist = idleHistory();
         if (session() === id) show(null, []);
       });
       await refetch();
@@ -192,6 +198,8 @@ export function Chat() {
     if (!message || busy()) return;
     const myView = view;
     const sentKey = draftKey(session());
+    rememberSent(message, sentKey);
+    hist = idleHistory();
     const history: ChatTurn[] = turns().slice(-18).map(({ role, content }) => ({ role, content }));
     setTurns([...turns(), { role: "user", content: message }]);
     setText("");
@@ -424,6 +432,20 @@ export function Chat() {
               abort?.abort();
               return;
             }
+            const dir = historyKey(e);
+            if (dir) {
+              const el = e.currentTarget;
+              if (el.selectionStart !== el.selectionEnd) return;
+              const step = historyStep(sentHistory(), hist, dir, el.value, el.selectionStart);
+              if (step) {
+                e.preventDefault();
+                hist = step.state;
+                setText(step.text);
+                el.value = step.text;
+                el.setSelectionRange(step.cursor, step.cursor);
+              }
+              return;
+            }
             // Enter that confirms an input-method composition (Hindi, Chinese, Japanese) must not send the message.
             if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
               e.preventDefault();
@@ -434,7 +456,7 @@ export function Chat() {
         <div class="actions">
           <button class="primary" type="submit" disabled={busy() || text().trim().length === 0}>{t("chat.send")}</button>
           <Show when={busy()}><button type="button" onClick={() => abort?.abort()}>{t("chat.stop")}</button></Show>
-          <button type="button" disabled={busy() || turns().length === 0} onClick={() => { setTurns([]); setError(""); }}>{t("chat.clear")}</button>
+          <button type="button" disabled={busy() || turns().length === 0} onClick={() => { setTurns([]); setError(""); forgetSent(draftKey(session())); hist = idleHistory(); }}>{t("chat.clear")}</button>
           <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
         </div>
       </form>
