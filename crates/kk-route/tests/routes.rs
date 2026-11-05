@@ -424,3 +424,254 @@ fn live_a_real_embedding_model_puts_similar_meaning_closer_than_unrelated_text()
         "related {related} vs unrelated {unrelated}"
     );
 }
+
+mod context {
+    use kk_route::{ChatMessage, CompletionRequest, OllamaRoute, Route, RouteError};
+    use serde_json::{json, Value};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+
+    const OVERFLOW: &str = r#"{"error":"request (7517 tokens) exceeds the available context size (4096 tokens), try increasing it"}"#;
+    const ANSWER: &str = r#"{"message":{"role":"assistant","content":"ok"},"done":true,"prompt_eval_count":5,"eval_count":2}"#;
+
+    /// A one-shot fake model server. It records the JSON it was sent and answers with the given status and body.
+    fn serve(status: &str, content_type: &str, reply: &str) -> (String, Arc<Mutex<Option<Value>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let seen = Arc::new(Mutex::new(None));
+        let seen_t = seen.clone();
+        let (status, content_type, reply) = (
+            status.to_string(),
+            content_type.to_string(),
+            reply.to_string(),
+        );
+        std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut got = Vec::new();
+            let mut buf = [0u8; 8192];
+            let body_start = loop {
+                let n = s.read(&mut buf).unwrap();
+                if n == 0 {
+                    return;
+                }
+                got.extend_from_slice(&buf[..n]);
+                if let Some(i) = got.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break i + 4;
+                }
+            };
+            let head = String::from_utf8_lossy(&got[..body_start]).to_lowercase();
+            let len: usize = head
+                .split("content-length: ")
+                .nth(1)
+                .and_then(|r| r.split("\r\n").next())
+                .and_then(|n| n.trim().parse().ok())
+                .unwrap_or(0);
+            while got.len() - body_start < len {
+                let n = s.read(&mut buf).unwrap();
+                if n == 0 {
+                    break;
+                }
+                got.extend_from_slice(&buf[..n]);
+            }
+            *seen_t.lock().unwrap() = serde_json::from_slice(&got[body_start..]).ok();
+            let _ = write!(
+                s,
+                "HTTP/1.1 {status}\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}",
+                reply.len()
+            );
+        });
+        (url, seen)
+    }
+
+    fn req() -> CompletionRequest {
+        CompletionRequest {
+            messages: vec![ChatMessage::new("user", "hi")],
+            tools: vec![],
+            max_tokens: 50,
+            temperature: 0.0,
+        }
+    }
+
+    fn sent(seen: &Arc<Mutex<Option<Value>>>) -> Value {
+        seen.lock()
+            .unwrap()
+            .clone()
+            .expect("the server was sent a JSON body")
+    }
+
+    #[test]
+    fn cx01_every_request_names_its_context_window_and_forbids_silent_cutting() {
+        let (url, seen) = serve("200 OK", "application/json", ANSWER);
+        let route = OllamaRoute::new(&url, "m").unwrap();
+        assert_eq!(route.context_tokens(), kk_route::DEFAULT_CONTEXT_TOKENS);
+        route.complete(&req()).unwrap();
+        let body = sent(&seen);
+        assert_eq!(
+            body["options"]["num_ctx"],
+            json!(kk_route::DEFAULT_CONTEXT_TOKENS)
+        );
+        assert_eq!(body["options"]["num_predict"], 50);
+        assert_eq!(
+            body["truncate"],
+            json!(false),
+            "Ollama must refuse a too-long conversation, not cut it"
+        );
+
+        let (url, seen) = serve("200 OK", "application/json", ANSWER);
+        let route = OllamaRoute::new(&url, "m")
+            .unwrap()
+            .with_context_tokens(8192);
+        route.complete(&req()).unwrap();
+        assert_eq!(
+            sent(&seen)["options"]["num_ctx"],
+            8192,
+            "the owner's chosen window is what is asked for"
+        );
+    }
+
+    #[test]
+    fn cx02_streamed_requests_carry_the_same_window_and_flag() {
+        let done = r#"{"message":{"role":"assistant","content":"ok"},"done":true,"prompt_eval_count":5,"eval_count":2}"#;
+        let (url, seen) = serve("200 OK", "application/x-ndjson", done);
+        let route = OllamaRoute::new(&url, "m")
+            .unwrap()
+            .with_context_tokens(12_000);
+        let out = route.stream(&req(), &mut |_| true).unwrap();
+        assert_eq!((out.text.as_str(), out.prompt_tokens), ("ok", 5));
+        let body = sent(&seen);
+        assert_eq!(body["options"]["num_ctx"], 12_000);
+        assert_eq!(body["truncate"], json!(false));
+        assert_eq!(body["stream"], json!(true));
+    }
+
+    #[test]
+    fn cx03_a_conversation_larger_than_the_window_is_its_own_error_with_both_numbers() {
+        let (url, _) = serve("400 Bad Request", "application/json", OVERFLOW);
+        let route = OllamaRoute::new(&url, "m").unwrap();
+        let e = route.complete(&req()).unwrap_err();
+        assert!(
+            matches!(
+                e,
+                RouteError::ContextTooLong {
+                    requested: 7517,
+                    window: 4096
+                }
+            ),
+            "{e}"
+        );
+        assert!(e.to_string().contains("7517") && e.to_string().contains("4096"));
+
+        let (url, _) = serve("400 Bad Request", "application/json", OVERFLOW);
+        let route = OllamaRoute::new(&url, "m").unwrap();
+        let e = route.stream(&req(), &mut |_| true).unwrap_err();
+        assert!(
+            matches!(
+                e,
+                RouteError::ContextTooLong {
+                    requested: 7517,
+                    window: 4096
+                }
+            ),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn cx04_an_overflow_reported_inside_a_stream_is_the_same_error() {
+        let line = r#"{"error":"request (9000 tokens) exceeds the available context size (8192 tokens), try increasing it"}"#;
+        let (url, _) = serve("200 OK", "application/x-ndjson", line);
+        let route = OllamaRoute::new(&url, "m").unwrap();
+        let e = route.stream(&req(), &mut |_| true).unwrap_err();
+        assert!(
+            matches!(
+                e,
+                RouteError::ContextTooLong {
+                    requested: 9000,
+                    window: 8192
+                }
+            ),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn cx05_other_failures_stay_plain_and_never_pass_the_servers_text_on() {
+        for (status, body) in [
+            (
+                "500 Internal Server Error",
+                r#"{"error":"model runner crashed at /Users/someone/secret"}"#,
+            ),
+            ("400 Bad Request", r#"{"error":"invalid options"}"#),
+            ("404 Not Found", "model not found"),
+            (
+                "400 Bad Request",
+                "request (abc tokens) exceeds the available context size (x tokens)",
+            ),
+        ] {
+            let (url, _) = serve(status, "application/json", body);
+            let route = OllamaRoute::new(&url, "m").unwrap();
+            let e = route.complete(&req()).unwrap_err();
+            let RouteError::BadResponse(m) = &e else {
+                panic!("{status}: expected a plain bad response, got {e}");
+            };
+            assert!(m.starts_with("status "), "{m}");
+            assert!(!m.contains("secret") && !m.contains("/Users"), "{m}");
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn live_a_long_conversation_is_read_whole_or_refused_never_cut() {
+        let web: String = (0..420)
+            .map(|i| format!("Page line {i}: regional sales rose, shipping was delayed and staffing changed. "))
+            .collect();
+        let request = CompletionRequest {
+            messages: vec![
+                ChatMessage::new("system", "Answer with the shortest possible reply."),
+                ChatMessage::new("system", &web),
+                ChatMessage::new("user", "Remember: the vault code word is PINEAPPLE-42."),
+                ChatMessage::new("assistant", "Noted."),
+                ChatMessage::new(
+                    "user",
+                    "What is the vault code word? Reply with the word only.",
+                ),
+            ],
+            tools: vec![],
+            max_tokens: 24,
+            temperature: 0.0,
+        };
+        let route = OllamaRoute::new("http://127.0.0.1:11434", "qwen2.5:1.5b").unwrap();
+        let done = route
+            .complete(&request)
+            .expect("the default window holds the conversation");
+        println!(
+            "window {}: read {} tokens, answered {:?}",
+            route.context_tokens(),
+            done.prompt_tokens,
+            done.message.content
+        );
+        assert!(
+            done.prompt_tokens > 4096,
+            "more than Ollama's own default window was read"
+        );
+        assert!(
+            done.message.content.contains("PINEAPPLE-42"),
+            "{:?}",
+            done.message.content
+        );
+
+        let small = OllamaRoute::new("http://127.0.0.1:11434", "qwen2.5:1.5b")
+            .unwrap()
+            .with_context_tokens(2048);
+        let e = small
+            .complete(&request)
+            .expect_err("a 2048-token window cannot hold it");
+        println!("refused: {e}");
+        assert!(
+            matches!(e, RouteError::ContextTooLong { requested, window } if requested > window && window <= 4096),
+            "{e}"
+        );
+        let _ = small.id();
+    }
+}

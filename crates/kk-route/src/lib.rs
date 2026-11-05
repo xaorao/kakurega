@@ -57,6 +57,11 @@ pub enum RouteError {
     BadResponse(String),
     NoEligibleRoute,
     ScriptExhausted,
+    /// The conversation is larger than the model's context window. Ollama would otherwise cut it silently.
+    ContextTooLong {
+        requested: u64,
+        window: u64,
+    },
 }
 
 impl fmt::Display for RouteError {
@@ -71,6 +76,10 @@ impl fmt::Display for RouteError {
                 f.write_str("no route is eligible for this data; refusing instead of falling back")
             }
             RouteError::ScriptExhausted => f.write_str("the scripted route has no more responses"),
+            RouteError::ContextTooLong { requested, window } => write!(
+                f,
+                "the conversation needs {requested} tokens but the model's window holds {window}"
+            ),
         }
     }
 }
@@ -83,6 +92,40 @@ pub trait Route: Send + Sync {
     fn tee_verified(&self) -> bool;
     fn evidence(&self) -> RouteEvidence;
     fn complete(&self, request: &CompletionRequest) -> Result<Completion, RouteError>;
+}
+
+/// What a non-success answer from Ollama means. A conversation larger than the window is reported as its own error, so
+/// the owner is told to shorten it instead of being shown a bare status.
+fn refusal(status: impl fmt::Display, body: &mut ureq::Body) -> RouteError {
+    use std::io::Read;
+    let mut text = String::new();
+    let _ = body.as_reader().take(4096).read_to_string(&mut text);
+    let message = serde_json::from_str::<Value>(&text)
+        .ok()
+        .and_then(|v| {
+            v["error"]
+                .as_str()
+                .or_else(|| v["error"]["message"].as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or(text);
+    match overflow_message(&message) {
+        Some((requested, window)) => RouteError::ContextTooLong { requested, window },
+        None => RouteError::BadResponse(format!("status {status}")),
+    }
+}
+
+/// Reads "request (N tokens) exceeds the available context size (W tokens)" and returns (N, W).
+fn overflow_message(message: &str) -> Option<(u64, u64)> {
+    fn number_after(text: &str, marker: &str) -> Option<u64> {
+        let rest = &text[text.find(marker)? + marker.len()..];
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        digits.parse().ok()
+    }
+    Some((
+        number_after(message, "request (")?,
+        number_after(message, "exceeds the available context size (")?,
+    ))
 }
 
 pub fn is_loopback_http(url: &str) -> bool {
@@ -101,11 +144,16 @@ pub fn is_loopback_http(url: &str) -> bool {
     host == "127.0.0.1" || host == "::1" || host == "localhost"
 }
 
+/// The context window asked of Ollama for every request. Ollama's own default is 4096 tokens on most machines, and it
+/// cuts a longer conversation from the middle without saying so.
+pub const DEFAULT_CONTEXT_TOKENS: u32 = 16_384;
+
 pub struct OllamaRoute {
     id: String,
     base: String,
     model: String,
     agent: ureq::Agent,
+    context_tokens: u32,
 }
 
 impl OllamaRoute {
@@ -123,7 +171,22 @@ impl OllamaRoute {
             base: base_url.trim_end_matches('/').to_string(),
             model: model.to_string(),
             agent: config.into(),
+            context_tokens: DEFAULT_CONTEXT_TOKENS,
         })
+    }
+
+    /// Sets the context window (in tokens) asked of the model.
+    pub fn with_context_tokens(mut self, tokens: u32) -> Self {
+        self.context_tokens = tokens;
+        self
+    }
+
+    pub fn context_tokens(&self) -> u32 {
+        self.context_tokens
+    }
+
+    fn options(&self, request: &CompletionRequest) -> Value {
+        json!({"num_predict": request.max_tokens, "temperature": request.temperature, "num_ctx": self.context_tokens})
     }
 
     fn model_digest(&self) -> Option<String> {
@@ -193,8 +256,9 @@ impl Route for OllamaRoute {
         let mut body = json!({
             "model": self.model,
             "stream": false,
+            "truncate": false,
             "messages": messages,
-            "options": {"num_predict": request.max_tokens, "temperature": request.temperature},
+            "options": self.options(request),
         });
         if !tools.is_empty() {
             body["tools"] = Value::Array(tools);
@@ -205,7 +269,7 @@ impl Route for OllamaRoute {
             .send_json(&body)
             .map_err(|e| RouteError::Unreachable(e.to_string()))?;
         if !resp.status().is_success() {
-            return Err(RouteError::BadResponse(format!("status {}", resp.status())));
+            return Err(refusal(resp.status(), resp.body_mut()));
         }
         let v: Value = resp
             .body_mut()
@@ -257,8 +321,9 @@ impl OllamaRoute {
         let body = json!({
             "model": self.model,
             "stream": true,
+            "truncate": false,
             "messages": messages,
-            "options": {"num_predict": request.max_tokens, "temperature": request.temperature},
+            "options": self.options(request),
         });
         let mut resp = self
             .agent
@@ -266,7 +331,7 @@ impl OllamaRoute {
             .send_json(&body)
             .map_err(|e| RouteError::Unreachable(e.to_string()))?;
         if !resp.status().is_success() {
-            return Err(RouteError::BadResponse(format!("status {}", resp.status())));
+            return Err(refusal(resp.status(), resp.body_mut()));
         }
         let mut reader = std::io::BufReader::new(resp.body_mut().as_reader());
         let mut text = String::new();
@@ -295,7 +360,9 @@ impl OllamaRoute {
             let v: Value = serde_json::from_str(line.trim())
                 .map_err(|e| RouteError::BadResponse(format!("unreadable stream line: {e}")))?;
             if let Some(err) = v["error"].as_str() {
-                return Err(RouteError::BadResponse(err.to_string()));
+                return Err(overflow_message(err)
+                    .map(|(requested, window)| RouteError::ContextTooLong { requested, window })
+                    .unwrap_or_else(|| RouteError::BadResponse(err.to_string())));
             }
             if let Some(piece) = v["message"]["content"].as_str() {
                 if !piece.is_empty() {
@@ -525,5 +592,29 @@ impl RouteSet {
 
     pub fn select(&self, taint: &Label) -> Result<&dyn Route, RouteError> {
         self.eligible_for(taint).ok_or(RouteError::NoEligibleRoute)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::overflow_message;
+
+    #[test]
+    fn ollama_overflow_text_is_read_and_nothing_else_is() {
+        let ok = "request (7517 tokens) exceeds the available context size (4096 tokens), try increasing it";
+        assert_eq!(overflow_message(ok), Some((7517, 4096)));
+        assert_eq!(
+            overflow_message(
+                "request (abc tokens) exceeds the available context size (4096 tokens)"
+            ),
+            None
+        );
+        assert_eq!(overflow_message("request (12 tokens) is fine"), None);
+        assert_eq!(
+            overflow_message("exceeds the available context size (4096 tokens)"),
+            None
+        );
+        assert_eq!(overflow_message("request (99999999999999999999999 tokens) exceeds the available context size (4 tokens)"), None);
+        assert_eq!(overflow_message(""), None);
     }
 }

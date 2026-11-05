@@ -94,6 +94,14 @@ fn serve(args: &[String]) -> Result<(), String> {
         commitment_key: keys.commitment_key,
         max_turns: 20,
         scripted: crate::flag(args, "--scripted").map(PathBuf::from),
+        context_tokens: match crate::flag(args, "--context") {
+            Some(v) => v
+                .parse::<u32>()
+                .ok()
+                .filter(|n| (2048..=1_048_576).contains(n))
+                .ok_or("--context must be a number of tokens between 2048 and 1048576")?,
+            None => kk_route::DEFAULT_CONTEXT_TOKENS,
+        },
     });
     drop(keys);
     let test_mode = crate::flag(args, "--scripted").is_some();

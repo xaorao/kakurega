@@ -15,6 +15,25 @@ pub struct ReviewRunner {
     pub commitment_key: [u8; 32],
     pub max_turns: u32,
     pub scripted: Option<PathBuf>,
+    /// The context window asked of the local model, in tokens.
+    pub context_tokens: u32,
+}
+
+impl ReviewRunner {
+    fn route(&self) -> Result<OllamaRoute, kk_route::RouteError> {
+        OllamaRoute::new(&self.ollama, &self.model)
+            .map(|r| r.with_context_tokens(self.context_tokens))
+    }
+}
+
+/// What the owner is told when the local model fails. A conversation larger than the model's window gets advice, not a status.
+fn model_failure(e: kk_route::RouteError) -> String {
+    match e {
+        kk_route::RouteError::ContextTooLong { requested, window } => format!(
+            "this conversation is too long for the model: it needs about {requested} tokens and the model's window holds {window}. Start a new conversation, send a shorter message, or choose fewer notes and web pages"
+        ),
+        other => format!("the local model did not answer: {other}"),
+    }
 }
 
 impl JobRunner for ReviewRunner {
@@ -65,7 +84,7 @@ impl JobRunner for ReviewRunner {
                 progress,
             );
         }
-        match OllamaRoute::new(&self.ollama, &self.model) {
+        match self.route() {
             Ok(route) => {
                 let ev = vec![route.evidence()];
                 run_job(
@@ -114,7 +133,7 @@ impl JobRunner for ReviewRunner {
                 simulated: true,
             });
         }
-        let route = OllamaRoute::new(&self.ollama, &self.model).map_err(|e| e.to_string())?;
+        let route = self.route().map_err(|e| e.to_string())?;
         let done = route
             .complete(&kk_route::CompletionRequest {
                 messages,
@@ -122,7 +141,7 @@ impl JobRunner for ReviewRunner {
                 max_tokens: 500,
                 temperature: 0.2,
             })
-            .map_err(|e| format!("the local model did not answer: {e}"))?;
+            .map_err(model_failure)?;
         Ok(kk_service::ChatReply {
             text: done.message.content,
             route_id: route.id().to_string(),
@@ -157,7 +176,7 @@ impl JobRunner for ReviewRunner {
                 stopped: false,
             });
         }
-        let route = OllamaRoute::new(&self.ollama, &self.model).map_err(|e| e.to_string())?;
+        let route = self.route().map_err(|e| e.to_string())?;
         let done = route
             .stream(
                 &kk_route::CompletionRequest {
@@ -168,7 +187,7 @@ impl JobRunner for ReviewRunner {
                 },
                 on_chunk,
             )
-            .map_err(|e| format!("the local model did not answer: {e}"))?;
+            .map_err(model_failure)?;
         Ok(kk_service::StreamedReply {
             reply: kk_service::ChatReply {
                 text: done.text,
@@ -186,12 +205,10 @@ impl JobRunner for ReviewRunner {
         }
         let model =
             std::env::var("KAKU_EMBED_MODEL").unwrap_or_else(|_| "nomic-embed-text".to_string());
-        OllamaRoute::new(&self.ollama, &self.model)
-            .ok()
-            .map(|route| {
-                std::sync::Arc::new(OllamaEmbedder { route, model })
-                    as std::sync::Arc<dyn kk_memory::Embedder>
-            })
+        self.route().ok().map(|route| {
+            std::sync::Arc::new(OllamaEmbedder { route, model })
+                as std::sync::Arc<dyn kk_memory::Embedder>
+        })
     }
 
     fn repairable(&self) -> Vec<String> {
@@ -206,7 +223,7 @@ impl JobRunner for ReviewRunner {
         if id != "model" || self.scripted.is_some() {
             return Err("this check cannot be fixed automatically".into());
         }
-        let route = OllamaRoute::new(&self.ollama, &self.model).map_err(|e| e.to_string())?;
+        let route = self.route().map_err(|e| e.to_string())?;
         route
             .pull(&mut |status, pct| {
                 progress(&match pct {
@@ -351,7 +368,7 @@ impl JobRunner for ReviewRunner {
     }
 
     fn route_info(&self) -> Value {
-        json!({"id": format!("ollama:{}", self.model), "class": "device_only", "model": if self.scripted.is_some() { "scripted test model".to_string() } else { self.model.clone() }, "simulated": self.scripted.is_some(), "endpoint": self.ollama,
+        json!({"id": format!("ollama:{}", self.model), "class": "device_only", "model": if self.scripted.is_some() { "scripted test model".to_string() } else { self.model.clone() }, "simulated": self.scripted.is_some(), "endpoint": self.ollama, "context_tokens": self.context_tokens,
                "transport": match &self.transport { Transport::Local => "local sandbox".to_string(), Transport::Lima { vm, .. } => format!("sandbox in the {vm} virtual machine") }})
     }
 }
