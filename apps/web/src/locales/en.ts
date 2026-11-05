@@ -67,7 +67,7 @@ export const en = {
   "mem.import.source": "Where they come from (letters, digits, - _)",
   "mem.import.files": "Note files",
   "mem.import.will": "{n} note(s) will be saved:",
-  "mem.import.skipped": "Skipped (not .md or .txt, empty, or too long): {list}",
+  "mem.import.skipped": "Skipped (not .md, .mdc or .txt, empty, or too long): {list}",
   "mem.import.button": "Save these notes",
   "mem.import.result": "{added} saved ({instr} of them read like instructions and will not be given to a model), {known} already known, {refused} refused.",
   "mem.error": "That did not work.",

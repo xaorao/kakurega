@@ -1,7 +1,7 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, type MemoryItem } from "../api";
 import { t, type Key } from "../i18n";
-import { notesFromFile } from "../notes-import";
+import { isNoteFile, notesFromFile } from "../notes-import";
 import { Suggestions } from "./ReviewView";
 
 const LEVELS = ["public", "internal", "confidential", "restricted"] as const;
@@ -86,7 +86,7 @@ function ImportNotes(props: { onDone: () => void }) {
     const ok: { name: string; text: string }[] = [];
     const bad: string[] = [];
     for (const f of Array.from(files ?? [])) {
-      if (ok.length >= MAX_NOTES || f.size > MAX_NOTE_CHARS * 4 || !/\.(md|markdown|txt)$/i.test(f.name)) {
+      if (ok.length >= MAX_NOTES || f.size > MAX_NOTE_CHARS * 4 || !isNoteFile(f.name)) {
         bad.push(f.name);
         continue;
       }
@@ -119,7 +119,7 @@ function ImportNotes(props: { onDone: () => void }) {
       <label for="imp-source">{t("mem.import.source")}</label>
       <input id="imp-source" value={source()} maxlength="40" onInput={(e) => setSource(e.currentTarget.value)} />
       <label for="imp-files">{t("mem.import.files")}</label>
-      <input id="imp-files" type="file" multiple accept=".md,.markdown,.txt" onChange={(e) => void choose(e.currentTarget.files)} />
+      <input id="imp-files" type="file" multiple accept=".md,.mdc,.markdown,.txt" onChange={(e) => void choose(e.currentTarget.files)} />
       <Show when={picked().length > 0}>
         <p><strong>{t("mem.import.will", { n: picked().length })}</strong></p>
         <ul class="plain"><For each={picked()}>{(p) => <li><code>{p.name}</code> <span class="muted">({p.text.length})</span></li>}</For></ul>

@@ -69,7 +69,7 @@ export const hi: Record<keyof typeof en, string> = {
   "mem.import.source": "वे कहाँ से आए (अक्षर, अंक, - _)",
   "mem.import.files": "नोट फ़ाइलें",
   "mem.import.will": "{n} नोट सहेजे जाएँगे:",
-  "mem.import.skipped": "छोड़े गए (.md या .txt नहीं, खाली, या बहुत लंबे): {list}",
+  "mem.import.skipped": "छोड़े गए (.md, .mdc या .txt नहीं, खाली, या बहुत लंबे): {list}",
   "mem.import.button": "ये नोट सहेजें",
   "mem.import.result": "{added} सहेजे (इनमें {instr} निर्देश जैसे लगे और मॉडल को नहीं दिए जाएँगे), {known} पहले से ज्ञात, {refused} अस्वीकृत।",
   "mem.error": "यह नहीं हो सका।",

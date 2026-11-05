@@ -148,7 +148,7 @@ pub fn read_dir(dir: &Path) -> Result<(Vec<Note>, usize), String> {
                 }
                 continue;
             }
-            if !name.ends_with(".md") {
+            if !(name.ends_with(".md") || name.ends_with(".mdc")) {
                 continue;
             }
             if meta.len() > MAX_FILE_BYTES || notes.len() >= MAX_FILES {
@@ -184,10 +184,12 @@ pub fn read_dir(dir: &Path) -> Result<(Vec<Note>, usize), String> {
                 continue;
             }
             match std::fs::read_to_string(e.path()) {
-                Ok(text) => match parse_note(name.trim_end_matches(".md"), &text) {
-                    Some(n) => notes.push(n),
-                    None => skipped += 1,
-                },
+                Ok(text) => {
+                    match parse_note(name.trim_end_matches(".mdc").trim_end_matches(".md"), &text) {
+                        Some(n) => notes.push(n),
+                        None => skipped += 1,
+                    }
+                }
                 Err(_) => skipped += 1,
             }
         }
@@ -371,5 +373,42 @@ mod tests {
         std::fs::write(c.join("MEMORY.md"), "- [a](a.md)\n").unwrap();
         std::fs::write(c.join("a.md"), "Alpha").unwrap();
         assert_eq!(read_dir(&c).unwrap().0.len(), 1);
+    }
+
+    #[test]
+    fn mi04_cursor_rule_files_are_read_with_their_description_as_the_first_line() {
+        let d = std::env::temp_dir().join(format!("kk-mi4-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join(".cursor/rules")).unwrap();
+        std::fs::write(
+            d.join(".cursor/rules/no-excessive-comments.mdc"),
+            "---\ndescription: Keep comments and docstrings minimal and intentional\nglobs: *,**/*\nalwaysApply: true\n---\n\n# Comments\n\n- Do NOT narrate what the code does.\n",
+        )
+        .unwrap();
+        std::fs::write(d.join(".cursor/rules/too-big.mdc"), "x".repeat(21_000)).unwrap();
+        std::fs::write(d.join("AGENTS.md"), "Use pnpm, not npm.\n").unwrap();
+        // hidden folders are skipped by the importer, so point it at the rules folder itself
+        let (notes, skipped) = read_dir(&d.join(".cursor/rules")).unwrap();
+        assert_eq!(
+            (notes.len(), skipped),
+            (1, 1),
+            "the big rule file is skipped and counted"
+        );
+        assert_eq!(notes[0].name, "no-excessive-comments");
+        assert!(
+            notes[0]
+                .text
+                .starts_with("Keep comments and docstrings minimal and intentional\n\n# Comments"),
+            "{}",
+            notes[0].text
+        );
+        assert!(
+            !notes[0].text.contains("alwaysApply"),
+            "the frontmatter is not part of the note"
+        );
+        let (agents, _) = read_dir(&d).unwrap();
+        assert!(agents
+            .iter()
+            .any(|n| n.name == "AGENTS" && n.text == "Use pnpm, not npm."));
     }
 }
