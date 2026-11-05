@@ -1,4 +1,7 @@
-# Reproducers beyond Python (decision record, not yet built)
+# Reproducers beyond Python
+
+## Status (honest)
+Steps 1 and 2 are built and tested (a `language` field on a finding; JavaScript closure and runner, mutation-checked). **They were built before any reference was read, which breaks the source-first rule: READING OWED.** No claim of "best" or "comparable to the strongest tools" is made for this feature until the references named under "References and what they teach" are read in full along their execution paths and this record is updated with what they showed. Steps 3 to 5 do not start until then.
 
 ## Why this matters
 
