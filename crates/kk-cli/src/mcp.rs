@@ -1,3 +1,5 @@
+#![deny(clippy::print_stdout)]
+
 use crate::approve::{connect, Admin};
 use serde_json::{json, Map, Value};
 use std::io::{BufRead, Write};
@@ -5,13 +7,14 @@ use std::io::{BufRead, Write};
 const PROTOCOL: &str = "2025-06-18";
 const MAX_LINE: usize = 1 << 20;
 const MAX_FILE: u64 = 20 << 20;
+const ID_PATTERN: &str = "^[A-Za-z0-9_-]{1,64}$";
 
 fn string_prop(desc: &str, max: u64) -> Value {
     json!({"type": "string", "description": desc, "minLength": 1, "maxLength": max})
 }
 
 fn job_id_prop() -> Value {
-    json!({"type": "string", "description": "A review id such as job-3.", "pattern": "^[A-Za-z0-9_-]{1,64}$"})
+    json!({"type": "string", "description": "A review id such as job-3.", "pattern": ID_PATTERN})
 }
 
 fn obj(props: Value, required: &[&str]) -> Value {
@@ -102,18 +105,25 @@ fn check_args(schema: &Value, args: &Value) -> Result<(), String> {
                 let Some(s) = v.as_str() else {
                     return Err(format!("`{k}` must be a string"));
                 };
-                if s.is_empty()
-                    || s.chars().count() as u64 > p["maxLength"].as_u64().unwrap_or(4096)
+                let count = s.chars().count() as u64;
+                if count < p["minLength"].as_u64().unwrap_or(1)
+                    || count > p["maxLength"].as_u64().unwrap_or(4096)
                     || s.chars().any(|c| c.is_control())
                 {
                     return Err(format!(
-                        "`{k}` must be 1 to {} characters without control characters",
-                        p["maxLength"]
+                        "`{k}` must be {} to {} characters without control characters",
+                        p["minLength"].as_u64().unwrap_or(1),
+                        p["maxLength"].as_u64().unwrap_or(4096)
                     ));
                 }
                 if let Some(pat) = p["pattern"].as_str() {
-                    if pat == "^[A-Za-z0-9_-]{1,64}$"
-                        && !s
+                    if pat != ID_PATTERN {
+                        return Err(format!(
+                            "`{k}` has a rule this server cannot check, so it is refused"
+                        ));
+                    }
+                    if count > 64
+                        || !s
                             .chars()
                             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
                     {
@@ -196,7 +206,7 @@ fn read_small(ctx: &Ctx, path: &str, suffixes: &[&str]) -> Result<Vec<u8>, Strin
     std::fs::read(p).map_err(|_| "cannot read that file".to_string())
 }
 
-fn call(admin: &Result<Admin, String>, ctx: &Ctx, name: &str, a: &Value) -> Value {
+fn call(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, name: &str, a: &Value) -> Value {
     let all = ctx.visible();
     let Some(def) = all
         .as_array()
@@ -257,9 +267,11 @@ fn call(admin: &Result<Admin, String>, ctx: &Ctx, name: &str, a: &Value) -> Valu
         }
         _ => {}
     }
-    let admin = match admin {
+    // Looked up for every call: the agent may have been started before `kaku serve`, and serve may have restarted since,
+    // with a new port and token.
+    let admin = match admin() {
         Ok(a) => a,
-        Err(e) => return fail(e),
+        Err(e) => return fail(&e),
     };
     let r = match name {
         "overview" => admin.get("/admin/overview"),
@@ -285,29 +297,41 @@ fn call(admin: &Result<Admin, String>, ctx: &Ctx, name: &str, a: &Value) -> Valu
     }
 }
 
-pub fn handle(admin: &Result<Admin, String>, ctx: &Ctx, line: &str) -> Option<Value> {
-    let msg: Value = match serde_json::from_str(line) {
+const PARSE_ERROR: &str =
+    r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"parse error"}}"#;
+
+fn invalid_request(id: Value) -> Option<Value> {
+    Some(
+        json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32600, "message": "invalid request"}}),
+    )
+}
+
+/// Answers one JSON-RPC line, or returns None when the message gets no answer. Nothing runs for a message without an
+/// `id`: it is a notification, and a notification never gets a reply, so a tool started by one could not report back.
+pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) -> Option<Value> {
+    let msg: Value = match serde_json::from_str(line.trim_start_matches('\u{feff}')) {
         Ok(v) => v,
-        Err(_) => {
-            return Some(
-                json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": "parse error"}}),
-            )
-        }
+        Err(_) => return serde_json::from_str(PARSE_ERROR).ok(),
     };
     if !msg.is_object() || msg["jsonrpc"] != "2.0" {
-        return Some(
-            json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32600, "message": "invalid request"}}),
-        );
+        return invalid_request(Value::Null);
     }
-    let id = msg.get("id").cloned();
-    let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
-    let ok = |result: Value| {
-        id.clone()
-            .map(|id| json!({"jsonrpc": "2.0", "id": id, "result": result}))
+    // An answer to a request this server never sent (it sends none).
+    if msg.get("method").is_none() && (msg.get("result").is_some() || msg.get("error").is_some()) {
+        return None;
+    }
+    let id = match msg.get("id") {
+        None => None,
+        Some(v) if v.is_string() || v.is_i64() || v.is_u64() => Some(v.clone()),
+        Some(_) => return invalid_request(Value::Null),
     };
+    let Some(method) = msg.get("method").and_then(Value::as_str) else {
+        return invalid_request(id.unwrap_or(Value::Null));
+    };
+    let id = id?;
+    let ok = |result: Value| Some(json!({"jsonrpc": "2.0", "id": id.clone(), "result": result}));
     let err = |code: i64, m: &str| {
-        id.clone()
-            .map(|id| json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": m}}))
+        Some(json!({"jsonrpc": "2.0", "id": id.clone(), "error": {"code": code, "message": m}}))
     };
     match method {
         "initialize" => ok(
@@ -374,7 +398,7 @@ fn read_line_bounded(input: &mut dyn BufRead, max: usize) -> Option<(Vec<u8>, bo
 }
 
 pub fn run(args: &[String]) -> u8 {
-    let admin = connect(args);
+    let admin = || connect(args);
     let ctx = Ctx::new(&crate::data_dir(args)).read_only(
         args.iter().any(|a| a == "--read-only")
             || std::env::var("KAKU_MCP_READ_ONLY").is_ok_and(|v| v == "1"),
@@ -393,6 +417,8 @@ pub fn run(args: &[String]) -> u8 {
             continue;
         }
         let Ok(line) = String::from_utf8(bytes) else {
+            let _ = writeln!(out, "{PARSE_ERROR}");
+            let _ = out.flush();
             continue;
         };
         if line.trim().is_empty() {
@@ -405,4 +431,68 @@ pub fn run(args: &[String]) -> u8 {
         }
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_rule_in_the_tool_list_is_one_this_server_checks() {
+        for t in tools().as_array().unwrap() {
+            let schema = &t["inputSchema"];
+            for (name, p) in schema["properties"].as_object().unwrap() {
+                assert_eq!(
+                    p["type"], "string",
+                    "{}: `{name}` has a type the checker does not know",
+                    t["name"]
+                );
+                if let Some(pat) = p.get("pattern") {
+                    assert_eq!(
+                        pat, ID_PATTERN,
+                        "{}: `{name}` has a pattern the checker would skip",
+                        t["name"]
+                    );
+                }
+            }
+        }
+    }
+
+    fn schema_of(name: &str) -> Value {
+        tools()
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == name)
+            .unwrap()["inputSchema"]
+            .clone()
+    }
+
+    #[test]
+    fn a_rule_the_checker_does_not_know_refuses_instead_of_passing() {
+        let schema = json!({"type": "object", "properties": {"x": {"type": "string", "pattern": "^[a-z]+$", "maxLength": 10}}, "required": ["x"]});
+        let e = check_args(&schema, &json!({"x": "abc"})).unwrap_err();
+        assert!(e.contains("cannot check"), "{e}");
+    }
+
+    #[test]
+    fn minimum_length_is_honoured_and_counts_characters() {
+        let schema = json!({"type": "object", "properties": {"x": {"type": "string", "minLength": 3, "maxLength": 5}}, "required": ["x"]});
+        assert!(check_args(&schema, &json!({"x": "ab"})).is_err());
+        assert!(check_args(&schema, &json!({"x": "abc"})).is_ok());
+        assert!(
+            check_args(&schema, &json!({"x": "вгд"})).is_ok(),
+            "three characters, six bytes"
+        );
+        assert!(check_args(&schema, &json!({"x": "abcdef"})).is_err());
+    }
+
+    #[test]
+    fn a_review_id_is_at_most_64_characters_of_letters_digits_dash_and_underscore() {
+        let schema = schema_of("review_status");
+        assert!(check_args(&schema, &json!({"id": "a".repeat(64)})).is_ok());
+        assert!(check_args(&schema, &json!({"id": "a".repeat(65)})).is_err());
+        assert!(check_args(&schema, &json!({"id": "job/../3"})).is_err());
+        assert!(check_args(&schema, &json!({"id": ""})).is_err());
+    }
 }
