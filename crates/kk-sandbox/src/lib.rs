@@ -340,17 +340,43 @@ fn write_filter(dir: &str) -> Result<PathBuf, SandboxError> {
     Ok(path)
 }
 
+/// `kk-worker-<digits>-<digits>` and nothing else: a unit name the host sends is passed to `systemd-run --unit`, so it must be
+/// a plain name we could have generated ourselves.
+pub fn valid_unit_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("kk-worker-") else {
+        return false;
+    };
+    let Some((a, b)) = rest.split_once('-') else {
+        return false;
+    };
+    let digits = |s: &str| !s.is_empty() && s.len() <= 20 && s.bytes().all(|c| c.is_ascii_digit());
+    digits(a) && digits(b)
+}
+
+fn new_unit_name() -> String {
+    format!(
+        "kk-worker-{}-{}",
+        std::process::id(),
+        UNIT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
+}
+
 fn scope_command(spec: &SandboxSpec) -> Result<(Command, String), SandboxError> {
+    scope_command_named(spec, None)
+}
+
+fn scope_command_named(
+    spec: &SandboxSpec,
+    unit: Option<String>,
+) -> Result<(Command, String), SandboxError> {
     if !cfg!(target_os = "linux") {
         return Err(SandboxError::Unsupported(
             "the bubblewrap sandbox runs on Linux only",
         ));
     }
-    let unit = format!(
-        "kk-worker-{}-{}",
-        std::process::id(),
-        UNIT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    );
+    let unit = unit
+        .filter(|u| valid_unit_name(u))
+        .unwrap_or_else(new_unit_name);
     let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") else {
         return Err(SandboxError::Unsupported(
             "a systemd user session (XDG_RUNTIME_DIR) is required for cgroup limits",
@@ -398,7 +424,10 @@ pub fn serve_lines_with(
             let (c, u) = scope_command(spec)?;
             (c, Some(u))
         }
-        Transport::Lima { vm, launcher } => (lima_command(vm, launcher, spec), None),
+        Transport::Lima { vm, launcher } => {
+            let (c, u) = lima_launch(vm, launcher, spec);
+            (c, Some(u))
+        }
     };
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -454,15 +483,19 @@ pub fn serve_lines_with(
         }
     });
     let stop_scope = |unit: &Option<String>| {
-        if let Some(unit) = unit {
-            let _ = Command::new("systemctl")
-                .args(["--user", "stop", &format!("{unit}.scope")])
-                .env_clear()
-                .env(
-                    "XDG_RUNTIME_DIR",
-                    std::env::var("XDG_RUNTIME_DIR").unwrap_or_default(),
-                )
-                .output();
+        let Some(unit) = unit else { return };
+        match transport {
+            Transport::Lima { vm, .. } => stop_lima_scope(vm, unit),
+            Transport::Local => {
+                let _ = Command::new("systemctl")
+                    .args(["--user", "stop", &format!("{unit}.scope")])
+                    .env_clear()
+                    .env(
+                        "XDG_RUNTIME_DIR",
+                        std::env::var("XDG_RUNTIME_DIR").unwrap_or_default(),
+                    )
+                    .output();
+            }
         }
     };
     let start = Instant::now();
@@ -506,7 +539,7 @@ pub fn serve_lines_with(
             break Exit::TimedOut;
         }
     };
-    let (stderr_bytes, _) = t_err.join().unwrap_or_default();
+    let (stderr_bytes, _) = join_reader(t_err, Duration::from_secs(10));
     Ok(ServeOutcome {
         exit,
         stderr: stderr_bytes,
@@ -537,10 +570,17 @@ struct WireSpec {
     output_bytes: usize,
     #[serde(default)]
     chdir: Option<String>,
+    /// The systemd scope name chosen by the host, so it can stop the scope inside the VM on a timeout.
+    #[serde(default)]
+    unit: Option<String>,
 }
 
 impl SandboxSpec {
     pub fn to_wire(&self) -> String {
+        self.to_wire_with_unit(None)
+    }
+
+    pub fn to_wire_with_unit(&self, unit: Option<&str>) -> String {
         let w = WireSpec {
             program: self.program.to_string_lossy().into_owned(),
             args: self
@@ -569,14 +609,20 @@ impl SandboxSpec {
                 .chdir
                 .as_ref()
                 .map(|c| c.to_string_lossy().into_owned()),
+            unit: unit.map(str::to_string),
         };
         serde_json::to_string(&w).unwrap_or_default()
     }
 
     pub fn from_wire(text: &str) -> Result<SandboxSpec, SandboxError> {
+        Self::from_wire_with_unit(text).map(|(spec, _)| spec)
+    }
+
+    pub fn from_wire_with_unit(text: &str) -> Result<(SandboxSpec, Option<String>), SandboxError> {
         let w: WireSpec =
             serde_json::from_str(text).map_err(|e| SandboxError::Spawn(e.to_string()))?;
-        Ok(SandboxSpec {
+        let unit = w.unit.clone();
+        let spec = SandboxSpec {
             program: PathBuf::from(w.program),
             args: w.args.into_iter().map(OsString::from).collect(),
             env: w.env,
@@ -600,7 +646,8 @@ impl SandboxSpec {
             },
             chdir: w.chdir.map(PathBuf::from),
             weaken_for_self_test: None,
-        })
+        };
+        Ok((spec, unit))
     }
 }
 
@@ -616,11 +663,11 @@ pub fn exec_from_wire(wire: &str) -> SandboxError {
     if let Err(e) = selfcheck::verify_profile() {
         return e;
     }
-    let spec = match SandboxSpec::from_wire(wire) {
+    let (spec, unit) = match SandboxSpec::from_wire_with_unit(wire) {
         Ok(s) => s,
         Err(e) => return e,
     };
-    match scope_command(&spec) {
+    match scope_command_named(&spec, unit) {
         Ok((mut cmd, _unit)) => {
             let err = cmd.exec();
             SandboxError::Spawn(err.to_string())
@@ -630,11 +677,50 @@ pub fn exec_from_wire(wire: &str) -> SandboxError {
 }
 
 pub fn lima_command(vm: &str, launcher: &Path, spec: &SandboxSpec) -> Command {
+    lima_launch(vm, launcher, spec).0
+}
+
+/// The command that runs the worker inside the VM, with the scope name the host will use to stop it.
+pub fn lima_launch(vm: &str, launcher: &Path, spec: &SandboxSpec) -> (Command, String) {
+    let unit = new_unit_name();
     let mut cmd = Command::new("limactl");
     cmd.args(["shell", "--tty=false", vm, "--"])
         .arg(launcher)
-        .arg(spec.to_wire());
-    cmd
+        .arg(spec.to_wire_with_unit(Some(&unit)));
+    (cmd, unit)
+}
+
+/// Stops the worker's scope inside the VM. Killing only the local `limactl` client would leave the worker running there.
+fn stop_lima_scope(vm: &str, unit: &str) {
+    let _ = Command::new("limactl")
+        .args([
+            "shell",
+            "--tty=false",
+            vm,
+            "--",
+            "systemctl",
+            "--user",
+            "stop",
+        ])
+        .arg(format!("{unit}.scope"))
+        .stdin(Stdio::null())
+        .output();
+}
+
+/// Waits for a reader thread, but not for ever: after a stop the pipe normally closes at once, and if something still holds
+/// it open the caller must not hang with it.
+fn join_reader(
+    handle: std::thread::JoinHandle<(Vec<u8>, bool)>,
+    wait: Duration,
+) -> (Vec<u8>, bool) {
+    let start = Instant::now();
+    while !handle.is_finished() {
+        if start.elapsed() >= wait {
+            return (Vec::new(), true);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    handle.join().unwrap_or_default()
 }
 
 pub fn run_with(spec: &SandboxSpec, transport: &Transport) -> Result<Outcome, SandboxError> {
@@ -644,7 +730,7 @@ pub fn run_with(spec: &SandboxSpec, transport: &Transport) -> Result<Outcome, Sa
             run_unchecked(spec)
         }
         Transport::Lima { vm, launcher } => {
-            let mut cmd = lima_command(vm, launcher, spec);
+            let (mut cmd, unit) = lima_launch(vm, launcher, spec);
             cmd.stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
@@ -671,6 +757,7 @@ pub fn run_with(spec: &SandboxSpec, transport: &Transport) -> Result<Outcome, Sa
                     }
                     Ok(None) => {
                         if start.elapsed() >= spec.limits.wall {
+                            stop_lima_scope(vm, &unit);
                             let _ = child.kill();
                             let _ = child.wait();
                             break Exit::TimedOut;
@@ -680,8 +767,8 @@ pub fn run_with(spec: &SandboxSpec, transport: &Transport) -> Result<Outcome, Sa
                     Err(e) => return Err(SandboxError::Spawn(e.to_string())),
                 }
             };
-            let (stdout, t1) = t_out.join().unwrap_or_default();
-            let (stderr, t2) = t_err.join().unwrap_or_default();
+            let (stdout, t1) = join_reader(t_out, Duration::from_secs(10));
+            let (stderr, t2) = join_reader(t_err, Duration::from_secs(10));
             Ok(Outcome {
                 exit,
                 stdout,

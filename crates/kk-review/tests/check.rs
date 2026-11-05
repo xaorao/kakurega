@@ -1,11 +1,12 @@
 use kk_review::check::{
     apply_all, apply_fix, clean_text, compare_test_runs, is_test_path, js_closure, missing_package,
-    parse_finding, parse_fix, parse_unittest, python_closure, run_project_tests, run_reproducer,
-    unified_diff, unified_diff_all, verify_fix, verify_fix_with_tests, CheckEnv, CheckStatus,
-    ClosureError, Edit, Finding, Fix, FixStatus, Language, TestRun, TestVerdict,
+    parse_finding, parse_fix, parse_node_test, parse_unittest, python_closure, run_project_tests,
+    run_project_tests_for, run_reproducer, unified_diff, unified_diff_all, verify_fix,
+    verify_fix_with_tests, CheckEnv, CheckStatus, ClosureError, Edit, Finding, Fix, FixStatus,
+    Language, TestRun, TestVerdict,
 };
 use kk_review::import::{scan_tree, ImportedFile};
-use kk_sandbox::Transport;
+use kk_sandbox::{Exit, Transport};
 use kk_types::label::Level;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -1071,4 +1072,319 @@ fn c24_a_missing_third_party_package_is_unavailable_and_a_mistake_about_the_proj
         "a missing project file is a bad reproducer"
     );
     assert!(matches!(jrun("process.exit(3);\n"), CheckStatus::Failed(_)));
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn f10_a_fix_that_just_ends_the_program_before_the_verdict_is_not_a_fix() {
+    let t = transport();
+    let env = CheckEnv {
+        transport: &t,
+        scratch: &scratch(),
+        python: "/usr/bin/python3",
+        node: "/usr/bin/node",
+    };
+    // Python: the "fix" makes logout end the whole program cleanly, after CONTROL_OK and before any verdict
+    let files = fixture_files();
+    let idx = index(&files);
+    let f = finding(REPRO);
+    let before = run_reproducer(&f, &idx, &env);
+    assert_eq!(before.status, CheckStatus::Reproduced);
+    let quits = fix(GOOD_OLD, "    import sys\n    sys.exit(0)\n");
+    match verify_fix(&f, &before, &quits, &idx, &env) {
+        FixStatus::NotChecked(m) => assert!(m.contains("verdict"), "{m}"),
+        other => panic!("ending the program was accepted as a fix: {other:?}"),
+    }
+    // the honest fix is still accepted
+    assert_eq!(
+        verify_fix(&f, &before, &fix(GOOD_OLD, GOOD_NEW), &idx, &env),
+        FixStatus::FixesTheReproducer
+    );
+    // JavaScript, same trick
+    let jsfiles = js_files();
+    let jidx = index(&jsfiles);
+    let jf = js_finding(JS_REPRO);
+    let jbefore = run_reproducer(&jf, &jidx, &env);
+    assert_eq!(jbefore.status, CheckStatus::Reproduced, "{jbefore:?}");
+    let old = "function logout(t) { let copy = t; copy = null; return copy; }";
+    let mk = |new: &str| Fix {
+        title: "x".into(),
+        file: "src/auth/session.js".into(),
+        old_text: old.into(),
+        new_text: new.into(),
+        also: vec![],
+        explanation: String::new(),
+    };
+    match verify_fix(
+        &jf,
+        &jbefore,
+        &mk("function logout(t) { process.exit(0); }"),
+        &jidx,
+        &env,
+    ) {
+        FixStatus::NotChecked(m) => assert!(m.contains("verdict"), "{m}"),
+        other => panic!("ending the program was accepted as a fix: {other:?}"),
+    }
+    assert_eq!(
+        verify_fix(
+            &jf,
+            &jbefore,
+            &mk("function logout(t) { ACTIVE.delete(t); return null; }"),
+            &jidx,
+            &env
+        ),
+        FixStatus::FixesTheReproducer
+    );
+}
+
+fn tap(tests: u32, pass: u32, fail: u32, cancelled: u32, skipped: u32, todo: u32) -> String {
+    format!("# tests {tests}\n# suites 0\n# pass {pass}\n# fail {fail}\n# cancelled {cancelled}\n# skipped {skipped}\n# todo {todo}\n")
+}
+
+#[test]
+fn n01_node_test_output_is_read_strictly_and_anything_unclear_is_not_a_pass() {
+    let ok = Exit::Code(0);
+    let body = |lines: &str, summary: String| format!("TAP version 13\n{lines}1..9\n{summary}");
+    // formats captured from Node 22.22.1
+    assert_eq!(
+        parse_node_test(&ok, &body("ok 1 - a\nok 2 - b\n", tap(4, 4, 0, 0, 0, 0))),
+        TestRun::Passed(4)
+    );
+    // skipped and todo tests are not passes: 3 tests, 1 pass
+    let skip = body(
+        "ok 1 - ran\nok 2 - skipped # SKIP\nnot ok 3 - todo # TODO\n",
+        tap(3, 1, 0, 0, 1, 1),
+    );
+    assert_eq!(parse_node_test(&ok, &skip), TestRun::Passed(1));
+    // nothing ran, or everything was skipped: no evidence
+    assert_eq!(
+        parse_node_test(&ok, &body("", tap(0, 0, 0, 0, 0, 0))),
+        TestRun::NoTests
+    );
+    assert_eq!(
+        parse_node_test(&ok, &body("ok 1 - s # SKIP\n", tap(2, 0, 0, 0, 2, 0))),
+        TestRun::NoTests
+    );
+    // failures
+    let failed = |t: TestRun| matches!(t, TestRun::Failed(_));
+    assert!(failed(parse_node_test(
+        &Exit::Code(1),
+        &body("not ok 2 - bad\n", tap(2, 1, 1, 0, 0, 0))
+    )));
+    assert!(
+        failed(parse_node_test(
+            &ok,
+            &body("not ok 2 - bad\n", tap(2, 1, 1, 0, 0, 0))
+        )),
+        "a failure with exit 0 is still a failure"
+    );
+    assert!(
+        failed(parse_node_test(&ok, &body("", tap(2, 1, 0, 1, 0, 0)))),
+        "cancelled is not a pass"
+    );
+    // SWE-bench's rule: the exit status must agree with the summary
+    assert!(failed(parse_node_test(
+        &Exit::Code(1),
+        &body("ok 1 - a\n", tap(4, 4, 0, 0, 0, 0))
+    )));
+    assert!(failed(parse_node_test(
+        &Exit::Signal(9),
+        &body("ok 1 - a\n", tap(4, 4, 0, 0, 0, 0))
+    )));
+    assert!(failed(parse_node_test(
+        &Exit::TimedOut,
+        &body("", tap(4, 4, 0, 0, 0, 0))
+    )));
+    // a summary that does not add up, or is incomplete, or missing (a run killed by the time limit prints none)
+    assert!(failed(parse_node_test(
+        &ok,
+        &body("", tap(9, 4, 0, 0, 0, 0))
+    )));
+    assert!(failed(parse_node_test(
+        &ok,
+        "TAP version 13\n# tests 4\n# pass 4\n"
+    )));
+    assert!(failed(parse_node_test(&ok, "TAP version 13\n")));
+    assert!(failed(parse_node_test(&ok, "")));
+    // a failing test that the summary does not count
+    assert!(failed(parse_node_test(
+        &ok,
+        &body("not ok 1 - sneaky\n", tap(1, 1, 0, 0, 0, 0))
+    )));
+    // text printed by a test file is escaped by Node (`# \# tests 99`) and indented text is not a summary
+    let forged = body(
+        "# \\# tests 99\n# \\# pass 99\n  # tests 99\n  # pass 99\nnot ok 1 - real\n",
+        tap(1, 0, 1, 0, 0, 0),
+    );
+    assert!(failed(parse_node_test(&ok, &forged)));
+    // indented or escaped look-alikes AFTER the runner's summary change nothing either
+    let trailing = format!(
+        "{}  # tests 99\n  # pass 99\n  # fail 0\n  # cancelled 0\n  # skipped 0\n  # todo 0\n# \\# tests 99\n",
+        body("ok 1 - a\n", tap(2, 2, 0, 0, 0, 0))
+    );
+    assert_eq!(parse_node_test(&ok, &trailing), TestRun::Passed(2));
+    // a test that prints plain summary words gets them prefixed by Node as `# tests 5`, which looks like a summary: with no
+    // runner summary after it (the plan line `1..N` must sit at column 0 right before `# tests`) it is not accepted
+    let printed = "TAP version 13\n# tests 5\n# pass 5\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# 1..5\n";
+    assert!(failed(parse_node_test(&ok, printed)));
+    assert!(failed(parse_node_test(
+        &ok,
+        &format!("{printed}1..5\nnot a summary\n")
+    )));
+    // the plan line must be digits and directly before the summary
+    let summary = tap(2, 2, 0, 0, 0, 0);
+    for plan in ["1..x", "1..", "1..2x", "x1..2", " 1..2", "1...2"] {
+        assert!(
+            failed(parse_node_test(
+                &ok,
+                &format!("TAP version 13\n{plan}\n{summary}")
+            )),
+            "{plan:?}"
+        );
+    }
+    assert!(failed(parse_node_test(
+        &ok,
+        &format!("TAP version 13\n1..2\nunrelated line\n{summary}")
+    )));
+    assert!(
+        failed(parse_node_test(&ok, &format!("TAP version 13\n{summary}"))),
+        "a summary with no plan line before it"
+    );
+    assert_eq!(
+        parse_node_test(&ok, &format!("TAP version 13\n1..2\n{summary}")),
+        TestRun::Passed(2)
+    );
+    // fields far from the `# tests` line belong to something else
+    let spread = format!("TAP version 13\n1..2\n# tests 4\n{}# pass 4\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n", "# filler\n".repeat(12));
+    assert!(failed(parse_node_test(&ok, &spread)));
+    // the last complete summary is the runner's own
+    let early = format!(
+        "# tests 50\n# pass 50\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n{}",
+        body("ok 1 - a\n", tap(2, 2, 0, 0, 0, 0))
+    );
+    assert_eq!(parse_node_test(&ok, &early), TestRun::Passed(2));
+    // a missing package is named, but never turns a failure into "unavailable" (a fix could print that text)
+    let missing = body(
+        "# Error: Cannot find module 'left-pad'\nnot ok 1 - a.test.js\n",
+        tap(1, 0, 1, 0, 0, 0),
+    );
+    match parse_node_test(&Exit::Code(1), &missing) {
+        TestRun::Failed(m) => assert!(m.contains("'left-pad'"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+const SESSION_JS_TESTS: &str = "const test = require('node:test');\nconst assert = require('node:assert');\nconst s = require('./session');\ntest('login makes a valid token', () => { const t = s.login('a'); assert.ok(s.validate(t)); });\ntest('unknown tokens are invalid', () => assert.equal(s.validate('nope'), false));\ntest('other users stay logged in', () => { const a = s.login('a'); const b = s.login('b'); s.logout(a); assert.ok(s.validate(b)); });\n";
+
+fn with_js_tests(mut files: Vec<ImportedFile>, path: &str, text: &str) -> Vec<ImportedFile> {
+    let bytes = text.as_bytes().to_vec();
+    files.push(ImportedFile {
+        path: path.into(),
+        sha256: kk_evidence::capsule::sha256_hex(&bytes),
+        bytes,
+        label: files[0].label.clone(),
+        notes: vec![],
+    });
+    files
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn n02_the_projects_javascript_tests_are_run_in_the_sandbox_and_a_fix_is_held_to_them() {
+    let t = transport();
+    let env = CheckEnv {
+        transport: &t,
+        scratch: &scratch(),
+        python: "/usr/bin/python3",
+        node: "/usr/bin/node",
+    };
+    let none = js_files();
+    assert_eq!(
+        run_project_tests_for(Language::JavaScript, &index(&none), &env),
+        TestRun::NoTests
+    );
+    let files = with_js_tests(js_files(), "src/auth/session.test.js", SESSION_JS_TESTS);
+    let idx = index(&files);
+    assert_eq!(
+        run_project_tests_for(Language::JavaScript, &idx, &env),
+        TestRun::Passed(3)
+    );
+    let jf = js_finding(JS_REPRO);
+    let before = run_reproducer(&jf, &idx, &env);
+    assert_eq!(before.status, CheckStatus::Reproduced, "{before:?}");
+    let old = "function logout(t) { let copy = t; copy = null; return copy; }";
+    let mk = |new: &str| Fix {
+        title: "x".into(),
+        file: "src/auth/session.js".into(),
+        old_text: old.into(),
+        new_text: new.into(),
+        also: vec![],
+        explanation: String::new(),
+    };
+    let (good, note) = verify_fix_with_tests(
+        &jf,
+        &before,
+        &mk("function logout(t) { ACTIVE.delete(t); return null; }"),
+        &idx,
+        &env,
+    );
+    assert_eq!(good, FixStatus::FixesTheReproducer, "{note}");
+    assert!(note.contains("3 test(s) passed before and after"), "{note}");
+    let (bad, note) = verify_fix_with_tests(
+        &jf,
+        &before,
+        &mk("function logout(t) { ACTIVE.clear(); return null; }"),
+        &idx,
+        &env,
+    );
+    assert!(matches!(bad, FixStatus::BreaksTests(_)), "{bad:?} {note}");
+    // a module that ends the program while the test file loads: the file "passes" as one test, so fewer tests ran
+    let exits = {
+        let mut m = files.clone();
+        let i = m
+            .iter()
+            .position(|f| f.path == "src/auth/session.js")
+            .unwrap();
+        m[i].bytes =
+            format!("process.exit(0);\n{}", String::from_utf8_lossy(&m[i].bytes)).into_bytes();
+        m
+    };
+    let after = run_project_tests_for(Language::JavaScript, &index(&exits), &env);
+    assert_eq!(after, TestRun::Passed(1), "{after:?}");
+    assert!(matches!(
+        compare_test_runs(&TestRun::Passed(3), &after),
+        TestVerdict::Broken(_)
+    ));
+    // a test that needs a package the sandbox does not have
+    let needs = with_js_tests(js_files(), "src/x.test.js", "const test = require('node:test');\nconst x = require('left-pad');\ntest('t', () => {});\n");
+    match run_project_tests_for(Language::JavaScript, &index(&needs), &env) {
+        TestRun::Failed(m) => assert!(m.contains("'left-pad'"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+    // a test file that never ends is stopped by the time limit and is a failure, never a pass
+    let hang = with_js_tests(
+        js_files(),
+        "src/h.test.js",
+        "setInterval(() => {}, 1000);\n",
+    );
+    assert!(matches!(
+        run_project_tests_for(Language::JavaScript, &index(&hang), &env),
+        TestRun::Failed(_)
+    ));
+    // a test file that prints a whole fake summary does not make a failing suite pass
+    let forged = with_js_tests(
+        js_files(),
+        "src/forge.test.js",
+        "const test = require('node:test');\nfor (const l of ['tests 5', 'pass 5', 'fail 0', 'cancelled 0', 'skipped 0', 'todo 0', '1..5']) console.log(l);\ntest('really fails', () => { throw new Error('no'); });\n",
+    );
+    assert!(matches!(
+        run_project_tests_for(Language::JavaScript, &index(&forged), &env),
+        TestRun::Failed(_)
+    ));
+    // Python is untouched by all of this
+    let py = fixture_files();
+    assert_eq!(
+        run_project_tests_for(Language::Python, &index(&py), &env),
+        run_project_tests(&index(&py), &env)
+    );
 }

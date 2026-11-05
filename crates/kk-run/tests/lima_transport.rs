@@ -172,3 +172,46 @@ sys.stdin.readline()
     assert_eq!(b.audit.len(), 1);
     assert!(b.audit[0].op == "log.note", "{:?}", b.audit);
 }
+
+fn in_vm(script: &str) -> String {
+    let o = std::process::Command::new("limactl")
+        .args(["shell", "--tty=false", "kak", "--", "bash", "-lc", script])
+        .output()
+        .expect("limactl");
+    String::from_utf8_lossy(&o.stdout).into_owned()
+}
+
+#[test]
+#[ignore]
+fn l03_a_worker_that_hangs_is_stopped_inside_the_vm_and_the_caller_gets_its_answer() {
+    use kk_sandbox::{run_with, SandboxSpec};
+    let mut spec = SandboxSpec::new("/usr/bin/python3");
+    let marker = format!(
+        "kk-l03-{}-{}",
+        std::process::id(),
+        std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos()
+    );
+    spec.args = vec![
+        "-c".into(),
+        format!("import time\nprint('started', flush=True)\ntime.sleep(300)  # {marker}\n").into(),
+    ];
+    spec.limits.wall = Duration::from_secs(4);
+    let t = transport();
+    let started = std::time::Instant::now();
+    let o = run_with(&spec, &t).expect("the run returns");
+    let took = started.elapsed();
+    assert_eq!(o.exit, Exit::TimedOut);
+    assert!(took < Duration::from_secs(30), "returned after {took:?}");
+    assert!(String::from_utf8_lossy(&o.stdout).contains("started"));
+    // nothing is left running inside the VM, and no scope is left behind
+    std::thread::sleep(Duration::from_secs(2));
+    let (head, tail) = marker.split_at(1);
+    assert_eq!(
+        in_vm(&format!("pgrep -fc '[{head}]{tail}' || true")).trim(),
+        "0"
+    );
+    assert_eq!(
+        in_vm("systemctl --user list-units 'kk-worker-*' --no-legend --plain 2>/dev/null | grep -c running || true").trim(),
+        "0"
+    );
+}

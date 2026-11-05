@@ -881,6 +881,135 @@ pub fn run_project_tests(files: &BTreeMap<String, &ImportedFile>, env: &CheckEnv
     }
 }
 
+/// The project's own tests for one language. Python runs `unittest`; JavaScript runs Node's built-in `node --test`.
+pub fn run_project_tests_for(
+    language: Language,
+    files: &BTreeMap<String, &ImportedFile>,
+    env: &CheckEnv<'_>,
+) -> TestRun {
+    match language {
+        Language::Python => run_project_tests(files, env),
+        Language::JavaScript => run_node_tests(files, env),
+    }
+}
+
+fn is_js_test_file(path: &str) -> bool {
+    is_test_path(path)
+        && matches!(
+            path.rsplit_once('.')
+                .map(|(_, e)| e.to_ascii_lowercase())
+                .as_deref(),
+            Some("js" | "mjs" | "cjs")
+        )
+}
+
+fn run_node_tests(files: &BTreeMap<String, &ImportedFile>, env: &CheckEnv<'_>) -> TestRun {
+    if !files.keys().any(|p| is_js_test_file(p)) {
+        return TestRun::NoTests;
+    }
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir: PathBuf = env
+        .scratch
+        .join(format!("jstests-{}-{n}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let project = dir.join("project");
+    for (p, f) in files {
+        let dest = project.join(p);
+        if dest.parent().map(fs::create_dir_all).transpose().is_err()
+            || fs::write(&dest, &f.bytes).is_err()
+        {
+            let _ = fs::remove_dir_all(&dir);
+            return TestRun::Unavailable("could not prepare the project".into());
+        }
+    }
+    let mut spec = SandboxSpec::new(env.node);
+    spec.args = vec![
+        "--test".into(),
+        "--test-reporter=tap".into(),
+        "--test-concurrency=1".into(),
+    ];
+    spec.binds.push(Bind {
+        host: project,
+        inside: "/project".into(),
+        writable: false,
+    });
+    spec.chdir = Some("/project".into());
+    spec.limits = Limits {
+        wall: Duration::from_secs(60),
+        cpu_secs: 30,
+        ..Limits::default()
+    };
+    let result = run_with(&spec, env.transport);
+    let _ = fs::remove_dir_all(&dir);
+    match result {
+        Ok(o) => parse_node_test(&o.exit, &String::from_utf8_lossy(&o.stdout)),
+        Err(SandboxError::Unsupported(m)) => TestRun::Unavailable(m.to_string()),
+        Err(e) => TestRun::Unavailable(e.to_string()),
+    }
+}
+
+/// Reads a `node --test --test-reporter=tap` run. Anything not clearly a pass is not a pass: the runner's own summary must be
+/// present, complete and add up, its failure counts must agree with the `not ok` lines and with the exit status, and a run
+/// where nothing passed (nothing ran, or everything was skipped) is no evidence. Text a test file prints is escaped by Node
+/// (`# \# tests 99`), so only the runner's own column-0 summary is read, and the last one wins.
+pub fn parse_node_test(exit: &Exit, stdout: &str) -> TestRun {
+    let hint = missing_package(Language::JavaScript, stdout)
+        .map(|p| format!(" (it needs the package '{p}', which is not in the sandbox)"))
+        .unwrap_or_default();
+    let lines: Vec<&str> = stdout.lines().collect();
+    let count = |l: &str, key: &str| -> Option<u32> {
+        l.strip_prefix(key)
+            .and_then(|r| r.trim().parse::<u32>().ok())
+    };
+    // the runner's own summary: `# tests N` directly after its plan line `1..N` (text a test prints is prefixed by Node, so a
+    // printed plan line reads `# 1..5` and can not stand in for it)
+    let is_plan = |l: &str| {
+        l.strip_prefix("1..")
+            .is_some_and(|r| !r.is_empty() && r.bytes().all(|b| b.is_ascii_digit()))
+    };
+    let Some(at) = lines
+        .iter()
+        .enumerate()
+        .rposition(|(i, l)| count(l, "# tests ").is_some() && i > 0 && is_plan(lines[i - 1]))
+    else {
+        return TestRun::Failed(format!("no test summary{hint}"));
+    };
+    let field = |key: &str| lines[at..].iter().take(8).find_map(|l| count(l, key));
+    let (Some(tests), Some(pass), Some(fail), Some(cancelled), Some(skipped), Some(todo)) = (
+        field("# tests "),
+        field("# pass "),
+        field("# fail "),
+        field("# cancelled "),
+        field("# skipped "),
+        field("# todo "),
+    ) else {
+        return TestRun::Failed(format!("the test summary is incomplete{hint}"));
+    };
+    if tests != pass + fail + cancelled + skipped + todo {
+        return TestRun::Failed("the test summary does not add up".into());
+    }
+    if fail > 0 || cancelled > 0 {
+        return TestRun::Failed(format!(
+            "{fail} test(s) failed and {cancelled} were cancelled{hint}"
+        ));
+    }
+    let uncounted_failure = lines.iter().any(|l| {
+        let l = l.trim_start();
+        l.starts_with("not ok ") && !l.contains("# TODO") && !l.contains("# SKIP")
+    });
+    if uncounted_failure {
+        return TestRun::Failed("a test failed that the summary does not count".into());
+    }
+    if *exit != Exit::Code(0) {
+        return TestRun::Failed(format!("the test run ended with {exit:?}{hint}"));
+    }
+    if tests == 0 || pass == 0 {
+        return TestRun::NoTests;
+    }
+    TestRun::Passed(pass)
+}
+
 /// `verify_fix`, then the project's own tests before and after. A fix that makes passing tests fail is not accepted.
 pub fn verify_fix_with_tests(
     finding: &Finding,
@@ -893,7 +1022,7 @@ pub fn verify_fix_with_tests(
     if status != FixStatus::FixesTheReproducer {
         return (status, String::new());
     }
-    let before_tests = run_project_tests(files, env);
+    let before_tests = run_project_tests_for(finding.language, files, env);
     let Some(new_bytes) = apply_all(files, fix) else {
         return (status, String::new());
     };
@@ -915,7 +1044,7 @@ pub fn verify_fix_with_tests(
     for p in &patched {
         map.insert(p.path.clone(), p);
     }
-    let after_tests = run_project_tests(&map, env);
+    let after_tests = run_project_tests_for(finding.language, &map, env);
     match compare_test_runs(&before_tests, &after_tests) {
         TestVerdict::Maintained(note) => (status, note),
         TestVerdict::Broken(note) => (FixStatus::BreaksTests(note.clone()), note),
@@ -963,8 +1092,10 @@ pub fn verify_fix(
     }
     let after = run_reproducer(finding, &map, env);
     let control_after = after.stdout.lines().any(|l| l.trim() == "CONTROL_OK");
+    let verdict_after = after.stdout.lines().any(|l| l.trim() == "NOT REPRODUCED");
     match after.status {
         CheckStatus::NotReproduced if !control_after => FixStatus::NotChecked("after the change the script no longer shows the normal behaviour working (no CONTROL_OK), so this cannot be told apart from removing the feature".into()),
+        CheckStatus::NotReproduced if !verdict_after => FixStatus::NotChecked("after the change the script ended without printing its NOT REPRODUCED verdict, so it cannot be told apart from the code ending the program early".into()),
         CheckStatus::NotReproduced => FixStatus::FixesTheReproducer,
         CheckStatus::Reproduced => FixStatus::StillReproduced,
         other => FixStatus::NotChecked(format!(
