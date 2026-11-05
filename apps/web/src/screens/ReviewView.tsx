@@ -424,8 +424,15 @@ export function ReviewView(props: { id: string; config: Config; onUpdate?: () =>
     setTab("progress");
     setJob(null);
     void load();
-    const t = setInterval(load, 700);
-    onCleanup(() => clearInterval(t));
+    // The service pushes a notice whenever a review changes, which App turns into this event. The timer is only a safety
+    // net for a stream that is down.
+    const changed = () => void load();
+    window.addEventListener("kk-changed", changed);
+    const t = setInterval(load, 5000);
+    onCleanup(() => {
+      clearInterval(t);
+      window.removeEventListener("kk-changed", changed);
+    });
   });
   const tabs: [Tab, Key][] = [["progress", "tab.progress"], ["protected", "tab.protected"], ["source", "tab.source"], ["findings", "tab.findings"], ["release", "tab.release"]];
   return (

@@ -124,6 +124,21 @@ try {
   check("and says what was not checked", (await disc.innerText()).includes("combined excerpts"));
   await axeCheck(page, "release tab with the disclosure card");
   check("review runs in the sandbox and opens on the release", true);
+  // an open review is refreshed by the service's change notices, not polled every second
+  {
+    let polls = 0;
+    const count = (r) => { if (r.method() === "GET" && /\/api\/jobs\/job-\d+$/.test(new URL(r.url()).pathname)) polls++; };
+    page.on("request", count);
+    await page.waitForTimeout(4000);
+    const idle = polls;
+    polls = 0;
+    await page.evaluate(() => window.dispatchEvent(new Event("kk-changed")));
+    await page.waitForTimeout(400);
+    const pushed = polls;
+    page.off("request", count);
+    check("an open review is not polled every second while nothing changes", idle <= 1, `${idle} requests in 4 seconds`);
+    check("a change notice refreshes the open review at once", pushed >= 1, `${pushed} requests`);
+  }
   await page.screenshot({ path: join(shots, "02-release.png"), fullPage: true });
   await axeCheck(page, "release");
   const digestText = await page.locator("p", { hasText: "Digest" }).first().innerText();
