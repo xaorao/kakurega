@@ -434,3 +434,48 @@ impl kk_memory::Embedder for OllamaEmbedder {
         }
     }
 }
+
+#[cfg(test)]
+mod live {
+    use super::*;
+    use kk_service::JobRunner;
+
+    /// Needs a local Ollama with qwen2.5:1.5b. Run with `cargo test -p kk-cli --bin kaku -- --ignored live::`.
+    #[test]
+    #[ignore]
+    fn live_a_real_chat_reply_carries_the_model_s_own_prompt_count() {
+        let runner = ReviewRunner {
+            model: "qwen2.5:1.5b".into(),
+            ollama: "http://127.0.0.1:11434".into(),
+            transport: Transport::Local,
+            worker_binary: PathBuf::new(),
+            scratch: std::env::temp_dir(),
+            commitment_key: [0; 32],
+            max_turns: 1,
+            scripted: None,
+            context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
+        };
+        let messages = vec![
+            ChatMessage::new("system", "Answer in one short sentence."),
+            ChatMessage::new(
+                "user",
+                "तिमाही रिपोर्ट में क्या बताया गया है? Answer in English.",
+            ),
+        ];
+        let estimated = kk_route::tokens::estimate_messages(&messages);
+        let reply = runner.chat(messages).expect("the local model answers");
+        println!(
+            "estimated {estimated}, counted {:?}, reply {:?}",
+            reply.prompt_tokens, reply.text
+        );
+        let counted = reply
+            .prompt_tokens
+            .expect("a real reply carries the model's own count");
+        assert!(!reply.simulated && counted > 0);
+        assert!(
+            (counted as f64) < (estimated as f64) * 3.0
+                && (counted as f64) > (estimated as f64) / 3.0,
+            "estimate {estimated} and count {counted} are in the same range"
+        );
+    }
+}
