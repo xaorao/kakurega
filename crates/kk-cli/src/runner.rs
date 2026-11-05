@@ -54,6 +54,7 @@ impl JobRunner for ReviewRunner {
             transport: self.transport.clone(),
             scratch: self.scratch.clone(),
             python: "/usr/bin/python3".into(),
+            node: "/usr/bin/node".into(),
             max_turns: self.max_turns,
             now,
             ttl_secs: 86_400,

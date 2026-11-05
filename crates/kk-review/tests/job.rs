@@ -83,6 +83,7 @@ fn config(name: &str) -> JobConfig {
         transport,
         scratch,
         python: "/usr/bin/python3".into(),
+        node: "/usr/bin/node".into(),
         max_turns: 12,
         now: 1_700_000_000,
         ttl_secs: 86_400,

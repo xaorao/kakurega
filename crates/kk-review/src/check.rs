@@ -174,6 +174,86 @@ pub fn python_closure(
     Ok(seen.into_iter().collect())
 }
 
+fn js_specifiers(source: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let bytes: Vec<char> = source.chars().collect();
+    let text: String = bytes.iter().collect();
+    for marker in ["require(", "import(", "from ", "import "] {
+        let mut rest = text.as_str();
+        while let Some(i) = rest.find(marker) {
+            rest = &rest[i + marker.len()..];
+            let t = rest.trim_start();
+            let mut chars = t.chars();
+            let q = match chars.next() {
+                Some(q @ ('\'' | '"')) => q,
+                _ => continue,
+            };
+            let spec: String = chars.take_while(|c| *c != q && *c != '\n').collect();
+            if !spec.is_empty() {
+                out.push(spec);
+            }
+        }
+    }
+    out
+}
+
+fn js_resolve(from: &str, spec: &str, files: &BTreeMap<String, &ImportedFile>) -> Option<String> {
+    let dir = Path::new(from).parent().unwrap_or(Path::new(""));
+    let mut parts: Vec<String> = dir
+        .components()
+        .filter_map(|c| c.as_os_str().to_str().map(String::from))
+        .collect();
+    for seg in spec.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            s => parts.push(s.to_string()),
+        }
+    }
+    let base = parts.join("/");
+    let mut candidates = vec![base.clone()];
+    for ext in [".js", ".mjs", ".cjs"] {
+        candidates.push(format!("{base}{ext}"));
+    }
+    for ext in [".js", ".mjs", ".cjs"] {
+        candidates.push(format!("{base}/index{ext}"));
+    }
+    candidates.into_iter().find(|c| files.contains_key(c))
+}
+
+/// The cited file plus every file it reaches through literal relative imports. Bare package names are not followed:
+/// there is no `node_modules` in the sample, so a package the code needs is named in the error.
+pub fn js_closure(
+    entry: &str,
+    files: &BTreeMap<String, &ImportedFile>,
+) -> Result<Vec<String>, ClosureError> {
+    if !files.contains_key(entry) {
+        return Err(ClosureError::EntryMissing);
+    }
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![entry.to_string()];
+    while let Some(path) = stack.pop() {
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        let f = files[&path];
+        if f.label.level >= Level::Restricted {
+            return Err(ClosureError::NeedsRestrictedFile(path));
+        }
+        let source = String::from_utf8_lossy(&f.bytes).to_string();
+        for spec in js_specifiers(&source) {
+            if spec.starts_with("./") || spec.starts_with("../") {
+                if let Some(target) = js_resolve(&path, &spec, files) {
+                    stack.push(target);
+                }
+            }
+        }
+    }
+    Ok(seen.into_iter().collect())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckStatus {
     Reproduced,
@@ -194,6 +274,7 @@ pub struct CheckEnv<'a> {
     pub transport: &'a Transport,
     pub scratch: &'a Path,
     pub python: &'a str,
+    pub node: &'a str,
 }
 
 pub fn run_reproducer(
@@ -208,17 +289,11 @@ pub fn run_reproducer(
             sample_paths: vec![],
         };
     }
-    if finding.language != Language::Python {
-        return CheckResult {
-            status: CheckStatus::Unavailable(format!(
-                "reproducers in {} cannot be run yet",
-                finding.language.as_str()
-            )),
-            stdout: String::new(),
-            sample_paths: vec![],
-        };
-    }
-    let sample_paths = match python_closure(&finding.file, files) {
+    let closure = match finding.language {
+        Language::Python => python_closure(&finding.file, files),
+        Language::JavaScript => js_closure(&finding.file, files),
+    };
+    let sample_paths = match closure {
         Ok(p) => p,
         Err(ClosureError::NeedsRestrictedFile(p)) => {
             return CheckResult {
@@ -263,7 +338,11 @@ pub fn run_reproducer(
             };
         }
     }
-    let script = dir.join("repro.py");
+    let (script_name, interpreter) = match finding.language {
+        Language::Python => ("repro.py", env.python),
+        Language::JavaScript => ("repro.mjs", env.node),
+    };
+    let script = dir.join(script_name);
     if fs::write(&script, finding.reproducer.as_bytes()).is_err() {
         return CheckResult {
             status: CheckStatus::Failed("could not write the reproducer".into()),
@@ -279,9 +358,16 @@ pub fn run_reproducer(
         if round == 2 {
             let _ = fs::write(sample.join(&finding.file), b"");
         }
-        let mut spec = SandboxSpec::new(env.python);
-        spec.args = vec!["-B".into(), "/repro/repro.py".into()];
-        spec.env = vec![("PYTHONPATH".into(), "/sample".into())];
+        let mut spec = SandboxSpec::new(interpreter);
+        match finding.language {
+            Language::Python => {
+                spec.args = vec!["-B".into(), "/repro/repro.py".into()];
+                spec.env = vec![("PYTHONPATH".into(), "/sample".into())];
+            }
+            Language::JavaScript => {
+                spec.args = vec!["/repro/repro.mjs".into()];
+            }
+        }
         spec.binds.push(Bind {
             host: sample.clone(),
             inside: "/sample".into(),
@@ -289,7 +375,7 @@ pub fn run_reproducer(
         });
         spec.binds.push(Bind {
             host: script.clone(),
-            inside: "/repro/repro.py".into(),
+            inside: format!("/repro/{script_name}").into(),
             writable: false,
         });
         spec.chdir = Some("/sample".into());

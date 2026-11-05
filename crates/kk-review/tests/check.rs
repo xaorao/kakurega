@@ -1,6 +1,6 @@
 use kk_review::check::{
-    apply_all, apply_fix, clean_text, parse_finding, parse_fix, parse_unittest, python_closure,
-    run_project_tests, run_reproducer, unified_diff, unified_diff_all, verify_fix,
+    apply_all, apply_fix, clean_text, js_closure, parse_finding, parse_fix, parse_unittest,
+    python_closure, run_project_tests, run_reproducer, unified_diff, unified_diff_all, verify_fix,
     verify_fix_with_tests, CheckEnv, CheckStatus, ClosureError, Edit, Finding, Fix, FixStatus,
     Language, TestRun,
 };
@@ -156,6 +156,7 @@ fn c03_the_kernel_reproduces_the_real_defect_and_does_not_confirm_a_false_one() 
         transport: &t,
         scratch: &scratch(),
         python: "/usr/bin/python3",
+        node: "/usr/bin/node",
     };
     let real = run_reproducer(&finding(REPRO), &idx, &env);
     assert_eq!(real.status, CheckStatus::Reproduced, "{real:?}");
@@ -177,6 +178,7 @@ fn c04_hostile_or_broken_reproducers_never_become_confirmations() {
         transport: &t,
         scratch: &scratch(),
         python: "/usr/bin/python3",
+        node: "/usr/bin/node",
     };
     let cases: Vec<(&str, &str)> = vec![
         ("print('REPRODUCED')\nimport sys; sys.exit(3)\n", "ended"),
@@ -274,6 +276,7 @@ fn f02_a_fix_is_only_called_good_when_the_reproducer_stops_reproducing_and_still
         transport: &t,
         scratch: &scratch(),
         python: "/usr/bin/python3",
+        node: "/usr/bin/node",
     };
     let f = finding(REPRO);
     let before = run_reproducer(&f, &idx, &env);
@@ -355,6 +358,7 @@ fn c05_a_script_that_prints_the_marker_without_touching_the_cited_code_is_not_a_
         transport: &t,
         scratch: &scratch(),
         python: "/usr/bin/python3",
+        node: "/usr/bin/node",
     };
     for (name, code) in [
         ("unconditional marker", "print('REPRODUCED')\n"),
@@ -467,6 +471,7 @@ fn f05_a_fix_that_stops_the_reproducer_but_breaks_the_projects_passing_tests_is_
         transport: &t,
         scratch: &scratch(),
         python: "/usr/bin/python3",
+        node: "/usr/bin/node",
     };
     assert_eq!(
         run_project_tests(&idx, &env),
@@ -691,22 +696,123 @@ fn c20_a_finding_names_its_language_python_by_default_and_unknown_names_are_refu
     assert_eq!(Language::parse("node"), None);
 }
 
+fn js_files() -> Vec<ImportedFile> {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dst = std::env::temp_dir().join(format!(
+        "kk-js-fixture-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = fs::remove_dir_all(&dst);
+    fs::create_dir_all(dst.join("src/auth")).unwrap();
+    fs::create_dir_all(dst.join("src/util")).unwrap();
+    fs::write(dst.join("src/auth/session.js"), "const tokens = require('./tokens');\nconst ACTIVE = new Set();\nfunction login(user) { const t = tokens.make(user); ACTIVE.add(t); return t; }\n// logout only clears a local copy, so the token stays valid\nfunction logout(t) { let copy = t; copy = null; return copy; }\nfunction validate(t) { return ACTIVE.has(t); }\nmodule.exports = { login, logout, validate };\n").unwrap();
+    fs::write(
+        dst.join("src/auth/tokens.js"),
+        "let n = 0;\nexports.make = (user) => `${user}-${++n}`;\n",
+    )
+    .unwrap();
+    fs::write(
+        dst.join("src/util/backoff.mjs"),
+        "export function retryDelay(n) { return 2 ** n; }\n",
+    )
+    .unwrap();
+    fs::write(dst.join("src/index.js"), "const s = require('./auth/session');\nimport('./util/backoff.mjs');\nconst lodash = require('lodash');\nmodule.exports = { s, lodash };\n").unwrap();
+    fs::write(dst.join(".env"), "SECRET=1\n").unwrap();
+    scan_tree(&dst, Level::Internal).files
+}
+
+const JS_REPRO: &str = "import { createRequire } from 'node:module';\nconst require = createRequire('/sample/');\nconst session = require('/sample/src/auth/session.js');\nconst t = session.login('alice');\nif (!session.validate(t)) throw new Error('control');\nconsole.log('CONTROL_OK');\nsession.logout(t);\nconsole.log(session.validate(t) ? 'REPRODUCED' : 'NOT REPRODUCED');\n";
+
+fn js_finding(code: &str) -> Finding {
+    Finding {
+        title: "Token not revoked".into(),
+        file: "src/auth/session.js".into(),
+        line: 5,
+        explanation: "logout leaves the token valid".into(),
+        reproducer: code.into(),
+        language: Language::JavaScript,
+    }
+}
+
 #[test]
-fn c21_a_javascript_reproducer_is_unavailable_for_now_and_is_never_run_as_python() {
-    let mut f = finding("print('CONTROL_OK')\nprint('REPRODUCED')\n");
-    f.language = Language::JavaScript;
-    let files = BTreeMap::new();
-    let env = CheckEnv {
-        transport: &Transport::Local,
-        scratch: &std::env::temp_dir(),
-        python: "/definitely/not/an/interpreter",
-    };
-    let r = run_reproducer(&f, &files, &env);
+fn c21_the_javascript_sample_follows_relative_imports_only() {
+    let files = js_files();
+    let idx = index(&files);
     assert_eq!(
-        r.status,
-        CheckStatus::Unavailable("reproducers in javascript cannot be run yet".into()),
-        "{:?}",
-        r.status
+        js_closure("src/auth/session.js", &idx).unwrap(),
+        vec!["src/auth/session.js", "src/auth/tokens.js"]
     );
-    assert!(r.stdout.is_empty() && r.sample_paths.is_empty());
+    let top = js_closure("src/index.js", &idx).unwrap();
+    assert!(
+        top.contains(&"src/util/backoff.mjs".to_string()),
+        "dynamic import followed: {top:?}"
+    );
+    assert!(top.contains(&"src/auth/tokens.js".to_string()));
+    assert!(!top.iter().any(|p| p.contains("env")), "{top:?}");
+    assert_eq!(js_closure("nope.js", &idx), Err(ClosureError::EntryMissing));
+    let mut withheld = files.clone();
+    for f in &mut withheld {
+        if f.path == "src/auth/tokens.js" {
+            f.label = kk_types::label::Label::new(Level::Restricted).with_compartment("secrets");
+        }
+    }
+    let idx2 = index(&withheld);
+    assert_eq!(
+        js_closure("src/auth/session.js", &idx2),
+        Err(ClosureError::NeedsRestrictedFile(
+            "src/auth/tokens.js".into()
+        ))
+    );
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn c22_javascript_reproducers_confirm_a_real_defect_and_hostile_ones_never_pass() {
+    let files = js_files();
+    let idx = index(&files);
+    let t = transport();
+    let env = CheckEnv {
+        transport: &t,
+        scratch: &scratch(),
+        python: "/usr/bin/python3",
+        node: "/usr/bin/node",
+    };
+    let real = run_reproducer(&js_finding(JS_REPRO), &idx, &env);
+    assert_eq!(real.status, CheckStatus::Reproduced, "{real:?}");
+    let decoy = "import { createRequire } from 'node:module';\nconst require = createRequire('/sample/');\nconst tokens = require('/sample/src/auth/tokens.js');\nconsole.log('CONTROL_OK');\nconsole.log(tokens.make('a') === 'zzz' ? 'REPRODUCED' : 'NOT REPRODUCED');\n";
+    let r = run_reproducer(&js_finding(decoy), &idx, &env);
+    assert_eq!(r.status, CheckStatus::NotReproduced, "{r:?}");
+    let no_control = "console.log('REPRODUCED');\n";
+    let r = run_reproducer(&js_finding(no_control), &idx, &env);
+    assert!(matches!(r.status, CheckStatus::Failed(_)), "{r:?}");
+    let independent = "console.log('CONTROL_OK');\nconsole.log('REPRODUCED');\n";
+    let r = run_reproducer(&js_finding(independent), &idx, &env);
+    assert!(
+        matches!(r.status, CheckStatus::Failed(_)),
+        "emptied file still reproduces: {r:?}"
+    );
+    let cases: Vec<(&str, &str)> = vec![
+        ("console.log('REPRODUCED'); process.exit(3);\n", "ended"),
+        ("console.log('REPRODUCED ' + Date.now());\n", "nondeterministic"),
+        ("import net from 'node:net';\nconst s = net.connect(80, '93.184.216.34');\ns.on('connect', () => { console.log('CONTROL_OK'); console.log('REPRODUCED'); });\ns.on('error', () => process.exit(4));\nsetTimeout(() => process.exit(5), 3000);\n", "ended"),
+        ("import fs from 'node:fs';\nconsole.log(fs.readFileSync('/etc/hostname','utf8'));\nconsole.log('REPRODUCED');\n", "ended"),
+        ("import fs from 'node:fs';\nfs.writeFileSync('/sample/x', 'y');\nconsole.log('CONTROL_OK');\nconsole.log('REPRODUCED');\n", "ended"),
+        ("throw new Error('boom');\n", "ended"),
+        ("", "unavailable"),
+    ];
+    for (code, expect) in cases {
+        let r = run_reproducer(&js_finding(code), &idx, &env);
+        assert_ne!(r.status, CheckStatus::Reproduced, "{code}: {r:?}");
+        match expect {
+            "ended" => assert!(matches!(r.status, CheckStatus::Failed(_)), "{code}: {r:?}"),
+            "nondeterministic" => {
+                assert_eq!(r.status, CheckStatus::Nondeterministic, "{code}: {r:?}")
+            }
+            _ => assert!(
+                matches!(r.status, CheckStatus::Unavailable(_)),
+                "{code}: {r:?}"
+            ),
+        }
+    }
 }

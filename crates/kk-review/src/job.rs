@@ -28,6 +28,7 @@ pub struct JobConfig {
     pub transport: Transport,
     pub scratch: PathBuf,
     pub python: String,
+    pub node: String,
     pub max_turns: u32,
     pub now: i64,
     pub ttl_secs: i64,
@@ -186,6 +187,7 @@ pub fn run_job(
         transport: &cfg.transport,
         scratch: &cfg.scratch,
         python: &cfg.python,
+        node: &cfg.node,
     };
     let written: Vec<_> = broker
         .written
