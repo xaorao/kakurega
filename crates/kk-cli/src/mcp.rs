@@ -154,6 +154,8 @@ pub struct Ctx {
     roots: Vec<std::path::PathBuf>,
     /// Tier 0: only the tools that read. The tools that start a review or ask for an approval are neither listed nor callable.
     read_only: bool,
+    /// When set, only these tools are listed and callable, whatever else the tool list holds.
+    allow: Option<Vec<String>>,
 }
 
 impl Ctx {
@@ -168,7 +170,14 @@ impl Ctx {
         Ctx {
             roots,
             read_only: false,
+            allow: None,
         }
+    }
+
+    /// Limits this connection to exactly the named tools.
+    pub fn allow(mut self, names: Vec<String>) -> Ctx {
+        self.allow = Some(names);
+        self
     }
 
     pub fn read_only(mut self, on: bool) -> Ctx {
@@ -178,16 +187,18 @@ impl Ctx {
 
     /// The tools this connection may see and call.
     fn visible(&self) -> Value {
-        let all = tools();
-        if !self.read_only {
-            return all;
-        }
         Value::Array(
-            all.as_array()
+            tools()
+                .as_array()
                 .cloned()
                 .unwrap_or_default()
                 .into_iter()
-                .filter(|t| t["annotations"]["readOnlyHint"] == true)
+                .filter(|t| !self.read_only || t["annotations"]["readOnlyHint"] == true)
+                .filter(|t| {
+                    self.allow
+                        .as_ref()
+                        .is_none_or(|names| names.iter().any(|n| t["name"] == n.as_str()))
+                })
                 .collect(),
         )
     }
@@ -485,10 +496,38 @@ fn cancelled_id(line: &str) -> Option<String> {
 pub fn run(args: &[String]) -> u8 {
     use std::sync::atomic::Ordering;
     let args: std::sync::Arc<Vec<String>> = std::sync::Arc::new(args.to_vec());
-    let ctx = std::sync::Arc::new(Ctx::new(&crate::data_dir(&args)).read_only(
+    let mut ctx = Ctx::new(&crate::data_dir(&args)).read_only(
         args.iter().any(|a| a == "--read-only")
             || std::env::var("KAKU_MCP_READ_ONLY").is_ok_and(|v| v == "1"),
-    ));
+    );
+    if let Some(list) = crate::flag(&args, "--allow") {
+        let names: Vec<String> = list
+            .split(',')
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .collect();
+        let known: Vec<String> = tools()
+            .as_array()
+            .map(|t| {
+                t.iter()
+                    .filter_map(|t| t["name"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if let Some(bad) = names.iter().find(|n| !known.contains(n)) {
+            eprintln!(
+                "--allow names a tool that does not exist: {bad}\nthe tools are: {}",
+                known.join(", ")
+            );
+            return 2;
+        }
+        if names.is_empty() {
+            eprintln!("--allow needs at least one tool name");
+            return 2;
+        }
+        ctx = ctx.allow(names);
+    }
+    let ctx = std::sync::Arc::new(ctx);
     let shared = std::sync::Arc::new(Shared {
         out: std::sync::Mutex::new(std::io::stdout()),
         cancelled: Default::default(),

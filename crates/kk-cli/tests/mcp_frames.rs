@@ -458,3 +458,109 @@ fn mc14_a_call_still_running_when_input_ends_is_answered_before_the_process_leav
         (json!(1), json!(false))
     );
 }
+
+fn live_with(dir: &Path, extra: &[&str]) -> Live {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kaku"))
+        .args(["mcp", "--data-dir"])
+        .arg(dir)
+        .args(extra)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.take().unwrap();
+    let out = child.stdout.take().unwrap();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(out).lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    Live { child, stdin, rx }
+}
+
+#[test]
+fn mc15_an_allow_list_gives_the_agent_exactly_the_named_tools_and_refuses_the_rest() {
+    let dir = fresh("mc15");
+    let admin = FakeAdmin::start("tok-15");
+    admin.publish(&dir);
+    let mut s = live_with(&dir, &["--allow", "overview, verify_log"]);
+    s.send(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).to_string());
+    let names: Vec<String> = s.recv()["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(names, ["overview", "verify_log"]);
+    s.send(&call(2, "overview", json!({})));
+    assert_eq!(s.recv()["result"]["isError"], false);
+    for (id, tool, args) in [
+        (3, "start_review", json!({"repo": "/tmp", "recipient": "x"})),
+        (4, "request_approval", json!({"id": "job-1"})),
+        (5, "list_reviews", json!({})),
+        (6, "approve", json!({})),
+    ] {
+        s.send(&call(id, tool, args));
+        let r = s.recv();
+        assert_eq!(
+            (r["error"]["code"].clone(), r["id"].clone()),
+            (json!(-32602), json!(id)),
+            "{tool}: {r}"
+        );
+    }
+    assert_eq!(
+        admin.seen(),
+        ["GET /admin/overview HTTP/1.1"],
+        "only the allowed call reached the service"
+    );
+    assert!(s.close().is_empty());
+}
+
+#[test]
+fn mc16_an_allow_list_with_an_unknown_or_empty_name_stops_the_server_with_a_message() {
+    let dir = fresh("mc16");
+    for (arg, expect) in [
+        ("overview,nonsense", "does not exist: nonsense"),
+        (" , ", "at least one tool name"),
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_kaku"))
+            .args(["mcp", "--data-dir"])
+            .arg(&dir)
+            .args(["--allow", arg])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{arg}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains(expect),
+            "{arg}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            out.stdout.is_empty(),
+            "nothing but protocol frames ever goes to stdout"
+        );
+    }
+}
+
+#[test]
+fn mc17_read_only_and_an_allow_list_together_give_only_what_both_allow() {
+    let dir = fresh("mc17");
+    let mut s = live_with(&dir, &["--read-only", "--allow", "overview,start_review"]);
+    s.send(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).to_string());
+    let names: Vec<String> = s.recv()["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        names,
+        ["overview"],
+        "start_review is allowed by the list but hidden by read-only"
+    );
+    assert!(s.close().is_empty());
+}
