@@ -336,3 +336,50 @@ fn mc10_the_protocol_version_is_the_clients_own_when_supported_the_newest_otherw
     );
     assert!(s.close().is_empty());
 }
+
+#[test]
+fn mc11_probing_clients_get_empty_lists_not_errors_and_a_cursor_on_the_single_tool_page_is_refused()
+{
+    let dir = fresh("mc11");
+    let mut s = live(&dir);
+    let ask = |id: u32, method: &str, params: Value| {
+        json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string()
+    };
+    for (method, key) in [
+        ("resources/list", "resources"),
+        ("resources/templates/list", "resourceTemplates"),
+        ("prompts/list", "prompts"),
+    ] {
+        s.send(&ask(1, method, json!({})));
+        let r = s.recv();
+        assert_eq!(r["result"][key], json!([]), "{method}: {r}");
+    }
+    s.send(&ask(2, "tools/list", json!({})));
+    assert!(s.recv()["result"]["tools"].as_array().unwrap().len() >= 7);
+    s.send(&ask(3, "tools/list", json!({"cursor": null})));
+    assert!(
+        s.recv()["result"]["tools"].is_array(),
+        "a null cursor is the first page"
+    );
+    s.send(&ask(4, "tools/list", json!({"cursor": "page-2"})));
+    let r = s.recv();
+    assert_eq!(
+        (r["error"]["code"].clone(), r["id"].clone()),
+        (json!(-32602), json!(4)),
+        "{r}"
+    );
+    s.send(&ask(5, "sampling/createMessage", json!({})));
+    assert_eq!(
+        s.recv()["error"]["code"],
+        -32601,
+        "what is not offered stays unknown"
+    );
+    // capabilities still advertise tools only
+    s.send(&ask(6, "initialize", json!({})));
+    let caps = s.recv()["result"]["capabilities"].clone();
+    assert!(
+        caps.get("resources").is_none() && caps.get("prompts").is_none(),
+        "{caps}"
+    );
+    assert!(s.close().is_empty());
+}

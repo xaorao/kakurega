@@ -356,7 +356,16 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
             )
         }
         "ping" => ok(json!({})),
+        // All tools fit in one page, so a cursor can only be wrong.
+        "tools/list" if msg["params"].get("cursor").is_some_and(|c| !c.is_null()) => err(
+            -32602,
+            "there is only one page of tools; no cursor is needed",
+        ),
         "tools/list" => ok(json!({"tools": ctx.visible()})),
+        // Not offered, but clients that probe for them get an empty answer instead of an error to log.
+        "resources/list" => ok(json!({"resources": []})),
+        "resources/templates/list" => ok(json!({"resourceTemplates": []})),
+        "prompts/list" => ok(json!({"prompts": []})),
         "tools/call" => {
             let p = msg.get("params").cloned().unwrap_or(Value::Null);
             let Some(name) = p.get("name").and_then(Value::as_str) else {
