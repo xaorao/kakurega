@@ -1969,3 +1969,24 @@ fn tu45_a_fix_whose_files_need_attention_is_listed_with_the_files_named_and_no_i
         "file names from the service are cleaned before they reach the screen"
     );
 }
+
+#[test]
+fn tu46_the_footer_shows_the_model_s_own_count_against_the_window_and_warns_near_the_limit() {
+    let mut a = booted();
+    let r = enter(&mut a, "hello");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": false}, "notes_used": 0, "usage": {"context_tokens": 4321, "context_tokens_estimate": 5000, "context_window": 16384, "estimate": false, "history_turns_dropped": 0}})));
+    let t = text(&a);
+    assert!(
+        t.contains("4321 of 16384 tokens of context used (26%, counted by the model)"),
+        "{t}"
+    );
+    assert!(!t.contains("close to the model's limit"), "{t}");
+    let r = enter(&mut a, "again");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": false}, "notes_used": 0, "usage": {"context_tokens": 900, "context_tokens_estimate": 900, "context_window": 1000, "estimate": true}})));
+    let t = text(&a);
+    assert!(
+        t.contains("about 900 of 1000 tokens of context used (90%)"),
+        "{t}"
+    );
+    assert!(t.contains("close to the model's limit"), "{t}");
+}

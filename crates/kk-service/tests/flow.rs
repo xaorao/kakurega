@@ -250,6 +250,7 @@ impl JobRunner for CannedRunner {
                 route_id: "canned".into(),
                 class: "device_only".into(),
                 simulated: true,
+                prompt_tokens: None,
             });
         }
         if self.confirm {
@@ -263,6 +264,7 @@ impl JobRunner for CannedRunner {
                 route_id: "canned".into(),
                 class: "device_only".into(),
                 simulated: true,
+                prompt_tokens: None,
             })
         } else {
             Err("no model is running".into())
@@ -3586,6 +3588,7 @@ impl JobRunner for SlowRunner {
                         route_id: "slow".into(),
                         class: "device_only".into(),
                         simulated: true,
+                        prompt_tokens: None,
                     },
                     stopped: true,
                 });
@@ -3598,6 +3601,7 @@ impl JobRunner for SlowRunner {
                 route_id: "slow".into(),
                 class: "device_only".into(),
                 simulated: true,
+                prompt_tokens: None,
             },
             stopped: false,
         })
@@ -5575,4 +5579,79 @@ fn sv49_the_context_estimate_counts_by_script_so_a_hindi_message_is_not_shown_as
         "Hindi {hi} must count well above English {en} for the same {} characters",
         english.chars().count()
     );
+}
+
+/// The canned runner, except that every chat reply carries the model's own prompt count and the route names its window.
+struct MeasuredRunner {
+    inner: CannedRunner,
+}
+
+impl JobRunner for MeasuredRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        self.inner.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        let mut v = self.inner.route_info();
+        v["context_tokens"] = json!(16384);
+        v
+    }
+    fn chat(&self, m: Vec<kk_types::chat::ChatMessage>) -> Result<kk_service::ChatReply, String> {
+        self.inner.chat(m).map(|mut r| {
+            r.prompt_tokens = Some(4321);
+            r
+        })
+    }
+}
+
+#[test]
+fn sv50_after_a_reply_the_model_s_own_count_is_shown_and_labelled_as_measured() {
+    let (root, _repo) = repo_copy("usage-measured");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(MeasuredRunner {
+            inner: CannedRunner { confirm: true },
+        }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (st, r) = w.post("/api/chat", json!({"message": "hello there"}));
+    assert_eq!(st, 200, "{r}");
+    let u = &r["usage"];
+    assert_eq!(
+        (
+            u["context_tokens"].clone(),
+            u["estimate"].clone(),
+            u["context_window"].clone()
+        ),
+        (json!(4321), json!(false), json!(16384)),
+        "{u}"
+    );
+    assert!(
+        u["context_tokens_estimate"].as_u64().unwrap() > 0,
+        "the estimate is still given beside it"
+    );
+
+    // a runner that gives no count: the estimate is shown and labelled as one, and no window is invented
+    let (_c2, w2, _repo2, _root2, _svc2) = boot("usage-estimated", true);
+    let (_, r) = w2.post("/api/chat", json!({"message": "hello there"}));
+    let u = &r["usage"];
+    assert_eq!(u["estimate"], true, "{u}");
+    assert_eq!(u["context_tokens"], u["context_tokens_estimate"], "{u}");
+    assert_eq!(u["context_window"], Value::Null, "{u}");
 }

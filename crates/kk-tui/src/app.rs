@@ -2425,8 +2425,34 @@ impl App {
                     },
                     body["notes_used"]
                 )];
-                if let Some(n) = body["usage"]["context_tokens_estimate"].as_u64() {
-                    foot.push(format!("about {n} tokens of context sent"));
+                if let Some(estimated) = body["usage"]["context_tokens_estimate"].as_u64() {
+                    let u = &body["usage"];
+                    // the model's own count when it gave one, otherwise the estimate; the window only if the service sent it
+                    let counted = u["estimate"] == false
+                        && u["context_tokens"].as_u64().is_some_and(|n| n > 0);
+                    let n = u["context_tokens"].as_u64().unwrap_or(estimated);
+                    let how = if counted {
+                        ", counted by the model"
+                    } else {
+                        ""
+                    };
+                    match u["context_window"].as_u64().filter(|w| *w > 0) {
+                        Some(max) => {
+                            let pct = (n.saturating_mul(100) / max).min(999);
+                            foot.push(if counted {
+                                format!("{n} of {max} tokens of context used ({pct}%{how})")
+                            } else {
+                                format!("about {n} of {max} tokens of context used ({pct}%)")
+                            });
+                            if pct >= 80 {
+                                foot.push("This conversation is close to the model's limit. Start a new conversation soon.".into());
+                            }
+                        }
+                        None if counted => {
+                            foot.push(format!("{n} tokens of context sent (counted by the model)"))
+                        }
+                        None => foot.push(format!("about {n} tokens of context sent")),
+                    }
                     let dropped = body["usage"]["history_turns_dropped"].as_u64().unwrap_or(0);
                     if dropped > 0 {
                         foot.push(format!("{dropped} older message(s) were not sent because the conversation is long"));

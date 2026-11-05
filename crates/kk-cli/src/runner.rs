@@ -124,6 +124,7 @@ impl JobRunner for ReviewRunner {
                     route_id: "scripted-test-model".into(),
                     class: "device_only".into(),
                     simulated: true,
+                    prompt_tokens: None,
                 });
             }
             return Ok(kk_service::ChatReply {
@@ -131,6 +132,7 @@ impl JobRunner for ReviewRunner {
                 route_id: "scripted-test-model".into(),
                 class: "device_only".into(),
                 simulated: true,
+                prompt_tokens: None,
             });
         }
         let route = self.route().map_err(|e| e.to_string())?;
@@ -143,6 +145,7 @@ impl JobRunner for ReviewRunner {
             })
             .map_err(model_failure)?;
         Ok(kk_service::ChatReply {
+            prompt_tokens: (done.prompt_tokens > 0).then_some(done.prompt_tokens),
             text: done.message.content,
             route_id: route.id().to_string(),
             class: "device_only".into(),
@@ -190,6 +193,7 @@ impl JobRunner for ReviewRunner {
             .map_err(model_failure)?;
         Ok(kk_service::StreamedReply {
             reply: kk_service::ChatReply {
+                prompt_tokens: (done.prompt_tokens > 0).then_some(done.prompt_tokens),
                 text: done.text,
                 route_id: route.id().to_string(),
                 class: "device_only".into(),
