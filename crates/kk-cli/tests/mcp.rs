@@ -139,7 +139,8 @@ fn mc03_arguments_are_validated_against_the_schema_and_files_are_reported_unifor
     let big = std::fs::File::create(dir.join("big.kkg")).unwrap();
     big.set_len(21 << 20).unwrap();
     let junk = dir.join("junk.kkg").to_string_lossy().to_string();
-    let r = session_in(Some(&dir), &[
+    // replies to calls that reach the service may arrive after later ones, so they are matched by id
+    let mut r = session_in(Some(&dir), &[
         call(1, "overview", json!({})),
         call(2, "review_status", json!({"id": "../../etc/passwd"})),
         call(3, "review_status", json!({"id": "job-1", "extra": true})),
@@ -158,6 +159,7 @@ fn mc03_arguments_are_validated_against_the_schema_and_files_are_reported_unifor
         call(16, "verify_log", json!({"path": dir.join("junk.json").to_string_lossy(), "pin": "not-a-key"})),
         json!({"jsonrpc": "2.0", "id": 17, "method": "tools/call", "params": {"name": "overview", "arguments": "nope"}}).to_string(),
     ]);
+    r.sort_by_key(|x| x["id"].as_u64().unwrap());
     let text = |i: usize| {
         r[i]["result"]["content"][0]["text"]
             .as_str()

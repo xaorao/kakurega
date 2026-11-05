@@ -424,38 +424,140 @@ fn read_line_bounded(input: &mut dyn BufRead, max: usize) -> Option<(Vec<u8>, bo
     }
 }
 
+/// Tools that call the running service over the network. They can be slow, so they run beside the reader and a cancel or
+/// a ping is never stuck behind them. The others read a local file or only refuse, and run in order.
+const SLOW_TOOLS: [&str; 5] = [
+    "overview",
+    "list_reviews",
+    "start_review",
+    "review_status",
+    "request_approval",
+];
+/// At most this many service-backed calls run at once.
+const MAX_IN_FLIGHT: usize = 4;
+/// At the end of input, work in progress gets this long to answer before the process leaves.
+const DRAIN: std::time::Duration = std::time::Duration::from_secs(5);
+
+struct Shared {
+    out: std::sync::Mutex<std::io::Stdout>,
+    /// Requests the client cancelled, by id as JSON text. An answer for one of them is not sent.
+    cancelled: std::sync::Mutex<std::collections::HashSet<String>>,
+    in_flight: std::sync::atomic::AtomicUsize,
+}
+
+impl Shared {
+    fn send(&self, frame: &Value) -> bool {
+        let mut out = self.out.lock().unwrap_or_else(|e| e.into_inner());
+        writeln!(out, "{frame}").and_then(|_| out.flush()).is_ok()
+    }
+}
+
+/// The id of a service-backed `tools/call` that will really call the service: the tool is visible and its arguments are
+/// valid. Those are the only calls that run beside the reader. A refusal is answered in order, at once.
+fn slow_call(ctx: &Ctx, line: &str) -> Option<Value> {
+    let msg: Value = serde_json::from_str(line.trim_start_matches('\u{feff}')).ok()?;
+    let id = msg.get("id")?;
+    if !(id.is_string() || id.is_i64() || id.is_u64()) || msg["method"] != "tools/call" {
+        return None;
+    }
+    let name = msg["params"]["name"].as_str()?;
+    if !SLOW_TOOLS.contains(&name) {
+        return None;
+    }
+    let tools = ctx.visible();
+    let def = tools.as_array()?.iter().find(|t| t["name"] == name)?;
+    let empty = Value::Object(Map::new());
+    let args = msg["params"].get("arguments").unwrap_or(&empty);
+    check_args(&def["inputSchema"], args).ok()?;
+    Some(id.clone())
+}
+
+/// The id a `notifications/cancelled` names, as JSON text.
+fn cancelled_id(line: &str) -> Option<String> {
+    let msg: Value = serde_json::from_str(line.trim_start_matches('\u{feff}')).ok()?;
+    if msg["method"] != "notifications/cancelled" || msg.get("id").is_some() {
+        return None;
+    }
+    let id = msg["params"].get("requestId")?;
+    (id.is_string() || id.is_i64() || id.is_u64()).then(|| id.to_string())
+}
+
 pub fn run(args: &[String]) -> u8 {
-    let admin = || connect(args);
-    let ctx = Ctx::new(&crate::data_dir(args)).read_only(
+    use std::sync::atomic::Ordering;
+    let args: std::sync::Arc<Vec<String>> = std::sync::Arc::new(args.to_vec());
+    let ctx = std::sync::Arc::new(Ctx::new(&crate::data_dir(&args)).read_only(
         args.iter().any(|a| a == "--read-only")
             || std::env::var("KAKU_MCP_READ_ONLY").is_ok_and(|v| v == "1"),
-    );
+    ));
+    let shared = std::sync::Arc::new(Shared {
+        out: std::sync::Mutex::new(std::io::stdout()),
+        cancelled: Default::default(),
+        in_flight: std::sync::atomic::AtomicUsize::new(0),
+    });
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
-    let mut out = std::io::stdout();
     while let Some((bytes, too_long)) = read_line_bounded(&mut input, MAX_LINE) {
         if too_long {
-            let _ = writeln!(
-                out,
-                "{}",
-                json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32600, "message": "request too large"}})
-            );
-            let _ = out.flush();
+            let frame = json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32600, "message": "request too large"}});
+            if !shared.send(&frame) {
+                break;
+            }
             continue;
         }
         let Ok(line) = String::from_utf8(bytes) else {
-            let _ = writeln!(out, "{PARSE_ERROR}");
-            let _ = out.flush();
+            if !shared.send(&serde_json::from_str(PARSE_ERROR).unwrap_or(Value::Null)) {
+                break;
+            }
             continue;
         };
         if line.trim().is_empty() {
             continue;
         }
+        if let Some(id) = cancelled_id(&line) {
+            shared
+                .cancelled
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(id);
+            continue;
+        }
+        if let Some(id) = slow_call(&ctx, &line) {
+            if shared.in_flight.fetch_add(1, Ordering::SeqCst) >= MAX_IN_FLIGHT {
+                shared.in_flight.fetch_sub(1, Ordering::SeqCst);
+                let frame = json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32000, "message": "too many requests are in progress; try again in a moment"}});
+                if !shared.send(&frame) {
+                    break;
+                }
+                continue;
+            }
+            let (shared, ctx, args) = (shared.clone(), ctx.clone(), args.clone());
+            std::thread::spawn(move || {
+                let admin = || connect(&args);
+                let reply = handle(&admin, &ctx, &line);
+                let key = id.to_string();
+                let was_cancelled = shared
+                    .cancelled
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&key);
+                if let (Some(frame), false) = (reply, was_cancelled) {
+                    shared.send(&frame);
+                }
+                shared.in_flight.fetch_sub(1, Ordering::SeqCst);
+            });
+            continue;
+        }
+        let admin = || connect(&args);
         if let Some(r) = handle(&admin, &ctx, &line) {
-            if writeln!(out, "{r}").and_then(|_| out.flush()).is_err() {
+            if !shared.send(&r) {
                 break;
             }
         }
+    }
+    // input ended: let work in progress answer, but never hold the process longer than DRAIN
+    let waited = std::time::Instant::now();
+    while shared.in_flight.load(Ordering::SeqCst) > 0 && waited.elapsed() < DRAIN {
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
     0
 }

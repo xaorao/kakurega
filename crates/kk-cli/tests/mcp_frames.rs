@@ -17,6 +17,11 @@ struct FakeAdmin {
 
 impl FakeAdmin {
     fn start(token: &str) -> FakeAdmin {
+        FakeAdmin::start_slow(token, 0)
+    }
+
+    /// Like `start`, but every answer waits `delay_ms` first.
+    fn start_slow(token: &str, delay_ms: u64) -> FakeAdmin {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let seen = Arc::new(Mutex::new(Vec::new()));
@@ -53,6 +58,7 @@ impl FakeAdmin {
                 }
                 let mut body = vec![0u8; length];
                 let _ = reader.read_exact(&mut body);
+                std::thread::sleep(Duration::from_millis(delay_ms));
                 if authorized {
                     seen_t
                         .lock()
@@ -382,4 +388,73 @@ fn mc11_probing_clients_get_empty_lists_not_errors_and_a_cursor_on_the_single_to
         "{caps}"
     );
     assert!(s.close().is_empty());
+}
+
+#[test]
+fn mc12_a_ping_is_answered_while_a_service_call_is_still_waiting() {
+    let dir = fresh("mc12");
+    let admin = FakeAdmin::start_slow("tok-12", 1500);
+    admin.publish(&dir);
+    let mut s = live(&dir);
+    s.send(&call(1, "overview", json!({})));
+    s.send(&ping(json!(2)));
+    let first = s.recv();
+    assert_eq!(
+        first["id"], 2,
+        "the ping came back first, not stuck behind the call: {first}"
+    );
+    let second = s.recv();
+    assert_eq!(
+        (second["id"].clone(), second["result"]["isError"].clone()),
+        (json!(1), json!(false)),
+        "{second}"
+    );
+    assert!(s.close().is_empty());
+}
+
+#[test]
+fn mc13_a_cancelled_call_gets_no_answer_and_the_next_request_is_served() {
+    let dir = fresh("mc13");
+    let admin = FakeAdmin::start_slow("tok-13", 1200);
+    admin.publish(&dir);
+    let mut s = live(&dir);
+    s.send(&call(1, "overview", json!({})));
+    s.send(
+        &json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 1}})
+            .to_string(),
+    );
+    s.send(&ping(json!(2)));
+    assert_eq!(s.recv()["id"], 2);
+    std::thread::sleep(Duration::from_millis(2200));
+    s.send(&ping(json!(3)));
+    assert_eq!(
+        s.recv()["id"],
+        3,
+        "nothing else was sent in between: the cancelled call was never answered"
+    );
+    // a cancel for an id that is not running is ignored, and a later call with a new id works
+    s.send(&json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 99}}).to_string());
+    s.send(&call(4, "overview", json!({})));
+    let r = s.recv();
+    assert_eq!(
+        (r["id"].clone(), r["result"]["isError"].clone()),
+        (json!(4), json!(false)),
+        "{r}"
+    );
+    assert!(s.close().is_empty());
+}
+
+#[test]
+fn mc14_a_call_still_running_when_input_ends_is_answered_before_the_process_leaves() {
+    let dir = fresh("mc14");
+    let admin = FakeAdmin::start_slow("tok-14", 800);
+    admin.publish(&dir);
+    let mut s = live(&dir);
+    s.send(&call(1, "overview", json!({})));
+    let rest = s.close();
+    assert_eq!(rest.len(), 1, "{rest:?}");
+    assert_eq!(
+        (rest[0]["id"].clone(), rest[0]["result"]["isError"].clone()),
+        (json!(1), json!(false))
+    );
 }
