@@ -1676,10 +1676,10 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
         .kept
         .as_ref()
         .is_some_and(|id| session_append(svc, id, &run.message_to_keep, &r.text));
-    // A rough size (four characters to a token) of everything sent to the model for this turn, so the owner can see when a
-    // conversation is getting long. It is an estimate, not the model's own count.
-    let sent_chars: usize = ctx.messages.iter().map(|m| m.content.chars().count()).sum();
-    let usage = json!({"context_tokens_estimate": sent_chars / 4, "reply_tokens_estimate": r.text.chars().count() / 4, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "estimate": true});
+    // The size of everything sent to the model for this turn, so the owner can see when a conversation is getting long.
+    // It is an estimate by script (kk_route::tokens), not the model's own count.
+    let window = svc.runner.route_info()["context_tokens"].as_u64();
+    let usage = json!({"context_tokens_estimate": kk_route::tokens::estimate_messages(&ctx.messages), "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "estimate": true});
     json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated}, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "web_sources_used": ctx.web_used, "saved": saved})
 }
 

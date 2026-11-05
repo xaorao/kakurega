@@ -24,6 +24,8 @@ impl RouteClass {
 
 pub use kk_types::chat::{ChatMessage, ToolCall, ToolSpec};
 
+pub mod tokens;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionRequest {
     pub messages: Vec<ChatMessage>,

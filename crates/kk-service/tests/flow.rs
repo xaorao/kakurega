@@ -5550,3 +5550,29 @@ fn sv48_a_damaged_saved_original_is_never_written_over_the_owners_file() {
     );
     assert_eq!(fix_list(&w, &job)["state"], "applied");
 }
+
+#[test]
+fn sv49_the_context_estimate_counts_by_script_so_a_hindi_message_is_not_shown_as_small() {
+    let (_c, w, _repo, _root, _svc) = boot("usage-script", true);
+    let english = "The quarterly report shows that regional sales rose while shipping was delayed.";
+    let hindi: String = "तिमाही रिपोर्ट से पता चलता है कि क्षेत्रीय बिक्री बढ़ी जबकि शिपिंग में देरी हुई"
+        .chars()
+        .cycle()
+        .take(english.chars().count())
+        .collect();
+    assert_eq!(hindi.chars().count(), english.chars().count());
+    let size = |m: &str| {
+        let (st, r) = w.post("/api/chat", json!({"message": m}));
+        assert_eq!(st, 200, "{r}");
+        assert_eq!(r["usage"]["estimate"], true, "it is labelled an estimate");
+        r["usage"]["context_tokens_estimate"].as_u64().unwrap()
+    };
+    let (en, hi) = (size(english), size(&hindi));
+    // The same 79 characters measured on qwen2.5:1.5b: about 76 tokens of Hindi and about 12 of English, a gap of about
+    // 64 (TESTING.md). Characters divided by four gives no gap at all, so a gap of 40 separates the two clearly.
+    assert!(
+        hi >= en + 40,
+        "Hindi {hi} must count well above English {en} for the same {} characters",
+        english.chars().count()
+    );
+}
