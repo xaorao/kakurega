@@ -47,6 +47,8 @@ pub enum Command {
     Web(bool),
     Sessions,
     NewChat,
+    /// `/project` shows the project of this conversation, `/project NAME` sets it and `/project none` clears it.
+    Project(Option<String>),
     Verify(String),
     Quit,
 }
@@ -82,6 +84,7 @@ pub const NAMES: &[&str] = &[
     "sessions",
     "resume",
     "newchat",
+    "project",
     "quit",
 ];
 
@@ -120,6 +123,7 @@ pub fn describe(name: &str) -> &'static str {
         "sessions" => "pick a kept conversation or a review",
         "resume" => "same as /sessions",
         "newchat" => "leave this conversation and start a new one",
+        "project" => "show or set the project this conversation is about",
         "quit" => "leave Kakurega",
         _ => "",
     }
@@ -162,6 +166,7 @@ pub fn usage(name: &str) -> &'static str {
         "deliver" => "/deliver [JOB]",
         "memory" => "/memory [WORDS]",
         "remember" => "/remember [in PROJECT:] TEXT",
+        "project" => "/project [NAME | none]",
         "ask" => "/ask FOLDER : QUESTION",
         "correct" => "/correct ID NEW TEXT",
         "forget" => "/forget ID",
@@ -245,6 +250,21 @@ pub fn parse(line: &str) -> Result<Command, String> {
         }
         "sessions" | "resume" => Ok(Command::Sessions),
         "newchat" => Ok(Command::NewChat),
+        "project" => {
+            if rest.is_empty() {
+                Ok(Command::Project(None))
+            } else if rest.eq_ignore_ascii_case("none") {
+                Ok(Command::Project(Some(String::new())))
+            } else if rest.chars().count() <= 80
+                && !rest.contains(['/', '\\'])
+                && !rest.chars().any(char::is_control)
+                && rest.trim() == rest
+            {
+                Ok(Command::Project(Some(rest.to_string())))
+            } else {
+                Err(format!("usage: {}", usage("project")))
+            }
+        }
         "review" => {
             let Some((folder, recipient)) = rest.rsplit_once(" for ") else {
                 return Err(format!("usage: {}", usage("review")));

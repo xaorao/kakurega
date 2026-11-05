@@ -6394,3 +6394,155 @@ fn sv57_forgetting_a_conversation_removes_its_summary_and_a_summary_survives_a_r
         "forgetting removes the summary with the turns"
     );
 }
+
+#[test]
+fn sv58_a_conversation_about_a_project_gets_that_project_s_notes_and_no_other_project_s() {
+    let (root, _repo) = repo_copy("projchat");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    for (t, p) in [
+        ("Quokkamark rounding applies everywhere", None),
+        ("Quokkamark rounding in alpha is half up", Some("alpha")),
+        ("Quokkamark rounding in beta is half even", Some("beta")),
+    ] {
+        let mut body = json!({"text": t, "level": "internal"});
+        if let Some(p) = p {
+            body["project"] = json!(p);
+        }
+        assert_eq!(w.post("/api/memories", body).0, 201, "{t}");
+    }
+    let texts = |r: &Value| -> Vec<String> {
+        r["notes"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|n| n["text"].as_str().unwrap_or("").to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    // no project: only what applies everywhere (sv43 holds)
+    let (st, plain) = w.post("/api/chat", json!({"message": "Quokkamark rounding"}));
+    assert_eq!(st, 200, "{plain}");
+    assert_eq!(plain["notes_used"], 1, "{plain}");
+    assert_eq!(plain["project"], json!(null));
+    // a chat about alpha gets the everywhere note and alpha's, never beta's
+    let (st, a) = w.post(
+        "/api/chat",
+        json!({"message": "Quokkamark rounding", "project": "alpha"}),
+    );
+    assert_eq!(st, 200, "{a}");
+    assert_eq!(a["project"], json!("alpha"));
+    assert_eq!(a["notes_used"], 2, "{a}");
+    let t = texts(&a);
+    assert!(
+        t.iter().any(|x| x.contains("half up")) && !t.iter().any(|x| x.contains("half even")),
+        "{t:?}"
+    );
+    let (_, b) = w.post(
+        "/api/chat",
+        json!({"message": "Quokkamark rounding", "project": "beta"}),
+    );
+    let t = texts(&b);
+    assert_eq!(b["notes_used"], 2, "{b}");
+    assert!(
+        t.iter().any(|x| x.contains("half even")) && !t.iter().any(|x| x.contains("half up")),
+        "{t:?}"
+    );
+    // an unknown project is just the everywhere notes
+    let (_, none) = w.post(
+        "/api/chat",
+        json!({"message": "Quokkamark rounding", "project": "gamma"}),
+    );
+    assert_eq!(none["notes_used"], 1, "{none}");
+    // odd project names are refused before anything runs
+    for bad in [
+        "a/b",
+        " alpha",
+        "alpha ",
+        "a\\b",
+        &"x".repeat(81),
+        "al\u{202e}pha",
+    ] {
+        let (st, r) = w.post(
+            "/api/chat",
+            json!({"message": "Quokkamark rounding", "project": bad}),
+        );
+        assert_eq!(st, 400, "{bad:?}: {r}");
+        assert_eq!(r["error"]["code"], json!("BAD_PROJECT"), "{bad:?}: {r}");
+    }
+    // a kept conversation remembers its project
+    let (st, s) = w.post(
+        "/api/sessions",
+        json!({"title": "alpha work", "project": "alpha"}),
+    );
+    assert_eq!(st, 201, "{s}");
+    let sid = s["id"].as_str().unwrap().to_string();
+    let (_, listed) = w.get("/api/sessions");
+    assert_eq!(listed["sessions"][0]["project"], json!("alpha"));
+    let (_, got) = w.get(&format!("/api/sessions/{sid}"));
+    assert_eq!(got["project"], json!("alpha"));
+    // a message with no project keeps the conversation's own
+    let (st, k) = w.post(
+        "/api/chat",
+        json!({"message": "Quokkamark rounding", "session": sid}),
+    );
+    assert_eq!(st, 200, "{k}");
+    assert_eq!(k["project"], json!("alpha"), "{k}");
+    assert_eq!(k["notes_used"], 2, "{k}");
+    // naming another project moves the conversation there
+    let (_, m) = w.post(
+        "/api/chat",
+        json!({"message": "Quokkamark rounding", "session": sid, "project": "beta"}),
+    );
+    assert_eq!(m["project"], json!("beta"), "{m}");
+    assert!(texts(&m).iter().any(|x| x.contains("half even")), "{m}");
+    assert_eq!(
+        w.get(&format!("/api/sessions/{sid}")).1["project"],
+        json!("beta")
+    );
+    // and the next message without one stays on beta
+    let (_, stay) = w.post(
+        "/api/chat",
+        json!({"message": "Quokkamark rounding", "session": sid}),
+    );
+    assert_eq!(stay["project"], json!("beta"), "{stay}");
+    // an empty name clears it
+    let (st, cleared) = w.post(
+        "/api/chat",
+        json!({"message": "Quokkamark rounding", "session": sid, "project": ""}),
+    );
+    assert_eq!(st, 200, "{cleared}");
+    assert_eq!(cleared["project"], json!(null), "{cleared}");
+    assert_eq!(cleared["notes_used"], 1, "{cleared}");
+    assert_eq!(
+        w.get(&format!("/api/sessions/{sid}")).1["project"],
+        json!(null)
+    );
+    // a bad project when making a conversation is refused and nothing is made
+    let before = w.get("/api/sessions").1["sessions"]
+        .as_array()
+        .unwrap()
+        .len();
+    let (st, r) = w.post("/api/sessions", json!({"title": "x", "project": "a/b"}));
+    assert_eq!(st, 400, "{r}");
+    assert_eq!(
+        w.get("/api/sessions").1["sessions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        before
+    );
+}

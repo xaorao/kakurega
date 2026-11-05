@@ -159,6 +159,9 @@ pub struct App {
     approval_watch_inflight: bool,
     pub chat_history: Vec<(String, String)>,
     pub session: Option<String>,
+    /// The project this conversation is about: its notes are offered, and no other project's. Set from the repository the
+    /// terminal was started in, by `/project`, or by a kept conversation.
+    pub chat_project: Option<String>,
     /// Long pastes shown as a short placeholder in the composer and expanded when a chat message is sent.
     pub pasted: Vec<(String, String)>,
     /// Messages typed while an answer is still arriving; each is sent after the previous answer completes.
@@ -240,6 +243,7 @@ impl App {
             approval_watch_inflight: false,
             chat_history: Vec::new(),
             session: None,
+            chat_project: None,
             pasted: Vec::new(),
             queued: Vec::new(),
             stashed: Vec::new(),
@@ -406,7 +410,7 @@ impl App {
         };
         let running = self.watching.len();
         format!(
-            "{} · {} · {} review(s){}",
+            "{} · {} · {} review(s){}{}",
             if self.route.is_empty() {
                 "connecting".to_string()
             } else {
@@ -418,6 +422,10 @@ impl App {
                 format!(" · {running} running")
             } else {
                 String::new()
+            },
+            match &self.chat_project {
+                Some(p) => format!(" · project {}", clean(p)),
+                None => String::new(),
             }
         )
     }
@@ -1136,6 +1144,29 @@ impl App {
                 );
                 Vec::new()
             }
+            Command::Project(arg) => {
+                match arg {
+                    None => {
+                        let line = match &self.chat_project {
+                            Some(p) => format!("This conversation is about the project \"{}\": notes saved for it are offered, and no other project's. /project none clears it.", clean(p)),
+                            None => "This conversation has no project, so only notes that apply everywhere are offered. /project NAME sets one.".to_string(),
+                        };
+                        self.say(Kind::Info, line);
+                    }
+                    Some(name) if name.is_empty() => {
+                        self.chat_project = None;
+                        self.say(
+                            Kind::Ok,
+                            "No project: only notes that apply everywhere are offered.",
+                        );
+                    }
+                    Some(name) => {
+                        self.say(Kind::Ok, format!("Project set to \"{}\": its notes are offered in this conversation.", clean(&name)));
+                        self.chat_project = Some(name);
+                    }
+                }
+                Vec::new()
+            }
             Command::Proof(model) => {
                 let model = model.unwrap_or_else(|| "Qwen/Qwen3.8-27B".to_string());
                 self.say(Kind::Info, format!("Checking the hardware proof of {model}. Only the model name is sent, to NEAR AI Cloud and to Intel and NVIDIA's verification services."));
@@ -1240,7 +1271,10 @@ impl App {
                     false,
                     Method::Post,
                     "/api/sessions",
-                    Some(json!({"title": ""})),
+                    Some(match &self.chat_project {
+                        Some(p) => json!({"title": "", "project": p}),
+                        None => json!({"title": ""}),
+                    }),
                 )]
             }
             Command::Sessions => {
@@ -1507,6 +1541,10 @@ impl App {
                 let mut body = json!({"message": message, "history": history});
                 if let Some(id) = &self.session {
                     body["session"] = json!(id);
+                    // an empty name tells a kept conversation to forget its project
+                    body["project"] = json!(self.chat_project.clone().unwrap_or_default());
+                } else if let Some(p) = &self.chat_project {
+                    body["project"] = json!(p);
                 }
                 if !self.web_pages.is_empty() {
                     body["sources"] = json!(self
@@ -2435,6 +2473,9 @@ impl App {
                     },
                     body["notes_used"]
                 )];
+                if let Some(p) = body["project"].as_str() {
+                    foot[0].push_str(&format!(" · project {}", clean(p)));
+                }
                 if let Some(estimated) = body["usage"]["context_tokens_estimate"].as_u64() {
                     let u = &body["usage"];
                     // the model's own count when it gave one, otherwise the estimate; the window only if the service sent it
@@ -2694,6 +2735,7 @@ impl App {
                 self.chat_history.clear();
                 self.cards.clear();
                 self.live = None;
+                self.chat_project = body["project"].as_str().map(clean);
                 for t in body["turns"].as_array().into_iter().flatten() {
                     let (role, content) = (
                         t["role"].as_str().unwrap_or(""),

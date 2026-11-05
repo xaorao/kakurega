@@ -1751,6 +1751,117 @@ fn tu38b_an_emptied_editor_file_is_a_cancel_and_keeps_the_draft() {
     assert_eq!(a.input.trim(), "kept words");
 }
 
+#[test]
+fn tu53_project_shows_sets_and_clears_the_project_a_conversation_is_about() {
+    let mut a = booted();
+    assert!(enter(&mut a, "/project").is_empty());
+    assert!(text(&a).contains("no project"), "{}", text(&a));
+    assert!(enter(&mut a, "/project papermark").is_empty());
+    assert_eq!(a.chat_project.as_deref(), Some("papermark"));
+    assert!(text(&a).contains("Project set to"));
+    enter(&mut a, "/project");
+    assert!(text(&a).contains("about the project \"papermark\""));
+    assert!(
+        a.status_line().contains("project papermark"),
+        "{}",
+        a.status_line()
+    );
+    enter(&mut a, "/project none");
+    assert_eq!(a.chat_project, None);
+    assert!(!a.status_line().contains("project"), "{}", a.status_line());
+    // odd names are refused with the usage line and change nothing
+    enter(&mut a, "/project papermark");
+    for bad in ["a/b", "a\\b", &"x".repeat(81)] {
+        enter(&mut a, &format!("/project {bad}"));
+        assert_eq!(a.chat_project.as_deref(), Some("papermark"), "{bad:?}");
+    }
+    assert!(text(&a).contains("usage: /project"));
+}
+
+#[test]
+fn tu54_the_project_travels_with_every_message_and_a_kept_conversation_remembers_and_can_forget_it()
+{
+    let mut a = booted();
+    // no project: nothing is sent
+    let r = enter(&mut a, "no project here");
+    assert!(r[0].body.as_ref().unwrap().get("project").is_none());
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"reply": "ok", "route": {"simulated": false}, "notes_used": 0}),
+    ));
+    enter(&mut a, "/project papermark");
+    let r = enter(&mut a, "about papermark");
+    assert_eq!(r[0].body.as_ref().unwrap()["project"], "papermark");
+    assert!(r[0].body.as_ref().unwrap().get("session").is_none());
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"reply": "hi", "route": {"simulated": false}, "notes_used": 1, "project": "papermark"}),
+    ));
+    assert!(
+        text(&a).contains("1 note(s) used · project papermark"),
+        "the reply line says which project it used: {}",
+        text(&a)
+    );
+    // keeping the conversation saves its project
+    let k = enter(&mut a, "/keep");
+    assert_eq!(k[0].body.as_ref().unwrap()["project"], "papermark");
+    a.handle(ok(&k[0], 201, json!({"id": "chat-pp11"})));
+    let r = enter(&mut a, "still about it");
+    assert_eq!(r[0].body.as_ref().unwrap()["session"], "chat-pp11");
+    assert_eq!(r[0].body.as_ref().unwrap()["project"], "papermark");
+    a.handle(ok(&r[0], 200, json!({"reply": "yes", "route": {"simulated": false}, "notes_used": 1, "saved": true, "project": "papermark"})));
+    // clearing the project of a kept conversation sends an empty name, which tells the service to forget it
+    enter(&mut a, "/project none");
+    let r = enter(&mut a, "now general");
+    assert_eq!(
+        r[0].body.as_ref().unwrap()["project"],
+        "",
+        "{:?}",
+        r[0].body
+    );
+}
+
+#[test]
+fn tu55_opening_a_kept_conversation_takes_its_project_and_one_without_clears_it() {
+    let mut a = booted();
+    enter(&mut a, "/project other");
+    let r = enter(&mut a, "/sessions");
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"sessions": [
+            {"id": "chat-2", "title": "with project", "created": 200, "updated": 200, "turns": 2, "project": "papermark"},
+            {"id": "chat-1", "title": "no project", "created": 100, "updated": 100, "turns": 2, "project": null}
+        ]}),
+    ));
+    let r = a.handle(key(KeyCode::Enter));
+    assert_eq!(r[0].path, "/api/sessions/chat-2");
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"id": "chat-2", "project": "papermark", "turns": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]}),
+    ));
+    assert_eq!(a.chat_project.as_deref(), Some("papermark"));
+    let r = enter(&mut a, "/sessions");
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"sessions": [{"id": "chat-1", "title": "no project", "created": 100, "updated": 100, "turns": 2, "project": null}]}),
+    ));
+    let r = a.handle(key(KeyCode::Enter));
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"id": "chat-1", "project": null, "turns": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]}),
+    ));
+    assert_eq!(
+        a.chat_project, None,
+        "a conversation without a project clears the old one"
+    );
+}
+
 fn footer_text(a: &App) -> String {
     let mut term = Terminal::new(TestBackend::new(110, 30)).unwrap();
     term.draw(|f| draw(f, a, &Theme::from_env())).unwrap();

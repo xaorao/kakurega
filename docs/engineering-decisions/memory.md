@@ -26,3 +26,13 @@ A review no longer gets the 50 newest notes regardless of the task. It gets up t
 - Beats the source in: deterministic order (the source's merge sorts a hash map by score only, so equal scores can come out in a different order each run); label, date and forgotten-note filtering inside both queries.
 - NOT BUILT: real embedding vectors (needs a model: Ollama or NEAR AI Cloud embeddings; vectors would carry the note's label and die with it), a recall quality benchmark against a labelled set, rerank.
 - Tests: fu01-fu05, me21-me23; mutations of the label filter and of the similarity list failed tests. A mutation of the id tie-break did not, because the ordered map plus a stable sort already gives the same order; the id clause is a second guard.
+
+## Project-scoped conversations (recovery of the "project-scoped memory" row)
+A private chat can be about a project. The request carries an optional `project` (a folder name, 1 to 80 characters, no control or direction characters, no path separators); the service offers the notes that apply everywhere plus that project's notes, never another project's. Without a project only the everywhere notes are offered, as before. A kept conversation stores its project: a message without one keeps it, a message naming another moves the conversation there, an empty name clears it. Stores made before this gain the `sessions.project` column on open, rows intact.
+
+- Terminal: `/project` shows it, `/project NAME` sets it, `/project none` clears it. On start it is the folder of the nearest repository above the working folder, and none outside a repository. The status line and each reply line say which project was used.
+- Web: a "Project (optional)" field on the chat screen with an explanation; a kept conversation restores it.
+- Source: Anamnesis keeps a four-way label per record and cannot separate two projects; OpenCode binds each session to a project found from the directory. See the trace row for the reading depth.
+- Tightened while doing this: a project name may hold no control character at all. Before, the shared text check let a tab or a line break through, which would break the inline display of a note's project.
+- Not done: project identity is still the folder name; two clones with the same folder name share notes. A repository-derived id (as OpenCode does) would fix it and needs a migration of existing notes. MCP exposes no notes; Telegram chat has no project.
+

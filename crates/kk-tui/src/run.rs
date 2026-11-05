@@ -44,6 +44,9 @@ fn event_loop(http: Http, data_dir: &Path) -> Result<(), String> {
     let mut term = Terminal::new(CrosstermBackend::new(stdout())).map_err(|e| e.to_string())?;
     let theme = Theme::from_env();
     let mut app = App::new();
+    app.chat_project = std::env::current_dir()
+        .ok()
+        .and_then(|d| crate::project::detect(&d));
     app.approver = kk_evidence::approval::load_approver(data_dir)
         .ok()
         .flatten();

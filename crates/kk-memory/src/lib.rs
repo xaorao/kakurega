@@ -43,6 +43,19 @@ fn refuse<T>(m: &str) -> Result<T, MemoryError> {
     Err(MemoryError::Refused(m.to_string()))
 }
 
+/// A project name is a folder name: 1 to 80 plain characters, no surrounding spaces, no path separators.
+pub fn valid_project(p: &str) -> bool {
+    !(p.trim() != p
+        || p.is_empty()
+        || p.chars().count() > 80
+        // unlike note text, a name may hold no control character at all (not even a tab or a line break), because it is
+        // shown inline next to the note
+        || p.chars().any(char::is_control)
+        || has_hidden_chars(p)
+        || p.contains('/')
+        || p.contains('\\'))
+}
+
 /// Which notes a lookup may see by project. `Global` is what applies everywhere; `Project` adds that project's notes;
 /// `All` is for the owner's own Memory screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -438,13 +451,7 @@ impl Memories {
 
     fn check_project(project: &Option<String>) -> Result<(), MemoryError> {
         if let Some(p) = project {
-            if p.trim() != p
-                || p.is_empty()
-                || p.chars().count() > 80
-                || has_hidden_chars(p)
-                || p.contains('/')
-                || p.contains('\\')
-            {
+            if !valid_project(p) {
                 return refuse("a project name is a folder name of 1 to 80 plain characters");
             }
         }

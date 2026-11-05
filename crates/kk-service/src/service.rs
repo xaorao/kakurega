@@ -295,7 +295,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY, body TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS fix_files(job TEXT NOT NULL, n INTEGER NOT NULL, file TEXT NOT NULL, orig BLOB NOT NULL, sha_after TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (job, n, file));
              CREATE TABLE IF NOT EXISTS fix_snapshots(job TEXT NOT NULL, n INTEGER NOT NULL, file TEXT NOT NULL, orig BLOB NOT NULL, sha_after TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (job, n));
-             CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, title TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, title TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL, project TEXT);
              CREATE TABLE IF NOT EXISTS session_turns(session TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (session, seq));
              CREATE TABLE IF NOT EXISTS session_summaries(session TEXT PRIMARY KEY, upto INTEGER NOT NULL, text TEXT NOT NULL, at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS prompt_history(id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, at INTEGER NOT NULL);
@@ -304,7 +304,26 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS approvers(key_id TEXT PRIMARY KEY, public BLOB NOT NULL, label TEXT NOT NULL, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);",
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // stores made before a conversation could name a project
+    let has_project = {
+        let c = v.connection();
+        let mut st = c
+            .prepare("PRAGMA table_info(sessions)")
+            .map_err(|e| e.to_string())?;
+        let names: Vec<String> = st
+            .query_map([], |r| r.get::<_, String>(1))
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .collect();
+        names.iter().any(|n| n == "project")
+    };
+    if !has_project {
+        v.connection()
+            .execute_batch("ALTER TABLE sessions ADD COLUMN project TEXT;")
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 impl Service {
@@ -1490,6 +1509,9 @@ struct ChatBody {
     sources: Vec<String>,
     #[serde(default)]
     session: Option<String>,
+    /// The project this chat is about: notes saved for it are offered, and no other project's. None means notes that apply everywhere.
+    #[serde(default)]
+    project: Option<String>,
 }
 
 const CHAT_SYSTEM: &str = "You are Kakurega's private assistant. You run on the owner's own computer. \
@@ -1528,7 +1550,12 @@ struct CompactPlan {
 }
 
 /// Checks a chat request and resolves a kept conversation to its stored history.
-fn chat_validate(svc: &Service, b: ChatBody) -> Result<ChatRun, Box<Response>> {
+fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response>> {
+    // an empty project name clears the project
+    let clear_project = b.project.as_deref() == Some("");
+    if clear_project {
+        b.project = None;
+    }
     if b.message.trim().is_empty() || b.message.len() > 4000 || !chat_clean(&b.message) {
         return Err(Box::new(error(
             StatusCode::BAD_REQUEST,
@@ -1546,6 +1573,16 @@ fn chat_validate(svc: &Service, b: ChatBody) -> Result<ChatRun, Box<Response>> {
             StatusCode::BAD_REQUEST,
             "BAD_HISTORY",
             "the conversation history is too long or malformed",
+        )));
+    }
+    if b.project
+        .as_deref()
+        .is_some_and(|p| !kk_memory::valid_project(p))
+    {
+        return Err(Box::new(error(
+            StatusCode::BAD_REQUEST,
+            "BAD_PROJECT",
+            "a project name is a folder name of 1 to 80 plain characters",
         )));
     }
     let message_to_keep = b.message.clone();
@@ -1572,6 +1609,29 @@ fn chat_validate(svc: &Service, b: ChatBody) -> Result<ChatRun, Box<Response>> {
             "there is no such kept conversation",
         )));
     };
+    // The conversation remembers its project: a message without one keeps it, a message naming another moves the
+    // conversation there, and an empty name clears it.
+    {
+        let store = svc.store.lock().expect("lock");
+        let c = store.connection();
+        let stored: Option<String> = c
+            .query_row("SELECT project FROM sessions WHERE id = ?1", [&id], |r| {
+                r.get(0)
+            })
+            .unwrap_or(None);
+        if clear_project {
+            let _ = c.execute("UPDATE sessions SET project = NULL WHERE id = ?1", [&id]);
+        } else if let Some(p) = &b.project {
+            if stored.as_ref() != Some(p) {
+                let _ = c.execute(
+                    "UPDATE sessions SET project = ?2 WHERE id = ?1",
+                    kk_vault::rusqlite::params![id, p],
+                );
+            }
+        } else {
+            b.project = stored;
+        }
+    }
     let (covered, summary) = match session_summary(svc, &id) {
         Some((upto, text)) if upto <= turns.len() => (upto, Some(text)),
         _ => (0, None),
@@ -1725,8 +1785,12 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
         let clearance = mem
             .owner_clearance()
             .unwrap_or_else(|_| kk_types::label::Label::new(kk_types::label::Level::Internal));
+        let scope = match b.project.as_deref() {
+            Some(p) => kk_memory::Scope::Project(p),
+            None => kk_memory::Scope::Global,
+        };
         let hits = mem
-            .recall(&b.message, &clearance, now(), 5)
+            .recall_scoped(&b.message, &clearance, now(), 5, scope)
             .unwrap_or_default();
         let withheld = hits.iter().filter(|h| h.instruction_like()).count();
         let candidates: Vec<_> = hits.into_iter().filter(|h| !h.instruction_like()).collect();
@@ -1868,7 +1932,7 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
     let estimated = kk_route::tokens::estimate_messages(&ctx.messages);
     let measured = r.prompt_tokens.filter(|n| *n > 0);
     let usage = json!({"context_tokens": measured.unwrap_or(estimated), "context_tokens_estimate": estimated, "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "history_turns_summarized": run.summarized, "summary_text": run.summary, "compacted_now": run.compacted_now, "compaction_failed": run.compaction_failed, "estimate": measured.is_none()});
-    json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated}, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "saved": saved, "not_saved": not_saved})
+    json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated}, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "saved": saved, "not_saved": not_saved, "project": run.body.project})
 }
 
 async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
@@ -2195,16 +2259,19 @@ fn session_append(svc: &Service, id: &str, user: &str, assistant: &str) -> Appen
 struct SessionNew {
     #[serde(default)]
     title: String,
+    /// The project the conversation is about; its notes are offered in every message.
+    #[serde(default)]
+    project: Option<String>,
 }
 
 async fn sessions_list(axum::Extension(svc): Svc) -> Response {
     let store = svc.store.lock().expect("lock");
     let c = store.connection();
-    let Ok(mut st) = c.prepare("SELECT s.id, s.title, s.created, s.updated, (SELECT count(*) FROM session_turns t WHERE t.session = s.id) FROM sessions s ORDER BY s.updated DESC, s.id LIMIT 200") else {
+    let Ok(mut st) = c.prepare("SELECT s.id, s.title, s.created, s.updated, (SELECT count(*) FROM session_turns t WHERE t.session = s.id), s.project FROM sessions s ORDER BY s.updated DESC, s.id LIMIT 200") else {
         return error(StatusCode::INTERNAL_SERVER_ERROR, "STORE", "could not read the conversations");
     };
     let rows: Vec<Value> = st
-        .query_map([], |r| Ok(json!({"id": r.get::<_, String>(0)?, "title": r.get::<_, String>(1)?, "created": r.get::<_, i64>(2)?, "updated": r.get::<_, i64>(3)?, "turns": r.get::<_, i64>(4)?})))
+        .query_map([], |r| Ok(json!({"id": r.get::<_, String>(0)?, "title": r.get::<_, String>(1)?, "created": r.get::<_, i64>(2)?, "updated": r.get::<_, i64>(3)?, "turns": r.get::<_, i64>(4)?, "project": r.get::<_, Option<String>>(5)?})))
         .map(|it| it.flatten().collect())
         .unwrap_or_default();
     Json(json!({"sessions": rows, "note": "Only conversations you chose to keep are listed. Forget removes the text from the encrypted store."})).into_response()
@@ -2219,6 +2286,16 @@ async fn session_new(axum::Extension(svc): Svc, Json(b): Json<SessionNew>) -> Re
             StatusCode::BAD_REQUEST,
             "BAD_TITLE",
             "a title is at most 80 characters, with no control characters or secrets",
+        );
+    }
+    if b.project
+        .as_deref()
+        .is_some_and(|p| !kk_memory::valid_project(p))
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_PROJECT",
+            "a project name is a folder name of 1 to 80 plain characters",
         );
     }
     let mut raw = [0u8; 6];
@@ -2242,8 +2319,8 @@ async fn session_new(axum::Extension(svc): Svc, Json(b): Json<SessionNew>) -> Re
         }
         let t = now();
         if c.execute(
-            "INSERT INTO sessions(id, title, created, updated) VALUES (?1, ?2, ?3, ?3)",
-            kk_vault::rusqlite::params![id, b.title.trim(), t],
+            "INSERT INTO sessions(id, title, created, updated, project) VALUES (?1, ?2, ?3, ?3, ?4)",
+            kk_vault::rusqlite::params![id, b.title.trim(), t, b.project],
         )
         .is_err()
         {
@@ -2270,7 +2347,16 @@ async fn session_get(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) ->
             let summary = session_summary(&svc, &id)
                 .filter(|(upto, _)| *upto <= t.len())
                 .map(|(upto, text)| json!({"covered": upto, "text": text}));
-            Json(json!({"id": id, "summary": summary, "turns": t.into_iter().map(|(role, content)| json!({"role": role, "content": content})).collect::<Vec<_>>()})).into_response()
+            let project: Option<String> = svc
+                .store
+                .lock()
+                .expect("lock")
+                .connection()
+                .query_row("SELECT project FROM sessions WHERE id = ?1", [&id], |r| {
+                    r.get(0)
+                })
+                .unwrap_or(None);
+            Json(json!({"id": id, "project": project, "summary": summary, "turns": t.into_iter().map(|(role, content)| json!({"role": role, "content": content})).collect::<Vec<_>>()})).into_response()
         }
     }
 }
@@ -4920,5 +5006,58 @@ impl Extension for Routes {
             .route("/admin/approvals/{id}/approve", post(admin_approve))
             .route("/admin/approvals/{id}/deny", post(admin_deny))
             .layer(axum::Extension(self.0.clone()))
+    }
+}
+
+#[cfg(test)]
+mod store_tests {
+    use super::*;
+
+    #[test]
+    fn a_store_made_before_conversations_named_a_project_gains_the_column_and_keeps_its_rows() {
+        let dir = std::env::temp_dir().join(format!("kk-store-mig-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let key = kk_vault::VaultKey::from_bytes([7u8; 32]);
+        let v = Vault::create(&dir.join("jobs.db"), &key).unwrap();
+        v.connection()
+            .execute_batch(
+                "CREATE TABLE sessions(id TEXT PRIMARY KEY, title TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL);
+                 INSERT INTO sessions(id, title, created, updated) VALUES ('old1', 'an old conversation', 5, 6);",
+            )
+            .unwrap();
+        init_store(&v).unwrap();
+        // the old row is intact and has no project
+        let project: Option<String> = v
+            .connection()
+            .query_row("SELECT project FROM sessions WHERE id = 'old1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(project, None);
+        let title: String = v
+            .connection()
+            .query_row("SELECT title FROM sessions WHERE id = 'old1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(title, "an old conversation");
+        // running it again changes nothing and does not fail
+        init_store(&v).unwrap();
+        v.connection()
+            .execute(
+                "UPDATE sessions SET project = 'alpha' WHERE id = 'old1'",
+                [],
+            )
+            .unwrap();
+        init_store(&v).unwrap();
+        let project: Option<String> = v
+            .connection()
+            .query_row("SELECT project FROM sessions WHERE id = 'old1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(project.as_deref(), Some("alpha"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

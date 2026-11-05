@@ -18,6 +18,8 @@ export function Chat() {
   let abort: AbortController | null = null;
   const [error, setError] = createSignal("");
   const [session, setSession] = createSignal<string | null>(null);
+  // the project this conversation is about; its notes are offered, and no other project's
+  const [project, setProject] = createSignal("");
   const [confirmForget, setConfirmForget] = createSignal<string | null>(null);
   // The box holds the draft of the conversation on screen. Each conversation keeps its own while the page is open.
   const setText = (v: string) => {
@@ -100,7 +102,7 @@ export function Chat() {
   const keep = async () => {
     setError("");
     try {
-      const r = await api.keepChat("");
+      const r = await api.keepChat("", project().trim() || undefined);
       const carried = text();
       forgetDraft(draftKey(session()));
       retagSent(draftKey(session()), draftKey(r.id));
@@ -115,6 +117,7 @@ export function Chat() {
     setError("");
     try {
       const r = await api.keptChat(id);
+      setProject(r.project ?? "");
       show(id, r.turns.map(({ role, content }) => ({ role, content })), r.summary?.text ?? "");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("chat.error"));
@@ -254,7 +257,7 @@ export function Chat() {
     setLive("");
     abort = new AbortController();
     try {
-      const r = await streamChat({ message, history, sources: pages().filter((p) => p.page_id && !p.looks_like_instructions).map((p) => p.page_id as string), ...(session() ? { session: session() } : {}) }, (d) => setLive((x) => x + d), abort.signal);
+      const r = await streamChat({ message, history, sources: pages().filter((p) => p.page_id && !p.looks_like_instructions).map((p) => p.page_id as string), ...(session() ? { session: session(), project: project().trim() } : project().trim() ? { project: project().trim() } : {}) }, (d) => setLive((x) => x + d), abort.signal);
       if (myView !== view) {
         if ("stopped" in r) saveDraft(sentKey, message);
         return;
@@ -265,6 +268,7 @@ export function Chat() {
         return;
       }
       const foot = [r.route.simulated ? t("chat.test") : t("chat.private"), t("chat.notesUsed", { n: r.notes_used })];
+      if (r.project) foot.push(t("chat.projectUsed", { name: r.project }));
       if (r.usage) {
         const m = meterLine(r.usage);
         foot.push(t(m.key, { n: m.n, max: m.max ?? 0, pct: m.pct ?? 0 }));
@@ -300,6 +304,11 @@ export function Chat() {
       <h1 id="h-chat">{t("chat.title")}</h1>
       <p class="lead">{t("chat.lead")}</p>
       <p class="muted">{session() ? t("chat.noteKept") : t("chat.note")}</p>
+      <div class="stack">
+        <label for="chat-project">{t("chat.project")}</label>
+        <input id="chat-project" value={project()} maxlength="80" placeholder={t("chat.projectHint")} disabled={busy()} onInput={(e) => setProject(e.currentTarget.value)} />
+        <p class="muted">{t("chat.projectExplain")}</p>
+      </div>
       <div class="card stack" role="region" aria-label={t("chat.keptTitle")}>
         <div class="actions">
           <Show when={!session()}><button type="button" onClick={keep}>{t("chat.keep")}</button></Show>

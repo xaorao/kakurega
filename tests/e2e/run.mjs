@@ -531,6 +531,34 @@ try {
   await page.screenshot({ path: join(shots, "13-chat.png") });
   await page.getByRole("button", { name: "Clear" }).click();
   check("Clear forgets the conversation", (await page.locator(".msg").count()) === 0);
+  // a conversation about a project gets that project's notes and no other project's
+  await page.getByRole("link", { name: "Memory" }).click();
+  await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
+  await page.getByLabel("What should be remembered").fill("Zorblax rounding in kestrel is banker's");
+  await page.getByLabel("Only for this project (optional folder name)").fill("kestrel");
+  await page.getByRole("button", { name: "Remember" }).click();
+  await page.locator(".mem", { hasText: "Zorblax" }).waitFor();
+  await page.getByLabel("Only for this project (optional folder name)").fill("");
+  await page.getByRole("link", { name: "Chat" }).click();
+  await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();
+  check("the chat says what the project field does", await page.getByText("Notes you saved for this project are offered in this conversation").isVisible());
+  await page.getByLabel("Your message").fill("Zorblax rounding");
+  await page.getByLabel("Your message").press("Enter");
+  await page.getByText("0 note(s) used").first().waitFor();
+  const withoutProject = await page.locator(".msg.assistant").first().innerText();
+  check("a conversation with no project does not get a project's note", /0 note\(s\) used/.test(withoutProject) && !withoutProject.includes("project kestrel"), withoutProject.replace(/\n/g, " | ").slice(0, 300));
+  await page.getByLabel("Project (optional)").fill("kestrel");
+  await page.getByLabel("Your message").fill("Zorblax rounding");
+  await page.getByLabel("Your message").press("Enter");
+  await page.locator(".msg.assistant").nth(1).waitFor();
+  await page.getByText("1 note(s) used").last().waitFor();
+  const withProject = await page.locator(".msg.assistant").nth(1).innerText();
+  check("naming the project brings its note and the answer says which project it used", /1 note\(s\) used/.test(withProject) && withProject.includes("project kestrel"), withProject.replace(/\n/g, " | ").slice(0, 300));
+  await page.getByLabel("Project (optional)").scrollIntoViewIfNeeded();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: join(shots, "13b-chat-project.png") });
+  await page.getByLabel("Project (optional)").fill("");
+  await page.getByRole("button", { name: "Clear" }).click();
   // unsent text is kept per conversation while the page is open, and only in memory
   await page.getByLabel("Your message").fill("draftcanary unsent words");
   await page.getByRole("link", { name: "Memory" }).click();

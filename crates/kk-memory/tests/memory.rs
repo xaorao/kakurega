@@ -1412,6 +1412,12 @@ fn me31_project_names_are_plain_folder_names_and_replacements_keep_the_scope() {
         "a/b",
         "a\\b",
         "evil\u{202e}name",
+        // a name is shown inline next to its note: no control character, not even a tab or a line break
+        "tab\tname",
+        "line\nbreak",
+        "carriage\rreturn",
+        "nul\u{0}name",
+        "esc\u{1b}[31mname",
         &"x".repeat(81),
     ] {
         assert!(
