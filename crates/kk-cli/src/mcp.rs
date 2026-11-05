@@ -5,6 +5,17 @@ use serde_json::{json, Map, Value};
 use std::io::{BufRead, Write};
 
 const PROTOCOL: &str = "2025-06-18";
+/// Versions this server speaks. It only offers tools, which these three revisions describe the same way.
+const SUPPORTED: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
+
+/// The version to answer with: the client's own when this server speaks it, otherwise the newest this server speaks.
+fn negotiate(requested: &str) -> &'static str {
+    SUPPORTED
+        .iter()
+        .copied()
+        .find(|v| *v == requested)
+        .unwrap_or(PROTOCOL)
+}
 const MAX_LINE: usize = 1 << 20;
 const MAX_FILE: u64 = 20 << 20;
 const ID_PATTERN: &str = "^[A-Za-z0-9_-]{1,64}$";
@@ -334,9 +345,16 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
         Some(json!({"jsonrpc": "2.0", "id": id.clone(), "error": {"code": code, "message": m}}))
     };
     match method {
-        "initialize" => ok(
-            json!({"protocolVersion": PROTOCOL, "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "kakurega", "title": "Kakurega", "version": env!("CARGO_PKG_VERSION")}, "instructions": "Counts and statuses only. Source text, memory text and findings are never returned. Approvals happen in a window or terminal the owner controls."}),
-        ),
+        "initialize" => {
+            let requested = match msg["params"].get("protocolVersion") {
+                None => PROTOCOL,
+                Some(Value::String(v)) => negotiate(v),
+                Some(_) => return err(-32602, "protocolVersion must be text"),
+            };
+            ok(
+                json!({"protocolVersion": requested, "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "kakurega", "title": "Kakurega", "version": env!("CARGO_PKG_VERSION")}, "instructions": "Counts and statuses only. Source text, memory text and findings are never returned. Approvals happen in a window or terminal the owner controls."}),
+            )
+        }
         "ping" => ok(json!({})),
         "tools/list" => ok(json!({"tools": ctx.visible()})),
         "tools/call" => {

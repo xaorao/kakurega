@@ -298,3 +298,41 @@ fn mc09_the_service_is_looked_up_for_every_call_so_starting_it_later_or_restarti
     assert_eq!(s.recv()["result"]["isError"], true);
     assert!(s.close().is_empty());
 }
+
+#[test]
+fn mc10_the_protocol_version_is_the_clients_own_when_supported_the_newest_otherwise_and_must_be_text(
+) {
+    let dir = fresh("mc10");
+    let mut s = live(&dir);
+    let init = |id: u32, params: Value| {
+        json!({"jsonrpc": "2.0", "id": id, "method": "initialize", "params": params}).to_string()
+    };
+    for (asked, answered) in [
+        ("2024-11-05", "2024-11-05"),
+        ("2025-03-26", "2025-03-26"),
+        ("2025-06-18", "2025-06-18"),
+        ("2099-01-01", "2025-06-18"),
+        ("garbage", "2025-06-18"),
+    ] {
+        s.send(&init(1, json!({"protocolVersion": asked})));
+        assert_eq!(
+            s.recv()["result"]["protocolVersion"],
+            answered,
+            "asked {asked}"
+        );
+    }
+    s.send(&init(2, json!({})));
+    assert_eq!(
+        s.recv()["result"]["protocolVersion"],
+        "2025-06-18",
+        "none given: the newest"
+    );
+    s.send(&init(3, json!({"protocolVersion": 20250618})));
+    let r = s.recv();
+    assert_eq!(
+        (r["error"]["code"].clone(), r["id"].clone()),
+        (json!(-32602), json!(3)),
+        "{r}"
+    );
+    assert!(s.close().is_empty());
+}
