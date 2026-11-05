@@ -6939,3 +6939,75 @@ fn sv61_an_optional_check_that_fails_is_reported_but_does_not_make_the_machine_n
         (json!(false), Some("do it"))
     );
 }
+
+#[test]
+fn sv62_the_admin_overview_and_the_readiness_page_agree_on_whether_the_machine_is_ready() {
+    let check = |label: &str, ok: bool, required: Option<bool>| {
+        let mut c = json!({"id": label, "label": label, "ok": ok, "detail": "", "fix": ""});
+        if let Some(r) = required {
+            c["required"] = json!(r);
+        }
+        c
+    };
+    // (checks, ready, failing required labels, failing optional labels)
+    let cases = vec![
+        (
+            vec![check("A", true, None), check("N", false, Some(false))],
+            true,
+            vec![],
+            vec!["N"],
+        ),
+        (
+            vec![check("A", true, None), check("B", false, None)],
+            false,
+            vec!["B"],
+            vec![],
+        ),
+        (
+            vec![check("N", false, Some(false))],
+            true,
+            vec![],
+            vec!["N"],
+        ),
+        (
+            vec![
+                check("B", false, Some(true)),
+                check("N", false, Some(false)),
+            ],
+            false,
+            vec!["B"],
+            vec!["N"],
+        ),
+        (vec![check("odd", false, None)], false, vec!["odd"], vec![]),
+    ];
+    for (checks, ready, required_bad, optional_bad) in cases {
+        let (root, _repo) = repo_copy("overview-ready");
+        let runner = Arc::new(ChecksRunner {
+            inner: CannedRunner { confirm: true },
+            checks,
+        });
+        let svc = Service::new(&root.join("data"), vec![root.clone()], runner, true).unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        assert_eq!(w.get("/api/readiness").1["ready"], ready);
+        let base = format!("http://127.0.0.1:{}", c.addr.port());
+        let (_, o) = admin(
+            &base,
+            c.security.admin_token(),
+            "GET",
+            "/admin/overview",
+            None,
+        );
+        assert_eq!(
+            o["ready"], ready,
+            "the overview must use the same rule: {o}"
+        );
+        assert_eq!(o["setup_problems"], json!(required_bad), "{o}");
+        assert_eq!(o["optional_missing"], json!(optional_bad), "{o}");
+    }
+}

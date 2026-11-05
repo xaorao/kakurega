@@ -22,6 +22,16 @@ impl FakeAdmin {
 
     /// Like `start`, but every answer waits `delay_ms` first.
     fn start_slow(token: &str, delay_ms: u64) -> FakeAdmin {
+        FakeAdmin::start_with(
+            token,
+            delay_ms,
+            r#"{"ready":true,"reviews":{},"jobs":[],"id":"job-1"}"#,
+        )
+    }
+
+    /// Like `start_slow`, with the exact body every answer carries.
+    fn start_with(token: &str, delay_ms: u64, payload: &str) -> FakeAdmin {
+        let payload = payload.to_string();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let seen = Arc::new(Mutex::new(Vec::new()));
@@ -67,7 +77,6 @@ impl FakeAdmin {
                 } else {
                     *refused_t.lock().unwrap() += 1;
                 }
-                let payload = r#"{"ready":true,"reviews":{},"jobs":[],"id":"job-1"}"#;
                 let _ = write!(
                     stream,
                     "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}",
@@ -562,5 +571,154 @@ fn mc17_read_only_and_an_allow_list_together_give_only_what_both_allow() {
         ["overview"],
         "start_review is allowed by the list but hidden by read-only"
     );
+    assert!(s.close().is_empty());
+}
+
+fn cancel(id: Value) -> String {
+    json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": id}})
+        .to_string()
+}
+
+#[test]
+fn mc18_a_cancel_only_ever_reaches_a_request_that_is_running() {
+    let dir = fresh("mc18");
+    let admin = FakeAdmin::start_slow("tok-18", 300);
+    admin.publish(&dir);
+    let mut s = live(&dir);
+    // a cancel for an id that was never sent must not swallow a later request that uses it
+    s.send(&cancel(json!(7)));
+    s.send(&call(7, "overview", json!({})));
+    let r = s.recv();
+    assert_eq!(
+        (r["id"].clone(), r["result"]["isError"].clone()),
+        (json!(7), json!(false)),
+        "{r}"
+    );
+    // nor a cancel that arrives after the answer, whether the id is then reused or not
+    s.send(&call(8, "overview", json!({})));
+    assert_eq!(s.recv()["id"], 8);
+    s.send(&cancel(json!(8)));
+    s.send(&call(8, "overview", json!({})));
+    let again = s.recv();
+    assert_eq!(
+        (again["id"].clone(), again["result"]["isError"].clone()),
+        (json!(8), json!(false)),
+        "a reused id after a stale cancel is still answered: {again}"
+    );
+    // string and integer ids are different ids: cancelling "9" does not cancel 9
+    s.send(&call(9, "overview", json!({})));
+    s.send(&cancel(json!("9")));
+    let nine = s.recv();
+    assert_eq!(nine["id"], 9, "{nine}");
+    assert!(s.close().is_empty());
+}
+
+#[test]
+fn mc19_a_request_id_that_is_already_running_is_refused_and_the_first_call_is_still_answered_once()
+{
+    let dir = fresh("mc19");
+    let admin = FakeAdmin::start_slow("tok-19", 1000);
+    admin.publish(&dir);
+    let mut s = live(&dir);
+    s.send(&call(1, "overview", json!({})));
+    s.send(&call(1, "list_reviews", json!({})));
+    let refusal = s.recv();
+    assert_eq!(refusal["id"], 1, "{refusal}");
+    assert_eq!(refusal["error"]["code"], -32600, "{refusal}");
+    assert!(
+        refusal["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("already"),
+        "{refusal}"
+    );
+    let answer = s.recv();
+    assert_eq!(
+        (answer["id"].clone(), answer["result"]["isError"].clone()),
+        (json!(1), json!(false)),
+        "{answer}"
+    );
+    // once answered, the id is free again
+    s.send(&call(1, "overview", json!({})));
+    assert_eq!(s.recv()["id"], 1);
+    assert!(s.close().is_empty());
+}
+
+#[test]
+fn mc20_an_answer_that_does_not_match_the_tools_output_schema_is_never_passed_on_as_structured_data(
+) {
+    let bad_payloads = [
+        (r#"{"ready":"yes","reviews":{}}"#, "ready is text"),
+        (r#"{"reviews":{}}"#, "ready is missing"),
+        (r#"{"ready":true}"#, "reviews is missing"),
+        (r#"{"ready":true,"reviews":[]}"#, "reviews is a list"),
+        (
+            r#"{"ready":true,"reviews":{},"setup_problems":"none"}"#,
+            "setup_problems is text",
+        ),
+        (
+            r#"{"ready":true,"reviews":{},"setup_problems":[1]}"#,
+            "setup_problems holds a number",
+        ),
+        (r#"{"ready":1,"reviews":{}}"#, "a number is not a boolean"),
+    ];
+    for (i, (payload, why)) in bad_payloads.iter().enumerate() {
+        let dir = fresh(&format!("mc20-{i}"));
+        let admin = FakeAdmin::start_with(&format!("tok-20-{i}"), 0, payload);
+        admin.publish(&dir);
+        let mut s = live(&dir);
+        s.send(&call(1, "overview", json!({})));
+        let r = s.recv();
+        assert_eq!(r["result"]["isError"], true, "{why}: {r}");
+        assert!(r["result"].get("structuredContent").is_none(), "{why}: {r}");
+        assert!(
+            r["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("did not match"),
+            "{why}: {r}"
+        );
+        assert!(s.close().is_empty());
+    }
+    // answers that fit are passed on untouched, including fields the schema does not list
+    let dir = fresh("mc20-ok");
+    let admin = FakeAdmin::start_with(
+        "tok-20-ok",
+        0,
+        r#"{"ready":false,"reviews":{"ready":2},"setup_problems":["Sandbox"],"extra":{"anything":[1,2]}}"#,
+    );
+    admin.publish(&dir);
+    let mut s = live(&dir);
+    s.send(&call(1, "overview", json!({})));
+    let r = s.recv();
+    assert_eq!(r["result"]["isError"], false, "{r}");
+    assert_eq!(
+        r["result"]["structuredContent"]["extra"],
+        json!({"anything": [1, 2]})
+    );
+    assert!(s.close().is_empty());
+}
+
+#[test]
+fn mc21_at_most_four_service_calls_run_at_once_and_the_fifth_is_refused_at_once() {
+    let dir = fresh("mc21");
+    let admin = FakeAdmin::start_slow("tok-21", 1500);
+    admin.publish(&dir);
+    let mut s = live(&dir);
+    for id in 1..=5 {
+        s.send(&call(id, "overview", json!({})));
+    }
+    let first = s.recv();
+    assert_eq!(
+        first["id"], 5,
+        "the fifth is turned away before any answer is ready: {first}"
+    );
+    assert_eq!(first["error"]["code"], -32000, "{first}");
+    let mut answered: Vec<u64> = (0..4).map(|_| s.recv()["id"].as_u64().unwrap()).collect();
+    answered.sort();
+    assert_eq!(answered, [1, 2, 3, 4]);
+    // and when they are done there is room again
+    s.send(&call(5, "overview", json!({})));
+    assert_eq!(s.recv()["id"], 5);
     assert!(s.close().is_empty());
 }

@@ -920,16 +920,30 @@ async fn config(axum::Extension(svc): Svc) -> Json<Value> {
     }))
 }
 
+/// Whether every REQUIRED check passes. A check marked `"required": false` is reported with its fix but does not stop the
+/// machine being ready; only a JSON `false` makes a check optional, anything else is required. The readiness page and the
+/// agent overview both use this one rule.
+fn machine_is_ready(checks: &[Value]) -> bool {
+    checks
+        .iter()
+        .all(|c| c["ok"] == true || c["required"] == false)
+}
+
+fn failing_labels(checks: &[Value], optional: bool) -> Vec<String> {
+    checks
+        .iter()
+        .filter(|c| c["ok"] != true && (c["required"] == false) == optional)
+        .filter_map(|c| c["label"].as_str().map(str::to_string))
+        .collect()
+}
+
 async fn readiness(axum::Extension(svc): Svc) -> Json<Value> {
     let svc2 = svc.clone();
     let (checks, repairable) =
         tokio::task::spawn_blocking(move || (svc2.runner.readiness(), svc2.runner.repairable()))
             .await
             .unwrap_or_default();
-    // a check marked `"required": false` is reported with its fix but does not stop the machine being ready; anything else is required
-    let ready = checks
-        .iter()
-        .all(|c| c["ok"] == true || c["required"] == false);
+    let ready = machine_is_ready(&checks);
     let repairs = svc.repairs.lock().expect("lock").clone();
     let checks: Vec<Value> = checks
         .into_iter()
@@ -4920,8 +4934,9 @@ async fn admin_overview(axum::Extension(svc): Svc) -> Response {
     Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
         "route": svc.runner.route_info(),
-        "ready": checks.iter().all(|c| c["ok"] == true),
-        "setup_problems": checks.iter().filter(|c| c["ok"] != true).filter_map(|c| c["label"].as_str()).collect::<Vec<_>>(),
+        "ready": machine_is_ready(&checks),
+        "setup_problems": failing_labels(&checks, false),
+        "optional_missing": failing_labels(&checks, true),
         "reviews": by_state,
         "memories_by_level": memories,
         "approvals_require_signature": svc.approvers_enrolled(),

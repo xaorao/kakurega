@@ -27,6 +27,12 @@
             "type": "string"
           }
         },
+        "optional_missing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "reviews": {
           "type": "object"
         },

@@ -37,14 +37,12 @@ fn out_obj(props: Value, required: &[&str]) -> Value {
     json!({"type": "object", "properties": props, "required": required})
 }
 
-fn tool(
-    name: &str,
-    title: &str,
-    description: &str,
-    input: Value,
-    output: Value,
-    read_only: bool,
-) -> Value {
+/// The tools that change something. This list, and nothing else, decides what read-only mode hides and what the
+/// `readOnlyHint` of every tool says; the hint is advertised metadata and is never read back to make a decision.
+pub const MUTATING: [&str; 2] = ["start_review", "request_approval"];
+
+fn tool(name: &str, title: &str, description: &str, input: Value, output: Value) -> Value {
+    let read_only = !MUTATING.contains(&name);
     json!({
         "name": name, "title": title, "description": description,
         "inputSchema": input, "outputSchema": output,
@@ -57,21 +55,70 @@ pub fn tools() -> Value {
     let _ = error_out;
     json!([
         tool("overview", "Overview", "Counts only: setup problems, reviews by state, memories by privacy level and the signed log's latest entry. Never returns source text, memory text or findings.", obj(json!({}), &[]),
-            out_obj(json!({"version": {"type": "string"}, "ready": {"type": "boolean"}, "approvals_require_signature": {"type": "boolean"}, "setup_problems": {"type": "array", "items": {"type": "string"}}, "reviews": {"type": "object"}, "memories_by_level": {"type": "object"}, "log": {"type": "object"}}), &["ready", "reviews"]), true),
+            out_obj(json!({"version": {"type": "string"}, "ready": {"type": "boolean"}, "approvals_require_signature": {"type": "boolean"}, "setup_problems": {"type": "array", "items": {"type": "string"}}, "optional_missing": {"type": "array", "items": {"type": "string"}}, "reviews": {"type": "object"}, "memories_by_level": {"type": "object"}, "log": {"type": "object"}}), &["ready", "reviews"])),
         tool("list_reviews", "List reviews", "List reviews with state and counts only. Never returns source text.", obj(json!({}), &[]),
-            out_obj(json!({"jobs": {"type": "array", "items": {"type": "object"}}}), &["jobs"]), true),
+            out_obj(json!({"jobs": {"type": "array", "items": {"type": "object"}}}), &["jobs"])),
         tool("start_review", "Start a review", "Start a private review of a project folder for a named recipient. Nothing is released by starting a review.",
             obj(json!({"repo": string_prop("Absolute path of the project folder, inside a root the owner allowed.", 4096), "recipient": string_prop("Who will receive the result.", 128)}), &["repo", "recipient"]),
-            out_obj(json!({"id": {"type": "string"}}), &["id"]), false),
+            out_obj(json!({"id": {"type": "string"}}), &["id"])),
         tool("review_status", "Review status", "State and counts of one review.", obj(json!({"id": job_id_prop()}), &["id"]),
-            out_obj(json!({"id": {"type": "string"}, "state": {"type": "string"}, "stage": {}, "files_reviewed": {}, "files_withheld": {}, "findings_reported": {}, "findings_confirmed": {}, "approval": {}, "delivered": {}}), &["id", "state"]), true),
+            out_obj(json!({"id": {"type": "string"}, "state": {"type": "string"}, "stage": {}, "files_reviewed": {}, "files_withheld": {}, "findings_reported": {}, "findings_confirmed": {}, "approval": {}, "delivered": {}}), &["id", "state"])),
         tool("request_approval", "Request approval", "Ask the owner to approve the release. This tool cannot approve: the owner approves in the desktop window, the terminal workspace or `kaku approve`, after seeing the exact files.", obj(json!({"id": job_id_prop()}), &["id"]),
-            out_obj(json!({"approval": {"type": "string"}, "digest": {"type": "string"}, "how": {"type": "string"}}), &["approval"]), false),
+            out_obj(json!({"approval": {"type": "string"}, "digest": {"type": "string"}, "how": {"type": "string"}}), &["approval"])),
         tool("verify_capsule", "Verify a capsule", "Check a capsule file (.kkg) offline and report what it does and does not establish.", obj(json!({"path": string_prop("Path of a .kkg capsule file.", 4096)}), &["path"]),
-            out_obj(json!({"valid": {"type": "boolean"}, "reason": {"type": "string"}, "signer": {}, "recipient": {}, "established": {"type": "array"}, "not_established": {"type": "array"}}), &["valid"]), true),
+            out_obj(json!({"valid": {"type": "boolean"}, "reason": {"type": "string"}, "signer": {}, "recipient": {}, "established": {"type": "array"}, "not_established": {"type": "array"}}), &["valid"])),
         tool("verify_log", "Verify the event log", "Check a saved signed event log (.json) offline, optionally against a pinned key and an anchor.", obj(json!({"path": string_prop("Path of a saved event log.", 4096), "pin": string_prop("Base64url Ed25519 public key to require.", 64), "anchor": string_prop("COUNT:HEAD printed by `kaku log export`.", 200)}), &["path"]),
-            out_obj(json!({"valid": {"type": "boolean"}, "reason": {"type": "string"}, "entries": {"type": "integer"}, "head": {"type": "string"}, "signer": {"type": "string"}}), &["valid"]), true)
+            out_obj(json!({"valid": {"type": "boolean"}, "reason": {"type": "string"}, "entries": {"type": "integer"}, "head": {"type": "string"}, "signer": {"type": "string"}}), &["valid"]))
     ])
+}
+
+/// Whether `v` fits `schema`, for the few keywords the output schemas use (`type`, `properties`, `required`, `items`; a test
+/// keeps it that way). Fields the schema does not list are allowed: the listed ones are the stable contract.
+fn conforms(schema: &Value, v: &Value) -> Result<(), String> {
+    if let Some(t) = schema["type"].as_str() {
+        let fits = match t {
+            "object" => v.is_object(),
+            "array" => v.is_array(),
+            "string" => v.is_string(),
+            "boolean" => v.is_boolean(),
+            "integer" => v.is_i64() || v.is_u64(),
+            "number" => v.is_number(),
+            "null" => v.is_null(),
+            other => {
+                return Err(format!(
+                    "the schema uses a type this server does not check: {other}"
+                ))
+            }
+        };
+        if !fits {
+            return Err(format!("expected {t}"));
+        }
+    }
+    if let Some(map) = v.as_object() {
+        for r in schema["required"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            if !map.contains_key(r) {
+                return Err(format!("`{r}` is missing"));
+            }
+        }
+        if let Some(props) = schema["properties"].as_object() {
+            for (k, p) in props {
+                if let Some(x) = map.get(k) {
+                    conforms(p, x).map_err(|e| format!("`{k}`: {e}"))?;
+                }
+            }
+        }
+    }
+    if let (Some(items), Some(list)) = (schema.get("items"), v.as_array()) {
+        for (i, x) in list.iter().enumerate() {
+            conforms(items, x).map_err(|e| format!("item {i}: {e}"))?;
+        }
+    }
+    Ok(())
 }
 
 fn reply(ok: bool, v: Value) -> Value {
@@ -193,7 +240,9 @@ impl Ctx {
                 .cloned()
                 .unwrap_or_default()
                 .into_iter()
-                .filter(|t| !self.read_only || t["annotations"]["readOnlyHint"] == true)
+                .filter(|t| {
+                    !self.read_only || !MUTATING.contains(&t["name"].as_str().unwrap_or_default())
+                })
                 .filter(|t| {
                     self.allow
                         .as_ref()
@@ -229,6 +278,33 @@ fn read_small(ctx: &Ctx, path: &str, suffixes: &[&str]) -> Result<Vec<u8>, Strin
 }
 
 fn call(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, name: &str, a: &Value) -> Value {
+    let result = call_unchecked(admin, ctx, name, a);
+    // A success reply is only passed on as structured data if it fits the tool's own output schema. The data comes from
+    // another process, so a wrong shape is refused here rather than handed to an agent that trusts the schema.
+    if result["isError"] == false {
+        let schema = tools()
+            .as_array()
+            .and_then(|t| {
+                t.iter()
+                    .find(|t| t["name"] == name)
+                    .map(|t| t["outputSchema"].clone())
+            })
+            .unwrap_or(Value::Null);
+        if let Err(why) = conforms(&schema, &result["structuredContent"]) {
+            return fail(&format!(
+                "the answer did not match this tool's output schema ({why}), so it was not used"
+            ));
+        }
+    }
+    result
+}
+
+fn call_unchecked(
+    admin: &dyn Fn() -> Result<Admin, String>,
+    ctx: &Ctx,
+    name: &str,
+    a: &Value,
+) -> Value {
     let all = ctx.visible();
     let Some(def) = all
         .as_array()
@@ -451,9 +527,10 @@ const DRAIN: std::time::Duration = std::time::Duration::from_secs(5);
 
 struct Shared {
     out: std::sync::Mutex<std::io::Stdout>,
-    /// Requests the client cancelled, by id as JSON text. An answer for one of them is not sent.
-    cancelled: std::sync::Mutex<std::collections::HashSet<String>>,
-    in_flight: std::sync::atomic::AtomicUsize,
+    /// The service-backed calls running now, by id as JSON text, each with whether the client cancelled it. A cancel only
+    /// ever marks a call that is in this map, so it can never silence a request that was not running; the answer of a
+    /// cancelled call is not sent. A finished call leaves the map, which frees its id.
+    in_flight: std::sync::Mutex<std::collections::HashMap<String, bool>>,
 }
 
 impl Shared {
@@ -494,7 +571,6 @@ fn cancelled_id(line: &str) -> Option<String> {
 }
 
 pub fn run(args: &[String]) -> u8 {
-    use std::sync::atomic::Ordering;
     let args: std::sync::Arc<Vec<String>> = std::sync::Arc::new(args.to_vec());
     let mut ctx = Ctx::new(&crate::data_dir(&args)).read_only(
         args.iter().any(|a| a == "--read-only")
@@ -530,8 +606,7 @@ pub fn run(args: &[String]) -> u8 {
     let ctx = std::sync::Arc::new(ctx);
     let shared = std::sync::Arc::new(Shared {
         out: std::sync::Mutex::new(std::io::stdout()),
-        cancelled: Default::default(),
-        in_flight: std::sync::atomic::AtomicUsize::new(0),
+        in_flight: Default::default(),
     });
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
@@ -553,17 +628,37 @@ pub fn run(args: &[String]) -> u8 {
             continue;
         }
         if let Some(id) = cancelled_id(&line) {
-            shared
-                .cancelled
+            if let Some(cancelled) = shared
+                .in_flight
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .insert(id);
+                .get_mut(&id)
+            {
+                *cancelled = true;
+            }
             continue;
         }
         if let Some(id) = slow_call(&ctx, &line) {
-            if shared.in_flight.fetch_add(1, Ordering::SeqCst) >= MAX_IN_FLIGHT {
-                shared.in_flight.fetch_sub(1, Ordering::SeqCst);
-                let frame = json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32000, "message": "too many requests are in progress; try again in a moment"}});
+            let key = id.to_string();
+            let refusal = {
+                let mut running = shared.in_flight.lock().unwrap_or_else(|e| e.into_inner());
+                if running.contains_key(&key) {
+                    Some("that request id is already in use by a request still running")
+                } else if running.len() >= MAX_IN_FLIGHT {
+                    Some("too many requests are in progress; try again in a moment")
+                } else {
+                    running.insert(key.clone(), false);
+                    None
+                }
+            };
+            if let Some(why) = refusal {
+                let (code, why) = if why.starts_with("that request") {
+                    (-32600, why)
+                } else {
+                    (-32000, why)
+                };
+                let frame =
+                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": why}});
                 if !shared.send(&frame) {
                     break;
                 }
@@ -573,16 +668,16 @@ pub fn run(args: &[String]) -> u8 {
             std::thread::spawn(move || {
                 let admin = || connect(&args);
                 let reply = handle(&admin, &ctx, &line);
-                let key = id.to_string();
+                // leave the map and learn whether the client cancelled, in one step
                 let was_cancelled = shared
-                    .cancelled
+                    .in_flight
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .remove(&key);
+                    .remove(&key)
+                    .unwrap_or(false);
                 if let (Some(frame), false) = (reply, was_cancelled) {
                     shared.send(&frame);
                 }
-                shared.in_flight.fetch_sub(1, Ordering::SeqCst);
             });
             continue;
         }
@@ -595,7 +690,13 @@ pub fn run(args: &[String]) -> u8 {
     }
     // input ended: let work in progress answer, but never hold the process longer than DRAIN
     let waited = std::time::Instant::now();
-    while shared.in_flight.load(Ordering::SeqCst) > 0 && waited.elapsed() < DRAIN {
+    while !shared
+        .in_flight
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_empty()
+        && waited.elapsed() < DRAIN
+    {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     0
@@ -662,5 +763,102 @@ mod tests {
         assert!(check_args(&schema, &json!({"id": "a".repeat(65)})).is_err());
         assert!(check_args(&schema, &json!({"id": "job/../3"})).is_err());
         assert!(check_args(&schema, &json!({"id": ""})).is_err());
+    }
+
+    #[test]
+    fn read_only_visibility_comes_from_the_explicit_list_and_the_hints_follow_it() {
+        let names = |v: Value| -> Vec<String> {
+            v.as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t["name"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let all = names(tools());
+        for t in tools().as_array().unwrap() {
+            let name = t["name"].as_str().unwrap();
+            assert_eq!(
+                t["annotations"]["readOnlyHint"],
+                !MUTATING.contains(&name),
+                "{name}: the hint must be derived from the explicit list"
+            );
+        }
+        for m in MUTATING {
+            assert!(
+                all.iter().any(|n| n == m),
+                "{m} is in MUTATING but is not a tool"
+            );
+        }
+        let dir = std::env::temp_dir();
+        let ro = Ctx::new(&dir).read_only(true);
+        let visible = names(ro.visible());
+        let expected: Vec<String> = all
+            .iter()
+            .filter(|n| !MUTATING.contains(&n.as_str()))
+            .cloned()
+            .collect();
+        assert_eq!(visible, expected);
+        assert!(!visible.iter().any(|n| MUTATING.contains(&n.as_str())));
+        assert_eq!(
+            names(Ctx::new(&dir).visible()),
+            all,
+            "without read-only everything is offered"
+        );
+    }
+
+    #[test]
+    fn the_output_check_follows_the_schema_and_knows_every_keyword_the_tools_use() {
+        let schema = json!({"type": "object", "properties": {
+            "ok": {"type": "boolean"}, "n": {"type": "integer"}, "s": {"type": "string"},
+            "list": {"type": "array", "items": {"type": "string"}}, "o": {"type": "object"}, "any": {}
+        }, "required": ["ok"]});
+        assert!(conforms(&schema, &json!({"ok": true})).is_ok());
+        assert!(conforms(&schema, &json!({"ok": false, "n": 3, "s": "x", "list": ["a"], "o": {}, "any": [1, null], "extra": 1})).is_ok());
+        for bad in [
+            json!({}),
+            json!({"ok": 1}),
+            json!({"ok": "true"}),
+            json!({"ok": null}),
+            json!({"ok": true, "n": 1.5}),
+            json!({"ok": true, "n": true}),
+            json!({"ok": true, "n": "3"}),
+            json!({"ok": true, "s": 3}),
+            json!({"ok": true, "list": "a"}),
+            json!({"ok": true, "list": [1]}),
+            json!({"ok": true, "o": []}),
+            json!([]),
+            json!("x"),
+            json!(null),
+        ] {
+            assert!(conforms(&schema, &bad).is_err(), "{bad}");
+        }
+        // every keyword used by an output schema is one the check understands, as for input schemas
+        fn keywords(v: &Value, out: &mut Vec<String>) {
+            if let Some(o) = v.as_object() {
+                for (k, x) in o {
+                    if k == "properties" {
+                        for p in x.as_object().into_iter().flat_map(|m| m.values()) {
+                            keywords(p, out);
+                        }
+                    } else {
+                        out.push(k.clone());
+                        if k == "items" {
+                            keywords(x, out);
+                        }
+                    }
+                }
+            }
+        }
+        for t in tools().as_array().unwrap() {
+            let mut ks = Vec::new();
+            keywords(&t["outputSchema"], &mut ks);
+            for k in ks {
+                assert!(
+                    ["type", "properties", "required", "items"].contains(&k.as_str()),
+                    "{}: output keyword {k} is not checked",
+                    t["name"]
+                );
+            }
+        }
     }
 }
