@@ -210,15 +210,20 @@ export function Chat() {
   const [searchOn, setSearchOn] = createSignal<{ available: boolean; provider?: string } | null>(null);
   api.searchStatus().then(setSearchOn).catch(() => setSearchOn({ available: false }));
   const [words, setWords] = createSignal("");
+  const [recency, setRecency] = createSignal("");
+  const windows = { day: "web.recency.day", week: "web.recency.week", month: "web.recency.month", year: "web.recency.year" } as const;
+  const windowText = (w: string | null) => (w && w in windows ? t(windows[w as keyof typeof windows]) : "");
   const [searchProposal, setSearchProposal] = createSignal<SearchProposal | null>(null);
   const [hits, setHits] = createSignal<SearchHit[]>([]);
+  const [searchNote, setSearchNote] = createSignal<{ why: string; engines: string[] } | null>(null);
   const showSearch = async () => {
     setWebBusy(true);
     setWebError("");
     setSearchProposal(null);
     setHits([]);
+    setSearchNote(null);
     try {
-      setSearchProposal(await api.searchPropose(words()));
+      setSearchProposal(await api.searchPropose(words(), recency()));
     } catch (err) {
       setWebError(err instanceof ApiError ? err.message : t("web.error"));
     } finally {
@@ -231,7 +236,9 @@ export function Chat() {
     setWebBusy(true);
     setWebError("");
     try {
-      setHits((await api.searchRun(p.id, p.digest)).results);
+      const answer = await api.searchRun(p.id, p.digest);
+      setHits(answer.results);
+      setSearchNote(answer.results.length === 0 ? { why: answer.empty_because ?? "", engines: answer.engines_failed } : null);
       setSearchProposal(null);
     } catch (err) {
       setWebError(err instanceof ApiError ? err.message : t("web.error"));
@@ -389,6 +396,11 @@ export function Chat() {
         <Show when={searchOn()?.available}>
           <label for="web-search">{t("web.searchWords")}</label>
           <input id="web-search" type="text" maxlength="200" value={words()} onInput={(e) => setWords(e.currentTarget.value)} />
+          <label for="web-recency">{t("web.recency")}</label>
+          <select id="web-recency" value={recency()} onChange={(e) => setRecency(e.currentTarget.value)}>
+            <option value="">{t("web.recencyAny")}</option>
+            <For each={Object.keys(windows)}>{(w) => <option value={w}>{windowText(w)}</option>}</For>
+          </select>
           <div class="actions">
             <button type="button" disabled={webBusy() || words().trim().length === 0} onClick={showSearch}>{t("web.searchShow")}</button>
           </div>
@@ -397,11 +409,20 @@ export function Chat() {
               <div class="stack" role="region" aria-label={t("web.searchReview")}>
                 <p><strong>{t("web.searchSends", { site: p().will_send_to })}</strong></p>
                 <p><code>{p().query}</code></p>
+                <Show when={p().recency}><p>{t("web.recencyShown", { window: windowText(p().recency) })}</p></Show>
                 <p class="muted">{p().stays_here}</p>
                 <div class="actions">
                   <button class="primary" type="button" disabled={webBusy()} onClick={sendSearch}>{t("web.searchSend")}</button>
                   <button type="button" onClick={() => setSearchProposal(null)}>{t("web.cancel")}</button>
                 </div>
+              </div>
+            )}
+          </Show>
+          <Show when={searchNote()}>
+            {(n) => (
+              <div role="status" class="stack">
+                <p><strong>{t("web.searchNone")}</strong> {n().why}</p>
+                <Show when={n().engines.length > 0}><p class="muted">{n().engines.join(" · ")}</p></Show>
               </div>
             )}
           </Show>

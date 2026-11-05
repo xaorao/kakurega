@@ -403,8 +403,27 @@ pub struct Hit {
     pub snippet: String,
 }
 
+/// The freshness windows a SearXNG-style provider understands.
+pub const RECENCY_WINDOWS: [&str; 4] = ["day", "week", "month", "year"];
+
 /// The exact address that would be requested for a query at a SearXNG-style provider.
 pub fn search_url(provider: &str, query: &str) -> Result<Url, FetchError> {
+    search_url_with(provider, query, None)
+}
+
+/// `search_url`, limited to results from the last day, week, month or year when a window is given.
+pub fn search_url_with(
+    provider: &str,
+    query: &str,
+    recency: Option<&str>,
+) -> Result<Url, FetchError> {
+    if let Some(w) = recency {
+        if !RECENCY_WINDOWS.contains(&w) {
+            return Err(FetchError::BadUrl(
+                "the freshness window must be day, week, month or year",
+            ));
+        }
+    }
     let mut u = validate_url(provider)?;
     if u.query().is_some() {
         return Err(FetchError::BadUrl(
@@ -421,36 +440,106 @@ pub fn search_url(provider: &str, query: &str) -> Result<Url, FetchError> {
         .append_pair("q", q)
         .append_pair("format", "json")
         .append_pair("safesearch", "1");
+    if let Some(w) = recency {
+        u.query_pairs_mut().append_pair("time_range", w);
+    }
     Ok(u)
 }
 
+pub const MAX_PER_HOST: usize = 3;
+pub const MAX_FAILED_ENGINES: usize = 6;
+
+/// What a SearXNG-style search site answered: the addresses worth choosing from, and the engines behind it that failed.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SearchAnswer {
+    pub hits: Vec<Hit>,
+    /// "engine: reason" for each engine the site could not ask, so an empty or thin list can be explained.
+    pub failed_engines: Vec<String>,
+}
+
+fn short(s: &str, n: usize) -> String {
+    clean_text(s).chars().take(n).collect()
+}
+
 /// Results of a SearXNG-style JSON answer. Only addresses that could be fetched are kept; titles and snippets are cleaned
-/// text and are still untrusted.
-pub fn parse_hits(body: &[u8]) -> Vec<Hit> {
+/// text and are still untrusted. A knowledge box (infobox) with an address comes first, one host fills at most
+/// `MAX_PER_HOST` places so a single site cannot crowd out the rest, and at most `MAX_HITS` are kept.
+pub fn parse_answer(body: &[u8]) -> SearchAnswer {
     let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
-        return Vec::new();
+        return SearchAnswer::default();
     };
     let mut seen = std::collections::BTreeSet::new();
-    let mut out = Vec::new();
-    for r in v["results"].as_array().into_iter().flatten() {
-        let (Some(url), Some(title)) = (r["url"].as_str(), r["title"].as_str()) else {
-            continue;
-        };
-        let Ok(u) = validate_url(url) else { continue };
-        if !seen.insert(u.to_string()) {
-            continue;
+    let mut per_host: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut hits = Vec::new();
+    let mut take = |url: &str, title: &str, snippet: &str| {
+        if hits.len() >= MAX_HITS {
+            return;
         }
-        let cut = |s: &str, n: usize| clean_text(s).chars().take(n).collect::<String>();
-        out.push(Hit {
-            title: cut(title, 200),
+        let Ok(u) = validate_url(url) else { return };
+        let host = u.host_str().unwrap_or_default().to_ascii_lowercase();
+        if per_host.get(&host).copied().unwrap_or(0) >= MAX_PER_HOST || !seen.insert(u.to_string())
+        {
+            return;
+        }
+        *per_host.entry(host).or_insert(0) += 1;
+        hits.push(Hit {
+            title: short(title, 200),
             url: u.to_string(),
-            snippet: cut(r["content"].as_str().unwrap_or(""), 400),
+            snippet: short(snippet, 400),
         });
-        if out.len() >= MAX_HITS {
-            break;
+    };
+    for b in v["infoboxes"].as_array().into_iter().flatten() {
+        let url = b["urls"]
+            .as_array()
+            .and_then(|a| a.iter().find_map(|u| u["url"].as_str()));
+        if let (Some(url), Some(content)) = (url, b["content"].as_str()) {
+            take(url, b["infobox"].as_str().unwrap_or(""), content);
         }
     }
-    out
+    for r in v["results"].as_array().into_iter().flatten() {
+        if let (Some(url), Some(title)) = (r["url"].as_str(), r["title"].as_str()) {
+            take(url, title, r["content"].as_str().unwrap_or(""));
+        }
+    }
+    let failed_engines = v["unresponsive_engines"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| {
+            let pair = e.as_array()?;
+            Some(format!(
+                "{}: {}",
+                short(pair.first()?.as_str()?, 30),
+                short(pair.get(1)?.as_str()?, 45)
+            ))
+        })
+        .take(MAX_FAILED_ENGINES)
+        .collect();
+    SearchAnswer {
+        hits,
+        failed_engines,
+    }
+}
+
+/// The addresses of a search answer; see `parse_answer`.
+pub fn parse_hits(body: &[u8]) -> Vec<Hit> {
+    parse_answer(body).hits
+}
+
+/// Why a search request failed, in words the owner can act on.
+pub fn explain_search_failure(e: &FetchError) -> String {
+    match e {
+        FetchError::Status(403) => "the search site refuses JSON answers; its owner must list json under search.formats in its settings (a stock SearXNG install does not)".into(),
+        FetchError::Status(429) => "the search site says too many requests were made; wait a while and try again".into(),
+        FetchError::Status(c @ 500..=599) => format!("the search site is unavailable right now (HTTP {c}); try again later"),
+        FetchError::Status(c) => format!("the search site answered HTTP {c}"),
+        FetchError::BadUrl(why) => format!("the search address was refused: {why}"),
+        FetchError::BlockedAddress => "the search site's address is not a public address, so it was not contacted".into(),
+        FetchError::NoAddress => "the search site's name did not resolve".into(),
+        FetchError::TooManyRedirects => "the search site redirected too many times".into(),
+        FetchError::NotText => "the search site did not answer with JSON (many sites only send web pages; a SearXNG site must list json under search.formats, or ask a different site)".into(),
+        FetchError::Transport(_) => "the search site could not be reached".into(),
+    }
 }
 
 // ---- text extraction ----
@@ -1158,6 +1247,103 @@ mod tests {
         assert!(parse_hits(b"not json").is_empty() && parse_hits(b"{}").is_empty());
         let many = serde_json::json!({"results": (0..40).map(|i| serde_json::json!({"title": "t", "url": format!("https://h{i}.example/"), "content": ""})).collect::<Vec<_>>()});
         assert_eq!(parse_hits(many.to_string().as_bytes()).len(), MAX_HITS);
+    }
+
+    #[test]
+    fn fe20_a_real_shaped_answer_reports_failed_engines_infobox_and_caps_hits_per_host() {
+        let mut results: Vec<serde_json::Value> = (0..6)
+            .map(|i| serde_json::json!({"title": format!("one {i}"), "url": format!("https://same.example/p{i}"), "content": "c", "engine": "bing", "score": 1.0}))
+            .collect();
+        results.push(
+            serde_json::json!({"title": "other", "url": "https://other.example/", "content": "c"}),
+        );
+        let body = serde_json::json!({
+            "query": "q", "results": results,
+            "infoboxes": [{"infobox": "A", "content": "A is a letter.", "urls": [{"title": "Wikipedia", "url": "https://en.wikipedia.org/wiki/A"}]},
+                          {"infobox": "B", "content": "no link"},
+                          {"infobox": "C", "content": "bad link", "urls": [{"url": "https://127.0.0.1/x"}]}],
+            "unresponsive_engines": [["duckduckgo", "CAPTCHA"], ["brave", "HTTP error"], "junk", [1, 2]]
+        })
+        .to_string();
+        let a = parse_answer(body.as_bytes());
+        let urls: Vec<&str> = a.hits.iter().map(|h| h.url.as_str()).collect();
+        assert_eq!(
+            urls,
+            [
+                "https://en.wikipedia.org/wiki/A",
+                "https://same.example/p0",
+                "https://same.example/p1",
+                "https://same.example/p2",
+                "https://other.example/"
+            ],
+            "the box comes first, a host gives at most {MAX_PER_HOST}"
+        );
+        assert_eq!(a.hits[0].title, "A");
+        assert_eq!(a.hits[0].snippet, "A is a letter.");
+        assert_eq!(
+            a.failed_engines,
+            ["duckduckgo: CAPTCHA", "brave: HTTP error"]
+        );
+        // an infobox alone is a usable answer (a real one-letter query returned only that)
+        let only = serde_json::json!({"results": [], "infoboxes": [{"content": "x", "urls": [{"url": "https://en.wikipedia.org/wiki/A"}]}]}).to_string();
+        assert_eq!(parse_answer(only.as_bytes()).hits.len(), 1);
+        assert_eq!(parse_hits(body.as_bytes()), a.hits);
+        // engine names and reasons are cleaned and short, and only a few are kept
+        let noisy = serde_json::json!({"results": [], "unresponsive_engines":
+            (0..20).map(|i| serde_json::json!([format!("e{i}\u{202e}"), "x".repeat(300)])).collect::<Vec<_>>()}).to_string();
+        let n = parse_answer(noisy.as_bytes());
+        assert_eq!(n.failed_engines.len(), MAX_FAILED_ENGINES);
+        assert!(n
+            .failed_engines
+            .iter()
+            .all(|e| e.chars().count() <= 80 && !e.contains('\u{202e}')));
+        assert!(
+            parse_answer(b"not json").hits.is_empty()
+                && parse_answer(b"[]").failed_engines.is_empty()
+        );
+    }
+
+    #[test]
+    fn fe22_a_freshness_window_is_one_of_four_words_and_is_part_of_the_address_shown() {
+        for w in ["day", "week", "month", "year"] {
+            let u = search_url_with("https://s.example/search", "rust", Some(w)).unwrap();
+            assert_eq!(
+                u.as_str(),
+                format!("https://s.example/search?q=rust&format=json&safesearch=1&time_range={w}")
+            );
+        }
+        assert_eq!(
+            search_url_with("https://s.example/search", "rust", None).unwrap(),
+            search_url("https://s.example/search", "rust").unwrap()
+        );
+        for bad in ["", "Month", "decade", "month&q=x", "day ", "None"] {
+            assert!(
+                search_url_with("https://s.example/search", "rust", Some(bad)).is_err(),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn fe21_search_failures_are_explained_in_plain_words() {
+        let say = |e: FetchError| explain_search_failure(&e);
+        assert!(say(FetchError::Status(403)).contains("search.formats"));
+        assert!(say(FetchError::Status(429)).contains("too many"));
+        assert!(say(FetchError::Status(503)).contains("unavailable"));
+        assert!(say(FetchError::Status(404)).contains("404"));
+        assert!(say(FetchError::NotText).contains("search.formats"));
+        assert!(say(FetchError::BadUrl("only https is allowed")).contains("only https"));
+        for e in [
+            FetchError::NotText,
+            FetchError::BlockedAddress,
+            FetchError::Transport("x".into()),
+        ] {
+            let m = say(e);
+            assert!(
+                !m.is_empty() && !m.contains("Transport(") && !m.contains("NotText"),
+                "{m}"
+            );
+        }
     }
 
     #[test]

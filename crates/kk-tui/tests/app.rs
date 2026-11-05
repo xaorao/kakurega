@@ -1636,6 +1636,64 @@ fn tu35_search_and_read_show_exactly_what_goes_out_send_nothing_without_a_yes_an
 }
 
 #[test]
+fn tu35b_an_empty_search_answer_says_why_and_names_the_engines_that_failed_and_clears_old_numbers()
+{
+    let mut a = booted();
+    let r = enter(&mut a, "/search zzzz");
+    a.handle(ok(&r[0], 200, json!({"id": "search-1", "digest": "d1", "query": "zzzz", "will_send_to": "search.example", "stays_here": "x"})));
+    let r = a.handle(key(KeyCode::Char('y')));
+    a.handle(ok(&r[0], 200, json!({"results": [{"title": "T", "snippet": "", "url": "https://tokio.rs/tutorial", "host": "tokio.rs", "withheld": false}], "engines_failed": [], "empty_because": null})));
+    assert_eq!(a.search_hits.len(), 1);
+    let r = enter(&mut a, "/search zzzz");
+    a.handle(ok(&r[0], 200, json!({"id": "search-2", "digest": "d2", "query": "zzzz", "will_send_to": "search.example", "stays_here": "x"})));
+    let r = a.handle(key(KeyCode::Char('y')));
+    a.handle(ok(&r[0], 200, json!({"results": [], "engines_failed": ["duckduckgo: CAPTCHA", "brave\u{202e}: HTTP error"], "empty_because": "the search site found nothing, and some of its search engines did not answer (listed below); try again later or use another search site"})));
+    let t = text(&a);
+    assert!(a.search_hits.is_empty(), "old numbers are gone");
+    assert!(
+        t.contains("No usable results.")
+            && t.contains("try again later or use another search site")
+            && t.contains("duckduckgo: CAPTCHA")
+            && t.contains(": HTTP error")
+            && !t.contains('\u{202e}'),
+        "{t}"
+    );
+}
+
+#[test]
+fn tu35c_a_freshness_flag_is_parsed_strictly_sent_and_shown_before_the_yes() {
+    assert_eq!(
+        cmd::parse("/search tokio async"),
+        Ok(Command::Search("tokio async".into(), None))
+    );
+    assert_eq!(
+        cmd::parse("/search --week tokio  async"),
+        Ok(Command::Search("tokio  async".into(), Some("week".into())))
+    );
+    for bad in [
+        "/search --decade x",
+        "/search --week",
+        "/search --Week x",
+        "/search --day --week x",
+        "/search -- x",
+    ] {
+        assert!(cmd::parse(bad).is_err(), "{bad}");
+    }
+    let mut a = booted();
+    let r = enter(&mut a, "/search --month tokio");
+    assert_eq!(
+        r[0].body.as_ref().unwrap(),
+        &json!({"query": "tokio", "recency": "month"})
+    );
+    a.handle(ok(&r[0], 200, json!({"id": "search-1", "digest": "d1", "query": "tokio", "recency": "month", "will_send_to": "search.example", "stays_here": "x"})));
+    let t = text(&a);
+    assert!(t.contains("last month"), "{t}");
+    assert!(a.handle(key(KeyCode::Char('n'))).is_empty());
+    let r = enter(&mut a, "/search tokio");
+    assert_eq!(r[0].body.as_ref().unwrap(), &json!({"query": "tokio"}));
+}
+
+#[test]
 fn tu36_search_and_read_refusals_from_the_service_are_shown_and_nothing_is_pending() {
     let mut a = booted();
     let r = enter(&mut a, "/search my secret words");
@@ -1657,7 +1715,7 @@ fn tu36_search_and_read_refusals_from_the_service_are_shown_and_nothing_is_pendi
         let r = enter(&mut a, bad);
         assert!(r.is_empty(), "{bad}");
     }
-    assert!(text(&a).contains("usage: /search WORDS"));
+    assert!(text(&a).contains("usage: /search [--day|--week|--month|--year] WORDS"));
 }
 
 #[test]

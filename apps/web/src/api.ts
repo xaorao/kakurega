@@ -91,7 +91,8 @@ export interface Schedule { id: string; repo: string; recipient: string; every_h
 export interface ScheduleRun { schedule: string; at: number; outcome: string; job: string | null }
 export interface ResearchItem { url: string; host?: string; allowed: boolean; reason?: string }
 export interface ResearchProposal { id: string; digest: string; items: ResearchItem[]; will_request: string[]; stays_here: string }
-export interface SearchProposal { id: string; digest: string; query: string; will_send_to: string; stays_here: string }
+export interface SearchProposal { id: string; digest: string; query: string; recency: string | null; will_send_to: string; stays_here: string }
+export interface SearchAnswer { results: SearchHit[]; note: string; engines_failed: string[]; empty_because: string | null }
 export interface SearchHit { title: string; snippet: string; url: string; host: string | null; withheld: boolean }
 export interface ResearchPage { page_id?: string; url: string; final_url?: string; title?: string; sha256?: string; truncated?: boolean; looks_like_instructions?: boolean; error?: string }
 export interface AskCitation { file: string; quote: string; verdict: "verified" | "not_found" | "unknown_file" | "bad_length"; line: number | null }
@@ -175,8 +176,8 @@ export const api = {
   keptChat: (id: string) => request<{ id: string; project?: string | null; turns: ChatTurn[]; summary?: { covered: number; text: string } | null }>("GET", `/api/sessions/${id}`),
   forgetChat: (id: string) => request<{ forgotten: boolean }>("POST", `/api/sessions/${id}/forget`, {}),
   searchStatus: () => request<{ available: boolean; provider?: string; how_to_enable?: string }>("GET", "/api/search/status"),
-  searchPropose: (query: string) => request<SearchProposal>("POST", "/api/search/propose", { query }),
-  searchRun: (id: string, digest: string) => request<{ results: SearchHit[]; note: string }>("POST", `/api/search/${id}/run`, { approve: true, digest }),
+  searchPropose: (query: string, recency?: string) => request<SearchProposal>("POST", "/api/search/propose", recency ? { query, recency } : { query }),
+  searchRun: (id: string, digest: string) => request<SearchAnswer>("POST", `/api/search/${id}/run`, { approve: true, digest }),
   importNotes: (source: string, notes: { text: string; name: string }[]) => request<{ added: number; already_known: number; refused: number; instruction_like: number; note: string }>("POST", "/api/memories/import-notes", { source, notes }),
   researchPropose: (urls: string[]) => request<ResearchProposal>("POST", "/api/research/propose", { urls }),
   researchFetch: (id: string, digest: string) => request<{ pages: ResearchPage[]; note: string }>("POST", `/api/research/${id}/fetch`, { approve: true, digest }),

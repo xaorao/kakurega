@@ -42,7 +42,7 @@ pub enum Command {
     ClearHistory,
     Proof(Option<String>),
     Gateway,
-    Search(String),
+    Search(String, Option<String>),
     Read(String),
     Web(bool),
     Sessions,
@@ -177,7 +177,7 @@ pub fn usage(name: &str) -> &'static str {
         "forget" => "/forget ID",
         "verify" => "/verify FILE",
         "proof" => "/proof [MODEL]",
-        "search" => "/search WORDS",
+        "search" => "/search [--day|--week|--month|--year] WORDS",
         "read" => "/read ADDRESS_OR_NUMBER ...",
         _ => "/help",
     }
@@ -197,6 +197,9 @@ fn job_arg(rest: &str) -> Result<Option<String>, String> {
     }
     Ok(Some(r.to_string()))
 }
+
+/// The freshness windows `/search` accepts; a test in kk-cli keeps this equal to the list the web fetcher validates.
+pub const RECENCY_WINDOWS: [&str; 4] = ["day", "week", "month", "year"];
 
 pub fn parse(line: &str) -> Result<Command, String> {
     let line = line.trim();
@@ -221,11 +224,24 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "clearhistory" => Ok(Command::ClearHistory),
         "gateway" => Ok(Command::Gateway),
         "search" => {
-            let w = rest.trim();
-            if w.is_empty() || w.chars().count() > 200 || w.chars().any(char::is_control) {
+            let mut w = rest.trim();
+            let mut recency = None;
+            if let Some(flag) = w.strip_prefix("--") {
+                let (name, after) = flag.split_once(char::is_whitespace).unwrap_or((flag, ""));
+                if !RECENCY_WINDOWS.contains(&name) {
+                    return Err(format!("usage: {}", usage("search")));
+                }
+                recency = Some(name.to_string());
+                w = after.trim();
+            }
+            if w.is_empty()
+                || w.starts_with("--")
+                || w.chars().count() > 200
+                || w.chars().any(char::is_control)
+            {
                 Err(format!("usage: {}", usage("search")))
             } else {
-                Ok(Command::Search(w.to_string()))
+                Ok(Command::Search(w.to_string(), recency))
             }
         }
         "read" => {

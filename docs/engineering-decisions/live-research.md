@@ -7,7 +7,7 @@
 
 ## References
 - Hermes Agent `tools/url_safety.py` (MIT, commit 29a61cb7). READ: lines 1-140 (module contract, address classes, metadata hosts, credential-named parameters). READ since: lines 140-651 (authority ambiguity, fake-IP ranges, connect-time resolution and pinning, redirect target); NOT READ: `web_tools_extract.py`, `web_result_cache.py`, `web_tools_truncate.py`, `web_tools_rescue.py`. Only `web_tools.py` lines 1-120 of the tool module were read.
-- Not studied for this slice: Claude Code and Codex web tools, Perplexity-style search, OpenClaw's browser tools. Search providers were not studied; the search design below is independent.
+- Not studied for this slice: Claude Code and Codex web tools, Perplexity-style search, OpenClaw's browser tools. Search providers were studied later; see `web-search.md` (OpenCode, Cline, SearXNG read and run).
 
 ## Decision
 - Built independently (REBUILD from behaviour): `kk-fetch` is the only door. Rules: https only, no credentials in the address, port 443 only, no credential-named parameters, no local or internal names, every resolved address must be public (a mixed answer is refused), the connection is pinned to the checked addresses through ureq's `Resolver`, redirects are not followed by the client and are re-validated by us from the start (max 4), body capped at 1 MiB, text types only, text capped at 60,000 characters, scripts, styles, frames and hidden Unicode removed. No cookies, no authorisation headers.

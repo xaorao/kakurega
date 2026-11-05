@@ -2741,6 +2741,8 @@ async fn research_fetch(
 #[serde(deny_unknown_fields)]
 struct SearchPropose {
     query: String,
+    #[serde(default)]
+    recency: Option<String>,
 }
 
 fn provider_host(svc: &Service) -> Option<(String, String)> {
@@ -2762,7 +2764,16 @@ async fn search_propose(axum::Extension(svc): Svc, Json(b): Json<SearchPropose>)
         return error(StatusCode::CONFLICT, "NO_SEARCH_PROVIDER", "web search is not set up: set KAKUREGA_SEARCH_URL to a search site you choose, then restart");
     };
     let query = b.query.trim().to_string();
-    let url = match kk_fetch::search_url(&provider, &query) {
+    if let Some(w) = b.recency.as_deref() {
+        if !kk_fetch::RECENCY_WINDOWS.contains(&w) {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "BAD_RECENCY",
+                "the freshness window must be day, week, month or year",
+            );
+        }
+    }
+    let url = match kk_fetch::search_url_with(&provider, &query, b.recency.as_deref()) {
         Ok(u) => u.to_string(),
         Err(_) => {
             return error(
@@ -2803,7 +2814,7 @@ async fn search_propose(axum::Extension(svc): Svc, Json(b): Json<SearchPropose>)
     drop(r);
     svc.log_event("search.proposed", &id, &[("provider", host.clone().into())]);
     Json(json!({
-        "id": id, "digest": digest, "query": query, "will_send_to": host,
+        "id": id, "digest": digest, "query": query, "recency": b.recency, "will_send_to": host,
         "stays_here": "Only these search words go to this one site. Your notes, files and the conversation are not sent. Nothing has been sent yet.",
         "expires_in_seconds": RESEARCH_TTL
     }))
@@ -2856,7 +2867,10 @@ async fn search_run(
             return error(
                 StatusCode::BAD_GATEWAY,
                 "SEARCH_FAILED",
-                &format!("the search site did not give a usable answer ({e:?})"),
+                &format!(
+                    "the search site did not give a usable answer: {}",
+                    kk_fetch::explain_search_failure(&e)
+                ),
             )
         }
         Err(_) => {
@@ -2867,8 +2881,9 @@ async fn search_run(
             )
         }
     };
-    let hits = kk_fetch::parse_hits(&body);
-    let results: Vec<Value> = hits
+    let answer = kk_fetch::parse_answer(&body);
+    let results: Vec<Value> = answer
+        .hits
         .iter()
         .map(|h| {
             let flagged = kk_memory::instruction_like(&h.title) || kk_memory::instruction_like(&h.snippet);
@@ -2882,7 +2897,14 @@ async fn search_run(
         })
         .collect();
     svc.log_event("search.run", &id, &[("results", results.len().into())]);
-    Json(json!({"results": results, "untrusted": true, "note": "These come from a search site and are only suggestions of where to look. Choose addresses to read; nothing is requested until you approve them."})).into_response()
+    let empty_because = if !results.is_empty() {
+        Value::Null
+    } else if answer.failed_engines.is_empty() {
+        json!("the search site found nothing for these words; try different or fewer words")
+    } else {
+        json!("the search site found nothing, and some of its search engines did not answer (listed below); try again later or use another search site")
+    };
+    Json(json!({"results": results, "engines_failed": answer.failed_engines, "empty_because": empty_because, "untrusted": true, "note": "These come from a search site and are only suggestions of where to look. Choose addresses to read; nothing is requested until you approve them."})).into_response()
 }
 
 fn sha(text: &str) -> [u8; 32] {

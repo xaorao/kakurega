@@ -1189,13 +1189,17 @@ impl App {
                     Some(json!({})),
                 )]
             }
-            Command::Search(words) => {
+            Command::Search(words, recency) => {
+                let mut body = json!({"query": words});
+                if let Some(w) = recency {
+                    body["recency"] = json!(w);
+                }
                 vec![self.req(
                     Intent::SearchPropose,
                     false,
                     Method::Post,
                     "/api/search/propose",
-                    Some(json!({"query": words})),
+                    Some(body),
                 )]
             }
             Command::Read(arg) => {
@@ -2356,6 +2360,9 @@ impl App {
                         clean(body["will_send_to"].as_str().unwrap_or("?"))
                     ));
                     lines.push(format!("  {}", clean(body["query"].as_str().unwrap_or(""))));
+                    if let Some(w) = body["recency"].as_str() {
+                        lines.push(format!("Only results from the last {}.", clean(w)));
+                    }
                 } else {
                     lines.push("These exact addresses would be requested:".into());
                     for i in body["items"].as_array().into_iter().flatten() {
@@ -2434,6 +2441,22 @@ impl App {
                 }
                 if self.search_hits.is_empty() {
                     lines.push("No usable results.".into());
+                    if let Some(why) = body["empty_because"].as_str() {
+                        lines.push(clean(why));
+                    }
+                    let failed: Vec<String> = body["engines_failed"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|e| e.as_str())
+                        .map(clean)
+                        .collect();
+                    if !failed.is_empty() {
+                        lines.push(format!(
+                            "Engines that did not answer: {}",
+                            failed.join(", ")
+                        ));
+                    }
                 } else {
                     lines.push(
                         "Read some with /read 1 2 (you will see the addresses and approve first)."
