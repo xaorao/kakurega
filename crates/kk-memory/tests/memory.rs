@@ -12,6 +12,8 @@ fn dir() -> PathBuf {
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed)
     ));
+    // a folder left by an earlier run with the same process id must not leak into this test
+    let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d
 }

@@ -10,6 +10,8 @@ fn open(p: Policy) -> (Ledger, std::path::PathBuf) {
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed)
     ));
+    // a folder left by an earlier run that had the same process id would make the vault refuse to be created
+    let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     let path = d.join("d.db");
     (
