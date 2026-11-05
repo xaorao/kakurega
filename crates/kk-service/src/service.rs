@@ -3810,7 +3810,8 @@ async fn fix_undo(
         FixState::Applying | FixState::Undoing => return fix_busy(),
     }
     let mut items = Vec::new();
-    for (file, _, _, reviewed_sha) in fix_edits(f) {
+    let mut kept_later_edits = false;
+    for (file, old_text, new_text, reviewed_sha) in fix_edits(f) {
         let snap: Option<(Vec<u8>, String)> = {
             let store = svc.store.lock().expect("lock");
             store
@@ -3847,13 +3848,33 @@ async fn fix_undo(
                 "a file could not be read",
             );
         };
-        if kk_evidence::capsule::sha256_hex(&current) != sha_after {
-            return error(StatusCode::CONFLICT, "CHANGED_SINCE_APPLY", "a file has been edited since the fix was applied, so restoring the original would erase those edits; restore it by hand");
-        }
+        let restored = if kk_evidence::capsule::sha256_hex(&current) == sha_after {
+            orig
+        } else {
+            // The file was edited after the fix. If the text the fix wrote is still there exactly once, only that text
+            // is swapped back and the later edits stay; otherwise nothing is restored.
+            let reverse = kk_review::check::Fix {
+                title: String::new(),
+                file: file.clone(),
+                old_text: new_text,
+                new_text: old_text,
+                also: vec![],
+                explanation: String::new(),
+            };
+            match kk_review::check::apply_fix(&current, &reverse) {
+                Some(bytes) => {
+                    kept_later_edits = true;
+                    bytes
+                }
+                None => {
+                    return error(StatusCode::CONFLICT, "CHANGED_SINCE_APPLY", "a file has been edited where the fix wrote its text, or that text is no longer there exactly once, so restoring the original would erase your edits; restore it by hand");
+                }
+            }
+        };
         items.push(Change {
             path: full,
             before: current,
-            after: orig,
+            after: restored,
             perms: meta.permissions(),
         });
     }
@@ -3892,7 +3913,7 @@ async fn fix_undo(
     }
     svc.push_event(&id, "fix_undone", &n.to_string());
     svc.log_event("fix.undone", &id, &[("files", items.len().into())]);
-    Json(json!({"undone": true, "file": f.file, "files": fix_edits(f).iter().map(|e| e.0.clone()).collect::<Vec<_>>()})).into_response()
+    Json(json!({"undone": true, "kept_later_edits": kept_later_edits, "file": f.file, "files": fix_edits(f).iter().map(|e| e.0.clone()).collect::<Vec<_>>()})).into_response()
 }
 
 async fn fix_apply(

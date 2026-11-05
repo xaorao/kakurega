@@ -2083,3 +2083,36 @@ fn tu50_the_footer_says_when_older_messages_are_summarised_or_could_not_be() {
         "nothing is said when nothing was summarised"
     );
 }
+
+#[test]
+fn tu51_an_undo_that_kept_later_edits_says_so() {
+    let mut a = booted();
+    a.jobs.push(kk_tui::app::JobRow {
+        id: "job-4".into(),
+        recipient: "x".into(),
+        state: "ready".into(),
+    });
+    let r = enter(&mut a, "/fixes");
+    a.handle(ok(&r[0], 200, json!({"fixes": [{"index": 0, "title": "t", "file": "a.py", "explanation": "e", "status": "fixes_the_reproducer", "verified": true, "diff": "-a\n+b\n", "applied": true, "state": "applied"}]})));
+    for (kept, expected) in [
+        (true, "Restored a.py. Your later edits to it were kept."),
+        (false, "Restored a.py."),
+    ] {
+        enter(&mut a, "/undofix 1");
+        let r = a.handle(key(KeyCode::Char('y')));
+        a.handle(ok(
+            &r[0],
+            200,
+            json!({"undone": true, "kept_later_edits": kept, "file": "a.py"}),
+        ));
+        let t = text(&a);
+        assert!(t.contains(expected), "{expected}: {t}");
+        if !kept {
+            assert_eq!(
+                t.matches("later edits to it were kept").count(),
+                1,
+                "said only for the undo that kept something"
+            );
+        }
+    }
+}

@@ -301,6 +301,7 @@ try {
   await fixesCard.getByRole("button", { name: /^Undo/ }).click();
   await fixesCard.getByText("Restored payments/auth/session.py.").waitFor();
   check("Undo puts the original bytes back exactly", readFileSync(sessionPath, "utf8") === beforeFix);
+  check("and says nothing about kept edits when there were none", (await fixesCard.getByText("later edits to it were kept").count()) === 0);
   await fixesCard.getByRole("button", { name: /^Apply to/ }).click();
   await fixesCard.getByRole("button", { name: "Yes, change the file" }).click();
   await fixesCard.getByText("Applied to payments/auth/session.py.").waitFor();

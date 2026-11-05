@@ -2853,7 +2853,8 @@ fn sv23_tenants_are_structurally_isolated_from_each_other() {
 }
 
 #[test]
-fn sv24_an_applied_fix_can_be_undone_once_and_never_over_later_edits() {
+fn sv24_an_applied_fix_can_be_undone_once_keeps_later_edits_elsewhere_and_never_erases_an_edit_to_the_fixed_text(
+) {
     let (root, repo) = repo_copy("undo");
     let svc = Service::new(
         &root.join("data"),
@@ -2932,11 +2933,32 @@ fn sv24_an_applied_fix_can_be_undone_once_and_never_over_later_edits() {
                 .unwrap_or(false)
         });
     assert!(!leak, "no data file holds the original text in the clear");
-    // apply again, edit the file, and the undo refuses rather than erase the edit
+    // apply again and add a line elsewhere in the file: the undo swaps the fixed text back and keeps the owner's line
     assert_eq!(w.post(&url(0, "apply"), file.clone()).0, 200);
     let mut edited = std::fs::read_to_string(&session).unwrap();
     edited.push_str("\n# my own change after the fix\n");
     std::fs::write(&session, &edited).unwrap();
+    let (st, r) = w.post(&url(0, "undo"), file.clone());
+    assert_eq!(
+        (st, r["kept_later_edits"].clone()),
+        (200, json!(true)),
+        "{r}"
+    );
+    let mut expected = String::from_utf8(original.clone()).unwrap();
+    expected.push_str("\n# my own change after the fix\n");
+    assert_eq!(
+        std::fs::read_to_string(&session).unwrap(),
+        expected,
+        "the original text is back and the later line is kept"
+    );
+    // apply once more, then edit the fixed line itself: that cannot be undone without erasing the edit, so it is refused
+    std::fs::write(&session, &original).unwrap();
+    assert_eq!(w.post(&url(0, "apply"), file.clone()).0, 200);
+    let fixed = std::fs::read_to_string(&session).unwrap();
+    let marker = "ACTIVE_TOKENS.pop(token, None)";
+    assert!(fixed.contains(marker), "the fix wrote this line");
+    let overlapping = fixed.replace(marker, "ACTIVE_TOKENS.pop(token, 42)");
+    std::fs::write(&session, &overlapping).unwrap();
     let (st, r) = w.post(&url(0, "undo"), file.clone());
     assert_eq!(
         (st, r["error"]["code"].as_str()),
@@ -2944,9 +2966,14 @@ fn sv24_an_applied_fix_can_be_undone_once_and_never_over_later_edits() {
     );
     assert_eq!(
         std::fs::read_to_string(&session).unwrap(),
-        edited,
-        "the later edit is untouched"
+        overlapping,
+        "an edit to the fixed line is untouched"
     );
+    // the fixed text copied somewhere else is no longer unique, so that is refused too
+    let doubled = format!("{fixed}\n    {marker}\n");
+    std::fs::write(&session, &doubled).unwrap();
+    assert_eq!(w.post(&url(0, "undo"), file.clone()).0, 409);
+    assert_eq!(std::fs::read_to_string(&session).unwrap(), doubled);
     let log = log_text(
         &format!("http://127.0.0.1:{}", c.addr.port()),
         c.security.admin_token(),
@@ -4695,8 +4722,8 @@ fn sv40_a_long_kept_conversation_reports_how_many_older_turns_were_not_sent() {
 }
 
 #[test]
-fn sv41_a_fix_that_touches_two_files_applies_and_undoes_as_one_and_refuses_if_either_file_changed()
-{
+fn sv41_a_fix_that_touches_two_files_applies_and_undoes_as_one_keeps_edits_elsewhere_and_refuses_if_either_fixed_line_was_edited(
+) {
     let (root, repo) = repo_copy("data-multifix");
     let svc = Service::new(
         &root.join("data"),
@@ -4766,10 +4793,14 @@ fn sv41_a_fix_that_touches_two_files_applies_and_undoes_as_one_and_refuses_if_ei
     assert!(String::from_utf8(std::fs::read(&tok).unwrap())
         .unwrap()
         .contains("payload, hashlib.sha256).hexdigest()[:40]"));
-    // undo refuses if either file was edited since, and restores both exactly otherwise
-    let mut later = std::fs::read(&tok).unwrap();
-    later.extend_from_slice(b"# mine\n");
-    std::fs::write(&tok, &later).unwrap();
+    // editing the fixed line of either file blocks the whole undo, and the other file is not rolled back either
+    let fixed_tok = std::fs::read_to_string(&tok).unwrap();
+    assert!(fixed_tok.contains("hexdigest()[:40]"), "the fix wrote this");
+    std::fs::write(
+        &tok,
+        fixed_tok.replace("hexdigest()[:40]", "hexdigest()[:41]"),
+    )
+    .unwrap();
     let (st, r) = w.post(&format!("/api/jobs/{job}/fixes/0/undo"), file.clone());
     assert_eq!(
         (st, r["error"]["code"].as_str()),
@@ -4781,12 +4812,35 @@ fn sv41_a_fix_that_touches_two_files_applies_and_undoes_as_one_and_refuses_if_ei
         sess0,
         "the other file was not rolled back either"
     );
-    later.truncate(later.len() - b"# mine\n".len());
+    // with that line as the fix wrote it and a line added elsewhere, both files go back and the added line stays
+    let mut later = fixed_tok.clone().into_bytes();
+    later.extend_from_slice(b"# mine\n");
     std::fs::write(&tok, &later).unwrap();
+    let (st, r) = w.post(&format!("/api/jobs/{job}/fixes/0/undo"), file.clone());
     assert_eq!(
-        w.post(&format!("/api/jobs/{job}/fixes/0/undo"), file.clone())
+        (st, r["kept_later_edits"].clone()),
+        (200, json!(true)),
+        "{r}"
+    );
+    let mut expected = tok0.clone();
+    expected.extend_from_slice(b"# mine\n");
+    assert_eq!(
+        (std::fs::read(&sess).unwrap(), std::fs::read(&tok).unwrap()),
+        (sess0.clone(), expected),
+        "both files are back and the later line is kept"
+    );
+    std::fs::write(&tok, &tok0).unwrap();
+    // a fix with nothing edited since restores both byte for byte and says nothing was kept
+    assert_eq!(
+        w.post(&format!("/api/jobs/{job}/fixes/0/apply"), file.clone())
             .0,
         200
+    );
+    let (st, r) = w.post(&format!("/api/jobs/{job}/fixes/0/undo"), file.clone());
+    assert_eq!(
+        (st, r["kept_later_edits"].clone()),
+        (200, json!(false)),
+        "{r}"
     );
     assert_eq!(
         (std::fs::read(&sess).unwrap(), std::fs::read(&tok).unwrap()),

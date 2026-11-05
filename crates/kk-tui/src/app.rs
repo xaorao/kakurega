@@ -2146,7 +2146,9 @@ impl App {
             Intent::UndoFix(file) => {
                 self.say(
                     if ok { Kind::Ok } else { Kind::Error },
-                    if ok {
+                    if ok && body["kept_later_edits"] == true {
+                        format!("Restored {file}. Your later edits to it were kept.")
+                    } else if ok {
                         format!("Restored {file}.")
                     } else {
                         err_text(status, &body)

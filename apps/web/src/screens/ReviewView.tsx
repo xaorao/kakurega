@@ -175,8 +175,8 @@ function Fixes(props: { jobId: string }) {
   const undo = async (f: Fix) => {
     setErr("");
     try {
-      await api.undoFix(props.jobId, f.index, f.file);
-      setNote(t("fix.undone", { file: f.file }));
+      const r = await api.undoFix(props.jobId, f.index, f.file);
+      setNote(t(r.kept_later_edits ? "fix.undoneKept" : "fix.undone", { file: f.file }));
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : String(e));
     }
