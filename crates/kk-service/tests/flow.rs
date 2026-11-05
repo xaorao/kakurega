@@ -5748,3 +5748,66 @@ fn sv51_chosen_pages_are_fitted_into_the_model_s_window_and_the_reply_says_what_
         "the pages are kept in the owner's order"
     );
 }
+
+#[test]
+fn sv52_recalled_notes_get_only_their_share_of_the_window_and_the_reply_says_how_many_were_left_out(
+) {
+    let (root, _repo) = repo_copy("note-budget");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(MeasuredRunner {
+            inner: CannedRunner { confirm: true },
+        }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let body: String = "तिमाही रिपोर्ट से पता चलता है कि क्षेत्रीय बिक्री बढ़ी जबकि शिपिंग में देरी हुई। "
+        .chars()
+        .cycle()
+        .take(1300)
+        .collect();
+    for n in ["पहली", "दूसरी", "तीसरी", "चौथी", "पाँचवीं"]
+    {
+        let (st, r) = w.post(
+            "/api/memories",
+            json!({"text": format!("{n} तिमाही रिपोर्ट: {body}"), "level": "internal"}),
+        );
+        assert_eq!(
+            (st, r["added"].clone()),
+            (201, json!(true)),
+            "saving a note: {r}"
+        );
+    }
+    let (st, r) = w.post(
+        "/api/chat",
+        json!({"message": "तिमाही रिपोर्ट क्षेत्रीय बिक्री"}),
+    );
+    assert_eq!(st, 200, "status {st}");
+    let (used, left_out) = (
+        r["notes_used"].as_u64().unwrap(),
+        r["notes_left_out"].as_u64().unwrap(),
+    );
+    // each note costs about 1700 tokens; a third of (16384 minus the 2457 reserve) is 4642, so two fit
+    assert!(
+        used >= 1 && left_out >= 1,
+        "used {used}, left out {left_out}"
+    );
+    assert_eq!(
+        r["notes"].as_array().unwrap().len() as u64,
+        used,
+        "only the notes sent are listed"
+    );
+    let sent = r["usage"]["context_tokens_estimate"].as_u64().unwrap();
+    assert!(
+        sent <= 16_384 - 2_457,
+        "the request leaves the reply its room: {sent}"
+    );
+}

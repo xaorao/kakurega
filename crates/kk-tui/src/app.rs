@@ -2478,6 +2478,12 @@ impl App {
                 if body["notes_withheld"].as_u64().unwrap_or(0) > 0 {
                     foot.push(format!("{} note(s) were not given to the model because they look like instructions.", body["notes_withheld"]));
                 }
+                if body["notes_left_out"].as_u64().unwrap_or(0) > 0 {
+                    foot.push(format!(
+                        "{} matching note(s) left out: no room in the model's window",
+                        body["notes_left_out"]
+                    ));
+                }
                 let pages = |k: &str| body[k].as_u64().unwrap_or(0);
                 if pages("web_sources_used") > 0 {
                     foot.push(format!("{} web page(s) used", pages("web_sources_used")));

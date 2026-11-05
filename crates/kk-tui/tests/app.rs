@@ -2014,3 +2014,22 @@ fn tu47_the_footer_says_how_many_web_pages_were_used_cut_short_or_left_out() {
         "nothing is said when no page was cut"
     );
 }
+
+#[test]
+fn tu48_the_footer_says_how_many_matching_notes_were_left_out() {
+    let mut a = booted();
+    let r = enter(&mut a, "what do my notes say");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": true}, "notes_used": 2, "notes_left_out": 3})));
+    assert!(
+        text(&a).contains("3 matching note(s) left out: no room in the model's window"),
+        "{}",
+        text(&a)
+    );
+    let r = enter(&mut a, "again");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": true}, "notes_used": 1, "notes_left_out": 0})));
+    assert_eq!(
+        text(&a).matches("matching note(s) left out").count(),
+        1,
+        "nothing is said when none were left out"
+    );
+}

@@ -38,3 +38,9 @@ export function pageNotes(r: { web_sources_used: number; web_sources_trimmed?: n
   if ((r.web_sources_left_out ?? 0) > 0) out.push({ key: "web.leftOut", n: r.web_sources_left_out ?? 0 });
   return out;
 }
+
+/** What the footer says about recalled notes that did not fit the room kept for notes. */
+export function noteNotes(r: { notes_left_out?: number }): { key: "chat.notesLeftOut"; n: number }[] {
+  const n = r.notes_left_out ?? 0;
+  return n > 0 ? [{ key: "chat.notesLeftOut", n }] : [];
+}

@@ -118,6 +118,7 @@ export const en = {
   "chat.empty": "Nothing yet. Ask something.",
   "chat.notesUsed": "{n} note(s) used",
   "chat.withheld": "{n} note(s) were not given to the model because they look like instructions.",
+  "chat.notesLeftOut": "{n} matching note(s) left out: no room in the model's window",
   "chat.private": "Private: answered on this computer",
   "chat.test": "Test model: this is a scripted reply, not a real model",
   "web.title": "Add pages from the web",

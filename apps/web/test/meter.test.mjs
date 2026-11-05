@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { meterLine, pageNotes } from "../src/meter.ts";
+import { meterLine, noteNotes, pageNotes } from "../src/meter.ts";
 
 test("mt01 the model's own count is shown and labelled as counted, with the window and percent", () => {
   assert.deepEqual(meterLine({ context_tokens: 4321, context_tokens_estimate: 5000, context_window: 16384, estimate: false }), { key: "chat.contextCountedWindow", n: 4321, max: 16384, pct: 26, near: false });
@@ -34,4 +34,10 @@ test("mt06 the footer names pages used, cut short and left out, and says nothing
   ]);
   assert.deepEqual(pageNotes({ web_sources_used: 0 }), []);
   assert.deepEqual(pageNotes({ web_sources_used: 0, web_sources_left_out: 2 }), [{ key: "web.leftOut", n: 2 }], "every page left out is still reported");
+});
+
+test("mt07 the footer says how many matching notes were left out, and nothing when none were", () => {
+  assert.deepEqual(noteNotes({ notes_left_out: 3 }), [{ key: "chat.notesLeftOut", n: 3 }]);
+  assert.deepEqual(noteNotes({ notes_left_out: 0 }), []);
+  assert.deepEqual(noteNotes({}), [], "an older service that sends no count shows nothing");
 });

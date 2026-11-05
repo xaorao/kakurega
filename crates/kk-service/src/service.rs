@@ -1569,6 +1569,8 @@ struct ChatContext {
     notes_list: Vec<Value>,
     untrusted_notes: usize,
     notes_withheld: usize,
+    /// Recalled notes that did not fit the room kept for notes.
+    notes_left_out: usize,
     web_used: usize,
     /// Chosen pages cut short, and pages left out, so the question fits the model's window.
     web_trimmed: usize,
@@ -1578,7 +1580,15 @@ struct ChatContext {
 
 /// Gathers the notes and chosen web pages and builds the model's messages.
 fn chat_context(svc: &Service, b: &ChatBody) -> ChatContext {
-    let (notes, used, untrusted_used, withheld, notes_list) = {
+    // Notes get at most a third of the room the window leaves after the reply's reserve, in the order they were recalled.
+    // A note that does not fit is left out whole: a note cut short can say something it never said.
+    let window = svc.runner.route_info()["context_tokens"]
+        .as_u64()
+        .filter(|w| *w > 0);
+    let note_room = window.map_or(u64::MAX, |w| {
+        w.saturating_sub(crate::budget::reply_reserve(w)) / 3
+    });
+    let (notes, used, untrusted_used, withheld, notes_list, notes_left_out) = {
         let mem = svc.memory.lock().expect("lock");
         let clearance = mem
             .owner_clearance()
@@ -1587,10 +1597,13 @@ fn chat_context(svc: &Service, b: &ChatBody) -> ChatContext {
             .recall(&b.message, &clearance, now(), 5)
             .unwrap_or_default();
         let withheld = hits.iter().filter(|h| h.instruction_like()).count();
-        let hits: Vec<_> = hits.into_iter().filter(|h| !h.instruction_like()).collect();
+        let candidates: Vec<_> = hits.into_iter().filter(|h| !h.instruction_like()).collect();
         let mut text = String::new();
-        for h in &hits {
-            text.push_str(&format!(
+        let mut spent = 0u64;
+        let mut left_out = 0usize;
+        let mut hits = Vec::new();
+        for h in candidates {
+            let line = format!(
                 "- {}{}\n",
                 h.memory.text.replace('\n', " "),
                 if h.untrusted {
@@ -1598,7 +1611,15 @@ fn chat_context(svc: &Service, b: &ChatBody) -> ChatContext {
                 } else {
                     ""
                 }
-            ));
+            );
+            let cost = kk_route::tokens::estimate_text(&line);
+            if spent.saturating_add(cost) > note_room {
+                left_out += 1;
+                continue;
+            }
+            spent += cost;
+            text.push_str(&line);
+            hits.push(h);
         }
         let list: Vec<Value> = hits
             .iter()
@@ -1618,6 +1639,7 @@ fn chat_context(svc: &Service, b: &ChatBody) -> ChatContext {
             hits.iter().filter(|h| h.untrusted).count(),
             withheld,
             list,
+            left_out,
         )
     };
     let pages: Vec<(String, String)> = {
@@ -1669,6 +1691,7 @@ fn chat_context(svc: &Service, b: &ChatBody) -> ChatContext {
         notes_list,
         untrusted_notes: untrusted_used,
         notes_withheld: withheld,
+        notes_left_out,
         web_used: fitted.used,
         web_trimmed: fitted.trimmed,
         web_left_out: fitted.left_out,
@@ -1699,7 +1722,7 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
     let estimated = kk_route::tokens::estimate_messages(&ctx.messages);
     let measured = r.prompt_tokens.filter(|n| *n > 0);
     let usage = json!({"context_tokens": measured.unwrap_or(estimated), "context_tokens_estimate": estimated, "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "estimate": measured.is_none()});
-    json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated}, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "saved": saved})
+    json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated}, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "saved": saved})
 }
 
 async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
