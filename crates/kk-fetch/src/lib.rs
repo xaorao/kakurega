@@ -193,6 +193,44 @@ pub trait Transport {
         pinned: &[SocketAddr],
         max_body: usize,
     ) -> Result<Response, FetchError>;
+
+    /// Like `get`, but a successful (2xx) body is written to `out` as it arrives instead of being collected, reading at most
+    /// `max_body` bytes. Other statuses write nothing. The default collects through `get`; a real transport streams.
+    fn stream(
+        &self,
+        url: &Url,
+        pinned: &[SocketAddr],
+        max_body: u64,
+        out: &mut dyn std::io::Write,
+    ) -> Result<Response, FetchError> {
+        let mut r = self.get(url, pinned, usize::try_from(max_body).unwrap_or(usize::MAX))?;
+        if (200..300).contains(&r.status) {
+            out.write_all(&r.body)
+                .map_err(|e| FetchError::Transport(e.to_string()))?;
+        }
+        r.body = Vec::new();
+        Ok(r)
+    }
+}
+
+/// Writes through to `inner` but refuses to pass on more than `limit` bytes in total, whatever the transport does.
+struct Capped<'a> {
+    inner: &'a mut dyn std::io::Write,
+    left: u64,
+}
+
+impl std::io::Write for Capped<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if buf.len() as u64 > self.left {
+            return Err(std::io::Error::other("the body is larger than allowed"));
+        }
+        self.left -= buf.len() as u64;
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -229,41 +267,81 @@ fn text_type(ct: &str) -> bool {
 }
 
 impl Fetcher<'_> {
+    /// The addresses a connection to `url` may use: every address the name resolves to must be public, and the connection is
+    /// pinned to exactly those.
+    fn pin(&self, url: &Url) -> Result<Vec<SocketAddr>, FetchError> {
+        let host = url
+            .host_str()
+            .ok_or(FetchError::BadUrl("no host"))?
+            .to_string();
+        let ips: Vec<IpAddr> = match host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<IpAddr>()
+        {
+            Ok(ip) => vec![ip],
+            Err(_) => self.dns.resolve(&host),
+        };
+        if ips.is_empty() {
+            return Err(FetchError::NoAddress);
+        }
+        // a mixed answer is how rebinding attacks start
+        if ips.iter().any(|ip| !ip_allowed(*ip)) {
+            return Err(FetchError::BlockedAddress);
+        }
+        Ok(ips
+            .iter()
+            .take(8)
+            .map(|ip| SocketAddr::new(*ip, 443))
+            .collect())
+    }
+
+    /// Where a redirect goes, held to the same rules as the first address.
+    fn redirect_target(current: &Url, r: &Response) -> Result<Url, FetchError> {
+        let loc = r.location.clone().ok_or(FetchError::Status(r.status))?;
+        let next = current
+            .join(&loc)
+            .map_err(|_| FetchError::BadUrl("a redirect to an invalid address"))?;
+        validate_url(next.as_str())
+    }
+
+    /// Fetches `raw` and writes the body to `out` as it arrives, never more than `max` bytes. The same rules as a page apply
+    /// to every hop (https only, no credentials, public addresses only, pinned connection, redirects re-validated), and the
+    /// body of a redirect or an error answer is never written. The cap is enforced here as well as by the transport.
+    pub fn fetch_to(
+        &self,
+        raw: &str,
+        max: u64,
+        out: &mut dyn std::io::Write,
+    ) -> Result<Url, FetchError> {
+        let mut current = validate_url(raw)?;
+        for _hop in 0..=MAX_REDIRECTS {
+            let pinned = self.pin(&current)?;
+            let mut capped = Capped {
+                inner: out,
+                left: max,
+            };
+            let r = self.transport.stream(&current, &pinned, max, &mut capped)?;
+            if matches!(r.status, 301 | 302 | 303 | 307 | 308) {
+                current = Self::redirect_target(&current, &r)?;
+                continue;
+            }
+            if !(200..300).contains(&r.status) {
+                return Err(FetchError::Status(r.status));
+            }
+            return Ok(current);
+        }
+        Err(FetchError::TooManyRedirects)
+    }
+
     /// The checked GET shared by page reading and search: every hop is validated, resolved and pinned from the start.
     fn get_checked(&self, raw: &str) -> Result<(Url, Response), FetchError> {
         let mut current = validate_url(raw)?;
         for _hop in 0..=MAX_REDIRECTS {
-            let host = current
-                .host_str()
-                .ok_or(FetchError::BadUrl("no host"))?
-                .to_string();
-            let ips: Vec<IpAddr> = match host
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .parse::<IpAddr>()
-            {
-                Ok(ip) => vec![ip],
-                Err(_) => self.dns.resolve(&host),
-            };
-            if ips.is_empty() {
-                return Err(FetchError::NoAddress);
-            }
-            // every address the name resolves to must be public: a mixed answer is how rebinding attacks start
-            if ips.iter().any(|ip| !ip_allowed(*ip)) {
-                return Err(FetchError::BlockedAddress);
-            }
-            let pinned: Vec<SocketAddr> = ips
-                .iter()
-                .take(8)
-                .map(|ip| SocketAddr::new(*ip, 443))
-                .collect();
+            let pinned = self.pin(&current)?;
             let r = self.transport.get(&current, &pinned, MAX_BODY)?;
             if matches!(r.status, 301 | 302 | 303 | 307 | 308) {
-                let loc = r.location.ok_or(FetchError::Status(r.status))?;
-                let next = current
-                    .join(&loc)
-                    .map_err(|_| FetchError::BadUrl("a redirect to an invalid address"))?;
-                current = validate_url(next.as_str())?;
+                current = Self::redirect_target(&current, &r)?;
                 continue;
             }
             if !(200..300).contains(&r.status) {
@@ -602,6 +680,54 @@ impl Transport for UreqTransport {
             location,
             content_type,
             body,
+        })
+    }
+
+    fn stream(
+        &self,
+        url: &Url,
+        pinned: &[SocketAddr],
+        max_body: u64,
+        out: &mut dyn std::io::Write,
+    ) -> Result<Response, FetchError> {
+        let config = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .max_redirects(0)
+            .timeout_global(Some(self.timeout))
+            .user_agent("Kakurega/0.1 (+local research; no cookies)")
+            .build();
+        let agent = ureq::Agent::with_parts(
+            config,
+            ureq::unversioned::transport::DefaultConnector::default(),
+            PinnedResolver {
+                addrs: pinned.to_vec(),
+            },
+        );
+        let mut r = agent
+            .get(url.as_str())
+            .call()
+            .map_err(|e| FetchError::Transport(e.to_string()))?;
+        let status = r.status().as_u16();
+        let location = r
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        let content_type = r
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        if (200..300).contains(&status) {
+            let mut reader = r.body_mut().with_config().limit(max_body).reader();
+            std::io::copy(&mut reader, out).map_err(|e| FetchError::Transport(e.to_string()))?;
+        }
+        Ok(Response {
+            status,
+            location,
+            content_type,
+            body: Vec::new(),
         })
     }
 }
@@ -1120,5 +1246,223 @@ mod tests {
         ] {
             assert!(validate_url(good).is_ok(), "{good}");
         }
+    }
+
+    // ---- streaming (fetch_to) ----
+
+    fn stream_dns() -> FakeDns {
+        FakeDns(
+            [
+                ("a.example", vec![ip("93.184.216.34")]),
+                ("b.example", vec![ip("93.184.216.35")]),
+                ("mixed.example", vec![ip("93.184.216.34"), ip("10.0.0.5")]),
+                ("evil.example", vec![ip("127.0.0.1")]),
+            ]
+            .into(),
+        )
+    }
+
+    fn net(pages: Vec<(&'static str, Response)>) -> FakeNet {
+        FakeNet {
+            pages: pages.into_iter().collect(),
+            calls: RefCell::new(vec![]),
+        }
+    }
+
+    #[test]
+    fn fs01_a_streamed_body_reaches_the_sink_from_a_pinned_public_address_and_the_final_address_is_returned(
+    ) {
+        let dns = stream_dns();
+        let n = net(vec![(
+            "https://a.example/f.bin",
+            page(200, "application/octet-stream", "0123456789"),
+        )]);
+        let f = Fetcher {
+            dns: &dns,
+            transport: &n,
+        };
+        let mut sink = Vec::new();
+        let final_url = f
+            .fetch_to("https://a.example/f.bin", 10, &mut sink)
+            .unwrap();
+        assert_eq!(sink, b"0123456789");
+        assert_eq!(final_url.as_str(), "https://a.example/f.bin");
+        assert_eq!(
+            n.calls.borrow()[0].1,
+            vec!["93.184.216.34:443".parse::<SocketAddr>().unwrap()]
+        );
+    }
+
+    #[test]
+    fn fs02_the_byte_cap_holds_even_when_the_transport_ignores_it() {
+        let dns = stream_dns();
+        // the fake transport hands over all 100 bytes whatever the limit says
+        let n = net(vec![(
+            "https://a.example/f.bin",
+            page(200, "application/octet-stream", &"x".repeat(100)),
+        )]);
+        let f = Fetcher {
+            dns: &dns,
+            transport: &n,
+        };
+        let mut sink = Vec::new();
+        let r = f.fetch_to("https://a.example/f.bin", 10, &mut sink);
+        assert!(matches!(r, Err(FetchError::Transport(_))), "{r:?}");
+        assert!(
+            sink.len() <= 10,
+            "no more than the cap was ever written: {}",
+            sink.len()
+        );
+        // exactly the cap is fine, one byte less than the body is not
+        let mut ok = Vec::new();
+        assert!(f.fetch_to("https://a.example/f.bin", 100, &mut ok).is_ok());
+        assert_eq!(ok.len(), 100);
+        let mut one_short = Vec::new();
+        assert!(f
+            .fetch_to("https://a.example/f.bin", 99, &mut one_short)
+            .is_err());
+        assert!(one_short.len() <= 99);
+    }
+
+    #[test]
+    fn fs03_redirects_are_followed_under_the_same_rules_and_their_bodies_are_never_written() {
+        let dns = stream_dns();
+        let mut redirect_with_body = redirect("https://b.example/end");
+        redirect_with_body.body = b"PAGE OF LIES".to_vec();
+        let n = net(vec![
+            ("https://a.example/start", redirect_with_body),
+            (
+                "https://b.example/end",
+                page(200, "application/octet-stream", "real"),
+            ),
+            (
+                "https://a.example/to-http",
+                redirect("http://b.example/end"),
+            ),
+            (
+                "https://a.example/to-private",
+                redirect("https://evil.example/end"),
+            ),
+            (
+                "https://a.example/to-creds",
+                redirect("https://user:pw@b.example/end"),
+            ),
+            (
+                "https://a.example/missing",
+                page(404, "text/html", "not found page"),
+            ),
+            ("https://a.example/loop", redirect("https://a.example/loop")),
+        ]);
+        let f = Fetcher {
+            dns: &dns,
+            transport: &n,
+        };
+        let mut sink = Vec::new();
+        f.fetch_to("https://a.example/start", 100, &mut sink)
+            .unwrap();
+        assert_eq!(sink, b"real", "only the final body, never a redirect's");
+        let mut http_sink = Vec::new();
+        assert!(matches!(
+            f.fetch_to("https://a.example/to-http", 100, &mut http_sink),
+            Err(FetchError::BadUrl(_))
+        ));
+        assert!(http_sink.is_empty());
+        let mut s = Vec::new();
+        assert_eq!(
+            f.fetch_to("https://a.example/to-private", 100, &mut s)
+                .err(),
+            Some(FetchError::BlockedAddress)
+        );
+        assert!(matches!(
+            f.fetch_to("https://a.example/to-creds", 100, &mut s),
+            Err(FetchError::BadUrl(_))
+        ));
+        assert_eq!(
+            f.fetch_to("https://a.example/missing", 100, &mut s).err(),
+            Some(FetchError::Status(404))
+        );
+        assert_eq!(
+            f.fetch_to("https://a.example/loop", 100, &mut s).err(),
+            Some(FetchError::TooManyRedirects)
+        );
+        let loops = n
+            .calls
+            .borrow()
+            .iter()
+            .filter(|c| c.0 == "https://a.example/loop")
+            .count();
+        assert_eq!(
+            loops,
+            MAX_REDIRECTS + 1,
+            "a redirect loop is given up after the limit, not followed on"
+        );
+        assert!(s.is_empty(), "an error answer's body is not written: {s:?}");
+    }
+
+    #[test]
+    fn fs04_refused_names_and_plain_http_make_no_request_at_all() {
+        let dns = stream_dns();
+        let n = net(vec![("https://a.example/f", page(200, "x", "body"))]);
+        let f = Fetcher {
+            dns: &dns,
+            transport: &n,
+        };
+        let mut s = Vec::new();
+        assert_eq!(
+            f.fetch_to("https://mixed.example/f", 10, &mut s).err(),
+            Some(FetchError::BlockedAddress)
+        );
+        assert_eq!(
+            f.fetch_to("https://evil.example/f", 10, &mut s).err(),
+            Some(FetchError::BlockedAddress)
+        );
+        assert!(f.fetch_to("http://a.example/f", 10, &mut s).is_err());
+        assert!(f.fetch_to("https://127.0.0.1/f", 10, &mut s).is_err());
+        assert!(f
+            .fetch_to("https://user:pw@a.example/f", 10, &mut s)
+            .is_err());
+        assert!(n.calls.borrow().is_empty(), "{:?}", n.calls.borrow());
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    #[ignore = "needs the internet"]
+    fn fs05_live_the_real_transport_streams_a_real_page_and_stops_at_the_cap() {
+        let dns = SystemDns;
+        let net = UreqTransport {
+            timeout: std::time::Duration::from_secs(30),
+        };
+        let f = Fetcher {
+            dns: &dns,
+            transport: &net,
+        };
+        let mut body = Vec::new();
+        let url = f
+            .fetch_to("https://example.com/", 1 << 20, &mut body)
+            .unwrap();
+        assert!(url.as_str().starts_with("https://example.com"));
+        assert!(
+            body.len() > 200,
+            "a real page arrived: {} bytes",
+            body.len()
+        );
+        assert!(String::from_utf8_lossy(&body)
+            .to_lowercase()
+            .contains("example"));
+        // the same page with a cap far below its size is cut off, and no more than the cap was written
+        let mut cut = Vec::new();
+        let r = f.fetch_to("https://example.com/", 50, &mut cut);
+        assert!(r.is_err(), "{r:?}");
+        assert!(cut.len() <= 50, "{}", cut.len());
+        // a missing page writes nothing
+        let mut none = Vec::new();
+        assert!(f
+            .fetch_to(
+                "https://example.com/definitely-not-a-page-xyz",
+                1 << 20,
+                &mut none
+            )
+            .is_err());
+        assert!(none.is_empty(), "{}", none.len());
     }
 }

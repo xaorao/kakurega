@@ -1,6 +1,9 @@
 use kk_evidence::dsse;
-use kk_evidence::keys::TrustedKeys;
 use serde::Deserialize;
+
+pub mod download;
+pub mod root;
+use root::Root;
 
 pub const MANIFEST_TYPE: &str = "application/vnd.kakurega.update.v1+json";
 pub const MAX_MANIFEST_BYTES: usize = 64 * 1024;
@@ -77,6 +80,8 @@ pub enum Refusal {
     },
     NoArtifactForThisComputer,
     BadArtifact(&'static str),
+    /// The root this installation trusts has expired: no announcement is accepted until a newer root is applied.
+    RootExpired,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,11 +91,12 @@ pub enum Verdict {
 }
 
 pub struct Context<'a> {
-    pub trusted: &'a TrustedKeys,
+    /// Who may announce: a list of keys and how many of them must sign.
+    pub root: &'a Root,
     pub channel: &'a str,
     pub platform: &'a str,
     pub current: Version,
-    /// The highest version any valid announcement has ever shown on this computer.
+    /// The highest version any valid announcement has shown on this computer UNDER THE CURRENT ROOT (`root::Seen::effective`).
     pub highest_seen: Option<Version>,
     pub now: u64,
 }
@@ -106,6 +112,14 @@ fn clean_notes(s: &str) -> String {
 }
 
 fn check_artifact(a: &Artifact) -> Result<(), Refusal> {
+    let platform_ok = !a.platform.is_empty()
+        && a.platform.len() <= 40
+        && a.platform
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_');
+    if !platform_ok {
+        return Err(Refusal::BadArtifact("the platform name has odd characters"));
+    }
     let hex = a.sha256.len() == 64
         && a.sha256
             .bytes()
@@ -128,11 +142,14 @@ fn check_artifact(a: &Artifact) -> Result<(), Refusal> {
 
 /// Decides what a signed announcement means for this computer. Nothing is downloaded or installed here.
 pub fn check(envelope: &[u8], cx: &Context) -> Result<Verdict, Refusal> {
+    if cx.root.is_expired(cx.now) {
+        return Err(Refusal::RootExpired);
+    }
     if envelope.len() > MAX_MANIFEST_BYTES {
         return Err(Refusal::Malformed("the announcement is too large"));
     }
     let env = dsse::decode(envelope).map_err(|e| Refusal::NotSigned(format!("{e:?}")))?;
-    dsse::verify(&env, cx.trusted, &[MANIFEST_TYPE])
+    dsse::verify_threshold(&env, cx.root.keys(), cx.root.threshold, &[MANIFEST_TYPE])
         .map_err(|e| Refusal::NotSigned(format!("{e:?}")))?;
     let m: Manifest = serde_json::from_slice(&env.payload)
         .map_err(|_| Refusal::Malformed("the announcement has the wrong shape"))?;
@@ -194,6 +211,17 @@ pub fn verify_download(offer: &Offer, bytes: &[u8]) -> Result<(), Refusal> {
 
 /// Publisher side: turns plain JSON into the canonical, signed announcement.
 pub fn sign_manifest(json: &[u8], signer: &kk_evidence::keys::Signer) -> Result<Vec<u8>, String> {
+    sign_manifest_multi(json, &[signer])
+}
+
+/// The same, signed by several publishers, for a root that asks for more than one.
+pub fn sign_manifest_multi(
+    json: &[u8],
+    signers: &[&kk_evidence::keys::Signer],
+) -> Result<Vec<u8>, String> {
+    if signers.is_empty() || signers.len() > dsse::MAX_SIGNATURES {
+        return Err("sign with 1 to 16 keys".into());
+    }
     let canon =
         kk_evidence::canon::canonicalize(json).map_err(|e| format!("not canonical JSON: {e:?}"))?;
     let m: Manifest =
@@ -202,6 +230,12 @@ pub fn sign_manifest(json: &[u8], signer: &kk_evidence::keys::Signer) -> Result<
     for a in &m.artifacts {
         check_artifact(a).map_err(|e| format!("{e:?}"))?;
     }
-    let env = dsse::sign(MANIFEST_TYPE, canon.as_bytes(), signer);
+    let mut env = dsse::sign(MANIFEST_TYPE, canon.as_bytes(), signers[0]);
+    for s in &signers[1..] {
+        env.signatures.push((
+            s.key_id(),
+            s.sign(&dsse::pae(MANIFEST_TYPE, canon.as_bytes())),
+        ));
+    }
     Ok(dsse::encode(&env).into_bytes())
 }

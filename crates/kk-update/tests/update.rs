@@ -1,4 +1,5 @@
-use kk_evidence::keys::{Signer, TrustedKeys};
+use kk_evidence::keys::Signer;
+use kk_update::root::Root;
 use kk_update::{check, sign_manifest, verify_download, Context, Offer, Refusal, Verdict, Version};
 use serde_json::{json, Value};
 
@@ -6,10 +7,8 @@ fn publisher() -> Signer {
     Signer::from_seed([42u8; 32])
 }
 
-fn trusted(s: &Signer) -> TrustedKeys {
-    let mut t = TrustedKeys::new();
-    t.add(&s.public()).unwrap();
-    t
+fn trusted(s: &Signer) -> Root {
+    Root::single(&s.public()).unwrap()
 }
 
 fn file() -> Vec<u8> {
@@ -31,9 +30,9 @@ fn signed(m: &Value) -> Vec<u8> {
     sign_manifest(m.to_string().as_bytes(), &publisher()).unwrap()
 }
 
-fn ctx<'a>(t: &'a TrustedKeys) -> Context<'a> {
+fn ctx<'a>(t: &'a Root) -> Context<'a> {
     Context {
-        trusted: t,
+        root: t,
         channel: "stable",
         platform: "macos-arm64",
         current: Version(1, 3, 2),
@@ -93,7 +92,10 @@ fn up03_only_the_publishers_key_counts_and_any_change_to_the_signed_bytes_breaks
     ));
     assert!(
         matches!(
-            check(&signed(&manifest()), &ctx(&TrustedKeys::new())),
+            check(
+                &signed(&manifest()),
+                &ctx(&trusted(&Signer::from_seed([1u8; 32])))
+            ),
             Err(Refusal::NotSigned(_))
         ),
         "no trusted key means nothing is accepted"

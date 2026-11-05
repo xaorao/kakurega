@@ -167,6 +167,76 @@ pub fn verify(
     })
 }
 
+/// Why a threshold check refused an envelope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThresholdError {
+    UnknownPayloadType,
+    /// A threshold below one would accept an envelope nobody signed.
+    BadThreshold,
+    TooManySignatures,
+    /// The same key id appears twice: one key must never count as two signers.
+    DuplicateSignature,
+    /// A key this installation trusts signed something else, or the signature is damaged.
+    BadSignature,
+    ThresholdNotMet {
+        valid: usize,
+        needed: usize,
+    },
+    PayloadNotCanonical,
+}
+
+/// Most signatures one envelope may carry; a root has at most this many keys.
+pub const MAX_SIGNATURES: usize = 16;
+
+/// Checks that at least `threshold` DIFFERENT trusted keys signed the envelope. A signature from a key that is not trusted
+/// is ignored (it neither counts nor fails the envelope); a bad signature from a trusted key fails it, because it means the
+/// envelope was altered. The same key id twice fails it. Returns the key ids that counted, sorted.
+pub fn verify_threshold(
+    env: &Envelope,
+    trusted: &TrustedKeys,
+    threshold: usize,
+    allowed_types: &[&str],
+) -> Result<Vec<KeyId>, ThresholdError> {
+    if !allowed_types.contains(&env.payload_type.as_str()) {
+        return Err(ThresholdError::UnknownPayloadType);
+    }
+    if threshold < 1 {
+        return Err(ThresholdError::BadThreshold);
+    }
+    if env.signatures.len() > MAX_SIGNATURES {
+        return Err(ThresholdError::TooManySignatures);
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for (id, _) in &env.signatures {
+        if !seen.insert(id.clone()) {
+            return Err(ThresholdError::DuplicateSignature);
+        }
+    }
+    let text =
+        std::str::from_utf8(&env.payload).map_err(|_| ThresholdError::PayloadNotCanonical)?;
+    match canon::canonicalize(text.as_bytes()) {
+        Ok(c) if c == text => {}
+        _ => return Err(ThresholdError::PayloadNotCanonical),
+    }
+    let message = pae(&env.payload_type, &env.payload);
+    let mut counted: Vec<KeyId> = Vec::new();
+    for (id, raw) in &env.signatures {
+        let Some(key) = trusted.get(id) else { continue };
+        let sig = Signature::from_bytes(raw);
+        key.verify_strict(&message, &sig)
+            .map_err(|_| ThresholdError::BadSignature)?;
+        counted.push(id.clone());
+    }
+    if counted.len() < threshold {
+        return Err(ThresholdError::ThresholdNotMet {
+            valid: counted.len(),
+            needed: threshold,
+        });
+    }
+    counted.sort();
+    Ok(counted)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2525,6 +2525,7 @@ dependencies = [
  "kk-companion",
  "kk-eventlog",
  "kk-evidence",
+ "kk-fetch",
  "kk-memory",
  "kk-review",
  "kk-route",
@@ -2761,6 +2762,7 @@ dependencies = [
  "kk-fetch",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
