@@ -5655,3 +5655,96 @@ fn sv50_after_a_reply_the_model_s_own_count_is_shown_and_labelled_as_measured() 
     assert_eq!(u["context_tokens"], u["context_tokens_estimate"], "{u}");
     assert_eq!(u["context_window"], Value::Null, "{u}");
 }
+
+/// Every page is 8000 characters of Hindi, which costs far more tokens than the same length of English.
+struct LongHindiWeb;
+
+impl kk_service::service::WebFetch for LongHindiWeb {
+    fn search(&self, _url: &str) -> Result<Vec<u8>, kk_fetch::FetchError> {
+        Ok(json!({"results": []}).to_string().into_bytes())
+    }
+
+    fn fetch(&self, url: &str) -> Result<kk_fetch::Page, kk_fetch::FetchError> {
+        let text: String = "तिमाही रिपोर्ट से पता चलता है कि क्षेत्रीय बिक्री बढ़ी जबकि शिपिंग में देरी हुई। "
+            .chars()
+            .cycle()
+            .take(8000)
+            .collect();
+        Ok(kk_fetch::Page {
+            requested: url.into(),
+            final_url: url.into(),
+            title: "Report".into(),
+            text,
+            truncated: false,
+        })
+    }
+}
+
+#[test]
+fn sv51_chosen_pages_are_fitted_into_the_model_s_window_and_the_reply_says_what_was_cut() {
+    let (root, _repo) = repo_copy("page-budget");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(MeasuredRunner {
+            inner: CannedRunner { confirm: true },
+        }),
+        true,
+    )
+    .unwrap();
+    svc.set_web(Arc::new(LongHindiWeb));
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let urls: Vec<String> = (1..=5).map(|n| format!("https://a.example/{n}")).collect();
+    let (st, p) = w.post("/api/research/propose", json!({ "urls": urls }));
+    assert_eq!(st, 200, "{p}");
+    let (id, digest) = (
+        p["id"].as_str().unwrap().to_string(),
+        p["digest"].as_str().unwrap().to_string(),
+    );
+    let (st, f) = w.post(
+        &format!("/api/research/{id}/fetch"),
+        json!({"approve": true, "digest": digest}),
+    );
+    assert_eq!(st, 200, "{f}");
+    let ids: Vec<String> = f["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["page_id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(ids.len(), 5);
+    let (st, r) = w.post(
+        "/api/chat",
+        json!({"message": "रिपोर्ट में क्या है?", "sources": ids}),
+    );
+    assert_eq!(st, 200, "status {st}");
+    let counts = (
+        r["web_sources_used"].clone(),
+        r["web_sources_trimmed"].clone(),
+        r["web_sources_left_out"].clone(),
+    );
+    assert_eq!(
+        counts,
+        (json!(2), json!(1), json!(3)),
+        "one whole page, one cut, three left out"
+    );
+    let sent = r["usage"]["context_tokens_estimate"].as_u64().unwrap();
+    assert!(sent <= 16_384, "the request fits the window: {sent} tokens");
+    let reply = r["reply"].as_str().unwrap();
+    assert!(
+        reply.contains("[the rest of this page was left out to fit the model's window]"),
+        "the cut page says it was cut"
+    );
+    assert!(
+        reply.contains("a.example/1")
+            && reply.contains("a.example/2")
+            && !reply.contains("a.example/3"),
+        "the pages are kept in the owner's order"
+    );
+}

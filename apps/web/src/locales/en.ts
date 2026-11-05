@@ -135,6 +135,8 @@ export const en = {
   "web.forget": "Forget these pages",
   "web.error": "Could not do that.",
   "web.used": "{n} web page(s) used",
+  "web.trimmed": "{n} page(s) cut short to fit the model's window",
+  "web.leftOut": "{n} page(s) left out: no room in the model's window",
   "chat.noteKept": "This conversation is kept in the encrypted store on this computer. Forget removes it.",
   "chat.keep": "Keep this conversation",
   "chat.keptNow": "Kept",

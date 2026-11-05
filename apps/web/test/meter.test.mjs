@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { meterLine } from "../src/meter.ts";
+import { meterLine, pageNotes } from "../src/meter.ts";
 
 test("mt01 the model's own count is shown and labelled as counted, with the window and percent", () => {
   assert.deepEqual(meterLine({ context_tokens: 4321, context_tokens_estimate: 5000, context_window: 16384, estimate: false }), { key: "chat.contextCountedWindow", n: 4321, max: 16384, pct: 26, near: false });
@@ -24,4 +24,14 @@ test("mt05 near the limit is flagged from 80%, and the percent is capped", () =>
   assert.equal(meterLine({ context_tokens: 79, context_tokens_estimate: 79, context_window: 100, estimate: false }).near, false);
   assert.equal(meterLine({ context_tokens: 80, context_tokens_estimate: 80, context_window: 100, estimate: false }).near, true);
   assert.equal(meterLine({ context_tokens: 10 ** 9, context_tokens_estimate: 1, context_window: 100, estimate: false }).pct, 999);
+});
+
+test("mt06 the footer names pages used, cut short and left out, and says nothing about pages when none were chosen", () => {
+  assert.deepEqual(pageNotes({ web_sources_used: 2, web_sources_trimmed: 1, web_sources_left_out: 3 }), [
+    { key: "web.used", n: 2 },
+    { key: "web.trimmed", n: 1 },
+    { key: "web.leftOut", n: 3 },
+  ]);
+  assert.deepEqual(pageNotes({ web_sources_used: 0 }), []);
+  assert.deepEqual(pageNotes({ web_sources_used: 0, web_sources_left_out: 2 }), [{ key: "web.leftOut", n: 2 }], "every page left out is still reported");
 });

@@ -3,7 +3,7 @@ import { api, ApiError, streamChat, type ChatTurn, type KeptChat, type GatewayPr
 import { t } from "../i18n";
 import { Markdown } from "../components/Markdown";
 import { draftKey, forgetDraft, loadDraft, saveDraft, stopsReply } from "../composer";
-import { meterLine } from "../meter";
+import { meterLine, pageNotes } from "../meter";
 
 interface Shown extends ChatTurn {
   foot?: string[];
@@ -218,7 +218,7 @@ export function Chat() {
         if (r.usage.history_turns_dropped > 0) foot.push(t("chat.dropped", { n: r.usage.history_turns_dropped }));
       }
       if (session()) foot.push(r.saved ? t("chat.saved") : t("chat.notSaved"));
-      if (r.web_sources_used > 0) foot.push(t("web.used", { n: r.web_sources_used }));
+      for (const p of pageNotes(r)) foot.push(t(p.key, { n: p.n }));
       if (r.notes_withheld > 0) foot.push(t("chat.withheld", { n: r.notes_withheld }));
       setTurns([...turns(), { role: "assistant", content: r.reply, foot, notes: r.notes }]);
       if (session()) await refetch();

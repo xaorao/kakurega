@@ -1990,3 +1990,27 @@ fn tu46_the_footer_shows_the_model_s_own_count_against_the_window_and_warns_near
     );
     assert!(t.contains("close to the model's limit"), "{t}");
 }
+
+#[test]
+fn tu47_the_footer_says_how_many_web_pages_were_used_cut_short_or_left_out() {
+    let mut a = booted();
+    let r = enter(&mut a, "what does the report say");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": true}, "notes_used": 0, "web_sources_used": 2, "web_sources_trimmed": 1, "web_sources_left_out": 3})));
+    let t = text(&a);
+    assert!(t.contains("2 web page(s) used"), "{t}");
+    assert!(
+        t.contains("1 page(s) cut short to fit the model's window"),
+        "{t}"
+    );
+    assert!(
+        t.contains("3 page(s) left out: no room in the model's window"),
+        "{t}"
+    );
+    let r = enter(&mut a, "again");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": true}, "notes_used": 0, "web_sources_used": 0})));
+    assert_eq!(
+        text(&a).matches("cut short").count(),
+        1,
+        "nothing is said when no page was cut"
+    );
+}

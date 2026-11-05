@@ -27,3 +27,14 @@ export function meterLine(u: Usage): MeterLine {
   const pct = Math.min(999, Math.round((n * 100) / max));
   return { key: counted ? "chat.contextCountedWindow" : "chat.contextWindow", n, max, pct, near: pct >= 80 };
 }
+
+export type PageKey = "web.used" | "web.trimmed" | "web.leftOut";
+
+/** What the footer says about the chosen web pages: how many were used, cut short or left out to fit the window. */
+export function pageNotes(r: { web_sources_used: number; web_sources_trimmed?: number; web_sources_left_out?: number }): { key: PageKey; n: number }[] {
+  const out: { key: PageKey; n: number }[] = [];
+  if (r.web_sources_used > 0) out.push({ key: "web.used", n: r.web_sources_used });
+  if ((r.web_sources_trimmed ?? 0) > 0) out.push({ key: "web.trimmed", n: r.web_sources_trimmed ?? 0 });
+  if ((r.web_sources_left_out ?? 0) > 0) out.push({ key: "web.leftOut", n: r.web_sources_left_out ?? 0 });
+  return out;
+}
