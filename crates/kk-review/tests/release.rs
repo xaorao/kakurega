@@ -56,6 +56,7 @@ fn finding() -> Finding {
         explanation:
             "logout() only clears a local variable, so validate() still accepts the token.".into(),
         reproducer: REPRO.into(),
+        language: kk_review::check::Language::Python,
     }
 }
 

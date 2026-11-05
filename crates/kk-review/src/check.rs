@@ -11,6 +11,32 @@ pub const MAX_TITLE: usize = 200;
 pub const MAX_EXPLANATION: usize = 4000;
 pub const MAX_REPRODUCER: usize = 16_000;
 
+/// The language a finding's reproducer is written in. Python is the default so older findings and reports are unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Language {
+    #[default]
+    Python,
+    JavaScript,
+}
+
+impl Language {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Language::Python => "python",
+            Language::JavaScript => "javascript",
+        }
+    }
+
+    /// Only the names this program knows. Anything else is refused, never guessed.
+    pub fn parse(name: &str) -> Option<Language> {
+        match name {
+            "python" => Some(Language::Python),
+            "javascript" => Some(Language::JavaScript),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
     pub title: String,
@@ -18,6 +44,7 @@ pub struct Finding {
     pub line: i64,
     pub explanation: String,
     pub reproducer: String,
+    pub language: Language,
 }
 
 pub fn clean_text(s: &str, max: usize) -> String {
@@ -33,9 +60,17 @@ pub fn clean_text(s: &str, max: usize) -> String {
 pub fn parse_finding(bytes: &[u8], known_files: &BTreeSet<String>) -> Option<Finding> {
     let v: Value = serde_json::from_slice(bytes).ok()?;
     let o = v.as_object()?;
-    if o.keys()
-        .any(|k| !["title", "file", "line", "explanation", "reproducer"].contains(&k.as_str()))
-    {
+    if o.keys().any(|k| {
+        ![
+            "title",
+            "file",
+            "line",
+            "explanation",
+            "reproducer",
+            "language",
+        ]
+        .contains(&k.as_str())
+    }) {
         return None;
     }
     let file = o.get("file")?.as_str()?.to_string();
@@ -46,7 +81,12 @@ pub fn parse_finding(bytes: &[u8], known_files: &BTreeSet<String>) -> Option<Fin
     if !(1..=10_000_000).contains(&line) {
         return None;
     }
+    let language = match o.get("language") {
+        None => Language::default(),
+        Some(v) => Language::parse(v.as_str()?)?,
+    };
     Some(Finding {
+        language,
         title: clean_text(o.get("title")?.as_str()?, MAX_TITLE),
         file,
         line,
@@ -164,6 +204,16 @@ pub fn run_reproducer(
     if finding.reproducer.trim().is_empty() {
         return CheckResult {
             status: CheckStatus::Unavailable("the finding has no reproducer".into()),
+            stdout: String::new(),
+            sample_paths: vec![],
+        };
+    }
+    if finding.language != Language::Python {
+        return CheckResult {
+            status: CheckStatus::Unavailable(format!(
+                "reproducers in {} cannot be run yet",
+                finding.language.as_str()
+            )),
             stdout: String::new(),
             sample_paths: vec![],
         };

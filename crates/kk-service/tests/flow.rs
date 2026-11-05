@@ -58,6 +58,7 @@ impl JobRunner for CannedRunner {
             line: 15,
             explanation: "logout() leaves the token valid".into(),
             reproducer: REPRO.into(),
+            language: kk_review::check::Language::Python,
         };
         let walker_sample: Option<Vec<String>> =
             if recipient.to_ascii_lowercase().starts_with("walker") {

@@ -2,7 +2,7 @@ use kk_review::check::{
     apply_all, apply_fix, clean_text, parse_finding, parse_fix, parse_unittest, python_closure,
     run_project_tests, run_reproducer, unified_diff, unified_diff_all, verify_fix,
     verify_fix_with_tests, CheckEnv, CheckStatus, ClosureError, Edit, Finding, Fix, FixStatus,
-    TestRun,
+    Language, TestRun,
 };
 use kk_review::import::{scan_tree, ImportedFile};
 use kk_sandbox::Transport;
@@ -55,6 +55,7 @@ fn finding(reproducer: &str) -> Finding {
         line: 15,
         explanation: "logout leaves the token valid".into(),
         reproducer: reproducer.into(),
+        language: Language::Python,
     }
 }
 
@@ -636,4 +637,76 @@ fn f07_every_change_applies_or_none_does_and_the_diff_names_every_file_with_whol
         apply_all(&files, &ambiguous).is_none(),
         "text that appears more than once is not a fix"
     );
+}
+
+#[test]
+fn c20_a_finding_names_its_language_python_by_default_and_unknown_names_are_refused() {
+    let known: BTreeSet<String> = [
+        "payments/auth/session.py".to_string(),
+        "web/app.js".to_string(),
+    ]
+    .into();
+    let base = |extra: &str| {
+        format!(
+            r#"{{"title":"t","file":"payments/auth/session.py","line":3,"explanation":"e","reproducer":"print(1)"{extra}}}"#
+        )
+    };
+    assert_eq!(
+        parse_finding(base("").as_bytes(), &known).unwrap().language,
+        Language::Python,
+        "no language: python"
+    );
+    assert_eq!(
+        parse_finding(base(r#","language":"python""#).as_bytes(), &known)
+            .unwrap()
+            .language,
+        Language::Python
+    );
+    assert_eq!(
+        parse_finding(base(r#","language":"javascript""#).as_bytes(), &known)
+            .unwrap()
+            .language,
+        Language::JavaScript
+    );
+    for bad in [
+        r#","language":"ruby""#,
+        r#","language":"JavaScript""#,
+        r#","language":""#.to_string().as_str(),
+        r#","language":7"#,
+        r#","language":null"#,
+        r#","language":["python"]"#,
+    ] {
+        let text = if bad == r#","language":""# {
+            base(r#","language":"""#)
+        } else {
+            base(bad)
+        };
+        assert!(
+            parse_finding(text.as_bytes(), &known).is_none(),
+            "refused: {bad}"
+        );
+    }
+    assert_eq!(Language::parse("python"), Some(Language::Python));
+    assert_eq!(Language::JavaScript.as_str(), "javascript");
+    assert_eq!(Language::parse("node"), None);
+}
+
+#[test]
+fn c21_a_javascript_reproducer_is_unavailable_for_now_and_is_never_run_as_python() {
+    let mut f = finding("print('CONTROL_OK')\nprint('REPRODUCED')\n");
+    f.language = Language::JavaScript;
+    let files = BTreeMap::new();
+    let env = CheckEnv {
+        transport: &Transport::Local,
+        scratch: &std::env::temp_dir(),
+        python: "/definitely/not/an/interpreter",
+    };
+    let r = run_reproducer(&f, &files, &env);
+    assert_eq!(
+        r.status,
+        CheckStatus::Unavailable("reproducers in javascript cannot be run yet".into()),
+        "{:?}",
+        r.status
+    );
+    assert!(r.stdout.is_empty() && r.sample_paths.is_empty());
 }
