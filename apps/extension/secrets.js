@@ -8,7 +8,24 @@ const BODY = {
   "upper-base32": (c) => /^[A-Z2-7]$/.test(c),
   base58: (c) => /^[A-Za-z0-9]$/.test(c) && !"0OIl".includes(c),
   "slack-like": (c) => /^[A-Za-z0-9-]$/.test(c),
+  "base64-std": (c) => /^[A-Za-z0-9+/]$/.test(c),
+  "base64-any": (c) => /^[A-Za-z0-9+/=_-]$/.test(c),
+  "upper-alnum-dash": (c) => /^[A-Z0-9-]$/.test(c),
+  "bech32-upper": (c) => "QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L".includes(c),
+  "hex-underscore": (c) => /^[0-9a-fA-F_]$/.test(c),
+  "url-path": (c) => /^[A-Za-z0-9@/-]$/.test(c),
+  "upper-alnum": (c) => /^[A-Z0-9]$/.test(c),
+  "lower-alnum": (c) => /^[a-z0-9]$/.test(c),
+  "alnum-dot": (c) => /^[A-Za-z0-9.]$/.test(c),
+  "word-eq-dot-dash": (c) => /^[A-Za-z0-9_=.-]$/.test(c),
 };
+
+/** A body that is a fill character or says what it is (`ghp_xxxx...`, `..._PUT_YOUR_TOKEN_HERE_...`) is documentation. */
+function placeholderBody(body) {
+  if ([...body].length >= 12 && new Set(body).size <= 3) return true;
+  const l = body.toLowerCase();
+  return body.length >= 16 && ["your", "example", "placeholder", "changeme", "dummy", "redacted", "token_here", "key_here"].some((w) => l.includes(w));
+}
 
 const wordBoundary = (text, at) => at === 0 || !/[A-Za-z0-9_]/.test(text[at - 1]);
 
@@ -31,7 +48,7 @@ export function findSecrets(text) {
         n++;
       }
       const example = f.rule === "aws access key id" && body.includes("EXAMPLE");
-      if (n >= f.min && n <= Math.max(f.max, f.min) && !example) {
+      if (n >= f.min && n <= Math.max(f.max, f.min) && !example && !placeholderBody(body)) {
         if (f.prefix === "SK" && !(/[0-9]/.test(body) && /[A-Za-z]/.test(body))) continue;
         found.add(f.rule);
       }

@@ -30,3 +30,38 @@ test("xs03 a selection that looks like a secret is never sent, and the message d
   assert.equal(sent, 1);
   void fine;
 });
+
+test("xs04 every provider format in the shared table is found at its shortest length, and placeholders are not", async () => {
+  const { FORMATS } = await import("../formats.js");
+  const sets = {
+    alnum: "aB3dE5gH7jK9mN2pQ4rS6tU8vW1xY0zC",
+    "alnum-dash-underscore": "aB3dE5gH7jK9mN2pQ4rS6tU8vW1xY0zC-_",
+    "alnum-dash-underscore-dot": "aB3dE5gH7jK9mN2pQ4rS6tU8vW1xY0zC-_.",
+    hex: "0123456789abcdef",
+    "upper-base32": "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",
+    base58: "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz",
+    "slack-like": "aB3dE5gH7jK9mN2pQ4rS6tU8vW1xY0zC-",
+    "base64-std": "aB3dE5gH7jK9mN2pQ4rS6tU8vW1xY0zC+/",
+    "base64-any": "aB3dE5gH7jK9mN2pQ4rS6tU8vW1xY0zC+/=_-",
+    "upper-alnum-dash": "ABCDEFGHJKLMNPQRSTUVWXYZ23456789-",
+    "bech32-upper": "QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L",
+    "hex-underscore": "0123456789abcdef_",
+    "url-path": "aB3dE5gH7jK9mN2pQ4rS6tU8vW1xY0zC-@/",
+    "upper-alnum": "ABCDEFGHJKLMNPQRSTUVWXYZ23456789",
+    "lower-alnum": "abcdefghjkmnpqrstuvwxyz23456789",
+    "alnum-dot": "aB3dE5gH7jK9mN2pQ4rS6tU8vW1xY0zC.",
+    "word-eq-dot-dash": "aB3dE5gH7jK9mN2pQ4rS6tU8vW1xY0zC_=.-",
+  };
+  const missed = [];
+  const accepted = [];
+  FORMATS.forEach((f, i) => {
+    const set = sets[f.body];
+    assert.ok(set, `no test alphabet for body kind ${f.body}`);
+    const body = (n) => Array.from({ length: n }, (_, k) => set[(k * 7 + i * 3 + k * k) % set.length]).join("");
+    if (!findSecrets(` ${f.prefix}${body(f.min)} `).includes(f.rule)) missed.push(f.prefix);
+    const filled = set[0].repeat(f.min);
+    if (findSecrets(` ${f.prefix}${filled} `).includes(f.rule)) accepted.push(f.prefix);
+  });
+  assert.deepEqual(missed, [], "formats the extension did not find");
+  assert.deepEqual(accepted, [], "fill-character bodies the extension accepted");
+});

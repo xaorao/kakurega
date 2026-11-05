@@ -24,3 +24,11 @@ debug = false
 
 [profile.test.package."*"]
 debug = false
+
+# the secret detector is scanned against multi-megabyte inputs in tests that check its work stays bounded;
+# optimising this one crate keeps those measurements about the algorithm, not the unoptimised build
+[profile.dev.package.kk-secrets]
+opt-level = 3
+
+[profile.test.package.kk-secrets]
+opt-level = 3

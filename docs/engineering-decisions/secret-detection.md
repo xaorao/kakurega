@@ -14,8 +14,70 @@ Matrix F (`capability-matrix/F-desktop-docs-security-tooling.md`) measured Kakur
 `cargo test -p kk-secrets` (corpus: 29 positives and 23 benign look-alikes), `cargo test -p kk-review --test release` rs08 (eight transformed or partial leaks rejected, a variable name accepted) and rs09 (provider secrets the old five markers missed). Measured false-positive rate of the generic scanner on real code trees from the local reference clones (`cargo run --release -p kk-secrets --example scan_tree DIR`): opencode/packages 8 of 8,359 text files (0.10 percent), openclaw/src 203 of 28,971 (0.7 percent), hermes-agent 246 of 22,069 (1.1 percent); the remaining hits were inspected and are almost all test fixtures and documentation holding example credentials, which are fail-closed (withheld) rather than leaked. The old importer withheld about 1.2 percent of opencode's real source for non-secrets.
 
 ## Limits (not verified or not done)
-- Recall was not compared against gitleaks on the same corpus here; matrix F measured gitleaks at 36 of 45 on its own corpus. Our corpus is smaller and written by us; it is not an independent benchmark.
+- The corpus tests in `crates/kk-secrets/tests/corpus.rs` are written by us. The independent comparison against gitleaks' own samples is described below; it was run once on the numbers given there and its samples are not kept in the repository.
 - The recovery-phrase rule has no BIP-39 word list: it uses word shape, repeated words and common function words. Owed: embed the list.
 - No PII detection yet (cards, IBAN, SSN, email, phone): matrix F rows P1 to P4.
 - Base64 or hex fragments split across lines, other encodings (rot13, unicode escapes), and information leaked by paraphrase are not caught.
 - `.kakuignore` (owner-declared withhold list) is not built (matrix F row S8).
+
+## Reference study and recovery (retrospective capability recovery, row "Shared secret detector")
+
+Why it was owed: the detector was built from memory of how gitleaks and detect-secrets behave, with no source read and no independent measurement.
+
+### What was read, by me
+- gitleaks (MIT, commit 5f6ec56): `detect/detect.go` lines 330 to 670 in full (the per-rule scan loop, `detectRule`, entropy and allowlist checks, multi-part rules); `detect/codec/decoder.go`, `encodings.go`, `base64.go`, `hex.go`, `percent.go` in full; `cmd/generate/config/utils/generate.go` in full (the regex builders and the 28 ways a sample secret is wrapped in INI, JSON, XML, YAML, Go, Java, PHP, Python, Makefile and logstash text); `config/gitleaks.toml` (222 rules), reading the pattern of every rule I took a format from. NOT READ: `detect.go` 1 to 330 and 670 to 900 (git, file and stdin sources, reporting), `report/`, `sources/`, the Go rule files beyond their patterns.
+- detect-secrets (Apache-2.0, commit 5e14193): `filters/heuristic.py`, `plugins/keyword.py`, `plugins/high_entropy_strings.py`, `filters/gibberish/__init__.py` and `filters/common.py` in full. NOT READ: the 30 provider plugins, `core/scan.py`, `audit/`, `filters/allowlist.py`, `regex.py`, `wordlist.py`, `transformers/`.
+
+### Independent benchmark (method, because it is the evidence)
+gitleaks' own rule generator holds, for each rule, positive and negative sample strings. I ran its generator on a scratch copy (original clone untouched) with its `Validate` step changed to also write the samples out: 215 rules, 6,368 positive samples (each secret in all 28 wrappers), 342 negative samples. `tests/gitleaks_compare.rs` (ignored by default; set `KK_GITLEAKS_SAMPLES` to the file) feeds them through `kk_secrets::scan`. The samples contain fake secrets and are not committed.
+
+| Stage | Positives found | Negatives flagged |
+|---|---|---|
+| Before this work | 4,178 of 6,368 (66%) | 80 of 342 |
+| After | 6,172 of 6,368 (97%) | 78 of 342 |
+
+Reading the 78: most are other gitleaks rules' true positives (a Cloudflare sample listed under the Meraki rule), placeholders gitleaks drops by entropy, or malformed Telegram samples that still sit next to the word `token`. These are not defects of ours; the number is not a false-positive rate.
+
+The 196 positives still missed: client-id style rules for public identifiers (Asana, Discord, Plaid: EXCLUDED, a client id is not a secret and a digits-only value after a provider name is not distinguishable from any number), Lob test keys (the word `test` marks fixtures), the age key sample (all `Q`, a filler string, rejected on purpose by the placeholder rule; a realistic age key is found), and about 20 others (for example `s.` Vault tokens, which cannot be told from a member path `self.token`; the Facebook `appid|secret` pair).
+
+### Real-code survey (false alarms and lost detections)
+Old and new detector run over the same files of six MIT codebases (opencode, hermes-agent, goose, papermark, LibreChat, OpenHands): opencode 22 to 24, goose 19 to 18, papermark 0 to 0, LibreChat 438 to 366, OpenHands 60 to 33, hermes-agent 510 to 935. I read about 100 of the new hits and 45 of the 218 dropped ones. Dropped: test fixtures and non-secrets (`token: 'email-verify-token-2'`, an ISO timestamp, `ghp_xxxx` placeholders, `secretPath: 'endpoints.x.apiKey'`), none a real credential. The hermes-agent increase is a documentation file with 241 Firebase download URLs carrying `token=<uuid>` (kept: such a URL is a capability link) and about 190 hard-coded fixture tokens inside test files.
+
+This survey found real defects in my first version, each fixed and tested: the type-annotation rule matched HTML (`alt="Discord" src="https://..."`), the call form matched lists of names (`"authtoken", "privatekey"`), provider names matched inside values (`agent:main:discord:group:C123`), a keyword followed by a path was read as a token (`mattermost-server/api/v4/...`), account ids, channel lists and storage keys were read as credentials.
+
+### Decisions
+| Capability seen | Source | Decision | Where |
+|---|---|---|---|
+| 130 more provider token layouts (prefix, alphabet, exact length) | gitleaks rules (MIT; layouts are public facts) | ADAPT: table entries only, no code | `FORMATS` in `lib.rs`, mirrored in `apps/extension` |
+| Placeholder and low-entropy bodies are documentation (`ghp_xxxx`) | gitleaks entropy; detect-secrets | IMPROVE: fill characters or words like `your`, `example` in a format body | `placeholder_body` |
+| Percent and `\uXXXX`, `U+XXXX` decoding before scanning | gitleaks codec | ADAPT idea, own code; nested with base64; bounded | `scan_decoded` |
+| Value wrappers: make operators, call form, XML element, type annotation, JSON-escaped newline | gitleaks generate.go | BUILD | `after_operator`, `take_value`, XML branch |
+| Provider names as context | gitleaks semi-generic rules | ADAPT with a curated list (no ordinary words) | `PROVIDERS` |
+| UUID or hex under a secret word is a credential | gitleaks generic rule; our own comment promised it | FIX | `credential_value_with` |
+| Hard-coded credential in a comparison, both directions | detect-secrets keyword.py | ADAPT | `Form::Compare` |
+| Typed alphabets and digit runs are not credentials | detect-secrets `is_sequential_string` | ADAPT | `SEQUENCES` |
+| More password names (`pwd`, `contrasena`, `db_pass`) | detect-secrets DENYLIST | ADAPT | `KEYWORDS` |
+| curl `-u user:password` and `Authorization` headers | gitleaks curl rules | BUILD | `scan_curl` |
+| Inline allow comment (`gitleaks:allow`, `pragma: allowlist secret`) | both | EXCLUDE: text this gate reads can be untrusted, and a marker inside it would let its author switch detection off for their own secret | none |
+| Trained gibberish model to cut false alarms | detect-secrets | NOT ADOPTED: trades missed secrets for fewer alarms; revisit only against a measured false-alarm corpus | none |
+| File-type aware syntax (quotes required in code, bare allowed in config) | detect-secrets | NOT ADOPTED: `scan` has no file name; the code-syntax heuristics approximate it | none |
+| Public identifiers (client ids) | gitleaks | EXCLUDE (see above) | none |
+
+### Corrections to earlier statements
+- I wrote that gitleaks' percent decoder skips a `%XX` at the very end of a string. That was wrong: its condition `encIndex+2 < encLen` is exactly the last-three-bytes case. No weakness there.
+- The comment on `identifier_shape` promised that UUIDs and hashes count when a keyword is next to them; the code did not do it. Fixed.
+
+### Defects found in the existing code while doing this
+- Reading the key name around a keyword walked the entire surrounding run of letters: a 4.5 MB base64 blob took 2.1 s because every incidental `key` re-walked it. Now bounded to 80 characters (0.34 s); test cx12.
+- Hit spans for a quoted value started on the opening quote and stopped one character short of the secret. No caller used spans yet, so nothing leaked, but redaction by span would have left the last character. Now exact; test cx13.
+
+### Evidence
+`cargo test -p kk-secrets`: corpus 6, formats 5, context 15, pii 6; `node --test` in `apps/extension` 14. Mutation checks: 40 safeguards removed one at a time over four rounds, each now fails at least one test (the rounds also exposed gaps in my own tests, such as a placeholder-word test whose body the alphabet cut short, which were fixed and rerun). The detector crate is built optimised in the dev and test profiles (workspace `Cargo.toml`) so the bounded-time tests measure the algorithm.
+
+### Remaining limits
+- The benchmark is gitleaks' own samples: it favours gitleaks' idea of a secret and its 28 wrappers. It says nothing about secrets written in prose.
+- The format lengths come from gitleaks' patterns, which are not anchored at the end; where a real token is longer than the pattern's minimum we require the exact documented length.
+- Flutterwave live keys and other providers whose live layout gitleaks does not list are NOT VERIFIED and not added.
+- `scan` still has no notion of file type or language.
+- A password written as dashed lowercase words with no digit (`correct-horse-battery-staple`) is not flagged: the older readable-identifier rule drops it on purpose, and I kept that precision choice. The same words with a number are flagged under a password name.
+- Test fixtures that look like real tokens (`ghp_` followed by 36 plausible characters inside a test file) are flagged: nothing distinguishes a fixture from a leaked token except its path, which `scan` does not see.

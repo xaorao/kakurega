@@ -38,6 +38,16 @@ enum Body {
     UpperBase32,
     Base58,
     SlackLike,
+    Base64Std,
+    Base64Any,
+    UpperAlnumDash,
+    Bech32Upper,
+    HexUnderscore,
+    UrlPath,
+    UpperAlnum,
+    LowerAlnum,
+    AlnumDot,
+    WordEqDotDash,
 }
 
 /// The provider formats as a JavaScript module, so the browser extension checks the same table before anything leaves
@@ -53,6 +63,16 @@ pub fn formats_js() -> String {
             Body::UpperBase32 => "upper-base32",
             Body::Base58 => "base58",
             Body::SlackLike => "slack-like",
+            Body::Base64Std => "base64-std",
+            Body::Base64Any => "base64-any",
+            Body::UpperAlnumDash => "upper-alnum-dash",
+            Body::Bech32Upper => "bech32-upper",
+            Body::HexUnderscore => "hex-underscore",
+            Body::UrlPath => "url-path",
+            Body::UpperAlnum => "upper-alnum",
+            Body::LowerAlnum => "lower-alnum",
+            Body::AlnumDot => "alnum-dot",
+            Body::WordEqDotDash => "word-eq-dot-dash",
         };
         out.push_str(&format!(
             "  {{ rule: {:?}, prefix: {:?}, body: {:?}, min: {}, max: {} }},\n",
@@ -67,6 +87,33 @@ pub fn formats_js() -> String {
     out
 }
 
+/// One provider format as plain data, for tests and tools that need to build or check tokens.
+#[derive(Debug, Clone)]
+pub struct FormatSpec {
+    pub rule: &'static str,
+    pub prefix: &'static str,
+    pub min: usize,
+    pub max: usize,
+    /// Every printable ASCII character the body may contain.
+    pub alphabet: String,
+}
+
+pub fn format_specs() -> Vec<FormatSpec> {
+    FORMATS
+        .iter()
+        .map(|f| FormatSpec {
+            rule: f.rule,
+            prefix: f.prefix,
+            min: f.min,
+            max: f.max,
+            alphabet: (0x20u8..0x7f)
+                .map(char::from)
+                .filter(|c| body_ok(f.body, *c))
+                .collect(),
+        })
+        .collect()
+}
+
 fn body_ok(b: Body, c: char) -> bool {
     match b {
         Body::Alnum => c.is_ascii_alphanumeric(),
@@ -78,6 +125,16 @@ fn body_ok(b: Body, c: char) -> bool {
         Body::UpperBase32 => c.is_ascii_uppercase() || ('2'..='7').contains(&c),
         Body::Base58 => c.is_ascii_alphanumeric() && !matches!(c, '0' | 'O' | 'I' | 'l'),
         Body::SlackLike => c.is_ascii_alphanumeric() || c == '-',
+        Body::Base64Std => c.is_ascii_alphanumeric() || c == '+' || c == '/',
+        Body::Base64Any => c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '=' | '_' | '-'),
+        Body::UpperAlnumDash => c.is_ascii_uppercase() || c.is_ascii_digit() || c == '-',
+        Body::Bech32Upper => "QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L".contains(c),
+        Body::HexUnderscore => c.is_ascii_hexdigit() || c == '_',
+        Body::UrlPath => c.is_ascii_alphanumeric() || matches!(c, '-' | '@' | '/'),
+        Body::UpperAlnum => c.is_ascii_uppercase() || c.is_ascii_digit(),
+        Body::LowerAlnum => c.is_ascii_lowercase() || c.is_ascii_digit(),
+        Body::AlnumDot => c.is_ascii_alphanumeric() || c == '.',
+        Body::WordEqDotDash => c.is_ascii_alphanumeric() || matches!(c, '_' | '=' | '.' | '-'),
     }
 }
 
@@ -314,6 +371,643 @@ const FORMATS: &[Format] = &[
         max: 80,
     },
     Format {
+        rule: "age secret key",
+        prefix: "AGE-SECRET-KEY-1",
+        body: Body::Bech32Upper,
+        min: 58,
+        max: 58,
+    },
+    Format {
+        rule: "slack webhook url",
+        prefix: "hooks.slack.com/services/",
+        body: Body::Base64Std,
+        min: 43,
+        max: 200,
+    },
+    Format {
+        rule: "slack webhook url",
+        prefix: "hooks.slack.com/workflows/",
+        body: Body::Base64Std,
+        min: 43,
+        max: 200,
+    },
+    Format {
+        rule: "slack webhook url",
+        prefix: "hooks.slack.com/triggers/",
+        body: Body::Base64Std,
+        min: 43,
+        max: 200,
+    },
+    Format {
+        rule: "microsoft teams webhook url",
+        prefix: "webhook.office.com/webhookb2/",
+        body: Body::UrlPath,
+        min: 159,
+        max: 200,
+    },
+    Format {
+        rule: "notion token",
+        prefix: "ntn_",
+        body: Body::Alnum,
+        min: 46,
+        max: 46,
+    },
+    Format {
+        rule: "sourcegraph token",
+        prefix: "sgp_",
+        body: Body::HexUnderscore,
+        min: 40,
+        max: 57,
+    },
+    Format {
+        rule: "sourcegraph token",
+        prefix: "sgp_local_",
+        body: Body::Hex,
+        min: 40,
+        max: 40,
+    },
+    Format {
+        rule: "aws access key id",
+        prefix: "ABIA",
+        body: Body::UpperBase32,
+        min: 16,
+        max: 16,
+    },
+    Format {
+        rule: "aws access key id",
+        prefix: "ACCA",
+        body: Body::UpperBase32,
+        min: 16,
+        max: 16,
+    },
+    Format {
+        rule: "easypost token",
+        prefix: "EZAK",
+        body: Body::Alnum,
+        min: 54,
+        max: 54,
+    },
+    Format {
+        rule: "easypost token",
+        prefix: "EZTK",
+        body: Body::Alnum,
+        min: 54,
+        max: 54,
+    },
+    Format {
+        rule: "huggingface organisation token",
+        prefix: "api_org_",
+        body: Body::Alnum,
+        min: 34,
+        max: 34,
+    },
+    Format {
+        rule: "intra 42 client secret",
+        prefix: "s-s4t2ud-",
+        body: Body::Hex,
+        min: 64,
+        max: 64,
+    },
+    Format {
+        rule: "intra 42 client secret",
+        prefix: "s-s4t2af-",
+        body: Body::Hex,
+        min: 64,
+        max: 64,
+    },
+    Format {
+        rule: "stripe secret key",
+        prefix: "sk_prod_",
+        body: Body::Alnum,
+        min: 16,
+        max: 255,
+    },
+    Format {
+        rule: "stripe secret key",
+        prefix: "rk_prod_",
+        body: Body::Alnum,
+        min: 16,
+        max: 255,
+    },
+    Format {
+        rule: "openshift user token",
+        prefix: "sha256~",
+        body: Body::AlnumDashUnderscore,
+        min: 43,
+        max: 43,
+    },
+    Format {
+        rule: "vault token",
+        prefix: "hvb.",
+        body: Body::AlnumDashUnderscore,
+        min: 138,
+        max: 300,
+    },
+    Format {
+        rule: "vault token",
+        prefix: "hvs.",
+        body: Body::AlnumDashUnderscore,
+        min: 90,
+        max: 120,
+    },
+    Format {
+        rule: "sentry token",
+        prefix: "sntrys_eyJpYXQiO",
+        body: Body::Base64Any,
+        min: 80,
+        max: 700,
+    },
+    Format {
+        rule: "sentry token",
+        prefix: "sntryu_",
+        body: Body::Hex,
+        min: 64,
+        max: 64,
+    },
+    Format {
+        rule: "1password secret key",
+        prefix: "A3-",
+        body: Body::UpperAlnumDash,
+        min: 36,
+        max: 37,
+    },
+    Format {
+        rule: "facebook page token",
+        prefix: "EAAM",
+        body: Body::Alnum,
+        min: 100,
+        max: 255,
+    },
+    Format {
+        rule: "facebook page token",
+        prefix: "EAAC",
+        body: Body::Alnum,
+        min: 100,
+        max: 255,
+    },
+    Format {
+        rule: "openai api key",
+        prefix: "sk-svcacct-",
+        body: Body::AlnumDashUnderscore,
+        min: 40,
+        max: 255,
+    },
+    Format {
+        rule: "openai api key",
+        prefix: "sk-admin-",
+        body: Body::AlnumDashUnderscore,
+        min: 40,
+        max: 255,
+    },
+    Format {
+        rule: "1password service account token",
+        prefix: "ops_eyJ",
+        body: Body::Base64Any,
+        min: 250,
+        max: 4000,
+    },
+    Format {
+        rule: "adobe client secret",
+        prefix: "p8e-",
+        body: Body::Alnum,
+        min: 32,
+        max: 32,
+    },
+    Format {
+        rule: "airtable personal access token",
+        prefix: "pat",
+        body: Body::AlnumDot,
+        min: 79,
+        max: 79,
+    },
+    Format {
+        rule: "alibaba access key id",
+        prefix: "LTAI",
+        body: Body::Alnum,
+        min: 20,
+        max: 20,
+    },
+    Format {
+        rule: "artifactory api key",
+        prefix: "AKCp",
+        body: Body::Alnum,
+        min: 69,
+        max: 69,
+    },
+    Format {
+        rule: "artifactory reference token",
+        prefix: "cmVmd",
+        body: Body::Alnum,
+        min: 59,
+        max: 59,
+    },
+    Format {
+        rule: "aws access key id",
+        prefix: "A3T",
+        body: Body::UpperAlnum,
+        min: 17,
+        max: 17,
+    },
+    Format {
+        rule: "aws bedrock api key",
+        prefix: "ABSK",
+        body: Body::Base64Any,
+        min: 109,
+        max: 272,
+    },
+    Format {
+        rule: "clickhouse cloud secret key",
+        prefix: "4b1d",
+        body: Body::Alnum,
+        min: 38,
+        max: 38,
+    },
+    Format {
+        rule: "clojars token",
+        prefix: "CLOJARS_",
+        body: Body::LowerAlnum,
+        min: 60,
+        max: 60,
+    },
+    Format {
+        rule: "databricks token",
+        prefix: "dapi",
+        body: Body::Hex,
+        min: 32,
+        max: 32,
+    },
+    Format {
+        rule: "digitalocean token",
+        prefix: "doo_v1_",
+        body: Body::Hex,
+        min: 64,
+        max: 64,
+    },
+    Format {
+        rule: "digitalocean token",
+        prefix: "dor_v1_",
+        body: Body::Hex,
+        min: 64,
+        max: 64,
+    },
+    Format {
+        rule: "duffel token",
+        prefix: "duffel_test_",
+        body: Body::WordEqDotDash,
+        min: 43,
+        max: 43,
+    },
+    Format {
+        rule: "duffel token",
+        prefix: "duffel_live_",
+        body: Body::WordEqDotDash,
+        min: 43,
+        max: 43,
+    },
+    Format {
+        rule: "dynatrace token",
+        prefix: "dt0c01.",
+        body: Body::AlnumDot,
+        min: 89,
+        max: 89,
+    },
+    Format {
+        rule: "flutterwave key",
+        prefix: "FLWSECK_TEST-",
+        body: Body::AlnumDashUnderscore,
+        min: 34,
+        max: 34,
+    },
+    Format {
+        rule: "flutterwave key",
+        prefix: "FLWSECK_TEST-",
+        body: Body::AlnumDashUnderscore,
+        min: 12,
+        max: 12,
+    },
+    Format {
+        rule: "flutterwave key",
+        prefix: "FLWPUBK_TEST-",
+        body: Body::AlnumDashUnderscore,
+        min: 34,
+        max: 34,
+    },
+    Format {
+        rule: "fly.io token",
+        prefix: "fo1_",
+        body: Body::AlnumDashUnderscore,
+        min: 43,
+        max: 43,
+    },
+    Format {
+        rule: "fly.io token",
+        prefix: "fm1r_",
+        body: Body::Base64Any,
+        min: 100,
+        max: 1500,
+    },
+    Format {
+        rule: "fly.io token",
+        prefix: "fm1a_",
+        body: Body::Base64Any,
+        min: 100,
+        max: 1500,
+    },
+    Format {
+        rule: "fly.io token",
+        prefix: "fm2_",
+        body: Body::Base64Any,
+        min: 100,
+        max: 1500,
+    },
+    Format {
+        rule: "frame.io token",
+        prefix: "fio-u-",
+        body: Body::WordEqDotDash,
+        min: 64,
+        max: 64,
+    },
+    Format {
+        rule: "gitlab token",
+        prefix: "gldt-",
+        body: Body::AlnumDashUnderscore,
+        min: 20,
+        max: 20,
+    },
+    Format {
+        rule: "gitlab token",
+        prefix: "glft-",
+        body: Body::AlnumDashUnderscore,
+        min: 20,
+        max: 20,
+    },
+    Format {
+        rule: "gitlab token",
+        prefix: "glffct-",
+        body: Body::AlnumDashUnderscore,
+        min: 20,
+        max: 20,
+    },
+    Format {
+        rule: "gitlab token",
+        prefix: "glrt-",
+        body: Body::AlnumDashUnderscore,
+        min: 20,
+        max: 20,
+    },
+    Format {
+        rule: "gitlab token",
+        prefix: "glrt-t",
+        body: Body::AlnumDashUnderscoreDot,
+        min: 30,
+        max: 320,
+    },
+    Format {
+        rule: "gitlab token",
+        prefix: "glsoat-",
+        body: Body::AlnumDashUnderscore,
+        min: 20,
+        max: 20,
+    },
+    Format {
+        rule: "gitlab token",
+        prefix: "glimt-",
+        body: Body::AlnumDashUnderscore,
+        min: 25,
+        max: 25,
+    },
+    Format {
+        rule: "gitlab token",
+        prefix: "glagent-",
+        body: Body::AlnumDashUnderscore,
+        min: 50,
+        max: 50,
+    },
+    Format {
+        rule: "gitlab token",
+        prefix: "gloas-",
+        body: Body::AlnumDashUnderscore,
+        min: 64,
+        max: 64,
+    },
+    Format {
+        rule: "gitlab token",
+        prefix: "glptt-",
+        body: Body::Hex,
+        min: 40,
+        max: 40,
+    },
+    Format {
+        rule: "gitlab token",
+        prefix: "glcbt-",
+        body: Body::AlnumDashUnderscore,
+        min: 22,
+        max: 26,
+    },
+    Format {
+        rule: "gitlab token",
+        prefix: "GR1348941",
+        body: Body::AlnumDashUnderscore,
+        min: 20,
+        max: 20,
+    },
+    Format {
+        rule: "grafana token",
+        prefix: "eyJrIjoi",
+        body: Body::Base64Any,
+        min: 70,
+        max: 403,
+    },
+    Format {
+        rule: "grafana token",
+        prefix: "glc_",
+        body: Body::Base64Any,
+        min: 32,
+        max: 403,
+    },
+    Format {
+        rule: "grafana token",
+        prefix: "glsa_",
+        body: Body::AlnumDashUnderscore,
+        min: 41,
+        max: 41,
+    },
+    Format {
+        rule: "heroku token",
+        prefix: "HRKU-AA",
+        body: Body::AlnumDashUnderscore,
+        min: 58,
+        max: 58,
+    },
+    Format {
+        rule: "infracost token",
+        prefix: "ico-",
+        body: Body::Alnum,
+        min: 32,
+        max: 32,
+    },
+    Format {
+        rule: "linear token",
+        prefix: "lin_api_",
+        body: Body::Alnum,
+        min: 40,
+        max: 40,
+    },
+    Format {
+        rule: "octopus deploy key",
+        prefix: "API-",
+        body: Body::UpperAlnum,
+        min: 26,
+        max: 26,
+    },
+    Format {
+        rule: "perplexity api key",
+        prefix: "pplx-",
+        body: Body::Alnum,
+        min: 48,
+        max: 48,
+    },
+    Format {
+        rule: "planetscale token",
+        prefix: "pscale_tkn_",
+        body: Body::WordEqDotDash,
+        min: 32,
+        max: 64,
+    },
+    Format {
+        rule: "planetscale token",
+        prefix: "pscale_oauth_",
+        body: Body::WordEqDotDash,
+        min: 32,
+        max: 64,
+    },
+    Format {
+        rule: "planetscale token",
+        prefix: "pscale_pw_",
+        body: Body::WordEqDotDash,
+        min: 32,
+        max: 64,
+    },
+    Format {
+        rule: "postman token",
+        prefix: "PMAK-",
+        body: Body::AlnumDashUnderscore,
+        min: 59,
+        max: 59,
+    },
+    Format {
+        rule: "prefect token",
+        prefix: "pnu_",
+        body: Body::Alnum,
+        min: 36,
+        max: 36,
+    },
+    Format {
+        rule: "pulumi token",
+        prefix: "pul-",
+        body: Body::Hex,
+        min: 40,
+        max: 40,
+    },
+    Format {
+        rule: "readme token",
+        prefix: "rdme_",
+        body: Body::LowerAlnum,
+        min: 70,
+        max: 70,
+    },
+    Format {
+        rule: "rubygems token",
+        prefix: "rubygems_",
+        body: Body::Hex,
+        min: 48,
+        max: 48,
+    },
+    Format {
+        rule: "scalingo token",
+        prefix: "tk-us-",
+        body: Body::AlnumDashUnderscore,
+        min: 48,
+        max: 48,
+    },
+    Format {
+        rule: "sendinblue key",
+        prefix: "xkeysib-",
+        body: Body::AlnumDashUnderscore,
+        min: 81,
+        max: 81,
+    },
+    Format {
+        rule: "settlemint token",
+        prefix: "sm_aat_",
+        body: Body::Alnum,
+        min: 16,
+        max: 16,
+    },
+    Format {
+        rule: "settlemint token",
+        prefix: "sm_pat_",
+        body: Body::Alnum,
+        min: 16,
+        max: 16,
+    },
+    Format {
+        rule: "settlemint token",
+        prefix: "sm_sat_",
+        body: Body::Alnum,
+        min: 16,
+        max: 16,
+    },
+    Format {
+        rule: "shippo token",
+        prefix: "shippo_live_",
+        body: Body::Hex,
+        min: 40,
+        max: 40,
+    },
+    Format {
+        rule: "shippo token",
+        prefix: "shippo_test_",
+        body: Body::Hex,
+        min: 40,
+        max: 40,
+    },
+    Format {
+        rule: "shopify token",
+        prefix: "shpca_",
+        body: Body::Hex,
+        min: 32,
+        max: 32,
+    },
+    Format {
+        rule: "shopify token",
+        prefix: "shppa_",
+        body: Body::Hex,
+        min: 32,
+        max: 32,
+    },
+    Format {
+        rule: "slack token",
+        prefix: "xoxe.xoxb-",
+        body: Body::UpperAlnumDash,
+        min: 165,
+        max: 168,
+    },
+    Format {
+        rule: "slack token",
+        prefix: "xoxe.xoxp-",
+        body: Body::UpperAlnumDash,
+        min: 165,
+        max: 168,
+    },
+    Format {
+        rule: "slack token",
+        prefix: "xoxe-",
+        body: Body::UpperAlnumDash,
+        min: 148,
+        max: 148,
+    },
+    Format {
         rule: "near or solana private key",
         prefix: "ed25519:",
         body: Body::Base58,
@@ -350,6 +1044,137 @@ const KEYWORDS: &[&str] = &[
     "auth_key",
     "client_secret",
     "credential",
+    "pwd",
+    "contrasena",
+    "contraseña",
+    "db_pass",
+    "database_pass",
+    "key_pass",
+];
+
+/// Provider names that, at the start of a key name, make the value after it a credential even when the key says neither
+/// `token` nor `secret` (`sonar.login = ...`, `cloudflare: "..."`). Ordinary words are left out on purpose.
+const PROVIDERS: &[&str] = &[
+    "adafruit",
+    "airtable",
+    "algolia",
+    "alibaba",
+    "artifactory",
+    "asana",
+    "atlassian",
+    "beamer",
+    "bintray",
+    "bitbucket",
+    "bittrex",
+    "cloudflare",
+    "codecov",
+    "coinbase",
+    "confluence",
+    "confluent",
+    "contentful",
+    "datadog",
+    "discord",
+    "droneci",
+    "dropbox",
+    "facebook",
+    "fastly",
+    "finicity",
+    "finnhub",
+    "flickr",
+    "freshbooks",
+    "gitter",
+    "gocardless",
+    "heroku",
+    "hubspot",
+    "jfrog",
+    "kucoin",
+    "launchdarkly",
+    "mailchimp",
+    "mailgun",
+    "mapbox",
+    "mattermost",
+    "messagebird",
+    "netlify",
+    "newrelic",
+    "new_relic",
+    "new-relic",
+    "nytimes",
+    "plaid",
+    "rapidapi",
+    "sendbird",
+    "sentry",
+    "snyk",
+    "sonar",
+    "sourcegraph",
+    "squarespace",
+    "sumologic",
+    "twitch",
+    "twitter",
+    "typeform",
+    "yandex",
+    "zendesk",
+    "creds",
+];
+
+/// Words in a key name that make a trailing `key` something other than a credential.
+const NOT_A_CREDENTIAL_KEY: &[&str] = &[
+    "public",
+    "pub_key",
+    "pubkey",
+    "primary",
+    "foreign",
+    "sort",
+    "partition",
+    "cache",
+    "hash",
+    "object",
+    "lookup",
+    "translation",
+    "i18n",
+    "group",
+    "record",
+    "shard",
+    "route",
+    "index",
+    "map_key",
+    "dict",
+    "storage_key",
+    "localstorage",
+    "session_key_name",
+    "ssh_authorized",
+    "authorized_keys",
+    "known_hosts",
+    "websocket",
+];
+
+/// Endings that say what a value names (an account, a channel, a mode), so a secret word earlier in the name does not
+/// make the value a credential: `CLOUDFLARE_ACCOUNT_ID`, `MATTERMOST_ALLOWED_USERS`, `PASSWORD_STORE`.
+const NOT_SECRET_SUFFIXES: &[&str] = &[
+    "_id",
+    "_ids",
+    "_name",
+    "_names",
+    "_url",
+    "_uri",
+    "_users",
+    "_user",
+    "_channel",
+    "_channels",
+    "_org",
+    "_team",
+    "_domain",
+    "_region",
+    "_host",
+    "_zone",
+    "_account",
+    "_project",
+    "_workspace",
+    "_tenant",
+    "_store",
+    "_dir",
+    "_mode",
+    "_enabled",
+    "_prefix",
 ];
 
 fn is_word_boundary(text: &str, at: usize) -> bool {
@@ -457,9 +1282,27 @@ fn placeholder(v: &str) -> bool {
         && l.len() < 40
 }
 
+/// Alphabets written out in order, twice, so that any stretch of one (`ABCDEFGH`, `345678901`, `89ABCDEF`) is found
+/// as a substring. A value made only of such a stretch is a pattern someone typed, not a random credential.
+const SEQUENCES: &[&str] = &[
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/",
+    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ+/",
+    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "01234567890123456789",
+    "0123456789ABCDEFABCDEF0123456789ABCDEFABCDEF",
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ=/",
+];
+
 fn sequential(v: &str) -> bool {
     let b: Vec<u8> = v.bytes().collect();
-    b.len() >= 6 && (b.windows(2).all(|w| w[1] == w[0] + 1) || b.windows(2).all(|w| w[1] == w[0]))
+    if b.len() < 6 {
+        return false;
+    }
+    if b.windows(2).all(|w| w[1] == w[0] + 1) || b.windows(2).all(|w| w[1] == w[0]) {
+        return true;
+    }
+    let upper = v.to_ascii_uppercase();
+    SEQUENCES.iter().any(|seq| seq.contains(&upper))
 }
 
 fn strip_quotes(v: &str) -> &str {
@@ -470,6 +1313,12 @@ fn strip_quotes(v: &str) -> &str {
 /// A value that plausibly is a literal credential: long enough, no whitespace, not a reference, not a placeholder, and
 /// either random enough or mixing letters with digits.
 pub fn credential_value(raw: &str) -> bool {
+    credential_value_with(raw, false)
+}
+
+/// `allow_identifier` is set when a key name such as `api_token` or `secret` sits directly in front of the value: then a
+/// UUID or a hash-length hex string is a credential, not an identifier (an Algolia key is 32 hex characters).
+fn credential_value_with(raw: &str, allow_identifier: bool) -> bool {
     let v = strip_quotes(raw);
     if v.len() < 8
         || v.contains(char::is_whitespace)
@@ -480,7 +1329,7 @@ pub fn credential_value(raw: &str) -> bool {
     {
         return false;
     }
-    if identifier_shape(v) {
+    if !allow_identifier && identifier_shape(v) {
         return false;
     }
     let has_digit = v.chars().any(|c| c.is_ascii_digit());
@@ -498,6 +1347,29 @@ pub fn credential_value(raw: &str) -> bool {
     entropy(v) >= 2.5 && has_alpha || (has_special && entropy(v) >= 3.0)
 }
 
+/// A provider-shaped value whose body is a fill character or says what it is (`ghp_xxxx...`, `..._PUT_YOUR_TOKEN_HERE_...`)
+/// is documentation, not a credential. Real bodies are random, so they use many distinct characters and never spell these words.
+pub fn placeholder_body(body: &str) -> bool {
+    let distinct: BTreeSet<char> = body.chars().collect();
+    if body.chars().count() >= 12 && distinct.len() <= 3 {
+        return true;
+    }
+    let l = body.to_ascii_lowercase();
+    body.len() >= 16
+        && [
+            "your",
+            "example",
+            "placeholder",
+            "changeme",
+            "dummy",
+            "redacted",
+            "token_here",
+            "key_here",
+        ]
+        .iter()
+        .any(|w| l.contains(w))
+}
+
 fn push(hits: &mut Vec<Hit>, rule: &'static str, start: usize, end: usize, decoded: bool) {
     hits.push(Hit {
         rule,
@@ -507,12 +1379,32 @@ fn push(hits: &mut Vec<Hit>, rule: &'static str, start: usize, end: usize, decod
     });
 }
 
+/// Which formats can start with a given byte, so the text is walked once instead of once per format.
+fn format_index() -> &'static Vec<Vec<usize>> {
+    static INDEX: std::sync::OnceLock<Vec<Vec<usize>>> = std::sync::OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut idx: Vec<Vec<usize>> = vec![Vec::new(); 256];
+        for (i, f) in FORMATS.iter().enumerate() {
+            idx[f.prefix.as_bytes()[0] as usize].push(i);
+        }
+        idx
+    })
+}
+
 fn scan_formats(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
-    for f in FORMATS {
-        let mut from = 0;
-        while let Some(i) = text[from..].find(f.prefix) {
-            let start = from + i;
-            from = start + f.prefix.len();
+    let index = format_index();
+    for (start, byte) in text.bytes().enumerate() {
+        let candidates = &index[byte as usize];
+        if candidates.is_empty() {
+            continue;
+        }
+        for &fi in candidates {
+            let f = &FORMATS[fi];
+            // every prefix starts with an ASCII byte, so `start` is always on a character boundary
+            if !text[start..].starts_with(f.prefix) {
+                continue;
+            }
+            let from = start + f.prefix.len();
             if !is_word_boundary(text, start) {
                 continue;
             }
@@ -522,7 +1414,11 @@ fn scan_formats(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
                 .collect();
             let n = body.chars().count();
             let documented_example = f.rule == "aws access key id" && body.contains("EXAMPLE");
-            if n >= f.min && n <= f.max.max(f.min) && !documented_example {
+            if n >= f.min
+                && n <= f.max.max(f.min)
+                && !documented_example
+                && !placeholder_body(&body)
+            {
                 if f.prefix == "SK"
                     && !(body.chars().any(|c| c.is_ascii_digit())
                         && body.chars().any(|c| c.is_ascii_alphabetic()))
@@ -530,8 +1426,6 @@ fn scan_formats(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
                     continue;
                 }
                 push(hits, f.rule, start, from + body.len(), decoded);
-            } else if n > f.max && f.max < 255 {
-                // a longer run of the same alphabet is not this format (for example a hash)
             }
         }
     }
@@ -622,14 +1516,16 @@ fn take_value(v: &str) -> (&str, bool) {
                     c.is_whitespace() || matches!(c, ',' | ';' | '&' | ')' | '}' | ']' | '>')
                 })
                 .unwrap_or(v.len());
-            (&v[..end], false)
+            // a JSON string holding several lines shows each break as the two characters backslash and n
+            let escaped = ["\\n", "\\r", "\\t"].iter().filter_map(|e| v.find(e)).min();
+            (&v[..end.min(escaped.unwrap_or(end))], false)
         }
     }
 }
 
 /// Code is full of `token = point.tokens`, `secret: Optional[str]` and `"test-key"`. An unquoted value is a literal only if
 /// it has no code syntax; a quoted one must not be a placeholder word, a test marker or plain readable words.
-fn literal_credential(v: &str, quoted: bool) -> bool {
+fn literal_credential(v: &str, quoted: bool, allow_identifier: bool) -> bool {
     if !v.is_ascii() {
         return false;
     }
@@ -699,6 +1595,7 @@ fn literal_credential(v: &str, quoted: bool) -> bool {
             || v.contains("->")
             || v.contains("=>");
         let member_path = v.contains('.')
+            && (v.len() < 32 || !v.chars().any(|c| c.is_ascii_digit()))
             && v.split('.').all(|p| {
                 !p.is_empty()
                     && p.chars()
@@ -710,20 +1607,233 @@ fn literal_credential(v: &str, quoted: bool) -> bool {
             return false;
         }
     }
-    credential_value(v)
+    credential_value_with(v, allow_identifier)
+}
+
+/// A bare `...Key = value` is a credential only when the value is clearly one: 20 or more token characters with high
+/// entropy, or a UUID. Version strings, identifiers with dots and short codes are left alone.
+fn key_value_strong(v: &str) -> bool {
+    let v = strip_quotes(v);
+    let uuid = v.len() == 36
+        && v.chars().enumerate().all(|(i, c)| {
+            if matches!(i, 8 | 13 | 18 | 23) {
+                c == '-'
+            } else {
+                c.is_ascii_hexdigit()
+            }
+        });
+    uuid || (v.len() >= 20
+        && v.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '+' | '/' | '='))
+        && entropy(v) >= 3.3)
+}
+
+/// How the value was introduced; the weaker forms are accepted only for stronger values.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Form {
+    Plain,
+    /// `("API_TOKEN", "value")`: a call or tuple, where lists of names look the same.
+    Comma,
+    /// `password == "value"`: a credential written into a check.
+    Compare,
+}
+
+/// What follows the operator of an assignment. Besides `=` and `:`, the make-style `:=`, `::=`, `:::=` and `?=`, PHP's
+/// `.=`, the arrow `=>` and the call form `("KEY", "value")` all introduce a value; a comma only does when a quoted
+/// string follows it, so `token, secret` in a list is not an assignment. A type word between the name and the `=`
+/// (`var token string = "..."`) is skipped.
+fn after_operator(rest: &str) -> Option<(&str, Form)> {
+    for op in ["!==", "===", "!=", "=="] {
+        if let Some(v) = rest.strip_prefix(op) {
+            return Some((v, Form::Compare));
+        }
+    }
+    for op in [":::=", "::=", ":=", "?=", ".=", "=>", "="] {
+        if let Some(v) = rest.strip_prefix(op) {
+            return Some((v, Form::Plain));
+        }
+    }
+    if let Some(v) = rest.strip_prefix(':') {
+        // `token: string = "..."` carries a type between the colon and the value
+        return Some((skip_type_to_value(v).unwrap_or(v), Form::Plain));
+    }
+    if let Some(v) = skip_type_to_value(rest) {
+        // `var token string = "..."`
+        return Some((v, Form::Plain));
+    }
+    if let Some(v) = rest.strip_prefix(',') {
+        if v.trim_start().starts_with(['"', '\'', '`']) {
+            return Some((v, Form::Comma));
+        }
+    }
+    rest.strip_prefix("is ")
+        .or_else(|| rest.strip_prefix("was "))
+        .map(|v| (v, Form::Plain))
+}
+
+/// Readable names with a number on the end (`gateway-api-key-1234567890`, `old-secret-123`): lowercase words and digit
+/// groups joined by `-`, `_` or `.`. Credentials are not written like that, fixtures and examples are.
+fn word_slug(v: &str) -> bool {
+    let parts: Vec<&str> = v.split(['-', '_', '.']).collect();
+    parts.len() >= 2
+        && parts.iter().all(|p| {
+            !p.is_empty()
+                && ((p.len() <= 14 && p.chars().all(|c| c.is_ascii_digit()))
+                    || (p.len() <= 5
+                        && p.starts_with('v')
+                        && p.len() > 1
+                        && p[1..].chars().all(|c| c.is_ascii_digit()))
+                    || (p.len() <= 14
+                        && p.chars().all(|c| c.is_ascii_lowercase())
+                        && p.chars().any(|c| "aeiouy".contains(c))))
+        })
+        && parts
+            .iter()
+            .any(|p| p.chars().any(|c| c.is_ascii_lowercase()))
+}
+
+/// Type names that can sit between a name and its value (`var token string = "..."`). Any other word there is prose or
+/// markup (`api_key id=ef56gh78`, `Discord" src="https://...`), not a declaration.
+const TYPE_WORDS: &[&str] = &[
+    "string",
+    "str",
+    "text",
+    "char",
+    "chars",
+    "any",
+    "object",
+    "bytes",
+    "nsstring",
+    "securestring",
+    "optional",
+    "option",
+    "cstring",
+];
+
+/// `string = value` or `Optional<String> := value`: one type word, then an assignment.
+fn skip_type_to_value(s: &str) -> Option<&str> {
+    let t = s.trim_start().trim_start_matches(['&', '*']);
+    let end = t
+        .find(|c: char| {
+            !(c.is_ascii_alphanumeric() || matches!(c, '_' | '<' | '>' | '[' | ']' | '.' | '?'))
+        })
+        .unwrap_or(t.len());
+    if end == 0 || end > 32 {
+        return None;
+    }
+    let word = t[..end].split(['<', '[']).next().unwrap_or("");
+    if !TYPE_WORDS.contains(&word.to_ascii_lowercase().as_str()) {
+        return None;
+    }
+    let after = t[end..].trim_start();
+    if after.starts_with("==") || after.starts_with("=>") {
+        return None;
+    }
+    after.strip_prefix(":=").or_else(|| after.strip_prefix('='))
+}
+
+/// The rest of a key name in one comparable form: camelCase and `.` or `-` become `_` boundaries, so `credentialId`,
+/// `credentials.url` and `token-count` are tested like `credential_id`, `credentials_url` and `token_count`.
+fn suffix_form(rest: &str) -> String {
+    let mut out = String::new();
+    // the rest of a name starts where the keyword ended, so a capital right away begins a new word (`credentialId`)
+    let mut prev_lower = true;
+    for c in rest.chars() {
+        if c.is_ascii_uppercase() && prev_lower {
+            out.push('_');
+        }
+        out.push(match c {
+            '.' | '-' => '_',
+            c => c.to_ascii_lowercase(),
+        });
+        prev_lower = c.is_ascii_lowercase() || c.is_ascii_digit();
+    }
+    out
+}
+
+/// No real key name is longer than this. Reading further would make every incidental match inside a long run of
+/// letters (a base64 blob) walk the whole run.
+const MAX_KEY_NAME: usize = 80;
+
+/// Every word that can name a credential: the general keywords, the provider names, and the bare `key` that counts only
+/// as the tail of a longer name. The position in this list identifies the word.
+fn credential_words() -> &'static Vec<&'static str> {
+    static WORDS: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    WORDS.get_or_init(|| {
+        KEYWORDS
+            .iter()
+            .chain(PROVIDERS.iter())
+            .chain(std::iter::once(&"key"))
+            .copied()
+            .collect()
+    })
+}
+
+/// Where each credential word occurs in a lowercased line, found in one pass over the line.
+fn keyword_occurrences(lower: &str) -> Vec<Vec<usize>> {
+    static BY_FIRST_BYTE: std::sync::OnceLock<Vec<Vec<usize>>> = std::sync::OnceLock::new();
+    let words = credential_words();
+    let index = BY_FIRST_BYTE.get_or_init(|| {
+        let mut idx: Vec<Vec<usize>> = vec![Vec::new(); 256];
+        for (i, w) in words.iter().enumerate() {
+            idx[w.as_bytes()[0] as usize].push(i);
+        }
+        idx
+    });
+    let mut out: Vec<Vec<usize>> = vec![Vec::new(); words.len()];
+    let bytes = lower.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        for &wi in &index[b as usize] {
+            if bytes[i..].starts_with(words[wi].as_bytes()) {
+                out[wi].push(i);
+            }
+        }
+    }
+    out
 }
 
 fn scan_assignments(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
     scan_bare_key(text, decoded, hits);
     let mut offset = 0;
-    for line in text.split_inclusive('\n') {
+    let all: Vec<&str> = text.split_inclusive('\n').collect();
+    for (li, line) in all.iter().copied().enumerate() {
         let l = line.trim_end_matches(['\n', '\r']);
         {
             let lower = l.to_ascii_lowercase();
-            for kw in KEYWORDS {
+            let occurrences = keyword_occurrences(&lower);
+            for (ki, kw) in credential_words().iter().enumerate() {
+                if occurrences[ki].is_empty() {
+                    continue;
+                }
+                let is_provider = ki >= KEYWORDS.len() && ki < KEYWORDS.len() + PROVIDERS.len();
+                let is_key_suffix = ki == KEYWORDS.len() + PROVIDERS.len();
                 let mut from = 0;
-                while let Some(i) = lower[from..].find(kw) {
-                    let kstart = from + i;
+                while let Some(kstart) = {
+                    let occ = &occurrences[ki];
+                    occ.get(occ.partition_point(|&o| o < from)).copied()
+                } {
+                    if is_provider || is_key_suffix {
+                        // the name must begin a word of the key: after a separator, at the start, or at a camelCase step
+                        let lb = l.as_bytes();
+                        let boundary = kstart == 0
+                            || !lb[kstart - 1].is_ascii_alphanumeric()
+                            || (lb[kstart - 1].is_ascii_lowercase()
+                                && lb[kstart].is_ascii_uppercase());
+                        let inside_value = kstart > 0 && matches!(lb[kstart - 1], b':' | b'/');
+                        if is_provider && (!boundary || inside_value) {
+                            from = kstart + kw.len();
+                            continue;
+                        }
+                        // `key` counts only as the tail of a longer name (`HEROKU_KEY`, `serviceKey`), never alone or as a prefix
+                        let separated = kstart > 0
+                            && (matches!(lb[kstart - 1], b'_' | b'-' | b'.')
+                                || (lb[kstart - 1].is_ascii_lowercase()
+                                    && lb[kstart].is_ascii_uppercase()));
+                        if is_key_suffix && !separated {
+                            from = kstart + kw.len();
+                            continue;
+                        }
+                    }
                     let after = &l[kstart + kw.len()..];
                     from = kstart + kw.len();
                     // the key name may continue (PASSWORD_FILE, token_count): take the rest of the identifier
@@ -732,8 +1842,75 @@ fn scan_assignments(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
                         .take_while(|c| {
                             c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.'
                         })
+                        .take(MAX_KEY_NAME)
                         .collect();
-                    let lower_rest = ident_rest.to_ascii_lowercase();
+                    let lower_rest = suffix_form(&ident_rest);
+                    let key_name = {
+                        let before: String = l[..kstart]
+                            .chars()
+                            .rev()
+                            .take_while(|c| {
+                                c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')
+                            })
+                            .take(MAX_KEY_NAME)
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .rev()
+                            .collect();
+                        format!("{before}{kw}{ident_rest}")
+                    };
+                    let env_style =
+                        key_name.contains('_') || !key_name.chars().any(|c| c.is_ascii_lowercase());
+                    let key_name = key_name.to_ascii_lowercase();
+                    let hash_named = [
+                        "hash",
+                        "sha",
+                        "md5",
+                        "digest",
+                        "checksum",
+                        "etag",
+                        "fingerprint",
+                        "commit",
+                        "revision",
+                        "uuid",
+                        "guid",
+                    ]
+                    .iter()
+                    .any(|w| key_name.contains(w));
+                    let password_class = [
+                        "password",
+                        "passwd",
+                        "pwd",
+                        "passphrase",
+                        "contrasena",
+                        "contraseña",
+                        "db_pass",
+                        "database_pass",
+                        "key_pass",
+                    ]
+                    .iter()
+                    .any(|w| key_name.contains(w));
+                    // everything a value must satisfy to count, given how it was introduced
+                    let accept = |tok: &str, quoted: bool, form: Form| -> bool {
+                        literal_credential(tok, quoted, !hash_named)
+                            && (!is_key_suffix || key_value_strong(tok))
+                            && (password_class || !word_slug(tok))
+                            && match form {
+                                Form::Plain => true,
+                                Form::Comma => env_style && tok.chars().any(|c| c.is_ascii_digit()),
+                                Form::Compare => tok.len() >= 10,
+                            }
+                    };
+                    if is_key_suffix
+                        && (NOT_A_CREDENTIAL_KEY.iter().any(|w| key_name.contains(w))
+                            || ident_rest
+                                .chars()
+                                .next()
+                                .is_some_and(|c| c.is_ascii_alphanumeric()))
+                    {
+                        // `key` followed by more letters (`keyboard`, `keyword`, `key_file` is caught below) is not a credential name
+                        continue;
+                    }
                     if [
                         "_file",
                         "_path",
@@ -764,17 +1941,82 @@ fn scan_assignments(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
                     {
                         continue;
                     }
+                    if !lower_rest.is_empty()
+                        && NOT_SECRET_SUFFIXES.iter().any(|s| lower_rest.ends_with(s))
+                    {
+                        continue;
+                    }
+                    // `"literal" == password`: the same hard-coded check written the other way round
+                    {
+                        let before_len = l[..kstart]
+                            .chars()
+                            .rev()
+                            .take_while(|c| {
+                                c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')
+                            })
+                            .take(MAX_KEY_NAME)
+                            .count();
+                        let head = l[..kstart - before_len].trim_end();
+                        let after_op = ["!==", "===", "!=", "=="]
+                            .iter()
+                            .find_map(|op| head.strip_suffix(op));
+                        if let Some(lit) = after_op.map(str::trim_end) {
+                            if let Some(q) =
+                                lit.chars().last().filter(|c| matches!(c, '"' | '\'' | '`'))
+                            {
+                                let inner = &lit[..lit.len() - 1];
+                                if let Some(open) = inner.rfind(q) {
+                                    let literal = &inner[open + 1..];
+                                    if accept(literal, true, Form::Compare) {
+                                        let vstart =
+                                            literal.as_ptr() as usize - text.as_ptr() as usize;
+                                        push(
+                                            hits,
+                                            "credential with its value",
+                                            vstart,
+                                            vstart + literal.len(),
+                                            decoded,
+                                        );
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     let rest = after[ident_rest.len()..]
                         .trim_start_matches([' ', '"', '\'', '`', ']', ')']);
-                    let value = rest
-                        .strip_prefix(":=")
-                        .or_else(|| rest.strip_prefix("=>"))
-                        .or_else(|| rest.strip_prefix("=="))
-                        .or_else(|| rest.strip_prefix('='))
-                        .or_else(|| rest.strip_prefix(':'))
-                        .or_else(|| rest.strip_prefix("is "))
-                        .or_else(|| rest.strip_prefix("was "));
-                    if value.is_none() && !rest.is_empty() {
+                    let operator = after_operator(rest);
+                    let value = operator.map(|(v, _)| v);
+                    let form = operator.map(|(_, f)| f).unwrap_or(Form::Plain);
+                    if value.is_none() {
+                        if let Some(after_tag) = rest.strip_prefix('>') {
+                            // `<apiToken>value</apiToken>`, or the value on the next line
+                            let inline = after_tag.split('<').next().unwrap_or("").trim();
+                            let next = all
+                                .get(li + 1)
+                                .map(|n| {
+                                    n.trim_end_matches(['\n', '\r'])
+                                        .split('<')
+                                        .next()
+                                        .unwrap_or("")
+                                        .trim()
+                                })
+                                .unwrap_or("");
+                            let cand = if inline.is_empty() { next } else { inline };
+                            if !cand.is_empty() && accept(cand, false, Form::Plain) {
+                                let cstart = cand.as_ptr() as usize - text.as_ptr() as usize;
+                                push(
+                                    hits,
+                                    "credential with its value",
+                                    cstart,
+                                    cstart + cand.len(),
+                                    decoded,
+                                );
+                                break;
+                            }
+                        }
+                    }
+                    if value.is_none() && !rest.is_empty() && !is_provider && !is_key_suffix {
                         // "api key 9f8e7d6c...": a keyword followed directly by a long random token
                         let token = rest.split_whitespace().next().unwrap_or("");
                         if token.len() >= 20
@@ -799,12 +2041,13 @@ fn scan_assignments(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
                     }
                     if let Some(v) = value {
                         let (token, quoted) = take_value(v.trim_start());
-                        // `x += y`, `x == y` are code, not an assignment of a literal
-                        if rest.starts_with("==") || rest.starts_with("!=") {
+                        // `x == y` is code; `x == "literal"` is a credential written into a check
+                        if (rest.starts_with("==") || rest.starts_with("!=")) && !quoted {
                             continue;
                         }
-                        if literal_credential(token, quoted) {
-                            let vstart = offset + (l.len() - v.trim_start().len());
+                        if accept(token, quoted, form) {
+                            // the value itself, without its quotes
+                            let vstart = token.as_ptr() as usize - text.as_ptr() as usize;
                             push(
                                 hits,
                                 "credential with its value",
@@ -930,12 +2173,238 @@ fn scan_wallets(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
     }
 }
 
+/// Shapes with a fixed layout but no prefix to search for: a Telegram bot token (`123456789:A` and 34 more characters)
+/// and an Azure AD client secret (`...<digit>Q~` and 31 to 34 more characters).
+fn scan_shapes(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
+    let bytes = text.as_bytes();
+    let tail_ok = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'-';
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b':' {
+            let mut d = i;
+            while d > 0 && bytes[d - 1].is_ascii_digit() {
+                d -= 1;
+            }
+            let digits = i - d;
+            let boundary =
+                d == 0 || !(bytes[d - 1].is_ascii_alphanumeric() || bytes[d - 1] == b'_');
+            if (5..=16).contains(&digits)
+                && boundary
+                && bytes.get(i + 1) == Some(&b'A')
+                && bytes.len() >= i + 36
+                && bytes[i + 2..i + 36].iter().all(|c| tail_ok(*c))
+                && !bytes.get(i + 36).is_some_and(|c| tail_ok(*c))
+                && !placeholder_body(&text[i + 2..i + 36])
+            {
+                push(hits, "telegram bot token", d, i + 36, decoded);
+            }
+        }
+        // Mailchimp: 32 hex characters, `-us`, and the data-centre number
+        if bytes[i] == b'-'
+            && bytes.get(i + 1) == Some(&b'u')
+            && bytes.get(i + 2) == Some(&b's')
+            && i >= 32
+            && bytes[i - 32..i].iter().all(|c| c.is_ascii_hexdigit())
+            && bytes.get(i + 3).is_some_and(|c| c.is_ascii_digit())
+            && (i == 32 || !(bytes[i - 33].is_ascii_alphanumeric() || bytes[i - 33] == b'_'))
+            && !bytes
+                .get(i + 4)
+                .is_some_and(|c| c.is_ascii_alphanumeric() && !c.is_ascii_digit())
+        {
+            let digits_end = if bytes.get(i + 4).is_some_and(|c| c.is_ascii_digit()) {
+                i + 5
+            } else {
+                i + 4
+            };
+            if !placeholder_body(&text[i - 32..i]) {
+                push(hits, "mailchimp api key", i - 32, digits_end, decoded);
+            }
+        }
+        if bytes[i] == b'Q' && bytes.get(i + 1) == Some(&b'~') && i >= 4 {
+            let lead_ok = bytes[i - 4..i - 1]
+                .iter()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'~' | b'.'))
+                && bytes[i - 1].is_ascii_digit();
+            let mut e = i + 2;
+            while e < bytes.len()
+                && (bytes[e].is_ascii_alphanumeric()
+                    || matches!(bytes[e], b'_' | b'~' | b'.' | b'-'))
+            {
+                e += 1;
+            }
+            let n = e - (i + 2);
+            let boundary =
+                i == 4 || !(bytes[i - 5].is_ascii_alphanumeric() || bytes[i - 5] == b'_');
+            if lead_ok
+                && boundary
+                && (31..=34).contains(&n)
+                && entropy(&text[i - 4..e]) >= 3.0
+                && !placeholder_body(&text[i + 2..e])
+            {
+                push(hits, "azure client secret", i - 4, e, decoded);
+            }
+        }
+        i += 1;
+    }
+}
+
+/// One shell argument: up to the closing quote when quoted, otherwise up to the next whitespace (so `${USER}:secret`
+/// stays whole).
+fn curl_argument(s: &str) -> &str {
+    match s.chars().next() {
+        Some(q @ ('"' | '\'')) => {
+            let rest = &s[1..];
+            &rest[..rest.find(q).unwrap_or(rest.len())]
+        }
+        _ => &s[..s.find(char::is_whitespace).unwrap_or(s.len())],
+    }
+}
+
+/// Credentials typed into a curl command: `-u user:password` and `-H "Authorization: ..."`.
+fn scan_curl(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
+    let lower = text.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(i) = lower[from..].find("curl") {
+        let at = from + i;
+        from = at + 4;
+        if !is_word_boundary(text, at)
+            || lower
+                .as_bytes()
+                .get(at + 4)
+                .is_some_and(|c| c.is_ascii_alphanumeric())
+        {
+            continue;
+        }
+        // the command and its continuation lines, up to the next curl
+        let mut end = (at + 1500).min(text.len());
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let stop = lower[at + 4..end]
+            .find("curl")
+            .map(|p| at + 4 + p)
+            .unwrap_or(end);
+        let cmd = &text[at..stop];
+        let mut rest = cmd;
+        while let Some(j) = rest.find(['-']) {
+            let flag_at = &rest[j..];
+            let preceded_by_space = j == 0 || rest.as_bytes()[j - 1].is_ascii_whitespace();
+            rest = &rest[j + 1..];
+            if !preceded_by_space {
+                continue;
+            }
+            let (kind, after) = if let Some(a) = flag_at.strip_prefix("--user") {
+                ('u', a)
+            } else if let Some(a) = flag_at.strip_prefix("--header") {
+                ('h', a)
+            } else if let Some(a) = flag_at.strip_prefix("-u") {
+                ('u', a)
+            } else if let Some(a) = flag_at.strip_prefix("-H") {
+                ('h', a)
+            } else {
+                continue;
+            };
+            let after = after.trim_start_matches(['=', ' ', '\t']);
+            let value = curl_argument(after);
+            let vstart = value.as_ptr() as usize - text.as_ptr() as usize;
+            if kind == 'u' {
+                if let Some((user, pw)) = value.split_once(':') {
+                    if pw.is_empty()
+                        && user.len() >= 8
+                        && credential_value_with(user, true)
+                        && !templated(user)
+                    {
+                        push(
+                            hits,
+                            "credential in a curl command",
+                            vstart,
+                            vstart + value.len(),
+                            decoded,
+                        );
+                    }
+                    let pw_shape_ok = !pw.contains(['|', '\\', '{', '}', '^'])
+                        && !pw.contains(char::is_whitespace)
+                        && !word_slug(pw);
+                    let distinct: BTreeSet<char> = pw.chars().collect();
+                    if pw_shape_ok
+                        && pw.len() >= 3
+                        && distinct.len() >= 3
+                        && pw != user
+                        && !templated(pw)
+                        && !indirect_reference(pw)
+                        && !placeholder(pw)
+                        && !["password", "pass", "secret", "token"]
+                            .contains(&pw.to_ascii_lowercase().as_str())
+                    {
+                        push(
+                            hits,
+                            "password in a curl command",
+                            vstart,
+                            vstart + value.len(),
+                            decoded,
+                        );
+                    }
+                }
+            } else if let Some((name, val)) = value.split_once(':') {
+                if name.trim().eq_ignore_ascii_case("authorization") {
+                    let cred = val.trim();
+                    let cred = ["Bearer ", "Basic ", "Token ", "bearer ", "basic ", "token "]
+                        .iter()
+                        .find_map(|p| cred.strip_prefix(p))
+                        .unwrap_or(cred)
+                        .trim();
+                    if credential_value_with(cred, true) && !templated(cred) {
+                        push(
+                            hits,
+                            "credential in a curl header",
+                            vstart,
+                            vstart + value.len(),
+                            decoded,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Sidekiq Pro and Enterprise gems are fetched with a credential of two eight-character hex halves, kept in an
+/// environment variable named after the vendor host.
+fn scan_gem_credentials(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
+    for name in [
+        "BUNDLE_ENTERPRISE__CONTRIBSYS__COM",
+        "BUNDLE_GEMS__CONTRIBSYS__COM",
+    ] {
+        let mut from = 0;
+        while let Some(i) = text[from..].find(name) {
+            let after = from + i + name.len();
+            from = after;
+            let rest = &text[after..];
+            let value = rest.trim_start_matches([' ', '=', ':', '"', '\'']);
+            let v = value.as_bytes();
+            if v.len() >= 17
+                && v[..8].iter().all(|c| c.is_ascii_hexdigit())
+                && v[8] == b':'
+                && v[9..17].iter().all(|c| c.is_ascii_hexdigit())
+                && !v.get(17).is_some_and(|c| c.is_ascii_alphanumeric())
+                && !placeholder_body(&value[..17].replace(':', ""))
+            {
+                let vstart = value.as_ptr() as usize - text.as_ptr() as usize;
+                push(hits, "gem server credential", vstart, vstart + 17, decoded);
+            }
+        }
+    }
+}
+
 fn scan_text(text: &str, decoded: bool) -> Vec<Hit> {
     let mut hits = Vec::new();
     scan_formats(text, decoded, &mut hits);
     scan_blocks_and_urls(text, decoded, &mut hits);
     scan_assignments(text, decoded, &mut hits);
     scan_wallets(text, decoded, &mut hits);
+    scan_shapes(text, decoded, &mut hits);
+    scan_curl(text, decoded, &mut hits);
+    scan_gem_credentials(text, decoded, &mut hits);
     hits
 }
 
@@ -1012,9 +2481,182 @@ fn candidate_segments(text: &str) -> Vec<(usize, usize)> {
     out
 }
 
+fn hex_val(c: u8) -> Option<u8> {
+    (c as char).to_digit(16).map(|d| d as u8)
+}
+
+/// Percent-decoding of every `%XX`, including one at the very end of the text.
+fn percent_unescape(tok: &str) -> Option<String> {
+    let b = tok.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    let mut changed = false;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hex_val(b[i + 1]), hex_val(b[i + 2])) {
+                out.push(h << 4 | l);
+                i += 3;
+                changed = true;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    if !changed {
+        return None;
+    }
+    String::from_utf8(out).ok()
+}
+
+/// `\uXXXX`, `\\uXXXX` and `U+XXXX` escapes, with surrogate pairs.
+fn unicode_unescape(tok: &str) -> Option<String> {
+    let c: Vec<char> = tok.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    let mut changed = false;
+    let four = |at: usize| -> Option<u32> {
+        let s: String = c.get(at..at + 4)?.iter().collect();
+        if s.len() == 4 && s.chars().all(|x| x.is_ascii_hexdigit()) {
+            u32::from_str_radix(&s, 16).ok()
+        } else {
+            None
+        }
+    };
+    while i < c.len() {
+        let mut at = None;
+        if c[i] == '\\' {
+            let mut j = i;
+            while j < c.len() && c[j] == '\\' && j - i < 2 {
+                j += 1;
+            }
+            if c.get(j) == Some(&'u') || c.get(j) == Some(&'U') {
+                at = Some(j + 1);
+            }
+        } else if c[i] == 'U' && c.get(i + 1) == Some(&'+') {
+            at = Some(i + 2);
+        }
+        if let Some(a) = at {
+            if let Some(mut cp) = four(a) {
+                let mut next = a + 4;
+                if (0xD800..0xDC00).contains(&cp) {
+                    // a high surrogate must be followed by an escaped low surrogate
+                    let mut k = next;
+                    while k < c.len() && c[k] == '\\' && k - next < 2 {
+                        k += 1;
+                    }
+                    let low = if c.get(k) == Some(&'u') {
+                        four(k + 1)
+                    } else {
+                        None
+                    };
+                    match low {
+                        Some(lo) if (0xDC00..0xE000).contains(&lo) => {
+                            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                            next = k + 5;
+                        }
+                        _ => return None,
+                    }
+                }
+                out.push(char::from_u32(cp)?);
+                i = next;
+                changed = true;
+                // `U+0067 U+0068`: a single space between two such escapes belongs to the run
+                if c[a - 2..a] == ['U', '+']
+                    && c.get(i).is_some_and(|x| x.is_whitespace())
+                    && c.get(i + 1) == Some(&'U')
+                    && c.get(i + 2) == Some(&'+')
+                {
+                    i += 1;
+                }
+                continue;
+            }
+        }
+        out.push(c[i]);
+        i += 1;
+    }
+    changed.then_some(out)
+}
+
+/// Whitespace- and quote-delimited tokens that contain an escape worth decoding.
+fn escaped_tokens(text: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut start = None;
+    let b = text.as_bytes();
+    for (i, ch) in text
+        .char_indices()
+        .chain(std::iter::once((text.len(), ' ')))
+    {
+        let delim = ch.is_whitespace() || matches!(ch, '"' | '\'' | '`' | '<' | '>');
+        match (delim, start) {
+            (false, None) => start = Some(i),
+            (true, Some(s)) => {
+                let tok = &b[s..i];
+                let has_pct = tok
+                    .windows(3)
+                    .any(|w| w[0] == b'%' && hex_val(w[1]).is_some() && hex_val(w[2]).is_some());
+                let has_uni = tok.windows(2).any(|w| w == b"\\u" || w == b"U+");
+                if has_pct || has_uni {
+                    out.push((s, i));
+                }
+                start = None;
+            }
+            _ => {}
+        }
+        if out.len() >= MAX_SEGMENTS * 4 {
+            break;
+        }
+    }
+    // a run of `U+XXXX` escapes separated by single spaces is one segment
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (s, e) in out {
+        let is_u = text[s..e].starts_with("U+");
+        if let Some(last) = merged.last_mut() {
+            if is_u
+                && text[last.0..last.1].starts_with("U+")
+                && text[last.1..s].len() == 1
+                && text[last.1..s].trim().is_empty()
+            {
+                last.1 = e;
+                continue;
+            }
+        }
+        merged.push((s, e));
+    }
+    merged
+}
+
 fn scan_decoded(text: &str, depth: usize, budget: &mut usize, hits: &mut Vec<Hit>) {
     if depth >= MAX_DECODE_DEPTH || *budget == 0 {
         return;
+    }
+    let mut escapes = 0;
+    for (s, e) in escaped_tokens(text) {
+        if escapes >= MAX_SEGMENTS || *budget == 0 {
+            break;
+        }
+        let tok = &text[s..e];
+        for decoder in [percent_unescape, unicode_unescape] {
+            let Some(inner) = decoder(tok) else { continue };
+            if inner.len() > *budget
+                || !inner
+                    .chars()
+                    .all(|c| !c.is_control() || matches!(c, '\n' | '\t' | '\r'))
+            {
+                continue;
+            }
+            escapes += 1;
+            *budget = budget.saturating_sub(inner.len());
+            for h in scan_text(&inner, true) {
+                hits.push(Hit {
+                    rule: h.rule,
+                    start: s,
+                    end: e,
+                    decoded: true,
+                });
+            }
+            scan_decoded(&inner, depth + 1, budget, hits);
+        }
     }
     let mut seen = 0;
     for (s, e) in candidate_segments(text) {
