@@ -1,4 +1,4 @@
-use crate::check::{clean_text, CheckResult, CheckStatus, Finding};
+use crate::check::{clean_text, names_sandbox_path, CheckResult, CheckStatus, Finding, Language};
 use crate::import::ImportedFile;
 use kk_evidence::canon::{self, Value};
 use kk_evidence::capsule::sha256_hex;
@@ -7,25 +7,46 @@ use std::collections::BTreeMap;
 
 pub const MAX_RELEASE_BYTES: usize = 8 << 20;
 
-const VERIFY_SCRIPT: &str = r#"import json, os, subprocess, sys, tempfile
+const VERIFY_SCRIPT: &str = r#"import json, os, shutil, subprocess, sys, tempfile
 
 here = os.path.dirname(os.path.abspath(__file__))
-index = json.load(open(os.path.join(here, "index.json")))
+index = json.load(open(os.path.join(here, "index.json"), encoding="utf-8"))
 failed = 0
+missing = 0
 for item in index["findings"]:
+    if item.get("language", "python") == "javascript":
+        node = shutil.which("node")
+        if node is None:
+            print("MISSING " + item["title"] + " (this check needs Node.js 22 or newer: install it from nodejs.org and run this again)")
+            missing += 1
+            continue
+        argv = [node, os.path.join(here, item["reproducer"])]
+    else:
+        argv = [sys.executable, os.path.join(here, item["reproducer"])]
     with tempfile.TemporaryDirectory() as work:
-        sample = json.load(open(os.path.join(here, item["sample"])))
+        root = os.path.abspath(work)
+        sample = json.load(open(os.path.join(here, item["sample"]), encoding="utf-8"))
+        escaped = False
         for path, text in sample.items():
-            dest = os.path.join(work, path)
+            dest = os.path.abspath(os.path.join(root, path))
+            if not dest.startswith(root + os.sep):
+                escaped = True
+                break
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            open(dest, "w").write(text)
-        env = dict(os.environ, PYTHONPATH=work, PYTHONDONTWRITEBYTECODE="1")
-        out = subprocess.run([sys.executable, os.path.join(here, item["reproducer"])], cwd=work, env=env, capture_output=True, text=True)
-        expected = open(os.path.join(here, item["expected"])).read()
+            open(dest, "w", encoding="utf-8", newline="").write(text)
+        if escaped:
+            print("FAIL " + item["title"] + " (the sample names a file outside its folder)")
+            failed += 1
+            continue
+        env = dict(os.environ, PYTHONPATH=root, PYTHONDONTWRITEBYTECODE="1")
+        env.pop("NODE_OPTIONS", None)
+        env.pop("NODE_PATH", None)
+        out = subprocess.run(argv, cwd=root, env=env, capture_output=True, text=True, encoding="utf-8")
+        expected = open(os.path.join(here, item["expected"]), encoding="utf-8", newline="").read()
         ok = out.returncode == 0 and out.stdout == expected
         print(("OK   " if ok else "FAIL ") + item["title"])
         failed += 0 if ok else 1
-sys.exit(1 if failed else 0)
+sys.exit(1 if failed else (2 if missing else 0))
 "#;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,14 +168,32 @@ pub fn assemble(
             not_confirmed.push((finding.title.clone(), format!("{:?}", check.status)));
             continue;
         }
+        if names_sandbox_path(&finding.reproducer) {
+            not_confirmed.push((
+                finding.title.clone(),
+                "the script names a path that exists only inside the sandbox, so the recipient could not re-run it"
+                    .into(),
+            ));
+            continue;
+        }
         n += 1;
+        let (script_name, how) = match finding.language {
+            Language::Python => (
+                format!("repro-{n}.py"),
+                format!("run run-check.py (Python 3). It rebuilds the minimal sample from sample-{n}.json, runs repro-{n}.py and compares the output with expected-{n}.txt."),
+            ),
+            Language::JavaScript => (
+                format!("repro-{n}.mjs"),
+                format!("run run-check.py (Python 3, with Node.js 22 or newer on the path). It rebuilds the minimal sample from sample-{n}.json, runs repro-{n}.mjs with Node.js and compares the output with expected-{n}.txt."),
+            ),
+        };
         let bound: String = check
             .sample_paths
             .iter()
             .map(|p| format!("  {}  sha256 {}\n", p, project_files[p].sha256))
             .collect();
         let text = format!(
-            "Finding {n}: {}\nLocation: {}:{}\n\n{}\n\nHow to check: run run-check.py. It rebuilds the minimal sample from sample-{n}.json, runs repro-{n}.py and compares the output with expected-{n}.txt.\n\nWhat this establishes: the script printed CONTROL_OK (normal behaviour works), then REPRODUCED, twice with identical output, and did not print REPRODUCED when the cited file was emptied. It was checked on exactly these files and nothing else:\n{}It does not establish that the defect exists in any other version of the code.\n",
+            "Finding {n}: {}\nLocation: {}:{}\n\n{}\n\nHow to check: {how}\n\nWhat this establishes: the script printed CONTROL_OK (normal behaviour works), then REPRODUCED, twice with identical output, and did not print REPRODUCED when the cited file was emptied. It was checked on exactly these files and nothing else:\n{}It does not establish that the defect exists in any other version of the code.\n",
             clean_text(&finding.title, 200),
             finding.file,
             finding.line,
@@ -162,10 +201,7 @@ pub fn assemble(
             bound
         );
         files.insert(format!("finding-{n}.txt"), text.into_bytes());
-        files.insert(
-            format!("repro-{n}.py"),
-            finding.reproducer.clone().into_bytes(),
-        );
+        files.insert(script_name.clone(), finding.reproducer.clone().into_bytes());
         files.insert(
             format!("expected-{n}.txt"),
             check.stdout.clone().into_bytes(),
@@ -186,12 +222,19 @@ pub fn assemble(
             format!("sample-{n}.json"),
             canon::serialize(&sample).into_bytes(),
         );
-        index_entries.push(Value::Object(vec![
+        let mut entry = vec![
             ("title".into(), Value::Str(clean_text(&finding.title, 200))),
             ("sample".into(), Value::Str(format!("sample-{n}.json"))),
-            ("reproducer".into(), Value::Str(format!("repro-{n}.py"))),
+            ("reproducer".into(), Value::Str(script_name)),
             ("expected".into(), Value::Str(format!("expected-{n}.txt"))),
-        ]));
+        ];
+        if finding.language != Language::Python {
+            entry.push((
+                "language".into(),
+                Value::Str(finding.language.as_str().into()),
+            ));
+        }
+        index_entries.push(Value::Object(entry));
     }
     if n == 0 {
         return Err(Rejection::NothingConfirmed);
@@ -247,6 +290,48 @@ pub fn assemble(
         not_confirmed,
         digest,
     })
+}
+
+/// The capsule claims for a draft, read from the draft's own `index.json`, so each claim names exactly the files that were
+/// released for that finding (the script is `repro-N.py` or `repro-N.mjs`) whatever was left out along the way.
+pub fn claims_for(draft: &ReleaseDraft) -> Vec<kk_evidence::capsule::ClaimSpec> {
+    let Some(bytes) = draft.files.get("index.json") else {
+        return Vec::new();
+    };
+    let Ok(index) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return Vec::new();
+    };
+    let Some(entries) = index["findings"].as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (i, e) in entries.iter().enumerate() {
+        let get = |k: &str| e[k].as_str().map(str::to_string);
+        let (Some(title), Some(script), Some(expected), Some(sample)) = (
+            get("title"),
+            get("reproducer"),
+            get("expected"),
+            get("sample"),
+        ) else {
+            return Vec::new();
+        };
+        let finding_file = format!("finding-{}.txt", i + 1);
+        let evidence = vec![finding_file, script, expected, sample];
+        if evidence.iter().any(|n| !draft.files.contains_key(n)) {
+            return Vec::new();
+        }
+        let how_to_check = if e["language"].as_str() == Some("javascript") {
+            "Run run-check.py with Python 3, with Node.js 22 or newer on the path: it rebuilds the minimal sample, runs the Node.js script and compares the output with the expected output file."
+        } else {
+            "Run run-check.py with Python 3: it rebuilds the minimal sample and compares the output with the expected output file."
+        };
+        out.push(kk_evidence::capsule::ClaimSpec {
+            statement: title,
+            evidence,
+            how_to_check: how_to_check.into(),
+        });
+    }
+    out
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

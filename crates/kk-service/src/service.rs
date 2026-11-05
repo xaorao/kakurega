@@ -4337,6 +4337,15 @@ async fn do_deliver(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> 
             "there is nothing to deliver",
         );
     };
+    // checked first, so a release that cannot be described never reaches the delivering state
+    let claims: Vec<ClaimSpec> = kk_review::release::claims_for(&draft);
+    if claims.is_empty() {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "RELEASE_INCONSISTENT",
+            "the release has no readable list of findings, so no capsule was made and nothing was sent",
+        );
+    }
     if svc.disclosure_json(&id, &s).1 == kk_disclosure::Verdict::Block {
         return error(StatusCode::CONFLICT, "DISCLOSURE_BLOCKED", "other releases to this recipient since the approval put the total over the disclosure limit; nothing was sent");
     }
@@ -4386,17 +4395,6 @@ async fn do_deliver(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> 
         svc.persist_approval(&aid, &rec);
         (aid, digest)
     };
-    let claims: Vec<ClaimSpec> = s
-        .findings
-        .iter()
-        .filter(|f| f.reproduced)
-        .enumerate()
-        .map(|(i, f)| ClaimSpec {
-            statement: f.title.clone(),
-            evidence: vec![format!("finding-{}.txt", i + 1), format!("repro-{}.py", i + 1), format!("expected-{}.txt", i + 1), format!("sample-{}.json", i + 1)],
-            how_to_check: "Run run-check.py with Python 3: it rebuilds the minimal sample and compares the output with expected-N.txt.".into(),
-        })
-        .collect();
     let bytes = build_capsule(
         &draft,
         &svc.keys.signer,

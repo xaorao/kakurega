@@ -56,7 +56,7 @@ python3 scripts/verify_program.py I  # the acceptance gate for a milestone (also
 
 ## Requirements
 
-git, Rust (version pinned in `rust-toolchain.toml`), Node 22.19 or newer, pnpm, Python 3. macOS also needs Lima for the sandbox; Linux needs bubblewrap. Windows is not supported.
+git, Rust (version pinned in `rust-toolchain.toml`), Node 22.19 or newer, pnpm, Python 3. A recipient who gets a release with a JavaScript finding needs Python 3 and Node.js 22 or newer to re-run its check; without Node the runner says so and still checks the other findings. macOS also needs Lima for the sandbox; Linux needs bubblewrap. Windows is not supported.
 
 ## Licence
 

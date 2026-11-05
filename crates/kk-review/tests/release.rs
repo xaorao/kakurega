@@ -538,3 +538,349 @@ fn rs10_short_values_from_a_withheld_file_are_stopped_even_when_they_are_not_in_
     ok.explanation = "ADMIN_PASSWORD is read from the environment.".into();
     assert!(assemble(&[(ok, confirmed())], &idx, "acme", "p", 0, 60).is_ok());
 }
+
+fn js_project() -> Vec<ImportedFile> {
+    let label = Label::new(Level::Internal);
+    let mk = |path: &str, text: &str| {
+        let bytes = text.as_bytes().to_vec();
+        ImportedFile {
+            path: path.into(),
+            sha256: kk_evidence::capsule::sha256_hex(&bytes),
+            bytes,
+            label: label.clone(),
+            notes: vec![],
+        }
+    };
+    vec![
+        mk("src/auth/tokens.js", "let n = 0;\nexports.make = (u) => `${u}-${++n}-é`;\n"),
+        mk("src/auth/session.js", "const tokens = require('./tokens');\nconst ACTIVE = new Set();\nfunction login(u) { const t = tokens.make(u); ACTIVE.add(t); return t; }\n// logout only clears a local copy, so the token stays valid\nfunction logout(t) { let copy = t; copy = null; return copy; }\nfunction validate(t) { return ACTIVE.has(t); }\nmodule.exports = { login, logout, validate };\n"),
+    ]
+}
+
+const JS_RELEASE_REPRO: &str = "import { createRequire } from 'node:module';\nconst require = createRequire(process.cwd() + '/');\nconst s = require('./src/auth/session.js');\nconst t = s.login('alice');\nif (!s.validate(t)) throw new Error('control');\nconsole.log('CONTROL_OK');\ns.logout(t);\nconsole.log(s.validate(t) ? 'REPRODUCED' : 'NOT REPRODUCED');\n";
+
+fn js_finding_for_release(reproducer: &str) -> Finding {
+    Finding {
+        title: "JS token not revoked".into(),
+        file: "src/auth/session.js".into(),
+        line: 5,
+        explanation: "logout only clears a local copy, so validate() still accepts the token."
+            .into(),
+        reproducer: reproducer.into(),
+        language: kk_review::check::Language::JavaScript,
+    }
+}
+
+fn js_confirmed() -> CheckResult {
+    CheckResult {
+        status: CheckStatus::Reproduced,
+        stdout: "CONTROL_OK\nREPRODUCED\n".into(),
+        sample_paths: vec!["src/auth/session.js".into(), "src/auth/tokens.js".into()],
+    }
+}
+
+fn write_release(draft: &kk_review::release::ReleaseDraft, tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("kk-recipient-{tag}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    for (n, b) in &draft.files {
+        fs::write(dir.join(n), b).unwrap();
+    }
+    dir
+}
+
+fn recipient(dir: &Path, path_env: Option<&str>) -> std::process::Output {
+    let mut c = Command::new("/usr/bin/python3");
+    c.arg(dir.join("run-check.py"));
+    if let Some(p) = path_env {
+        c.env("PATH", p);
+    }
+    c.output().expect("python3")
+}
+
+fn text(o: &std::process::Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    )
+}
+
+#[test]
+fn rj01_a_javascript_finding_is_released_as_a_node_script_the_recipient_can_re_run() {
+    let proj = js_project();
+    let idx = index(&proj);
+    let draft = assemble(
+        &[(js_finding_for_release(JS_RELEASE_REPRO), js_confirmed())],
+        &idx,
+        "acme-audit",
+        "policy-1",
+        1_700_000_000,
+        86_400,
+    )
+    .expect("assemble");
+    let names: Vec<&str> = draft.files.keys().map(String::as_str).collect();
+    assert_eq!(
+        names,
+        vec![
+            "expected-1.txt",
+            "finding-1.txt",
+            "index.json",
+            "repro-1.mjs",
+            "run-check.py",
+            "sample-1.json"
+        ]
+    );
+    let readme = String::from_utf8_lossy(&draft.files["finding-1.txt"]).into_owned();
+    assert!(
+        readme.contains("Node.js") && readme.contains("repro-1.mjs"),
+        "{readme}"
+    );
+    let index_json = String::from_utf8_lossy(&draft.files["index.json"]).into_owned();
+    assert!(
+        index_json.contains("\"language\":\"javascript\""),
+        "{index_json}"
+    );
+    let dir = write_release(&draft, "js");
+    let ok = recipient(&dir, None);
+    assert!(ok.status.success(), "{}", text(&ok));
+    assert!(
+        text(&ok).contains("OK   JS token not revoked"),
+        "{}",
+        text(&ok)
+    );
+    // the recipient's own NODE_OPTIONS / NODE_PATH must not change what the check runs
+    let hostile_env = Command::new("/usr/bin/python3")
+        .arg(dir.join("run-check.py"))
+        .env("NODE_OPTIONS", "--no-such-node-flag")
+        .env("NODE_PATH", "/nonexistent")
+        .output()
+        .unwrap();
+    assert!(hostile_env.status.success(), "{}", text(&hostile_env));
+    // a module that exists only on the recipient's NODE_PATH must not be found: the check runs against the sample alone
+    let extra = dir.join("elsewhere");
+    fs::create_dir_all(extra.join("fakepkg")).unwrap();
+    fs::write(extra.join("fakepkg/index.js"), "module.exports = 1;\n").unwrap();
+    let kept = fs::read_to_string(dir.join("repro-1.mjs")).unwrap();
+    let kept_expected = fs::read_to_string(dir.join("expected-1.txt")).unwrap();
+    fs::write(dir.join("repro-1.mjs"), "import { createRequire } from 'node:module';\ncreateRequire(process.cwd() + '/')('fakepkg');\nconsole.log('CONTROL_OK');\nconsole.log('REPRODUCED');\n").unwrap();
+    let leaked = Command::new("/usr/bin/python3")
+        .arg(dir.join("run-check.py"))
+        .env("NODE_PATH", &extra)
+        .output()
+        .unwrap();
+    assert_eq!(
+        leaked.status.code(),
+        Some(1),
+        "NODE_PATH reached the check: {}",
+        text(&leaked)
+    );
+    fs::write(dir.join("repro-1.mjs"), kept).unwrap();
+    fs::write(dir.join("expected-1.txt"), kept_expected).unwrap();
+    // a changed script, a changed sample and a changed expected output each fail the check
+    let original = fs::read_to_string(dir.join("repro-1.mjs")).unwrap();
+    fs::write(
+        dir.join("repro-1.mjs"),
+        original.replace("'REPRODUCED'", "'REPRODUCED?'"),
+    )
+    .unwrap();
+    assert_eq!(recipient(&dir, None).status.code(), Some(1));
+    fs::write(dir.join("repro-1.mjs"), &original).unwrap();
+    let sample = fs::read_to_string(dir.join("sample-1.json")).unwrap();
+    fs::write(
+        dir.join("sample-1.json"),
+        sample.replace("return ACTIVE.has(t)", "return false"),
+    )
+    .unwrap();
+    assert_eq!(recipient(&dir, None).status.code(), Some(1));
+    fs::write(dir.join("sample-1.json"), &sample).unwrap();
+    fs::write(dir.join("expected-1.txt"), "CONTROL_OK\n").unwrap();
+    assert_eq!(recipient(&dir, None).status.code(), Some(1));
+}
+
+#[test]
+fn rj02_without_node_the_recipient_is_told_so_and_python_findings_are_still_checked() {
+    let mut proj = files();
+    proj.extend(js_project());
+    let idx = index(&proj);
+    let draft = assemble(
+        &[
+            (finding(), confirmed()),
+            (js_finding_for_release(JS_RELEASE_REPRO), js_confirmed()),
+        ],
+        &idx,
+        "acme-audit",
+        "policy-1",
+        1_700_000_000,
+        86_400,
+    )
+    .expect("assemble");
+    assert!(draft.files.contains_key("repro-1.py") && draft.files.contains_key("repro-2.mjs"));
+    let dir = write_release(&draft, "mixed");
+    let both = recipient(&dir, None);
+    assert!(both.status.success(), "{}", text(&both));
+    assert!(
+        text(&both).contains("OK   Token not revoked")
+            && text(&both).contains("OK   JS token not revoked")
+    );
+    // a PATH with nothing in it, whatever this machine's layout (python is started by its full path)
+    let empty = std::env::temp_dir().join(format!("kk-empty-path-{}", std::process::id()));
+    fs::create_dir_all(&empty).unwrap();
+    let none = recipient(&dir, Some(empty.to_str().unwrap()));
+    assert_eq!(none.status.code(), Some(2), "{}", text(&none));
+    let t = text(&none);
+    assert!(t.contains("OK   Token not revoked"), "{t}");
+    assert!(
+        t.contains("MISSING JS token not revoked") && t.contains("Node.js"),
+        "{t}"
+    );
+    assert!(!t.contains("OK   JS token"), "{t}");
+}
+
+#[test]
+fn rj03_a_script_that_names_the_sandbox_path_is_not_released_and_the_sample_cannot_escape_its_folder(
+) {
+    let proj = js_project();
+    let idx = index(&proj);
+    let hardcoded = JS_RELEASE_REPRO.replace(
+        "createRequire(process.cwd() + '/')",
+        "createRequire('/sample/')",
+    );
+    let r = assemble(
+        &[(js_finding_for_release(&hardcoded), js_confirmed())],
+        &idx,
+        "acme-audit",
+        "policy-1",
+        1_700_000_000,
+        86_400,
+    );
+    assert!(matches!(r, Err(Rejection::NothingConfirmed)), "{r:?}");
+    let mut proj = files();
+    proj.extend(js_project());
+    let idx = index(&proj);
+    let draft = assemble(
+        &[
+            (js_finding_for_release(&hardcoded), js_confirmed()),
+            (finding(), confirmed()),
+        ],
+        &idx,
+        "acme-audit",
+        "policy-1",
+        1_700_000_000,
+        86_400,
+    )
+    .expect("the other finding still goes out");
+    assert_eq!(draft.not_confirmed.len(), 1);
+    assert!(
+        draft.not_confirmed[0].1.contains("sandbox"),
+        "{:?}",
+        draft.not_confirmed
+    );
+    // the recipient's runner refuses a sample path that leaves its working folder
+    let dir = write_release(&draft, "escape");
+    let victim = dir
+        .parent()
+        .unwrap()
+        .join(format!("kk-escape-{}.txt", std::process::id()));
+    let _ = fs::remove_file(&victim);
+    let sample = format!("{{\"../kk-escape-{}.txt\":\"pwned\"}}", std::process::id());
+    fs::write(dir.join("sample-1.json"), sample).unwrap();
+    let o = recipient(&dir, None);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(
+        !victim.exists(),
+        "a file was written outside the working folder"
+    );
+}
+
+#[test]
+fn rj04_the_capsule_claims_name_exactly_the_files_that_were_released_for_each_language() {
+    let mut proj = files();
+    proj.extend(js_project());
+    let idx = index(&proj);
+    let hardcoded = JS_RELEASE_REPRO.replace(
+        "createRequire(process.cwd() + '/')",
+        "createRequire('/sample/')",
+    );
+    // order: a Python finding, one that is left out, a JavaScript finding, another Python finding
+    let second_python = Finding {
+        title: "Second Python finding".into(),
+        ..finding()
+    };
+    let draft = assemble(
+        &[
+            (finding(), confirmed()),
+            (js_finding_for_release(&hardcoded), js_confirmed()),
+            (js_finding_for_release(JS_RELEASE_REPRO), js_confirmed()),
+            (second_python, confirmed()),
+        ],
+        &idx,
+        "acme-audit",
+        "policy-1",
+        1_700_000_000,
+        86_400,
+    )
+    .expect("assemble");
+    let claims = kk_review::release::claims_for(&draft);
+    assert_eq!(claims.len(), 3);
+    let titles: Vec<&str> = claims.iter().map(|c| c.statement.as_str()).collect();
+    assert_eq!(
+        titles,
+        [
+            "Token not revoked",
+            "JS token not revoked",
+            "Second Python finding"
+        ]
+    );
+    for c in &claims {
+        assert_eq!(c.evidence.len(), 4);
+        for name in &c.evidence {
+            assert!(
+                draft.files.contains_key(name),
+                "{name} is not in the release"
+            );
+        }
+    }
+    assert_eq!(
+        claims[0].evidence,
+        [
+            "finding-1.txt",
+            "repro-1.py",
+            "expected-1.txt",
+            "sample-1.json"
+        ]
+    );
+    assert_eq!(
+        claims[1].evidence,
+        [
+            "finding-2.txt",
+            "repro-2.mjs",
+            "expected-2.txt",
+            "sample-2.json"
+        ]
+    );
+    assert!(
+        claims[1].how_to_check.contains("Node.js"),
+        "{}",
+        claims[1].how_to_check
+    );
+    assert!(
+        !claims[0].how_to_check.contains("Node.js"),
+        "{}",
+        claims[0].how_to_check
+    );
+    assert!(claims[0].how_to_check.contains("run-check.py"));
+    // a claim that names a file the release does not hold is never made
+    let mut missing_script = draft.clone();
+    missing_script.files.remove("repro-2.mjs");
+    assert!(kk_review::release::claims_for(&missing_script).is_empty());
+    let mut missing_sample = draft.clone();
+    missing_sample.files.remove("sample-3.json");
+    assert!(kk_review::release::claims_for(&missing_sample).is_empty());
+    // a draft with no usable index makes no claims rather than wrong ones
+    let mut broken = draft.clone();
+    broken
+        .files
+        .insert("index.json".into(), b"not json".to_vec());
+    assert!(kk_review::release::claims_for(&broken).is_empty());
+}

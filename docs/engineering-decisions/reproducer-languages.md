@@ -1,7 +1,7 @@
 # Reproducers beyond Python
 
 ## Status (honest)
-Reading is done (see "References read"). Built and tested: a `language` field on a finding; the JavaScript closure and runner; and, from the reading, three corrections to fix checking that apply to both languages (a fix may not change a test file, the project's tests must still all run, and a missing package is "cannot check here", not a failed reproducer). Also built: the JavaScript project-test oracle (`node --test`, read the way SWE-bench's rules require) and a rule that a fix is accepted only if the script reaches its explicit `NOT REPRODUCED` verdict. Still to build: the release scripts for JavaScript, the prompt and screens, the readiness check, and the measurement on the real local model. No claim of "best" or "comparable to the strongest tools" is made; the comparison below says where ours is stricter and where it is not.
+Reading is done (see "References read"). Built and tested: a `language` field on a finding; the JavaScript closure and runner; and, from the reading, three corrections to fix checking that apply to both languages (a fix may not change a test file, the project's tests must still all run, and a missing package is "cannot check here", not a failed reproducer). Also built: the JavaScript project-test oracle (`node --test`, read the way SWE-bench's rules require) and a rule that a fix is accepted only if the script reaches its explicit `NOT REPRODUCED` verdict. Also built: the JavaScript release package. Still to build: the prompt and screens, the readiness check, and the measurement on the real local model. No claim of "best" or "comparable to the strongest tools" is made; the comparison below says where ours is stricter and where it is not.
 
 ## Why this matters
 
@@ -74,8 +74,7 @@ of the release can re-run the check with the language's own interpreter. The wor
 4. **Runner**: `node` inside the same sandbox spec. Defense in depth: Node's own permission flags (read only the sample and
    the script) are added if the VM's Node supports them; the sandbox remains the real boundary.
 5. **TypeScript is a separate, later step** (Node can strip types, with limits: no enums or namespaces). Not promised here.
-6. **Release**: a `run-check.mjs` beside `run-check.py`, chosen per finding; the release README names which interpreter the
-   recipient needs. The signed release digest covers both scripts.
+6. **Release (built, as changed during the build)**: one `run-check.py` for the whole release, chosen per finding by a `language` entry in `index.json` (absent for Python, so Python releases are byte-for-byte what they were). A JavaScript finding is released as `repro-N.mjs`; its `finding-N.txt` says the check needs Node.js 22 or newer. The recipient's runner finds `node` on the path; without it that finding prints `MISSING ... needs Node.js`, the other findings are still checked, and the exit code is 2 (1 means a check failed, 0 all passed). It clears `NODE_OPTIONS` and `NODE_PATH`, refuses a sample path that leaves its folder, and reads and writes UTF-8 explicitly. The capsule's claims are now built from the release's own `index.json` (`claims_for`) instead of assuming `repro-N.py` for the Nth confirmed finding, which would have named wrong files as soon as a finding was left out or was JavaScript.
 7. **Test oracle**: `node --test` for projects that have tests, run before and after a fix, like `unittest` today. A project
    whose tests cannot run offline is reported as "tests not run", never as passing.
 8. **Readiness**: a setup check that says whether the sandbox has `node` (the Linux VM has Node 22 at `/usr/bin/node`; a
@@ -91,11 +90,14 @@ Each is a test that must fail on a build without the feature:
 - Hostile reproducers: network, file write, `child_process`, `worker_threads`, reading outside the sample, an infinite loop,
   a huge output, a closure that reaches a withheld file. Each ends in a refusal or a limit, never a pass.
 - A cosmetic, disabling, broken and ambiguous fix is refused exactly as for Python (the `f0x` tests, in JavaScript).
-- The recipient's `run-check.mjs` reproduces the verdict on a machine with Node and says clearly when Node is missing.
+- The recipient's runner reproduces the verdict on a machine with Node and says clearly when Node is missing (rj01, rj02; e01 runs the real sandbox result through the recipient's own `python3` and `node` in the VM).
 - A mixed project (Python and JavaScript findings) keeps each finding's language; Python behaviour is byte-for-byte
   unchanged (all existing `check`, `job`, `release` tests pass untouched).
 - The model prompt change is checked against the real local model on a fixture: whether it picks the right language and
   writes a reproducer that passes `CONTROL_OK` is measured and the rate recorded, not assumed.
+
+## Release rule found while building it
+A reproducer must find the project through the current folder, never through the sandbox's own paths (`/sample`, `/repro`): nobody else has those paths, so the recipient could not re-run it. `names_sandbox_path` makes such a script `Unavailable` with the reason, and `assemble` leaves it out of the release and lists it as not confirmed (c25, rj03). The old JavaScript test fixtures used `/sample/` and were rewritten to `process.cwd()`. Limit: a string such as `process.cwd() + '/sample'` cannot be told apart from the sandbox path without parsing the language, so it is also refused (fails closed, a rare false "cannot check").
 
 ## Unknowns
 

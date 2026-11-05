@@ -277,6 +277,32 @@ pub struct CheckEnv<'a> {
     pub node: &'a str,
 }
 
+/// Whether a script names a path that exists only inside our sandbox (`/sample` is the project, `/repro` the script). A check
+/// that does can only be re-run here, so it is not accepted: the script must use the current folder instead. A path counts
+/// only when it starts at a root (not `src/sample`, `https://x/sample`, `../sample`, `~/sample`) and the name ends there
+/// (not `/samples`, `/sample_data`).
+pub fn names_sandbox_path(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    for name in ["/sample", "/repro"] {
+        let mut from = 0;
+        while let Some(i) = text[from..].find(name) {
+            let at = from + i;
+            let before = if at == 0 { None } else { Some(bytes[at - 1]) };
+            let after = bytes.get(at + name.len()).copied();
+            let root_start = before.is_none_or(|b| {
+                !(b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'/' | b'~' | b':'))
+            });
+            let name_ends =
+                after.is_none_or(|b| !(b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-')));
+            if root_start && name_ends {
+                return true;
+            }
+            from = at + name.len();
+        }
+    }
+    false
+}
+
 pub fn run_reproducer(
     finding: &Finding,
     files: &BTreeMap<String, &ImportedFile>,
@@ -285,6 +311,15 @@ pub fn run_reproducer(
     if finding.reproducer.trim().is_empty() {
         return CheckResult {
             status: CheckStatus::Unavailable("the finding has no reproducer".into()),
+            stdout: String::new(),
+            sample_paths: vec![],
+        };
+    }
+    if names_sandbox_path(&finding.reproducer) {
+        return CheckResult {
+            status: CheckStatus::Unavailable(
+                "the script names a path that exists only inside the sandbox (/sample or /repro), so no one else could re-run it; it must find the project through the current folder".into(),
+            ),
             stdout: String::new(),
             sample_paths: vec![],
         };

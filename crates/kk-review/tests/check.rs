@@ -1,9 +1,9 @@
 use kk_review::check::{
     apply_all, apply_fix, clean_text, compare_test_runs, is_test_path, js_closure, missing_package,
-    parse_finding, parse_fix, parse_node_test, parse_unittest, python_closure, run_project_tests,
-    run_project_tests_for, run_reproducer, unified_diff, unified_diff_all, verify_fix,
-    verify_fix_with_tests, CheckEnv, CheckStatus, ClosureError, Edit, Finding, Fix, FixStatus,
-    Language, TestRun, TestVerdict,
+    names_sandbox_path, parse_finding, parse_fix, parse_node_test, parse_unittest, python_closure,
+    run_project_tests, run_project_tests_for, run_reproducer, unified_diff, unified_diff_all,
+    verify_fix, verify_fix_with_tests, CheckEnv, CheckStatus, ClosureError, Edit, Finding, Fix,
+    FixStatus, Language, TestRun, TestVerdict,
 };
 use kk_review::import::{scan_tree, ImportedFile};
 use kk_sandbox::{Exit, Transport};
@@ -723,7 +723,7 @@ fn js_files() -> Vec<ImportedFile> {
     scan_tree(&dst, Level::Internal).files
 }
 
-const JS_REPRO: &str = "import { createRequire } from 'node:module';\nconst require = createRequire('/sample/');\nconst session = require('/sample/src/auth/session.js');\nconst t = session.login('alice');\nif (!session.validate(t)) throw new Error('control');\nconsole.log('CONTROL_OK');\nsession.logout(t);\nconsole.log(session.validate(t) ? 'REPRODUCED' : 'NOT REPRODUCED');\n";
+const JS_REPRO: &str = "import { createRequire } from 'node:module';\nconst require = createRequire(process.cwd() + '/');\nconst session = require('./src/auth/session.js');\nconst t = session.login('alice');\nif (!session.validate(t)) throw new Error('control');\nconsole.log('CONTROL_OK');\nsession.logout(t);\nconsole.log(session.validate(t) ? 'REPRODUCED' : 'NOT REPRODUCED');\n";
 
 fn js_finding(code: &str) -> Finding {
     Finding {
@@ -781,7 +781,7 @@ fn c22_javascript_reproducers_confirm_a_real_defect_and_hostile_ones_never_pass(
     };
     let real = run_reproducer(&js_finding(JS_REPRO), &idx, &env);
     assert_eq!(real.status, CheckStatus::Reproduced, "{real:?}");
-    let decoy = "import { createRequire } from 'node:module';\nconst require = createRequire('/sample/');\nconst tokens = require('/sample/src/auth/tokens.js');\nconsole.log('CONTROL_OK');\nconsole.log(tokens.make('a') === 'zzz' ? 'REPRODUCED' : 'NOT REPRODUCED');\n";
+    let decoy = "import { createRequire } from 'node:module';\nconst require = createRequire(process.cwd() + '/');\nconst tokens = require('./src/auth/tokens.js');\nconsole.log('CONTROL_OK');\nconsole.log(tokens.make('a') === 'zzz' ? 'REPRODUCED' : 'NOT REPRODUCED');\n";
     let r = run_reproducer(&js_finding(decoy), &idx, &env);
     assert_eq!(r.status, CheckStatus::NotReproduced, "{r:?}");
     let no_control = "console.log('REPRODUCED');\n";
@@ -798,7 +798,7 @@ fn c22_javascript_reproducers_confirm_a_real_defect_and_hostile_ones_never_pass(
         ("console.log('REPRODUCED ' + Date.now());\n", "nondeterministic"),
         ("import net from 'node:net';\nconst s = net.connect(80, '93.184.216.34');\ns.on('connect', () => { console.log('CONTROL_OK'); console.log('REPRODUCED'); });\ns.on('error', () => process.exit(4));\nsetTimeout(() => process.exit(5), 3000);\n", "ended"),
         ("import fs from 'node:fs';\nconsole.log(fs.readFileSync('/etc/hostname','utf8'));\nconsole.log('REPRODUCED');\n", "ended"),
-        ("import fs from 'node:fs';\nfs.writeFileSync('/sample/x', 'y');\nconsole.log('CONTROL_OK');\nconsole.log('REPRODUCED');\n", "ended"),
+        ("import fs from 'node:fs';\nfs.writeFileSync(process.cwd() + '/x', 'y');\nconsole.log('CONTROL_OK');\nconsole.log('REPRODUCED');\n", "ended"),
         ("throw new Error('boom');\n", "ended"),
         ("", "unavailable"),
     ];
@@ -1387,4 +1387,124 @@ fn n02_the_projects_javascript_tests_are_run_in_the_sandbox_and_a_fix_is_held_to
         run_project_tests_for(Language::Python, &index(&py), &env),
         run_project_tests(&index(&py), &env)
     );
+}
+
+#[test]
+fn c25_a_reproducer_may_not_name_the_sandboxs_own_paths_because_no_one_else_could_re_run_it() {
+    for bad in [
+        "const r = createRequire('/sample/');",
+        "require('/sample/src/a.js')",
+        "open('/sample/x')",
+        "path = \"/sample\"",
+        "x=/sample/y",
+        "import('/repro/repro.mjs')",
+        "(\"/repro/repro.py\")",
+        "/sample",
+        "see /sample/y",
+        "\t/sample/a",
+        // not told apart from the sandbox path without parsing the language, so it fails closed
+        "process.cwd() + '/sample'",
+    ] {
+        assert!(names_sandbox_path(bad), "{bad:?}");
+    }
+    for ok in [
+        "",
+        "require('./src/sample/a.js')",
+        "from sample import x",
+        "open('data/sample.txt')",
+        "path = '/samples/x'",
+        "path = '/sample_data/x'",
+        "require('../sample/x.js')",
+        "https://example.com/sample/page",
+        "https://example.com/repro/page",
+        "samples = 3",
+        "x = a/sample/b",
+        "~/sample/x",
+    ] {
+        assert!(!names_sandbox_path(ok), "{ok:?}");
+    }
+    // a script that does is not run and says why; this needs no sandbox
+    let files = fixture_files();
+    let idx = index(&files);
+    let t = Transport::Local;
+    let scratch = std::env::temp_dir();
+    let env = CheckEnv {
+        transport: &t,
+        scratch: &scratch,
+        python: "/nonexistent/python",
+        node: "/nonexistent/node",
+    };
+    let mut f = finding(REPRO);
+    f.reproducer = format!("{}\nopen('/sample/payments/auth/session.py')\n", REPRO);
+    match run_reproducer(&f, &idx, &env).status {
+        CheckStatus::Unavailable(m) => {
+            assert!(m.contains("/sample") && m.contains("current folder"), "{m}")
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn e01_what_the_sandbox_confirmed_is_what_the_recipients_own_machine_reproduces_in_both_languages()
+{
+    use kk_review::release::assemble;
+    let t = transport();
+    let scratch_dir = scratch();
+    let env = CheckEnv {
+        transport: &t,
+        scratch: &scratch_dir,
+        python: "/usr/bin/python3",
+        node: "/usr/bin/node",
+    };
+    let mut files = fixture_files();
+    files.extend(js_files());
+    let idx = index(&files);
+    let py = finding(REPRO);
+    let js = js_finding(JS_REPRO);
+    let py_check = run_reproducer(&py, &idx, &env);
+    let js_check = run_reproducer(&js, &idx, &env);
+    assert_eq!(py_check.status, CheckStatus::Reproduced, "{py_check:?}");
+    assert_eq!(js_check.status, CheckStatus::Reproduced, "{js_check:?}");
+    let draft = assemble(
+        &[(py, py_check), (js, js_check)],
+        &idx,
+        "acme-audit",
+        "policy-1",
+        1_700_000_000,
+        86_400,
+    )
+    .expect("assemble");
+    let dir = scratch_dir.join(format!("e01-release-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    for (n, b) in &draft.files {
+        fs::write(dir.join(n), b).unwrap();
+    }
+    // the recipient's side: plain python3 and node, outside our sandbox, on the release folder alone
+    let run = |script: &str| -> (bool, String) {
+        let out = if cfg!(target_os = "linux") {
+            std::process::Command::new("python3")
+                .arg(dir.join(script))
+                .output()
+                .unwrap()
+        } else {
+            std::process::Command::new("limactl")
+                .args(["shell", "--tty=false", "kak", "--", "python3"])
+                .arg(dir.join(script))
+                .output()
+                .unwrap()
+        };
+        (
+            out.status.success(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
+    };
+    let (ok, text) = run("run-check.py");
+    assert!(ok, "{text}");
+    assert_eq!(text.matches("OK   ").count(), 2, "{text}");
 }
