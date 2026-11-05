@@ -592,7 +592,7 @@ impl App {
         }
     }
 
-    /// Takes back what the editor returned. Control characters are removed like in any paste; a failure or an unchanged
+    /// Takes back what the editor returned. Control characters are removed like in any paste; a failure or an empty
     /// result leaves the composer as it was.
     pub fn finish_edit(&mut self, result: Result<String, String>) {
         match result {
@@ -600,6 +600,14 @@ impl App {
                 let text = clean(&text.replace("\r\n", "\n"))
                     .trim_end_matches('\n')
                     .to_string();
+                // an emptied file is a cancel, as with `git commit`: the draft is kept
+                if text.trim().is_empty() {
+                    self.say(
+                        Kind::Info,
+                        "the editor returned nothing, so your message is unchanged",
+                    );
+                    return;
+                }
                 self.input = text;
                 self.cursor = self.input.chars().count();
                 self.pasted.clear();

@@ -14,11 +14,78 @@ pub fn chosen(visual: Option<String>, editor: Option<String>) -> String {
         .unwrap_or_else(|| "vi".to_string())
 }
 
+/// Splits an editor command into its program and arguments the way a shell reads quotes, without being a shell: single
+/// quotes keep everything, double quotes keep everything except a backslash before `"`, `\\` or a space, and a backslash
+/// outside quotes keeps the next character. Nothing is expanded (`$HOME`, `~`, globs and backticks stay as written), so
+/// `"/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl" -w` works and no variable or command is ever run.
+pub fn split_command(command: &str) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_word = false;
+    let mut chars = command.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                in_word = true;
+                loop {
+                    match chars.next() {
+                        Some('\'') => break,
+                        Some(c) => cur.push(c),
+                        None => return Err("the editor command has an unclosed ' quote".into()),
+                    }
+                }
+            }
+            '"' => {
+                in_word = true;
+                loop {
+                    match chars.next() {
+                        Some('"') => break,
+                        Some('\\') => match chars.next() {
+                            Some(n @ ('"' | '\\' | ' ')) => cur.push(n),
+                            Some(n) => {
+                                cur.push('\\');
+                                cur.push(n);
+                            }
+                            None => {
+                                return Err("the editor command has an unclosed \" quote".into())
+                            }
+                        },
+                        Some(c) => cur.push(c),
+                        None => return Err("the editor command has an unclosed \" quote".into()),
+                    }
+                }
+            }
+            '\\' => {
+                in_word = true;
+                match chars.next() {
+                    Some(n) => cur.push(n),
+                    None => cur.push('\\'),
+                }
+            }
+            c if c.is_whitespace() => {
+                if in_word {
+                    out.push(std::mem::take(&mut cur));
+                    in_word = false;
+                }
+            }
+            c => {
+                in_word = true;
+                cur.push(c);
+            }
+        }
+    }
+    if in_word {
+        out.push(cur);
+    }
+    Ok(out)
+}
+
 /// Opens `text` in the owner's editor and returns what they saved. The text goes through a file only the owner can read,
-/// in a folder only the owner can open, removed afterwards. The command is run directly (split on spaces, never through a
-/// shell), and the editor is the owner's own program.
+/// in a folder only the owner can open, removed afterwards. The command is split like a shell reads quotes (see
+/// `split_command`) and run directly, never through a shell; the editor is the owner's own program.
 pub fn edit_with(command: &str, text: &str) -> Result<String, String> {
-    let mut parts = command.split_whitespace();
+    let words = split_command(command)?;
+    let mut parts = words.iter();
     let program = parts.next().ok_or("no editor is set; set $EDITOR")?;
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let nanos = std::time::SystemTime::now()

@@ -95,3 +95,62 @@ fn ed05_the_command_is_never_given_to_a_shell() {
         "text after a semicolon is only an argument, never a command"
     );
 }
+
+#[test]
+fn ed06_the_command_is_split_like_a_shell_reads_quotes_and_nothing_is_expanded() {
+    use kk_tui::editor::split_command;
+    let v = |s: &str| split_command(s).unwrap();
+    assert_eq!(v("code -w"), ["code", "-w"]);
+    assert_eq!(v("  nano   -c  "), ["nano", "-c"]);
+    assert_eq!(
+        v("\"/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl\" -w"),
+        [
+            "/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl",
+            "-w"
+        ]
+    );
+    assert_eq!(
+        v("'/opt/my editor/ed' --wait"),
+        ["/opt/my editor/ed", "--wait"]
+    );
+    assert_eq!(v("/opt/my\\ editor/ed -x"), ["/opt/my editor/ed", "-x"]);
+    assert_eq!(v("ed \"a \\\" b\""), ["ed", "a \" b"]);
+    assert_eq!(v("ed ''"), ["ed", ""], "an empty quoted argument is kept");
+    assert_eq!(
+        v("ed a'b c'd"),
+        ["ed", "ab cd"],
+        "quotes join into one word"
+    );
+    // nothing is expanded or run
+    assert_eq!(
+        v("ed $HOME ~/x `id` *.md"),
+        ["ed", "$HOME", "~/x", "`id`", "*.md"]
+    );
+    assert_eq!(v("ed \"$(id)\""), ["ed", "$(id)"]);
+    assert!(v("").is_empty() && v("   ").is_empty());
+    assert!(split_command("ed 'open").unwrap_err().contains("unclosed"));
+    assert!(split_command("ed \"open").unwrap_err().contains("unclosed"));
+}
+
+#[test]
+fn ed07_an_editor_whose_path_contains_a_space_is_started() {
+    let d = std::env::temp_dir().join(format!("kk editor space {}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let p = d.join("my editor.sh");
+    std::fs::write(&p, "#!/bin/sh\nprintf ' by a spaced editor' >> \"$1\"\n").unwrap();
+    let command = format!("sh \"{}\"", p.to_string_lossy());
+    assert_eq!(
+        edit_with(&command, "draft").unwrap(),
+        "draft by a spaced editor"
+    );
+    let escaped = format!("sh {}", p.to_string_lossy().replace(' ', "\\ "));
+    assert_eq!(
+        edit_with(&escaped, "draft").unwrap(),
+        "draft by a spaced editor"
+    );
+    assert!(edit_with("sh 'unclosed", "x")
+        .unwrap_err()
+        .contains("unclosed"));
+    let _ = std::fs::remove_dir_all(&d);
+}

@@ -1736,6 +1736,21 @@ fn tu38_ctrl_g_hands_the_whole_message_to_the_editor_and_takes_back_what_is_save
         .ends_with("message\nsecond line"));
 }
 
+#[test]
+fn tu38b_an_emptied_editor_file_is_a_cancel_and_keeps_the_draft() {
+    let mut a = booted();
+    typed(&mut a, "my careful draft");
+    let before = a.input.clone();
+    for empty in ["", "\n", "   \n\n", "\r\n\r\n"] {
+        a.finish_edit(Ok(empty.into()));
+        assert_eq!(a.input, before, "{empty:?} must not erase the draft");
+    }
+    assert!(text(&a).contains("returned nothing"));
+    // text that is only whitespace around real words is still taken
+    a.finish_edit(Ok("  kept words \n".into()));
+    assert_eq!(a.input.trim(), "kept words");
+}
+
 fn footer_text(a: &App) -> String {
     let mut term = Terminal::new(TestBackend::new(110, 30)).unwrap();
     term.draw(|f| draw(f, a, &Theme::from_env())).unwrap();
