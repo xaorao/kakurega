@@ -6236,6 +6236,23 @@ fn sv55_a_kept_conversation_that_outgrows_its_room_is_summarised_and_the_summary
             && !asked.contains("question number 10"),
         "the summariser saw the older turns and not the newest"
     );
+    // the owner can read exactly what the model is told in place of the older turns
+    assert_eq!(
+        u["summary_text"],
+        "Goal: plan a trip\n- budget is 500 pounds"
+    );
+    let opened = w.get(&format!("/api/sessions/{id}")).1;
+    assert_eq!(
+        (
+            opened["summary"]["covered"].clone(),
+            opened["summary"]["text"].clone()
+        ),
+        (
+            json!(12),
+            json!("Goal: plan a trip\n- budget is 500 pounds")
+        ),
+        "{opened}"
+    );
     // the next message uses the same summary and does not write another
     let r = say(&w, &id, 11);
     let u = &r["usage"];

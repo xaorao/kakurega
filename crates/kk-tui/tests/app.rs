@@ -2116,3 +2116,25 @@ fn tu51_an_undo_that_kept_later_edits_says_so() {
         }
     }
 }
+
+#[test]
+fn tu52_the_footer_shows_the_summary_the_model_is_sent_in_place_of_the_oldest_messages() {
+    let mut a = booted();
+    let r = enter(&mut a, "hello");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": true}, "notes_used": 0, "usage": {"context_tokens_estimate": 900, "history_turns_summarized": 12, "compacted_now": true, "summary_text": "Goal: plan a trip\u{1b}[31m", "history_turns_dropped": 0}})));
+    let t = text(&a);
+    assert!(
+        t.contains("Summary sent in their place: Goal: plan a trip"),
+        "{t}"
+    );
+    assert!(
+        !t.contains('\u{1b}'),
+        "the summary is cleaned before it reaches the screen"
+    );
+    let r = enter(&mut a, "again");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": true}, "notes_used": 0, "usage": {"context_tokens_estimate": 900, "history_turns_summarized": 0, "summary_text": "stale text", "history_turns_dropped": 0}})));
+    assert!(
+        !text(&a).contains("stale text"),
+        "no summary is shown when none stands in for anything"
+    );
+}

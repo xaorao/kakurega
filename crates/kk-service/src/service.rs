@@ -1867,7 +1867,7 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
     let window = svc.runner.route_info()["context_tokens"].as_u64();
     let estimated = kk_route::tokens::estimate_messages(&ctx.messages);
     let measured = r.prompt_tokens.filter(|n| *n > 0);
-    let usage = json!({"context_tokens": measured.unwrap_or(estimated), "context_tokens_estimate": estimated, "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "history_turns_summarized": run.summarized, "compacted_now": run.compacted_now, "compaction_failed": run.compaction_failed, "estimate": measured.is_none()});
+    let usage = json!({"context_tokens": measured.unwrap_or(estimated), "context_tokens_estimate": estimated, "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "history_turns_summarized": run.summarized, "summary_text": run.summary, "compacted_now": run.compacted_now, "compaction_failed": run.compaction_failed, "estimate": measured.is_none()});
     json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated}, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "saved": saved, "not_saved": not_saved})
 }
 
@@ -2260,8 +2260,18 @@ async fn session_new(axum::Extension(svc): Svc, Json(b): Json<SessionNew>) -> Re
 
 async fn session_get(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
     match session_turns(&svc, &id) {
-        None => error(StatusCode::NOT_FOUND, "NO_SESSION", "there is no such kept conversation"),
-        Some(t) => Json(json!({"id": id, "turns": t.into_iter().map(|(role, content)| json!({"role": role, "content": content})).collect::<Vec<_>>()})).into_response(),
+        None => error(
+            StatusCode::NOT_FOUND,
+            "NO_SESSION",
+            "there is no such kept conversation",
+        ),
+        Some(t) => {
+            // what the model is sent in place of the first `covered` turns, so the owner can read it
+            let summary = session_summary(&svc, &id)
+                .filter(|(upto, _)| *upto <= t.len())
+                .map(|(upto, text)| json!({"covered": upto, "text": text}));
+            Json(json!({"id": id, "summary": summary, "turns": t.into_iter().map(|(role, content)| json!({"role": role, "content": content})).collect::<Vec<_>>()})).into_response()
+        }
     }
 }
 

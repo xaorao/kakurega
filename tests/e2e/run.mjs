@@ -586,8 +586,20 @@ try {
   await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();
   await page.getByRole("button", { name: "Open" }).first().waitFor();
   check("after a reload the kept conversation is listed and nothing else is shown until it is opened", (await page.locator(".msg").count()) === 0 && (await page.getByRole("button", { name: "Open" }).count()) === 1);
+  await page.route(/\/api\/sessions\/[^/]+$/, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const real = await route.fetch();
+    const body = await real.json();
+    body.summary = { covered: 12, text: "Goal: plan a trip (summary canary)" };
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  });
   await page.getByRole("button", { name: "Open" }).click();
   await page.locator(".msg").nth(1).waitFor();
+  await page.unroute(/\/api\/sessions\/[^/]+$/);
+  const shown = page.locator(".summary-shown");
+  await shown.locator("summary").click();
+  check("an opened conversation shows the summary the model is sent in place of the oldest messages, with what it is", (await shown.innerText()).includes("summary canary") && (await shown.innerText()).includes("can leave things out"));
+  await axeCheck(page, "chat with a shown summary");
   check("opening the kept conversation brings back both sides of the exchange", (await page.locator(".msg").count()) === 2);
   await page.getByRole("button", { name: "Forget", exact: true }).click();
   check("Forget asks for a second press before removing anything", (await page.getByRole("button", { name: "Press again to forget" }).count()) === 1 && (await page.locator(".msg").count()) === 2);

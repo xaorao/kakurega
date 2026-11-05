@@ -2465,6 +2465,15 @@ impl App {
                             format!("The oldest {summarised} messages are replaced by a summary. You can still open them in full.")
                         });
                     }
+                    if let Some(text) = body["usage"]["summary_text"]
+                        .as_str()
+                        .filter(|_| summarised > 0)
+                    {
+                        foot.push(format!(
+                            "Summary sent in their place: {}",
+                            clean(text).chars().take(600).collect::<String>()
+                        ));
+                    }
                     if !body["usage"]["compaction_failed"].is_null() {
                         foot.push("The oldest messages could not be summarised, so they were left out of this answer.".into());
                     }

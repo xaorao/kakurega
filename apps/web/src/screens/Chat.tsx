@@ -32,7 +32,9 @@ export function Chat() {
   // Where Up and Down are in the messages sent from this page.
   let hist = idleHistory();
   let box: HTMLTextAreaElement | undefined;
-  const show = (next: string | null, nextTurns: Shown[]) => {
+  // What the model is sent in place of the oldest messages of the open conversation, so the owner can read it.
+  const [summaryText, setSummaryText] = createSignal("");
+  const show = (next: string | null, nextTurns: Shown[], summary = "") => {
     if (busy()) abort?.abort();
     view++;
     hist = idleHistory();
@@ -40,6 +42,7 @@ export function Chat() {
     batch(() => {
       setSession(next);
       setTurns(nextTurns);
+      setSummaryText(summary);
       setTextRaw(loadDraft(draftKey(next)));
     });
   };
@@ -112,7 +115,7 @@ export function Chat() {
     setError("");
     try {
       const r = await api.keptChat(id);
-      show(id, r.turns.map(({ role, content }) => ({ role, content })));
+      show(id, r.turns.map(({ role, content }) => ({ role, content })), r.summary?.text ?? "");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("chat.error"));
     }
@@ -273,6 +276,7 @@ export function Chat() {
       for (const p of pageNotes(r)) foot.push(t(p.key, { n: p.n }));
       if (r.notes_withheld > 0) foot.push(t("chat.withheld", { n: r.notes_withheld }));
       for (const p of noteNotes(r)) foot.push(t(p.key, { n: p.n }));
+      if (r.usage?.summary_text) setSummaryText(r.usage.summary_text);
       setTurns([...turns(), { role: "assistant", content: r.reply, foot, notes: r.notes }]);
       if (session()) await refetch();
     } catch (err) {
@@ -445,6 +449,9 @@ export function Chat() {
         </Show>
       </details>
       {/* The tools come before the conversation, so the message box sits directly under the newest message. */}
+      <Show when={summaryText()}>
+        <details class="card stack summary-shown"><summary>{t("chat.summaryShow")}</summary><p class="muted">{t("chat.summaryExplain")}</p><p class="mem-text">{summaryText()}</p></details>
+      </Show>
       <ul class="plain stack chat" aria-live="polite">
         <For each={turns()} fallback={<li class="muted">{t("chat.empty")}</li>}>
           {(m) => (

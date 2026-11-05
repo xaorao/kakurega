@@ -231,6 +231,8 @@ export const en = {
   "chat.summarisedNow": "The oldest {n} messages were just summarised to make room. You can still open them in full.",
   "chat.summarised": "The oldest {n} messages are replaced by a summary. You can still open them in full.",
   "chat.summaryFailed": "The oldest messages could not be summarised, so they were left out of this answer.",
+  "chat.summaryShow": "Summary sent in place of the oldest messages",
+  "chat.summaryExplain": "The assistant wrote this from the oldest messages. The model is sent it instead of them, as background only. It can leave things out; the messages themselves are unchanged.",
   "fix.nFiles": "{n} files",
   "web.searchWords": "Search the web (the words you type go to the search site)",
   "web.searchShow": "Show what will be sent",
