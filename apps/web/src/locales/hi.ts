@@ -143,6 +143,7 @@ export const hi: Record<keyof typeof en, string> = {
   "chat.keep": "इस बातचीत को रखें",
   "chat.keptNow": "रखी गई",
   "chat.newChat": "नई बातचीत शुरू करें",
+  "chat.jump": "सबसे नए संदेश पर जाएँ",
   "chat.keptTitle": "रखी गई बातचीतें",
   "chat.untitled": "बिना शीर्षक",
   "chat.turns": "{n} संदेश",

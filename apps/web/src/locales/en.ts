@@ -141,6 +141,7 @@ export const en = {
   "chat.keep": "Keep this conversation",
   "chat.keptNow": "Kept",
   "chat.newChat": "Start a new conversation",
+  "chat.jump": "Jump to the latest",
   "chat.keptTitle": "Kept conversations",
   "chat.untitled": "Untitled",
   "chat.turns": "{n} message(s)",

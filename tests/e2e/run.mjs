@@ -547,6 +547,32 @@ try {
   await page.getByRole("button", { name: "Clear" }).click();
   await page.getByLabel("Your message").press("ArrowUp");
   check("after Clear, Up brings back nothing from the forgotten conversation", (await page.getByLabel("Your message").inputValue()) === "");
+  // a long reply ends where the owner is looking, and a reply that lands while the owner reads further up does not move the page
+  const longReply = (word) => Array.from({ length: 80 }, (_, i) => `${word} ${i + 1} of a long answer.`).join("\n\n");
+  const doneLine = (text) => JSON.stringify({ done: true, reply: text, route: { id: "scripted-test-model", class: "device_only", simulated: true }, notes_used: 0, notes: [], usage: { context_tokens: 100, context_tokens_estimate: 100, context_window: 16384, estimate: true, reply_tokens_estimate: 10, history_turns_sent: 0, history_turns_dropped: 0 }, web_sources_used: 0, notes_withheld: 0, saved: false }) + "\n";
+  const inView = (loc) => loc.evaluate((el) => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= window.innerHeight; });
+  await page.route("**/api/chat/stream", (route) => route.fulfill({ status: 200, contentType: "application/x-ndjson", body: doneLine(longReply("Line")) }));
+  await page.getByLabel("Your message").fill("give me a long answer");
+  await page.getByLabel("Your message").press("Enter");
+  await page.getByText("Line 80 of a long answer.", { exact: true }).waitFor();
+  await page.waitForTimeout(300);
+  check("after a long reply its newest line and the message box are both in view", (await inView(page.getByText("Line 80 of a long answer.", { exact: true }))) && (await inView(page.getByLabel("Your message"))));
+  await page.unroute("**/api/chat/stream");
+  await page.route("**/api/chat/stream", async (route) => { await new Promise((r) => setTimeout(r, 1200)); await route.fulfill({ status: 200, contentType: "application/x-ndjson", body: doneLine(longReply("Row")) }); });
+  await page.getByLabel("Your message").fill("another long answer");
+  await page.getByLabel("Your message").press("Enter");
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.getByText("Row 80 of a long answer.", { exact: true }).waitFor({ state: "attached" });
+  await page.waitForTimeout(300);
+  check("a reply that lands while the owner reads further up does not move the page", (await page.evaluate(() => window.scrollY)) < 50);
+  const jumpBtn = page.getByRole("button", { name: "Jump to the latest" });
+  check("while the owner reads further up, a reply that lands offers Jump to the latest", (await jumpBtn.count()) === 1);
+  await axeCheck(page, "chat with the Jump to the latest button");
+  if ((await jumpBtn.count()) === 1) await jumpBtn.click();
+  await page.waitForTimeout(300);
+  check("Jump to the latest brings the newest line and the message box into view and goes away", (await inView(page.getByText("Row 80 of a long answer.", { exact: true }))) && (await inView(page.getByLabel("Your message"))) && (await jumpBtn.count()) === 0);
+  await page.unroute("**/api/chat/stream");
+  await page.getByRole("button", { name: "Clear" }).click();
   // a kept conversation survives a reload, can be opened again, and is gone after Forget
   await page.getByRole("button", { name: "Keep this conversation" }).click();
   await page.getByText("Kept", { exact: true }).waitFor();

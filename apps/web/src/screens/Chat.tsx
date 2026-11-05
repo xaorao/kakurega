@@ -1,4 +1,4 @@
-import { batch, createResource, createSignal, For, Show } from "solid-js";
+import { batch, createEffect, createResource, createSignal, For, on, onCleanup, Show } from "solid-js";
 import { api, ApiError, streamChat, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
 import { t } from "../i18n";
 import { Markdown } from "../components/Markdown";
@@ -26,6 +26,9 @@ export function Chat() {
   };
   // Bumped whenever another conversation is put on screen, so a reply that arrives late never lands in the wrong one.
   let view = 0;
+  // Follow new text only while the owner is at the bottom of the page. Scrolling up stops it; sending, opening a
+  // conversation or Jump to the latest starts it again (OpenCode session/timeline/interaction.ts, pin and unpin).
+  let pinned = true;
   // Where Up and Down are in the messages sent from this page.
   let hist = idleHistory();
   let box: HTMLTextAreaElement | undefined;
@@ -33,6 +36,7 @@ export function Chat() {
     if (busy()) abort?.abort();
     view++;
     hist = idleHistory();
+    pinned = true;
     batch(() => {
       setSession(next);
       setTurns(nextTurns);
@@ -44,7 +48,44 @@ export function Chat() {
     if (window.matchMedia("(max-width: 767px)").matches) return;
     const a = document.activeElement;
     if (a && a !== document.body && !box?.form?.contains(a)) return;
-    box?.focus();
+    box?.focus({ preventScroll: !pinned });
+  };
+  const [unseen, setUnseen] = createSignal(false);
+  const atBottom = () => document.documentElement.scrollHeight - window.innerHeight - window.scrollY <= 80;
+  let lastY = window.scrollY;
+  const onScroll = () => {
+    const y = window.scrollY;
+    if (atBottom()) {
+      pinned = true;
+      setUnseen(false);
+    } else if (y < lastY - 2) {
+      // only the owner moves the page up; text growing below never unpins
+      pinned = false;
+    }
+    lastY = y;
+  };
+  window.addEventListener("scroll", onScroll, { passive: true });
+  onCleanup(() => window.removeEventListener("scroll", onScroll));
+  const toEnd = () => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "auto" });
+  let frame = 0;
+  createEffect(
+    on(
+      [turns, live],
+      () => {
+        cancelAnimationFrame(frame);
+        frame = requestAnimationFrame(() => {
+          if (pinned) toEnd();
+          else if (!atBottom()) setUnseen(true);
+        });
+      },
+      { defer: true },
+    ),
+  );
+  onCleanup(() => cancelAnimationFrame(frame));
+  const jump = () => {
+    pinned = true;
+    setUnseen(false);
+    toEnd();
   };
   const [kept, { refetch, mutate }] = createResource<KeptChat[]>(async () => {
     try {
@@ -200,6 +241,8 @@ export function Chat() {
     const sentKey = draftKey(session());
     rememberSent(message, sentKey);
     hist = idleHistory();
+    pinned = true;
+    setUnseen(false);
     const history: ChatTurn[] = turns().slice(-18).map(({ role, content }) => ({ role, content }));
     setTurns([...turns(), { role: "user", content: message }]);
     setText("");
@@ -271,25 +314,6 @@ export function Chat() {
           </ul>
         </Show>
       </div>
-      <ul class="plain stack chat" aria-live="polite">
-        <For each={turns()} fallback={<li class="muted">{t("chat.empty")}</li>}>
-          {(m) => (
-            <li class={`card stack msg ${m.role}`}>
-              <strong>{m.role === "user" ? t("chat.you") : t("chat.assistant")}</strong>
-              {m.role === "assistant" ? <Markdown text={m.content} /> : <p class="mem-text">{m.content}</p>}
-              <Show when={m.foot}>{(f) => <p class="muted">{f().join(" · ")}</p>}</Show>
-              <Show when={(m.notes ?? []).length > 0}>
-                <details class="notes-used">
-                  <summary>{t("chat.whichNotes", { n: m.notes!.length })}</summary>
-                  <ul class="plain"><For each={m.notes}>{(n) => <li><span>{n.text}</span> <span class="muted">({n.why}{n.untrusted ? `; ${t("mem.untrusted")}` : ""})</span></li>}</For></ul>
-                </details>
-              </Show>
-            </li>
-          )}
-        </For>
-        <Show when={busy() && live()}><li class="card stack msg assistant"><strong>{t("chat.assistant")}</strong><Markdown text={live()} /></li></Show>
-        <Show when={busy() && !live()}><li class="muted" role="status">{t("chat.thinking")}</li></Show>
-      </ul>
       <details class="card stack" id="model-proof">
         <summary>{t("proof.title")}</summary>
         <p class="muted">{t("proof.lead")}</p>
@@ -418,6 +442,27 @@ export function Chat() {
           <button type="button" onClick={() => setPages([])}>{t("web.forget")}</button>
         </Show>
       </details>
+      {/* The tools come before the conversation, so the message box sits directly under the newest message. */}
+      <ul class="plain stack chat" aria-live="polite">
+        <For each={turns()} fallback={<li class="muted">{t("chat.empty")}</li>}>
+          {(m) => (
+            <li class={`card stack msg ${m.role}`}>
+              <strong>{m.role === "user" ? t("chat.you") : t("chat.assistant")}</strong>
+              {m.role === "assistant" ? <Markdown text={m.content} /> : <p class="mem-text">{m.content}</p>}
+              <Show when={m.foot}>{(f) => <p class="muted">{f().join(" · ")}</p>}</Show>
+              <Show when={(m.notes ?? []).length > 0}>
+                <details class="notes-used">
+                  <summary>{t("chat.whichNotes", { n: m.notes!.length })}</summary>
+                  <ul class="plain"><For each={m.notes}>{(n) => <li><span>{n.text}</span> <span class="muted">({n.why}{n.untrusted ? `; ${t("mem.untrusted")}` : ""})</span></li>}</For></ul>
+                </details>
+              </Show>
+            </li>
+          )}
+        </For>
+        <Show when={busy() && live()}><li class="card stack msg assistant"><strong>{t("chat.assistant")}</strong><Markdown text={live()} /></li></Show>
+        <Show when={busy() && !live()}><li class="muted" role="status">{t("chat.thinking")}</li></Show>
+      </ul>
+      <Show when={unseen()}><button type="button" class="jump" onClick={jump}>{t("chat.jump")}</button></Show>
       <form class="card stack" onSubmit={send}>
         <label for="chat-input">{t("chat.input")}</label>
         <textarea

@@ -226,3 +226,6 @@ button.danger { background: var(--redline); border-color: var(--redline); color:
 .diff .add { background: var(--cipher-bg); color: var(--ink); }
 .diff .del { background: var(--redline-bg); color: var(--ink); }
 .diff .hunk, .diff .file { color: var(--stone); font-weight: 600; }
+
+/* Shown in the chat while the owner reads further up and new text has arrived below. */
+.jump { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 3; background: var(--paper); color: var(--ink); box-shadow: 0 2px 10px rgb(0 0 0 / 0.18); }
