@@ -8,13 +8,15 @@ import json, os, socket, subprocess, sys
 r = {}
 port = int(os.environ["KK_PROBE_PORT"])
 def tcp(host, family=socket.AF_INET):
-    s = socket.socket(family, socket.SOCK_STREAM); s.settimeout(1.0)
+    s = None
     try:
+        s = socket.socket(family, socket.SOCK_STREAM); s.settimeout(1.0)
         s.connect((host, port)); return True
     except Exception:
         return False
     finally:
-        s.close()
+        if s is not None:
+            s.close()
 r["tcp_loopback_reachable"] = tcp("127.0.0.1")
 try:
     r["tcp6_loopback_reachable"] = tcp("::1", socket.AF_INET6)
@@ -31,6 +33,23 @@ except Exception:
 p = subprocess.run(["/usr/bin/unshare", "-U", "true"], capture_output=True)
 r["nested_userns_allowed"] = (p.returncode == 0)
 r["host_pids_visible"] = sum(1 for n in os.listdir("/proc") if n.isdigit()) > 8
+import ctypes
+libc = ctypes.CDLL(None, use_errno=True)
+def creatable(family, kind):
+    try:
+        socket.socket(family, kind).close(); return True
+    except OSError:
+        return False
+r["vsock_socket_creatable"] = creatable(40, socket.SOCK_STREAM)
+r["inet_socket_creatable"] = creatable(socket.AF_INET, socket.SOCK_STREAM)
+r["netlink_socket_creatable"] = creatable(16, socket.SOCK_DGRAM)
+r["io_uring_usable"] = libc.syscall(425, 1, ctypes.create_string_buffer(120)) >= 0
+libc.ptrace(0xFFFF, 0, 0, 0)
+r["ptrace_refused_by_filter"] = (ctypes.get_errno() == 1)
+try:
+    a, b = socket.socketpair(); a.close(); b.close(); r["unix_socketpair_works"] = True
+except OSError:
+    r["unix_socketpair_works"] = False
 print(json.dumps(r))
 "#;
 
@@ -88,11 +107,25 @@ pub fn probe(weaken: Option<Weakening>) -> Result<Vec<String>, SandboxError> {
         "secret_readable",
         "nested_userns_allowed",
         "host_pids_visible",
+        "vsock_socket_creatable",
+        "inet_socket_creatable",
+        "netlink_socket_creatable",
+        "io_uring_usable",
     ] {
         let needle = format!("\"{key}\": false");
         if !text.contains(&needle) {
             failures.push(format!(
                 "probe {key} was not confirmed blocked (output: {})",
+                text.trim()
+            ));
+        }
+    }
+    // the controls: what the filter must still allow, and the refusal that proves the filter itself is installed
+    for key in ["unix_socketpair_works", "ptrace_refused_by_filter"] {
+        let needle = format!("\"{key}\": true");
+        if !text.contains(&needle) {
+            failures.push(format!(
+                "probe {key} was not confirmed (output: {})",
                 text.trim()
             ));
         }

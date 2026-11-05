@@ -1,3 +1,5 @@
+pub mod seccomp;
+
 use std::ffi::OsString;
 use std::fmt;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -52,6 +54,7 @@ pub struct SandboxSpec {
 pub enum Weakening {
     ShareNetwork,
     AllowNestedUserNamespaces,
+    NoSyscallFilter,
 }
 
 impl SandboxSpec {
@@ -104,6 +107,15 @@ pub struct Outcome {
     pub truncated: bool,
 }
 
+/// Whether the system-call filter is installed. The profile checks that weaken the network layer drop it too, so that layer
+/// can be proven on its own: the filter would otherwise refuse the sockets the check needs to open.
+pub fn filter_enabled(spec: &SandboxSpec) -> bool {
+    !matches!(
+        spec.weaken_for_self_test,
+        Some(Weakening::NoSyscallFilter | Weakening::ShareNetwork)
+    )
+}
+
 pub fn bwrap_args(spec: &SandboxSpec) -> Vec<OsString> {
     let mut a: Vec<OsString> = Vec::new();
     a.push(OsString::from("--unshare-all"));
@@ -113,6 +125,10 @@ pub fn bwrap_args(spec: &SandboxSpec) -> Vec<OsString> {
     }
     if spec.weaken_for_self_test != Some(Weakening::AllowNestedUserNamespaces) {
         a.push(OsString::from("--disable-userns"));
+    }
+    if filter_enabled(spec) {
+        a.push(OsString::from("--seccomp"));
+        a.push(OsString::from(FILTER_FD));
     }
     a.push(OsString::from("--die-with-parent"));
     a.push(OsString::from("--new-session"));
@@ -225,27 +241,7 @@ fn read_capped<R: Read>(mut r: R, cap: usize) -> (Vec<u8>, bool) {
 }
 
 pub fn run_unchecked(spec: &SandboxSpec) -> Result<Outcome, SandboxError> {
-    if !cfg!(target_os = "linux") {
-        return Err(SandboxError::Unsupported(
-            "the bubblewrap sandbox runs on Linux only",
-        ));
-    }
-    let unit = format!(
-        "kk-worker-{}-{}",
-        std::process::id(),
-        UNIT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    );
-    let mut cmd = Command::new("systemd-run");
-    cmd.args(scope_args(&spec.limits, &unit));
-    cmd.arg("prlimit").args(prlimit_args(&spec.limits));
-    cmd.arg("--").arg("bwrap").args(bwrap_args(spec));
-    if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
-        cmd.env_clear().env("XDG_RUNTIME_DIR", dir);
-    } else {
-        return Err(SandboxError::Unsupported(
-            "a systemd user session (XDG_RUNTIME_DIR) is required for cgroup limits",
-        ));
-    }
+    let (mut cmd, unit) = scope_command(spec)?;
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -313,6 +309,37 @@ pub struct ServeOutcome {
     pub oversize_line: bool,
 }
 
+/// The descriptor number the system-call filter is opened as for `bwrap --seccomp`.
+pub const FILTER_FD: &str = "9";
+
+/// Opens the filter file as descriptor 9 and deletes it before the real command runs, so the file never outlives the launch.
+const OPEN_FILTER: &str = r#"f=$1; shift; exec 9<"$f" || exit 126; rm -f "$f"; exec "$@""#;
+
+static FILTER_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Writes the filter into a private file in the user's runtime folder (owner-only, never reused) and returns its path.
+fn write_filter(dir: &str) -> Result<PathBuf, SandboxError> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = Path::new(dir).join(format!(
+        "kk-seccomp-{}-{}.bpf",
+        std::process::id(),
+        FILTER_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .map_err(|e| SandboxError::Spawn(format!("cannot prepare the system-call filter: {e}")))?;
+    if let Err(e) = f.write_all(&seccomp::bytes()).and_then(|_| f.flush()) {
+        let _ = std::fs::remove_file(&path);
+        return Err(SandboxError::Spawn(format!(
+            "cannot prepare the system-call filter: {e}"
+        )));
+    }
+    Ok(path)
+}
+
 fn scope_command(spec: &SandboxSpec) -> Result<(Command, String), SandboxError> {
     if !cfg!(target_os = "linux") {
         return Err(SandboxError::Unsupported(
@@ -329,10 +356,26 @@ fn scope_command(spec: &SandboxSpec) -> Result<(Command, String), SandboxError> 
             "a systemd user session (XDG_RUNTIME_DIR) is required for cgroup limits",
         ));
     };
-    let mut cmd = Command::new("systemd-run");
-    cmd.args(scope_args(&spec.limits, &unit));
-    cmd.arg("prlimit").args(prlimit_args(&spec.limits));
-    cmd.arg("--").arg("bwrap").args(bwrap_args(spec));
+    let mut args = scope_args(&spec.limits, &unit);
+    args.push(OsString::from("prlimit"));
+    args.extend(prlimit_args(&spec.limits));
+    args.push(OsString::from("--"));
+    args.push(OsString::from("bwrap"));
+    args.extend(bwrap_args(spec));
+    let mut cmd;
+    if !filter_enabled(spec) {
+        cmd = Command::new("systemd-run");
+        cmd.args(args);
+    } else {
+        let filter = write_filter(&dir)?;
+        cmd = Command::new("/bin/sh");
+        cmd.arg("-c")
+            .arg(OPEN_FILTER)
+            .arg("kk-sandbox")
+            .arg(filter)
+            .arg("systemd-run")
+            .args(args);
+    }
     cmd.env_clear().env("XDG_RUNTIME_DIR", dir);
     Ok((cmd, unit))
 }

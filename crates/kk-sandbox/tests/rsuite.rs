@@ -47,11 +47,13 @@ import os, socket, subprocess
 res = {}
 port = int(os.environ["P"])
 def tcp(host, fam=socket.AF_INET):
-    s = socket.socket(fam, socket.SOCK_STREAM); s.settimeout(1.0)
+    s = None
     try:
+        s = socket.socket(fam, socket.SOCK_STREAM); s.settimeout(1.0)
         s.connect((host, port)); return True
     except Exception: return False
-    finally: s.close()
+    finally:
+        if s is not None: s.close()
 res["tcp4"] = tcp("127.0.0.1")
 res["tcp6"] = tcp("::1", socket.AF_INET6)
 res["tcp4mapped"] = tcp("::ffff:127.0.0.1", socket.AF_INET6)
@@ -114,6 +116,14 @@ fn r01_to_r06_network_is_closed_while_the_control_run_proves_the_probe_works() {
         control_conns >= 1,
         "the control run must have connected to the listener"
     );
+    // the control's datagram arrives, which proves the listener works; drain it so only the sandbox's could be left
+    let mut drain = [0u8; 8];
+    udp.set_read_timeout(Some(Duration::from_millis(1000)))
+        .unwrap();
+    assert!(
+        udp.recv_from(&mut drain).is_ok(),
+        "the control run's datagram must reach the listener"
+    );
     let spec = py_spec(
         &dir,
         NET_PROBE,
@@ -139,7 +149,7 @@ fn r01_to_r06_network_is_closed_while_the_control_run_proves_the_probe_works() {
     udp.set_read_timeout(Some(Duration::from_millis(300)))
         .unwrap();
     assert!(
-        udp.recv_from(&mut buf).is_err() || !sandboxed.contains("'udp_sent': False"),
+        udp.recv_from(&mut buf).is_err(),
         "UDP datagram must not reach the host"
     );
     tcp.set_nonblocking(true).unwrap();
@@ -380,4 +390,181 @@ fn the_parent_environment_does_not_reach_the_worker() {
         "parent environment leaked: {o}"
     );
     assert!(o.contains("ALLOWED"), "declared variables must arrive: {o}");
+}
+
+const SOCKET_PROBE: &str = r#"
+import ctypes, json, os, socket
+libc = ctypes.CDLL(None, use_errno=True)
+res = {}
+def make(name, family, kind):
+    try:
+        s = socket.socket(family, kind)
+        res[name] = "created"
+        return s
+    except OSError as e:
+        res[name] = errno_name(e.errno)
+def errno_name(n):
+    return {1: "EPERM", 13: "EACCES", 97: "EAFNOSUPPORT"}.get(n, str(n))
+v = make("vsock", 40, socket.SOCK_STREAM)
+if v is not None:
+    v.settimeout(3)
+    try:
+        v.connect((2, 22)); res["vsock_connect"] = "CONNECTED"
+    except OSError as e:
+        res["vsock_connect"] = "reached-host:" + errno_name(e.errno)
+make("inet", socket.AF_INET, socket.SOCK_STREAM)
+make("inet6", socket.AF_INET6, socket.SOCK_DGRAM)
+make("netlink", 16, socket.SOCK_DGRAM)
+make("packet", 17, socket.SOCK_RAW)
+make("unix", socket.AF_UNIX, socket.SOCK_STREAM)
+try:
+    a, b = socket.socketpair(); a.send(b"x"); res["socketpair"] = b.recv(1) == b"x"
+except OSError as e:
+    res["socketpair"] = errno_name(e.errno)
+r = libc.syscall(425, 1, ctypes.create_string_buffer(120))
+res["io_uring_setup"] = "created" if r >= 0 else errno_name(ctypes.get_errno())
+libc.ptrace(0xFFFF, 0, 0, 0)
+res["ptrace"] = errno_name(ctypes.get_errno())
+print(json.dumps(res, sort_keys=True))
+"#;
+
+fn socket_report(weaken: Option<Weakening>) -> serde_json::Value {
+    let dir = scratch("sockets");
+    let mut spec = py_spec(&dir, SOCKET_PROBE, &[]);
+    spec.weaken_for_self_test = weaken;
+    let text = out_of(&spec);
+    serde_json::from_str(text.lines().last().unwrap_or_default())
+        .unwrap_or_else(|e| panic!("probe output was not JSON ({e}): {text}"))
+}
+
+#[test]
+fn r30_vm_sockets_and_every_non_unix_family_are_refused_while_unix_sockets_still_work() {
+    let on = socket_report(None);
+    for k in ["vsock", "inet", "inet6", "netlink", "packet"] {
+        assert_eq!(on[k], "EPERM", "{k}: {on}");
+    }
+    assert!(
+        on.get("vsock_connect").is_none(),
+        "no vsock socket, so no connection: {on}"
+    );
+    assert_eq!(on["unix"], "created", "{on}");
+    assert_eq!(on["socketpair"], true, "{on}");
+    assert_eq!(on["io_uring_setup"], "EPERM", "{on}");
+    assert_eq!(on["ptrace"], "EPERM", "{on}");
+}
+
+#[test]
+fn r31_without_the_filter_the_same_code_reaches_the_host_over_a_vm_socket() {
+    // the control that makes r30 mean something: the hole was real, in this very sandbox profile
+    let off = socket_report(Some(Weakening::NoSyscallFilter));
+    assert_eq!(off["vsock"], "created", "{off}");
+    let connect = off["vsock_connect"].as_str().unwrap_or_default();
+    assert!(
+        connect.starts_with("reached-host:") || connect == "CONNECTED",
+        "{off}"
+    );
+    assert_ne!(off["ptrace"], "EPERM", "{off}");
+}
+
+#[test]
+fn r32_the_profile_check_notices_a_missing_filter_and_still_passes_when_it_is_installed() {
+    assert!(selfcheck::verify_profile().is_ok());
+    let weak = selfcheck::probe(Some(Weakening::NoSyscallFilter)).unwrap();
+    assert!(
+        weak.iter()
+            .any(|f| f.starts_with("probe vsock_socket_creatable was not confirmed blocked")),
+        "{weak:?}"
+    );
+    assert!(
+        weak.iter()
+            .any(|f| f.starts_with("probe ptrace_refused_by_filter was not confirmed")),
+        "{weak:?}"
+    );
+}
+
+#[test]
+fn r33_ordinary_python_work_is_unaffected_by_the_filter() {
+    let dir = scratch("ordinary-python");
+    let code = r#"
+import concurrent.futures, json, multiprocessing, os, subprocess, sys, threading, zlib, hashlib
+with concurrent.futures.ThreadPoolExecutor(4) as ex:
+    total = sum(ex.map(lambda n: n * n, range(100)))
+out = subprocess.run(["/usr/bin/env", "echo", "child"], capture_output=True, text=True).stdout.strip()
+ctx = multiprocessing.get_context("fork")
+with ctx.Pool(2) as pool:
+    squares = pool.map(abs, [-1, -2, -3])
+open("/tmp/x", "w").write("data")
+print(json.dumps({"total": total, "child": out, "squares": squares, "hash": hashlib.sha256(b"a").hexdigest()[:8], "z": len(zlib.compress(b"a" * 1000))}))
+"#;
+    let spec = py_spec(&dir, code, &[]);
+    let text = out_of(&spec);
+    assert!(
+        text.contains("\"total\": 328350")
+            && text.contains("\"child\": \"child\"")
+            && text.contains("[1, 2, 3]"),
+        "{text}"
+    );
+}
+
+#[test]
+fn r34_node_runs_normally_under_the_filter() {
+    if !std::path::Path::new("/usr/bin/node").exists() {
+        eprintln!("skipped: no /usr/bin/node in this machine");
+        return;
+    }
+    let dir = scratch("ordinary-node");
+    let script = dir.join("w.mjs");
+    fs::write(
+        &script,
+        r#"
+import { spawnSync } from "node:child_process";
+import { Worker, isMainThread, parentPort } from "node:worker_threads";
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+if (isMainThread) {
+  const child = spawnSync("/usr/bin/env", ["echo", "child"], { encoding: "utf8" }).stdout.trim();
+  writeFileSync("/tmp/x", "data");
+  const w = new Worker(new URL(import.meta.url));
+  w.on("message", async (m) => {
+    await new Promise((r) => setTimeout(r, 10));
+    console.log(JSON.stringify({ child, file: readFileSync("/tmp/x", "utf8"), worker: m, hash: createHash("sha256").update("a").digest("hex").slice(0, 8) }));
+  });
+} else {
+  parentPort.postMessage(6 * 7);
+}
+"#,
+    )
+    .unwrap();
+    let mut spec = SandboxSpec::new("/usr/bin/node");
+    spec.args = vec!["/tmp/w.mjs".into()];
+    spec.binds.push(Bind {
+        host: script,
+        inside: "/tmp/w.mjs".into(),
+        writable: false,
+    });
+    spec.limits.wall = Duration::from_secs(20);
+    let text = out_of(&spec);
+    assert!(
+        text.contains("\"child\":\"child\"")
+            && text.contains("\"worker\":42")
+            && text.contains("\"file\":\"data\""),
+        "{text}"
+    );
+}
+
+#[test]
+fn r35_the_filter_file_never_outlives_the_launch() {
+    let dir = scratch("filterfile");
+    let spec = py_spec(&dir, "print('hi')", &[]);
+    let o = run_unchecked(&spec).expect("run");
+    assert!(String::from_utf8_lossy(&o.stdout).contains("hi"));
+    let runtime = std::env::var("XDG_RUNTIME_DIR").unwrap();
+    let mine = format!("kk-seccomp-{}-", std::process::id());
+    let left: Vec<String> = fs::read_dir(runtime)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with(&mine))
+        .collect();
+    assert!(left.is_empty(), "left behind: {left:?}");
 }
