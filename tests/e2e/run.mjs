@@ -514,6 +514,26 @@ try {
   await page.screenshot({ path: join(shots, "13-chat.png") });
   await page.getByRole("button", { name: "Clear" }).click();
   check("Clear forgets the conversation", (await page.locator(".msg").count()) === 0);
+  // unsent text is kept per conversation while the page is open, and only in memory
+  await page.getByLabel("Your message").fill("draftcanary unsent words");
+  await page.getByRole("link", { name: "Memory" }).click();
+  await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
+  await page.getByRole("link", { name: "Chat" }).click();
+  await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();
+  check("unsent text is still in the box after leaving the chat screen and coming back", (await page.getByLabel("Your message").inputValue()) === "draftcanary unsent words");
+  check("the draft is never written to browser storage", await page.evaluate(() => !JSON.stringify({ ...localStorage, ...sessionStorage }).includes("draftcanary")));
+  // Escape stops a reply that is being written and puts the message back
+  await page.getByLabel("Your message").press("Enter");
+  await page.locator(".msg.assistant").waitFor();
+  await page.getByLabel("Your message").press("Escape");
+  await page.getByRole("button", { name: "Stop" }).waitFor({ state: "detached" });
+  check("Escape stops the reply being written and puts the message back in the box", (await page.locator(".msg").count()) === 0 && (await page.getByLabel("Your message").inputValue()) === "draftcanary unsent words");
+  // sending with the button moves the cursor away; when the reply is done it is back in the box
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByText("note(s) used").first().waitFor();
+  await page.getByRole("button", { name: "Stop" }).waitFor({ state: "detached" });
+  check("after a reply the cursor is back in the message box", await page.evaluate(() => document.activeElement?.id === "chat-input"));
+  await page.getByRole("button", { name: "Clear" }).click();
   // a kept conversation survives a reload, can be opened again, and is gone after Forget
   await page.getByRole("button", { name: "Keep this conversation" }).click();
   await page.getByText("Kept", { exact: true }).waitFor();

@@ -11,6 +11,7 @@ import { Documents } from "./screens/Documents";
 import { Inbox } from "./screens/Inbox";
 import { Palette, type PaletteItem } from "./components/Palette";
 import { createLive } from "./live";
+import { clearDrafts } from "./composer";
 import { applyLocale, LOCALES, locale, rich, setLocale, t, type Locale } from "./i18n";
 
 function useHash() {
@@ -138,6 +139,10 @@ export function App() {
   const hash = useHash();
   const [paired, setPaired] = createSignal<boolean | null>(null);
   const [config, setConfig] = createSignal<Config | null>(null);
+  // Signed out by any path (the button, the palette, an expired session): nothing typed stays in the page.
+  createEffect(() => {
+    if (paired() === false) clearDrafts();
+  });
   const [jobs, setJobs] = createSignal<Job[]>([]);
   const [query, setQuery] = createSignal("");
   const [unreachable, setUnreachable] = createSignal(false);

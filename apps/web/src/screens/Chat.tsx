@@ -2,6 +2,7 @@ import { batch, createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, streamChat, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
 import { t } from "../i18n";
 import { Markdown } from "../components/Markdown";
+import { draftKey, forgetDraft, loadDraft, saveDraft, stopsReply } from "../composer";
 
 interface Shown extends ChatTurn {
   foot?: string[];
@@ -10,13 +11,37 @@ interface Shown extends ChatTurn {
 
 export function Chat() {
   const [turns, setTurns] = createSignal<Shown[]>([]);
-  const [text, setText] = createSignal("");
+  const [text, setTextRaw] = createSignal(loadDraft(draftKey(null)));
   const [busy, setBusy] = createSignal(false);
   const [live, setLive] = createSignal("");
   let abort: AbortController | null = null;
   const [error, setError] = createSignal("");
   const [session, setSession] = createSignal<string | null>(null);
   const [confirmForget, setConfirmForget] = createSignal<string | null>(null);
+  // The box holds the draft of the conversation on screen. Each conversation keeps its own while the page is open.
+  const setText = (v: string) => {
+    setTextRaw(v);
+    saveDraft(draftKey(session()), v);
+  };
+  // Bumped whenever another conversation is put on screen, so a reply that arrives late never lands in the wrong one.
+  let view = 0;
+  let box: HTMLTextAreaElement | undefined;
+  const show = (next: string | null, nextTurns: Shown[]) => {
+    if (busy()) abort?.abort();
+    view++;
+    batch(() => {
+      setSession(next);
+      setTurns(nextTurns);
+      setTextRaw(loadDraft(draftKey(next)));
+    });
+  };
+  // After a reply, the cursor goes back to the box, unless the owner has moved on to something else or is on a phone.
+  const returnFocus = () => {
+    if (window.matchMedia("(max-width: 767px)").matches) return;
+    const a = document.activeElement;
+    if (a && a !== document.body && !box?.form?.contains(a)) return;
+    box?.focus();
+  };
   const [kept, { refetch, mutate }] = createResource<KeptChat[]>(async () => {
     try {
       return (await api.keptChats()).sessions;
@@ -28,7 +53,10 @@ export function Chat() {
     setError("");
     try {
       const r = await api.keepChat("");
+      const carried = text();
+      forgetDraft(draftKey(session()));
       setSession(r.id);
+      saveDraft(draftKey(r.id), carried);
       await refetch();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("chat.error"));
@@ -38,8 +66,7 @@ export function Chat() {
     setError("");
     try {
       const r = await api.keptChat(id);
-      setTurns(r.turns.map(({ role, content }) => ({ role, content })));
-      setSession(id);
+      show(id, r.turns.map(({ role, content }) => ({ role, content })));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("chat.error"));
     }
@@ -55,10 +82,8 @@ export function Chat() {
       // the list and the screen change together: the forgotten conversation is never listed once its text is gone
       batch(() => {
         mutate((list) => (list ?? []).filter((k) => k.id !== id));
-        if (session() === id) {
-          setSession(null);
-          setTurns([]);
-        }
+        forgetDraft(draftKey(id));
+        if (session() === id) show(null, []);
       });
       await refetch();
     } catch (err) {
@@ -164,6 +189,8 @@ export function Chat() {
     e?.preventDefault();
     const message = text().trim();
     if (!message || busy()) return;
+    const myView = view;
+    const sentKey = draftKey(session());
     const history: ChatTurn[] = turns().slice(-18).map(({ role, content }) => ({ role, content }));
     setTurns([...turns(), { role: "user", content: message }]);
     setText("");
@@ -173,6 +200,10 @@ export function Chat() {
     abort = new AbortController();
     try {
       const r = await streamChat({ message, history, sources: pages().filter((p) => p.page_id && !p.looks_like_instructions).map((p) => p.page_id as string), ...(session() ? { session: session() } : {}) }, (d) => setLive((x) => x + d), abort.signal);
+      if (myView !== view) {
+        if ("stopped" in r) saveDraft(sentKey, message);
+        return;
+      }
       if ("stopped" in r) {
         setTurns(turns().slice(0, -1));
         setText(message);
@@ -189,6 +220,11 @@ export function Chat() {
       setTurns([...turns(), { role: "assistant", content: r.reply, foot, notes: r.notes }]);
       if (session()) await refetch();
     } catch (err) {
+      // a message whose reply was cut short by switching conversations goes back to the draft it was written in
+      if (myView !== view) {
+        saveDraft(sentKey, message);
+        return;
+      }
       setTurns(turns().slice(0, -1));
       setText(message);
       if (!(err instanceof DOMException && err.name === "AbortError")) setError(err instanceof ApiError ? err.message : t("chat.error"));
@@ -196,6 +232,7 @@ export function Chat() {
       setBusy(false);
       setLive("");
       abort = null;
+      if (myView === view) returnFocus();
     }
   };
   return (
@@ -206,7 +243,7 @@ export function Chat() {
       <div class="card stack" role="region" aria-label={t("chat.keptTitle")}>
         <div class="actions">
           <Show when={!session()}><button type="button" onClick={keep}>{t("chat.keep")}</button></Show>
-          <Show when={session()}><span class="chip ok">{t("chat.keptNow")}</span> <button type="button" onClick={() => { setSession(null); setTurns([]); }}>{t("chat.newChat")}</button></Show>
+          <Show when={session()}><span class="chip ok">{t("chat.keptNow")}</span> <button type="button" onClick={() => show(null, [])}>{t("chat.newChat")}</button></Show>
         </div>
         <Show when={(kept() ?? []).length > 0}>
           <p><strong>{t("chat.keptTitle")}</strong></p>
@@ -373,11 +410,17 @@ export function Chat() {
       <form class="card stack" onSubmit={send}>
         <label for="chat-input">{t("chat.input")}</label>
         <textarea
+          ref={box}
           id="chat-input"
           rows="3"
           value={text()}
           onInput={(e) => setText(e.currentTarget.value)}
           onKeyDown={(e) => {
+            if (stopsReply(e, busy())) {
+              e.preventDefault();
+              abort?.abort();
+              return;
+            }
             // Enter that confirms an input-method composition (Hindi, Chinese, Japanese) must not send the message.
             if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
               e.preventDefault();
