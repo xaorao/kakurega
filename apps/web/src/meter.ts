@@ -44,3 +44,14 @@ export function noteNotes(r: { notes_left_out?: number }): { key: "chat.notesLef
   const n = r.notes_left_out ?? 0;
   return n > 0 ? [{ key: "chat.notesLeftOut", n }] : [];
 }
+
+export type SavedKey = "chat.saved" | "chat.notSaved" | "chat.notSavedForgotten" | "chat.notSavedError";
+
+/** What the footer says about saving an exchange in a kept conversation: the real reason, never "full" when the service
+ *  said otherwise. An older service that sends no reason keeps the old wording. */
+export function savedLine(r: { saved?: boolean; not_saved?: string | null }): SavedKey {
+  if (r.saved) return "chat.saved";
+  if (r.not_saved === "forgotten") return "chat.notSavedForgotten";
+  if (r.not_saved === "error") return "chat.notSavedError";
+  return "chat.notSaved";
+}

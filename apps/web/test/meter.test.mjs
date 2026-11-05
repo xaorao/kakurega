@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { meterLine, noteNotes, pageNotes } from "../src/meter.ts";
+import { meterLine, noteNotes, pageNotes, savedLine } from "../src/meter.ts";
 
 test("mt01 the model's own count is shown and labelled as counted, with the window and percent", () => {
   assert.deepEqual(meterLine({ context_tokens: 4321, context_tokens_estimate: 5000, context_window: 16384, estimate: false }), { key: "chat.contextCountedWindow", n: 4321, max: 16384, pct: 26, near: false });
@@ -40,4 +40,12 @@ test("mt07 the footer says how many matching notes were left out, and nothing wh
   assert.deepEqual(noteNotes({ notes_left_out: 3 }), [{ key: "chat.notesLeftOut", n: 3 }]);
   assert.deepEqual(noteNotes({ notes_left_out: 0 }), []);
   assert.deepEqual(noteNotes({}), [], "an older service that sends no count shows nothing");
+});
+
+test("mt08 the footer names the real reason an exchange was not saved", () => {
+  assert.equal(savedLine({ saved: true }), "chat.saved");
+  assert.equal(savedLine({ saved: false, not_saved: "full" }), "chat.notSaved");
+  assert.equal(savedLine({ saved: false, not_saved: "forgotten" }), "chat.notSavedForgotten");
+  assert.equal(savedLine({ saved: false, not_saved: "error" }), "chat.notSavedError");
+  assert.equal(savedLine({ saved: false }), "chat.notSaved", "an older service that gives no reason keeps the old wording");
 });

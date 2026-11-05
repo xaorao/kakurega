@@ -5894,6 +5894,7 @@ fn sv53_a_conversation_forgotten_while_its_reply_is_written_keeps_nothing_in_the
         r["saved"], false,
         "the reply is not saved under a forgotten conversation"
     );
+    assert_eq!(r["not_saved"], "forgotten", "the reply says why: {r}");
     assert_eq!(w.get(&format!("/api/sessions/{id}")).0, 404);
     let listed = w.get("/api/sessions").1.to_string();
     assert!(
@@ -5927,5 +5928,89 @@ fn sv53_a_conversation_forgotten_while_its_reply_is_written_keeps_nothing_in_the
     assert_eq!(
         left, 0,
         "no turn of the forgotten conversation is left in the store"
+    );
+}
+
+/// The canned runner, except that every chat reply is one short line, so a long conversation stays small. (The canned
+/// runner echoes everything it was sent, its own earlier replies included, so its replies grow with every turn until the
+/// test client can no longer read them.)
+struct ShortRunner {
+    inner: CannedRunner,
+}
+
+impl JobRunner for ShortRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        self.inner.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        self.inner.route_info()
+    }
+    fn chat(&self, _m: Vec<kk_types::chat::ChatMessage>) -> Result<kk_service::ChatReply, String> {
+        Ok(kk_service::ChatReply {
+            text: "short reply".into(),
+            route_id: "canned".into(),
+            class: "device_only".into(),
+            simulated: true,
+            prompt_tokens: None,
+        })
+    }
+}
+
+#[test]
+fn sv54_a_full_kept_conversation_says_it_is_full_and_an_unkept_chat_gives_no_reason() {
+    let (root, _repo) = repo_copy("session-full");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(ShortRunner {
+            inner: CannedRunner { confirm: true },
+        }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let id = w.post("/api/sessions", json!({"title": ""})).1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut last = json!(null);
+    for i in 0..201 {
+        let (st, body) = w.post(
+            "/api/chat",
+            json!({"message": format!("q {i}"), "session": id}),
+        );
+        last = body;
+        if i < 200 {
+            assert_eq!(
+                (st, last["saved"].clone()),
+                (200, json!(true)),
+                "exchange {i}: {last}"
+            );
+        }
+    }
+    assert_eq!(
+        (last["saved"].clone(), last["not_saved"].clone()),
+        (json!(false), json!("full")),
+        "{last}"
+    );
+    let (_, plain) = w.post("/api/chat", json!({"message": "unkept"}));
+    assert_eq!(
+        (plain["saved"].clone(), plain["not_saved"].clone()),
+        (json!(false), Value::Null),
+        "{plain}"
     );
 }

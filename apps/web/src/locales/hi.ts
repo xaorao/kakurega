@@ -153,6 +153,8 @@ export const hi: Record<keyof typeof en, string> = {
   "chat.forgetSure": "भूलने के लिए फिर दबाएँ",
   "chat.saved": "एन्क्रिप्टेड स्टोर में सहेजा गया",
   "chat.notSaved": "सहेजा नहीं गया (बातचीत भर चुकी है)",
+  "chat.notSavedForgotten": "सहेजा नहीं गया: यह बातचीत भुला दी गई थी",
+  "chat.notSavedError": "सहेजा नहीं गया: एन्क्रिप्टेड स्टोर में लिखा नहीं जा सका",
   "chat.stop": "रोकें",
   "palette.title": "कमांड",
   "palette.placeholder": "स्क्रीन, समीक्षा या सेटिंग खोजने के लिए लिखें",

@@ -2462,7 +2462,15 @@ impl App {
                     foot.push(if body["saved"] == true {
                         "saved in the encrypted store".into()
                     } else {
-                        "not saved (this conversation is full)".to_string()
+                        match body["not_saved"].as_str() {
+                            Some("forgotten") => {
+                                "not saved: this conversation was forgotten".to_string()
+                            }
+                            Some("error") => {
+                                "not saved: the encrypted store could not be written".to_string()
+                            }
+                            _ => "not saved (this conversation is full)".to_string(),
+                        }
                     });
                 }
                 for n in body["notes"].as_array().into_iter().flatten() {

@@ -1710,10 +1710,18 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
             ("chars_out", r.text.chars().count().into()),
         ],
     );
-    let saved = run
+    let appended = run
         .kept
         .as_ref()
-        .is_some_and(|id| session_append(svc, id, &run.message_to_keep, &r.text));
+        .map(|id| session_append(svc, id, &run.message_to_keep, &r.text));
+    let saved = appended == Some(Appended::Saved);
+    // why an exchange in a kept conversation was not saved, so the screen never says "full" when it was not
+    let not_saved = match appended {
+        Some(Appended::Full) => json!("full"),
+        Some(Appended::Forgotten) => json!("forgotten"),
+        Some(Appended::Failed) => json!("error"),
+        Some(Appended::Saved) | None => Value::Null,
+    };
     // The size of everything sent to the model for this turn, so the owner can see when a conversation is getting long.
     // It is an estimate by script (kk_route::tokens), not the model's own count.
     // After the reply the model's own count of what it read replaces the estimate (as OpenCode's compaction prefers a
@@ -1722,7 +1730,7 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
     let estimated = kk_route::tokens::estimate_messages(&ctx.messages);
     let measured = r.prompt_tokens.filter(|n| *n > 0);
     let usage = json!({"context_tokens": measured.unwrap_or(estimated), "context_tokens_estimate": estimated, "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "estimate": measured.is_none()});
-    json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated}, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "saved": saved})
+    json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated}, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "saved": saved, "not_saved": not_saved})
 }
 
 async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
@@ -1992,40 +2000,52 @@ fn session_turns(svc: &Service, id: &str) -> Option<Vec<(String, String)>> {
     Some(rows.flatten().collect())
 }
 
+/// What became of a finished exchange in a kept conversation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Appended {
+    Saved,
+    /// The conversation has reached its limit; old turns are never dropped to make room.
+    Full,
+    /// The conversation was forgotten while the reply was being written.
+    Forgotten,
+    /// The store could not be read or written.
+    Failed,
+}
+
 /// Saves one finished exchange. A conversation that has reached its limit stops saving instead of dropping old turns, and
 /// one that was forgotten while its reply was being written saves nothing.
-fn session_append(svc: &Service, id: &str, user: &str, assistant: &str) -> bool {
+fn session_append(svc: &Service, id: &str, user: &str, assistant: &str) -> Appended {
     let t = now();
     let store = svc.store.lock().expect("lock");
     let c = store.connection();
     // Forget deletes under this same lock, so checking here and inserting below cannot interleave with it.
-    if c.query_row("SELECT 1 FROM sessions WHERE id = ?1", [id], |_| Ok(()))
-        .is_err()
-    {
-        return false;
+    match c.query_row("SELECT 1 FROM sessions WHERE id = ?1", [id], |_| Ok(())) {
+        Ok(()) => {}
+        Err(kk_vault::rusqlite::Error::QueryReturnedNoRows) => return Appended::Forgotten,
+        Err(_) => return Appended::Failed,
     }
-    let n: i64 = c
-        .query_row(
-            "SELECT count(*) FROM session_turns WHERE session = ?1",
-            [id],
-            |r| r.get(0),
-        )
-        .unwrap_or(i64::MAX);
+    let Ok(n) = c.query_row(
+        "SELECT count(*) FROM session_turns WHERE session = ?1",
+        [id],
+        |r| r.get::<_, i64>(0),
+    ) else {
+        return Appended::Failed;
+    };
     if n + 2 > MAX_SESSION_TURNS {
-        return false;
+        return Appended::Full;
     }
-    let ok = c.execute("INSERT INTO session_turns(session, seq, role, content, at) VALUES (?1, ?2, 'user', ?3, ?4), (?1, ?5, 'assistant', ?6, ?4)", kk_vault::rusqlite::params![id, n, user, t, n + 1, assistant]).is_ok();
-    if ok {
-        let title: String = user
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .chars()
-            .take(60)
-            .collect();
-        let _ = c.execute("UPDATE sessions SET updated = ?2, title = CASE WHEN title = '' THEN ?3 ELSE title END WHERE id = ?1", kk_vault::rusqlite::params![id, t, title]);
+    if c.execute("INSERT INTO session_turns(session, seq, role, content, at) VALUES (?1, ?2, 'user', ?3, ?4), (?1, ?5, 'assistant', ?6, ?4)", kk_vault::rusqlite::params![id, n, user, t, n + 1, assistant]).is_err() {
+        return Appended::Failed;
     }
-    ok
+    let title: String = user
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(60)
+        .collect();
+    let _ = c.execute("UPDATE sessions SET updated = ?2, title = CASE WHEN title = '' THEN ?3 ELSE title END WHERE id = ?1", kk_vault::rusqlite::params![id, t, title]);
+    Appended::Saved
 }
 
 #[derive(Deserialize)]

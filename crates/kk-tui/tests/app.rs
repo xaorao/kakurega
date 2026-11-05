@@ -2033,3 +2033,24 @@ fn tu48_the_footer_says_how_many_matching_notes_were_left_out() {
         "nothing is said when none were left out"
     );
 }
+
+#[test]
+fn tu49_a_kept_exchange_that_was_not_saved_names_the_real_reason() {
+    let mut a = booted();
+    a.session = Some("s-1".into());
+    for (reason, expected) in [
+        (
+            json!("forgotten"),
+            "not saved: this conversation was forgotten",
+        ),
+        (
+            json!("error"),
+            "not saved: the encrypted store could not be written",
+        ),
+        (json!("full"), "not saved (this conversation is full)"),
+    ] {
+        let r = enter(&mut a, "hello");
+        a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": true}, "notes_used": 0, "saved": false, "not_saved": reason})));
+        assert!(text(&a).contains(expected), "{expected}: {}", text(&a));
+    }
+}
