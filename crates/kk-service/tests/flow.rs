@@ -5811,3 +5811,121 @@ fn sv52_recalled_notes_get_only_their_share_of_the_window_and_the_reply_says_how
         "the request leaves the reply its room: {sent}"
     );
 }
+
+/// The canned runner, except that a chat reply waits until the test lets it finish.
+struct GatedRunner {
+    inner: CannedRunner,
+    started: std::sync::Mutex<std::sync::mpsc::Sender<()>>,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl JobRunner for GatedRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        self.inner.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        self.inner.route_info()
+    }
+    fn chat(&self, m: Vec<kk_types::chat::ChatMessage>) -> Result<kk_service::ChatReply, String> {
+        let _ = self.started.lock().unwrap().send(());
+        let _ = self
+            .release
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(10));
+        self.inner.chat(m)
+    }
+}
+
+#[test]
+fn sv53_a_conversation_forgotten_while_its_reply_is_written_keeps_nothing_in_the_store() {
+    let (root, _repo) = repo_copy("forget-mid-reply");
+    let data = root.join("data");
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let svc = Service::new(
+        &data,
+        vec![root.clone()],
+        Arc::new(GatedRunner {
+            inner: CannedRunner { confirm: true },
+            started: std::sync::Mutex::new(started_tx),
+            release: std::sync::Mutex::new(release_rx),
+        }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let mut w2 = Web::new(c.addr);
+    w2.pair(&c.security.issue_pairing_code());
+    let id = w.post("/api/sessions", json!({"title": ""})).1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let id2 = id.clone();
+    let asking = std::thread::spawn(move || {
+        w2.post(
+            "/api/chat",
+            json!({"message": "forgetmidreply canary", "session": id2}),
+        )
+    });
+    started_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the model started writing the reply");
+    let (st, f) = w.post(&format!("/api/sessions/{id}/forget"), json!({}));
+    assert_eq!(st, 200, "{f}");
+    release_tx.send(()).unwrap();
+    let (st, r) = asking.join().unwrap();
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(
+        r["saved"], false,
+        "the reply is not saved under a forgotten conversation"
+    );
+    assert_eq!(w.get(&format!("/api/sessions/{id}")).0, 404);
+    let listed = w.get("/api/sessions").1.to_string();
+    assert!(
+        !listed.contains(&id),
+        "the forgotten conversation is not listed: {listed}"
+    );
+    drop(w);
+    drop(c);
+    drop(svc);
+    let waited = std::time::Instant::now();
+    while waited.elapsed() < Duration::from_secs(5)
+        && Service::new(
+            &data,
+            vec![root.clone()],
+            Arc::new(CannedRunner { confirm: true }),
+            true,
+        )
+        .is_err()
+    {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let store = kk_service::keys::open_vault(&data, "jobs.db").unwrap();
+    let left: i64 = store
+        .connection()
+        .query_row(
+            "SELECT count(*) FROM session_turns WHERE session = ?1 OR content LIKE '%forgetmidreply%'",
+            [&id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        left, 0,
+        "no turn of the forgotten conversation is left in the store"
+    );
+}

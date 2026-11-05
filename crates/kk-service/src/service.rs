@@ -1992,11 +1992,18 @@ fn session_turns(svc: &Service, id: &str) -> Option<Vec<(String, String)>> {
     Some(rows.flatten().collect())
 }
 
-/// Saves one finished exchange. A conversation that has reached its limit stops saving instead of dropping old turns.
+/// Saves one finished exchange. A conversation that has reached its limit stops saving instead of dropping old turns, and
+/// one that was forgotten while its reply was being written saves nothing.
 fn session_append(svc: &Service, id: &str, user: &str, assistant: &str) -> bool {
     let t = now();
     let store = svc.store.lock().expect("lock");
     let c = store.connection();
+    // Forget deletes under this same lock, so checking here and inserting below cannot interleave with it.
+    if c.query_row("SELECT 1 FROM sessions WHERE id = ?1", [id], |_| Ok(()))
+        .is_err()
+    {
+        return false;
+    }
     let n: i64 = c
         .query_row(
             "SELECT count(*) FROM session_turns WHERE session = ?1",
