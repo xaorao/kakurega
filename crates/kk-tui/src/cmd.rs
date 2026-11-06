@@ -1,5 +1,12 @@
 /// What `/instructions` was asked to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PiiAction {
+    Show,
+    Add(String),
+    Remove(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstructionsAction {
     Show,
     Set {
@@ -60,6 +67,7 @@ pub enum Command {
     Forget(String),
     ForgetReview(String),
     Instructions(InstructionsAction),
+    Pii(PiiAction),
     Find(String),
     Transcript(String),
     Copy(bool),
@@ -121,6 +129,7 @@ pub const NAMES: &[&str] = &[
     "forget",
     "forgetreview",
     "instructions",
+    "pii",
     "find",
     "transcript",
     "copy",
@@ -172,6 +181,7 @@ pub fn describe(name: &str) -> &'static str {
         "forget" => "delete a saved note for good",
         "forgetreview" => "delete everything one review left in memory",
         "instructions" => "your standing orders to the assistant",
+        "pii" => "values you say are not personal data, left out of release notices",
         "find" => "search kept conversations by words",
         "transcript" => "search this conversation on the screen",
         "copy" => "copy the last reply (or all) to the clipboard, after asking",
@@ -249,6 +259,7 @@ pub fn usage(name: &str) -> &'static str {
         "forget" => "/forget ID",
         "forgetreview" => "/forgetreview JOB",
         "instructions" => "/instructions [set [in PROJECT:] TEXT | clear [PROJECT]]",
+        "pii" => "/pii [add ENTRY | remove ENTRY]",
         "find" => "/find WORDS",
         "transcript" => "/transcript WORDS",
         "copy" => "/copy [all]",
@@ -425,6 +436,16 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 question: q.trim().to_string(),
             }),
             _ => Err(format!("usage: {}", usage("ask"))),
+        },
+        "pii" => match rest.split_once(char::is_whitespace) {
+            None if rest.is_empty() => Ok(Command::Pii(PiiAction::Show)),
+            Some(("add", e)) if !e.trim().is_empty() => {
+                Ok(Command::Pii(PiiAction::Add(e.trim().to_string())))
+            }
+            Some(("remove", e)) if !e.trim().is_empty() => {
+                Ok(Command::Pii(PiiAction::Remove(e.trim().to_string())))
+            }
+            _ => Err(format!("usage: {}", usage("pii"))),
         },
         "aside" => {
             if rest.is_empty() {

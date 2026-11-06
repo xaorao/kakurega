@@ -122,3 +122,148 @@ fn pi06_hostile_input_finishes_and_stays_bounded() {
     assert!(t.elapsed().as_secs() < 5, "{:?}", t.elapsed());
     let _ = scan("\u{0}\u{ffff}😀é+@..-@");
 }
+
+mod allowlist {
+    use kk_secrets::pii::{check_entry, scan, scan_with, Allow, Kind, MAX_ENTRIES};
+
+    fn allow(entries: &[&str]) -> Allow {
+        Allow::new(&entries.iter().map(|e| e.to_string()).collect::<Vec<_>>())
+    }
+
+    fn emails(text: &str, a: &Allow) -> (usize, usize) {
+        let s = scan_with(text, a);
+        (s.found.get(&Kind::Email).copied().unwrap_or(0), s.allowed)
+    }
+
+    #[test]
+    fn pa01_an_empty_list_changes_nothing() {
+        let text = "a@b.com, 4111 1111 1111 1111, c@d.org";
+        let s = scan_with(text, &Allow::none());
+        assert_eq!(s.found, scan(text));
+        assert_eq!(s.allowed, 0);
+        assert!(Allow::none().is_empty() && !allow(&["@acme.com"]).is_empty());
+    }
+
+    #[test]
+    fn pa02_an_exact_address_a_domain_with_subdomains_and_a_pattern_are_each_kept_out_and_counted()
+    {
+        let text = "me@acme.com, dev@eu.acme.com, x@notacme.com, qa@fixtures.test, y@other.org";
+        assert_eq!(emails(text, &allow(&["me@acme.com"])), (4, 1));
+        assert_eq!(
+            emails(text, &allow(&["@acme.com"])),
+            (3, 2),
+            "the domain and its subdomains, not notacme.com"
+        );
+        assert_eq!(emails(text, &allow(&["*@fixtures.test"])), (4, 1));
+        assert_eq!(
+            emails(
+                text,
+                &allow(&["@acme.com", "*@fixtures.test", "y@other.org"])
+            ),
+            (1, 4)
+        );
+        // case does not matter, either way round
+        assert_eq!(emails("ME@ACME.COM", &allow(&["me@Acme.com"])), (0, 1));
+    }
+
+    #[test]
+    fn pa03_numbers_match_by_their_digits_whatever_the_spacing() {
+        let a = allow(&["4111111111111111"]);
+        let s = scan_with("pay 4111 1111 1111 1111 or 5555-5555-5555-4444", &a);
+        assert_eq!(s.found.get(&Kind::PaymentCard), Some(&1));
+        assert_eq!(s.allowed, 1);
+        let g = allow(&["4111*"]);
+        assert_eq!(scan_with("4111-1111-1111-1111", &g).allowed, 1);
+        // an email entry never allows a number and a number entry never an email
+        // (the digits in front of the @ are also a card number, and that one the entry does allow)
+        assert_eq!(
+            emails("4111111111111111@acme.com", &allow(&["4111111111111111"])),
+            (1, 1)
+        );
+        // a domain entry does not apply to anything but email addresses
+        assert_eq!(
+            scan_with("4111 1111 1111 1111", &allow(&["@acme.com"])).allowed,
+            0
+        );
+        // a hyphen belongs to an address and is not stripped from it
+        assert_eq!(
+            emails("my-name@acme.com", &allow(&["my-name@acme.com"])),
+            (0, 1)
+        );
+        assert_eq!(
+            emails("myname@acme.com", &allow(&["my-name@acme.com"])),
+            (1, 0)
+        );
+    }
+
+    #[test]
+    fn pa04_entries_that_would_allow_almost_everything_or_are_malformed_are_refused() {
+        for bad in [
+            "",
+            "   ",
+            "*",
+            "**",
+            "*@*",
+            "*.*",
+            "@com",
+            "@",
+            "@a.b",
+            "@-x.com",
+            "@acme..com",
+            "abc",
+            "a b\nc@x.com",
+            "tab\t@x.com",
+        ] {
+            assert!(check_entry(bad).is_err(), "{bad:?} should be refused");
+        }
+        assert!(check_entry(&"a".repeat(201)).is_err());
+        for good in [
+            "me@acme.com",
+            "@acme.com",
+            "*@fixtures.test",
+            "  trim@acme.com  ",
+            "4111111111111111",
+            "4111 1111 1111 1111",
+        ] {
+            assert!(check_entry(good).is_ok(), "{good:?}");
+        }
+        assert_eq!(check_entry("  trim@acme.com ").unwrap(), "trim@acme.com");
+        // a stored entry that fails the check is ignored, so a damaged list reports more and never less
+        let a = allow(&["*@*", "@com", "ok@acme.com"]);
+        assert_eq!(emails("x@y.org ok@acme.com", &a), (1, 1));
+    }
+
+    #[test]
+    fn pa05_hostile_patterns_and_values_finish_and_do_not_over_match() {
+        // many wildcards against a long value that nearly matches: linear work, no blow-up
+        let pat = format!("{}z@x.test", "a*".repeat(60));
+        let value = format!("{}@x.test", "a".repeat(240));
+        let a = allow(&[pat.as_str()]);
+        let t0 = std::time::Instant::now();
+        assert_eq!(emails(&format!("{value} "), &a), (1, 0));
+        assert!(t0.elapsed() < std::time::Duration::from_secs(2));
+        // a pattern is anchored at both ends
+        assert_eq!(emails("xme@acme.com", &allow(&["me@acme.com"])), (1, 0));
+        assert_eq!(
+            emails("me@acme.com.evil.org", &allow(&["me@acme.com"])),
+            (1, 0)
+        );
+        assert_eq!(
+            emails("a@b.acme.com.evil.org", &allow(&["@acme.com"])),
+            (1, 0)
+        );
+        // a value too long to be an address is never matched by a pattern, however loose
+        let long = format!("{}@acme.com", "a".repeat(600));
+        assert_eq!(emails(&long, &allow(&["*@acme.com"])), (1, 0));
+        // the list is capped
+        let many: Vec<String> = (0..MAX_ENTRIES + 50)
+            .map(|i| format!("user{i}@acme.com"))
+            .collect();
+        let a = Allow::new(&many);
+        assert_eq!(
+            scan_with(&format!("user{}@acme.com", MAX_ENTRIES + 10), &a).allowed,
+            0
+        );
+        assert_eq!(scan_with("user3@acme.com", &a).allowed, 1);
+    }
+}

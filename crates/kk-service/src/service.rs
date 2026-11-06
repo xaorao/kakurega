@@ -338,6 +338,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS agent_leases(tool TEXT PRIMARY KEY, remaining INTEGER NOT NULL, granted INTEGER NOT NULL, expires_at INTEGER NOT NULL, issued_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS usage_ledger(id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, route TEXT NOT NULL, class TEXT NOT NULL, simulated INTEGER NOT NULL, prompt_tokens INTEGER NOT NULL, measured INTEGER NOT NULL, reply_tokens INTEGER NOT NULL, elapsed_ms INTEGER NOT NULL);
              CREATE INDEX IF NOT EXISTS usage_ledger_at ON usage_ledger(at);
+             CREATE TABLE IF NOT EXISTS pii_allow(entry TEXT PRIMARY KEY, added_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS owner_instructions(scope TEXT PRIMARY KEY, text TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);",
         )
@@ -1838,6 +1839,60 @@ const MAX_INSTRUCTION_PROJECTS: i64 = 30;
 struct InstructionBody {
     project: Option<String>,
     text: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PiiAllowBody {
+    #[serde(default)]
+    add: Option<String>,
+    #[serde(default)]
+    remove: Option<String>,
+}
+
+async fn pii_allow_get(axum::Extension(svc): Svc) -> Response {
+    Json(json!({
+        "entries": svc.pii_allow_entries().iter().map(|(e, at)| json!({"entry": e, "added_at": at})).collect::<Vec<_>>(),
+        "max_entries": kk_secrets::pii::MAX_ENTRIES,
+        "note": "Values that match are not counted as personal data in a release notice. The notice says how many were left out. This changes only the notice: nothing is sent or withheld differently.",
+    }))
+    .into_response()
+}
+
+/// Adds or removes one allowlist entry. Only the owner's browser or terminal session reaches this.
+async fn pii_allow_set(axum::Extension(svc): Svc, Json(b): Json<PiiAllowBody>) -> Response {
+    let refuse = |why: &str| error(StatusCode::UNPROCESSABLE_ENTITY, "PII_ALLOW_REFUSED", why);
+    let (entry, add) = match (&b.add, &b.remove) {
+        (Some(e), None) => (e.as_str(), true),
+        (None, Some(e)) => (e.as_str(), false),
+        _ => return refuse("give exactly one of add or remove"),
+    };
+    let entry = if add {
+        match kk_secrets::pii::check_entry(entry) {
+            Ok(e) => e,
+            Err(why) => return refuse(why),
+        }
+    } else {
+        entry.trim().to_string()
+    };
+    match svc.pii_allow_edit(&entry, add) {
+        Ok(changed) => {
+            if changed {
+                svc.log_event(
+                    if add {
+                        "pii_allow.added"
+                    } else {
+                        "pii_allow.removed"
+                    },
+                    "owner",
+                    &[("entries", svc.pii_allow_entries().len().into())],
+                );
+            }
+            Json(json!({"changed": changed, "entries": svc.pii_allow_entries().len()}))
+                .into_response()
+        }
+        Err(e) => refuse(&e),
+    }
 }
 
 async fn instructions_get(axum::Extension(svc): Svc) -> Response {
@@ -4615,6 +4670,57 @@ impl Service {
         Ok(true)
     }
 
+    /// The owner's list of values that are not personal data, as stored.
+    fn pii_allow_entries(&self) -> Vec<(String, i64)> {
+        let store = self.store.lock().expect("lock");
+        let c = store.connection();
+        let Ok(mut st) =
+            c.prepare("SELECT entry, added_at FROM pii_allow ORDER BY added_at, entry")
+        else {
+            return vec![];
+        };
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map(|it| it.flatten().collect())
+            .unwrap_or_default()
+    }
+
+    fn pii_allow(&self) -> kk_secrets::pii::Allow {
+        let list: Vec<String> = self
+            .pii_allow_entries()
+            .into_iter()
+            .map(|(e, _)| e)
+            .collect();
+        kk_secrets::pii::Allow::new(&list)
+    }
+
+    /// Adds (true) or removes (false) one entry. Returns whether the list changed.
+    fn pii_allow_edit(&self, entry: &str, add: bool) -> Result<bool, String> {
+        let store = self.store.lock().expect("lock");
+        let c = store.connection();
+        if !add {
+            let n = c
+                .execute("DELETE FROM pii_allow WHERE entry = ?1", [entry])
+                .map_err(|e| e.to_string())?;
+            return Ok(n > 0);
+        }
+        let count: i64 = c
+            .query_row("SELECT count(*) FROM pii_allow", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        if count as usize >= kk_secrets::pii::MAX_ENTRIES {
+            return Err(format!(
+                "the list holds at most {} entries",
+                kk_secrets::pii::MAX_ENTRIES
+            ));
+        }
+        let n = c
+            .execute(
+                "INSERT OR IGNORE INTO pii_allow(entry, added_at) VALUES (?1, ?2)",
+                kk_vault::rusqlite::params![entry, now()],
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(n > 0)
+    }
+
     /// The block of standing instructions a conversation gets, or None when the owner wrote none that apply.
     fn instruction_block(&self, project: Option<&str>) -> Option<String> {
         let (global, projects) = self.instructions_all();
@@ -6103,20 +6209,39 @@ async fn fix_apply(
     Json(json!({"applied": true, "file": f.file, "files": plan.iter().map(|p| p.0.clone()).collect::<Vec<_>>(), "sha256_after": after_first})).into_response()
 }
 
-fn draft_json(s: &Snapshot) -> Value {
+fn draft_json(s: &Snapshot, allow: &kk_secrets::pii::Allow) -> Value {
     match s.release_draft() {
-        Some(d) => json!({
-            "available": true, "digest": d.digest, "recipient": d.recipient, "policy_version": d.policy_version, "expires": d.expires,
-            "files": d.files.iter().map(|(n, b)| json!({"name": n, "bytes": b.len(), "sha256": kk_evidence::capsule::sha256_hex(b), "text": if n.ends_with(".txt") || n.ends_with(".py") || n.ends_with(".json") { Value::String(String::from_utf8_lossy(b).into_owned()) } else { Value::Null }})).collect::<Vec<_>>(),
-            "removed": d.removed.iter().map(|x| json!({"what": x.what, "why": x.why})).collect::<Vec<_>>(),
-            "not_confirmed": d.not_confirmed.iter().map(|(t, w)| json!({"title": t, "why": w})).collect::<Vec<_>>(),
-            // personal data seen in the exact bytes being released, counts only; a notice for the owner, never a block
-            "personal_data": d.files.iter().filter_map(|(n, b)| {
-                let found = kk_secrets::pii::scan(&String::from_utf8_lossy(b));
-                (!found.is_empty()).then(|| json!({"file": n, "found": kk_secrets::pii::describe(&found)}))
+        Some(d) => {
+            let scans: Vec<(String, kk_secrets::pii::Scan)> = d
+                .files
+                .iter()
+                .map(|(n, b)| {
+                    (
+                        n.clone(),
+                        kk_secrets::pii::scan_with(&String::from_utf8_lossy(b), allow),
+                    )
+                })
+                .collect();
+            let hidden: usize = scans.iter().map(|(_, x)| x.allowed).sum();
+            let mut not_established = kk_review::release::standard_not_established();
+            if hidden > 0 {
+                not_established.push(format!(
+                    "{hidden} value(s) that look like personal data were not counted above because they match your own allowlist. The allowlist is yours; this release was not checked for them."
+                ));
+            }
+            json!({
+                "available": true, "digest": d.digest, "recipient": d.recipient, "policy_version": d.policy_version, "expires": d.expires,
+                "files": d.files.iter().map(|(n, b)| json!({"name": n, "bytes": b.len(), "sha256": kk_evidence::capsule::sha256_hex(b), "text": if n.ends_with(".txt") || n.ends_with(".py") || n.ends_with(".json") { Value::String(String::from_utf8_lossy(b).into_owned()) } else { Value::Null }})).collect::<Vec<_>>(),
+                "removed": d.removed.iter().map(|x| json!({"what": x.what, "why": x.why})).collect::<Vec<_>>(),
+                "not_confirmed": d.not_confirmed.iter().map(|(t, w)| json!({"title": t, "why": w})).collect::<Vec<_>>(),
+                // personal data seen in the exact bytes being released, counts only; a notice for the owner, never a block
+            "personal_data": scans.iter().filter(|(_, x)| !x.found.is_empty()).map(|(n, x)| {
+                json!({"file": n, "found": kk_secrets::pii::describe(&x.found)})
             }).collect::<Vec<_>>(),
-            "not_established": kk_review::release::standard_not_established(),
-        }),
+                "personal_data_allowed": hidden,
+                "not_established": not_established,
+            })
+        }
         None => {
             json!({"available": false, "reason": s.rejection.clone().unwrap_or_default(), "not_confirmed": s.findings.iter().map(|f| json!({"title": f.title, "why": f.status})).collect::<Vec<_>>()})
         }
@@ -6127,7 +6252,7 @@ async fn release(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Res
     match snap_of(&svc, &id) {
         Err(r) => r,
         Ok(s) => {
-            let mut d = draft_json(&s);
+            let mut d = draft_json(&s, &svc.pii_allow());
             d["disclosure"] = svc.disclosure_json(&id, &s).0;
             Json(d).into_response()
         }
@@ -6441,7 +6566,7 @@ async fn admin_show(axum::Extension(svc): Svc, UrlPath(aid): UrlPath<String>) ->
     match snap_of(&svc, &job) {
         Err(r) => r,
         Ok(s) => {
-            let mut d = draft_json(&s);
+            let mut d = draft_json(&s, &svc.pii_allow());
             d["approval"] = json!(aid);
             d["statement"] = svc.statement_json(&aid);
             d["statement_canonical"] = svc.statement_canonical(&aid);
@@ -6961,6 +7086,7 @@ impl Extension for Routes {
                 "/api/instructions",
                 get(instructions_get).post(instructions_set),
             )
+            .route("/api/pii-allow", get(pii_allow_get).post(pii_allow_set))
             .route("/api/usage", get(usage_summary))
             .route("/api/exports/transcript", post(transcript_export))
             .route("/api/memories/sources", get(memory_sources))

@@ -3846,3 +3846,37 @@ mod linear_mode {
         assert!(mode_text(&loading).unwrap().contains("Loading"));
     }
 }
+
+#[test]
+fn tu62_pii_lists_adds_and_removes_through_the_service_and_reports_what_happened() {
+    let mut app = booted();
+    let r = enter(&mut app, "/pii");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].body.is_none()),
+        ("/api/pii-allow", true)
+    );
+    app.handle(ok(&r[0], 200, json!({"entries": [], "max_entries": 200})));
+    assert!(text(&app).contains("Nothing is on your list"));
+    let r = enter(&mut app, "/pii add @acme.com");
+    assert_eq!(r[0].body.as_ref().unwrap(), &json!({"add": "@acme.com"}));
+    app.handle(ok(&r[0], 200, json!({"changed": true, "entries": 1})));
+    assert!(text(&app).contains("The list now has 1"));
+    let r = enter(&mut app, "/pii remove @acme.com");
+    assert_eq!(r[0].body.as_ref().unwrap(), &json!({"remove": "@acme.com"}));
+    app.handle(ok(&r[0], 200, json!({"changed": false, "entries": 0})));
+    assert!(text(&app).contains("No change"));
+    let r = enter(&mut app, "/pii add *");
+    app.handle(ok(&r[0], 422, json!({"error": {"code": "PII_ALLOW_REFUSED", "message": "an entry needs at least four letters"}})));
+    assert!(text(&app).contains("at least four letters"));
+    let r = enter(&mut app, "/pii");
+    app.handle(ok(
+        &r[0],
+        200,
+        json!({"entries": [{"entry": "a@b.com\u{1b}[2J", "added_at": 1}]}),
+    ));
+    assert!(!text(&app).contains('\u{1b}') && text(&app).contains("1 value(s)"));
+    for bad in ["/pii add", "/pii remove", "/pii wipe x", "/pii add"] {
+        assert!(enter(&mut app, bad).is_empty(), "{bad}");
+        assert!(text(&app).contains("usage: /pii"));
+    }
+}

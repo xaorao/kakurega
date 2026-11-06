@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 135, PARTIAL 88, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 9. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 135, PARTIAL 89, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 8. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -244,7 +244,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | F-S10 | Live validation of found credentials | EXCLUDE: validation sends the secret to a third party, breaking the privacy promise | EXCLUDED | sending a secret to a third party |
 | F-P1 | Pattern + checksum + context recognisers | ADAPT the checksum/invalidation logic and score-plus-context model into Rust for cards, IB | BUILT | Luhn and Verhoeff in kk-secrets pii.rs (tests pii) |
 | F-P2 | Name/address detection (NER) | IMPROVE later: only through a local model, or the TEE endpoint after the existing route/at | LATER | needs a local or attested model |
-| F-P3 | PII allowlist owned by the operator | ADAPT idea: owner-controlled list recorded in the manifest (an entry is evidence in the ca | OWED-L | no owner-controlled allowlist recorded in the manifest |
+| F-P3 | PII allowlist owned by the operator | ADAPT idea: owner-controlled list recorded in the manifest (an entry is evidence in the ca | PARTIAL | owner allowlist for the personal-data notice: /api/pii-allow + /pii, strict entries, counted not silent; Privateer piiAllow read in full; no web editor, capsule does not carry the list (secret-detection.md) |
 | F-P4 | Silent auto-redaction | EXCLUDE: a bypass of approval; false positives become silent rewrites the model reads (Pri | EXCLUDED | would bypass approval |
 | F-I1 | Value-level capabilities with readers | IMPROVE inside the same lattice: add an optional per-compartment recipient allow-set that  | LATER | label lattice already in place; per-compartment readers later |
 | F-I2 | Quarantined parsing | BUILD option: for documents, parse with the deterministic Docling path and give the agent  | LATER | offline-parsing.md; sandboxed parser option not adopted |

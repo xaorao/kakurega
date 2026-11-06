@@ -106,6 +106,8 @@ enum Intent {
     HistoryLoad,
     HistorySave,
     Aside,
+    PiiShow,
+    PiiEdit,
     HistoryClear,
     Proof,
     GatewayProof,
@@ -1918,6 +1920,28 @@ impl App {
                 self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id, review: None, choose: None, copy: None, apply: None, undo: false, web: None });
                 Vec::new()
             }
+            Command::Pii(a) => {
+                use crate::cmd::PiiAction;
+                match a {
+                    PiiAction::Show => {
+                        vec![self.req(Intent::PiiShow, false, Method::Get, "/api/pii-allow", None)]
+                    }
+                    PiiAction::Add(e) => vec![self.req(
+                        Intent::PiiEdit,
+                        false,
+                        Method::Post,
+                        "/api/pii-allow",
+                        Some(json!({"add": e})),
+                    )],
+                    PiiAction::Remove(e) => vec![self.req(
+                        Intent::PiiEdit,
+                        false,
+                        Method::Post,
+                        "/api/pii-allow",
+                        Some(json!({"remove": e})),
+                    )],
+                }
+            }
             Command::Aside(text) => {
                 if self.chat_waiting {
                     self.say(
@@ -3325,6 +3349,47 @@ impl App {
                         .into(),
                 );
                 self.push(Kind::Info, Some("Read"), lines);
+                Vec::new()
+            }
+            Intent::PiiShow => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let list: Vec<String> = body["entries"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|e| format!("  {}", clean(e["entry"].as_str().unwrap_or(""))))
+                    .collect();
+                let mut lines = if list.is_empty() {
+                    vec!["Nothing is on your list: every value that looks like personal data is counted in release notices.".to_string()]
+                } else {
+                    let mut v = vec![format!(
+                        "{} value(s) you said are not personal data:",
+                        list.len()
+                    )];
+                    v.extend(list);
+                    v
+                };
+                lines.push("Add one with /pii add ENTRY (an address, @domain.com, or a pattern with *); take one off with /pii remove ENTRY. This changes only the notice before a release; nothing is sent or withheld differently.".into());
+                self.push(Kind::Info, Some("Personal data allowlist"), lines);
+                Vec::new()
+            }
+            Intent::PiiEdit => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                } else if body["changed"] == true {
+                    self.say(
+                        Kind::Ok,
+                        format!("Done. The list now has {} entr(ies).", body["entries"]),
+                    );
+                } else {
+                    self.say(
+                        Kind::Info,
+                        "No change: that entry was already there, or was not on the list.",
+                    );
+                }
                 Vec::new()
             }
             Intent::Aside => {

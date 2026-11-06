@@ -10829,3 +10829,188 @@ fn sv109_notes_given_to_the_model_count_as_used_and_a_chat_that_found_none_recor
         "a second use updates the same record"
     );
 }
+
+#[test]
+fn sv110_the_owners_allowlist_keeps_named_values_out_of_the_release_notice_and_says_how_many() {
+    let (root, repo) = repo_copy("piiallow");
+    let session = repo.join("payments/auth/session.py");
+    let mut text = std::fs::read_to_string(&session).unwrap();
+    text.push_str("\n# contact ops@acme-payments.com or ops2@acme-payments.com, test card 4111 1111 1111 1111\n");
+    std::fs::write(&session, text).unwrap();
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let anon = Web::new(c.addr);
+    assert_eq!(anon.get("/api/pii-allow").0, 401);
+    assert_eq!(
+        anon.post("/api/pii-allow", json!({"add": "ops@acme-payments.com"}))
+            .0,
+        401
+    );
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (st, list) = w.get("/api/pii-allow");
+    assert_eq!((st, list["entries"].clone()), (200, json!([])));
+    // refusals: nothing that allows almost everything, malformed bodies, unknown fields, both fields
+    for bad in [
+        json!({"add": "*"}),
+        json!({"add": "*@*"}),
+        json!({"add": "@com"}),
+        json!({"add": ""}),
+        json!({"add": "a@b.com", "remove": "a@b.com"}),
+        json!({}),
+        json!({"add": "ops@acme-payments.com", "surprise": 1}),
+    ] {
+        let (st, r) = w.post("/api/pii-allow", bad.clone());
+        assert!(st == 422 || st == 400, "{bad}: {st} {r}");
+    }
+    assert_eq!(w.get("/api/pii-allow").1["entries"], json!([]));
+    let job = {
+        let (_, s) = w.post(
+            "/api/jobs",
+            json!({"repo": repo.to_string_lossy(), "recipient": "acme-audit"}),
+        );
+        let job = s["id"].as_str().unwrap().to_string();
+        wait_for(&w, &job, &["ready"]);
+        job
+    };
+    let notice = |w: &Web| {
+        let (_, rel) = w.get(&format!("/api/jobs/{job}/release"));
+        let found = rel["personal_data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["file"] == "sample-1.json")
+            .map(|x| x["found"].as_str().unwrap().to_string());
+        (
+            found,
+            rel["personal_data_allowed"].as_u64().unwrap(),
+            rel["not_established"].to_string(),
+        )
+    };
+    let (found, hidden, ne) = notice(&w);
+    assert_eq!(
+        (found.as_deref(), hidden),
+        (Some("2 email addresses, 1 payment card number"), 0)
+    );
+    assert!(!ne.contains("allowlist"));
+    // allow the domain and the test card
+    assert_eq!(
+        w.post("/api/pii-allow", json!({"add": "@acme-payments.com"}))
+            .1["changed"],
+        true
+    );
+    assert_eq!(
+        w.post("/api/pii-allow", json!({"add": "4111111111111111"}))
+            .1["changed"],
+        true
+    );
+    assert_eq!(
+        w.post("/api/pii-allow", json!({"add": "@acme-payments.com"}))
+            .1["changed"],
+        false,
+        "adding twice changes nothing"
+    );
+    let (found, hidden, ne) = notice(&w);
+    assert_eq!(
+        (found, hidden),
+        (None, 3),
+        "everything on the list is counted as left out, not silently dropped"
+    );
+    assert!(
+        ne.contains("3 value(s)") && ne.contains("allowlist"),
+        "{ne}"
+    );
+    // removing one brings that kind back
+    assert_eq!(
+        w.post("/api/pii-allow", json!({"remove": "4111111111111111"}))
+            .1["changed"],
+        true
+    );
+    assert_eq!(
+        w.post("/api/pii-allow", json!({"remove": "4111111111111111"}))
+            .1["changed"],
+        false
+    );
+    let (found, hidden, _) = notice(&w);
+    assert_eq!(
+        (found.as_deref(), hidden),
+        (Some("1 payment card number"), 2)
+    );
+    // the list does not stop a release from being offered, and the values never reach the log
+    assert_eq!(
+        w.get(&format!("/api/jobs/{job}/release")).1["available"],
+        true
+    );
+    let log = w.get("/api/log").1.to_string();
+    assert!(
+        log.contains("pii_allow.added") && !log.contains("acme-payments.com"),
+        "{log}"
+    );
+    // the list holds at most 200 entries
+    let have = w.get("/api/pii-allow").1["entries"]
+        .as_array()
+        .unwrap()
+        .len();
+    for i in have..200 {
+        assert_eq!(
+            w.post(
+                "/api/pii-allow",
+                json!({"add": format!("user{i}@fixtures.test")})
+            )
+            .0,
+            200
+        );
+    }
+    let (st, r) = w.post(
+        "/api/pii-allow",
+        json!({"add": "one-too-many@fixtures.test"}),
+    );
+    assert_eq!(st, 422, "{r}");
+    assert_eq!(
+        w.get("/api/pii-allow").1["entries"]
+            .as_array()
+            .unwrap()
+            .len(),
+        200
+    );
+    for i in have..200 {
+        w.post(
+            "/api/pii-allow",
+            json!({"remove": format!("user{i}@fixtures.test")}),
+        );
+    }
+    // it survives a restart
+    drop(c);
+    drop(svc);
+    let svc2 = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c2 = start(Options {
+        extension: Arc::new(Routes(svc2.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w2 = Web::new(c2.addr);
+    w2.pair(&c2.security.issue_pairing_code());
+    assert_eq!(
+        w2.get("/api/pii-allow").1["entries"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}

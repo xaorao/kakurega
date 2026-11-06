@@ -77,10 +77,30 @@ impl Kind {
 
 /// How many of each kind of personal data the text seems to contain.
 pub fn scan(text: &str) -> BTreeMap<Kind, usize> {
+    scan_with(text, &Allow::none()).found
+}
+
+/// What a scan found, and how many matches the owner's own list kept out of the count.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Scan {
+    pub found: BTreeMap<Kind, usize>,
+    pub allowed: usize,
+}
+
+/// `scan`, leaving out the values the owner said are not personal data. The number left out is returned, so a notice can say
+/// that the list was used instead of silently reporting less.
+pub fn scan_with(text: &str, allow: &Allow) -> Scan {
     let mut out: BTreeMap<Kind, usize> = BTreeMap::new();
-    let mut add = |k: Kind| *out.entry(k).or_insert(0) += 1;
-    for _ in emails(text) {
-        add(Kind::Email);
+    let mut allowed = 0usize;
+    let mut add = |k: Kind, value: &str| {
+        if allow.permits(k, value) {
+            allowed += 1;
+        } else {
+            *out.entry(k).or_insert(0) += 1;
+        }
+    };
+    for (s, e) in emails(text) {
+        add(Kind::Email, &text[s..e]);
     }
     let bytes = text.as_bytes();
     let n = bytes.len();
@@ -105,7 +125,7 @@ pub fn scan(text: &str) -> BTreeMap<Kind, usize> {
                 }
             });
             if let Some((k, end)) = found {
-                add(k);
+                add(k, &text[i..end]);
                 i = end;
             } else {
                 // nothing fit: move past the first group only, so a number that follows it is still looked at
@@ -122,9 +142,9 @@ pub fn scan(text: &str) -> BTreeMap<Kind, usize> {
             if after_ok {
                 let word = &text[i..j];
                 if is_pan(word) {
-                    add(Kind::IndianPan);
+                    add(Kind::IndianPan, word);
                 } else if is_iban(word) {
-                    add(Kind::Iban);
+                    add(Kind::Iban, word);
                 }
             }
             i = j.max(i + 1);
@@ -132,7 +152,159 @@ pub fn scan(text: &str) -> BTreeMap<Kind, usize> {
         }
         i += 1;
     }
-    out
+    Scan {
+        found: out,
+        allowed,
+    }
+}
+
+/// The most entries an allowlist may hold, and the longest entry.
+pub const MAX_ENTRIES: usize = 200;
+pub const MAX_ENTRY_CHARS: usize = 200;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Pattern {
+    /// `@acme.com`: an email address at that domain or any subdomain of it.
+    Domain(String),
+    /// Anything with a `*` in it, which stands for any run of characters.
+    Glob(Vec<char>),
+    /// The value in lower case, and the same with spaces and dashes taken out (for numbers).
+    Exact(String, String),
+}
+
+/// The values the owner has said are not personal data (a fixture mailbox, a company domain, a test card number). Each entry
+/// is `me@acme.com` (that value), `*@fixtures.test` (a pattern, `*` stands for any text) or `@acme.com` (that domain and its
+/// subdomains, for email addresses). Comparison ignores case, and for numbers ignores spaces and dashes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Allow {
+    patterns: Vec<Pattern>,
+}
+
+/// Checks one entry and returns it as it will be kept (trimmed). A list that allowed everything would switch the notice off
+/// without saying so, so an entry must carry at least four letters or digits of its own, and a domain must be a real one.
+pub fn check_entry(raw: &str) -> Result<String, &'static str> {
+    let e = raw.trim();
+    if e.is_empty() {
+        return Err("an empty entry matches nothing");
+    }
+    if e.chars().count() > MAX_ENTRY_CHARS {
+        return Err("an entry is at most 200 characters");
+    }
+    if e.chars()
+        .any(|c| c.is_control() || c.is_whitespace() && c != ' ')
+    {
+        return Err("an entry has no control characters or line breaks");
+    }
+    if e.chars().filter(|c| c.is_alphanumeric()).count() < 4 {
+        return Err("an entry needs at least four letters or digits of its own, or it would allow almost everything");
+    }
+    if let Some(domain) = e.strip_prefix('@') {
+        let labels: Vec<&str> = domain.split('.').collect();
+        let ok = labels.len() >= 2
+            && labels.iter().all(|l| {
+                !l.is_empty()
+                    && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                    && !l.starts_with('-')
+                    && !l.ends_with('-')
+            })
+            && labels
+                .last()
+                .is_some_and(|t| t.len() >= 2 && t.bytes().all(|b| b.is_ascii_alphabetic()));
+        if !ok {
+            return Err("a domain entry is @ followed by a full domain such as @acme.com");
+        }
+    }
+    Ok(e.to_string())
+}
+
+fn fold(value: &str, digits_only_separators: bool) -> String {
+    value
+        .chars()
+        .filter(|c| !(digits_only_separators && (*c == ' ' || *c == '-')))
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn glob_match(pat: &[char], text: &[char]) -> bool {
+    // iterative wildcard match: no recursion, no backtracking blow-up (at most pat * text steps)
+    let (mut p, mut t) = (0usize, 0usize);
+    let (mut star, mut mark) = (None::<usize>, 0usize);
+    while t < text.len() {
+        if p < pat.len() && pat[p] == '*' {
+            star = Some(p);
+            mark = t;
+            p += 1;
+        } else if p < pat.len() && pat[p] == text[t] {
+            p += 1;
+            t += 1;
+        } else if let Some(sp) = star {
+            p = sp + 1;
+            mark += 1;
+            t = mark;
+        } else {
+            return false;
+        }
+    }
+    while p < pat.len() && pat[p] == '*' {
+        p += 1;
+    }
+    p == pat.len()
+}
+
+impl Allow {
+    pub fn none() -> Allow {
+        Allow::default()
+    }
+
+    /// Builds the list from stored entries. An entry that fails `check_entry` is left out, so a damaged list can only make
+    /// the notice say more, never less.
+    pub fn new(entries: &[String]) -> Allow {
+        let patterns = entries
+            .iter()
+            .take(MAX_ENTRIES)
+            .filter_map(|raw| check_entry(raw).ok())
+            .map(|e| {
+                if let Some(d) = e.strip_prefix('@') {
+                    Pattern::Domain(d.to_ascii_lowercase())
+                } else if e.contains('*') {
+                    Pattern::Glob(fold(&e, false).chars().collect())
+                } else {
+                    Pattern::Exact(fold(&e, false), fold(&e, true))
+                }
+            })
+            .collect();
+        Allow { patterns }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.patterns.is_empty()
+    }
+
+    /// Whether the owner said this value is not personal data.
+    pub fn permits(&self, kind: Kind, value: &str) -> bool {
+        if self.patterns.is_empty() || value.len() > 512 {
+            return false;
+        }
+        let is_email = kind == Kind::Email;
+        let plain = fold(value, !is_email);
+        let chars: Vec<char> = fold(value, false).chars().collect();
+        self.patterns.iter().any(|p| match p {
+            Pattern::Domain(d) => {
+                is_email
+                    && plain
+                        .rsplit_once('@')
+                        .is_some_and(|(_, host)| host == d || host.ends_with(&format!(".{d}")))
+            }
+            Pattern::Glob(g) => glob_match(g, &chars),
+            Pattern::Exact(lower, stripped) => {
+                if is_email {
+                    *lower == plain
+                } else {
+                    *stripped == plain
+                }
+            }
+        })
+    }
 }
 
 /// "2 email addresses, 1 payment card number" for a notice line; empty when there is nothing to say.
