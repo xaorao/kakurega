@@ -296,6 +296,39 @@ fn load_bound(dir: &Path) -> Option<i64> {
         .and_then(|v| v["chat"].as_i64())
 }
 
+/// How long the bridge waits after Telegram could not be reached or answered with an error: 2 s, doubling to 60 s, with a
+/// fifth either way so many bridges do not return together, back to the start after one good poll.
+#[derive(Default)]
+struct Backoff {
+    failures: usize,
+}
+
+impl Backoff {
+    fn failed(&mut self, jitter: f64) -> Duration {
+        self.failures += 1;
+        kk_route::retry::Retry {
+            retries: usize::MAX,
+            first_delay: Duration::from_secs(2),
+            max_delay: Duration::from_secs(60),
+        }
+        .delay(self.failures, jitter)
+    }
+
+    fn succeeded(&mut self) {
+        self.failures = 0;
+    }
+}
+
+fn jitter() -> f64 {
+    f64::from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0)
+            % 1000,
+    ) / 1000.0
+}
+
 /// Remembers which chat the bridge is bound to: whole or not at all, readable only by the owner.
 fn save_bound(dir: &Path, chat: i64) {
     let _ = kk_vault::durable::write_atomic(
@@ -413,6 +446,7 @@ pub fn run(args: &[String]) -> u8 {
     let mut tracked: BTreeMap<String, i64> = BTreeMap::new();
     let mut last_poll = Instant::now() - Duration::from_secs(10);
     let mut status = Status::default();
+    let mut backoff = Backoff::default();
     let mut status_written = Instant::now() - Duration::from_secs(60);
     loop {
         reload_code(&mut bridge);
@@ -441,6 +475,7 @@ pub fn run(args: &[String]) -> u8 {
         let url = format!("{api}/bot{token}/getUpdates?timeout=2&offset={offset}&allowed_updates=%5B%22message%22%5D");
         match agent.get(&url).call() {
             Ok(mut r) if r.status().as_u16() == 200 => {
+                backoff.succeeded();
                 status.last_poll_ok = Some(unix_now());
                 if status.last_error == "Telegram is not reachable" {
                     status.last_error.clear();
@@ -468,7 +503,7 @@ pub fn run(args: &[String]) -> u8 {
             }
             Ok(r) => {
                 eprintln!("telegram answered {}", r.status());
-                std::thread::sleep(Duration::from_secs(3));
+                std::thread::sleep(backoff.failed(jitter()));
             }
             Err(e) => {
                 status.last_error = "Telegram is not reachable".into();
@@ -476,7 +511,7 @@ pub fn run(args: &[String]) -> u8 {
                     "telegram is not reachable: {}",
                     scrub(&e.to_string(), &token)
                 );
-                std::thread::sleep(Duration::from_secs(3));
+                std::thread::sleep(backoff.failed(jitter()));
             }
         }
         if status_written.elapsed() >= Duration::from_secs(30) {
@@ -834,6 +869,23 @@ impl Outbox {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tg61_polling_failures_wait_longer_each_time_up_to_a_minute_and_a_good_poll_starts_over() {
+        let mut b = Backoff::default();
+        let waits: Vec<u64> = (0..8).map(|_| b.failed(0.5).as_secs()).collect();
+        assert_eq!(waits, [2, 4, 8, 16, 32, 60, 60, 60]);
+        b.succeeded();
+        assert_eq!(b.failed(0.5).as_secs(), 2);
+        assert_eq!(Backoff::default().failed(0.0).as_millis(), 1600);
+        assert_eq!(Backoff::default().failed(1.0).as_millis(), 2400);
+        let mut many = Backoff { failures: 100_000 };
+        assert_eq!(
+            many.failed(0.5).as_secs(),
+            60,
+            "a long outage does not overflow"
+        );
+    }
+
     #[test]
     fn tg60_the_bound_chat_is_saved_whole_and_for_the_owner_only() {
         use std::os::unix::fs::PermissionsExt;

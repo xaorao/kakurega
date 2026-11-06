@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 132, PARTIAL 65, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 35. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 132, PARTIAL 66, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 34. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -91,7 +91,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | C-9 | Owner vs member roles | EXCLUDE (no write powers exist to scope) | EXCLUDED | EXCLUDE (no write powers exist to scope) |
 | C-10 | Polling vs webhook | Keep polling for local mode (no public endpoint, which is the whole local-first point). AD | KEPT | polling, no public endpoint |
 | C-11 | Real long poll | IMPROVE: `timeout=25`, client timeout 35; keep a separate notification tick so event laten | OWED-L | getUpdates uses timeout=2; a 25 s long poll would cut requests |
-| C-12 | Reconnection backoff | IMPROVE: 2 s start, x2, cap 60 s, jitter, reset on success. OpenClaw's 30 s start is too s | OWED-L | fixed 10 s wait on a 409; outbox backs off exponentially; polling errors have no jitter or cap |
+| C-12 | Reconnection backoff | IMPROVE: 2 s start, x2, cap 60 s, jitter, reset on success. OpenClaw's 30 s start is too s | PARTIAL | polling errors back off 2 s doubling to 60 s with jitter and reset on success (tg61); the fixed 10 s wait on a 409 is kept; OpenClaw source for this row not re-read in this step: NOT READ |
 | C-13 | 409 conflict and stale webhook | ADAPT the behaviour: `deleteWebhook` at start, on 409 re-clear and back off, after N tries | PARTIAL | 409 reported and retried; deleteWebhook only when asked in doctor (code, no named test) |
 | C-14 | Token rejected (401/404) | BUILD: `getMe` at start; 401 -> stop retrying, report `blocked: token rejected` in health  | BUILT | 401 stops the bridge with a clear message; doctor getMe (code; no named test) |
 | C-15 | Stall watchdog | ADAPT in small form: a hung request is already bounded by the client timeout; add "no succ | KEPT | client timeouts already bound a hung request |
