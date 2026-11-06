@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 135, PARTIAL 79, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 18. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 135, PARTIAL 80, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 17. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -278,7 +278,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | F-X3 | Origin pinning | KEEP | KEPT | pinned origin |
 | F-X4 | Port discovery | IMPROVE with native messaging? EXCLUDE: Ghast-style `nativeMessaging` widens the permissio | EXCLUDED | no native messaging |
 | F-X5 | Page content capture beyond a selection | Not adopted; any addition needs `activeTab` and an explicit click. Decide only after readi | EXCLUDED | selection only |
-| F-X6 | MV3 hardening review | Search and read Chrome extension security guidance before store submission | OWED-L | review of Chrome extension security guidance not recorded |
+| F-X6 | MV3 hardening review | Search and read Chrome extension security guidance before store submission | PARTIAL | Chrome MV3 security guidance read (two pages, partly) and the extension checked item by item against it, all already enforced by tests ex06-ex09; rest of Stay secure and store policies not read (extension.md) |
 
 ## Matrix G: Ghast whole product
 
