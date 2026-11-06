@@ -326,3 +326,11 @@ button.linklike:hover { color: var(--ink); }
 .welcome { margin-bottom: 24px; }
 .welcome .choice { display: flex; gap: 8px; align-items: center; }
 .welcome fieldset { border: 0; padding: 0; margin: 0; }
+
+/* code colours: each is also a different weight or slant, so colour is never the only signal */
+.tok-kw { color: var(--cipher-text); font-weight: 600; }
+.tok-str { color: var(--redline); }
+.tok-num { color: var(--stone); text-decoration: underline dotted; text-underline-offset: 3px; }
+.tok-com { color: var(--graphite); font-style: italic; }
+.tok-fn { font-weight: 600; }
+.tok-key { color: var(--cipher-text); }

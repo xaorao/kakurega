@@ -266,6 +266,14 @@ try {
   await page.getByText("Confirmed by the kernel").waitFor();
   check("finding is confirmed by the kernel", true);
   check("the finding says which language its check ran in", (await page.getByText("Reproducer the kernel ran (Python)").count()) === 1);
+  await page.getByText("Reproducer the kernel ran (Python)").click();
+  const repro = page.locator("details[open] pre code").first();
+  await repro.waitFor();
+  const reproText = await repro.innerText();
+  check("the reproducer is coloured by kind (keywords, strings, calls) and its text is exactly the code", (await repro.locator(".tok-kw").count()) >= 2 && (await repro.locator(".tok-str").count()) >= 1 && (await repro.locator(".tok-fn").count()) >= 1 && reproText.includes("from payments.auth import session") && reproText.includes("print('CONTROL_OK')"));
+  check("the colours add no element but spans, and no inline style", (await repro.locator(":scope *:not(span)").count()) === 0 && (await repro.locator("[style]").count()) === 0);
+  await axeCheck(page, "findings with a coloured reproducer");
+  await page.screenshot({ path: join(shots, "07b-coloured-reproducer.png") });
 
   await page.getByRole("tab", { name: "Protection" }).click();
   await page.getByText("possible prompt injection").first().waitFor();

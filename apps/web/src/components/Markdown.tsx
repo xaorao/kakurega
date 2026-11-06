@@ -1,3 +1,4 @@
+import { Code } from "./Code";
 import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import { parse, type Block, type Inline } from "../markdown";
 import { t } from "../i18n";
@@ -39,7 +40,7 @@ function CodeBlock(props: { lang: string; v: string }) {
   return (
     <div class="codeblock">
       <div class="actions"><span class="muted">{props.lang || t("md.code")}</span><button type="button" class="link" onClick={copy}>{copied() ? t("md.copied") : t("md.copy")}</button></div>
-      <pre tabindex="0"><code>{props.v}</code></pre>
+      <pre tabindex="0"><Code lang={props.lang} text={props.v} /></pre>
     </div>
   );
 }

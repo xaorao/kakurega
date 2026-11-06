@@ -43,3 +43,5 @@ Pattern rules (`crates/kk-review/src/pattern.rs`, `rules/patterns.yml`): Semgrep
 Attaching files in the web workspace (`apps/web/src/attach.ts`, `screens/Chat.tsx`): the ideas of accepting a file drop anywhere on the page, showing a drop target only for drags that carry files, clearing it on Escape or when the pointer leaves the window, pasting files from the clipboard, and not attaching the same file twice follow OpenCode (MIT, Anomaly) `packages/app/src/composer/attachments/attachments.ts` and `dropzone.tsx`; the code is written here.
 
 Slash commands in the web chat (`apps/web/src/slash.ts`): the popover's states and keys follow OpenCode (MIT, Anomaly) `packages/app/src/composer/suggestions/machine.ts` (read in full); the code is written here.
+
+Code colours (`apps/web/src/highlight.ts`): the idea of colouring code in answers by sending text pieces with a kind follows OpenCode (MIT, Anomaly) `markdown.worker.ts`, which uses `@pierre/highlights` (Apache-2.0); neither is used here, the scanner is written here.

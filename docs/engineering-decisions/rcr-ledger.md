@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 136, PARTIAL 94, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 2. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 136, PARTIAL 95, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 1. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -35,7 +35,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | B-W11 | Multiple open threads (tabs) | BUILD later, low priority; not needed until background agents run in parallel | LATER | tabs: not needed until background agents run in the page |
 | B-W12 | Event stream transport | BUILD. Server-sent events from `kk-companion` through the same guard as every route (Host, | BUILT | server-sent change notices with ping and reconnect (sv37, lv01-lv06); Release tab uses them (row 17) |
 | B-W13 | Streaming markdown | ADAPT patchmark (MIT) with notice. Required changes: (a) after sanitising, rewrite or drop | BUILT | safe markdown renderer with copy buttons (mk tests, e2e) |
-| B-W14 | Code blocks and highlighting | ADAPT worker + tokenizer. NOT VERIFIED: whether `@pierre/highlights` needs WebAssembly (Sh | OWED-L | no syntax colours in chat code blocks or diffs; excluded for diffs (trace row 19) |
+| B-W14 | Code blocks and highlighting | ADAPT worker + tokenizer. NOT VERIFIED: whether `@pierre/highlights` needs WebAssembly (Sh | PARTIAL | own one-pass scanner for 7 language families, classes only, joins back to the exact text (fuzzed), size-limited; used for chat code blocks and reproducers; library/worker not read; no diffs, no streaming incremental (web-shell.md) |
 | B-W15 | Message actions | ADAPT fork-before-prompt and sibling switcher as logic ported to Solid (MIT). IMPROVE: bra | PARTIAL | message actions in the web chat: copy, edit and branch, answer again, version switcher; branches are new kept conversations, history never rewritten; no terminal or side-by-side compare (web-shell.md) |
 | B-W16 | Stop, cancel and leave-guard | BUILD: `POST /api/threads/:id/cancel` through the kernel; the guard only warns, it grants  | BUILT | Stop and Esc and Ctrl+G, draft returns, leave aborts and keeps the draft (cm04, e2e) |
 | B-W17 | Reasoning and thinking display | ADAPT the three-mode switch. Reasoning text is untrusted model output: collapsed by defaul | LATER | local models here expose no separate reasoning text |
