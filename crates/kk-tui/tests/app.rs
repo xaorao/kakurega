@@ -3134,3 +3134,56 @@ fn tu46_the_terminal_searches_copies_and_exports_its_own_transcript() {
     e.handle(ok(&r[0], 409, json!({"error": {"code": "EXISTS", "message": "a file with that name is already there; choose another name"}})));
     assert!(text(&e).contains("already there"));
 }
+
+#[test]
+fn tu47_the_status_line_carries_how_full_the_models_window_is_after_each_answer_and_clears_with_the_conversation(
+) {
+    let mut a = booted();
+    assert!(!a.status_line().contains("context"), "{}", a.status_line());
+    let r = enter(&mut a, "hello");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": false}, "notes_used": 0, "usage": {"context_tokens": 4321, "context_tokens_estimate": 5000, "context_window": 16384, "estimate": false, "history_turns_dropped": 0}})));
+    assert!(
+        a.status_line().ends_with("· context 26% (4.3k of 16.4k)"),
+        "{}",
+        a.status_line()
+    );
+    // an estimate is marked as one, and a missing window is not invented
+    let r = enter(&mut a, "again");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": false}, "notes_used": 0, "usage": {"context_tokens_estimate": 900, "history_turns_dropped": 0}})));
+    assert!(
+        a.status_line().ends_with("· context ~900"),
+        "{}",
+        a.status_line()
+    );
+    enter(&mut a, "/clear");
+    assert!(
+        !a.status_line().contains("context"),
+        "a fresh conversation starts empty: {}",
+        a.status_line()
+    );
+}
+
+#[test]
+fn tu48_the_short_context_figure_is_exact_at_its_edges() {
+    use kk_tui::app::context_meter;
+    assert_eq!(context_meter(0, Some(1000), true), "context 0% (0 of 1.0k)");
+    assert_eq!(context_meter(999, None, true), "context 999");
+    assert_eq!(context_meter(1000, None, false), "context ~1.0k");
+    assert_eq!(
+        context_meter(16384, Some(16384), true),
+        "context 100% (16.4k of 16.4k)"
+    );
+    assert_eq!(
+        context_meter(40_000, Some(16384), true),
+        "context 244% (40.0k of 16.4k)"
+    );
+    assert!(
+        context_meter(u64::MAX, Some(1), true).starts_with("context 999%"),
+        "huge figures neither overflow nor exceed 999%"
+    );
+    assert_eq!(
+        context_meter(5, Some(0), true),
+        "context 5",
+        "a window of zero is no window"
+    );
+}

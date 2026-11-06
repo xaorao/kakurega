@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 133, PARTIAL 68, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 31. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 133, PARTIAL 69, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 30. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -416,7 +416,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | A-A37 | Reconnect and event replay | see the section in matrix A | PARTIAL | watched reviews are polled every 0.7 s; no event replay (row 17 exclusion) |
 | A-A38 | Headless and programmatic modes | see the section in matrix A | PARTIAL | `kaku verify`, `kaku approve`, `kaku log` scriptable; no --json on most |
 | A-A39 | Configuration and diagnostics | see the section in matrix A | PARTIAL | `kaku telegram doctor`; no general `kaku doctor` |
-| A-A40 | Status line, title, usage | see the section in matrix A | OWED-L | no status line with usage |
+| A-A40 | Status line, title, usage | see the section in matrix A | PARTIAL | status line shows how full the model's window is after each answer; no cost or speed (terminal-transcript.md) |
 | A-A41 | Clipboard | see the section in matrix A | PARTIAL | /copy puts the last reply or the whole conversation on the clipboard through OSC 52 after asking; no paste handling (terminal-transcript.md) |
 | A-A42 | How the references test a terminal UI | see the section in matrix A | BUILT | real-terminal harness with canary and 27 checks (tui_pty.py) |
 | A-A43 | Client/daemon split and shared service | see the section in matrix A | BUILT | terminal is a client of the same service |

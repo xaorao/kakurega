@@ -222,6 +222,8 @@ pub struct App {
     /// The project this conversation is about: its notes are offered, and no other project's. Set from the repository the
     /// terminal was started in, by `/project`, or by a kept conversation.
     pub chat_project: Option<String>,
+    /// How much of the model's window the last answer's question took, for the status line; empty until an answer comes.
+    context_meter: Option<String>,
     /// Long pastes shown as a short placeholder in the composer and expanded when a chat message is sent.
     pub pasted: Vec<(String, String)>,
     /// Messages typed while an answer is still arriving; each is sent after the previous answer completes.
@@ -306,6 +308,7 @@ impl App {
             chat_history: Vec::new(),
             session: None,
             chat_project: None,
+            context_meter: None,
             pasted: Vec::new(),
             queued: Vec::new(),
             stashed: Vec::new(),
@@ -473,7 +476,7 @@ impl App {
         };
         let running = self.watching.len();
         format!(
-            "{} · {} · {} review(s){}{}",
+            "{} · {} · {} review(s){}{}{}",
             if self.route.is_empty() {
                 "connecting".to_string()
             } else {
@@ -488,6 +491,10 @@ impl App {
             },
             match &self.chat_project {
                 Some(p) => format!(" · project {}", clean(p)),
+                None => String::new(),
+            },
+            match &self.context_meter {
+                Some(m) => format!(" · {m}"),
                 None => String::new(),
             }
         )
@@ -1224,6 +1231,7 @@ impl App {
             }
             Command::Clear | Command::NewChat => {
                 self.chat_history.clear();
+                self.context_meter = None;
                 self.web_pages.clear();
                 self.search_hits.clear();
                 self.queued.clear();
@@ -3142,6 +3150,8 @@ impl App {
                     let counted = u["estimate"] == false
                         && u["context_tokens"].as_u64().is_some_and(|n| n > 0);
                     let n = u["context_tokens"].as_u64().unwrap_or(estimated);
+                    self.context_meter =
+                        Some(context_meter(n, u["context_window"].as_u64(), counted));
                     let how = if counted {
                         ", counted by the model"
                     } else {
@@ -3393,6 +3403,7 @@ impl App {
                     return Vec::new();
                 }
                 self.chat_history.clear();
+                self.context_meter = None;
                 self.cards.clear();
                 self.live = None;
                 self.chat_project = body["project"].as_str().map(clean);
@@ -3431,6 +3442,7 @@ impl App {
                 if ok && self.session.as_deref() == Some(id.as_str()) {
                     self.session = None;
                     self.chat_history.clear();
+                    self.context_meter = None;
                 }
                 Vec::new()
             }
@@ -3570,4 +3582,26 @@ pub fn release_lines(d: &Value) -> Vec<String> {
         lines.push(format!("  - {}", clean(n.as_str().unwrap_or(""))));
     }
     lines
+}
+
+/// The short form of the context use for the status line: `context 12% (2.0k of 16.4k)` with a known window, `context about
+/// 2.0k` without one, a tilde in front of the figure when it is the program's own estimate.
+pub fn context_meter(tokens: u64, window: Option<u64>, counted: bool) -> String {
+    let k = |n: u64| {
+        if n < 1000 {
+            n.to_string()
+        } else {
+            format!("{:.1}k", n as f64 / 1000.0)
+        }
+    };
+    let tilde = if counted { "" } else { "~" };
+    match window.filter(|w| *w > 0) {
+        Some(w) => format!(
+            "context {}% ({tilde}{} of {})",
+            (tokens.saturating_mul(100) / w).min(999),
+            k(tokens),
+            k(w)
+        ),
+        None => format!("context {tilde}{}", k(tokens)),
+    }
 }
