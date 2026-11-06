@@ -214,10 +214,25 @@ try {
   check("page tells the user to approve in the terminal", /kaku approve appr-\d+/.test(cmd));
   await page.screenshot({ path: join(shots, "05-waiting.png"), fullPage: true });
   await axeCheck(page, "waiting for approval");
+  // while nothing changes the page does not ask about the approval every second; it waits for the service's change notice
+  await page.waitForTimeout(1500); // change notices from the request just made arrive first
+  let approvalAsks = 0;
+  const countAsk = (r) => { if (r.method() === "GET" && /\/api\/jobs\/[^/]+\/approval$/.test(new URL(r.url()).pathname)) approvalAsks++; };
+  page.on("request", countAsk);
+  await page.waitForTimeout(3300);
+  check("an idle approval screen does not poll every second", approvalAsks <= 1, `asked ${approvalAsks} times in 3.3 s`);
+  // a change notice makes the screen ask at once
+  const before = approvalAsks;
+  await page.evaluate(() => window.dispatchEvent(new Event("kk-changed")));
+  await page.waitForTimeout(250);
+  page.off("request", countAsk);
+  check("a change notice makes the approval screen look at once", approvalAsks > before, `${before} -> ${approvalAsks}`);
 
+  const decidedAt = Date.now();
   const approve = spawnSync(kaku, ["approve", "--data-dir", data], { input: digest.slice(0, 12) + "\n", encoding: "utf8" });
   check("terminal shows the exact files and accepts the digest prefix", approve.status === 0 && /RELEASE FOR APPROVAL/.test(approve.stdout) && /Approved\./.test(approve.stdout), approve.stderr.slice(0, 200));
   await page.getByRole("button", { name: "Sign and deliver the capsule" }).waitFor({ timeout: 15000 });
+  check("an approval given in the terminal shows in the page within about a second, by the change notice", Date.now() - decidedAt < 4500, `${Date.now() - decidedAt} ms including the terminal step`);
   await page.getByRole("button", { name: "Sign and deliver the capsule" }).click();
   await page.getByText("Delivered.").waitFor();
 

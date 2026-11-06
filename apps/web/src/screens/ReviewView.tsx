@@ -1,4 +1,4 @@
-import { createEffect, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { DiffView } from "../components/DiffView";
 import { api, ApiError, type Config, type Fix, type Job } from "../api";
 import { rich, t, type Key } from "../i18n";
@@ -284,17 +284,27 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
   const [error, setError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
 
-  const poll = async () => {
+  // Only a different review restarts the watching; a refreshed copy of the same review must not.
+  const jobId = createMemo(() => props.job.id);
+  const poll = async (id = jobId()) => {
     try {
-      setApproval(await api.approval(props.job.id));
+      setApproval(await api.approval(id));
     } catch {
       /* try again on the next tick */
     }
   };
+  // The service pushes a notice whenever an approval changes, which App turns into this event, so nothing is asked every
+  // second. The slow timer is only a safety net for a stream that is down.
   createEffect(() => {
-    void poll();
-    const t = setInterval(poll, 1000);
-    onCleanup(() => clearInterval(t));
+    const id = jobId();
+    void poll(id);
+    const changed = () => void poll(id);
+    window.addEventListener("kk-changed", changed);
+    const t = setInterval(changed, 5000);
+    onCleanup(() => {
+      clearInterval(t);
+      window.removeEventListener("kk-changed", changed);
+    });
   });
 
   const ask = async () => {
