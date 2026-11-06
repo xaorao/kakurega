@@ -116,6 +116,7 @@ export const en = {
   "chat.lead": "Ask the private assistant. It runs on this computer. It can use the notes you saved in Memory, except notes that look like instructions. It cannot read your files or send anything.",
   "chat.note": "Conversations are not saved unless you choose Keep. Closing this page or choosing Clear forgets them.",
   "chat.input": "Your message",
+  "chat.recovered": "The connection dropped, but your message and its reply were saved. Nothing was sent twice.",
   "chat.pick.title": "Earlier messages",
   "chat.pick.placeholder": "Search the messages you sent",
   "chat.pick.none": "No earlier message matches.",

@@ -159,3 +159,13 @@ export function historyMatches(entries: readonly string[], query: string): strin
   }
   return out;
 }
+
+/** After a send failed on the way back, whether the kept conversation nevertheless holds this exchange (the service saved it
+ *  before the connection dropped). True only if it grew by exactly one user turn with this text and one reply; anything else
+ *  is not guessed at, and the message goes back in the box as for any failed send. */
+export function exchangeWasSaved(before: number, message: string, saved: readonly { role: string; content: string }[]): boolean {
+  if (saved.length !== before + 2) return false;
+  const asked = saved[before];
+  const answer = saved[before + 1];
+  return asked?.role === "user" && asked.content.trim() === message.trim() && answer?.role === "assistant" && answer.content.trim() !== "";
+}

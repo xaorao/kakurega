@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { draftKey, saveDraft, loadDraft, forgetDraft, clearDrafts, draftCount, stopsReply, rememberSent, sentHistory, forgetSent, retagSent, idleHistory, historyStep, historyKey, historyMatches, opensHistoryPicker } from "../src/composer.ts";
+import { draftKey, saveDraft, loadDraft, forgetDraft, clearDrafts, draftCount, stopsReply, rememberSent, sentHistory, forgetSent, retagSent, idleHistory, historyStep, historyKey, historyMatches, opensHistoryPicker, exchangeWasSaved } from "../src/composer.ts";
 
 test("cm01 each conversation keeps its own draft and an empty draft is not kept", () => {
   clearDrafts();
@@ -152,4 +152,23 @@ test("cp23 the picker shows at most fifty and ignores blank entries", () => {
   assert.equal(got.length, 50);
   assert.equal(got[0], "message number 79");
   assert.deepEqual(historyMatches(["", "  ", "real"], ""), ["real"]);
+});
+
+const turn = (role, content) => ({ role, content });
+
+test("cp24 a failed send counts as saved only when the kept conversation holds exactly this exchange as its two newest turns", () => {
+  const before = [turn("user", "hello"), turn("assistant", "hi")];
+  const ok = [...before, turn("user", "what changed?"), turn("assistant", "Two things.")];
+  assert.equal(exchangeWasSaved(2, "what changed?", ok), true);
+  assert.equal(exchangeWasSaved(2, "  what changed?  ", ok), true, "the box text is trimmed before it is sent");
+  assert.equal(exchangeWasSaved(2, "what changed?", before), false, "nothing was added");
+  assert.equal(exchangeWasSaved(2, "what changed?", [...before, turn("user", "what changed?")]), false, "a message without its reply is not an exchange");
+  assert.equal(exchangeWasSaved(2, "what changed?", [...ok, turn("user", "x"), turn("assistant", "y")]), false, "another device added more: do not guess");
+  assert.equal(exchangeWasSaved(2, "something else", ok), false, "a different message");
+  assert.equal(exchangeWasSaved(2, "what changed?", [...before, turn("assistant", "Two things."), turn("user", "what changed?")]), false, "wrong order");
+  assert.equal(exchangeWasSaved(2, "what changed?", [...before, turn("user", "what changed?"), turn("assistant", "  ")]), false, "an empty reply");
+  assert.equal(exchangeWasSaved(2, "what changed?", [...before, turn("assistant", "what changed?"), turn("assistant", "Two things.")]), false, "the first new turn must be the owner's");
+  assert.equal(exchangeWasSaved(2, "what changed?", [...before, turn("user", "what changed?"), turn("user", "Two things.")]), false, "the second new turn must be the reply");
+  assert.equal(exchangeWasSaved(0, "first", [turn("user", "first"), turn("assistant", "ok")]), true);
+  assert.equal(exchangeWasSaved(0, "first", []), false);
 });

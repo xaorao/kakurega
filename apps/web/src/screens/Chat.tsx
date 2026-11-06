@@ -3,7 +3,7 @@ import { api, ApiError, streamChat, type ChatTurn, type KeptChat, type GatewayPr
 import { t } from "../i18n";
 import { Markdown } from "../components/Markdown";
 import { HistoryPicker } from "../components/HistoryPicker";
-import { draftKey, opensHistoryPicker, forgetDraft, forgetSent, historyKey, historyStep, idleHistory, loadDraft, rememberSent, retagSent, saveDraft, sentHistory, stopsReply } from "../composer";
+import { draftKey, exchangeWasSaved, opensHistoryPicker, forgetDraft, forgetSent, historyKey, historyStep, idleHistory, loadDraft, rememberSent, retagSent, saveDraft, sentHistory, stopsReply } from "../composer";
 import { meterLine, noteNotes, pageNotes, savedLine, summaryNotes } from "../meter";
 
 interface Shown extends ChatTurn {
@@ -16,6 +16,7 @@ export function Chat() {
   const [text, setTextRaw] = createSignal(loadDraft(draftKey(null)));
   const [busy, setBusy] = createSignal(false);
   const [picking, setPicking] = createSignal(false);
+  const [recovered, setRecovered] = createSignal(false);
   const [live, setLive] = createSignal("");
   let abort: AbortController | null = null;
   const [error, setError] = createSignal("");
@@ -259,10 +260,12 @@ export function Chat() {
     pinned = true;
     setUnseen(false);
     const history: ChatTurn[] = turns().slice(-18).map(({ role, content }) => ({ role, content }));
+    const turnsBefore = turns().length;
     setTurns([...turns(), { role: "user", content: message }]);
     setText("");
     setBusy(true);
     setError("");
+    setRecovered(false);
     setLive("");
     abort = new AbortController();
     try {
@@ -298,9 +301,27 @@ export function Chat() {
         saveDraft(sentKey, message);
         return;
       }
+      // The service may have saved this exchange before the connection dropped. Sending the message again would save it twice,
+      // so a kept conversation is read back first: if it holds exactly this exchange, it is shown instead of the message returning.
+      const id = session();
+      const aborted = err instanceof DOMException && err.name === "AbortError";
+      if (id && !aborted) {
+        try {
+          const saved = await api.keptChat(id);
+          if (myView === view && exchangeWasSaved(turnsBefore, message, saved.turns)) {
+            setTurns(saved.turns.map(({ role, content }) => ({ role, content })));
+            setSummaryText(saved.summary?.text ?? "");
+            setRecovered(true);
+            if (session()) await refetch();
+            return;
+          }
+        } catch {
+          /* cannot tell: treat it as not saved, like any failed send */
+        }
+      }
       setTurns(turns().slice(0, -1));
       setText(message);
-      if (!(err instanceof DOMException && err.name === "AbortError")) setError(err instanceof ApiError ? err.message : t("chat.error"));
+      if (!aborted) setError(err instanceof ApiError ? err.message : t("chat.error"));
     } finally {
       setBusy(false);
       setLive("");
@@ -549,6 +570,7 @@ export function Chat() {
           <Show when={busy()}><button type="button" onClick={() => abort?.abort()}>{t("chat.stop")}</button></Show>
           <button type="button" disabled={busy() || turns().length === 0} onClick={() => { setTurns([]); setError(""); forgetSent(draftKey(session())); hist = idleHistory(); }}>{t("chat.clear")}</button>
           <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
+          <Show when={recovered()}><span role="status" class="muted">{t("chat.recovered")}</span></Show>
         </div>
         <p class="muted">{t("chat.pick.hint")}</p>
         <Show when={picking()}>

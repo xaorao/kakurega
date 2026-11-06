@@ -66,12 +66,21 @@ await ctx.addInitScript(() => {
 });
 const page = await ctx.newPage();
 const requestOrigins = new Set();
+// Connection resets this script injects on purpose into the chat stream (the checks that cut the connection). Each one is
+// excused once, so an unexpected reset still counts as a failure.
+let injectedResets = 0;
+let excusedRequests = 0;
+let excusedConsole = 0;
 page.on("request", (r) => { try { requestOrigins.add(new URL(r.url()).origin); } catch { /* data: urls */ } });
 page.on("console", (m) => {
   if (m.type() !== "error") return;
   // The browser logs every non-2xx fetch as a console error. The model-proof refusal is a deliberate 422 that the page
   // shows as a message (checked by its own steps), so only that exact response is excused.
   if (m.location().url.endsWith("/api/route/attest") && /status of 422/.test(m.text())) return;
+  if (m.location().url.endsWith("/api/chat/stream") && /ERR_CONNECTION_RESET/.test(m.text()) && excusedConsole < injectedResets) {
+    excusedConsole++;
+    return;
+  }
   problems.push("console: " + m.text());
 });
 page.on("pageerror", (e) => problems.push("pageerror: " + e.message));
@@ -81,6 +90,10 @@ page.on("requestfailed", async (r) => {
   // showed the complete answer (checked by the chat steps); a request without a response still counts as a failure.
   const response = await r.response().catch(() => null);
   if (r.url().endsWith("/api/chat/stream") && r.failure()?.errorText === "net::ERR_ABORTED" && response?.status() === 200) return;
+  if (r.url().endsWith("/api/chat/stream") && r.failure()?.errorText === "net::ERR_CONNECTION_RESET" && excusedRequests < injectedResets) {
+    excusedRequests++;
+    return;
+  }
   // Also classified as a harness artifact: an idempotent GET that the browser cancelled because the page was reloaded or
   // navigated while it was in flight (the screens poll /api/fs, /api/readiness and /api/jobs). A POST or any other failure
   // still counts.
@@ -786,6 +799,35 @@ try {
   await page.getByRole("button", { name: "Keep this conversation" }).waitFor();
   await page.getByLabel("Your message").press("ArrowUp");
   check("after Forget, Up never brings back a message from the forgotten conversation", !(await page.getByLabel("Your message").inputValue()).includes("forgetcanary"));
+  // the connection drops after the service saved the exchange: the message does not come back to be sent twice
+  await page.getByRole("button", { name: "Keep this conversation" }).click();
+  await page.getByText("Kept", { exact: true }).waitFor();
+  await page.route("**/api/chat/stream", async (route) => {
+    await route.fetch();
+    injectedResets++;
+    await route.abort("connectionreset");
+  });
+  await page.getByLabel("Your message").fill("droppedcanary after saving");
+  await page.getByLabel("Your message").press("Enter");
+  await page.getByText("your message and its reply were saved", { exact: false }).waitFor();
+  await page.unroute("**/api/chat/stream");
+  check("a connection that drops after the exchange was saved shows both sides and does not bring the message back", (await page.locator(".msg").count()) === 2 && (await page.getByLabel("Your message").inputValue()) === "");
+  check("and the kept conversation holds the exchange exactly once", (await page.evaluate(async () => { const l = await (await fetch("/api/sessions")).json(); const r = await (await fetch(`/api/sessions/${l.sessions[0].id}`)).json(); return r.turns.filter((t) => t.content.includes("droppedcanary")).length; })) === 1);
+  await axeCheck(page, "chat after a recovered send");
+  // a connection that drops before anything was saved still returns the message to the box
+  await page.route("**/api/chat/stream", (route) => {
+    injectedResets++;
+    return route.abort("connectionreset");
+  });
+  await page.getByLabel("Your message").fill("notsavedcanary message");
+  await page.getByLabel("Your message").press("Enter");
+  await page.getByRole("alert").first().waitFor();
+  await page.unroute("**/api/chat/stream");
+  check("a connection that drops before the exchange was saved puts the message back in the box", (await page.getByLabel("Your message").inputValue()) === "notsavedcanary message" && (await page.locator(".msg").count()) === 2);
+  await page.getByLabel("Your message").fill("");
+  await page.getByRole("button", { name: "Forget", exact: true }).click();
+  await page.getByRole("button", { name: "Press again to forget" }).click();
+  await page.getByRole("button", { name: "Keep this conversation" }).waitFor();
   // documents: an answer whose quotes are checked against the files
   await page.getByRole("link", { name: "Documents" }).click();
   await page.getByRole("heading", { name: "Ask your documents", exact: true }).waitFor();
