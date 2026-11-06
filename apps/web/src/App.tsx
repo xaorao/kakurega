@@ -14,6 +14,8 @@ import { Documents } from "./screens/Documents";
 import { Inbox } from "./screens/Inbox";
 import { notifier } from "./notifier";
 import { Palette, type PaletteItem } from "./components/Palette";
+import { ShortcutHelp } from "./components/ShortcutHelp";
+import { appShortcut } from "./shortcuts";
 import { createLive } from "./live";
 import { clearDrafts } from "./composer";
 import { applyLocale, LOCALES, locale, rich, setLocale, t, type Locale } from "./i18n";
@@ -162,6 +164,7 @@ export function App() {
   const [failures, setFailures] = createSignal(0);
   const [waiting, setWaiting] = createSignal(0);
   const [paletteOpen, setPaletteOpen] = createSignal(false);
+  const [helpOpen, setHelpOpen] = createSignal(false);
   let searchBox: HTMLInputElement | undefined;
   const shown = createMemo(() => {
     const q = query().trim().toLowerCase();
@@ -169,15 +172,17 @@ export function App() {
     return jobs().filter((j) => `${j.repo} ${j.recipient} ${j.state.replace(/_/g, " ")}`.toLowerCase().includes(q));
   });
   const onKey = (e: KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "p") {
-      e.preventDefault();
+    if (e.isComposing || e.defaultPrevented) return;
+    const found = appShortcut(e, e.target as HTMLElement | null);
+    if (!found) return;
+    e.preventDefault();
+    if (found.id === "palette") {
       if (paired()) setPaletteOpen(!paletteOpen());
-      return;
-    }
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-      e.preventDefault();
+    } else if (found.id === "search") {
       searchBox?.focus();
       searchBox?.select();
+    } else if (found.id === "help" || found.id === "help-anywhere") {
+      if (paired() && !paletteOpen()) setHelpOpen(!helpOpen());
     }
   };
   applyLocale();
@@ -271,6 +276,7 @@ export function App() {
       { id: "privacy", label: t("nav.privacy"), group: t("palette.screens"), run: go("#/privacy") },
       { id: "agent", label: t("nav.agent"), group: t("palette.screens"), run: go("#/agent") },
       { id: "activity", label: t("nav.activity"), group: t("palette.screens"), run: go("#/activity") },
+      { id: "shortcuts", label: t("kb.title"), group: t("palette.screens"), run: () => setHelpOpen(true) },
     ];
     const reviews: PaletteItem[] = jobs().map((j) => ({ id: `job-${j.id}`, label: t("nav.sub", { state: t(`state.${j.state}` as never), recipient: j.recipient }) + ` · ${j.id}`, group: t("palette.reviews"), run: go(`#/job/${j.id}`) }));
     const settings: PaletteItem[] = [
@@ -288,7 +294,8 @@ export function App() {
     <Show when={paired() !== null} fallback={<main class="center"><p class="muted">{t("app.connecting")}</p></main>}>
       <Show when={paired()} fallback={<Show when={unreachable()} fallback={<Pair onDone={() => { setPaired(null); }} />}><main class="center"><p role="alert" class="bad">{t("app.unreachable")}</p><button onClick={() => { setUnreachable(false); setPaired(null); }}>{t("app.retry")}</button></main></Show>}>
         <Palette open={paletteOpen()} items={paletteItems()} onClose={() => setPaletteOpen(false)} />
-        <div class="shell" inert={paletteOpen()}>
+        <ShortcutHelp open={helpOpen()} onClose={() => setHelpOpen(false)} />
+        <div class="shell" inert={paletteOpen() || helpOpen()}>
           <header class="top">
             <a class="brand" href="#/">kakurega</a>
             <Show when={config()}>{(c) => <Badge config={c()} />}</Show>

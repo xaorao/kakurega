@@ -208,6 +208,10 @@ button.danger { background: var(--redline); border-color: var(--redline); color:
 .pal-item.sel .muted { color: var(--stone); }
 .history-picker ul { margin: 0; padding: 0; overflow-y: auto; max-height: 40vh; }
 .hist-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.kb-list { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+.kb-list dt { margin: 0; }
+.kb-list dd { margin: 0; }
+kbd { font-family: var(--mono, monospace); font-size: 0.8125rem; padding: 1px 6px; border: 1px solid var(--stone); border-radius: 4px; background: var(--veil); color: var(--ink); }
 .pal-head { padding: 10px 10px 4px; font-size: 0.8125rem; font-weight: 600; color: var(--stone); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 

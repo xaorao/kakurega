@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 128, PARTIAL 56, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 7, OWED-L 41. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 128, PARTIAL 57, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 6, OWED-L 41. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -31,7 +31,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | B-W07 | Search across conversations | ADAPT `search.ts` (MIT) for the multi-source/abort/rank mechanics. IMPROVE: full-text inde | BUILT | search across kept conversations (content and title, every word, bounded, owner session) on web and terminal; stale answers dropped, not cancelled (web-shell.md) |
 | B-W08 | Find in the open conversation | ADAPT the technique (no DOM rewriting, so no CSP or XSS issue). Fall back to no highlight  | OWED-L | the browser's own find works on the page; no in-app find |
 | B-W09 | Command palette | ADAPT `command.tsx` registry (MIT, Effect `Schema` used for persistence only: replace). IM | BUILT | command palette with ranking, group headers, page and section keys (pm01-pm10, e2e) |
-| B-W10 | Keyboard shortcuts, help, rebinding | ADAPT: declarative table + help dialog (opened by `?`/Cmd+Shift+/), recorder later | OWED-M | no shortcut help dialog or rebinding; shortcuts exist (Ctrl+Shift+P, Esc, Ctrl+G, Shift+Up) |
+| B-W10 | Keyboard shortcuts, help, rebinding | ADAPT: declarative table + help dialog (opened by `?`/Cmd+Shift+/), recorder later | PARTIAL | declarative shortcut table, help dialog generated from it (? and Ctrl+/), tied to the real handlers; no rebinding or recorder (web-shell.md) |
 | B-W11 | Multiple open threads (tabs) | BUILD later, low priority; not needed until background agents run in parallel | LATER | tabs: not needed until background agents run in the page |
 | B-W12 | Event stream transport | BUILD. Server-sent events from `kk-companion` through the same guard as every route (Host, | BUILT | server-sent change notices with ping and reconnect (sv37, lv01-lv06); Release tab uses them (row 17) |
 | B-W13 | Streaming markdown | ADAPT patchmark (MIT) with notice. Required changes: (a) after sanitising, rewrite or drop | BUILT | safe markdown renderer with copy buttons (mk tests, e2e) |
