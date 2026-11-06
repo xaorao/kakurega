@@ -81,6 +81,11 @@ try:
     check("the overview resource carries the same data as the overview tool (the signed log has grown by the audited call)", same)
     pr = rpc("prompts/get", {"name": "private_review", "arguments": {"repo": str(work / "root/payments-service"), "recipient": "mcp-agent"}})
     check("the private review prompt names every step and leaves approval to the owner", all(w in pr["result"]["messages"][0]["content"]["text"] for w in ("start_review", "request_approval", "kaku approve")))
+    printed = subprocess.run([kaku, "mcp", "install", "--client", "generic", "--print", "--read-only", "--data-dir", str(data)], capture_output=True, text=True)
+    server = json.loads(printed.stdout)["mcpServers"]["kakurega"]
+    ro = subprocess.run([server["command"], *server["args"]], input=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}) + "\n", capture_output=True, text=True, timeout=30)
+    ro_names = [t["name"] for t in json.loads(ro.stdout.splitlines()[0])["result"]["tools"]]
+    check("the command that `kaku mcp install --print` prints starts a server with the limit it was given", printed.returncode == 0 and "start_review" not in ro_names and "overview" in ro_names, str(ro_names))
     started = tool("start_review", repo=str(work / "root/payments-service"), recipient="mcp-agent")
     check("an agent can start a review", started["isError"] is False and started["structuredContent"]["id"].startswith("job-"))
     job = started["structuredContent"]["id"]

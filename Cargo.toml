@@ -32,3 +32,10 @@ opt-level = 3
 
 [profile.test.package.kk-secrets]
 opt-level = 3
+
+# hashing a whole program file is part of printing an install command; unoptimised it takes seconds in tests
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.test.package.sha2]
+opt-level = 3

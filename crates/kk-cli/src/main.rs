@@ -5,6 +5,7 @@ mod backup;
 mod extension;
 mod log;
 mod mcp;
+mod mcp_install;
 mod memory_import;
 #[cfg(test)]
 mod recall_bench;
@@ -28,6 +29,7 @@ Usage:
   kaku mcp [--read-only] [--allow TOOL,TOOL] [--leased]   speak MCP on stdin and stdout for an agent client (cannot approve; --read-only hides the tools that start a review or ask for an approval; --allow gives the agent exactly the tools named)
   kaku telegram pair | kaku telegram   notifications and counts on your phone (never contents)
   kaku approver enroll|list|revoke   key that signs approvals (required once enrolled)
+  kaku mcp install --client claude-code|claude-desktop|cursor|generic --print [limits]   print the exact text that makes an MCP client start this server (full path, your limits, no token; it never edits the client)
   kaku agent grant TOOL [--uses N] [--minutes M] | revoke [TOOL] | status   lease the tools that act to an agent started with `kaku mcp --leased`
   kaku extension pair|status|revoke  connect the browser extension (it can only queue suggestions)
   kaku backup [--out FILE]          save an encrypted copy of all your data; prints a recovery key once

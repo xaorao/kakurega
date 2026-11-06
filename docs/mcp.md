@@ -10,6 +10,14 @@ The service must be running (`kaku serve`, or the desktop app, or the terminal w
 { "mcpServers": { "kakurega": { "command": "kaku", "args": ["mcp"] } } }
 ```
 
+To get the exact text for your client instead of writing it by hand, ask `kaku` to print it:
+
+```sh
+kaku mcp install --client claude-code --print --read-only
+```
+
+`--client` is `claude-code` (one `claude mcp add` line), `claude-desktop`, `cursor` or `generic` (an `mcpServers` block). It names this very file by its full path, carries `--read-only`, `--allow`, `--leased` and `--data-dir` as you give them, and contains no token: the server finds the service's token itself when it starts. The path and the SHA-256 of the file go to stderr, so what you paste stays clean and you can check what the client will run. It only prints. It never edits a client's configuration, because that file runs programs with your privileges. Not checked: the Claude Code line on Windows (it is refused; use `--client generic`), and Cursor's global configuration path (its documentation names only a project's `.cursor/mcp.json`).
+
 `kaku` must be a path the client can run: use the full path of the binary you built (for example `/path/to/kakurega/target/debug/kaku`) or `/opt/kakurega/kaku` from the Linux package. Pass `--data-dir DIR` if the service was started with another data directory.
 
 ## What an agent can do

@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 118, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 18, OWED-L 41. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 119, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 17, OWED-L 41. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -170,7 +170,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | D-D35 | Audit and evidence for MCP calls | BUILD: every call becomes a signed-log event `mcp.call` with tool, token id, argument dige | BUILT | every tool call is a signed `mcp.call` log event with the tool and outcome only; floods are counted (sv75, sv76, mc30-mc33, live 47/47) |
 | D-D36 | Testing and conformance tools | ADAPT: add conformance run and Inspector CLI smoke to CI; keep the canary scan; add the sc | BUILT | official-SDK client interop, framing tests, live run (mc tests, mcp_live.py 43/43) |
 | D-D37 | Client compatibility quirks (facts to design around) | ADAPT: keep a `docs/mcp-clients.md` table and a test that replays three recorded client ha | PARTIAL | docs/mcp.md tells which kaku path a client needs; no client table |
-| D-D38 | Installing the server into a client | BUILD `kaku mcp install --client NAME --print` printing the exact command, binary path and | OWED-M | no `kaku mcp install --print` |
+| D-D38 | Installing the server into a client | BUILD `kaku mcp install --client NAME --print` printing the exact command, binary path and | BUILT | `kaku mcp install --client NAME --print`: full path, limits, no token, digest on stderr, never writes (mi01-mi08, live 52/52) |
 | D-D39 | Hosted and remote MCP | Defer to hosted mode; design D32 so the scope names equal OAuth scopes. | LATER | hosted mode |
 | D-D40 | Identifiers and cross-call state | IMPROVE with D28: keep `job-N` for humans, add an opaque handle for MCP and check principa | LATER | job-N ids stay |
 

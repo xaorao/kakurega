@@ -859,7 +859,38 @@ fn unknown_option(args: &[String]) -> Option<String> {
     None
 }
 
+/// The tool names in an `--allow` list: trimmed, without repeats, each one a tool that exists.
+pub(crate) fn parse_allow(list: &str) -> Result<Vec<String>, String> {
+    let mut names: Vec<String> = Vec::new();
+    for n in list.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+        if !names.iter().any(|x| x == n) {
+            names.push(n.to_string());
+        }
+    }
+    let known: Vec<String> = tools()
+        .as_array()
+        .map(|t| {
+            t.iter()
+                .filter_map(|t| t["name"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(bad) = names.iter().find(|n| !known.contains(n)) {
+        return Err(format!(
+            "--allow names a tool that does not exist: {bad}\nthe tools are: {}",
+            known.join(", ")
+        ));
+    }
+    if names.is_empty() {
+        return Err("--allow needs at least one tool name".into());
+    }
+    Ok(names)
+}
+
 pub fn run(args: &[String]) -> u8 {
+    if args.first().map(String::as_str) == Some("install") {
+        return crate::mcp_install::run(&args[1..]);
+    }
     if let Some(why) = unknown_option(args) {
         eprintln!(
             "{why}\nusage: kaku mcp [--read-only] [--allow TOOL,TOOL] [--leased] [--data-dir DIR]"
@@ -874,31 +905,13 @@ pub fn run(args: &[String]) -> u8 {
                 || std::env::var("KAKU_MCP_READ_ONLY").is_ok_and(|v| v == "1"),
         );
     if let Some(list) = crate::flag(&args, "--allow") {
-        let names: Vec<String> = list
-            .split(',')
-            .map(|n| n.trim().to_string())
-            .filter(|n| !n.is_empty())
-            .collect();
-        let known: Vec<String> = tools()
-            .as_array()
-            .map(|t| {
-                t.iter()
-                    .filter_map(|t| t["name"].as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default();
-        if let Some(bad) = names.iter().find(|n| !known.contains(n)) {
-            eprintln!(
-                "--allow names a tool that does not exist: {bad}\nthe tools are: {}",
-                known.join(", ")
-            );
-            return 2;
+        match parse_allow(&list) {
+            Ok(names) => ctx = ctx.allow(names),
+            Err(why) => {
+                eprintln!("{why}");
+                return 2;
+            }
         }
-        if names.is_empty() {
-            eprintln!("--allow needs at least one tool name");
-            return 2;
-        }
-        ctx = ctx.allow(names);
     }
     let ctx = std::sync::Arc::new(ctx);
     let shared = std::sync::Arc::new(Shared {
