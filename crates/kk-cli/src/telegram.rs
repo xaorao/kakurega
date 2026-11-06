@@ -868,6 +868,12 @@ fn send_once(agent: &ureq::Agent, api: &str, token: &str, o: &Out) -> (SendOutco
 #[derive(Default)]
 pub struct Outbox {
     items: std::collections::VecDeque<(Out, u32, Instant)>,
+    /// Telegram's flood penalty is for the whole bot: until this time nothing is sent, not just the message that was refused.
+    gate_until: Option<Instant>,
+    /// Messages that may go out now, refilled at one a second up to a burst of three, so a run of events reaches the chat as a
+    /// steady trickle instead of a flood.
+    tokens: f64,
+    refilled: Option<Instant>,
 }
 
 impl Outbox {
@@ -876,6 +882,9 @@ impl Outbox {
     }
 
     pub const MAX: usize = 50;
+    /// Messages that may go out together, and the rate they come back at, per second.
+    pub const BURST: f64 = 3.0;
+    pub const PER_SECOND: f64 = 1.0;
     pub const MAX_TRIES: u32 = 10;
 
     pub fn push(&mut self, o: Out) {
@@ -897,18 +906,33 @@ impl Outbox {
 
     /// Tries every message that is due, in order. A flood-control answer pauses everything behind it.
     pub fn flush(&mut self, now: Instant, send: &mut dyn FnMut(&Out) -> SendOutcome) {
+        if self.gate_until.is_some_and(|g| now < g) {
+            return;
+        }
+        let since = self
+            .refilled
+            .map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f64());
+        self.tokens = if self.refilled.is_none() {
+            Self::BURST
+        } else {
+            (self.tokens + since * Self::PER_SECOND).min(Self::BURST)
+        };
+        self.refilled = Some(now);
         let mut keep = std::collections::VecDeque::new();
         let mut paused = false;
         while let Some((o, tries, due)) = self.items.pop_front() {
-            if paused || due > now {
+            if paused || due > now || self.tokens < 1.0 {
                 keep.push_back((o, tries, due));
                 continue;
             }
+            self.tokens -= 1.0;
             match send(&o) {
                 SendOutcome::Delivered => {}
                 SendOutcome::Drop(m) => eprintln!("dropping a message: {m}"),
                 SendOutcome::RetryAfter(wait) => {
                     paused = true;
+                    // nothing is tried while the gate is closed, so only one answer can set it per flush
+                    self.gate_until = Some(now + wait);
                     keep.push_back((o, tries, now + wait));
                 }
                 SendOutcome::Retry => {
@@ -927,6 +951,87 @@ impl Outbox {
 
 #[cfg(test)]
 mod tests {
+    fn quiet(t: &str) -> Out {
+        Out {
+            chat: 7,
+            text: t.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn tg66_a_flood_penalty_holds_every_later_flush_until_it_ends_and_a_shorter_one_never_shortens_it(
+    ) {
+        let t0 = Instant::now() + Duration::from_secs(1);
+        let mut b = Outbox::default();
+        for t in ["x", "y", "z"] {
+            b.push(quiet(t));
+        }
+        let mut seen: Vec<String> = Vec::new();
+        b.flush(t0, &mut |o| {
+            seen.push(o.text.clone());
+            SendOutcome::RetryAfter(Duration::from_secs(30))
+        });
+        assert_eq!(seen, ["x"]);
+        // two seconds later nothing may be tried: the penalty is for the whole bot, not for one message
+        b.flush(t0 + Duration::from_secs(2), &mut |_| {
+            panic!("sent during a flood penalty")
+        });
+        b.flush(t0 + Duration::from_secs(29), &mut |_| {
+            panic!("sent during a flood penalty")
+        });
+        assert_eq!(b.len(), 3, "nothing was lost");
+        // after the penalty the queue drains in order
+        let mut sent = Vec::new();
+        b.flush(t0 + Duration::from_secs(31), &mut |o| {
+            sent.push(o.text.clone());
+            SendOutcome::Delivered
+        });
+        assert_eq!(sent, ["x", "y", "z"]);
+    }
+
+    #[test]
+    fn tg67_a_run_of_notices_goes_out_three_at_once_and_then_one_a_second() {
+        let t0 = Instant::now() + Duration::from_secs(1);
+        let mut b = Outbox::default();
+        for i in 0..10 {
+            b.push(quiet(&format!("m{i}")));
+        }
+        let mut sent: Vec<String> = Vec::new();
+        let go = |b: &mut Outbox, at: Instant, sent: &mut Vec<String>| {
+            b.flush(at, &mut |o| {
+                sent.push(o.text.clone());
+                SendOutcome::Delivered
+            })
+        };
+        go(&mut b, t0, &mut sent);
+        assert_eq!(sent, ["m0", "m1", "m2"], "a burst of three");
+        go(&mut b, t0, &mut sent);
+        assert_eq!(sent.len(), 3, "no more in the same instant");
+        go(&mut b, t0 + Duration::from_millis(500), &mut sent);
+        assert_eq!(sent.len(), 3, "half a second is not enough for another");
+        go(&mut b, t0 + Duration::from_millis(1000), &mut sent);
+        assert_eq!(sent.len(), 4);
+        go(&mut b, t0 + Duration::from_secs(3), &mut sent);
+        assert_eq!(sent.len(), 6, "two seconds more, two more messages");
+        go(&mut b, t0 + Duration::from_secs(3600), &mut sent);
+        assert_eq!(
+            sent.len(),
+            9,
+            "an hour of quiet refills no more than the burst"
+        );
+        go(&mut b, t0 + Duration::from_secs(3600), &mut sent);
+        assert_eq!(sent.len(), 9, "the burst is spent");
+        go(&mut b, t0 + Duration::from_secs(3601), &mut sent);
+        assert_eq!(sent.len(), 10);
+        assert_eq!(
+            sent,
+            (0..10).map(|i| format!("m{i}")).collect::<Vec<_>>(),
+            "order is kept"
+        );
+        assert!(b.is_empty());
+    }
+
     #[test]
     fn tg65_a_quiet_notice_is_sent_with_disable_notification_and_a_loud_one_without() {
         use std::io::{Read, Write};
@@ -1525,7 +1630,8 @@ mod tests {
         assert_eq!(b4.len(), Outbox::MAX);
         let mut tries = 0;
         let mut now = t0;
-        while !b4.is_empty() && tries < 40 {
+        // pacing lets three messages out per flush, so exhausting fifty messages takes many rounds
+        while !b4.is_empty() && tries < 400 {
             now += Duration::from_secs(120);
             b4.flush(now, &mut |_| SendOutcome::Retry);
             tries += 1;
