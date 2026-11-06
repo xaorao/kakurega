@@ -3187,3 +3187,69 @@ fn tu48_the_short_context_figure_is_exact_at_its_edges() {
         "a window of zero is no window"
     );
 }
+
+#[test]
+fn tu49_branch_copies_a_kept_conversation_at_a_chosen_message_and_opens_the_copy() {
+    let mut a = booted();
+    let r = enter(&mut a, "/branch");
+    assert!(
+        r.is_empty() && text(&a).contains("Only a kept conversation can be branched"),
+        "{}",
+        text(&a)
+    );
+    // keep a conversation holding one exchange
+    let r = enter(&mut a, "/keep");
+    a.handle(ok(&r[0], 201, json!({"id": "chat-aaa"})));
+    let r = enter(&mut a, "first question");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "first answer", "route": {"simulated": true}, "notes_used": 0})));
+    // all of it, by default
+    let r = enter(&mut a, "/branch");
+    assert_eq!(r[0].path, "/api/sessions/chat-aaa/fork");
+    assert_eq!(r[0].body, Some(json!({"at": 2})));
+    // the copy is opened: its messages come back and the original is untouched
+    let open = a.handle(ok(
+        &r[0],
+        201,
+        json!({"id": "chat-bbb", "parent": "chat-aaa", "fork_at": 2}),
+    ));
+    assert_eq!(open[0].path, "/api/sessions/chat-bbb");
+    a.handle(ok(&open[0], 200, json!({"id": "chat-bbb", "turns": [{"role": "user", "content": "first question"}, {"role": "assistant", "content": "first answer"}]})));
+    assert!(
+        text(&a).contains("Opened the kept conversation"),
+        "{}",
+        text(&a)
+    );
+    // a cut after one message, a point past the end, and words are refused without asking the service
+    let r = enter(&mut a, "/branch 1");
+    assert_eq!(r[0].body, Some(json!({"at": 1})));
+    assert!(
+        enter(&mut a, "/branch 9").is_empty() && text(&a).contains("has 2 message(s)"),
+        "{}",
+        text(&a)
+    );
+    assert!(
+        enter(&mut a, "/branch soon").is_empty() && text(&a).contains("usage: /branch [N]"),
+        "{}",
+        text(&a)
+    );
+    assert!(enter(&mut a, "/branch -1").is_empty());
+    let shown = text(&a).matches("usage: /branch [N]").count();
+    assert!(enter(&mut a, "/branch 100001").is_empty());
+    assert_eq!(
+        text(&a).matches("usage: /branch [N]").count(),
+        shown + 1,
+        "a number beyond any conversation is refused by the command itself"
+    );
+    // a refused branch says why and opens nothing
+    let r = enter(&mut a, "/branch 0");
+    let out = a.handle(ok(
+        &r[0],
+        409,
+        json!({"error": {"code": "TOO_MANY", "message": "forget some kept conversations first"}}),
+    ));
+    assert!(
+        out.is_empty() && text(&a).contains("forget some kept conversations first"),
+        "{}",
+        text(&a)
+    );
+}

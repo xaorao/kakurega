@@ -63,6 +63,8 @@ pub enum Command {
     Copy(bool),
     Export(String),
     Usage(u32),
+    /// Branch the open kept conversation, keeping its first N messages (all when none is given).
+    Branch(Option<usize>),
     RenameChat {
         id: String,
         title: String,
@@ -121,6 +123,7 @@ pub const NAMES: &[&str] = &[
     "copy",
     "export",
     "usage",
+    "branch",
     "rename",
     "conflicts",
     "choose",
@@ -170,6 +173,7 @@ pub fn describe(name: &str) -> &'static str {
         "copy" => "copy the last reply (or all) to the clipboard, after asking",
         "export" => "write this conversation to a file in the exports folder",
         "usage" => "what each model route answered over some days",
+        "branch" => "start a copy of this kept conversation, optionally cut after message N",
         "rename" => "rename a kept conversation",
         "conflicts" => "notes that seem to disagree",
         "choose" => "keep one of two disagreeing notes",
@@ -245,6 +249,7 @@ pub fn usage(name: &str) -> &'static str {
         "copy" => "/copy [all]",
         "export" => "/export NAME",
         "usage" => "/usage [DAYS]",
+        "branch" => "/branch [N]",
         "rename" => "/rename ID NEW TITLE",
         "conflicts" => "/conflicts",
         "choose" => "/choose KEEP_ID OVER_ID",
@@ -463,6 +468,16 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 match rest.parse::<u32>() {
                     Ok(d) if (1..=366).contains(&d) => Ok(Command::Usage(d)),
                     _ => Err(format!("usage: {}", usage("usage"))),
+                }
+            }
+        }
+        "branch" => {
+            if rest.is_empty() {
+                Ok(Command::Branch(None))
+            } else {
+                match rest.parse::<usize>() {
+                    Ok(n) if n <= 100_000 => Ok(Command::Branch(Some(n))),
+                    _ => Err(format!("usage: {}", usage("branch"))),
                 }
             }
         }

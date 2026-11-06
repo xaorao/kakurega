@@ -104,6 +104,7 @@ enum Intent {
     Proof,
     GatewayProof,
     Keep,
+    Branch,
     Sessions,
     OpenChat(String),
     ForgetChat(String),
@@ -1381,6 +1382,33 @@ impl App {
                         Some(p) => json!({"title": "", "project": p}),
                         None => json!({"title": ""}),
                     }),
+                )]
+            }
+            Command::Branch(at) => {
+                let Some(id) = self.session.clone() else {
+                    self.say(
+                        Kind::Info,
+                        "Only a kept conversation can be branched. /keep saves this one first.",
+                    );
+                    return Vec::new();
+                };
+                let total = self.chat_history.len();
+                let at = at.unwrap_or(total);
+                if at > total {
+                    self.say(
+                        Kind::Error,
+                        format!(
+                            "This conversation has {total} message(s); choose a number up to that."
+                        ),
+                    );
+                    return Vec::new();
+                }
+                vec![self.req(
+                    Intent::Branch,
+                    false,
+                    Method::Post,
+                    &format!("/api/sessions/{id}/fork"),
+                    Some(json!({"at": at})),
                 )]
             }
             Command::Sessions => {
@@ -3369,6 +3397,20 @@ impl App {
                     self.say(Kind::Error, err_text(status, &body));
                 }
                 Vec::new()
+            }
+            Intent::Branch => {
+                let Some(new_id) = ok.then(|| body["id"].as_str().map(clean)).flatten() else {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                };
+                // the copy is opened like any kept conversation; the original is untouched and stays in /sessions
+                vec![self.req(
+                    Intent::OpenChat(new_id.clone()),
+                    false,
+                    Method::Get,
+                    &format!("/api/sessions/{new_id}"),
+                    None,
+                )]
             }
             Intent::Sessions => {
                 if let Mode::Picker(p) = &mut self.mode {

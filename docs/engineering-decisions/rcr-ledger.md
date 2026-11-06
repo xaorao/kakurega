@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 134, PARTIAL 71, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 27. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 134, PARTIAL 72, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 26. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -380,7 +380,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | A-A01 | Persistent sessions: save, list, resume | see the section in matrix A | BUILT | encrypted kept conversations, list, open, forget (c81c227) |
 | A-A02 | Session picker | see the section in matrix A | BUILT | /sessions picker (picker.rs) |
 | A-A03 | Resume at launch | see the section in matrix A | OWED-L | no resume of the last conversation at launch |
-| A-A04 | Fork or branch a session | see the section in matrix A | OWED-L | no fork of a conversation |
+| A-A04 | Fork or branch a session | see the section in matrix A | PARTIAL | /branch [N] copies a kept conversation and opens the copy; no version switcher or message picker; terminal references not re-read (terminal-transcript.md) |
 | A-A05 | Rewind to an earlier prompt, with file revert | see the section in matrix A | LATER | rewind with file revert; fixes have undo |
 | A-A06 | Message queue while busy | see the section in matrix A | BUILT | queued messages while an answer arrives (7d5a796) |
 | A-A07 | Steer and interrupt, busy-input modes | see the section in matrix A | BUILT | Esc twice stops an arriving answer (88ce0cc) |
