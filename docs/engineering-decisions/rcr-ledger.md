@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 133, PARTIAL 66, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 33. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 133, PARTIAL 67, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 32. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -97,7 +97,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | C-15 | Stall watchdog | ADAPT in small form: a hung request is already bounded by the client timeout; add "no succ | KEPT | client timeouts already bound a hung request |
 | C-16 | Update dedupe and offset | ADAPT Hermes's receipt-set idea (bounded, 24 h TTL), not a watermark. Needed only if any i | PARTIAL | offset advanced; no receipt set (low risk: replies are idempotent) |
 | C-17 | Allowed updates | Keep. Revisit only if non-consequential buttons are added (3.6) | BUILT | allowed_updates is message only |
-| C-18 | Network quirks | BUILD small: honour `HTTPS_PROXY`; document; no DNS tricks | OWED-L | HTTPS_PROXY handling not checked: NOT VERIFIED |
+| C-18 | Network quirks | BUILD small: honour `HTTPS_PROXY`; document; no DNS tricks | PARTIAL | local and pinned clients never use an environment proxy (a real privacy defect found and fixed); Telegram keeps the library default that honours HTTPS_PROXY, not tested end to end (proxies.md) |
 | C-19 | Typed send outcome | ADAPT: port the five-way outcome enum (IronClaw is MIT/Apache Rust; take the status mappin | BUILT | classify_send and read answers (tg17, tg25) |
 | C-20 | 429 flood control | ADAPT: gate with deadline; short waits (<= 5 s) inline, longer ones go back to the outbox  | PARTIAL | retry_after honoured in the outbox (tg17) |
 | C-21 | Durable outbox (delivery ledger) | ADAPT the design (Python, MIT; rebuild in Rust, store as a small SQLite/JSON file in the d | PARTIAL | bounded outbox with backoff (tg17); in memory, not kept across a restart |

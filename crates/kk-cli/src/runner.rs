@@ -286,6 +286,7 @@ impl JobRunner for ReviewRunner {
         } else {
             let agent: ureq::Agent = ureq::Agent::config_builder()
                 .timeout_global(Some(std::time::Duration::from_secs(2)))
+                .proxy(None)
                 .build()
                 .into();
             match agent

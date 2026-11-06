@@ -732,6 +732,8 @@ impl Transport for UreqTransport {
         let config = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .max_redirects(0)
+            // a proxy would resolve and connect for us and so step round the address checks and the pinned connection
+            .proxy(None)
             .timeout_global(Some(self.timeout))
             .user_agent("Kakurega/0.1 (+local research; no cookies)")
             .build();
@@ -782,6 +784,8 @@ impl Transport for UreqTransport {
         let config = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .max_redirects(0)
+            // a proxy would resolve and connect for us and so step round the address checks and the pinned connection
+            .proxy(None)
             .timeout_global(Some(self.timeout))
             .user_agent("Kakurega/0.1 (+local research; no cookies)")
             .build();

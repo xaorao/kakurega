@@ -18,6 +18,7 @@ pub fn connect(args: &[String]) -> Result<Admin, String> {
     let cfg = ureq::Agent::config_builder()
         .http_status_as_error(false)
         .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .proxy(None)
         .build();
     Ok(Admin {
         base: format!("http://127.0.0.1:{port}"),
@@ -288,5 +289,44 @@ pub fn run(args: &[String]) -> u8 {
             eprintln!("{e}");
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod proxy_tests {
+    use std::net::TcpListener;
+
+    #[test]
+    fn px04_the_admin_token_never_travels_through_an_environment_proxy() {
+        let proxy = TcpListener::bind("127.0.0.1:0").unwrap();
+        proxy.set_nonblocking(true).unwrap();
+        let purl = format!("http://{}", proxy.local_addr().unwrap());
+        for k in ["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
+            std::env::set_var(k, &purl);
+        }
+        std::env::remove_var("NO_PROXY");
+        std::env::remove_var("no_proxy");
+        let service = TcpListener::bind("127.0.0.1:0").unwrap();
+        let svc_addr = service.local_addr().unwrap();
+        let reached = std::thread::spawn(move || service.accept().is_ok());
+        let dir = std::env::temp_dir().join(format!("kk-px04-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("admin.json"),
+            format!("{{\"port\": {}, \"token\": \"tok\"}}", svc_addr.port()),
+        )
+        .unwrap();
+        let admin = super::connect(&["--data-dir".to_string(), dir.to_string_lossy().into_owned()])
+            .unwrap();
+        let _ = admin
+            .agent
+            .get(&format!("{}/admin/health", admin.base))
+            .call();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(proxy.accept().is_err(), "the proxy was contacted");
+        assert!(
+            reached.join().unwrap(),
+            "the service was contacted directly"
+        );
     }
 }

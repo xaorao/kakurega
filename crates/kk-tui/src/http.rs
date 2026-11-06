@@ -14,6 +14,7 @@ fn build_agent() -> ureq::Agent {
     let cfg = ureq::Agent::config_builder()
         .http_status_as_error(false)
         .timeout_global(Some(std::time::Duration::from_secs(60)))
+        .proxy(None)
         .build();
     cfg.into()
 }
@@ -191,5 +192,35 @@ impl Http {
             id: req.id,
             result: self.call(req.admin, req.method, &req.path, req.body.as_ref()),
         }
+    }
+}
+
+#[cfg(test)]
+mod proxy_tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    #[test]
+    fn px03_the_terminal_talks_to_the_local_service_and_never_through_an_environment_proxy() {
+        let proxy = TcpListener::bind("127.0.0.1:0").unwrap();
+        proxy.set_nonblocking(true).unwrap();
+        let purl = format!("http://{}", proxy.local_addr().unwrap());
+        for k in ["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
+            std::env::set_var(k, &purl);
+        }
+        std::env::remove_var("NO_PROXY");
+        std::env::remove_var("no_proxy");
+        let service = TcpListener::bind("127.0.0.1:0").unwrap();
+        let svc_addr = service.local_addr().unwrap();
+        let reached = std::thread::spawn(move || service.accept().is_ok());
+        let _ = build_agent()
+            .get(&format!("http://{}/api/health", svc_addr))
+            .call();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(proxy.accept().is_err(), "the proxy was contacted");
+        assert!(
+            reached.join().unwrap(),
+            "the service was contacted directly"
+        );
     }
 }

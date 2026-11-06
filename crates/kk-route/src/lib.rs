@@ -169,6 +169,18 @@ pub fn is_loopback_http(url: &str) -> bool {
 /// cuts a longer conversation from the middle without saying so.
 pub const DEFAULT_CONTEXT_TOKENS: u32 = 16_384;
 
+/// The client for a model on this computer: no redirects, no proxy from the environment (a proxy would carry the prompts
+/// somewhere else), and a status that is read, not turned into an error.
+fn local_agent(limit: Duration) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(limit))
+        .proxy(None)
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .build()
+        .into()
+}
+
 pub struct OllamaRoute {
     id: String,
     base: String,
@@ -183,16 +195,12 @@ impl OllamaRoute {
         if !is_loopback_http(base_url) {
             return Err(RouteError::EndpointNotLoopback(base_url.to_string()));
         }
-        let config = ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(300)))
-            .max_redirects(0)
-            .http_status_as_error(false)
-            .build();
+        let agent = local_agent(Duration::from_secs(300));
         Ok(OllamaRoute {
             id: format!("ollama:{model}"),
             base: base_url.trim_end_matches('/').to_string(),
             model: model.to_string(),
-            agent: config.into(),
+            agent,
             context_tokens: DEFAULT_CONTEXT_TOKENS,
             retry: retry::Retry::default(),
         })
@@ -206,12 +214,7 @@ impl OllamaRoute {
 
     /// Sets how long one call may take.
     pub fn with_timeout(mut self, limit: Duration) -> Self {
-        let config = ureq::Agent::config_builder()
-            .timeout_global(Some(limit))
-            .max_redirects(0)
-            .http_status_as_error(false)
-            .build();
-        self.agent = config.into();
+        self.agent = local_agent(limit);
         self
     }
 
