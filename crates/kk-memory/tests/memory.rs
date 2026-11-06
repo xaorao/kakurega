@@ -1071,6 +1071,108 @@ fn me25_vectors_die_with_their_note_whether_it_is_forgotten_or_replaced() {
 }
 
 #[test]
+fn me30_how_many_notes_meaning_alone_may_bring_in_is_a_setting_that_defaults_to_ten() {
+    let texts = [
+        "Initech paid last week",
+        "Hooli pays monthly",
+        "Pied Piper payment cleared",
+        "Soylent payments arrive late",
+        "Umbrella paid in full",
+        "Stark pays on delivery",
+        "Wayne payment is pending",
+        "Wonka payments were split",
+        "Oscorp paid in two parts",
+        "Cyberdyne payment is overdue",
+        "Tyrell pays by transfer",
+        "Aperture paid early",
+    ];
+    let count = |cap: Option<usize>| {
+        let mut m = mem_with(Concepts::new("cap"));
+        if let Some(c) = cap {
+            m.set_meaning_cap(c);
+        }
+        for (i, t) in texts.iter().enumerate() {
+            m.remember(i as i64 + 1, nm(t, internal())).unwrap();
+        }
+        // the question shares no word with any note, so only meaning can bring a note in
+        m.recall("bill", &internal(), 99, 20).unwrap().len()
+    };
+    assert_eq!(count(None), 10, "the default is ten");
+    assert_eq!(count(Some(5)), 5);
+    assert_eq!(count(Some(3)), 3);
+    assert_eq!(count(Some(8)), 8);
+    assert_eq!(
+        count(Some(1000)),
+        12,
+        "a large cap is limited by the notes there are"
+    );
+    assert_eq!(count(Some(0)), 0, "zero turns meaning off");
+}
+
+#[test]
+fn me31_how_much_meaning_counts_in_the_merge_is_a_setting_that_defaults_to_four() {
+    let mut m = mem_with(Concepts::new("w"));
+    // A shares the word garden with the question but is far from it in meaning; B shares no word with it but means the same
+    // as its other words. Each is first in exactly one ranking, so at weight one they tie (and the id decides): the tests
+    // below use weights that leave no tie.
+    let a = id(m
+        .remember(1, nm("The garden needs staking", internal()))
+        .unwrap());
+    let b = id(m.remember(2, nm("Hooli pays monthly", internal())).unwrap());
+    let ask = |m: &Memories| -> Vec<String> {
+        m.recall("garden bill invoice payments", &internal(), 99, 10)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.memory.id)
+            .collect()
+    };
+    let default = ask(&m);
+    let set = |v: &[String]| {
+        let mut v = v.to_vec();
+        v.sort();
+        v
+    };
+    let mut both = vec![a.clone(), b.clone()];
+    both.sort();
+    assert_eq!(set(&default), both);
+    m.set_meaning_weight(4.0);
+    assert_eq!(ask(&m), default, "weight four is the default");
+    assert_eq!(
+        default,
+        [b.clone(), a.clone()],
+        "by default the note only meaning found is lifted"
+    );
+    m.set_meaning_weight(1.0);
+    let plain = ask(&m);
+    m.set_meaning_weight(0.5);
+    assert_eq!(
+        ask(&m),
+        [a.clone(), b.clone()],
+        "a lighter meaning ranking leaves the keyword note first"
+    );
+    m.set_meaning_weight(2.0);
+    assert_eq!(
+        ask(&m),
+        [b.clone(), a.clone()],
+        "a heavier meaning ranking lifts the note only meaning found"
+    );
+    m.set_meaning_weight(0.0);
+    assert_eq!(
+        ask(&m),
+        std::slice::from_ref(&a),
+        "weight zero leaves meaning out of the merge"
+    );
+    for unusable in [f64::NAN, f64::INFINITY, -1.0] {
+        m.set_meaning_weight(unusable);
+        assert_eq!(
+            ask(&m),
+            plain,
+            "an unusable weight counts as one: {unusable}"
+        );
+    }
+}
+
+#[test]
 fn me26_meaning_never_shows_a_note_above_the_callers_clearance() {
     let m = mem_with(Concepts::new("c1"));
     m.remember(

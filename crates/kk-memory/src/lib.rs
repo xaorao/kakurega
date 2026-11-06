@@ -143,12 +143,21 @@ pub trait Embedder: Send + Sync {
 }
 
 /// At most this many notes can enter a recall through meaning alone, so a weak model cannot flood the results.
-const MEANING_ONLY_CAP: usize = 5;
+/// Chosen on development questions of the LongMemEval retrieval benchmark and confirmed on questions held out from the
+/// choice (docs/engineering-decisions/memory.md).
+const MEANING_ONLY_CAP: usize = 10;
+
+/// How much the meaning ranking counts in the merge with the keyword and similar-wording rankings. Same source as the cap.
+const MEANING_WEIGHT: f64 = 4.0;
 
 pub struct Memories {
     vault: Vault,
     fp_key: [u8; 32],
     embedder: Option<std::sync::Arc<dyn Embedder>>,
+    /// How many notes the meaning ranking keeps; see `MEANING_ONLY_CAP`.
+    meaning_cap: usize,
+    /// How much the meaning ranking counts in the merge; see `fuse::fuse_weighted`.
+    meaning_weight: f64,
 }
 
 const SCHEMA: &str = "
@@ -509,6 +518,8 @@ impl Memories {
             vault,
             fp_key: fingerprint_key,
             embedder: None,
+            meaning_cap: MEANING_ONLY_CAP,
+            meaning_weight: MEANING_WEIGHT,
         })
     }
 
@@ -517,6 +528,19 @@ impl Memories {
     }
 
     /// Number of notes that currently have a stored vector.
+    /// How many notes the meaning ranking may keep before it is merged with the keyword rankings (default 5). A weak model
+    /// should keep this small so it cannot flood the results; 0 turns meaning off. Measured, not guessed: see the recall
+    /// benchmark in `docs/engineering-decisions/memory.md`.
+    pub fn set_meaning_cap(&mut self, cap: usize) {
+        self.meaning_cap = cap;
+    }
+
+    /// How much the meaning ranking counts when it is merged with the keyword rankings (default 1, the same as each of them;
+    /// limited to 0 to 10). Measured, not guessed: see the recall benchmark in `docs/engineering-decisions/memory.md`.
+    pub fn set_meaning_weight(&mut self, weight: f64) {
+        self.meaning_weight = weight;
+    }
+
     pub fn vector_count(&self) -> usize {
         self.conn()
             .query_row("SELECT count(*) FROM memory_vectors", [], |r| {
@@ -844,7 +868,10 @@ impl Memories {
         };
         let by_meaning = self.rank_by_meaning(query, as_of, level, pool, scope, &mut by_id);
         let mut out = Vec::new();
-        for f in fuse::fuse(&[keyword, similar, by_meaning]) {
+        for f in fuse::fuse_weighted(
+            &[keyword, similar, by_meaning],
+            &[1.0, 1.0, self.meaning_weight],
+        ) {
             let Some(r) = by_id.remove(&f.id) else {
                 continue;
             };
@@ -950,7 +977,7 @@ impl Memories {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then(a.1.cmp(&b.1))
         });
-        scored.truncate(pool.min(MEANING_ONLY_CAP));
+        scored.truncate(pool.min(self.meaning_cap));
         let ids: Vec<String> = scored.into_iter().map(|(_, id)| id).collect();
         for id in &ids {
             if !by_id.contains_key(id) {

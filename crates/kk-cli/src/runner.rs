@@ -410,12 +410,17 @@ impl JobRunner for ReviewRunner {
 
 /// Recall by meaning through the embedding model of the local Ollama. If the model is not installed, embedding fails and
 /// recall quietly uses keywords and wording only.
-struct OllamaEmbedder {
+pub(crate) struct OllamaEmbedder {
     route: OllamaRoute,
     model: String,
 }
 
 impl OllamaEmbedder {
+    #[cfg(test)]
+    pub(crate) fn new(route: OllamaRoute, model: String) -> Self {
+        Self { route, model }
+    }
+
     /// nomic-embed-text is trained with a task prefix on both sides; without them its scores bunch together and unrelated
     /// text scores almost as high as related text (measured on the real model).
     fn prefixed(&self) -> bool {

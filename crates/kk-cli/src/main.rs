@@ -5,6 +5,8 @@ mod extension;
 mod log;
 mod mcp;
 mod memory_import;
+#[cfg(test)]
+mod recall_bench;
 mod runner;
 mod serve;
 mod telegram;

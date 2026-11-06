@@ -29,8 +29,23 @@ pub struct Fused {
     pub ranks: Vec<Option<usize>>,
 }
 
+/// The most one list may count for. Past this a single ranking would make the others meaningless.
+pub const MAX_WEIGHT: f64 = 10.0;
+
 /// Merges ranked lists of note ids. Equal scores are ordered by id, so the result never depends on hashing or arrival order.
+#[cfg(test)]
 pub fn fuse(lists: &[Vec<String>]) -> Vec<Fused> {
+    fuse_weighted(lists, &[])
+}
+
+/// `fuse`, where list `i` counts `weights[i]` times as much. A missing, negative or non-finite weight counts as one, a weight
+/// past `MAX_WEIGHT` as `MAX_WEIGHT`, and a weight of zero makes a list count for nothing (a note only that list found is
+/// left out). All ones is exactly `fuse`.
+pub fn fuse_weighted(lists: &[Vec<String>], weights: &[f64]) -> Vec<Fused> {
+    let weight = |li: usize| match weights.get(li) {
+        Some(w) if w.is_finite() && *w >= 0.0 => w.min(MAX_WEIGHT),
+        _ => 1.0,
+    };
     let mut acc: BTreeMap<&str, Fused> = BTreeMap::new();
     for (li, list) in lists.iter().enumerate() {
         let mut seen: BTreeSet<&str> = BTreeSet::new();
@@ -45,11 +60,11 @@ pub fn fuse(lists: &[Vec<String>]) -> Vec<Fused> {
                 score: 0.0,
                 ranks: vec![None; lists.len()],
             });
-            e.score += 1.0 / (RRF_K + rank as f64);
+            e.score += weight(li) / (RRF_K + rank as f64);
             e.ranks[li] = Some(rank);
         }
     }
-    let mut out: Vec<Fused> = acc.into_values().collect();
+    let mut out: Vec<Fused> = acc.into_values().filter(|f| f.score > 0.0).collect();
     out.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
@@ -262,6 +277,52 @@ mod tests {
         assert!(
             from_blob(&[1, 2, 3]).is_none(),
             "a damaged blob is not a vector"
+        );
+    }
+
+    fn order_of(v: &[Fused]) -> Vec<&str> {
+        v.iter().map(|f| f.id.as_str()).collect()
+    }
+
+    #[test]
+    fn fu07_a_weight_decides_how_much_a_list_counts_and_one_everywhere_is_the_plain_merge() {
+        let a: Vec<String> = ["x", "y", "z"].iter().map(|s| s.to_string()).collect();
+        let b: Vec<String> = ["z", "y", "x"].iter().map(|s| s.to_string()).collect();
+        let lists = [a, b];
+        assert_eq!(
+            fuse_weighted(&lists, &[1.0, 1.0]),
+            fuse(&lists),
+            "equal weights are the plain merge"
+        );
+        // x leads the first list and z the second; the heavier list wins the top place
+        assert_eq!(order_of(&fuse_weighted(&lists, &[3.0, 1.0]))[0], "x");
+        assert_eq!(order_of(&fuse_weighted(&lists, &[1.0, 3.0]))[0], "z");
+        // a list with weight zero does not count at all
+        let zero = fuse_weighted(&lists, &[0.0, 1.0]);
+        assert_eq!(order_of(&zero), ["z", "y", "x"]);
+        assert!(
+            zero.iter()
+                .all(|f| f.ranks.iter().filter(|r| r.is_some()).count() == 2),
+            "the ranks are still reported"
+        );
+    }
+
+    #[test]
+    fn fu08_an_unusable_weight_counts_as_one_and_a_huge_one_is_limited() {
+        let a: Vec<String> = ["x", "y"].iter().map(|s| s.to_string()).collect();
+        let b: Vec<String> = ["y", "x"].iter().map(|s| s.to_string()).collect();
+        let lists = [a, b];
+        let plain = fuse(&lists);
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -2.0] {
+            assert_eq!(fuse_weighted(&lists, &[bad, 1.0]), plain, "{bad}");
+        }
+        // fewer weights than lists: the missing ones are one
+        assert_eq!(fuse_weighted(&lists, &[]), plain);
+        assert_eq!(fuse_weighted(&lists, &[1.0]), plain);
+        // a weight past the limit counts as the limit, so no list can make the others meaningless
+        assert_eq!(
+            fuse_weighted(&lists, &[1e12, 1.0]),
+            fuse_weighted(&lists, &[MAX_WEIGHT, 1.0])
         );
     }
 }
