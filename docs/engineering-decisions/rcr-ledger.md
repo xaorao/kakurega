@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 136, PARTIAL 93, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 3. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 136, PARTIAL 94, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 2. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -284,7 +284,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 
 | Key | Capability | Matrix decision | Status | Evidence or reason |
 |---|---|---|---|---|
-| G-GH-01 | Five skippable first-run steps in about two minutes: language, invite  | IMPROVE: add language, name and theme steps, each skippable, plus the readiness screen of  | OWED-L | first run is pairing and readiness; no language, name or theme steps |
+| G-GH-01 | Five skippable first-run steps in about two minutes: language, invite  | IMPROVE: add language, name and theme steps, each skippable, plus the readiness screen of  | PARTIAL | first-visit welcome: language, theme, setup summary, each skippable, Escape skips, remembered; no name/invite/wallet by design; unaided-stranger test needs a person (web-shell.md) |
 | G-GH-02 | Account is a wallet; "Create one for me" makes a seed phrase and an ac | EXCLUDE: a chain wallet as identity is a funds risk and not our model (project rule on see | EXCLUDED | a chain wallet as identity is a funds risk |
 | G-GH-03 | First chat is blocked by a "Top up 0G funds" dialog | KEEP (their weakness, our opening). Do not add any gate before the first local review | KEPT | no top-up gate before the first chat |
 | G-GH-04 | Sign-in by email code or Google, then onboarding; vault key issued by  | EXCLUDE a server-issued key (a backend that issues the key defeats local-first). Hosted mo | EXCLUDED | no server-issued key |

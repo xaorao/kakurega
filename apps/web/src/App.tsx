@@ -15,6 +15,8 @@ import { Documents } from "./screens/Documents";
 import { Inbox } from "./screens/Inbox";
 import { notifier } from "./notifier";
 import { Palette, type PaletteItem } from "./components/Palette";
+import { Welcome } from "./components/Welcome";
+import { welcomeDone } from "./welcome";
 import { ShortcutHelp } from "./components/ShortcutHelp";
 import { appShortcut } from "./shortcuts";
 import { createLive } from "./live";
@@ -144,6 +146,7 @@ export function App() {
   const [waiting, setWaiting] = createSignal(0);
   const [paletteOpen, setPaletteOpen] = createSignal(false);
   const [helpOpen, setHelpOpen] = createSignal(false);
+  const [welcome, setWelcome] = createSignal(!welcomeDone(typeof localStorage === "undefined" ? undefined : localStorage));
   {
     const open = () => setHelpOpen(true);
     window.addEventListener("kk:help", open);
@@ -338,6 +341,9 @@ export function App() {
               </ul>
             </nav>
             <main class="main">
+              <Show when={welcome()}>
+                <Welcome onDone={() => setWelcome(false)} />
+              </Show>
               <ErrorBoundary fallback={(_err, reset) => <section class="card stack" role="alert"><p>{t("app.crashed")}</p><button onClick={reset}>{t("app.reload")}</button></section>}>
               <Show when={config()}>
                 {(c) => (

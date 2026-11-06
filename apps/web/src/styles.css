@@ -323,3 +323,6 @@ button.linklike:hover { color: var(--ink); }
 .slash-row.on { background: var(--veil); color: var(--ink); outline: 2px solid var(--cipher); outline-offset: -2px; }
 .slash-row.on .muted { color: var(--stone); }
 @media (forced-colors: active) { .slash-row.on { outline: 2px solid Highlight; } }
+.welcome { margin-bottom: 24px; }
+.welcome .choice { display: flex; gap: 8px; align-items: center; }
+.welcome fieldset { border: 0; padding: 0; margin: 0; }
