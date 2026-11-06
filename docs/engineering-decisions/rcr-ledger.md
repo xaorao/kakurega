@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 135, PARTIAL 86, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 11. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 135, PARTIAL 87, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 10. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -411,7 +411,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | A-A32 | Scrollback model: alt screen versus inline, mouse | see the section in matrix A | BUILT | alt screen, scroll back, restore on exit (tui_pty.py 27/27) |
 | A-A33 | Keyboard model, keymap config, command palette | see the section in matrix A | LATER | keymap config |
 | A-A34 | Themes and colour | see the section in matrix A | PARTIAL | a theme exists; no theme choice |
-| A-A35 | Accessibility | see the section in matrix A | OWED-L | no linear accessibility mode or screen-reader pass |
+| A-A35 | Accessibility | see the section in matrix A | PARTIAL | kaku tui --linear: append-only plain lines, no control bytes, overlays as prompts; unit + pipe e2e; NOT run with VoiceOver (terminal-transcript.md) |
 | A-A36 | Error recovery and process lifecycle | see the section in matrix A | BUILT | terminal restored after errors and exit (tui_pty.py) |
 | A-A37 | Reconnect and event replay | see the section in matrix A | PARTIAL | watched reviews are polled every 0.7 s; no event replay (row 17 exclusion) |
 | A-A38 | Headless and programmatic modes | see the section in matrix A | PARTIAL | `kaku verify`, `kaku approve`, `kaku log` scriptable; no --json on most |

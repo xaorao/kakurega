@@ -23,7 +23,8 @@ use std::process::ExitCode;
 const USAGE: &str = "kaku: private code review with checkable results
 
 Usage:
-  kaku [tui] [--resume]             open the full-screen workspace (starts the service if needed); --resume opens the newest kept conversation
+  kaku [tui] [--resume] [--linear]  open the full-screen workspace (starts the service if needed); --resume opens the newest kept conversation;
+                                    --linear (or KAKU_LINEAR=1) is plain lines in and out for screen readers and pipes
   kaku serve [--data-dir DIR] [--ui-dir DIR] [--root DIR]... [--model NAME] [--ollama URL] [--context TOKENS]
              [--transport lima|local] [--vm NAME] [--worker-bin PATH] [--launcher PATH]
   kaku pair                         print a new one-time pairing link for the browser

@@ -557,6 +557,11 @@ impl App {
         }
     }
 
+    /// The card an answer is still being written into, if any. Its text changes until the answer ends.
+    pub fn live_card(&self) -> Option<usize> {
+        self.live.as_ref().map(|(i, _)| *i)
+    }
+
     pub fn status_line(&self) -> String {
         let ready = match self.ready {
             Some(true) => "ready",

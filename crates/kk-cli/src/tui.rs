@@ -34,6 +34,7 @@ pub fn run(args: &[String]) -> u8 {
         for a in args {
             if a != "--data-dir"
                 && a != "--resume"
+                && a != "--linear"
                 && Some(a.as_str()) != crate::flag(args, "--data-dir").as_deref()
             {
                 cmd.arg(a);
@@ -72,7 +73,16 @@ pub fn run(args: &[String]) -> u8 {
             return 1;
         }
     }
-    match kk_tui::run::run(&dir, args.iter().any(|a| a == "--resume")) {
+    let resume = args.iter().any(|a| a == "--resume");
+    let linear = args.iter().any(|a| a == "--linear")
+        || std::env::var("KAKU_LINEAR")
+            .is_ok_and(|v| !matches!(v.trim(), "" | "0" | "off" | "false" | "no"));
+    let result = if linear {
+        kk_tui::linear::run(&dir, resume)
+    } else {
+        kk_tui::run::run(&dir, resume)
+    };
+    match result {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("{e}");

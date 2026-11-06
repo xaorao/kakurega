@@ -3585,3 +3585,264 @@ fn tu55_the_window_of_a_long_conversation_is_the_same_as_cutting_it_from_the_who
     let (l, b) = window_lines(&few, 80, &th, 100, 0);
     assert!(l.len() < 100 && b == 0);
 }
+
+mod linear_mode {
+    use super::*;
+    use kk_tui::linear::{card_text, feed_line, mode_text, news, Printed};
+    use kk_tui::picker::{Item, ItemKind, Picker};
+
+    fn echoing() -> Printed {
+        Printed::new(true)
+    }
+
+    #[test]
+    fn tu56_a_card_is_plain_lines_that_start_with_what_kind_of_message_it_is() {
+        let c = |kind, title: Option<&str>, lines: &[&str]| kk_tui::app::Card {
+            kind,
+            title: title.map(String::from),
+            lines: lines.iter().map(|l| l.to_string()).collect(),
+        };
+        assert_eq!(
+            card_text(&c(Kind::Warn, None, &["one line"])),
+            "[Warning] one line"
+        );
+        assert_eq!(
+            card_text(&c(Kind::Error, Some("Title"), &[])),
+            "[Error] Title"
+        );
+        assert_eq!(
+            card_text(&c(Kind::Ok, Some("T"), &["a", "b", "", " "])),
+            "[Done] T\n  a\n  b",
+            "blank trailing lines are not read out"
+        );
+        assert_eq!(
+            card_text(&c(Kind::Info, None, &["a", "b"])),
+            "[Note]\n  a\n  b"
+        );
+        assert_eq!(card_text(&c(Kind::User, None, &["/help"])), "[You] /help");
+    }
+
+    #[test]
+    fn tu57_everything_is_written_once_in_order_and_the_owners_own_lines_only_where_nothing_echoes_them(
+    ) {
+        let mut app = booted();
+        let mut quiet = Printed::new(false);
+        let mut loud = echoing();
+        let first_q = news(&mut app, &mut quiet);
+        let first_l = news(&mut app, &mut loud);
+        assert!(first_q.contains("[Status]") && first_q == first_l);
+        assert_eq!(
+            news(&mut app, &mut quiet),
+            "",
+            "nothing new, nothing written"
+        );
+        feed_line(&mut app, "/help");
+        let q = news(&mut app, &mut quiet);
+        let l = news(&mut app, &mut loud);
+        assert!(
+            !q.contains("[You]") && l.starts_with("[You] /help\n"),
+            "{q} | {l}"
+        );
+        assert!(q.contains("/review FOLDER for RECIPIENT"));
+        assert_eq!(news(&mut app, &mut quiet), "");
+        assert!(
+            !q.chars().any(|c| c.is_control() && c != '\n'),
+            "no control character"
+        );
+    }
+
+    #[test]
+    fn tu58_an_answer_in_progress_is_announced_once_and_written_whole_when_it_is_finished() {
+        let mut app = booted();
+        let mut seen = Printed::new(false);
+        news(&mut app, &mut seen);
+        let r = feed_line(&mut app, "a question");
+        assert!(r[0].stream);
+        let id = r[0].id;
+        let waiting = news(&mut app, &mut seen);
+        assert_eq!(waiting.matches("The assistant is answering").count(), 1);
+        for piece in ["Par", "tial ", "answer"] {
+            app.handle(Event::Delta {
+                id,
+                text: piece.into(),
+            });
+            let n = news(&mut app, &mut seen);
+            assert!(
+                !n.contains("Par"),
+                "a half-written answer is not read out: {n}"
+            );
+            assert!(
+                !n.contains("The assistant is answering"),
+                "announced once: {n}"
+            );
+        }
+        app.handle(ok(
+            &r[0],
+            200,
+            json!({"reply": "Partial answer", "notes_used": 0, "route": {"simulated": true}}),
+        ));
+        let done = news(&mut app, &mut seen);
+        assert_eq!(done.matches("Partial answer").count(), 1, "{done}");
+        assert_eq!(news(&mut app, &mut seen), "");
+    }
+
+    #[test]
+    fn tu59_a_yes_or_no_question_takes_yes_and_treats_anything_else_as_no() {
+        let mut app = booted();
+        let mut seen = Printed::new(false);
+        feed_line(&mut app, "/forget note-1");
+        let q = news(&mut app, &mut seen);
+        assert!(
+            q.contains("[Question]") && q.contains("Type y and press Enter to say yes"),
+            "{q}"
+        );
+        let r = feed_line(&mut app, "maybe");
+        assert!(
+            r.is_empty() && matches!(app.mode, Mode::Normal),
+            "anything else is no, and the question closes"
+        );
+        assert!(news(&mut app, &mut seen).contains("Cancelled"));
+        feed_line(&mut app, "/forget note-1");
+        let r = feed_line(&mut app, " YES ");
+        assert!(
+            !r.is_empty() && r[0].path.contains("note-1"),
+            "yes sends the request: {r:?}"
+        );
+    }
+
+    #[test]
+    fn tu60_the_approval_is_a_sequential_prompt_that_only_the_right_prefix_or_the_word_refuse_answers(
+    ) {
+        let mut app = booted();
+        app.jobs.push(kk_tui::app::JobRow {
+            id: "job-4".into(),
+            recipient: "x".into(),
+            state: "ready".into(),
+        });
+        open_approval(&mut app);
+        let mut seen = Printed::new(false);
+        let p = news(&mut app, &mut seen);
+        assert!(
+            p.contains("[Approval needed] release job-4")
+                && p.contains(
+                    "type the first 12 characters of the digest, abcdef012345, and press Enter"
+                )
+                && p.contains("type refuse"),
+            "{p}"
+        );
+        // a wrong answer writes only the error, not the whole release again
+        feed_line(&mut app, "ffffffffffff");
+        let e = news(&mut app, &mut seen);
+        assert!(
+            e.starts_with("[Error] That is not the first 12 characters")
+                && !e.contains("Files that would be sent"),
+            "{e}"
+        );
+        feed_line(&mut app, "ffffffffffff");
+        assert_eq!(
+            news(&mut app, &mut seen),
+            "",
+            "the same error is not read out twice in a row"
+        );
+        // letters that are not hexadecimal are dropped, never typed into the approval
+        feed_line(&mut app, "zzz abcdef012345 qqq");
+        let Mode::Approval(v) = &app.mode else {
+            panic!()
+        };
+        assert_eq!(v.typed, "abcdef012345");
+        // the word refuse refuses
+        let mut other = booted();
+        other.jobs.push(kk_tui::app::JobRow {
+            id: "job-4".into(),
+            recipient: "x".into(),
+            state: "ready".into(),
+        });
+        open_approval(&mut other);
+        let mut seen2 = Printed::new(false);
+        news(&mut other, &mut seen2);
+        feed_line(&mut other, "ffffffffffff");
+        assert!(news(&mut other, &mut seen2).contains("[Error]"));
+        let r = feed_line(&mut other, "REFUSE");
+        news(&mut other, &mut seen2);
+        open_approval(&mut other);
+        news(&mut other, &mut seen2);
+        feed_line(&mut other, "ffffffffffff");
+        assert!(
+            news(&mut other, &mut seen2).contains("[Error]"),
+            "the same error in a new prompt is read out again"
+        );
+        let r2 = feed_line(&mut other, "REFUSE");
+        assert!(!r2.is_empty());
+
+        assert!(matches!(other.mode, Mode::Normal));
+        assert!(
+            r.iter()
+                .any(|q| q.path.contains("deny") || q.path.contains("refus")),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn tu61_a_list_is_numbered_and_chosen_by_number_narrowed_by_words_or_closed() {
+        let mut app = booted();
+        let mut p = Picker::new("Conversations and reviews");
+        p.loading = false;
+        for (i, name) in ["alpha chat", "beta chat", "gamma review"]
+            .iter()
+            .enumerate()
+        {
+            p.items.push(Item {
+                id: format!("id-{i}"),
+                label: name.to_string(),
+                detail: String::new(),
+                when: 100 - i as i64,
+                kind: ItemKind::Chat,
+            });
+        }
+        app.mode = Mode::Picker(p);
+        let text = mode_text(&app).unwrap();
+        assert!(
+            text.contains("1. alpha chat")
+                && text.contains("3. gamma review")
+                && text.contains("Type a number"),
+            "{text}"
+        );
+        feed_line(&mut app, "review");
+        let text = mode_text(&app).unwrap();
+        assert!(
+            text.contains("1. gamma review") && !text.contains("alpha"),
+            "{text}"
+        );
+        let mut seen = Printed::new(false);
+        news(&mut app, &mut seen);
+        for bad in ["0", "4", "9"] {
+            feed_line(&mut app, bad);
+            assert!(
+                news(&mut app, &mut seen).contains("[Error] There is no number"),
+                "{bad}"
+            );
+            assert!(matches!(app.mode, Mode::Picker(_)));
+            feed_line(&mut app, "review");
+            news(&mut app, &mut seen);
+        }
+        feed_line(&mut app, "9");
+        assert!(news(&mut app, &mut seen).contains("[Error] There is no number 9"));
+        assert!(
+            matches!(app.mode, Mode::Picker(_)),
+            "a bad number leaves the list open"
+        );
+        let r = feed_line(&mut app, "1");
+        assert!(
+            matches!(app.mode, Mode::Normal) && r.iter().any(|q| q.path.contains("id-2")),
+            "{r:?}"
+        );
+        let mut again = booted();
+        again.mode = Mode::Picker(Picker::new("x"));
+        feed_line(&mut again, "cancel");
+        assert!(matches!(again.mode, Mode::Normal));
+        // a list still loading says so and offers no number
+        let mut loading = booted();
+        loading.mode = Mode::Picker(Picker::new("x"));
+        assert!(mode_text(&loading).unwrap().contains("Loading"));
+    }
+}
