@@ -1,3 +1,24 @@
+/// What `/instructions` was asked to do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InstructionsAction {
+    Show,
+    Set {
+        project: Option<String>,
+        text: String,
+    },
+    Clear(Option<String>),
+}
+
+fn plain_project(p: &str) -> bool {
+    let p = p.trim();
+    !p.is_empty()
+        && p.chars().count() <= 80
+        && p != "."
+        && p != ".."
+        && !p.contains(['/', '\\'])
+        && !p.chars().any(char::is_control)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Help,
@@ -36,6 +57,7 @@ pub enum Command {
     },
     Forget(String),
     ForgetReview(String),
+    Instructions(InstructionsAction),
     Log,
     Clear,
     Keep,
@@ -75,6 +97,7 @@ pub const NAMES: &[&str] = &[
     "correct",
     "forget",
     "forgetreview",
+    "instructions",
     "log",
     "verify",
     "clear",
@@ -114,6 +137,7 @@ pub fn describe(name: &str) -> &'static str {
         "correct" => "change a saved note",
         "forget" => "delete a saved note for good",
         "forgetreview" => "delete everything one review left in memory",
+        "instructions" => "your standing orders to the assistant",
         "log" => "the signed activity log",
         "verify" => "check a capsule offline",
         "clear" => "start a fresh conversation",
@@ -179,6 +203,7 @@ pub fn usage(name: &str) -> &'static str {
         "correct" => "/correct ID NEW TEXT",
         "forget" => "/forget ID",
         "forgetreview" => "/forgetreview JOB",
+        "instructions" => "/instructions [set [in PROJECT:] TEXT | clear [PROJECT]]",
         "verify" => "/verify FILE",
         "proof" => "/proof [MODEL]",
         "search" => "/search [--day|--week|--month|--year] WORDS",
@@ -384,6 +409,38 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 Err(format!("usage: {}", usage("forget")))
             } else {
                 Ok(Command::Forget(rest.to_string()))
+            }
+        }
+        "instructions" => {
+            let bad = || Err(format!("usage: {}", usage("instructions")));
+            if rest.is_empty() {
+                return Ok(Command::Instructions(InstructionsAction::Show));
+            }
+            let (sub, tail) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+            let tail = tail.trim();
+            match sub {
+                "set" if !tail.is_empty() => match tail.strip_prefix("in ") {
+                    Some(after) => match after.split_once(':') {
+                        Some((p, text)) if plain_project(p) && !text.trim().is_empty() => {
+                            Ok(Command::Instructions(InstructionsAction::Set {
+                                project: Some(p.trim().to_string()),
+                                text: text.trim().to_string(),
+                            }))
+                        }
+                        _ => bad(),
+                    },
+                    None => Ok(Command::Instructions(InstructionsAction::Set {
+                        project: None,
+                        text: tail.to_string(),
+                    })),
+                },
+                "clear" if tail.is_empty() => {
+                    Ok(Command::Instructions(InstructionsAction::Clear(None)))
+                }
+                "clear" if plain_project(tail) && !tail.contains(char::is_whitespace) => Ok(
+                    Command::Instructions(InstructionsAction::Clear(Some(tail.to_string()))),
+                ),
+                _ => bad(),
             }
         }
         "forgetreview" => {

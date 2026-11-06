@@ -96,7 +96,8 @@ function launchCompanion() {
   shellSecret = newShellSecret(randomBytes);
   child = spawn(kakuBin, ["serve", "--data-dir", dataDir, "--shell-secret-stdin", ...(process.env.KAKU_ARGS ? process.env.KAKU_ARGS.split(" ") : [])], { stdio: ["pipe", "ignore", "ignore"] });
   child.stdin.on("error", () => {});
-  child.stdin.end(shellSecret + "\n");
+  // the pipe stays open: when this process goes away, however it goes, the companion sees it close and leaves too
+  child.stdin.write(shellSecret + "\n");
   const mine = child;
   mine.on("exit", () => {
     if (app.isQuitting || child !== mine) return;

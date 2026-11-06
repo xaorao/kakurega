@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 123, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 13, OWED-L 41. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 124, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 12, OWED-L 41. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -302,7 +302,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | G-GH-16 | Usage page: per-model cost, custom date range, response speed | BUILD a local usage ledger per route | OWED-M | no per-route usage ledger |
 | G-GH-17 | Slash commands and a commands menu for tools, skills, MCP, saved promp | IMPROVE web and desktop to match | OWED-L | web has no slash commands (palette instead) |
 | G-GH-18 | Plan mode | BUILD: plan is shown before any effect; the plan is not an approval | LATER | plan mode with the worker loop |
-| G-GH-19 | Personal AGENTS instructions for chat and coding | BUILD as labeled "owner instruction" memory, kept separate from data memory so injected te | OWED-M | no owner-instruction notes: instruction-like notes are withheld from the model by design; a labelled owner-written standing instruction is not offered |
+| G-GH-19 | Personal AGENTS instructions for chat and coding | BUILD as labeled "owner instruction" memory, kept separate from data memory so injected te | BUILT | owner standing instructions: encrypted store, owner-session only, global + per project, one labelled system block, logged without words; web, terminal; not applied to ask or reviews (owner-instructions.md) |
 | G-GH-20 | Interactive previews and artifacts rendered in a sandbox page (CSP `co | ADAPT the idea: render model-made HTML in a sandboxed frame with no network, no storage | EXCLUDED | no model-written HTML is run |
 | G-GH-21 | App-context capture with an optional global shortcut | BUILD as an explicit one-shot capture with preview and label, not a background recorder | LATER | explicit one-shot capture |
 | G-GH-22 | Voice input (local Whisper) and local TTS | BUILD local only; remote speech route only for Public-label audio | EXCLUDED | voice not built; remote speech excluded |

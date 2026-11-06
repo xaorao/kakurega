@@ -5,6 +5,7 @@ import { NewReview } from "./screens/NewReview";
 import { ReviewView } from "./screens/ReviewView";
 import { Verify } from "./screens/Verify";
 import { Memory } from "./screens/Memory";
+import { Instructions } from "./screens/Instructions";
 import { Activity } from "./screens/Activity";
 import { AgentAccess } from "./screens/AgentAccess";
 import { Privacy } from "./screens/Privacy";
@@ -266,6 +267,7 @@ export function App() {
       { id: "docs", label: t("nav.docs"), group: t("palette.screens"), run: go("#/docs") },
       { id: "chat", label: t("nav.chat"), group: t("palette.screens"), run: go("#/chat") },
       { id: "memory", label: t("nav.memory"), group: t("palette.screens"), run: go("#/memory") },
+      { id: "instructions", label: t("nav.instructions"), group: t("palette.screens"), run: go("#/instructions") },
       { id: "privacy", label: t("nav.privacy"), group: t("palette.screens"), run: go("#/privacy") },
       { id: "agent", label: t("nav.agent"), group: t("palette.screens"), run: go("#/agent") },
       { id: "activity", label: t("nav.activity"), group: t("palette.screens"), run: go("#/activity") },
@@ -308,6 +310,7 @@ export function App() {
               <a href="#/docs" class={hash() === "#/docs" ? "navlink active" : "navlink"}>{t("nav.docs")}</a>
               <a href="#/chat" class={hash() === "#/chat" ? "navlink active" : "navlink"}>{t("nav.chat")}</a>
               <a href="#/memory" class={hash() === "#/memory" ? "navlink active" : "navlink"}>{t("nav.memory")}</a>
+              <a href="#/instructions" class={hash() === "#/instructions" ? "navlink active" : "navlink"}>{t("nav.instructions")}</a>
               <a href="#/privacy" class={hash() === "#/privacy" ? "navlink active" : "navlink"}>{t("nav.privacy")}</a>
               <a href="#/agent" class={hash() === "#/agent" ? "navlink active" : "navlink"}>{t("nav.agent")}</a>
               <a href="#/activity" class={hash() === "#/activity" ? "navlink active" : "navlink"}>{t("nav.activity")}</a>
@@ -340,7 +343,7 @@ export function App() {
               <ErrorBoundary fallback={(_err, reset) => <section class="card stack" role="alert"><p>{t("app.crashed")}</p><button onClick={reset}>{t("app.reload")}</button></section>}>
               <Show when={config()}>
                 {(c) => (
-                  <Show when={hash() !== "#/memory" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/docs" && hash() !== "#/inbox" && hash() !== "#/agent" && hash() !== "#/privacy"} fallback={hash() === "#/privacy" ? <Privacy /> : hash() === "#/agent" ? <AgentAccess /> : hash() === "#/inbox" ? <Inbox /> : hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/docs" ? <Documents /> : <Memory />}>
+                  <Show when={hash() !== "#/memory" && hash() !== "#/instructions" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/docs" && hash() !== "#/inbox" && hash() !== "#/agent" && hash() !== "#/privacy"} fallback={hash() === "#/instructions" ? <Instructions /> : hash() === "#/privacy" ? <Privacy /> : hash() === "#/agent" ? <AgentAccess /> : hash() === "#/inbox" ? <Inbox /> : hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/docs" ? <Documents /> : <Memory />}>
                     <Show when={jobId()} fallback={<NewReview config={c()} onStarted={(id) => { void refresh(); location.hash = `#/job/${id}`; }} />}>
                     {(id) => <ReviewView id={id()} config={c()} onUpdate={() => void refresh()} />}
                     </Show>

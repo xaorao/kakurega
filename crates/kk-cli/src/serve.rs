@@ -118,7 +118,8 @@ fn serve(args: &[String]) -> Result<(), String> {
         });
     // The desktop shell hands over its per-launch secret on stdin, never in the environment or arguments, which the review
     // workers would inherit and other programs could list.
-    let shell_secret = if args.iter().any(|a| a == "--shell-secret-stdin") {
+    let owned_by_shell = args.iter().any(|a| a == "--shell-secret-stdin");
+    let shell_secret = if owned_by_shell {
         let mut line = String::new();
         std::io::stdin()
             .read_line(&mut line)
@@ -172,8 +173,26 @@ fn serve(args: &[String]) -> Result<(), String> {
     println!("Press Ctrl-C to stop.");
     let owner =
         std::env::var_os("KAKU_EXIT_WITH_PARENT").map(|_| std::os::unix::process::parent_id());
+    // A shell that handed over its secret keeps the other end of the pipe open for as long as it lives. When the pipe
+    // closes the shell is gone, however it went (a crash or a forced quit leave no time to say so), and nothing is left to
+    // serve: the service leaves too instead of running on with nobody holding its window.
+    let shell_gone = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if owned_by_shell {
+        let flag = shell_gone.clone();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut sink = [0u8; 256];
+            let mut stdin = std::io::stdin().lock();
+            while matches!(stdin.read(&mut sink), Ok(n) if n > 0) {}
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+    }
     loop {
         std::thread::sleep(std::time::Duration::from_secs(1));
+        if shell_gone.load(std::sync::atomic::Ordering::SeqCst) {
+            let _ = std::fs::remove_file(data.join("admin.json"));
+            return Ok(());
+        }
         if let Some(p) = owner {
             if std::os::unix::process::parent_id() != p {
                 let _ = std::fs::remove_file(data.join("admin.json"));

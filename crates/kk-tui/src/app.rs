@@ -97,6 +97,8 @@ enum Intent {
     /// The counts of what forgetting a review would remove, asked for before anything is confirmed.
     ReviewFootprint(String),
     ForgetReview,
+    InstructionsShow,
+    InstructionsSet,
     Log,
     Chat,
     SearchPropose,
@@ -1536,6 +1538,44 @@ impl App {
                 &format!("/api/memories/{id}/correct"),
                 Some(json!({"text": text, "reason": "you corrected it in the terminal"})),
             )],
+            Command::Instructions(action) => {
+                use crate::cmd::InstructionsAction as A;
+                match action {
+                    A::Show => vec![self.req(
+                        Intent::InstructionsShow,
+                        false,
+                        Method::Get,
+                        "/api/instructions",
+                        None,
+                    )],
+                    A::Set { project, text } => {
+                        let body = match project {
+                            Some(p) => json!({"project": p, "text": text}),
+                            None => json!({"text": text}),
+                        };
+                        vec![self.req(
+                            Intent::InstructionsSet,
+                            false,
+                            Method::Post,
+                            "/api/instructions",
+                            Some(body),
+                        )]
+                    }
+                    A::Clear(project) => {
+                        let body = match project {
+                            Some(p) => json!({"project": p, "text": ""}),
+                            None => json!({"text": ""}),
+                        };
+                        vec![self.req(
+                            Intent::InstructionsSet,
+                            false,
+                            Method::Post,
+                            "/api/instructions",
+                            Some(body),
+                        )]
+                    }
+                }
+            }
             Command::ForgetReview(job) => vec![self.req(
                 Intent::ReviewFootprint(job.clone()),
                 false,
@@ -1604,19 +1644,26 @@ impl App {
     }
 
     fn scrub_last_remember(&mut self) {
+        self.scrub_last(
+            "/remember",
+            "/remember [text hidden: it looked like a secret and was not stored]",
+        );
+    }
+
+    /// Replaces the last typed command that starts with `prefix` in the transcript, and drops it from the command history.
+    fn scrub_last(&mut self, prefix: &str, replacement: &str) {
         if let Some(c) = self.cards.iter_mut().rev().find(|c| {
             c.kind == Kind::User
                 && c.lines
                     .first()
-                    .is_some_and(|l| l.trim_start().to_ascii_lowercase().starts_with("/remember"))
+                    .is_some_and(|l| l.trim_start().to_ascii_lowercase().starts_with(prefix))
         }) {
-            c.lines =
-                vec!["/remember [text hidden: it looked like a secret and was not stored]".into()];
+            c.lines = vec![replacement.to_string()];
         }
         if let Some(i) = self
             .history
             .iter()
-            .rposition(|h| h.trim_start().to_ascii_lowercase().starts_with("/remember"))
+            .rposition(|h| h.trim_start().to_ascii_lowercase().starts_with(prefix))
         {
             self.history.remove(i);
         }
@@ -2309,6 +2356,59 @@ impl App {
                         err_text(status, &body)
                     },
                 );
+                Vec::new()
+            }
+            Intent::InstructionsShow => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let mut lines: Vec<String> = Vec::new();
+                if let Some(g) = body["global"]["text"].as_str() {
+                    lines.push("For every conversation:".into());
+                    lines.extend(g.lines().map(|l| format!("  {}", clean(l))));
+                }
+                for p in body["projects"].as_array().cloned().unwrap_or_default() {
+                    lines.push(format!(
+                        "For the project {}:",
+                        clean(p["project"].as_str().unwrap_or("?"))
+                    ));
+                    lines.extend(
+                        p["text"]
+                            .as_str()
+                            .unwrap_or("")
+                            .lines()
+                            .map(|l| format!("  {}", clean(l))),
+                    );
+                }
+                if lines.is_empty() {
+                    self.say(Kind::Info, "No standing instructions. /instructions set TEXT writes one; /instructions set in PROJECT: TEXT keeps it for one project.");
+                } else {
+                    self.push(Kind::Info, Some("Your standing instructions"), lines);
+                }
+                Vec::new()
+            }
+            Intent::InstructionsSet => {
+                if ok {
+                    self.say(
+                        Kind::Ok,
+                        if body["removed"] == true {
+                            "Removed."
+                        } else if body["saved"] == true {
+                            "Saved."
+                        } else {
+                            "Nothing was set there."
+                        },
+                    );
+                } else {
+                    if body["error"]["message"]
+                        .as_str()
+                        .is_some_and(|m| m.contains("looks like a secret"))
+                    {
+                        self.scrub_last("/instructions", "/instructions [text hidden: it looked like a secret and was not saved]");
+                    }
+                    self.say(Kind::Error, err_text(status, &body));
+                }
                 Vec::new()
             }
             Intent::ReviewFootprint(job) => {

@@ -2536,3 +2536,108 @@ fn tu40_forgetting_everything_from_a_review_shows_what_goes_asks_first_and_repor
         text(&a)
     );
 }
+
+#[test]
+fn tu41_the_terminal_shows_sets_and_clears_the_owners_standing_instructions() {
+    use kk_tui::cmd::InstructionsAction;
+    assert_eq!(
+        cmd::parse("/instructions").unwrap(),
+        Command::Instructions(InstructionsAction::Show)
+    );
+    assert_eq!(
+        cmd::parse("/instructions set Answer in short bullets").unwrap(),
+        Command::Instructions(InstructionsAction::Set {
+            project: None,
+            text: "Answer in short bullets".into()
+        })
+    );
+    assert_eq!(
+        cmd::parse("/instructions set in kestrel: Prices are in euros").unwrap(),
+        Command::Instructions(InstructionsAction::Set {
+            project: Some("kestrel".into()),
+            text: "Prices are in euros".into()
+        })
+    );
+    assert_eq!(
+        cmd::parse("/instructions clear").unwrap(),
+        Command::Instructions(InstructionsAction::Clear(None))
+    );
+    assert_eq!(
+        cmd::parse("/instructions clear kestrel").unwrap(),
+        Command::Instructions(InstructionsAction::Clear(Some("kestrel".into())))
+    );
+    for bad in [
+        "/instructions set",
+        "/instructions set   ",
+        "/instructions set in : text",
+        "/instructions set in a/b: text",
+        "/instructions set in kestrel:",
+        "/instructions clear a b",
+        "/instructions clear a/b",
+        "/instructions frobnicate",
+        "/instructions set in kestrel text without a colon",
+        "/instructions set in ..: text",
+        "/instructions set in .: text",
+        "/instructions clear ..",
+        "/instructions clear .",
+    ] {
+        assert!(cmd::parse(bad).is_err(), "{bad}");
+    }
+    // show: a request, then the texts in the transcript
+    let mut app = booted();
+    let r = enter(&mut app, "/instructions");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].admin),
+        ("/api/instructions", false)
+    );
+    assert_eq!(r[0].method, Method::Get);
+    app.handle(ok(&r[0], 200, json!({"global": {"text": "Answer in short bullets", "updated_at": 5}, "projects": [{"project": "kestrel", "text": "Prices are in euros", "updated_at": 6}], "max_chars": 4000})));
+    let t = text(&app);
+    assert!(
+        t.contains("Answer in short bullets")
+            && t.contains("kestrel")
+            && t.contains("Prices are in euros"),
+        "{t}"
+    );
+    let mut a = booted();
+    let r = enter(&mut a, "/instructions");
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"global": null, "projects": [], "max_chars": 4000}),
+    ));
+    assert!(
+        text(&a).contains("No standing instructions"),
+        "{}",
+        text(&a)
+    );
+    // set and clear send exactly what was typed and say what happened
+    let mut a = booted();
+    let r = enter(&mut a, "/instructions set Answer in short bullets");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/instructions", Method::Post)
+    );
+    assert_eq!(r[0].body, Some(json!({"text": "Answer in short bullets"})));
+    a.handle(ok(&r[0], 200, json!({"saved": true})));
+    assert!(text(&a).contains("Saved"), "{}", text(&a));
+    let r = enter(&mut a, "/instructions set in kestrel: Prices are in euros");
+    assert_eq!(
+        r[0].body,
+        Some(json!({"project": "kestrel", "text": "Prices are in euros"}))
+    );
+    let r = enter(&mut a, "/instructions clear kestrel");
+    assert_eq!(r[0].body, Some(json!({"project": "kestrel", "text": ""})));
+    a.handle(ok(&r[0], 200, json!({"removed": true, "saved": false})));
+    assert!(text(&a).contains("Removed"), "{}", text(&a));
+    let r = enter(&mut a, "/instructions clear");
+    assert_eq!(r[0].body, Some(json!({"text": ""})));
+    // a refused secret is scrubbed from the transcript and the history, like a note
+    let mut a = booted();
+    let r = enter(&mut a, "/instructions set use the key hunter2hunter2");
+    a.handle(ok(&r[0], 422, json!({"error": {"code": "INSTRUCTION_REFUSED", "message": "this looks like a secret; instructions are sent to the model, so keep secrets out of them"}})));
+    assert!(!text(&a).contains("hunter2"), "{}", text(&a));
+    assert!(text(&a).contains("keep secrets out"));
+    a.handle(key(KeyCode::Up));
+    assert!(!a.input.contains("hunter2"), "{:?}", a.input);
+}

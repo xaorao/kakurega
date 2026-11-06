@@ -73,6 +73,7 @@ let excusedRequests = 0;
 let excusedConsole = 0;
 // The one lease the script asks for with zero uses, to see the service's refusal shown in words: the browser logs its 400.
 let leaseRefusals = 1;
+let instructionRefusals = 0; // the one deliberate 422 when an instruction holds a secret
 let forgottenWordsRefusals = 0; // the one deliberate 422 when forgotten words are typed in again
 page.on("request", (r) => { try { requestOrigins.add(new URL(r.url()).origin); } catch { /* data: urls */ } });
 page.on("console", (m) => {
@@ -80,6 +81,10 @@ page.on("console", (m) => {
   // The browser logs every non-2xx fetch as a console error. The model-proof refusal is a deliberate 422 that the page
   // shows as a message (checked by its own steps), so only that exact response is excused.
   if (m.location().url.endsWith("/api/route/attest") && /status of 422/.test(m.text())) return;
+  if (m.location().url.endsWith("/api/instructions") && /status of 422/.test(m.text()) && instructionRefusals > 0) {
+    instructionRefusals--;
+    return;
+  }
   if (m.location().url.endsWith("/api/memories") && /status of 422/.test(m.text()) && forgottenWordsRefusals > 0) {
     forgottenWordsRefusals--;
     return;
@@ -1051,6 +1056,41 @@ try {
   const rows = await page.locator("tbody tr").allInnerTexts();
   check("the activity list shows approvals, delivery and memory changes in plain words", ["Release approved", "Delivery finished", "Memory forgotten", "Review finished", "Suggestion accepted"].every((w) => rows.join("\n").includes(w)));
   check("the activity page never shows memory text or file contents", !rows.join("\n").includes("in-process dictionary") && !rows.join("\n").includes("euros"));
+  // the owner's standing instructions: written once, kept, sent with chat questions, and refused if they hold a secret
+  await page.getByRole("link", { name: "Instructions" }).click();
+  await page.getByRole("heading", { name: "Your standing instructions", exact: true }).waitFor();
+  await page.getByLabel("Instructions for every conversation").fill("Answer in short bullet points.");
+  await page.getByRole("button", { name: "Save" }).first().click();
+  await page.getByText("Saved.").first().waitFor();
+  await axeCheck(page, "instructions screen");
+  await page.screenshot({ path: join(shots, "14b-instructions.png") });
+  await page.reload();
+  await page.getByRole("heading", { name: "Your standing instructions", exact: true }).waitFor();
+  check("a saved instruction is still there after the page is reloaded", (await page.getByLabel("Instructions for every conversation").inputValue()) === "Answer in short bullet points.");
+  instructionRefusals = 1;
+  await page.getByLabel("Instructions for every conversation").fill("Use this key " + "sk_li" + "ve_abcdefghijklmnop0123");
+  await page.getByRole("button", { name: "Save" }).first().click();
+  await page.getByRole("alert").filter({ hasText: /secret/i }).first().waitFor();
+  check("an instruction that holds a secret is refused with the reason and the saved one is unchanged", await page.getByRole("alert").filter({ hasText: /secret/i }).first().isVisible());
+  await page.getByLabel("Instructions for every conversation").fill("Answer in short bullet points.");
+  await page.getByRole("link", { name: "Chat" }).click();
+  await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();
+  await page.getByLabel("Your message").fill("What is the rounding rule?");
+  await page.getByLabel("Your message").press("Enter");
+  await page.getByText("your instructions applied").first().waitFor();
+  check("an answer says that the owner's instructions were sent with it", (await page.locator(".msg.assistant").innerText()).includes("your instructions applied"));
+  await page.getByRole("button", { name: "Clear" }).click();
+  await page.getByRole("link", { name: "Instructions" }).click();
+  await page.getByRole("button", { name: "Remove" }).first().click();
+  await page.getByText("Removed.").first().waitFor();
+  await page.getByRole("link", { name: "Chat" }).click();
+  await page.getByLabel("Your message").fill("What is the rounding rule?");
+  await page.getByLabel("Your message").press("Enter");
+  await page.getByText("note(s) used").first().waitFor();
+  check("after removing them the answer no longer says so", !(await page.locator(".msg.assistant").innerText()).includes("your instructions applied"));
+  await page.getByRole("button", { name: "Clear" }).click();
+  await page.getByRole("link", { name: "Activity" }).click();
+  await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();
   await axeCheck(page, "activity screen");
   await page.screenshot({ path: join(shots, "12-activity.png") });
   const [logDl] = await Promise.all([page.waitForEvent("download"), page.getByRole("link", { name: "Download the signed log" }).click()]);

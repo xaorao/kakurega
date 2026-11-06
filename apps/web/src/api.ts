@@ -80,7 +80,13 @@ export interface Suggestion { id: string; text: string; why: string; level: stri
 export interface LogEntry { seq: number; at: number; kind: string; subject: string; data: Record<string, string | number> }
 export interface LogSummary { count: number; head: string | null; public_key: string; recent: LogEntry[] }
 export interface ChatTurn { role: "user" | "assistant"; content: string }
-export interface ChatReply { project?: string | null; reply: string; route: { id: string; class: string; simulated: boolean; stays_here?: boolean; host?: string | null }; notes_used: number; notes?: { id: string; text: string; why: string; untrusted: boolean; project?: string | null }[]; notes_withheld: number; notes_left_out?: number; web_sources_used: number; web_sources_trimmed?: number; web_sources_left_out?: number; saved?: boolean; not_saved?: "full" | "forgotten" | "error" | null; usage?: { context_tokens?: number; context_window?: number | null; estimate?: boolean; context_tokens_estimate: number; reply_tokens_estimate: number; history_turns_sent: number; history_turns_dropped: number; history_turns_summarized?: number; summary_text?: string | null; compacted_now?: boolean; compaction_failed?: string | null } }
+export interface ChatReply { instructions_used?: boolean; project?: string | null; reply: string; route: { id: string; class: string; simulated: boolean; stays_here?: boolean; host?: string | null }; notes_used: number; notes?: { id: string; text: string; why: string; untrusted: boolean; project?: string | null }[]; notes_withheld: number; notes_left_out?: number; web_sources_used: number; web_sources_trimmed?: number; web_sources_left_out?: number; saved?: boolean; not_saved?: "full" | "forgotten" | "error" | null; usage?: { context_tokens?: number; context_window?: number | null; estimate?: boolean; context_tokens_estimate: number; reply_tokens_estimate: number; history_turns_sent: number; history_turns_dropped: number; history_turns_summarized?: number; summary_text?: string | null; compacted_now?: boolean; compaction_failed?: string | null } }
+export interface Instructions {
+  global: { text: string; updated_at: number } | null;
+  projects: { project: string; text: string; updated_at: number }[];
+  max_chars: number;
+}
+
 export interface ReviewSource {
   job: string;
   notes: number;
@@ -183,6 +189,8 @@ export const api = {
   attestGateway: () => request<GatewayProofResult>("POST", "/api/route/gateway", {}),
   attestModel: (model: string) => request<ModelProof>("POST", "/api/route/attest", { model }),
   similarMemories: () => request<SimilarMemories>("GET", "/api/memories/similar"),
+  instructions: () => request<Instructions>("GET", "/api/instructions"),
+  setInstruction: (project: string | undefined, text: string) => request<{ saved?: boolean; removed?: boolean }>("POST", "/api/instructions", project ? { project, text } : { text }),
   reviewSources: () => request<{ sources: ReviewSource[] }>("GET", "/api/memories/sources"),
   forgetReview: (job: string) => request<ReviewSource & { forgotten: boolean }>("POST", `/api/memories/sources/${encodeURIComponent(job)}/forget`, {}),
   mergeMemories: (keep: string, merge: string[]) => request<{ merged: number; kept: string }>("POST", "/api/memories/merge", { keep, merge }),

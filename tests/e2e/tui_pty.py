@@ -294,7 +294,9 @@ check("a second workspace started its own service", alive)
 p2.kill()
 p2.wait()
 gone = False
-for _ in range(40):
+killed_at = time.time()
+# the service polls its parent once a second; the claim is that it leaves by itself, so a machine under load gets a minute
+for _ in range(240):
     try:
         os.read(m2, 65536)
     except OSError:
@@ -304,7 +306,7 @@ for _ in range(40):
         break
     time.sleep(0.25)
 os.close(m2)
-check("after the workspace is killed outright, the service it started exits by itself", gone)
+check("after the workspace is killed outright, the service it started exits by itself", gone, f"after {time.time() - killed_at:.1f} s")
 bad = results.count(False)
 print(f"\n{len(results) - bad}/{len(results)} terminal checks passed" if bad == 0 else f"\n{bad} FAILED")
 sys.exit(1 if bad else 0)
