@@ -109,6 +109,12 @@ export function Chat() {
     setFindAt(at);
     paintFind(found(), at);
   };
+  // New messages and streamed text change what is on the screen, so an open search is read again after each change.
+  createEffect(() => {
+    turns();
+    live();
+    if (findText().trim() !== "") queueMicrotask(() => runFind(findText(), true));
+  });
   const clearFind = () => {
     setFindText("");
     setFound([]);

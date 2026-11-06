@@ -1156,6 +1156,14 @@ try {
   await page.getByText("2 of 2", { exact: true }).waitFor();
   await page.getByLabel("Find in this conversation").press("Enter");
   await page.getByText("1 of 2", { exact: true }).waitFor();
+  // a new answer arrives while a search is open: the count follows what is on the screen
+  await page.getByLabel("Find in this conversation").fill("I received");
+  await page.getByText(/^\d+ of \d+$/).waitFor();
+  const seenBefore = Number((await page.getByText(/^\d+ of \d+$/).innerText()).split(" of ")[1]);
+  await page.getByLabel("Your message").fill("findcanary message");
+  await page.getByLabel("Your message").press("Enter");
+  await page.getByText(`1 of ${seenBefore + 1}`, { exact: true }).waitFor();
+  check("a search left open counts the new answer when it arrives", true);
   await page.getByLabel("Find in this conversation").fill("zzzznomatch");
   await page.getByText("No match", { exact: true }).waitFor();
   await page.getByLabel("Find in this conversation").press("Escape");
