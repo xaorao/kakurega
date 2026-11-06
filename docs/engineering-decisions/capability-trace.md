@@ -2,6 +2,47 @@
 
 One row per recovered or decided capability. Reading depth is stated honestly: FULL = read in full by Claude along the capability's path, PART = partly read, MATRIX = taken from an investigator's matrix and not yet read by Claude. A row with MATRIX depth may not justify a design decision (CLAUDE.md, source-first rule).
 
+## Reading index (my own reading, one line per row)
+
+Depth is what I read myself along the capability's path: FULL (the whole path read) or PART (some of it read; the rest listed). Reports from other agents and the capability matrices are never counted as reading. The working definition of done for this gate (until the owner chooses another) is FULL or PART by me on every row, with the unread remainder written down and no high-value gap left unbuilt.
+
+| # | Capability | Reference read by me | Depth | Not read |
+|---|---|---|---|---|
+| 1 | Hybrid recall | Anamnesis `search/hybrid.rs` 1-560 | FULL | its tests and store layer |
+| 2 | Safe web fetch | Hermes `tools/url_safety.py` 1-651 | FULL | `web_tools.py` beyond 1-120 |
+| 3 | Query-relevant memory for reviews | Ghast `desktop/memory.md` (public docs) FULL; Anamnesis `hybrid.rs` | PART | the closed app itself |
+| 4 | Coding checkpoints, guarded undo | OpenCode `snapshot.ts`, `session/revert.ts` FULL; Cline `checkpoint-restore.ts` 1-260 | PART | OpenCode `git.ts`, Cline hooks, OpenHands history |
+| 5 | Web composer and send | OpenCode `composer/editor/interaction.ts` (840), `composer/submit.ts` (723), `session/timeline/interaction.ts` (455), `persistence.tsx`, `submission-state.ts` | FULL | Hermes, Codex, OpenClaw composers |
+| 6 | MCP hardening | rmcp `transport/async_rw.rs`, service loop (parts) | PART | rest of rmcp |
+| 7 | Encrypted backup | Ghast `companion-checkpoint/sync.rs` 1-215 | FULL | 215-603 (remote upload, not built) |
+| 8 | Persistent sessions | OpenCode `dialog-session-list.tsx` 1-200 of 327 | PART | rows 200-327 |
+| 9 | Streaming answers with stop | OpenCode prompt editor and submit (see row 5), `prompt/index.tsx` 1407-1486 | FULL | most of `prompt/index.tsx` (2036 lines) |
+| 10 | Command palette | OpenCode `dialog-select.tsx` 1-860 of 1001 | FULL | 860-1001 (closing layout, skimmed) |
+| 11 | Slash-command completion | OpenCode `autocomplete.tsx` 483-522, 601-660, 856-870 | PART | file and agent mention parts |
+| 12 | MCP interop with the official SDK | rmcp `model.rs` versions, `examples/clients` | PART | the rest of rmcp |
+| 13 | Readiness with repair | Ghast `companion-cli/main.rs` report shape | PART | lines 808-927 in full |
+| 14 | Memory import from other assistants | Hermes `tools/memory_tool_store.py` parts; Anamnesis importers | PART | other adapters |
+| 15 | Citation click-through | AnythingLLM `Citation/index.jsx` (404); LibreChat `citations.ts` (46), `Citation.tsx` 1-125 and 295-394 | PART | AnythingLLM detail view and sidebar; LibreChat pager |
+| 16 | One place for what waits on the owner | OpenCode `session-permission-dock.tsx`, `auto-approve.ts`, `session-request-tree.ts`, `notifications/coordinator.ts`, `notification.tsx` 225-399; Ghast `approval-flow.md` | PART | `notification.tsx` 1-224 (skimmed) |
+| 17 | Live updates | OpenCode `client/solid/connection.ts`, `shared-events.ts`, `runtime/server/client.tsx`, `server/event-feed.ts` and 2 more | FULL | generated client, tests |
+| 18 | Draft stash | OpenCode `draft-stash.ts` | FULL | none |
+| 19 | Fix diff viewer | OpenCode `util/diff.ts`, `component/patch-diff.tsx` (211) | PART | `diff-viewer.tsx` beyond 1-200 of 1380, file tree, image viewer |
+| 20 | Scheduled reviews | Ghast `companion-cron/lib.rs` 1-145 | PART | scheduling loop and run tiers |
+| 21 | Tiered tool access, owner leases | IronClaw `ironclaw_authorization/src/lib.rs` (parts of 1680), `capability.rs` 370-392; OpenCode `core/src/permission.ts` (388) | PART | rest of IronClaw authorization and its 1434-line lease tests |
+| 22 | Context meter and compaction | OpenCode `util/token.ts`, `compaction.ts` parts; Ollama timings; Hermes `_generate_summary`, summary/retry/window modules | PART | Cline and Codex compaction |
+| 23 | Vector recall | Anamnesis `hybrid.rs` 1-560 | FULL | embedding providers, `vec0` store (not adopted) |
+| 24 | Web search from conversation | OpenCode `core/src/websearch.ts`, Cline `web-search.ts` FULL; SearXNG `webapp.py` 640-700 | FULL | LibreChat search |
+| 25 | Signed updates | Tauri `updater.rs` 494-1010, 1885-1975, `config.rs` parts; python-tuf `trusted_metadata_set.py` FULL | PART | rest of Tauri updater and python-tuf |
+| 26 | Near-duplicate notes | Anamnesis `semantic_dedupe.rs` (524) | FULL | `near_merge_preview.rs` |
+| 27 | Project-scoped notes | Anamnesis `core/model.rs`, `query.rs` FULL; OpenCode `project.ts` 1-260 of 536 | PART | rest of `project.ts` |
+| 28 | External editor | OpenCode `editor.ts`, `context/editor.ts` (409), `prompt/content.ts` | FULL | `editor-zed.ts`, renderer suspend and resume |
+| 29 | Secret detector comparison | gitleaks `detect/detect.go` 330-670, `codec/*`, `generate.go`; detect-secrets `filters/*`, `plugins/keyword.py`, `high_entropy_strings.py` | FULL | gitleaks `detect.go` 1-330 and 670-900, `report/`, `sources/`; detect-secrets provider plugins |
+| 30 | Reproducer languages, fix checking | SWE-bench `grading.py`, `infra_failure.py` FULL, parsers and `run_evaluation.py` PART; Agentless, Semgrep PART | PART | rest of those repositories |
+| 31 | Memory shown, consolidation | Ghast `desktop/memory.md`, `approval-flow.md` FULL (public docs); ghast-memory-os `kernel/consolidation.ts` (607, all but the stopword list) | FULL | `runtime/create-memory-os.ts` beyond 4960-5130 |
+| 32 | Worker sandbox | Codex `linux-sandbox/seccomp.rs` (306) FULL, `bwrap.rs` 225-415 of 1537 | PART | `linux_run_main.rs`, proxy files |
+
+Counts: FULL on 14 rows, PART on 18 rows, none without reading. The per-row records below keep the commits, files and line ranges.
+
 | Upstream and revision | Files examined (depth) | Capability | Decision | Kakurega location | Verification | Outstanding gap |
 |---|---|---|---|---|---|---|
 | Anamnesis (Apache-2.0), working copy in private-ai/ghast-ai | `crates/search/src/hybrid.rs` 1-560 (FULL for fusion, pool, modes); tests and store layer (NOT READ) | Hybrid recall: rank fusion, pool sizing, per-hit explanation | REBUILD from algorithm | `crates/kk-memory/src/fuse.rs`, `recall` in `crates/kk-memory/src/lib.rs` | fu01-fu05, me21-me23; label and wording mutations fail tests | Embedding vectors; recall quality benchmark Recall measured on LongMemEval (170 held-out questions, protocol and numbers in memory.md): defaults changed to cap 10 and merge weight 4 (all@5 .876 to .924, NDCG .593 to .642); plain meaning search still ahead on NDCG; false positives, short notes and other embedders NOT MEASURED. |
