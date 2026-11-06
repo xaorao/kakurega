@@ -155,6 +155,14 @@ try:
     exp = subprocess.run([kaku, "log", "export", "--out", str(work / "lease-log.json"), "--data-dir", str(data)], capture_output=True, text=True)
     logtext = (work / "lease-log.json").read_text()
     check("the signed log records the grant, the use, the refusals and the revoke", exp.returncode == 0 and all(k in logtext for k in ["agent.lease.granted", "agent.lease.used", "agent.lease.refused", "agent.lease.revoked"]))
+    # the same log records every tool call by an agent: the tool and how it ended, never what it was given or answered
+    entries = [json.loads(e["entry"]) for e in json.loads((work / "lease-log.json").read_text())["entries"]]
+    calls = [e for e in entries if e["kind"] == "mcp.call"]
+    tools_used = {"overview", "start_review", "review_status", "request_approval", "list_reviews", "verify_log", "verify_capsule", "unknown"}
+    check("the signed log holds a record of each tool call", len(calls) >= 10, f"{len(calls)} mcp.call entries")
+    check("a call record names only a known tool and carries only an outcome", all(set(e["data"].keys()) == {"outcome"} and e["subject"] in tools_used and e["data"]["outcome"] in ("ok", "error", "refused") for e in calls), json.dumps(calls[:2]))
+    check("refused calls are recorded as refused", any(e["subject"] == "start_review" and e["data"]["outcome"] == "refused" for e in calls))
+    check("no call record contains a path, a recipient or review text", not any(w in json.dumps(calls) for w in ["payments-service", "Acme Audit", "mcp-agent", "session.py", "hunter2"]))
     lm.stdin.close()
     lm.wait(timeout=10)
 finally:

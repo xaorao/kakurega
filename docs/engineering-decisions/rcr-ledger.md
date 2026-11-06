@@ -14,7 +14,7 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ### The owed high-value rows (to be built, in this order)
 1. B-W02 / G-GH-84: one page that says what stays on this computer and what can leave, and when, generated from the route and policy state.
-2. D-D35: every MCP call recorded in the signed log (tool name and outcome, no content).
+2. (done) D-D35: every MCP call recorded in the signed log (tool name and outcome, no content): BUILT.
 (Medium rows follow in the tables; they are taken in order once these are closed.)
 
 
@@ -168,7 +168,7 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 | D-D32 | Authorization and transports | BUILD: (a) a scoped agent token enforced by the existing companion guard, not a second aut | PARTIAL | stdio only; owner leases scope the acting tools (agent-leases.md); no token transport |
 | D-D33 | Rate and size limits | BUILD: per-token budget (for example 60 calls per minute, 4 `start_review` per hour, respo | PARTIAL | use and time limits per lease (sv63-sv67); no per-minute budget |
 | D-D34 | Extensions: skills over MCP, apps | BUILD later: one static skill `kakurega-safe-review` so agents learn the flow. EXCLUDE App | LATER | static skill for agents |
-| D-D35 | Audit and evidence for MCP calls | BUILD: every call becomes a signed-log event `mcp.call` with tool, token id, argument dige | OWED-H | MCP calls are not recorded as signed log events; only lease events are |
+| D-D35 | Audit and evidence for MCP calls | BUILD: every call becomes a signed-log event `mcp.call` with tool, token id, argument dige | BUILT | every tool call is a signed `mcp.call` log event with the tool and outcome only; floods are counted (sv75, sv76, mc30-mc33, live 47/47) |
 | D-D36 | Testing and conformance tools | ADAPT: add conformance run and Inspector CLI smoke to CI; keep the canary scan; add the sc | BUILT | official-SDK client interop, framing tests, live run (mc tests, mcp_live.py 43/43) |
 | D-D37 | Client compatibility quirks (facts to design around) | ADAPT: keep a `docs/mcp-clients.md` table and a test that replays three recorded client ha | PARTIAL | docs/mcp.md tells which kaku path a client needs; no client table |
 | D-D38 | Installing the server into a client | BUILD `kaku mcp install --client NAME --print` printing the exact command, binary path and | OWED-M | no `kaku mcp install --print` |

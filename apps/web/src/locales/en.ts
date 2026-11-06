@@ -247,6 +247,8 @@ export const en = {
   "log.kind.agent.lease.refused": "Agent refused: no lease",
   "log.kind.agent.lease.refunded": "Lease use given back",
   "log.kind.agent.lease.revoked": "Lease revoked",
+  "log.kind.mcp.call": "Agent used a tool",
+  "log.kind.mcp.calls_limited": "Agent calls not listed one by one",
   "nav.inboxCount": "{n} waiting",
   "inbox.title": "Waiting for you",
   "inbox.lead": "Everything that needs a decision or a look from you, in one place. Nothing here has been sent anywhere.",

@@ -7623,3 +7623,80 @@ fn sv74_all_merged_notes_are_listed_with_the_note_they_went_into_so_any_can_be_b
     );
     assert_eq!(Web::new(c.addr).get("/api/memories/merged").0, 401);
 }
+
+#[test]
+fn sv75_an_mcp_call_is_recorded_in_the_signed_log_with_the_tool_and_the_outcome_and_nothing_else() {
+    let (c, _w, base, _svc, _root) = lease_world("mcp-audit");
+    let tok = c.security.admin_token().to_string();
+    let rec = |tool: &str, outcome: &str| {
+        admin(
+            &base,
+            &tok,
+            "POST",
+            "/admin/agent-calls",
+            Some(json!({"tool": tool, "outcome": outcome})),
+        )
+    };
+    assert_eq!(rec("overview", "ok").0, 200);
+    assert_eq!(rec("start_review", "refused").0, 200);
+    assert_eq!(rec("unknown", "refused").0, 200);
+    let (_, log) = admin(&base, &tok, "GET", "/admin/log", None);
+    let text = log.to_string();
+    assert!(text.matches("mcp.call").count() >= 3, "{text}");
+    for word in ["overview", "start_review", "refused"] {
+        assert!(text.contains(word), "the log lacks {word}: {text}");
+    }
+    // only a tool name and an outcome are accepted: nothing else can be written into the log through this door
+    for bad in [
+        json!({"tool": "overview", "outcome": "ok", "args": {"repo": "/secret"}}),
+        json!({"tool": "Overview; rm -rf", "outcome": "ok"}),
+        json!({"tool": "a".repeat(40), "outcome": "ok"}),
+        json!({"tool": "", "outcome": "ok"}),
+        json!({"tool": "overview", "outcome": "the owner's password is hunter2"}),
+        json!({"tool": "overview"}),
+    ] {
+        let (s, v) = admin(&base, &tok, "POST", "/admin/agent-calls", Some(bad.clone()));
+        assert!(s == 400 || s == 422, "{bad}: {s} {v}");
+    }
+    assert_eq!(
+        admin(
+            &base,
+            "wrong",
+            "POST",
+            "/admin/agent-calls",
+            Some(json!({"tool": "overview", "outcome": "ok"}))
+        )
+        .0,
+        401
+    );
+    assert!(!admin(&base, &tok, "GET", "/admin/log", None)
+        .1
+        .to_string()
+        .contains("hunter2"));
+}
+
+#[test]
+fn sv76_a_flood_of_calls_cannot_fill_the_log_one_summary_stands_for_the_rest() {
+    let (c, _w, base, _svc, _root) = lease_world("mcp-audit-flood");
+    let tok = c.security.admin_token().to_string();
+    for _ in 0..150 {
+        admin(
+            &base,
+            &tok,
+            "POST",
+            "/admin/agent-calls",
+            Some(json!({"tool": "overview", "outcome": "ok"})),
+        );
+    }
+    let (_, log) = admin(&base, &tok, "GET", "/admin/log", None);
+    let text = log.to_string();
+    let single = text.matches("mcp.call").count();
+    assert!(
+        single <= 125,
+        "{single} call events: the log must stay bounded"
+    );
+    assert!(
+        text.contains("mcp.calls_limited"),
+        "the calls that were not written one by one are counted"
+    );
+}

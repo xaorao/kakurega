@@ -67,6 +67,25 @@ impl Admin {
     }
 }
 
+impl Admin {
+    /// Like `post`, but gives up after `secs` seconds: for notes the caller does not wait on, such as a record of a call.
+    pub fn post_within(&self, path: &str, body: Value, secs: u64) -> Result<(u16, Value), String> {
+        let mut r = self
+            .agent
+            .post(&format!("{}{path}", self.base))
+            .header("Authorization", &format!("Bearer {}", self.token))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(secs)))
+            .build()
+            .send_json(body)
+            .map_err(|e| e.to_string())?;
+        Ok((
+            r.status().as_u16(),
+            r.body_mut().read_json().unwrap_or(Value::Null),
+        ))
+    }
+}
+
 pub fn pair(args: &[String]) -> u8 {
     match connect(args).and_then(|a| a.post("/admin/pairing", json!({}))) {
         Ok((200, v)) => {

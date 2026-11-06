@@ -249,6 +249,8 @@ export const hi: Record<keyof typeof en, string> = {
   "log.kind.agent.lease.refused": "एजेंट को मना किया गया: लीज़ नहीं",
   "log.kind.agent.lease.refunded": "लीज़ का उपयोग लौटाया गया",
   "log.kind.agent.lease.revoked": "लीज़ वापस ली गई",
+  "log.kind.mcp.call": "एजेंट ने एक टूल इस्तेमाल किया",
+  "log.kind.mcp.calls_limited": "एजेंट की कुछ कॉल अलग-अलग नहीं गिनाई गईं",
   "nav.inboxCount": "{n} प्रतीक्षा में",
   "inbox.title": "आपकी प्रतीक्षा में",
   "inbox.lead": "जिन चीज़ों पर आपके निर्णय या नज़र की ज़रूरत है, सब एक जगह। यहाँ की किसी चीज़ को कहीं भेजा नहीं गया है।",

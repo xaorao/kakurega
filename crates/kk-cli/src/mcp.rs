@@ -338,6 +338,31 @@ fn call(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, name: &str, a: &Va
     result
 }
 
+/// How a finished call is described in the signed log: it worked, it failed, or it was refused (a lease, or the arguments).
+fn outcome_of(result: &Value) -> &'static str {
+    if result["isError"] != true {
+        return "ok";
+    }
+    let text = result["content"][0]["text"].as_str().unwrap_or_default();
+    if text.contains("acts on the owner's behalf") {
+        "refused"
+    } else {
+        "error"
+    }
+}
+
+/// Tells the service a tool was used and how it ended, so the owner's signed log shows what an agent did. Only the tool's
+/// name and the outcome go: never the arguments or the answer. A service that cannot be reached changes nothing for the agent.
+fn report(admin: &dyn Fn() -> Result<Admin, String>, tool: &str, outcome: &str) {
+    if let Ok(a) = admin() {
+        let _ = a.post_within(
+            "/admin/agent-calls",
+            json!({"tool": tool, "outcome": outcome}),
+            2,
+        );
+    }
+}
+
 /// Why a lease did not let a call through, in words the agent can pass on to the owner.
 fn lease_refusal(tool: &str, reason: &str) -> String {
     let why = match reason {
@@ -552,13 +577,17 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
                 .as_array()
                 .is_some_and(|t| t.iter().any(|t| t["name"] == name))
             {
+                // a name the agent made up is never written anywhere
+                report(admin, "unknown", "refused");
                 return err(-32602, "unknown tool");
             }
             let args = p
                 .get("arguments")
                 .cloned()
                 .unwrap_or(Value::Object(Map::new()));
-            ok(call(admin, ctx, name, &args))
+            let result = call(admin, ctx, name, &args);
+            report(admin, name, outcome_of(&result));
+            ok(result)
         }
         m if m.starts_with("notifications/") => None,
         _ => err(-32601, "method not found"),

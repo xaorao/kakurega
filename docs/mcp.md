@@ -38,3 +38,8 @@ Counts and statuses are the only review data an agent receives. Anything richer 
 
 ## Reading files
 See the notes in the engineering record: `verify_*` read only inside the agent's folder or the export folder with one uniform error; unknown tools are protocol errors; oversized lines are refused unbuffered; service calls time out after 30 seconds. `overview` reports `approvals_require_signature`; without an enrolled approver key the local admin token alone can approve.
+
+## What is recorded
+
+Every tool call an agent makes is written to the owner's signed event log as `mcp.call`: the tool's name and how it ended (`ok`, `error` or `refused`). The arguments and the answers are never recorded, and a tool name the agent made up is recorded as `unknown`. At most 120 calls a minute are written one by one; more are counted in an `mcp.calls_limited` entry, so an agent cannot fill the log. If the service cannot take the record, the call still answers. The owner sees these entries under Activity.
+

@@ -114,6 +114,14 @@ impl FakeAdmin {
         self.seen.lock().unwrap().clone()
     }
 
+    /// What reached the service for the tools' own work: the record of each call (`/admin/agent-calls`) is left out.
+    fn work_seen(&self) -> Vec<String> {
+        self.seen()
+            .into_iter()
+            .filter(|l| !l.contains("/admin/agent-calls"))
+            .collect()
+    }
+
     fn refused(&self) -> usize {
         *self.refused.lock().unwrap()
     }
@@ -212,7 +220,7 @@ fn mc07_a_message_without_an_id_is_a_notification_and_never_runs_a_tool() {
     let r = s.recv();
     assert_eq!(r["id"], 2);
     assert_eq!(r["result"]["isError"], false, "{r}");
-    assert_eq!(admin.seen(), ["GET /admin/overview HTTP/1.1"]);
+    assert_eq!(admin.work_seen(), ["GET /admin/overview HTTP/1.1"]);
     assert_eq!(admin.refused(), 0, "every request carried the token");
     assert!(s.close().is_empty());
 }
@@ -295,14 +303,18 @@ fn mc09_the_service_is_looked_up_for_every_call_so_starting_it_later_or_restarti
     a.publish(&dir);
     s.send(&call(2, "overview", json!({})));
     assert_eq!(s.recv()["result"]["isError"], false);
-    assert_eq!(a.seen().len(), 1);
+    assert_eq!(a.work_seen().len(), 1);
     // kaku serve restarts: new port, new token, same data folder
     let b = FakeAdmin::start("tok-b");
     b.publish(&dir);
     s.send(&call(3, "list_reviews", json!({})));
     assert_eq!(s.recv()["result"]["isError"], false);
-    assert_eq!(b.seen(), ["GET /admin/jobs HTTP/1.1"]);
-    assert_eq!(a.seen().len(), 1, "the old service was not asked again");
+    assert_eq!(b.work_seen(), ["GET /admin/jobs HTTP/1.1"]);
+    assert_eq!(
+        a.work_seen().len(),
+        1,
+        "the old service was not asked again"
+    );
     assert_eq!(
         a.refused() + b.refused(),
         0,
@@ -522,7 +534,7 @@ fn mc15_an_allow_list_gives_the_agent_exactly_the_named_tools_and_refuses_the_re
         );
     }
     assert_eq!(
-        admin.seen(),
+        admin.work_seen(),
         ["GET /admin/overview HTTP/1.1"],
         "only the allowed call reached the service"
     );
@@ -1067,4 +1079,139 @@ fn mc29_a_lease_check_the_service_cannot_answer_starts_nothing() {
         admin.seen()
     );
     assert!(s.close().is_empty());
+}
+
+/// A service stand-in that keeps the body of every audit post.
+fn audit_admin(token: &str, audit_status: u16) -> (FakeAdmin, Arc<Mutex<Vec<Value>>>) {
+    let bodies = Arc::new(Mutex::new(Vec::new()));
+    let b = bodies.clone();
+    let admin = FakeAdmin::start_router(
+        token,
+        0,
+        Arc::new(move |path, body| match path {
+            "/admin/agent-calls" => {
+                b.lock()
+                    .unwrap()
+                    .push(serde_json::from_str(body).unwrap_or(Value::Null));
+                (audit_status, json!({"recorded": true}).to_string())
+            }
+            "/admin/agent-access" => (200, json!({"leases": []}).to_string()),
+            "/admin/agent-access/use" => (
+                200,
+                json!({"allowed": false, "reason": "no_lease"}).to_string(),
+            ),
+            "/admin/jobs" => (200, json!({"id": "job-1"}).to_string()),
+            _ => (
+                200,
+                r#"{"ready":true,"reviews":{},"jobs":[],"id":"job-1"}"#.to_string(),
+            ),
+        }),
+    );
+    (admin, bodies)
+}
+
+#[test]
+fn mc30_every_tool_call_is_reported_to_the_service_with_the_tool_and_how_it_ended_and_nothing_more()
+{
+    let dir = fresh("mc30");
+    let (admin, bodies) = audit_admin("tok-30", 200);
+    admin.publish(&dir);
+    let mut s = live(&dir);
+    s.send(&call(1, "overview", json!({})));
+    assert_eq!(s.recv()["result"]["isError"], false);
+    s.send(&call(
+        2,
+        "verify_capsule",
+        json!({"path": "/nowhere/secret-client/capsule.kkg"}),
+    ));
+    assert_eq!(s.recv()["result"]["isError"], true);
+    s.send(&call(
+        3,
+        "start_review",
+        json!({"repo": "/work/secret-client", "recipient": "Acme Audit"}),
+    ));
+    assert_eq!(s.recv()["result"]["isError"], false);
+    assert!(s.close().is_empty());
+    let got = bodies.lock().unwrap().clone();
+    assert_eq!(
+        got,
+        vec![
+            json!({"tool": "overview", "outcome": "ok"}),
+            json!({"tool": "verify_capsule", "outcome": "error"}),
+            json!({"tool": "start_review", "outcome": "ok"}),
+        ],
+        "only the tool and the outcome are sent, never a path, a recipient or an answer"
+    );
+}
+
+#[test]
+fn mc31_a_call_that_is_refused_is_reported_as_refused_and_an_invented_tool_as_unknown() {
+    let dir = fresh("mc31");
+    let (admin, bodies) = audit_admin("tok-31", 200);
+    admin.publish(&dir);
+    let mut s = live_with(&dir, &["--leased"]);
+    s.send(&call(
+        1,
+        "start_review",
+        json!({"repo": "/work/x", "recipient": "Acme"}),
+    ));
+    assert_eq!(s.recv()["result"]["isError"], true);
+    s.send(&call(
+        2,
+        "delete_everything_now",
+        json!({"secret": "hunter2"}),
+    ));
+    assert!(s.recv()["error"].is_object());
+    assert!(s.close().is_empty());
+    let got = bodies.lock().unwrap().clone();
+    assert_eq!(
+        got,
+        vec![
+            json!({"tool": "start_review", "outcome": "refused"}),
+            json!({"tool": "unknown", "outcome": "refused"})
+        ],
+        "a name the agent made up is never written to the log"
+    );
+    assert!(
+        !format!("{got:?}").contains("hunter2")
+            && !format!("{got:?}").contains("delete_everything")
+    );
+}
+
+#[test]
+fn mc32_a_service_that_cannot_record_the_call_changes_nothing_for_the_agent() {
+    let dir = fresh("mc32");
+    let (admin, _bodies) = audit_admin("tok-32", 500);
+    admin.publish(&dir);
+    let mut s = live(&dir);
+    s.send(&call(1, "overview", json!({})));
+    let r = s.recv();
+    assert_eq!(r["result"]["isError"], false, "{r}");
+    assert!(s.close().is_empty());
+    // and with no service at all, the read tools that need none still answer
+    let dir2 = fresh("mc32b");
+    let mut t = live(&dir2);
+    t.send(&call(
+        1,
+        "verify_capsule",
+        json!({"path": "/nowhere/x.kkg"}),
+    ));
+    assert_eq!(t.recv()["result"]["isError"], true);
+    assert!(t.close().is_empty());
+}
+
+#[test]
+fn mc33_a_message_without_an_id_runs_nothing_and_is_not_reported() {
+    let dir = fresh("mc33");
+    let (admin, bodies) = audit_admin("tok-33", 200);
+    admin.publish(&dir);
+    let mut s = live(&dir);
+    s.send(&json!({"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "overview", "arguments": {}}}).to_string());
+    s.send(&ping(json!(1)));
+    assert_eq!(s.recv()["id"], 1);
+    assert!(s.close().is_empty());
+    assert!(
+        bodies.lock().unwrap().is_empty(),
+        "a notification is not a call"
+    );
 }

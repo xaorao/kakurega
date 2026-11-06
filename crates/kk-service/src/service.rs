@@ -199,6 +199,8 @@ pub struct Service {
     lease_skew: std::sync::atomic::AtomicI64,
     /// Kept conversations whose last summary failed, with how many turns they had then. See `COMPACTION_WAIT_TURNS`.
     compaction_wait: Mutex<std::collections::HashMap<String, usize>>,
+    /// Start of the current minute, calls written to the log in it, calls counted but not written. See `agent_call`.
+    call_window: Mutex<(i64, usize, usize)>,
     pub test_mode: bool,
 }
 
@@ -619,6 +621,7 @@ impl Service {
             fix_locks: fixfiles::JobLocks::default(),
             lease_skew: std::sync::atomic::AtomicI64::new(0),
             compaction_wait: Mutex::new(std::collections::HashMap::new()),
+            call_window: Mutex::new((0, 0, 0)),
             test_mode,
         });
         settle_all_fixes(&svc);
@@ -3282,6 +3285,65 @@ struct LeaseRevokeBody {
     tool: Option<String>,
 }
 
+/// How many agent calls are written to the log one by one in a minute. The rest are counted.
+const CALLS_LOGGED_PER_MINUTE: usize = 120;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentCallBody {
+    tool: String,
+    outcome: String,
+}
+
+/// Records that an agent used a tool through the MCP door: the tool's name and how it ended (ok, error, refused), nothing
+/// else. Neither the arguments nor the answer ever come here. A tool name the agent invented is recorded as `unknown` by
+/// the caller. At most 120 calls a minute are written one by one; the rest are counted in a summary event, so an agent
+/// cannot fill the signed log.
+async fn agent_call(axum::Extension(svc): Svc, Json(b): Json<AgentCallBody>) -> Response {
+    let tool_ok = !b.tool.is_empty()
+        && b.tool.len() <= 24
+        && b.tool.bytes().all(|c| c.is_ascii_lowercase() || c == b'_');
+    if !tool_ok || !["ok", "error", "refused"].contains(&b.outcome.as_str()) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_CALL",
+            "a tool name (a to z and underscore) and an outcome (ok, error or refused) are needed",
+        );
+    }
+    let t = svc.lease_now();
+    let action = {
+        let mut w = svc.call_window.lock().expect("lock");
+        if t - w.0 >= 60 {
+            *w = (t, 0, 0);
+        }
+        if w.1 < CALLS_LOGGED_PER_MINUTE {
+            w.1 += 1;
+            Some(None)
+        } else {
+            w.2 += 1;
+            (w.2 == 1 || w.2 % 50 == 0).then_some(Some(w.2))
+        }
+    };
+    match action {
+        Some(None) => {
+            svc.log_event(
+                "mcp.call",
+                &b.tool,
+                &[("outcome", b.outcome.as_str().into())],
+            );
+        }
+        Some(Some(dropped)) => {
+            svc.log_event(
+                "mcp.calls_limited",
+                "mcp",
+                &[("not_written", dropped.into())],
+            );
+        }
+        None => {}
+    }
+    Json(json!({"recorded": true})).into_response()
+}
+
 async fn lease_list_route(axum::Extension(svc): Svc) -> Response {
     Json(json!({"leases": svc.lease_list(), "leasable": LEASABLE_TOOLS, "now": svc.lease_now()}))
         .into_response()
@@ -5357,6 +5419,7 @@ impl Extension for Routes {
             )
             .route("/admin/approvers/revoke", post(admin_approver_revoke))
             .route("/admin/agent-access", get(lease_list_route))
+            .route("/admin/agent-calls", post(agent_call))
             .route("/admin/agent-access/grant", post(lease_grant_route))
             .route("/admin/agent-access/revoke", post(lease_revoke_route))
             .route("/admin/agent-access/use", post(lease_use_route))
