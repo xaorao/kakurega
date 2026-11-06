@@ -221,6 +221,28 @@ try:
     (repo / "target/e2e-shots/tui-delivered.txt").write_text(screen_text())
     send("Where are login sessions kept?\r")
     check("plain text is a chat message answered by the private assistant", wait_for(r"\[test model\] I received \d+ characters") is not None)
+    # search, copy and export of the conversation on the screen
+    send("/transcript login sessions\r")
+    check("/transcript marks every word it found without colour", wait_for(r"\[\[login\]\] \[\[sessions\]\]|\[\[sessions\]\]") is not None)
+    raw_before = len(raw)
+    send("/copy\r")
+    check("/copy asks before it touches the clipboard and says other programs can read it", wait_for(r"Other programs can read the clipboard") is not None and b"\x1b]52;" not in raw[raw_before:])
+    send("n")
+    pump(0.5)
+    check("a no puts nothing on the clipboard", b"\x1b]52;" not in raw[raw_before:])
+    send("/copy\r")
+    wait_for(r"Other programs can read the clipboard")
+    send("y")
+    pump(1.0)
+    import base64 as _b64
+    seq = re.search(rb"\x1b\]52;c;([A-Za-z0-9+/=]+)\x07", raw[raw_before:])
+    check("a yes writes the standard clipboard sequence holding exactly the last reply", seq is not None and b"test model" in _b64.b64decode(seq.group(1)), (seq.group(1)[:30] if seq else b"").decode())
+    send("/export pty-notes\r")
+    check("/export writes the conversation to a file in the exports folder", wait_for(r"Written to .*pty-notes\.md", 15) is not None)
+    _f = data / "exports" / "pty-notes.md"
+    check("the file holds both sides of the conversation and not the commands", _f.exists() and "You: Where are login sessions kept?" in _f.read_text() and "/export" not in _f.read_text() and (_f.stat().st_mode & 0o777) == 0o600)
+    send("/export pty-notes\r")
+    check("exporting under the same name again is refused", wait_for(r"already there", 15) is not None)
     # an approval decided in another window closes the terminal's approval view by itself
     import json as _json, urllib.request as _ur
     _a = _json.load(open(data / "admin.json"))

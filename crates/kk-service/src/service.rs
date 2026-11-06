@@ -1573,6 +1573,110 @@ async fn memory_forget(
 /// The owner's instruction for every conversation (text, written at), and one per project (name, text, written at).
 type StandingInstructions = (Option<(String, i64)>, Vec<(String, String, i64)>);
 
+/// Under the 1 MiB every request body may be, so a refusal is always this clear message and never a cut connection.
+const EXPORT_MAX_BYTES: usize = 512 * 1024;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TranscriptExport {
+    name: String,
+    text: String,
+}
+
+/// Writes a conversation the owner is looking at to a new file in the exports folder of the data directory. The name is a
+/// plain file name; an existing file is never replaced; text that looks like a secret or hides characters is refused.
+async fn transcript_export(axum::Extension(svc): Svc, Json(b): Json<TranscriptExport>) -> Response {
+    let bad_name = || {
+        error(StatusCode::BAD_REQUEST, "BAD_NAME", "a name is 1 to 60 letters, digits, dots, dashes or underscores, not starting with a dot, ending in .md or .txt (or neither)")
+    };
+    let plain = !b.name.is_empty()
+        && b.name.chars().count() <= 60
+        && !b.name.starts_with('.')
+        && b.name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
+    if !plain {
+        return bad_name();
+    }
+    let file_name = match b.name.rsplit_once('.') {
+        Some((stem, ext)) if matches!(ext, "md" | "txt") && !stem.is_empty() => b.name.clone(),
+        Some(_) => return bad_name(),
+        None => format!("{}.md", b.name),
+    };
+    if b.text.len() > EXPORT_MAX_BYTES {
+        return error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "TOO_LARGE",
+            "a transcript is at most 512 KiB",
+        );
+    }
+    if b.text.trim().is_empty() {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "EMPTY",
+            "there is nothing to write",
+        );
+    }
+    if kk_types::injection::hidden_chars(&b.text)
+        || b.text
+            .chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\t' && c != '\r')
+        || !chat_clean(&b.text.replace('\r', ""))
+    {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "HIDDEN_TEXT",
+            "the text contains control or direction-changing characters",
+        );
+    }
+    if !kk_secrets::scan(&b.text).is_empty() || kk_secrets::looks_secret(&b.text).is_some() {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "SECRET",
+            "the text looks like it contains a secret, so it is not written to a file",
+        );
+    }
+    let dir = svc.data_dir.join("exports");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "WRITE_FAILED",
+            "could not make the exports folder",
+        );
+    }
+    let path = dir.join(&file_name);
+    let written = {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .and_then(|mut f| f.write_all(b.text.as_bytes()))
+    };
+    match written {
+        Ok(()) => {
+            svc.log_event(
+                "transcript.exported",
+                "chat",
+                &[("chars", b.text.chars().count().into())],
+            );
+            Json(json!({"path": path.to_string_lossy()})).into_response()
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => error(
+            StatusCode::CONFLICT,
+            "EXISTS",
+            "a file with that name is already there; choose another name",
+        ),
+        Err(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "WRITE_FAILED",
+            "could not write the file",
+        ),
+    }
+}
+
 /// The usage ledger keeps 400 days.
 const USAGE_KEEP_SECS: i64 = 400 * 86_400;
 /// The longest range one question may cover.
@@ -6045,6 +6149,7 @@ impl Extension for Routes {
                 get(instructions_get).post(instructions_set),
             )
             .route("/api/usage", get(usage_summary))
+            .route("/api/exports/transcript", post(transcript_export))
             .route("/api/memories/sources", get(memory_sources))
             .route("/api/memories/sources/{job}", get(memory_source_footprint))
             .route(

@@ -59,6 +59,9 @@ pub enum Command {
     ForgetReview(String),
     Instructions(InstructionsAction),
     Find(String),
+    Transcript(String),
+    Copy(bool),
+    Export(String),
     Usage(u32),
     RenameChat {
         id: String,
@@ -114,6 +117,9 @@ pub const NAMES: &[&str] = &[
     "forgetreview",
     "instructions",
     "find",
+    "transcript",
+    "copy",
+    "export",
     "usage",
     "rename",
     "conflicts",
@@ -160,6 +166,9 @@ pub fn describe(name: &str) -> &'static str {
         "forgetreview" => "delete everything one review left in memory",
         "instructions" => "your standing orders to the assistant",
         "find" => "search kept conversations by words",
+        "transcript" => "search this conversation on the screen",
+        "copy" => "copy the last reply (or all) to the clipboard, after asking",
+        "export" => "write this conversation to a file in the exports folder",
         "usage" => "what each model route answered over some days",
         "rename" => "rename a kept conversation",
         "conflicts" => "notes that seem to disagree",
@@ -232,6 +241,9 @@ pub fn usage(name: &str) -> &'static str {
         "forgetreview" => "/forgetreview JOB",
         "instructions" => "/instructions [set [in PROJECT:] TEXT | clear [PROJECT]]",
         "find" => "/find WORDS",
+        "transcript" => "/transcript WORDS",
+        "copy" => "/copy [all]",
+        "export" => "/export NAME",
         "usage" => "/usage [DAYS]",
         "rename" => "/rename ID NEW TITLE",
         "conflicts" => "/conflicts",
@@ -452,6 +464,25 @@ pub fn parse(line: &str) -> Result<Command, String> {
                     Ok(d) if (1..=366).contains(&d) => Ok(Command::Usage(d)),
                     _ => Err(format!("usage: {}", usage("usage"))),
                 }
+            }
+        }
+        "transcript" => {
+            if rest.is_empty() {
+                Err(format!("usage: {}", usage("transcript")))
+            } else {
+                Ok(Command::Transcript(rest.to_string()))
+            }
+        }
+        "copy" => match rest {
+            "" => Ok(Command::Copy(false)),
+            "all" => Ok(Command::Copy(true)),
+            _ => Err(format!("usage: {}", usage("copy"))),
+        },
+        "export" => {
+            if rest.is_empty() || rest.contains(char::is_whitespace) {
+                Err(format!("usage: {}", usage("export")))
+            } else {
+                Ok(Command::Export(rest.to_string()))
             }
         }
         "find" => {

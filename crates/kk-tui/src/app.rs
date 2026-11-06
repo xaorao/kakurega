@@ -50,6 +50,44 @@ pub enum Kind {
     Error,
 }
 
+/// The title of the card that lists what `/transcript` found.
+const SEARCH_TITLE: &str = "Search in this conversation";
+
+/// Standard base64 with padding, the form a terminal's clipboard sequence takes.
+pub fn base64_standard(bytes: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |a, (i, b)| a | (u32::from(*b) << (16 - 8 * i)));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(A[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// The most text put on the clipboard in one go: terminals refuse longer clipboard sequences.
+pub const COPY_MAX_BYTES: usize = 74_000;
+
+/// The terminal sequence that puts `text` on the system clipboard. Base64 contains no escape or bell, so nothing in the text
+/// can end it early or start another. None for nothing, or for more than a terminal takes.
+pub fn osc52(text: &str) -> Option<String> {
+    if text.is_empty() || text.len() > COPY_MAX_BYTES {
+        return None;
+    }
+    Some(format!(
+        "\x1b]52;c;{}\x07",
+        base64_standard(text.as_bytes())
+    ))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Card {
     pub kind: Kind,
@@ -101,6 +139,7 @@ enum Intent {
     InstructionsSet,
     ConflictsList,
     FindChats,
+    ExportTranscript,
     UsageShow,
     RenameChat,
     ChooseNote,
@@ -137,6 +176,8 @@ pub struct ConfirmView {
     pub review: Option<String>,
     /// Two disagreeing notes waiting for a yes: the one to keep, the one it replaces.
     pub choose: Option<(String, String)>,
+    /// Text waiting for a yes before it goes to the clipboard.
+    pub copy: Option<String>,
     pub apply: Option<(String, usize, String)>,
     pub undo: bool,
     /// A web request waiting for a yes: ("search" or "read", request id, digest of exactly what was shown).
@@ -189,6 +230,8 @@ pub struct App {
     pub stashed: Vec<String>,
     /// Set by Ctrl-G: the text to open in the owner's editor. The runtime takes it, runs the editor and calls `finish_edit`.
     pub editor_request: Option<String>,
+    /// Text the owner agreed to put on the system clipboard; the screen loop writes the clipboard sequence for it.
+    pub clipboard_request: Option<String>,
     /// Set by the first Esc while an answer is arriving; the second Esc within a few seconds stops it. Counts down on ticks.
     pub esc_armed: u8,
     pub popup_sel: usize,
@@ -275,6 +318,7 @@ impl App {
             chat_waiting: false,
             approver: None,
             editor_request: None,
+            clipboard_request: None,
             esc_armed: 0,
             fixes_seen: Vec::new(),
             search_hits: Vec::new(),
@@ -820,6 +864,7 @@ impl App {
                 let web = c.web.clone();
                 let review = c.review.clone();
                 let choose = c.choose.clone();
+                let copy = c.copy.clone();
                 match k.code {
                     KeyCode::Char('y') | KeyCode::Char('Y') if !ctrl && web.is_some() => {
                         self.mode = Mode::Normal;
@@ -857,6 +902,12 @@ impl App {
                             &format!("/api/jobs/{job}/fixes/{}/{what}", n - 1),
                             Some(json!({"file": file})),
                         )]
+                    }
+                    KeyCode::Char('y') | KeyCode::Char('Y') if !ctrl && copy.is_some() => {
+                        self.mode = Mode::Normal;
+                        self.clipboard_request = copy;
+                        self.say(Kind::Ok, "Copied.");
+                        Vec::new()
                     }
                     KeyCode::Char('y') | KeyCode::Char('Y') if !ctrl && choose.is_some() => {
                         self.mode = Mode::Normal;
@@ -1436,6 +1487,7 @@ impl App {
                     forget_id: String::new(),
                     review: None,
                     choose: None,
+                    copy: None,
                     apply: Some((j, n, file)),
                     undo: false,
                     web: None,
@@ -1462,6 +1514,7 @@ impl App {
                     forget_id: String::new(),
                     review: None,
                     choose: None,
+                    copy: None,
                     apply: Some((j, n, file)),
                     undo: true,
                     web: None,
@@ -1574,6 +1627,55 @@ impl App {
                     None,
                 )]
             }
+            Command::Transcript(words) => {
+                let (total, hits) = self.search_transcript(&words);
+                if total == 0 {
+                    self.say(Kind::Info, "No line has all of those words.");
+                } else {
+                    let mut lines = hits;
+                    lines.insert(0, format!("{total} lines hold all of those words (the first 30 are shown); each word is marked [[like this]]."));
+                    self.push(Kind::Info, Some(SEARCH_TITLE), lines);
+                }
+                Vec::new()
+            }
+            Command::Copy(all) => {
+                let text = if all {
+                    Some(self.transcript_text())
+                } else {
+                    self.cards
+                        .iter()
+                        .rev()
+                        .find(|c| c.title.as_deref() == Some("Assistant"))
+                        .map(|c| c.lines.join("\n"))
+                };
+                match text {
+                    None => self.say(Kind::Info, "There is no reply to copy yet."),
+                    Some(t) if osc52(&t).is_none() => self.say(Kind::Error, "That is too large for the clipboard; /export NAME writes it to a file instead."),
+                    Some(t) => {
+                        self.mode = Mode::Confirm(ConfirmView {
+                            prompt: format!("Copy {} characters to the system clipboard? Other programs can read the clipboard. [y/N]", t.chars().count()),
+                            forget_id: String::new(),
+                            review: None,
+                            choose: None,
+                            copy: Some(t),
+                            apply: None,
+                            undo: false,
+                            web: None,
+                        });
+                    }
+                }
+                Vec::new()
+            }
+            Command::Export(name) => {
+                let text = self.transcript_text();
+                vec![self.req(
+                    Intent::ExportTranscript,
+                    false,
+                    Method::Post,
+                    "/api/exports/transcript",
+                    Some(json!({"name": name, "text": text})),
+                )]
+            }
             Command::Find(words) => {
                 let q: String = words
                     .bytes()
@@ -1612,7 +1714,7 @@ impl App {
                     prompt: format!("Keep {keep} and make {replaced} its earlier version? Nothing is deleted. [y/N]"),
                     forget_id: String::new(),
                     review: None,
-                    choose: Some((keep, replaced)),
+                    choose: Some((keep, replaced)), copy: None,
                     apply: None,
                     undo: false,
                     web: None,
@@ -1672,7 +1774,7 @@ impl App {
                 None,
             )],
             Command::Forget(id) => {
-                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id, review: None, choose: None, apply: None, undo: false, web: None });
+                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id, review: None, choose: None, copy: None, apply: None, undo: false, web: None });
                 Vec::new()
             }
             Command::Log => vec![self.req(Intent::Log, false, Method::Get, "/api/log", None)],
@@ -1729,6 +1831,81 @@ impl App {
         );
         req.stream = true;
         vec![req]
+    }
+
+    /// The conversation on the screen as plain text: what the owner typed after "You:", then each answer or message under its
+    /// title. The commands typed to read or write it are not part of it.
+    pub fn transcript_text(&self) -> String {
+        let mut blocks: Vec<String> = Vec::new();
+        for c in &self.cards {
+            match (&c.kind, &c.title) {
+                (Kind::User, _) => {
+                    let line = c.lines.join("\n");
+                    if line.trim_start().starts_with('/') {
+                        continue;
+                    }
+                    blocks.push(format!("You: {line}"));
+                }
+                // what a search found is about the conversation, not part of it
+                (_, Some(t)) if t == SEARCH_TITLE => {}
+                (_, Some(t)) => blocks.push(format!("{t}:\n{}", c.lines.join("\n"))),
+                (_, None) => blocks.push(c.lines.join("\n")),
+            }
+        }
+        blocks.join("\n\n") + "\n"
+    }
+
+    /// Lines of the transcript that hold every one of `words` (any case), with each word's first place marked [[like this]].
+    fn search_transcript(&self, words: &str) -> (usize, Vec<String>) {
+        let words: Vec<String> = words
+            .split_whitespace()
+            .map(|w| w.to_lowercase())
+            .take(6)
+            .collect();
+        let mut hits = Vec::new();
+        let mut total = 0;
+        for (n, line) in self.transcript_text().lines().enumerate() {
+            if line.trim().is_empty() || line.trim_start().to_lowercase().starts_with("you: /") {
+                continue;
+            }
+            let low = line.to_lowercase();
+            if words.is_empty() || !words.iter().all(|w| low.contains(w.as_str())) {
+                continue;
+            }
+            total += 1;
+            if hits.len() < 30 {
+                // mark the first place each word appears, working on characters so lower-casing never shifts the text
+                let chars: Vec<char> = line.chars().collect();
+                let low_chars: Vec<char> = low.chars().collect();
+                let mut marks: Vec<(usize, usize)> = Vec::new();
+                for w in &words {
+                    let wc: Vec<char> = w.chars().collect();
+                    if let Some(at) =
+                        (0..low_chars.len().saturating_sub(wc.len().saturating_sub(1)))
+                            .find(|i| low_chars[*i..].starts_with(&wc))
+                    {
+                        marks.push((at, at + wc.len()));
+                    }
+                }
+                marks.sort();
+                marks.dedup();
+                let mut out = String::new();
+                let mut at = 0;
+                for (a, b) in marks {
+                    if a < at || b > chars.len() {
+                        continue;
+                    }
+                    out.extend(&chars[at..a]);
+                    out.push_str("[[");
+                    out.extend(&chars[a..b]);
+                    out.push_str("]]");
+                    at = b;
+                }
+                out.extend(&chars[at..]);
+                hits.push(format!("{:>5}: {}", n + 1, clean(&out)));
+            }
+        }
+        (total, hits)
     }
 
     fn scrub_last_remember(&mut self) {
@@ -2483,6 +2660,17 @@ impl App {
                 self.push(Kind::Info, Some("Model usage"), lines);
                 Vec::new()
             }
+            Intent::ExportTranscript => {
+                if ok {
+                    self.say(
+                        Kind::Ok,
+                        format!("Written to {}", clean(body["path"].as_str().unwrap_or("?"))),
+                    );
+                } else {
+                    self.say(Kind::Error, err_text(status, &body));
+                }
+                Vec::new()
+            }
             Intent::FindChats => {
                 if !ok {
                     self.say(Kind::Error, err_text(status, &body));
@@ -2641,7 +2829,7 @@ impl App {
                 self.mode = Mode::Confirm(ConfirmView {
                     prompt: format!("Forget {notes} notes and {waiting} waiting suggestions that review {job} left? The text is deleted and will not be saved again. [y/N]"),
                     forget_id: String::new(),
-                    review: Some(job), choose: None,
+                    review: Some(job), choose: None, copy: None,
                     apply: None,
                     undo: false,
                     web: None,
@@ -2792,6 +2980,7 @@ impl App {
                     forget_id: String::new(),
                     review: None,
                     choose: None,
+                    copy: None,
                     apply: None,
                     undo: false,
                     web: Some((

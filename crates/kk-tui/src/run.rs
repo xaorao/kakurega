@@ -109,6 +109,15 @@ fn event_loop(http: Http, data_dir: &Path) -> Result<(), String> {
                 for r in app.drain_background() {
                     let _ = req_tx.send(r);
                 }
+                if let Some(text) = app.clipboard_request.take() {
+                    // the owner said yes: write the terminal's clipboard sequence for exactly this text, once
+                    if let Some(seq) = crate::app::osc52(&text) {
+                        use std::io::Write;
+                        let mut out = stdout();
+                        let _ = out.write_all(seq.as_bytes());
+                        let _ = out.flush();
+                    }
+                }
                 if let Some(text) = app.editor_request.take() {
                     // hand the screen to the editor, then take it back exactly as it was
                     restore();

@@ -2865,3 +2865,272 @@ fn tu44_the_terminal_shows_model_usage_for_a_number_of_days() {
     a.handle(ok(&r[0], 200, json!({"from": 0, "to": 1, "routes": [], "total": {"turns": 0, "prompt_tokens": 0, "reply_tokens": 0}, "note": "n"})));
     assert!(text(&a).contains("No replies"), "{}", text(&a));
 }
+
+fn b64_decode(s: &str) -> Vec<u8> {
+    let val = |c: u8| match c {
+        b'A'..=b'Z' => c - b'A',
+        b'a'..=b'z' => c - b'a' + 26,
+        b'0'..=b'9' => c - b'0' + 52,
+        b'+' => 62,
+        b'/' => 63,
+        _ => panic!("not standard base64: {}", c as char),
+    };
+    let bytes: Vec<u8> = s.bytes().filter(|b| *b != b'=').collect();
+    let mut out = Vec::new();
+    for chunk in bytes.chunks(4) {
+        let n = chunk
+            .iter()
+            .fold(0u32, |a, c| (a << 6) | u32::from(val(*c)))
+            << (6 * (4 - chunk.len()));
+        for i in 0..chunk.len() - 1 {
+            out.push((n >> (16 - 8 * i)) as u8);
+        }
+    }
+    out
+}
+
+#[test]
+fn tu45_the_clipboard_sequence_is_standard_base64_and_refuses_what_a_terminal_cannot_take() {
+    use kk_tui::app::{base64_standard, osc52};
+    for (raw, want) in [
+        ("", ""),
+        ("f", "Zg=="),
+        ("fo", "Zm8="),
+        ("foo", "Zm9v"),
+        ("foob", "Zm9vYg=="),
+        ("fooba", "Zm9vYmE="),
+        ("foobar", "Zm9vYmFy"),
+    ] {
+        assert_eq!(base64_standard(raw.as_bytes()), want);
+    }
+    let text = "héllo → 世界\nsecond line\n";
+    let seq = osc52(text).expect("small text");
+    assert!(
+        seq.starts_with("\x1b]52;c;") && seq.ends_with('\x07'),
+        "{seq:?}"
+    );
+    let body = &seq["\x1b]52;c;".len()..seq.len() - 1];
+    assert_eq!(
+        b64_decode(body),
+        text.as_bytes(),
+        "exactly the bytes that were chosen"
+    );
+    assert!(
+        osc52(&"x".repeat(75_000)).is_none(),
+        "too large for a terminal to take"
+    );
+    assert!(osc52("").is_none(), "nothing to copy");
+    // text can never end the sequence early or start another
+    let hostile = "a\x07b\x1b]52;c;ZXZpbA==\x07c\x1b\\";
+    let seq = osc52(hostile).unwrap();
+    assert_eq!(seq.matches('\x07').count(), 1, "only the closing bell");
+    assert_eq!(seq.matches('\x1b').count(), 1, "only the opening escape");
+}
+
+#[test]
+fn tu46_the_terminal_searches_copies_and_exports_its_own_transcript() {
+    assert_eq!(
+        cmd::parse("/transcript deadline friday").unwrap(),
+        Command::Transcript("deadline friday".into())
+    );
+    assert_eq!(cmd::parse("/copy").unwrap(), Command::Copy(false));
+    assert_eq!(cmd::parse("/copy all").unwrap(), Command::Copy(true));
+    assert_eq!(
+        cmd::parse("/export call-notes").unwrap(),
+        Command::Export("call-notes".into())
+    );
+    for bad in [
+        "/transcript",
+        "/transcript   ",
+        "/copy everything",
+        "/copy all all",
+        "/export",
+        "/export a b",
+    ] {
+        assert!(cmd::parse(bad).is_err(), "{bad}");
+    }
+    let mut app = booted();
+    for i in 0..2000 {
+        app.cards.push(Card {
+            kind: Kind::Info,
+            title: None,
+            lines: vec![format!("line {i} about nothing in particular")],
+        });
+    }
+    app.cards.push(Card {
+        kind: Kind::User,
+        title: None,
+        lines: vec!["What did the client say about the DEADLINE?".into()],
+    });
+    app.cards.push(Card {
+        kind: Kind::Info,
+        title: Some("Assistant".into()),
+        lines: vec![
+            "The client said the deadline moved to Friday.".into(),
+            "Nothing else.".into(),
+        ],
+    });
+    // search: case does not matter, every word must be on the line, and the match is marked without colour
+    let newest = |app: &App| -> String {
+        let t = text(app);
+        t.rsplit("Search in this conversation")
+            .next()
+            .unwrap_or("")
+            .to_string()
+    };
+    enter(&mut app, "/transcript deadline");
+    let t = newest(&app);
+    assert!(
+        t.contains("[[DEADLINE]]")
+            && t.contains("The client said the [[deadline]] moved to Friday"),
+        "{t}"
+    );
+    assert!(
+        t.contains("2 lines hold") || text(&app).contains("2 lines hold"),
+        "{t}"
+    );
+    enter(&mut app, "/transcript client friday");
+    assert!(
+        newest(&app).contains("[[client]] said the deadline moved to [[Friday]]"),
+        "{}",
+        newest(&app)
+    );
+    // typing in capitals finds the same lines, and an earlier search never counts as part of the conversation
+    enter(&mut app, "/transcript DEADLINE FRIDAY");
+    assert!(
+        newest(&app).contains("[[deadline]] moved to [[Friday]]"),
+        "{}",
+        newest(&app)
+    );
+    assert!(
+        !app.transcript_text()
+            .contains("lines hold all of those words"),
+        "search results are not in the transcript"
+    );
+    enter(&mut app, "/transcript zebra");
+    assert!(
+        text(&app)
+            .trim_end()
+            .ends_with("No line has all of those words."),
+        "{}",
+        text(&app)
+    );
+    enter(&mut app, "/transcript line");
+    let card = newest(&app);
+    let shown = card
+        .lines()
+        .filter(|l| {
+            l.trim_start()
+                .split_once(": ")
+                .is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+        })
+        .count();
+    assert_eq!(shown, 30, "at most thirty lines are shown");
+    assert!(
+        card.contains("lines hold all of those words (the first 30 are shown)"),
+        "and it says how many there are: {}",
+        &card[..card.len().min(200)]
+    );
+    // copy: asks first, the last reply only, exactly its text
+    let mut a = booted();
+    a.cards.push(Card {
+        kind: Kind::User,
+        title: None,
+        lines: vec!["question".into()],
+    });
+    a.cards.push(Card {
+        kind: Kind::Info,
+        title: Some("Assistant".into()),
+        lines: vec!["the answer".into(), "second line".into()],
+    });
+    assert!(enter(&mut a, "/copy").is_empty());
+    let prompt = match &a.mode {
+        Mode::Confirm(c) => c.prompt.clone(),
+        other => panic!("not asking: {other:?}"),
+    };
+    assert!(
+        prompt.contains("clipboard")
+            && prompt.contains("Other programs")
+            && prompt.ends_with("[y/N]"),
+        "{prompt}"
+    );
+    for k in [KeyCode::Enter, KeyCode::Char('n'), KeyCode::Esc] {
+        let mut b = booted();
+        b.cards.push(Card {
+            kind: Kind::Info,
+            title: Some("Assistant".into()),
+            lines: vec!["x".into()],
+        });
+        enter(&mut b, "/copy");
+        b.handle(key(k));
+        assert!(
+            b.clipboard_request.is_none(),
+            "nothing is copied without a yes"
+        );
+    }
+    assert!(a.clipboard_request.is_none());
+    a.handle(key(KeyCode::Char('y')));
+    assert_eq!(
+        a.clipboard_request.as_deref(),
+        Some("the answer\nsecond line")
+    );
+    let mut none = booted();
+    enter(&mut none, "/copy");
+    assert!(text(&none).contains("no reply to copy"), "{}", text(&none));
+    // copy all: the whole transcript text, asked about first
+    let mut all = booted();
+    all.cards.push(Card {
+        kind: Kind::User,
+        title: None,
+        lines: vec!["question".into()],
+    });
+    all.cards.push(Card {
+        kind: Kind::Info,
+        title: Some("Assistant".into()),
+        lines: vec!["the answer".into()],
+    });
+    enter(&mut all, "/copy all");
+    all.handle(key(KeyCode::Char('y')));
+    let copied = all.clipboard_request.clone().unwrap();
+    assert!(
+        copied.contains("You: question") && copied.contains("the answer"),
+        "{copied}"
+    );
+    // export: one request with the transcript text, and what comes back is said plainly
+    let mut e = booted();
+    e.cards.push(Card {
+        kind: Kind::User,
+        title: None,
+        lines: vec!["question".into()],
+    });
+    e.cards.push(Card {
+        kind: Kind::Info,
+        title: Some("Assistant".into()),
+        lines: vec!["the answer".into()],
+    });
+    let r = enter(&mut e, "/export call-notes");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method, r[0].admin),
+        ("/api/exports/transcript", Method::Post, false)
+    );
+    let body = r[0].body.clone().unwrap();
+    assert_eq!(body["name"], "call-notes");
+    let sent = body["text"].as_str().unwrap();
+    assert!(
+        sent.contains("You: question") && sent.contains("the answer") && !sent.contains("/export"),
+        "{sent}"
+    );
+    e.handle(ok(
+        &r[0],
+        200,
+        json!({"path": "/home/p/.kakurega/exports/call-notes.md"}),
+    ));
+    assert!(
+        text(&e).contains("Written to /home/p/.kakurega/exports/call-notes.md"),
+        "{}",
+        text(&e)
+    );
+    let r = enter(&mut e, "/export call-notes");
+    e.handle(ok(&r[0], 409, json!({"error": {"code": "EXISTS", "message": "a file with that name is already there; choose another name"}})));
+    assert!(text(&e).contains("already there"));
+}

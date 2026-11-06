@@ -8896,3 +8896,154 @@ fn sv90_every_chat_reply_is_counted_per_route_for_a_date_range_and_the_totals_eq
     assert_eq!(v2["routes"][0]["measured_turns"], 1, "{v2}");
     assert_eq!(v2["routes"][0]["prompt_tokens"], 4321);
 }
+
+#[test]
+fn sv91_a_transcript_is_exported_to_a_file_the_owner_names_inside_the_exports_folder_and_never_over_another_file(
+) {
+    let (c, w, _seen, root) = instructions_service("export");
+    let anon = Web::new(c.addr);
+    assert_eq!(
+        anon.post(
+            "/api/exports/transcript",
+            json!({"name": "a", "text": "hi"})
+        )
+        .0,
+        401
+    );
+    let (s, v) = w.post(
+        "/api/exports/transcript",
+        json!({"name": "client-call", "text": "You: hello\n\nAssistant: hi there\n"}),
+    );
+    assert_eq!(s, 200, "{v}");
+    let file = std::path::PathBuf::from(v["path"].as_str().unwrap());
+    assert!(
+        file.starts_with(root.join("data").join("exports")),
+        "{file:?}"
+    );
+    assert_eq!(file.file_name().unwrap(), "client-call.md");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "You: hello\n\nAssistant: hi there\n"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "private to the owner"
+        );
+    }
+    // a second export under the same name is refused and the first is untouched
+    let (s, _) = w.post(
+        "/api/exports/transcript",
+        json!({"name": "client-call", "text": "other"}),
+    );
+    assert_eq!(s, 409);
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "You: hello\n\nAssistant: hi there\n"
+    );
+    // a name is a plain name: nothing that walks out of the folder, hides, or names another kind of file
+    for bad in [
+        "",
+        "../escape",
+        "a/b",
+        "a\\b",
+        ".hidden",
+        "..",
+        "x".repeat(70).as_str(),
+        "name with space",
+        "a\u{0}b",
+        "con.md.exe",
+        "notes.sh",
+        "name\n",
+    ] {
+        let (s, v) = w.post(
+            "/api/exports/transcript",
+            json!({"name": bad, "text": "hi"}),
+        );
+        assert!(s == 400 || s == 409, "{bad:?}: {s} {v}");
+        assert_ne!(s, 200);
+    }
+    assert!(
+        !root.join("data").join("escape").exists() && !root.join("data").join("escape.md").exists()
+    );
+    // what is refused in the text
+    let secret = format!("the key is {}{}", "sk_li", "ve_abcdefghijklmnop0123");
+    assert_eq!(
+        w.post(
+            "/api/exports/transcript",
+            json!({"name": "s1", "text": secret})
+        )
+        .0,
+        422,
+        "a secret is never written to a file"
+    );
+    assert_eq!(
+        w.post(
+            "/api/exports/transcript",
+            json!({"name": "s2", "text": "x\u{202e}y"})
+        )
+        .0,
+        422
+    );
+    assert_eq!(
+        w.post("/api/exports/transcript", json!({"name": "s3", "text": ""}))
+            .0,
+        422
+    );
+    assert_eq!(
+        w.post(
+            "/api/exports/transcript",
+            json!({"name": "s4", "text": "x".repeat(512 * 1024 + 1)})
+        )
+        .0,
+        413
+    );
+    assert_eq!(
+        w.post(
+            "/api/exports/transcript",
+            json!({"name": "s5", "text": "hi", "extra": 1})
+        )
+        .0,
+        422
+    );
+    for n in ["s1", "s2", "s3", "s4", "s5"] {
+        assert!(
+            !root
+                .join("data")
+                .join("exports")
+                .join(format!("{n}.md"))
+                .exists(),
+            "{n}"
+        );
+    }
+    // .txt is allowed, other extensions are not
+    assert_eq!(
+        w.post(
+            "/api/exports/transcript",
+            json!({"name": "plain.txt", "text": "hi"})
+        )
+        .0,
+        200
+    );
+    assert_eq!(
+        w.post(
+            "/api/exports/transcript",
+            json!({"name": "plain.json", "text": "hi"})
+        )
+        .0,
+        400
+    );
+    let log = log_text(
+        &format!("http://127.0.0.1:{}", c.addr.port()),
+        c.security.admin_token(),
+    );
+    assert!(
+        log.contains("transcript.exported")
+            && !log.contains("hello")
+            && !log.contains("client-call"),
+        "the log has the event and not the words or the name"
+    );
+}
