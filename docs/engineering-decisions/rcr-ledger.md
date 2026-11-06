@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 135, PARTIAL 82, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 15. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 135, PARTIAL 83, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 14. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -387,7 +387,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | A-A08 | Interrupt hygiene: never leave the conversation invalid | see the section in matrix A | BUILT | a stopped reply leaves a valid conversation |
 | A-A09 | Multiple concurrent jobs and agents: roster, dock, detail, tail | see the section in matrix A | PARTIAL | /status lists reviews; no dock or roster |
 | A-A10 | Background work that finishes while you are elsewhere | see the section in matrix A | PARTIAL | live progress of a watched review; no catch-up on return |
-| A-A11 | Notifications and terminal status | see the section in matrix A | OWED-L | no terminal title or bell |
+| A-A11 | Notifications and terminal status | see the section in matrix A | PARTIAL | bell + generic window title on review finished/stopped, KAKU_NOTIFY=off, focus reporting; pty-verified; no OSC 9/777, no service-error notice (terminal-transcript.md) |
 | A-A12 | Permission prompt design | see the section in matrix A | BUILT | approval view with exact bytes and typed digest (11c1446) |
 | A-A13 | Remembered permissions and rule languages | see the section in matrix A | EXCLUDED | no remembered permissions for anything that releases data |
 | A-A14 | Approval requests under concurrency | see the section in matrix A | BUILT | approval view closes when decided elsewhere (0d4afbc) |

@@ -39,6 +39,8 @@ pub enum Event {
         text: String,
     },
     Tick,
+    /// The terminal reported that it gained (true) or lost (false) the owner's focus.
+    Focus(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,6 +238,12 @@ pub struct App {
     pub editor_request: Option<String>,
     /// Text the owner agreed to put on the system clipboard; the screen loop writes the clipboard sequence for it.
     pub clipboard_request: Option<String>,
+    /// Set when a review finished or stopped; the screen loop takes it and rings the bell once.
+    pub attention: Option<crate::attention::Attention>,
+    /// What the terminal last said about focus; unknown until it says.
+    pub focused: Option<bool>,
+    /// The latest thing that waits for the owner, shown in the window title until the owner acts.
+    pub waiting: Option<crate::attention::Attention>,
     /// Set by the first Esc while an answer is arriving; the second Esc within a few seconds stops it. Counts down on ticks.
     pub esc_armed: u8,
     pub popup_sel: usize,
@@ -324,6 +332,9 @@ impl App {
             approver: None,
             editor_request: None,
             clipboard_request: None,
+            attention: None,
+            focused: None,
+            waiting: None,
             esc_armed: 0,
             fixes_seen: Vec::new(),
             search_hits: Vec::new(),
@@ -515,7 +526,10 @@ impl App {
 
     pub fn handle(&mut self, ev: Event) -> Vec<Req> {
         match ev {
-            Event::Key(k) => self.on_key(k),
+            Event::Key(k) => {
+                self.waiting = None;
+                self.on_key(k)
+            }
             Event::Paste(t) => {
                 if let Mode::Approval(v) = &mut self.mode {
                     let t: String = t.chars().filter(|c| c.is_ascii_hexdigit()).collect();
@@ -523,6 +537,13 @@ impl App {
                     v.typed.truncate(DIGEST_ACK_LEN);
                 } else if matches!(self.mode, Mode::Normal) {
                     self.paste(&t);
+                }
+                Vec::new()
+            }
+            Event::Focus(on) => {
+                self.focused = Some(on);
+                if on {
+                    self.waiting = None;
                 }
                 Vec::new()
             }
@@ -2242,6 +2263,13 @@ impl App {
                         "nothing_to_release" => "The kernel confirmed no finding, so nothing can be sent. /findings shows why.".to_string(),
                         _ => format!("It stopped: {}", clean(body["note"].as_str().unwrap_or(""))),
                     };
+                    let what = if state == "ready" {
+                        crate::attention::Attention::ReviewReady
+                    } else {
+                        crate::attention::Attention::ReviewStopped
+                    };
+                    self.attention = Some(what);
+                    self.waiting = Some(what);
                     self.push(
                         if state == "ready" {
                             Kind::Ok

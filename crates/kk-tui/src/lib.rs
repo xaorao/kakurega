@@ -1,4 +1,5 @@
 pub mod app;
+pub mod attention;
 pub mod cmd;
 pub mod editor;
 pub mod http;

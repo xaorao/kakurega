@@ -1,7 +1,10 @@
 use crate::app::{App, Event, Req};
 use crate::http::Http;
 use crate::ui::{draw, Theme};
-use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, Event as CtEvent};
+use crossterm::event::{
+    self, DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange,
+    Event as CtEvent,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -18,6 +21,7 @@ fn restore() {
     let _ = execute!(
         stdout(),
         DisableBracketedPaste,
+        DisableFocusChange,
         LeaveAlternateScreen,
         crossterm::cursor::Show
     );
@@ -34,7 +38,13 @@ pub fn run(data_dir: &Path, resume: bool) -> Result<(), String> {
         prev(info);
     }));
     enable_raw_mode().map_err(|e| e.to_string())?;
-    execute!(stdout(), EnterAlternateScreen, EnableBracketedPaste).map_err(|e| e.to_string())?;
+    execute!(
+        stdout(),
+        EnterAlternateScreen,
+        EnableBracketedPaste,
+        EnableFocusChange
+    )
+    .map_err(|e| e.to_string())?;
     let result = event_loop(http, data_dir, resume);
     restore();
     result
@@ -95,7 +105,26 @@ fn event_loop(http: Http, data_dir: &Path, resume: bool) -> Result<(), String> {
     for r in app.drain_background() {
         let _ = req_tx.send(r);
     }
+    let notify = std::env::var("KAKU_NOTIFY").ok();
+    let mut shown_title: Option<Option<crate::attention::Attention>> = None;
     loop {
+        if shown_title != Some(app.waiting) {
+            shown_title = Some(app.waiting);
+            if let Some(t) = crate::attention::title(notify.as_deref(), app.waiting) {
+                use std::io::Write;
+                let mut out = stdout();
+                let _ = out.write_all(t.as_bytes());
+                let _ = out.flush();
+            }
+        }
+        if app.attention.take().is_some() {
+            if let Some(b) = crate::attention::bell(notify.as_deref(), app.focused) {
+                use std::io::Write;
+                let mut out = stdout();
+                let _ = out.write_all(b.as_bytes());
+                let _ = out.flush();
+            }
+        }
         term.draw(|f| draw(f, &app, &theme))
             .map_err(|e| e.to_string())?;
         if app.quit {
@@ -105,6 +134,8 @@ fn event_loop(http: Http, data_dir: &Path, resume: bool) -> Result<(), String> {
             let ev = match event::read().map_err(|e| e.to_string())? {
                 CtEvent::Key(k) => Some(Event::Key(k)),
                 CtEvent::Paste(t) => Some(Event::Paste(t)),
+                CtEvent::FocusGained => Some(Event::Focus(true)),
+                CtEvent::FocusLost => Some(Event::Focus(false)),
                 _ => None,
             };
             if let Some(ev) = ev {
@@ -132,8 +163,13 @@ fn event_loop(http: Http, data_dir: &Path, resume: bool) -> Result<(), String> {
                     );
                     let result = crate::editor::edit_with(&command, &text);
                     enable_raw_mode().map_err(|e| e.to_string())?;
-                    execute!(stdout(), EnterAlternateScreen, EnableBracketedPaste)
-                        .map_err(|e| e.to_string())?;
+                    execute!(
+                        stdout(),
+                        EnterAlternateScreen,
+                        EnableBracketedPaste,
+                        EnableFocusChange
+                    )
+                    .map_err(|e| e.to_string())?;
                     term.clear().map_err(|e| e.to_string())?;
                     app.finish_edit(result);
                 }

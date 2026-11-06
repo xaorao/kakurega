@@ -3299,3 +3299,49 @@ fn tu50_resume_at_start_opens_the_newest_kept_conversation_and_says_so_when_ther
         .handle(ok(&r[0], 200, json!({"sessions": [{"title": "no id"}]})))
         .is_empty());
 }
+
+fn finish_review(app: &mut App, state: &str) {
+    let r = enter(app, "/review payments for acme-audit");
+    app.handle(ok(&r[0], 202, json!({"id": "job-4"})));
+    let t = app.handle(Event::Tick);
+    let body = |s: &str| json!({"state": s, "recipient": "acme-audit", "note": "stopped for a reason", "events": [{"stage": "queued", "detail": ""}]});
+    app.handle(ok(&t[0], 200, body("running")));
+    let t = app.handle(Event::Tick);
+    app.handle(ok(&t[0], 200, body(state)));
+}
+
+#[test]
+fn tu51_a_finished_review_asks_for_one_bell_and_a_title_that_names_nothing_of_the_job() {
+    use kk_tui::attention::Attention;
+    let mut app = booted();
+    assert!(app.attention.is_none() && app.waiting.is_none());
+    finish_review(&mut app, "ready");
+    assert_eq!(app.attention.take(), Some(Attention::ReviewReady));
+    assert!(app.attention.is_none(), "taken once, not twice");
+    assert_eq!(app.waiting, Some(Attention::ReviewReady));
+    let phrase = Attention::ReviewReady.phrase();
+    for secret in ["acme-audit", "payments", "job-4", "stopped for a reason"] {
+        assert!(!phrase.contains(secret));
+    }
+    let seq = kk_tui::attention::title(None, app.waiting).unwrap();
+    assert!(seq.contains("a review is ready") && !seq.contains("acme") && !seq.contains("job-4"));
+    // the title clears when the terminal is looked at again
+    app.handle(Event::Focus(false));
+    assert_eq!(app.focused, Some(false));
+    assert!(app.waiting.is_some());
+    app.handle(Event::Focus(true));
+    assert_eq!(app.focused, Some(true));
+    assert!(app.waiting.is_none());
+    // a review that stopped is a different, equally generic, notice
+    let mut stopped = booted();
+    finish_review(&mut stopped, "failed");
+    assert_eq!(stopped.attention.take(), Some(Attention::ReviewStopped));
+    // a key press is the owner acting: the title clears
+    stopped.handle(key(KeyCode::Char('x')));
+    assert!(stopped.waiting.is_none());
+    // while the review is still running nothing is raised
+    let mut running = booted();
+    let r = enter(&mut running, "/review payments for acme-audit");
+    running.handle(ok(&r[0], 202, json!({"id": "job-4"})));
+    assert!(running.attention.is_none() && running.waiting.is_none());
+}

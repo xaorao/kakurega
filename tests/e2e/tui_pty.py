@@ -197,6 +197,14 @@ try:
     send(" payments-service for acme-audit\r")
     check("a review starts from a relative folder name", wait_for(r"Review job-\d+ started") is not None)
     check("progress and completion appear without any key press", wait_for(r"finished: ready", 120) is not None)
+    pump(0.5)
+    import re as _re
+    _osc = _re.compile(rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+    _bare = _osc.sub(b"", raw).count(b"\x07")
+    check("a finished review rings the bell exactly once", _bare == 1, f"bells={_bare}")
+    check("and the window title says only that a review is ready", b"\x1b]2;Kakurega: a review is ready\x07" in raw)
+    check("no title or bell names the folder, the recipient or the job", all(b"payments-service" not in t and b"acme-audit" not in t and b"job-" not in t for t in _re.findall(rb"\x1b\]2;[^\x07]*\x07", raw)))
+    check("focus reporting was asked for", b"\x1b[?1004h" in raw)
     send("/approve\r")
     m = wait_for(r"first 12 characters of the digest \(([0-9a-f]{12})\)")
     check("the approval view opens and names the digest prefix to type", m is not None)
@@ -290,7 +298,7 @@ try:
         pump(0.2)
     pump(0.5)
     check("the program exits cleanly on /quit", proc.poll() == 0, f"exit={proc.poll()}")
-    check("the terminal is restored: alternate screen left, cursor shown, bracketed paste off", all(s in raw for s in [b"\x1b[?1049l", b"\x1b[?25h", b"\x1b[?2004l"]))
+    check("the terminal is restored: alternate screen left, cursor shown, bracketed paste off", all(s in raw for s in [b"\x1b[?1049l", b"\x1b[?25h", b"\x1b[?2004l", b"\x1b[?1004l"]))
 finally:
     if proc.poll() is None:
         proc.kill()
