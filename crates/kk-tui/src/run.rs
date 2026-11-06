@@ -23,7 +23,7 @@ fn restore() {
     );
 }
 
-pub fn run(data_dir: &Path) -> Result<(), String> {
+pub fn run(data_dir: &Path, resume: bool) -> Result<(), String> {
     if !stdout().is_terminal() || !std::io::stdin().is_terminal() {
         return Err("the full-screen workspace needs a terminal; use `kaku --help` for the scripting commands".into());
     }
@@ -35,12 +35,12 @@ pub fn run(data_dir: &Path) -> Result<(), String> {
     }));
     enable_raw_mode().map_err(|e| e.to_string())?;
     execute!(stdout(), EnterAlternateScreen, EnableBracketedPaste).map_err(|e| e.to_string())?;
-    let result = event_loop(http, data_dir);
+    let result = event_loop(http, data_dir, resume);
     restore();
     result
 }
 
-fn event_loop(http: Http, data_dir: &Path) -> Result<(), String> {
+fn event_loop(http: Http, data_dir: &Path, resume: bool) -> Result<(), String> {
     let mut term = Terminal::new(CrosstermBackend::new(stdout())).map_err(|e| e.to_string())?;
     let theme = Theme::from_env();
     let mut app = App::new();
@@ -86,6 +86,11 @@ fn event_loop(http: Http, data_dir: &Path) -> Result<(), String> {
     }
     for r in app.start() {
         let _ = req_tx.send(r);
+    }
+    if resume {
+        for r in app.resume_at_start() {
+            let _ = req_tx.send(r);
+        }
     }
     for r in app.drain_background() {
         let _ = req_tx.send(r);

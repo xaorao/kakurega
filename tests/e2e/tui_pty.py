@@ -280,6 +280,10 @@ try:
     send("/remember the password is hunter2hunter2\r")
     check("a secret is refused", wait_for(r"secrets are never stored") is not None)
     check("and hidden from the transcript", "text hidden" in screen_text())
+    send("/keep\r")
+    check("a conversation is kept so a later launch can resume it", wait_for(r"Kept\. From now on", 20) is not None)
+    send("resumecanary words\r")
+    pump(4.0)
     send("/quit\r")
     deadline = time.time() + 15
     while proc.poll() is None and time.time() < deadline:
@@ -294,6 +298,39 @@ finally:
 
 left = subprocess.run(["pgrep", "-fl", f"kaku serve --data-dir {data}"], capture_output=True, text=True)
 check("no service process is left behind", left.returncode != 0, left.stdout.strip()[:200])
+# `kaku --resume` opens the newest kept conversation at launch
+m3, s3 = pty.openpty()
+fcntl.ioctl(s3, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 110, 0, 0))
+env3 = dict(os.environ, TERM="xterm-256color")
+p3 = subprocess.Popen([str(kaku), "tui", "--resume", "--data-dir", str(data), "--root", str(work / "root"), "--scripted", str(repo / "tests/e2e/script.json"), "--ui-dir", str(repo / "apps/web/dist")], stdin=s3, stdout=s3, stderr=s3, env=env3, close_fds=True)
+os.close(s3)
+screen3 = Screen(32, 110)
+dec3 = codecs.getincrementaldecoder("utf8")(errors="replace")
+t_end = time.time() + 40
+while time.time() < t_end and "resumecanary words" not in screen3.text():
+    r, _, _ = select.select([m3], [], [], 0.2)
+    if r:
+        try:
+            screen3.feed(dec3.decode(os.read(m3, 65536)))
+        except OSError:
+            break
+check("launching with --resume shows the newest kept conversation, with the message kept earlier", "resumecanary words" in screen3.text())
+check("and says it was opened from the store", "Opened the kept conversation" in screen3.text())
+os.write(m3, b"/quit\r")
+t_end = time.time() + 20
+while p3.poll() is None and time.time() < t_end:
+    # the screen is redrawn constantly; leave the pipe unread and the program blocks writing to it
+    r, _, _ = select.select([m3], [], [], 0.2)
+    if r:
+        try:
+            os.read(m3, 65536)
+        except OSError:
+            break
+if p3.poll() is None:
+    p3.kill()
+    p3.wait()
+check("the resumed workspace exits cleanly", p3.returncode == 0, f"exit={p3.returncode}")
+os.close(m3)
 # a hard kill of the workspace (terminal closed, SIGKILL) must not leave the service it started running
 data2 = work / "data2"
 m2, s2 = pty.openpty()

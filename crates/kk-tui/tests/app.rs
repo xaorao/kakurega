@@ -3253,3 +3253,49 @@ fn tu49_branch_copies_a_kept_conversation_at_a_chosen_message_and_opens_the_copy
         text(&a)
     );
 }
+
+#[test]
+fn tu50_resume_at_start_opens_the_newest_kept_conversation_and_says_so_when_there_is_none() {
+    let mut a = booted();
+    let r = a.resume_at_start();
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0].path, "/api/sessions");
+    // the service lists newest first: the first one is opened
+    let open = a.handle(ok(&r[0], 200, json!({"sessions": [{"id": "chat-new", "title": "", "updated": 9, "turns": 2}, {"id": "chat-old", "title": "", "updated": 1, "turns": 4}]})));
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].path, "/api/sessions/chat-new");
+    a.handle(ok(&open[0], 200, json!({"id": "chat-new", "turns": [{"role": "user", "content": "where did we stop"}, {"role": "assistant", "content": "at the audit"}]})));
+    assert!(
+        text(&a).contains("where did we stop") && text(&a).contains("Opened the kept conversation"),
+        "{}",
+        text(&a)
+    );
+    // none kept: a plain sentence, nothing opened
+    let mut b = booted();
+    let r = b.resume_at_start();
+    let out = b.handle(ok(&r[0], 200, json!({"sessions": []})));
+    assert!(
+        out.is_empty() && text(&b).contains("no kept conversation to resume"),
+        "{}",
+        text(&b)
+    );
+    // the service unreachable or refusing: its reason, nothing opened
+    let mut c = booted();
+    let r = c.resume_at_start();
+    let out = c.handle(ok(
+        &r[0],
+        500,
+        json!({"error": {"code": "STORE", "message": "could not read the conversations"}}),
+    ));
+    assert!(
+        out.is_empty() && text(&c).contains("could not read the conversations"),
+        "{}",
+        text(&c)
+    );
+    // a malformed entry never opens anything
+    let mut d = booted();
+    let r = d.resume_at_start();
+    assert!(d
+        .handle(ok(&r[0], 200, json!({"sessions": [{"title": "no id"}]})))
+        .is_empty());
+}

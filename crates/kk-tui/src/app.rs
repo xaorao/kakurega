@@ -105,6 +105,7 @@ enum Intent {
     GatewayProof,
     Keep,
     Branch,
+    ResumeLast,
     Sessions,
     OpenChat(String),
     ForgetChat(String),
@@ -362,6 +363,17 @@ impl App {
 
     fn say(&mut self, kind: Kind, line: impl AsRef<str>) {
         self.push(kind, None, text_lines(line.as_ref()));
+    }
+
+    /// Opens the most recently updated kept conversation once the screen is up (`kaku --resume`).
+    pub fn resume_at_start(&mut self) -> Vec<Req> {
+        vec![self.req(
+            Intent::ResumeLast,
+            false,
+            Method::Get,
+            "/api/sessions",
+            None,
+        )]
     }
 
     pub fn start(&mut self) -> Vec<Req> {
@@ -3397,6 +3409,32 @@ impl App {
                     self.say(Kind::Error, err_text(status, &body));
                 }
                 Vec::new()
+            }
+            Intent::ResumeLast => {
+                let newest = ok
+                    .then(|| body["sessions"].as_array().and_then(|l| l.first()))
+                    .flatten()
+                    .and_then(|k| k["id"].as_str().map(clean));
+                match newest {
+                    Some(id) => vec![self.req(
+                        Intent::OpenChat(id.clone()),
+                        false,
+                        Method::Get,
+                        &format!("/api/sessions/{id}"),
+                        None,
+                    )],
+                    None => {
+                        if ok {
+                            self.say(
+                                Kind::Info,
+                                "There is no kept conversation to resume yet. /keep saves one.",
+                            );
+                        } else {
+                            self.say(Kind::Error, err_text(status, &body));
+                        }
+                        Vec::new()
+                    }
+                }
             }
             Intent::Branch => {
                 let Some(new_id) = ok.then(|| body["id"].as_str().map(clean)).flatten() else {

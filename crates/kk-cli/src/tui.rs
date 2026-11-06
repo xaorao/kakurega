@@ -32,7 +32,10 @@ pub fn run(args: &[String]) -> u8 {
         let mut cmd = Command::new(exe);
         cmd.arg("serve").arg("--data-dir").arg(&dir);
         for a in args {
-            if a != "--data-dir" && Some(a.as_str()) != crate::flag(args, "--data-dir").as_deref() {
+            if a != "--data-dir"
+                && a != "--resume"
+                && Some(a.as_str()) != crate::flag(args, "--data-dir").as_deref()
+            {
                 cmd.arg(a);
             }
         }
@@ -69,7 +72,7 @@ pub fn run(args: &[String]) -> u8 {
             return 1;
         }
     }
-    match kk_tui::run::run(&dir) {
+    match kk_tui::run::run(&dir, args.iter().any(|a| a == "--resume")) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("{e}");
