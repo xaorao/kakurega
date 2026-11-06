@@ -71,7 +71,7 @@ try:
     init = rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test-agent", "version": "0"}})
     check("initialize answers with the protocol version", init["result"]["protocolVersion"] == "2025-06-18")
     tools = rpc("tools/list")["result"]["tools"]
-    check("seven typed tools are offered", len(tools) == 7)
+    check("eight typed tools are offered", len(tools) == 8)
     schemas.update({t["name"]: t["outputSchema"] for t in tools})
     o = tool("overview")
     check("overview tells the agent whether approvals need a signature", isinstance(o["structuredContent"].get("approvals_require_signature"), bool))
@@ -110,6 +110,13 @@ try:
     check("asking twice is refused politely", again["isError"] is True)
     lst = tool("list_reviews")["structuredContent"]["jobs"]
     check("list_reviews shows the review without text", len(lst) == 1 and set(lst[0].keys()) >= {"id", "state"} and "summary" not in lst[0])
+    ev = tool("review_events", after=0, limit=100)["structuredContent"]
+    stages = [e["stage"] for e in ev["events"]]
+    check("review_events lists the review's stages in order, from queued to approval", ev["events"] and ev["events"][0]["stage"] == "queued" and "approval" in stages and all(e["review"] == job for e in ev["events"]), str(stages))
+    check("and carries no detail, recipient or path", all(set(e) == {"seq", "review", "stage", "at"} for e in ev["events"]) and "Acme" not in json.dumps(ev))
+    more = tool("review_events", after=ev["next"])["structuredContent"]
+    check("asking again from next returns nothing new and the same position", more["events"] == [] and more["next"] == ev["next"] and more["reset"] is False)
+    check("a bad position is refused by the tool", tool("review_events", after=-1)["isError"] is True)
     export = subprocess.run([kaku, "log", "export", "--data-dir", str(data), "--out", str(work / "log.json")], capture_output=True, text=True)
     vl = tool("verify_log", path=str(work / "log.json"))
     check("verify_log checks a saved log offline", vl["isError"] is False and vl["structuredContent"]["valid"] is True, export.stdout.strip()[:100])
@@ -173,7 +180,7 @@ try:
     # the same log records every tool call by an agent: the tool and how it ended, never what it was given or answered
     entries = [json.loads(e["entry"]) for e in json.loads((work / "lease-log.json").read_text())["entries"]]
     calls = [e for e in entries if e["kind"] == "mcp.call"]
-    tools_used = {"overview", "start_review", "review_status", "request_approval", "list_reviews", "verify_log", "verify_capsule", "unknown"}
+    tools_used = {"overview", "start_review", "review_status", "review_events", "request_approval", "list_reviews", "verify_log", "verify_capsule", "unknown"}
     check("the signed log holds a record of each tool call", len(calls) >= 10, f"{len(calls)} mcp.call entries")
     check("a call record names only a known tool and carries only an outcome", all(set(e["data"].keys()) == {"outcome"} and e["subject"] in tools_used and e["data"]["outcome"] in ("ok", "error", "refused") for e in calls), json.dumps(calls[:2]))
     check("refused calls are recorded as refused", any(e["subject"] == "start_review" and e["data"]["outcome"] == "refused" for e in calls))

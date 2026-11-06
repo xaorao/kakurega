@@ -69,6 +69,9 @@ pub fn tools() -> Value {
             out_obj(json!({"id": {"type": "string"}}), &["id"])),
         tool("review_status", "Review status", "State and counts of one review.", obj(json!({"id": job_id_prop()}), &["id"]),
             out_obj(json!({"id": {"type": "string"}, "state": {"type": "string"}, "stage": {}, "files_reviewed": {}, "files_withheld": {}, "findings_reported": {}, "findings_confirmed": {}, "approval": {}, "delivered": {}}), &["id", "state"])),
+        tool("review_events", "Review events", "What happened to the reviews, in order, after a position you remember: the review id, the stage name and the time of each event, never a detail. Ask again with `next` to follow along; `reset` means the service was restored from an older copy and you should start from 0.",
+            obj(json!({"after": {"type": "integer", "description": "The position of the last event you saw; 0 to start.", "minimum": 0, "maximum": 9_007_199_254_740_991u64}, "limit": {"type": "integer", "description": "How many events at most, 1 to 100.", "minimum": 1, "maximum": 100}}), &[]),
+            out_obj(json!({"events": {"type": "array", "items": {"type": "object"}}, "next": {"type": "integer"}, "latest": {"type": "integer"}, "reset": {"type": "boolean"}}), &["events", "next", "latest", "reset"])),
         tool("request_approval", "Request approval", "Ask the owner to approve the release. This tool cannot approve: the owner approves in the desktop window, the terminal workspace or `kaku approve`, after seeing the exact files.", obj(json!({"id": job_id_prop()}), &["id"]),
             out_obj(json!({"approval": {"type": "string"}, "digest": {"type": "string"}, "how": {"type": "string"}}), &["approval"])),
         tool("verify_capsule", "Verify a capsule", "Check a capsule file (.kkg) offline and report what it does and does not establish.", obj(json!({"path": string_prop("Path of a .kkg capsule file.", 4096)}), &["path"]),
@@ -193,6 +196,16 @@ fn check_args(schema: &Value, args: &Value) -> Result<(), String> {
                     {
                         return Err(format!("`{k}` is not a valid id"));
                     }
+                }
+            }
+            Some("integer") => {
+                let (lo, hi) = (
+                    p["minimum"].as_u64().unwrap_or(0),
+                    p["maximum"].as_u64().unwrap_or(u64::MAX),
+                );
+                match v.as_u64() {
+                    Some(n) if (lo..=hi).contains(&n) => {}
+                    _ => return Err(format!("`{k}` must be a whole number from {lo} to {hi}")),
                 }
             }
             _ => return Err(format!("`{k}` has an unsupported type")),
@@ -552,6 +565,11 @@ fn call_inner(
             json!({"repo": s("repo"), "recipient": s("recipient")}),
         ),
         "review_status" => admin.get(&format!("/admin/jobs/{}", s("id").unwrap_or_default())),
+        "review_events" => admin.get(&format!(
+            "/admin/events?after={}&limit={}",
+            a.get("after").and_then(Value::as_u64).unwrap_or(0),
+            a.get("limit").and_then(Value::as_u64).unwrap_or(50)
+        )),
         "request_approval" => admin.post(
             &format!("/admin/jobs/{}/approval", s("id").unwrap_or_default()),
             json!({}),
@@ -866,11 +884,12 @@ fn read_line_bounded(input: &mut dyn BufRead, max: usize) -> Option<(Vec<u8>, bo
 
 /// Tools that call the running service over the network. They can be slow, so they run beside the reader and a cancel or
 /// a ping is never stuck behind them. The others read a local file or only refuse, and run in order.
-const SLOW_TOOLS: [&str; 5] = [
+const SLOW_TOOLS: [&str; 6] = [
     "overview",
     "list_reviews",
     "start_review",
     "review_status",
+    "review_events",
     "request_approval",
 ];
 /// At most this many service-backed calls run at once.
@@ -1129,11 +1148,21 @@ mod tests {
         for t in tools().as_array().unwrap() {
             let schema = &t["inputSchema"];
             for (name, p) in schema["properties"].as_object().unwrap() {
-                assert_eq!(
-                    p["type"], "string",
+                assert!(
+                    p["type"] == "string" || p["type"] == "integer",
                     "{}: `{name}` has a type the checker does not know",
                     t["name"]
                 );
+                if p["type"] == "integer" {
+                    // the only rules the checker applies to a whole number
+                    for key in p.as_object().unwrap().keys() {
+                        assert!(
+                            ["type", "description", "minimum", "maximum"].contains(&key.as_str()),
+                            "{}: `{name}` has a rule `{key}` the checker would skip",
+                            t["name"]
+                        );
+                    }
+                }
                 if let Some(pat) = p.get("pattern") {
                     assert_eq!(
                         pat, ID_PATTERN,
@@ -1153,6 +1182,30 @@ mod tests {
             .find(|t| t["name"] == name)
             .unwrap()["inputSchema"]
             .clone()
+    }
+
+    #[test]
+    fn whole_numbers_are_checked_against_their_bounds_and_nothing_else_passes() {
+        let schema = json!({"type": "object", "properties": {"n": {"type": "integer", "minimum": 2, "maximum": 5}}, "required": [], "additionalProperties": false});
+        for ok in [2, 3, 5] {
+            assert!(check_args(&schema, &json!({"n": ok})).is_ok(), "{ok}");
+        }
+        for bad in [
+            json!(1),
+            json!(6),
+            json!(-1),
+            json!(2.5),
+            json!("3"),
+            json!(null),
+            json!(true),
+            json!([3]),
+            json!(u64::MAX),
+        ] {
+            assert!(
+                check_args(&schema, &json!({"n": bad.clone()})).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

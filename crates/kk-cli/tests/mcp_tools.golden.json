@@ -178,6 +178,62 @@
     }
   },
   {
+    "name": "review_events",
+    "title": "Review events",
+    "description": "What happened to the reviews, in order, after a position you remember: the review id, the stage name and the time of each event, never a detail. Ask again with `next` to follow along; `reset` means the service was restored from an older copy and you should start from 0.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "after": {
+          "type": "integer",
+          "description": "The position of the last event you saw; 0 to start.",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "limit": {
+          "type": "integer",
+          "description": "How many events at most, 1 to 100.",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "next": {
+          "type": "integer"
+        },
+        "latest": {
+          "type": "integer"
+        },
+        "reset": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "events",
+        "next",
+        "latest",
+        "reset"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
     "name": "request_approval",
     "title": "Request approval",
     "description": "Ask the owner to approve the release. This tool cannot approve: the owner approves in the desktop window, the terminal workspace or `kaku approve`, after seeing the exact files.",

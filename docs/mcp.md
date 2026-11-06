@@ -26,6 +26,7 @@ kaku mcp install --client claude-code --print --read-only
 |---|---|---|
 | `overview` | counts: setup problems, reviews by state, memories by privacy level, signed log head | nothing |
 | `list_reviews`, `review_status` | state and counts only | nothing |
+| `review_events` | what happened to the reviews after a position you remember: review id, stage name and time, never a detail | nothing |
 | `start_review` | a folder path the owner allowed | starts a review; releases nothing |
 | `request_approval` | | asks the owner to approve; the owner decides in a window or terminal |
 | `verify_capsule`, `verify_log` | a capsule or saved log file, checked offline | nothing |

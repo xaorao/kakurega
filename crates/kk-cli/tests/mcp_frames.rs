@@ -1969,3 +1969,52 @@ fn mc46_a_trace_id_in_the_call_meta_is_sent_with_the_report_and_nothing_else_is(
         ]
     );
 }
+
+#[test]
+fn mc47_review_events_forwards_a_position_and_a_limit_checks_them_and_works_in_read_only_mode() {
+    let dir = fresh("mc47");
+    let admin = FakeAdmin::start_with(
+        "tok-47",
+        0,
+        r#"{"events":[{"seq":4,"review":"job-1","stage":"queued","at":5}],"next":4,"latest":9,"reset":false}"#,
+    );
+    admin.publish(&dir);
+    let mut s = live_with(&dir, &["--read-only"]);
+    s.send(&call(1, "review_events", json!({})));
+    let r = s.recv();
+    assert_eq!(r["result"]["isError"], false, "{r}");
+    assert_eq!(r["result"]["structuredContent"]["next"], 4);
+    s.send(&call(2, "review_events", json!({"after": 4, "limit": 10})));
+    assert_eq!(s.recv()["result"]["isError"], false);
+    s.send(&call(3, "review_events", json!({"after": 0, "limit": 100})));
+    assert_eq!(s.recv()["result"]["isError"], false);
+    // a bad argument is refused here and never reaches the service
+    for bad in [
+        json!({"after": -1}),
+        json!({"after": "4"}),
+        json!({"after": 1.5}),
+        json!({"limit": 0}),
+        json!({"limit": 101}),
+        json!({"limit": "5"}),
+        json!({"after": 1, "since": 2}),
+        json!({"after": 9_007_199_254_740_992u64}),
+    ] {
+        s.send(&call(9, "review_events", bad.clone()));
+        let r = s.recv();
+        assert!(
+            r["error"].is_object() || r["result"]["isError"] == true,
+            "{bad}: {r}"
+        );
+    }
+    assert!(s.close().is_empty());
+    let seen: Vec<String> = admin.work_seen();
+    assert_eq!(
+        seen,
+        [
+            "GET /admin/events?after=0&limit=50 HTTP/1.1",
+            "GET /admin/events?after=4&limit=10 HTTP/1.1",
+            "GET /admin/events?after=0&limit=100 HTTP/1.1"
+        ],
+        "defaults are filled in, and only the well-formed calls were forwarded"
+    );
+}

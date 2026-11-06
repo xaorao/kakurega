@@ -80,6 +80,7 @@ fn mc02_the_tool_list_is_a_stable_typed_contract_and_offers_no_way_to_read_priva
             "list_reviews",
             "start_review",
             "review_status",
+            "review_events",
             "request_approval",
             "verify_capsule",
             "verify_log"

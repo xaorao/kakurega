@@ -10251,3 +10251,282 @@ fn anon_get(base: &str, path: &str) -> u16 {
         .status()
         .as_u16()
 }
+
+#[test]
+fn sv105_review_events_are_a_cursor_feed_of_stage_names_with_no_details() {
+    let (c, w, repo, _root, _svc) = boot("events", true);
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    let tok = c.security.admin_token().to_string();
+    assert_eq!(
+        anon_get(&base, "/admin/events"),
+        401,
+        "the admin token is needed"
+    );
+    let start = |who: &str| -> String {
+        let (_, s) = w.post(
+            "/api/jobs",
+            json!({"repo": repo.to_string_lossy(), "recipient": who}),
+        );
+        let id = s["id"].as_str().unwrap().to_string();
+        wait_for(&w, &id, &["ready"]);
+        id
+    };
+    let first = start("Acme Secret Corp");
+    let (st, v) = admin(&base, &tok, "GET", "/admin/events?after=0&limit=100", None);
+    assert_eq!(st, 200, "{v}");
+    let evs = v["events"].as_array().unwrap();
+    assert!(evs.len() >= 3, "queued, some stages, finished: {v}");
+    assert!(evs.iter().all(|e| e["review"] == json!(first)));
+    let seqs: Vec<u64> = evs.iter().map(|e| e["seq"].as_u64().unwrap()).collect();
+    assert!(
+        seqs.windows(2).all(|p| p[0] < p[1]),
+        "strictly increasing: {seqs:?}"
+    );
+    assert_eq!(evs[0]["stage"], json!("queued"));
+    assert_eq!(evs.last().unwrap()["stage"], json!("finished"));
+    // stage names and ids only: no detail, recipient or path
+    let text = v.to_string();
+    for private in [
+        "waiting to start",
+        "Acme",
+        "Secret",
+        &repo.to_string_lossy(),
+    ] {
+        assert!(!text.contains(private), "{private} is in the feed: {text}");
+    }
+    for e in evs {
+        assert_eq!(
+            e.as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+            ["at", "review", "seq", "stage"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
+        );
+    }
+    // a cursor resumes exactly after what was seen, in pages
+    let (_, p1) = admin(&base, &tok, "GET", "/admin/events?after=0&limit=2", None);
+    assert_eq!(p1["events"].as_array().unwrap().len(), 2);
+    let next = p1["next"].as_u64().unwrap();
+    assert_eq!(next, seqs[1]);
+    let (_, p2) = admin(
+        &base,
+        &tok,
+        "GET",
+        &format!("/admin/events?after={next}&limit=100"),
+        None,
+    );
+    let rest: Vec<u64> = p2["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["seq"].as_u64().unwrap())
+        .collect();
+    assert_eq!(rest, seqs[2..].to_vec(), "no gap and no repeat");
+    let latest = v["latest"].as_u64().unwrap();
+    // nothing new: the same position back, no events
+    let (_, none) = admin(
+        &base,
+        &tok,
+        "GET",
+        &format!("/admin/events?after={latest}"),
+        None,
+    );
+    assert_eq!(
+        (
+            none["events"].as_array().unwrap().len(),
+            none["next"].as_u64(),
+            none["reset"].as_bool()
+        ),
+        (0, Some(latest), Some(false))
+    );
+    // a new review adds events after the cursor
+    let second = start("Other Corp");
+    let (_, more) = admin(
+        &base,
+        &tok,
+        "GET",
+        &format!("/admin/events?after={latest}&limit=100"),
+        None,
+    );
+    let more = more["events"].as_array().unwrap();
+    assert!(
+        !more.is_empty()
+            && more
+                .iter()
+                .all(|e| e["review"] == json!(second) && e["seq"].as_u64().unwrap() > latest),
+        "{more:?}"
+    );
+    // a position from the future means the service was restored from an older copy: start over
+    let (_, future) = admin(&base, &tok, "GET", "/admin/events?after=999999999", None);
+    assert_eq!(future["reset"], json!(true));
+    // the limit is clamped, junk is refused
+    let (_, big) = admin(
+        &base,
+        &tok,
+        "GET",
+        "/admin/events?after=0&limit=100000",
+        None,
+    );
+    assert!(big["events"].as_array().unwrap().len() <= 100);
+    let (_, zero) = admin(&base, &tok, "GET", "/admin/events?after=0&limit=0", None);
+    assert_eq!(
+        zero["events"].as_array().unwrap().len(),
+        1,
+        "a limit of zero is one"
+    );
+    // two reviews running at once interleave their events: paging one at a time still sees every event once, in order
+    let ids: Vec<String> = ["One Corp", "Two Corp", "Three Corp"]
+        .iter()
+        .map(|who| {
+            w.post(
+                "/api/jobs",
+                json!({"repo": repo.to_string_lossy(), "recipient": who}),
+            )
+            .1["id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    for id in &ids {
+        wait_for(&w, id, &["ready"]);
+    }
+    let (_, everything) = admin(&base, &tok, "GET", "/admin/events?after=0&limit=100", None);
+    let all_seqs: Vec<u64> = everything["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["seq"].as_u64().unwrap())
+        .collect();
+    assert!(all_seqs.windows(2).all(|p| p[0] < p[1]));
+    let mut cursor = 0;
+    let mut paged = Vec::new();
+    loop {
+        let (_, page) = admin(
+            &base,
+            &tok,
+            "GET",
+            &format!("/admin/events?after={cursor}&limit=1"),
+            None,
+        );
+        let Some(e) = page["events"].as_array().and_then(|a| a.first()).cloned() else {
+            break;
+        };
+        paged.push(e["seq"].as_u64().unwrap());
+        cursor = page["next"].as_u64().unwrap();
+    }
+    assert_eq!(
+        paged, all_seqs,
+        "one at a time sees each event once and in order"
+    );
+    assert_eq!(
+        admin(&base, &tok, "GET", "/admin/events?after=-1", None).0,
+        400
+    );
+    assert_eq!(
+        admin(&base, &tok, "GET", "/admin/events?after=x", None).0,
+        400
+    );
+}
+
+/// One life of the service for the restart test below, run in its own process so its event counter starts at zero.
+fn events_life(phase: &str, data: &Path, repo: &Path, root: &Path) -> Vec<u64> {
+    let svc = Service::new(
+        data,
+        vec![root.to_path_buf()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .expect("service");
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    let tok = c.security.admin_token().to_string();
+    if phase == "a" {
+        let (_, s) = w.post(
+            "/api/jobs",
+            json!({"repo": repo.to_string_lossy(), "recipient": "acme"}),
+        );
+        wait_for(&w, s["id"].as_str().unwrap(), &["ready"]);
+    } else {
+        let (_, s) = w.post(
+            "/api/jobs",
+            json!({"repo": repo.to_string_lossy(), "recipient": "again"}),
+        );
+        wait_for(&w, s["id"].as_str().unwrap(), &["ready"]);
+    }
+    let (_, v) = admin(&base, &tok, "GET", "/admin/events?after=0&limit=100", None);
+    v["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["seq"].as_u64().unwrap())
+        .collect()
+}
+
+#[test]
+fn sv106_event_positions_continue_across_a_restart_so_a_remembered_position_stays_valid() {
+    if let Ok(phase) = std::env::var("KK_EVENTS_PHASE") {
+        let data = PathBuf::from(std::env::var("KK_EVENTS_DATA").unwrap());
+        let repo = PathBuf::from(std::env::var("KK_EVENTS_REPO").unwrap());
+        let root = PathBuf::from(std::env::var("KK_EVENTS_ROOT").unwrap());
+        let seqs = events_life(&phase, &data, &repo, &root);
+        fs::write(
+            std::env::var("KK_EVENTS_OUT").unwrap(),
+            seqs.iter()
+                .map(u64::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+        )
+        .unwrap();
+        return;
+    }
+    let (root, repo) = repo_copy("events-restart");
+    let data = root.join("data");
+    let run = |phase: &str| -> Vec<u64> {
+        let out = root.join(format!("out-{phase}.txt"));
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "sv106_event_positions_continue_across_a_restart_so_a_remembered_position_stays_valid",
+                "--exact",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("KK_EVENTS_PHASE", phase)
+            .env("KK_EVENTS_DATA", &data)
+            .env("KK_EVENTS_REPO", &repo)
+            .env("KK_EVENTS_ROOT", &root)
+            .env("KK_EVENTS_OUT", &out)
+            .status()
+            .unwrap();
+        assert!(status.success(), "phase {phase}");
+        fs::read_to_string(out)
+            .unwrap()
+            .split(',')
+            .map(|n| n.parse().unwrap())
+            .collect()
+    };
+    let first = run("a");
+    let second = run("b");
+    let seen = *first.iter().max().unwrap();
+    let old: Vec<u64> = second.iter().copied().filter(|s| *s <= seen).collect();
+    let new: Vec<u64> = second.iter().copied().filter(|s| *s > seen).collect();
+    assert_eq!(old, first, "the first life's events keep their positions");
+    assert!(
+        new.len() >= 3,
+        "the second life adds events after them: {second:?}"
+    );
+    assert!(
+        second.windows(2).all(|p| p[0] < p[1]),
+        "still strictly increasing: {second:?}"
+    );
+}

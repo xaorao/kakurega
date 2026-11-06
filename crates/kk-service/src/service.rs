@@ -97,6 +97,23 @@ struct Event {
     at: i64,
     stage: String,
     detail: String,
+    /// Position in the order every review's events happened in, from 1; 0 for an event stored before positions existed. A
+    /// client that remembers the last position it saw can ask for what came after it.
+    #[serde(default)]
+    seq: u64,
+}
+
+static EVENT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+impl Event {
+    fn new(stage: &str, detail: &str) -> Event {
+        Event {
+            at: now(),
+            stage: stage.to_string(),
+            detail: detail.to_string(),
+            seq: EVENT_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1,
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -575,6 +592,7 @@ impl Service {
                     ))
                 })
                 .map_err(|e| e.to_string())?;
+            let mut interrupted: Vec<String> = Vec::new();
             for row in rows.flatten() {
                 let (id, meta, snap) = row;
                 if let Ok(mut job) = serde_json::from_str::<Job>(&meta) {
@@ -583,11 +601,7 @@ impl Service {
                             "the service stopped while this review was running; start it again"
                                 .into(),
                         );
-                        job.events.push(Event {
-                            at: now(),
-                            stage: "interrupted".into(),
-                            detail: "the service stopped".into(),
-                        });
+                        interrupted.push(id.clone());
                     }
                     if let Some(n) = id.strip_prefix("job-").and_then(|n| n.parse::<u64>().ok()) {
                         inner.next = inner.next.max(n + 1);
@@ -596,6 +610,20 @@ impl Service {
                         inner.snaps.insert(id.clone(), Arc::new(sn));
                     }
                     inner.jobs.insert(id, job);
+                }
+            }
+            // positions continue where the stored events left off, so a client's remembered position stays valid across a restart
+            let stored_max = inner
+                .jobs
+                .values()
+                .flat_map(|j| j.events.iter().map(|e| e.seq))
+                .max()
+                .unwrap_or(0);
+            EVENT_SEQ.fetch_max(stored_max, std::sync::atomic::Ordering::SeqCst);
+            for id in interrupted {
+                if let Some(job) = inner.jobs.get_mut(&id) {
+                    job.events
+                        .push(Event::new("interrupted", "the service stopped"));
                 }
             }
             let mut stmt = c
@@ -799,11 +827,7 @@ impl Service {
         let Some(j) = g.jobs.get_mut(id) else {
             return false;
         };
-        j.events.push(Event {
-            at: now(),
-            stage: stage.into(),
-            detail: detail.into(),
-        });
+        j.events.push(Event::new(stage, detail));
         let j = j.clone();
         drop(g);
         self.persist_job(&j, None)
@@ -829,11 +853,7 @@ impl Service {
                 recipient: recipient.to_string(),
                 created: now(),
                 state: JobState::Running,
-                events: vec![Event {
-                    at: now(),
-                    stage: "queued".into(),
-                    detail: "waiting to start".into(),
-                }],
+                events: vec![Event::new("queued", "waiting to start")],
                 approval: None,
                 delivered: None,
             };
@@ -882,11 +902,7 @@ impl Service {
                         job.state = JobState::Failed("the review stopped unexpectedly".into())
                     }
                 }
-                job.events.push(Event {
-                    at: now(),
-                    stage: "finished".into(),
-                    detail: String::new(),
-                });
+                job.events.push(Event::new("finished", ""));
                 let job = job.clone();
                 if let Some(s) = &snap_out {
                     g.snaps.insert(jid.clone(), s.clone());
@@ -6034,11 +6050,10 @@ async fn request_approval(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String
         g.approvals.insert(aid.clone(), rec.clone());
         let job = g.jobs.get_mut(&id).map(|j| {
             j.approval = Some(aid.clone());
-            j.events.push(Event {
-                at: now(),
-                stage: "approval".into(),
-                detail: "waiting for your approval in the terminal".into(),
-            });
+            j.events.push(Event::new(
+                "approval",
+                "waiting for your approval in the terminal",
+            ));
             j.clone()
         });
         (aid, rec, job)
@@ -6203,11 +6218,7 @@ async fn do_deliver(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> 
                         path: file.path.clone(),
                         signer: signer.clone(),
                     });
-                    j.events.push(Event {
-                        at: now(),
-                        stage: "delivered".into(),
-                        detail: name.clone(),
-                    });
+                    j.events.push(Event::new("delivered", &name.clone()));
                     job_out = Some(j.clone());
                 }
                 (
@@ -6566,11 +6577,8 @@ async fn admin_approve(
                 let rec = a.clone();
                 let job = a.job.clone();
                 if let Some(j) = g.jobs.get_mut(&job) {
-                    j.events.push(Event {
-                        at: now(),
-                        stage: "approved".into(),
-                        detail: "approved in the terminal".into(),
-                    });
+                    j.events
+                        .push(Event::new("approved", "approved in the terminal"));
                 }
                 (Json(json!({"state": "approved"})).into_response(), rec)
             }
@@ -6698,6 +6706,51 @@ async fn admin_job_start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) ->
         Ok(id) => (StatusCode::ACCEPTED, Json(json!({"id": id}))).into_response(),
         Err(m) => error(StatusCode::BAD_REQUEST, "BAD_JOB", &m),
     }
+}
+
+#[derive(Deserialize)]
+struct EventsQuery {
+    after: Option<u64>,
+    limit: Option<usize>,
+}
+
+/// What happened to the reviews, in order, after a position the caller remembers: `{seq, review, stage, at}` for each event, the
+/// stage name only (never a detail, which may name a file or a recipient), at most 100 at a time. `next` is the position to
+/// ask from next time, `latest` the newest position that exists. A caller that asks from a position newer than `latest`
+/// (the service was restored from an older copy) is told to start over with `reset`.
+async fn admin_events(axum::Extension(svc): Svc, Query(q): Query<EventsQuery>) -> Response {
+    let after = q.after.unwrap_or(0);
+    let limit = q.limit.unwrap_or(50).clamp(1, 100);
+    let (mut all, latest) = {
+        let g = svc.inner.lock().expect("lock");
+        let all: Vec<(u64, String, String, i64)> = g
+            .jobs
+            .values()
+            .flat_map(|j| {
+                j.events
+                    .iter()
+                    .filter(|e| e.seq > 0)
+                    .map(|e| (e.seq, j.id.clone(), e.stage.clone(), e.at))
+            })
+            .collect();
+        let latest = all.iter().map(|e| e.0).max().unwrap_or(0);
+        (all, latest)
+    };
+    if after > latest.max(EVENT_SEQ.load(std::sync::atomic::Ordering::SeqCst)) {
+        return Json(json!({"events": [], "next": latest, "latest": latest, "reset": true}))
+            .into_response();
+    }
+    all.retain(|e| e.0 > after);
+    all.sort();
+    all.truncate(limit);
+    let next = all.last().map_or(after, |e| e.0);
+    Json(json!({
+        "events": all.iter().map(|(seq, review, stage, at)| json!({"seq": seq, "review": review, "stage": stage, "at": at})).collect::<Vec<_>>(),
+        "next": next,
+        "latest": latest,
+        "reset": false,
+    }))
+    .into_response()
 }
 
 async fn admin_job_get(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
@@ -6844,6 +6897,7 @@ impl Extension for Routes {
             .route("/admin/overview", get(admin_overview))
             .route("/admin/jobs", get(admin_jobs_list).post(admin_job_start))
             .route("/admin/jobs/{id}", get(admin_job_get))
+            .route("/admin/events", get(admin_events))
             .route(
                 "/admin/jobs/{id}/approval",
                 post(admin_job_request_approval),

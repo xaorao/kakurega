@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 135, PARTIAL 75, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 22. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 135, PARTIAL 77, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 20. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -141,7 +141,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | D-D06 | Message size and framing | IMPROVE: SDK with a 1 MiB cap; wrap the transport to emit `-32600` for the dropped id (ext | BUILT | bounded line reader with a size error (mc tests) |
 | D-D07 | Concurrency, ordering, timeouts | ADAPT via SDK; set explicit connect and read timeouts (for example 10 s and 30 s) on the ` | BUILT | running-call registry, duplicate ids refused, drain at end of input (mc18-mc21) |
 | D-D08 | Cancellation | ADAPT via SDK, plus wire the token into the admin HTTP call. | BUILT | cancel reaches only a running call (mc18-mc21) |
-| D-D09 | Progress | BUILD on top of SDK for `review_wait`, using the job's existing `events` (stage names). | OWED-L | no progress notifications; no review_wait tool |
+| D-D09 | Progress | BUILD on top of SDK for `review_wait`, using the job's existing `events` (stage names). | PARTIAL | progress is available by polling review_events; no MCP progress notifications or blocking review_wait (mcp.md) |
 | D-D10 | Pagination and cache hints | ADAPT via SDK. Mark every `resources/read` `private` with `ttlMs: 0`. | LATER | no resources yet |
 | D-D11 | Logging capability | EXCLUDE. Log to stderr only, structured, no payloads. | EXCLUDED | logs go to stderr only |
 | D-D12 | Completion | BUILD later, only for review ids. | LATER | only useful with prompts and resources |
@@ -159,7 +159,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | D-D24 | Resources (list, read) | BUILD under a custom scheme `kakurega://` with read-only resources: `kakurega://overview`, | BUILT | `kakurega://overview` resource, gated like the tool, audited as `overview` (mc35-41, live 51/51) |
 | D-D25 | Resource templates | BUILD with D24: `kakurega://review/{id}/status`. | BUILT | `kakurega://review/{id}/status` template; only the exact shape resolves (mc38, 17 hostile addresses) |
 | D-D26 | Prompts | BUILD static prompts, no data: `private_review` (walks through start, wait, request approv | BUILT | `private_review` prompt, offered only while its three tools are allowed, values quoted (mc40, mc39) |
-| D-D27 | Change notifications and subscriptions | BUILD both: a cursor feed `review_events(after, limit)` over job events (any client works) | OWED-L | no subscriptions; clients re-list |
+| D-D27 | Change notifications and subscriptions | BUILD both: a cursor feed `review_events(after, limit)` over job events (any client works) | PARTIAL | review_events cursor feed over review events (stage names only), positions kept across restarts; no resource subscriptions (mcp.md) |
 | D-D28 | Long-running tasks | BUILD on Kakurega's own job store: a task is a view of a persisted job. Use the SDK only f | LATER | start_review returns an id; tasks protocol not used |
 | D-D29 | Elicitation, multi round-trip requests (MRTR) | EXCLUDE as an approval or consent channel. Optional later: a URL-mode elicitation that onl | EXCLUDED | not an approval channel |
 | D-D30 | Sampling | EXCLUDE. | EXCLUDED | not offered |
