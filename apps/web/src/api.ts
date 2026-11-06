@@ -118,7 +118,7 @@ export interface ChatHit {
 }
 
 export interface SimilarMemories { groups: MemoryItem[][]; scanned: number; complete: boolean; note: string }
-export interface KeptChat { id: string; title: string; created: number; updated: number; turns: number; project?: string | null; parent?: string | null; fork_at?: number | null }
+export interface KeptChat { id: string; title: string; created: number; updated: number; turns: number; project?: string | null; parent?: string | null; fork_at?: number | null; pinned?: boolean; archived?: boolean }
 export interface ModelProof { verified: boolean; model: string; checked_at?: number; means?: string[]; does_not_mean?: string[]; deployments?: { signer: string; tcb: string; advisories: string[]; gpu_verified: boolean; compose_hash: string | null; os_image_hash: string | null; nonce: string }[] }
 export interface GatewayProofResult { verified: boolean; gateway?: { signer: string; tcb: string; advisories: string[]; compose_hash: string | null; tls_bound: boolean; tls_fingerprint: string | null; nonce: string }; means?: string[]; does_not_mean?: string[] }
 export interface Passage { file: string; start: number; focus: number; lines: string[] }
@@ -241,7 +241,9 @@ export const api = {
   mergeMemories: (keep: string, merge: string[]) => request<{ merged: number; kept: string }>("POST", "/api/memories/merge", { keep, merge }),
   unmergeMemory: (id: string) => request<{ restored: boolean }>("POST", `/api/memories/${id}/unmerge`, {}),
   mergedMemories: () => request<{ merged: { id: string; text: string; merged_into: string; project?: string | null; level: string }[] }>("GET", "/api/memories/merged"),
-  keptChats: () => request<{ sessions: KeptChat[] }>("GET", "/api/sessions"),
+  keptChats: (archived = false) => request<{ sessions: KeptChat[] }>("GET", archived ? "/api/sessions?archived=1" : "/api/sessions"),
+  pinChat: (id: string, pinned: boolean) => request<{ ok: boolean }>("POST", `/api/sessions/${id}/pin`, { pinned }),
+  archiveChat: (id: string, archived: boolean) => request<{ ok: boolean }>("POST", `/api/sessions/${id}/archive`, { archived }),
   searchChats: (q: string) => request<{ results: ChatHit[] }>("GET", `/api/sessions/search?q=${encodeURIComponent(q)}`),
   renameChat: (id: string, title: string) => request<{ renamed: boolean }>("POST", `/api/sessions/${id}/rename`, { title }),
   keepChat: (title: string, project?: string) => request<{ id: string }>("POST", "/api/sessions", project ? { title, project } : { title }),

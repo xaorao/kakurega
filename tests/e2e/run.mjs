@@ -1186,6 +1186,26 @@ try {
   await findBtn.click();
   await page.getByText("Nothing new worth keeping was found.").waitFor();
   check("asking again finds nothing new: a kept or dismissed fact is not suggested twice", (await page.getByRole("button", { name: "Keep this note" }).count()) === 0);
+  // pin and archive in the list of kept conversations
+  const keptRows = page.locator("ul.plain li.actions", { has: page.getByRole("button", { name: "Open" }) });
+  const total = await keptRows.count();
+  check("the kept conversations are listed with Pin and Archive buttons", total >= 3 && (await page.getByRole("button", { name: "Pin", exact: true }).count()) === total && (await page.getByRole("button", { name: "Archive", exact: true }).count()) === total, `rows=${total}`);
+  const lastTitle = (await keptRows.nth(total - 1).locator("span").first().innerText()).trim();
+  await keptRows.nth(total - 1).getByRole("button", { name: "Pin", exact: true }).click();
+  await page.locator("ul.plain li.actions .chip", { hasText: "Pinned" }).waitFor();
+  check("a pinned conversation moves to the top of the list and says so", (await keptRows.first().locator(".chip", { hasText: "Pinned" }).count()) === 1 && (await keptRows.first().getByRole("button", { name: "Unpin" }).count()) === 1);
+  await keptRows.first().getByRole("button", { name: "Archive", exact: true }).click();
+  await page.waitForFunction((n) => document.querySelectorAll("ul.plain li.actions").length < n, await page.locator("ul.plain li.actions").count());
+  check("archiving hides the conversation from the list", (await keptRows.count()) === total - 1);
+  await page.getByLabel("Show archived conversations").check();
+  await page.locator("ul.plain li.actions .chip", { hasText: "Archived" }).waitFor();
+  check("the archived view shows it again, marked", (await keptRows.count()) === total && (await page.locator("ul.plain li.actions .chip", { hasText: "Archived" }).count()) === 1);
+  await page.locator("ul.plain li.actions", { has: page.locator(".chip", { hasText: "Archived" }) }).getByRole("button", { name: "Bring back" }).click();
+  await page.locator("ul.plain li.actions .chip", { hasText: "Archived" }).waitFor({ state: "detached" });
+  await page.locator("ul.plain li.actions", { has: page.locator(".chip", { hasText: "Pinned" }) }).getByRole("button", { name: "Unpin" }).click();
+  await page.locator("ul.plain li.actions .chip", { hasText: "Pinned" }).waitFor({ state: "detached" });
+  await page.getByLabel("Show archived conversations").uncheck();
+  check("brought back and unpinned, it is an ordinary conversation again", (await keptRows.count()) === total && lastTitle.length > 0);
   // tidy up: forget every kept conversation so the steps after this see only their own
   for (let guard = 0; guard < 6; guard++) {
     const forgets = page.getByRole("button", { name: "Forget", exact: true });

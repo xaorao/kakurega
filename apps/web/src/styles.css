@@ -315,3 +315,5 @@ button.linklike:hover { color: var(--ink); }
   ::highlight(find) { background: Highlight; color: HighlightText; }
   ::highlight(find-current) { background: Mark; color: MarkText; }
 }
+
+.row-check { display: flex; align-items: center; gap: 8px; font-weight: 400; }

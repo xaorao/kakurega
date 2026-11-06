@@ -272,9 +272,11 @@ export function Chat() {
     setUnseen(false);
     toEnd();
   };
-  const [kept, { refetch, mutate }] = createResource<KeptChat[]>(async () => {
+  const [showArchived, setShowArchived] = createSignal(false);
+  // the source is an object so that `false` (do not show archived) still counts as a value to fetch for
+  const [kept, { refetch, mutate }] = createResource<KeptChat[], { archived: boolean }>(() => ({ archived: showArchived() }), async ({ archived }) => {
     try {
-      return (await api.keptChats()).sessions;
+      return (await api.keptChats(archived)).sessions;
     } catch {
       return [];
     }
@@ -368,6 +370,16 @@ export function Chat() {
       setTimeout(() => setCopiedAt((c) => (c === i ? null : c)), 1500);
     } catch {
       /* the browser refused the clipboard; nothing was copied and nothing is claimed */
+    }
+  };
+  const flagKept = async (id: string, what: "pin" | "archive", on: boolean) => {
+    setKeptProblem("");
+    try {
+      if (what === "pin") await api.pinChat(id, on);
+      else await api.archiveChat(id, on);
+      await refetch();
+    } catch (e) {
+      setKeptProblem(e instanceof ApiError ? e.message : t("chat.renameError"));
     }
   };
   const forget = async (id: string) => {
@@ -620,6 +632,7 @@ export function Chat() {
         </Show>
         <Show when={(kept() ?? []).length > 0}>
           <p><strong>{t("chat.keptTitle")}</strong></p>
+          <label class="row-check"><input type="checkbox" checked={showArchived()} onChange={(e) => setShowArchived(e.currentTarget.checked)} /> <span>{t("chat.showArchived")}</span></label>
           <label class="sr" for="chat-search">{t("chat.search")}</label>
           <input id="chat-search" type="search" maxlength="200" placeholder={t("chat.search")} value={chatQuery()} onInput={(e) => onSearch(e.currentTarget.value)} />
           <Show when={keptProblem()}><p role="alert" class="bad">{keptProblem()}</p></Show>
@@ -650,10 +663,12 @@ export function Chat() {
                       <button type="button" onClick={() => setRenaming("")}>{t("mem.cancel")}</button>
                     </span>
                   }>
-                    <span>{k.title || t("chat.untitled")} · {t("chat.turns", { n: k.turns })}</span>
+                    <span>{k.pinned ? <span class="chip">{t("chat.pinned")}</span> : null} {k.archived ? <span class="chip">{t("chat.archived")}</span> : null} {k.title || t("chat.untitled")} · {t("chat.turns", { n: k.turns })}</span>
                     <button type="button" onClick={() => { setRenaming(k.id); setRenameText(k.title); }}>{t("chat.rename")}</button>
                   </Show>
                   <button type="button" onClick={() => openKept(k.id)}>{t("chat.open")}</button>
+                  <button type="button" onClick={() => void flagKept(k.id, "pin", !k.pinned)}>{k.pinned ? t("chat.unpin") : t("chat.pin")}</button>
+                  <button type="button" onClick={() => void flagKept(k.id, "archive", !k.archived)}>{k.archived ? t("chat.unarchive") : t("chat.archive")}</button>
                   <button type="button" onClick={() => forget(k.id)}>{confirmForget() === k.id ? t("chat.forgetSure") : t("chat.forget")}</button>
                 </li>
               )}

@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 135, PARTIAL 78, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 19. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 135, PARTIAL 79, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 18. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -27,7 +27,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | B-W04 | Pairing | EXCLUDE reuse; keep ours. QR/camera pairing for a phone is EXCLUDED until `hosted-mode.md` | KEPT | ours kept (pairing link and one-time code) |
 | B-W05 | Connection loss and recovery | ADAPT the grace-period hook (MIT, tiny) and add a distinct "session expired, pair again" s | BUILT | live.ts reconnect with backoff, unreachable state, three-miss notice (lv01-lv06, e2e) |
 | B-W05b | Workspaces / projects | BUILD, with AnythingLLM's "workspace owns documents + threads + memory scope + route prefe | PARTIAL | projects scope notes and chats (f808980); documents are per folder; no single workspace object |
-| B-W06 | Conversation and job list | ADAPT unread-from-timestamps rule, pin, archive. Delete is a kernel operation (see W44) | OWED-L | kept conversations list with open and forget; no unread, pin or archive |
+| B-W06 | Conversation and job list | ADAPT unread-from-timestamps rule, pin, archive. Delete is a kernel operation (see W44) | PARTIAL | pin (max 10) and archive for kept conversations in the web list; no unread markers, no terminal (web-shell.md) |
 | B-W07 | Search across conversations | ADAPT `search.ts` (MIT) for the multi-source/abort/rank mechanics. IMPROVE: full-text inde | BUILT | search across kept conversations (content and title, every word, bounded, owner session) on web and terminal; stale answers dropped, not cancelled (web-shell.md) |
 | B-W08 | Find in the open conversation | ADAPT the technique (no DOM rewriting, so no CSP or XSS issue). Fall back to no highlight  | BUILT | in-conversation find: count, stepping, browser highlight, repaint on change; OpenCode search-controller.ts read FULL; Cmd+F takeover excluded by decision (web-shell.md) |
 | B-W09 | Command palette | ADAPT `command.tsx` registry (MIT, Effect `Schema` used for persistence only: replace). IM | BUILT | command palette with ranking, group headers, page and section keys (pm01-pm10, e2e) |

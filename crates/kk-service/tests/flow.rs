@@ -10530,3 +10530,189 @@ fn sv106_event_positions_continue_across_a_restart_so_a_remembered_position_stay
         "still strictly increasing: {second:?}"
     );
 }
+
+#[test]
+fn sv107_a_conversation_can_be_pinned_to_the_top_or_archived_out_of_sight_and_nothing_is_lost() {
+    let (c, w, _root) = file_service("pin", FileRunner::new("http://127.0.0.1:11434", 16384));
+    let anon = Web::new(c.addr);
+    assert_eq!(
+        anon.post("/api/sessions/x/pin", json!({"pinned": true})).0,
+        401
+    );
+    assert_eq!(
+        anon.post("/api/sessions/x/archive", json!({"archived": true}))
+            .0,
+        401
+    );
+    let make = |title: &str| {
+        w.post("/api/sessions", json!({"title": title})).1["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let (a, b, d) = (make("alpha"), make("beta"), make("gamma"));
+    assert_eq!(
+        w.post(
+            "/api/chat",
+            json!({"message": "words worth keeping", "session": a})
+        )
+        .0,
+        200
+    );
+    let ids = |q: &str| -> Vec<String> {
+        w.get(&format!("/api/sessions{q}")).1["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    // a pinned conversation goes to the top, whatever its age; unpinning takes the mark away (the rest is ordered by date, and
+    // conversations made in the same second tie, so only the pinned position is asserted)
+    assert_eq!(
+        w.post(&format!("/api/sessions/{d}/pin"), json!({"pinned": true}))
+            .0,
+        200
+    );
+    assert_eq!(ids("")[0], d);
+    let row = w.get("/api/sessions").1["sessions"][0].clone();
+    assert_eq!(
+        (row["pinned"].as_bool(), row["archived"].as_bool()),
+        (Some(true), Some(false))
+    );
+    assert_eq!(
+        w.post(&format!("/api/sessions/{a}/pin"), json!({"pinned": true}))
+            .0,
+        200
+    );
+    assert_eq!(
+        ids("")[..2]
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>(),
+        [a.clone(), d.clone()].into_iter().collect(),
+        "both pinned ones come first"
+    );
+    assert_eq!(
+        w.post(&format!("/api/sessions/{a}/pin"), json!({"pinned": false}))
+            .0,
+        200
+    );
+    assert_eq!(
+        w.post(&format!("/api/sessions/{d}/pin"), json!({"pinned": false}))
+            .0,
+        200
+    );
+    let after = w.get("/api/sessions").1["sessions"].clone();
+    assert!(
+        after
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["pinned"] == json!(false)),
+        "{after}"
+    );
+    // archiving hides it from the list but loses nothing, and the archived view brings it back
+    assert_eq!(
+        w.post(
+            &format!("/api/sessions/{a}/archive"),
+            json!({"archived": true})
+        )
+        .0,
+        200
+    );
+    assert!(!ids("").contains(&a) && ids("?archived=1").contains(&a));
+    let kept = w.get(&format!("/api/sessions/{a}")).1;
+    assert_eq!(
+        kept["turns"].as_array().unwrap().len(),
+        2,
+        "the text is still there"
+    );
+    assert_eq!(
+        w.post(
+            "/api/chat",
+            json!({"message": "and one more", "session": a})
+        )
+        .0,
+        200,
+        "an archived conversation can still be continued"
+    );
+    assert_eq!(
+        w.post(
+            &format!("/api/sessions/{a}/archive"),
+            json!({"archived": false})
+        )
+        .0,
+        200
+    );
+    assert!(ids("").contains(&a));
+    // wrong requests change nothing
+    assert_eq!(
+        w.post("/api/sessions/chat-nope/pin", json!({"pinned": true}))
+            .0,
+        404
+    );
+    assert_eq!(
+        w.post("/api/sessions/chat-nope/archive", json!({"archived": true}))
+            .0,
+        404
+    );
+    assert_eq!(
+        w.post(&format!("/api/sessions/{b}/pin"), json!({"pinned": "yes"}))
+            .0,
+        422
+    );
+    assert_eq!(
+        w.post(
+            &format!("/api/sessions/{b}/pin"),
+            json!({"pinned": true, "extra": 1})
+        )
+        .0,
+        422
+    );
+    assert_eq!(w.post(&format!("/api/sessions/{b}/pin"), json!({})).0, 422);
+    // at most ten pinned; pinning one that is already pinned is fine
+    let many: Vec<String> = (0..10).map(|i| make(&format!("p{i}"))).collect();
+    for id in &many {
+        assert_eq!(
+            w.post(&format!("/api/sessions/{id}/pin"), json!({"pinned": true}))
+                .0,
+            200
+        );
+    }
+    assert_eq!(
+        w.post(
+            &format!("/api/sessions/{}/pin", many[0]),
+            json!({"pinned": true})
+        )
+        .0,
+        200
+    );
+    let (s, v) = w.post(&format!("/api/sessions/{b}/pin"), json!({"pinned": true}));
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("TOO_MANY_PINNED")),
+        "{v}"
+    );
+    assert_eq!(
+        w.post(&format!("/api/sessions/{b}/pin"), json!({"pinned": false}))
+            .0,
+        200,
+        "unpinning never needs room"
+    );
+    // the signed log records that it happened, with no words
+    let log = log_text(
+        &format!("http://127.0.0.1:{}", c.addr.port()),
+        c.security.admin_token(),
+    );
+    assert!(
+        log.contains("session.pinned")
+            && log.contains("session.archived")
+            && log.contains("session.unarchived"),
+        "{log}"
+    );
+    assert!(
+        !log.contains("words worth keeping") && !log.contains("alpha") && !log.contains("gamma"),
+        "no words in the log"
+    );
+}

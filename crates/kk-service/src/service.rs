@@ -380,6 +380,24 @@ fn init_store(v: &Vault) -> Result<(), String> {
             )
             .map_err(|e| e.to_string())?;
     }
+    // stores made before a conversation could be pinned or archived
+    let has_pinned = {
+        let c = v.connection();
+        let mut st = c
+            .prepare("PRAGMA table_info(sessions)")
+            .map_err(|e| e.to_string())?;
+        let names: Vec<String> = st
+            .query_map([], |r| r.get::<_, String>(1))
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .collect();
+        names.iter().any(|n| n == "pinned")
+    };
+    if !has_pinned {
+        v.connection()
+            .execute_batch("ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0; ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;")
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -3021,14 +3039,21 @@ struct SessionNew {
     project: Option<String>,
 }
 
-async fn sessions_list(axum::Extension(svc): Svc) -> Response {
+#[derive(Deserialize)]
+struct SessionsQuery {
+    /// `1` also lists archived conversations.
+    archived: Option<u8>,
+}
+
+async fn sessions_list(axum::Extension(svc): Svc, Query(q): Query<SessionsQuery>) -> Response {
+    let with_archived = q.archived == Some(1);
     let store = svc.store.lock().expect("lock");
     let c = store.connection();
-    let Ok(mut st) = c.prepare("SELECT s.id, s.title, s.created, s.updated, (SELECT count(*) FROM session_turns t WHERE t.session = s.id), s.project, s.parent, s.fork_at FROM sessions s ORDER BY s.updated DESC, s.id LIMIT 200") else {
+    let Ok(mut st) = c.prepare("SELECT s.id, s.title, s.created, s.updated, (SELECT count(*) FROM session_turns t WHERE t.session = s.id), s.project, s.parent, s.fork_at, s.pinned, s.archived FROM sessions s WHERE (?1 = 1 OR s.archived = 0) ORDER BY s.pinned DESC, s.updated DESC, s.id LIMIT 200") else {
         return error(StatusCode::INTERNAL_SERVER_ERROR, "STORE", "could not read the conversations");
     };
     let rows: Vec<Value> = st
-        .query_map([], |r| Ok(json!({"id": r.get::<_, String>(0)?, "title": r.get::<_, String>(1)?, "created": r.get::<_, i64>(2)?, "updated": r.get::<_, i64>(3)?, "turns": r.get::<_, i64>(4)?, "project": r.get::<_, Option<String>>(5)?, "parent": r.get::<_, Option<String>>(6)?, "fork_at": r.get::<_, Option<i64>>(7)?})))
+        .query_map([i64::from(with_archived)], |r| Ok(json!({"id": r.get::<_, String>(0)?, "title": r.get::<_, String>(1)?, "created": r.get::<_, i64>(2)?, "updated": r.get::<_, i64>(3)?, "turns": r.get::<_, i64>(4)?, "project": r.get::<_, Option<String>>(5)?, "parent": r.get::<_, Option<String>>(6)?, "fork_at": r.get::<_, Option<i64>>(7)?, "pinned": r.get::<_, i64>(8)? == 1, "archived": r.get::<_, i64>(9)? == 1})))
         .map(|it| it.flatten().collect())
         .unwrap_or_default();
     Json(json!({"sessions": rows, "note": "Only conversations you chose to keep are listed. Forget removes the text from the encrypted store."})).into_response()
@@ -3675,6 +3700,98 @@ async fn attachment_remove(axum::Extension(svc): Svc, UrlPath(id): UrlPath<Strin
             "that file is no longer here",
         )
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PinBody {
+    pinned: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ArchiveBody {
+    archived: bool,
+}
+
+/// How many conversations may be pinned at once, so the pinned group stays a short list the owner can read.
+const MAX_PINNED: i64 = 10;
+
+fn session_flag(svc: &Service, id: &str, column: &str, on: bool, kind: &str) -> Response {
+    let changed = {
+        let store = svc.store.lock().expect("lock");
+        let c = store.connection();
+        if column == "pinned" && on {
+            let n: i64 = c
+                .query_row(
+                    "SELECT count(*) FROM sessions WHERE pinned = 1 AND id != ?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            if n >= MAX_PINNED {
+                return error(
+                    StatusCode::CONFLICT,
+                    "TOO_MANY_PINNED",
+                    "at most 10 conversations can be pinned: unpin one first",
+                );
+            }
+        }
+        // the column is one of two fixed names chosen by the callers below, never text from a request
+        c.execute(
+            &format!("UPDATE sessions SET {column} = ?1 WHERE id = ?2"),
+            kk_vault::rusqlite::params![i64::from(on), id],
+        )
+        .unwrap_or(0)
+    };
+    if changed == 0 {
+        return error(
+            StatusCode::NOT_FOUND,
+            "NO_SESSION",
+            "there is no such kept conversation",
+        );
+    }
+    svc.log_event(kind, id, &[]);
+    Json(json!({"ok": true, column: on})).into_response()
+}
+
+/// Pins a conversation to the top of the list, or unpins it. Changes only the order the owner sees.
+async fn session_pin(
+    axum::Extension(svc): Svc,
+    UrlPath(id): UrlPath<String>,
+    Json(b): Json<PinBody>,
+) -> Response {
+    session_flag(
+        &svc,
+        &id,
+        "pinned",
+        b.pinned,
+        if b.pinned {
+            "session.pinned"
+        } else {
+            "session.unpinned"
+        },
+    )
+}
+
+/// Hides a conversation from the list without removing anything: its text stays in the encrypted store, and it comes back
+/// with the list's "archived" view. Forgetting is a separate, deliberate act.
+async fn session_archive(
+    axum::Extension(svc): Svc,
+    UrlPath(id): UrlPath<String>,
+    Json(b): Json<ArchiveBody>,
+) -> Response {
+    session_flag(
+        &svc,
+        &id,
+        "archived",
+        b.archived,
+        if b.archived {
+            "session.archived"
+        } else {
+            "session.unarchived"
+        },
+    )
 }
 
 async fn session_forget(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
@@ -6785,6 +6902,8 @@ impl Extension for Routes {
             .route("/api/sessions/{id}/rename", post(session_rename))
             .route("/api/sessions/{id}/forget", post(session_forget))
             .route("/api/sessions/{id}/fork", post(session_fork))
+            .route("/api/sessions/{id}/pin", post(session_pin))
+            .route("/api/sessions/{id}/archive", post(session_archive))
             .route(
                 "/api/attachments",
                 post(attachment_upload)
@@ -6959,6 +7078,16 @@ mod store_tests {
             })
             .unwrap();
         assert_eq!(project.as_deref(), Some("alpha"));
+        // the same old row is neither pinned nor archived, and does not branch from anything
+        let flags: (i64, i64, Option<String>) = v
+            .connection()
+            .query_row(
+                "SELECT pinned, archived, parent FROM sessions WHERE id = 'old1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(flags, (0, 0, None));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
