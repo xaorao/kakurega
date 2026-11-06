@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 134, PARTIAL 75, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 23. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 135, PARTIAL 75, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 22. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -115,7 +115,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | C-33 | Group / topic / channel behaviour | Keep. EXCLUDE groups: a group is many principals and a shared history | KEPT | Keep. EXCLUDE groups: a group is many principals and a shared history |
 | C-34 | Approval over chat | **EXCLUDE chat approval entirely.** Every reference puts the action detail (command, param | EXCLUDED | **EXCLUDE chat approval entirely.** Every reference puts the action detail (command, parameters, sometimes file text) into the chat provider and lets a chat mes |
 | C-35 | Approval *lifecycle hygiene* (terminal receipt, expiry, stale button) | IMPROVE (this part is safe): keep the message id of an "approval waiting" ping and, when t | BUILT | stale approval notice corrected once, edit only for own notice (tg24, tg26) |
-| C-36 | Trusted-device handoff | IMPROVE the text only: include the review id and the exact surface ("Kakurega app, Approva | OWED-L | approval notice text: whether it names the review id and the surface is NOT VERIFIED |
+| C-36 | Trusted-device handoff | IMPROVE the text only: include the review id and the exact surface ("Kakurega app, Approva | BUILT | approval notice names the review id and where to decide (workspace 'Waiting for you' or kaku approve); places verified to exist (telegram-bridge.md) |
 | C-37 | Non-consequential buttons | Optional later, tightly bounded: "Mute 1 h" and "Unpair this chat" buttons whose callbacks | LATER | optional, bounded |
 | C-38 | Inbound media/voice | EXCLUDE. Files from a chat are untrusted input into the user's machine for no benefit to a | EXCLUDED | EXCLUDE. Files from a chat are untrusted input into the user's machine for no benefit to a counts-only bridge |
 | C-39 | Outbound media/files | EXCLUDE (would carry content) | EXCLUDED | EXCLUDE (would carry content) |

@@ -283,7 +283,7 @@ impl Bridge {
             let waiting = j["approval"].as_str() == Some("waiting") && j["delivered"].is_null();
             let was = self.seen_approvals.insert(id.clone(), waiting);
             if self.primed && waiting && was != Some(true) {
-                out.push(Out { chat, text: format!("An approval for {id} is waiting on your computer. Nothing is sent until you approve there."), note: Some(Note::Track(format!("approval:{id}"))), silent: false });
+                out.push(Out { chat, text: format!("An approval for {id} is waiting on your computer. Decide there: open the Kakurega workspace (Waiting for you), or run `kaku approve` in a terminal. Nothing is sent until you approve there."), note: Some(Note::Track(format!("approval:{id}"))), silent: false });
             }
             if self.primed && !waiting && was == Some(true) {
                 out.push(Out {
@@ -1546,6 +1546,9 @@ mod tests {
         assert!(
             n[0].text
                 .contains("approval for job-1 is waiting on your computer")
+                && n[0].text.contains(
+                    "open the Kakurega workspace (Waiting for you), or run `kaku approve`"
+                )
                 && n[0]
                     .text
                     .contains("Nothing is sent until you approve there")
