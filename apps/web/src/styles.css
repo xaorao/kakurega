@@ -250,3 +250,59 @@ button.linklike:hover { color: var(--ink); }
 .file-chip p { margin: 0; }
 .read-passages li p { margin: 2px 0 0; }
 .struck { text-decoration: line-through; }
+
+/* People who ask their system for more contrast get darker text, stronger lines and no tints that carry meaning alone. */
+@media (prefers-contrast: more) {
+  :root {
+    --graphite: #3b4450;
+    --fog: #4b5563;
+    --line: #6b7280;
+    --veil: #eef0f3;
+    --cipher-text: #065f46;
+    --redline: #9a3412;
+    --amber: #854d0e;
+  }
+  .card, .badge, .chip, input, select, textarea, button, .button { border-width: 2px; }
+  a { text-decoration: underline; }
+  button.linklike, .navlink { text-decoration: underline; }
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --graphite: #d4d4d8;
+    --fog: #a1a1aa;
+    --line: #a1a1aa;
+    --veil: #1f1f23;
+    --cipher-text: #6ee7b7;
+    --redline: #fdba74;
+    --amber: #fde047;
+  }
+}
+@media (prefers-contrast: more) {
+  :root[data-theme="dark"] {
+    --graphite: #d4d4d8;
+    --fog: #a1a1aa;
+    --line: #a1a1aa;
+    --veil: #1f1f23;
+    --cipher-text: #6ee7b7;
+    --redline: #fdba74;
+    --amber: #fde047;
+  }
+}
+
+/* In a forced-colours mode the system picks the colours, so meaning cannot rest on a colour or a tint: the current page,
+   chips, the live dot and a struck-out line each get a shape the system keeps. */
+@media (forced-colors: active) {
+  .navlink.active, .list a.active { outline: 2px solid Highlight; outline-offset: -2px; }
+  .chip, .badge { border: 1px solid CanvasText; }
+  .dot { forced-color-adjust: none; background: Highlight; }
+  .primary { border: 2px solid ButtonText; }
+  .struck { text-decoration: line-through; }
+  .bad::before { content: "! "; font-weight: 700; }
+  :focus-visible { outline: 3px solid Highlight; }
+  .attach.drop { outline: 3px dashed Highlight; }
+}
+
+/* People who ask for less motion get none: the colour fades of links and buttons are switched off. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}

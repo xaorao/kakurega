@@ -69,6 +69,7 @@ export interface Config {
   route: { id: string; class: string; model?: string; simulated: boolean; transport?: string; host?: string | null; stays_here?: boolean };
   roots: string[];
   test_mode: boolean;
+  approvals?: { asks_every_release: boolean; signing_key_enrolled: boolean };
   signer: string;
   signer_public: string;
 }

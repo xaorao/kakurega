@@ -118,6 +118,11 @@ function Badge(props: { config: Config }) {
       <span class="badge" title={t("badge.sandbox.title")}>
         {r().transport ?? "sandbox"}
       </span>
+      <Show when={props.config.approvals?.asks_every_release}>
+        <span class="badge" title={t(props.config.approvals?.signing_key_enrolled ? "badge.approvals.signed.title" : "badge.approvals.title")}>
+          {t(props.config.approvals?.signing_key_enrolled ? "badge.approvals.signed" : "badge.approvals")}
+        </span>
+      </Show>
       <span class="badge">{r().model ?? r().id}</span>
     </div>
   );

@@ -972,6 +972,9 @@ async fn config(axum::Extension(svc): Svc) -> Json<Value> {
         "route": svc.route_for_owner(),
         "roots": svc.roots.iter().map(|r| r.to_string_lossy()).collect::<Vec<_>>(),
         "test_mode": svc.test_mode,
+        // Nothing leaves this computer without the owner deciding on that exact release; there is no setting that turns this
+        // off. Whether the decision must also carry a signature from an enrolled approval key is the only thing that varies.
+        "approvals": {"asks_every_release": true, "signing_key_enrolled": svc.approvers_enrolled()},
         "signer": kk_evidence::keys::KeyId::of(&svc.signer_public()).as_str(),
         "signer_public": kk_evidence::b64::encode(&svc.signer_public()),
     }))

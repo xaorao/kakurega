@@ -26,9 +26,14 @@ const chrome = join(homedir(), "Library/Caches/ms-playwright/chromium-1223/chrom
 const results = [];
 const axeSource = readFileSync(join(here, "node_modules/axe-core/axe.min.js"), "utf8");
 const axeCheck = async (pg, label) => {
-  // a pointer resting on a link or a frame still being painted would colour what axe measures
+  // links and buttons fade their colours for 0.12 s; a measurement taken mid-fade reads a colour that is on its way
   await pg.mouse.move(1, 1);
-  await pg.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await pg.evaluate(async () => {
+    // only what will end: a transition or an animation that repeats for ever would never finish
+    const ending = document.getAnimations().filter((x) => x.effect && x.effect.getComputedTiming().iterations !== Infinity);
+    await Promise.race([Promise.all(ending.map((x) => x.finished.catch(() => undefined))), new Promise((r) => setTimeout(r, 2000))]);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  });
   await pg.evaluate(axeSource);
   const res = await pg.evaluate(async () => await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"] } }));
   const bad = res.violations.filter((v) => ["serious", "critical", "moderate"].includes(v.impact));
@@ -605,6 +610,8 @@ try {
   };
   const badgeLocal = await withRoute({ simulated: false, host: "127.0.0.1", stays_here: true });
   check("the badge says the model runs on this computer when its address is this computer", badgeLocal.includes("Private: model runs on this computer"), badgeLocal);
+  const approvalsBadge = page.locator(".badge", { hasText: "Releases ask you" });
+  check("a badge in the header says every release asks you and that nothing turns it off", (await approvalsBadge.count()) === 1 && ((await approvalsBadge.getAttribute("title")) ?? "").includes("There is no setting that turns this off."), (await approvalsBadge.allInnerTexts()).join("|"));
   const badgeRemote = await withRoute({ simulated: false, host: "models.example.com", stays_here: false, class: "device_only" });
   check("a route that calls itself device-only but is elsewhere gets a badge naming the host, not the private one", badgeRemote.includes("Model at models.example.com, not on this computer") && !badgeRemote.includes("Private: model runs on this computer"), badgeRemote);
   const badgeNone = await withRoute({ simulated: false, host: null, stays_here: false });
@@ -1407,6 +1414,29 @@ try {
   check("the imported note is listed as untrusted with where it came from", /untrusted/i.test(imported) && imported.includes("imported from other-assistant"), imported.replace(/\n/g, " | ").slice(0, 160));
   check("importing used only the local service", requestOrigins.size === requestsBeforeImport);
   await axeCheck(page, "memory import card");
+  // more contrast and forced colours, as a person who asks their system for them would see the workspace
+  await page.getByRole("link", { name: "Chat" }).click();
+  await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();
+  await page.emulateMedia({ contrast: "more", colorScheme: "light" });
+  await page.evaluate(() => document.documentElement.removeAttribute("data-theme"));
+  const grey = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--graphite").trim());
+  check("asking for more contrast darkens the muted text and strengthens the lines", grey === "#3b4450" && (await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--line").trim())) === "#6b7280", grey);
+  check("and thickens the borders of cards and fields", (await page.evaluate(() => getComputedStyle(document.querySelector(".card")).borderTopWidth)) === "2px");
+  await axeCheck(page, "chat with more contrast (light)");
+  await page.screenshot({ path: join(shots, "15a-more-contrast-light.png") });
+  await page.emulateMedia({ contrast: "more", colorScheme: "dark" });
+  await axeCheck(page, "chat with more contrast (dark)");
+  await page.screenshot({ path: join(shots, "15b-more-contrast-dark.png") });
+  await page.emulateMedia({ contrast: "no-preference", colorScheme: "light", forcedColors: "active" });
+  await page.screenshot({ path: join(shots, "15c-forced-colors.png") });
+  const forced = await page.evaluate(() => ({
+    nav: getComputedStyle(document.querySelector(".navlink.active")).outlineStyle,
+    chip: getComputedStyle(document.querySelector(".chip, .badge")).borderTopStyle,
+  }));
+  await page.keyboard.press("Tab");
+  forced.focus = await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle);
+  check("in forced colours the current page, chips and focus keep a shape the system preserves", forced.nav === "solid" && forced.chip === "solid" && forced.focus !== "none", JSON.stringify(forced));
+  await page.emulateMedia({ forcedColors: "none", colorScheme: null, contrast: null });
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark" });
   const mp = await mobile.newPage();
   await mp.goto(base + "/verify");

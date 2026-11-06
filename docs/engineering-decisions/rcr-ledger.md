@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 128, PARTIAL 63, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 41. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 130, PARTIAL 65, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 37. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -56,13 +56,13 @@ No OWED-H row remains. The medium rows below come next, in order.
 | B-W32 | Provider and credential management | BUILD a minimal key form that POSTs once to the companion, never echoes the key back, neve | LATER | needs the NEAR key and credits |
 | B-W33 | Settings and settings search | BUILD a settings area; ADAPT the catalog-driven search index (pure data, MIT). Every setti | PARTIAL | settings screen with catalog-driven search (11 settings, both languages); no editable privacy preferences by design (web-shell.md) |
 | B-W34 | Usage, cost and context meter | ADAPT gauge + breakdown (MIT). Data from kernel events for local routes (tokens, time) and | BUILT | context meter with the model's own count and window (mt01-mt06, sv49-sv52) |
-| B-W35 | Approval mode indicator | ADAPT the chip as read-only status of the kernel policy (e.g. "ask for every release"). EX | OWED-L | approvals always ask; no chip says so |
+| B-W35 | Approval mode indicator | ADAPT the chip as read-only status of the kernel policy (e.g. "ask for every release"). EX | BUILT | header badge Releases ask you (signed when an approval key is enrolled), status only, from /api/config (web-shell.md) |
 | B-W36 | Permission and approval prompt | IMPROVE, not replace. Adopt the dock layout, a countdown showing expiry (`Release.expires` | PARTIAL | release approval page with exact files and digest; no expiry countdown |
 | B-W37 | Notifications | ADAPT in-app toast + tab-title count + optional Notification API. IMPROVE: notification te | BUILT | waiting count, desktop notices (n01-n14), e2e |
 | B-W38 | Empty, loading, error states | BUILD error boundary with copyable, content-free diagnostics; ADAPT skeleton for lists. EX | BUILT | error boundary, loading and unreachable states (e2e) |
 | B-W39 | Accessibility | ADAPT Kobalte Tabs, Dialog, Collapsible, Menu (MIT) instead of hand-rolled; ADAPT the anno | BUILT | axe checks on every screen in e2e; roving tabs; focus return |
 | B-W40 | Responsive and mobile | ADAPT the drawer for sidebar and for the source/diff panes; test at 360 px. Phone pairing  | BUILT | 390 px mobile pass in e2e |
-| B-W41 | Theming | IMPROVE small: add `prefers-contrast: more` and `forced-colors` support; keep tokens repla | OWED-L | no prefers-contrast or forced-colors rules |
+| B-W41 | Theming | IMPROVE small: add `prefers-contrast: more` and `forced-colors` support; keep tokens repla | BUILT | prefers-contrast more, forced-colors and reduced motion in the web app; tested with emulation and axe in light and dark (web-shell.md) |
 | B-W42 | Internationalisation | ADAPT plural and RTL logic (MIT) and keep our parity tests as the gate for every new local | BUILT | English and Hindi with parity tests (i18n01-i18n03) |
 | B-W43 | Offline and PWA | Do NOT add a service worker to the companion app. BUILD it for `/verify` only when it is s | LATER | verifier page offline use belongs with the recipient verifier |
 | B-W44 | Export, import, delete | ADAPT filename sanitiser and format picker (markdown + JSON). IMPROVE: export is a kernel- | PARTIAL | notes export and import; no export of a conversation |
@@ -297,7 +297,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | G-GH-11 | One calm composer for everything: attach (+), model picker, reasoning  | IMPROVE: one composer plus our additions: route badge and what-leaves line | PARTIAL | one composer with route and meter; attachments and picker not in it |
 | G-GH-12 | Attachments: PDF, DOCX, ZIP, images | BUILD attach through the offline parser, each file labeled on entry | PARTIAL | attach files in the web chat: Word, Excel, PDF text layer, web pages, text, archives read in an isolated process; what is read is shown; hostile lines left out; no OCR, no PDF table structure (attachments.md) |
 | G-GH-13 | Model picker with search, families, capability badges, reasoning level | BUILD with eligibility, not only capability: each model shows route class and whether the  | LATER | one route until NEAR credits |
-| G-GH-14 | Permission shield in the composer (screenshot shows a yellow shield; w | KEEP; adopt a visible mode indicator in the composer showing the current policy | OWED-L | no visible mode indicator in the composer |
+| G-GH-14 | Permission shield in the composer (screenshot shows a yellow shield; w | KEEP; adopt a visible mode indicator in the composer showing the current policy | PARTIAL | approvals badge in the header of every screen; not inside the composer, no mode choice by design (web-shell.md) |
 | G-GH-15 | Context meter, automatic and manual cleanup, custom limit, prompt cach | BUILD; caching only on routes whose docs allow it (NEAR docs warn about cross-customer pre | BUILT | meter, warning, automatic summary (sv49-sv56) |
 | G-GH-16 | Usage page: per-model cost, custom date range, response speed | BUILD a local usage ledger per route | PARTIAL | usage ledger per route for chat replies with date range, measured vs estimated tokens and speed (web, service, terminal); no cost (no prices known), ask and reviews not counted (web-shell.md) |
 | G-GH-17 | Slash commands and a commands menu for tools, skills, MCP, saved promp | IMPROVE web and desktop to match | OWED-L | web has no slash commands (palette instead) |
@@ -417,7 +417,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | A-A38 | Headless and programmatic modes | see the section in matrix A | PARTIAL | `kaku verify`, `kaku approve`, `kaku log` scriptable; no --json on most |
 | A-A39 | Configuration and diagnostics | see the section in matrix A | PARTIAL | `kaku telegram doctor`; no general `kaku doctor` |
 | A-A40 | Status line, title, usage | see the section in matrix A | OWED-L | no status line with usage |
-| A-A41 | Clipboard | see the section in matrix A | OWED-L | no clipboard copy command |
+| A-A41 | Clipboard | see the section in matrix A | PARTIAL | /copy puts the last reply or the whole conversation on the clipboard through OSC 52 after asking; no paste handling (terminal-transcript.md) |
 | A-A42 | How the references test a terminal UI | see the section in matrix A | BUILT | real-terminal harness with canary and 27 checks (tui_pty.py) |
 | A-A43 | Client/daemon split and shared service | see the section in matrix A | BUILT | terminal is a client of the same service |
 | A-A44 | Safe rendering of untrusted text | see the section in matrix A | BUILT | untrusted text is cleaned before drawing (app.rs clean) |

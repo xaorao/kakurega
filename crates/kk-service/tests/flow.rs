@@ -2266,6 +2266,11 @@ fn sv20_once_an_approver_is_enrolled_only_a_signed_approval_of_the_exact_release
     let v0 = show(&a0);
     assert_eq!(v0["requires_proof"], false);
     assert_eq!(
+        w.get("/api/config").1["approvals"],
+        json!({"asks_every_release": true, "signing_key_enrolled": false}),
+        "the header says every release asks, and that no signing key is enrolled yet"
+    );
+    assert_eq!(
         adm(
             "POST",
             &format!("/admin/approvals/{a0}/approve"),
@@ -2324,6 +2329,10 @@ fn sv20_once_an_approver_is_enrolled_only_a_signed_approval_of_the_exact_release
     let (_, a1) = new_job(&w, "acme-audit");
     let v1 = show(&a1);
     assert_eq!(v1["requires_proof"], true);
+    assert_eq!(
+        w.get("/api/config").1["approvals"],
+        json!({"asks_every_release": true, "signing_key_enrolled": true})
+    );
     let ack = v1["digest"].as_str().unwrap()[..12].to_string();
     let approve = |aid: &str, proof: Option<String>| {
         adm(
