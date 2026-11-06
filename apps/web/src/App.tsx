@@ -9,6 +9,7 @@ import { Activity } from "./screens/Activity";
 import { Chat } from "./screens/Chat";
 import { Documents } from "./screens/Documents";
 import { Inbox } from "./screens/Inbox";
+import { notifier } from "./notifier";
 import { Palette, type PaletteItem } from "./components/Palette";
 import { createLive } from "./live";
 import { clearDrafts } from "./composer";
@@ -199,7 +200,9 @@ export function App() {
     try {
       setJobs((await api.jobs()).jobs);
       setFailures(0);
-      setWaiting((await api.inbox().catch(() => ({ count: 0 }))).count);
+      const inbox = await api.inbox().catch(() => null);
+      setWaiting(inbox?.count ?? 0);
+      if (inbox) void notifier.observe(inbox.items);
     } catch {
       // keep the last state on screen, say so after three misses in a row, and keep trying
       setFailures((n) => n + 1);
@@ -225,6 +228,10 @@ export function App() {
   const onOnline = () => live?.online();
   document.addEventListener("visibilitychange", onVisible);
   window.addEventListener("online", onOnline);
+  const onFocus = () => void notifier.focusChanged();
+  window.addEventListener("focus", onFocus);
+  window.addEventListener("blur", onFocus);
+  onFocus();
   createEffect(() => {
     if (paired()) live?.start();
     else live?.stop();
@@ -233,6 +240,8 @@ export function App() {
     clearInterval(watch);
     document.removeEventListener("visibilitychange", onVisible);
     window.removeEventListener("online", onOnline);
+    window.removeEventListener("focus", onFocus);
+    window.removeEventListener("blur", onFocus);
     live?.stop();
   });
 

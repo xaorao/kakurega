@@ -397,6 +397,47 @@ try {
   const itemsText = await page.locator("main").innerText();
   check("each waiting item names what it is, who it is for and links to the review", itemsText.includes("Approval waiting") && itemsText.includes("Acme") && itemsText.includes("Failed") && (await page.getByRole("link", { name: "Open" }).first().getAttribute("href")) === "#/job/job-9");
   await axeCheck(page, "waiting for you screen (items)");
+  // desktop notices: off until chosen; with a window in front nothing is shown; with none in front one generic notice, never the details
+  await ctx.grantPermissions(["notifications"]);
+  await page.addInitScript(() => {
+    window.__notices = [];
+    const Real = window.Notification;
+    window.Notification = class extends Real {
+      constructor(title, o) {
+        super(title, o);
+        window.__notices.push({ title, body: o?.body, tag: o?.tag });
+        window.__last = this;
+      }
+    };
+  });
+  await page.reload();
+  const notifyBox = page.getByRole("checkbox", { name: /Tell me on this computer/ });
+  await notifyBox.waitFor();
+  check("desktop notices are off until the owner turns them on", !(await notifyBox.isChecked()));
+  await notifyBox.check();
+  check("turning them on is remembered", await page.evaluate(() => localStorage.getItem("kk.notify") === "1"));
+  const withItem = { count: 3, items: [{ kind: "approval_waiting", job: "job-9", recipient: "Acme", since: 5, what: "An approval is waiting for your decision." }, { kind: "failed", job: "job-8", recipient: "Beta", since: 6, what: "A review stopped." }, { kind: "approval_waiting", job: "job-secret-77", recipient: "Zeta Private Client", since: 7, what: "Release payments/auth.py" }] };
+  await page.unroute("**/api/inbox");
+  await page.route("**/api/inbox", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(withItem) }));
+  await page.waitForFunction(() => document.body.innerText.includes("Zeta Private Client"), null, { timeout: 25000 });
+  check("a window in front is never interrupted", (await page.evaluate(() => window.__notices.length)) === 0);
+  await page.evaluate(() => {
+    document.hasFocus = () => false;
+    window.dispatchEvent(new Event("blur"));
+  });
+  await page.route("**/api/inbox", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ count: 4, items: [...withItem.items, { kind: "approval_waiting", job: "job-secret-78", recipient: "Omega Confidential", since: 8, what: "Release secrets.env" }] }) }));
+  await page.waitForFunction(() => window.__notices.length > 0, null, { timeout: 25000 });
+  const notices = await page.evaluate(() => window.__notices);
+  check("with no window in front exactly one generic notice is shown", notices.length === 1 && notices[0].title === "Kakurega" && notices[0].body === "Something is waiting for your approval.", JSON.stringify(notices));
+  check("the notice carries nothing about the work", !/Omega|Confidential|secret|job-|Zeta/.test(JSON.stringify(notices)));
+  await page.evaluate(() => {
+    location.hash = "#/";
+    window.__last.onclick();
+  });
+  check("clicking the notice opens the waiting screen", await page.evaluate(() => location.hash === "#/inbox"));
+  await axeCheck(page, "waiting for you screen (notices on)");
+  await notifyBox.uncheck();
+  check("turning them off is remembered", await page.evaluate(() => localStorage.getItem("kk.notify") === "0"));
   await page.unroute("**/api/inbox");
   await page.waitForLoadState("load");
   await page.reload();
