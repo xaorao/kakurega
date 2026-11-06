@@ -26,10 +26,28 @@ const chrome = join(homedir(), "Library/Caches/ms-playwright/chromium-1223/chrom
 const results = [];
 const axeSource = readFileSync(join(here, "node_modules/axe-core/axe.min.js"), "utf8");
 const axeCheck = async (pg, label) => {
+  // a pointer resting on a link or a frame still being painted would colour what axe measures
+  await pg.mouse.move(1, 1);
+  await pg.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   await pg.evaluate(axeSource);
   const res = await pg.evaluate(async () => await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"] } }));
   const bad = res.violations.filter((v) => ["serious", "critical", "moderate"].includes(v.impact));
-  check(`accessibility (axe, WCAG 2.1 AA): ${label}`, bad.length === 0, bad.map((v) => `${v.id}[${v.impact}] x${v.nodes.length}: ${v.nodes[0]?.target?.join(" ")}`).join(" | ").slice(0, 500));
+  if (bad.length) {
+    // keep what the page looked like, and what was drawn over the first flagged element, so a flake can be read afterwards
+    try {
+      await pg.screenshot({ path: join(shots, `axe-fail-${label.replace(/[^a-z0-9]+/gi, "-")}.png`) });
+      const stack = await pg.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return "element gone";
+        const r = el.getBoundingClientRect();
+        return document.elementsFromPoint(r.x + r.width / 2, r.y + r.height / 2).slice(0, 5).map((e) => `${e.tagName.toLowerCase()}.${e.className}`).join(" < ") + ` hovered=${el.matches(":hover")} focused=${el.matches(":focus")} bg=${getComputedStyle(el).backgroundColor} color=${getComputedStyle(el).color}`;
+      }, bad[0].nodes[0].target.join(" "));
+      console.log("AXE-DETAIL " + stack);
+    } catch (e) {
+      console.log("AXE-DETAIL unavailable " + e);
+    }
+  }
+  check(`accessibility (axe, WCAG 2.1 AA): ${label}`, bad.length === 0, bad.map((v) => `${v.id}[${v.impact}] x${v.nodes.length}: ${v.nodes[0]?.target?.join(" ")} ${(v.nodes[0]?.any?.[0]?.message ?? "").slice(0, 200)}`).join(" | ").slice(0, 700));
 };
 const check = (name, ok, detail = "") => {
   results.push({ name, ok, detail });
@@ -1174,6 +1192,35 @@ try {
   await kb.waitFor({ state: "detached" });
   check("closing it puts the cursor back where it was", await page.evaluate(() => document.activeElement?.id === "chat-input"));
   await page.getByLabel("Your message").fill("");
+  await page.getByRole("link", { name: "Activity" }).click();
+  await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();
+  // settings: one place for every setting, searchable by name, meaning or a word people use
+  await page.getByRole("link", { name: "Settings" }).click();
+  await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+  check("the settings screen lists every setting in its section", (await page.locator("li[id^='setting-']").count()) === 11);
+  await axeCheck(page, "settings screen");
+  await page.screenshot({ path: join(shots, "14d-settings.png"), fullPage: true });
+  await page.getByLabel("Search settings").fill("notify");
+  await page.locator("#setting-notifications").waitFor();
+  check("searching for notify finds the notification setting and only what matches", (await page.locator("li[id^='setting-']").count()) >= 1 && (await page.locator("#setting-notifications").count()) === 1 && (await page.locator("#setting-theme").count()) === 0);
+  await page.getByLabel("Search settings").fill("analytics");
+  await page.locator("#setting-telemetry").waitFor();
+  check("a word that is only a keyword finds the telemetry statement", (await page.locator("#setting-telemetry").innerText()).includes("no analytics"));
+  await page.getByLabel("Search settings").fill("zxqvj");
+  await page.getByText("No setting matches.").waitFor();
+  await page.getByLabel("Search settings").fill("");
+  await page.locator("#set-theme").selectOption("dark");
+  check("the theme chosen in settings is applied at once", (await page.evaluate(() => document.documentElement.getAttribute("data-theme"))) === "dark");
+  await page.locator("#set-theme").selectOption("system");
+  await page.locator("#setting-shortcuts").getByRole("button", { name: "Show the list" }).click();
+  const kb2 = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await kb2.waitFor();
+  check("the keyboard setting opens the same list of shortcuts", (await kb2.locator("dt").count()) === 9);
+  await page.keyboard.press("Escape");
+  await kb2.waitFor({ state: "detached" });
+  await page.locator("#setting-where-data-goes").getByRole("link", { name: "Open" }).click();
+  await page.getByRole("heading", { name: "Where your data goes", exact: true }).waitFor();
+  check("a privacy setting opens the page that explains it", true);
   await page.getByRole("link", { name: "Activity" }).click();
   await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();
   await axeCheck(page, "activity screen");

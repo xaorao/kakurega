@@ -6,6 +6,7 @@ import { ReviewView } from "./screens/ReviewView";
 import { Verify } from "./screens/Verify";
 import { Memory } from "./screens/Memory";
 import { Instructions } from "./screens/Instructions";
+import { Settings } from "./screens/Settings";
 import { Activity } from "./screens/Activity";
 import { AgentAccess } from "./screens/AgentAccess";
 import { Privacy } from "./screens/Privacy";
@@ -28,34 +29,7 @@ function useHash() {
   return hash;
 }
 
-type Theme = "system" | "light" | "dark";
-
-function applyTheme(t: Theme) {
-  if (t === "system") document.documentElement.removeAttribute("data-theme");
-  else document.documentElement.setAttribute("data-theme", t);
-}
-
-function storedTheme(): Theme {
-  try {
-    const v = localStorage.getItem("kk-theme");
-    return v === "light" || v === "dark" ? v : "system";
-  } catch {
-    return "system";
-  }
-}
-
-const [theme, setTheme] = createSignal<Theme>(storedTheme());
-
-function chooseTheme(t: Theme) {
-  setTheme(t);
-  applyTheme(t);
-  try {
-    if (t === "system") localStorage.removeItem("kk-theme");
-    else localStorage.setItem("kk-theme", t);
-  } catch {
-    /* the choice still applies for this visit */
-  }
-}
+import { applyTheme, chooseTheme, theme, type Theme } from "./theme";
 
 function ThemePicker() {
   onMount(() => applyTheme(theme()));
@@ -185,6 +159,11 @@ export function App() {
       if (paired() && !paletteOpen()) setHelpOpen(!helpOpen());
     }
   };
+  const showHelp = () => {
+    if (paired() && !paletteOpen()) setHelpOpen(true);
+  };
+  window.addEventListener("kk-show-shortcuts", showHelp);
+  onCleanup(() => window.removeEventListener("kk-show-shortcuts", showHelp));
   applyLocale();
   window.addEventListener("keydown", onKey);
   onCleanup(() => window.removeEventListener("keydown", onKey));
@@ -273,6 +252,7 @@ export function App() {
       { id: "chat", label: t("nav.chat"), group: t("palette.screens"), run: go("#/chat") },
       { id: "memory", label: t("nav.memory"), group: t("palette.screens"), run: go("#/memory") },
       { id: "instructions", label: t("nav.instructions"), group: t("palette.screens"), run: go("#/instructions") },
+      { id: "settings", label: t("nav.settings"), group: t("palette.screens"), run: go("#/settings") },
       { id: "privacy", label: t("nav.privacy"), group: t("palette.screens"), run: go("#/privacy") },
       { id: "agent", label: t("nav.agent"), group: t("palette.screens"), run: go("#/agent") },
       { id: "activity", label: t("nav.activity"), group: t("palette.screens"), run: go("#/activity") },
@@ -318,6 +298,7 @@ export function App() {
               <a href="#/chat" class={hash() === "#/chat" ? "navlink active" : "navlink"}>{t("nav.chat")}</a>
               <a href="#/memory" class={hash() === "#/memory" ? "navlink active" : "navlink"}>{t("nav.memory")}</a>
               <a href="#/instructions" class={hash() === "#/instructions" ? "navlink active" : "navlink"}>{t("nav.instructions")}</a>
+              <a href="#/settings" class={hash() === "#/settings" ? "navlink active" : "navlink"}>{t("nav.settings")}</a>
               <a href="#/privacy" class={hash() === "#/privacy" ? "navlink active" : "navlink"}>{t("nav.privacy")}</a>
               <a href="#/agent" class={hash() === "#/agent" ? "navlink active" : "navlink"}>{t("nav.agent")}</a>
               <a href="#/activity" class={hash() === "#/activity" ? "navlink active" : "navlink"}>{t("nav.activity")}</a>
@@ -350,7 +331,7 @@ export function App() {
               <ErrorBoundary fallback={(_err, reset) => <section class="card stack" role="alert"><p>{t("app.crashed")}</p><button onClick={reset}>{t("app.reload")}</button></section>}>
               <Show when={config()}>
                 {(c) => (
-                  <Show when={hash() !== "#/memory" && hash() !== "#/instructions" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/docs" && hash() !== "#/inbox" && hash() !== "#/agent" && hash() !== "#/privacy"} fallback={hash() === "#/instructions" ? <Instructions /> : hash() === "#/privacy" ? <Privacy /> : hash() === "#/agent" ? <AgentAccess /> : hash() === "#/inbox" ? <Inbox /> : hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/docs" ? <Documents /> : <Memory />}>
+                  <Show when={hash() !== "#/memory" && hash() !== "#/instructions" && hash() !== "#/settings" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/docs" && hash() !== "#/inbox" && hash() !== "#/agent" && hash() !== "#/privacy"} fallback={hash() === "#/settings" ? <Settings /> : hash() === "#/instructions" ? <Instructions /> : hash() === "#/privacy" ? <Privacy /> : hash() === "#/agent" ? <AgentAccess /> : hash() === "#/inbox" ? <Inbox /> : hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/docs" ? <Documents /> : <Memory />}>
                     <Show when={jobId()} fallback={<NewReview config={c()} onStarted={(id) => { void refresh(); location.hash = `#/job/${id}`; }} />}>
                     {(id) => <ReviewView id={id()} config={c()} onUpdate={() => void refresh()} />}
                     </Show>

@@ -304,9 +304,11 @@ struct Web {
 
 impl Web {
     fn new(addr: std::net::SocketAddr) -> Web {
+        // a fresh connection per request: reusing one the server has already closed shows up as a broken pipe
         let cfg = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .max_redirects(0)
+            .max_idle_connections(0)
             .build();
         Web {
             base: format!("http://127.0.0.1:{}", addr.port()),

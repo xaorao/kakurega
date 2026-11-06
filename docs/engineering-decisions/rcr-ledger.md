@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 128, PARTIAL 59, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 4, OWED-L 41. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 128, PARTIAL 60, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 3, OWED-L 41. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -54,7 +54,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | B-W30 | Saved prompts and variables | BUILD later, vault-stored; low | LATER | saved prompts: low |
 | B-W31 | Route and model chooser | IMPROVE. Chooser lists only routes the kernel allows for this workspace and shows class (l | LATER | one route today; a chooser matters once NEAR credits give a second route |
 | B-W32 | Provider and credential management | BUILD a minimal key form that POSTs once to the companion, never echoes the key back, neve | LATER | needs the NEAR key and credits |
-| B-W33 | Settings and settings search | BUILD a settings area; ADAPT the catalog-driven search index (pure data, MIT). Every setti | OWED-M | language and theme are in the header; no settings screen (notifications toggle sits on the waiting screen) |
+| B-W33 | Settings and settings search | BUILD a settings area; ADAPT the catalog-driven search index (pure data, MIT). Every setti | PARTIAL | settings screen with catalog-driven search (11 settings, both languages); no editable privacy preferences by design (web-shell.md) |
 | B-W34 | Usage, cost and context meter | ADAPT gauge + breakdown (MIT). Data from kernel events for local routes (tokens, time) and | BUILT | context meter with the model's own count and window (mt01-mt06, sv49-sv52) |
 | B-W35 | Approval mode indicator | ADAPT the chip as read-only status of the kernel policy (e.g. "ask for every release"). EX | OWED-L | approvals always ask; no chip says so |
 | B-W36 | Permission and approval prompt | IMPROVE, not replace. Adopt the dock layout, a countdown showing expiry (`Release.expires` | PARTIAL | release approval page with exact files and digest; no expiry countdown |
