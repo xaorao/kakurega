@@ -1076,7 +1076,7 @@ fn memory_json(r: &kk_memory::Recalled) -> Value {
         "compartments": m.label.compartments.iter().collect::<Vec<_>>(),
         "subject": m.subject, "project": m.project, "created_at": m.created_at,
         "valid_from": m.valid_from, "valid_to": m.valid_to,
-        "source": match &m.source { kk_memory::Source::User => "you".to_string(), kk_memory::Source::Review(id) => format!("review {id}") },
+        "source": match &m.source { kk_memory::Source::User => "you".to_string(), kk_memory::Source::Review(id) if id.starts_with("chat-") => format!("conversation {id}"), kk_memory::Source::Review(id) => format!("review {id}") },
     })
 }
 
@@ -3240,6 +3240,113 @@ async fn session_fork(
         .into_response()
 }
 
+/// Reads a kept conversation, when the owner asks, for facts worth remembering. What the model finds becomes suggestions that
+/// wait for the owner, never notes; a conversation's text goes only where the chat already sends it.
+async fn session_suggest_notes(
+    axum::Extension(svc): Svc,
+    UrlPath(id): UrlPath<String>,
+) -> Response {
+    let Some(turns) = session_turns(&svc, &id) else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "NO_SESSION",
+            "there is no such kept conversation",
+        );
+    };
+    if turns.is_empty() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "NOTHING_TO_READ",
+            "there is nothing to read yet: ask something and wait for the answer first",
+        );
+    }
+    let request = crate::extraction::request(&turns, &crate::extraction::iso_date(now()));
+    let svc2 = svc.clone();
+    let answer = tokio::task::spawn_blocking(move || svc2.runner.summarize(request)).await;
+    let text = match answer {
+        Ok(Ok(t)) => t,
+        _ => {
+            return error(
+                StatusCode::BAD_GATEWAY,
+                "MODEL_UNAVAILABLE",
+                "the model could not read the conversation, so nothing was suggested",
+            )
+        }
+    };
+    let Some(found) = crate::extraction::parse(&text) else {
+        return error(
+            StatusCode::BAD_GATEWAY,
+            "NOT_A_LIST",
+            "the model's answer was not a list of notes, so nothing was suggested",
+        );
+    };
+    let label = kk_types::label::Label::new(kk_types::label::Level::Internal).untrusted();
+    let (mut added, mut known) = (0usize, 0usize);
+    {
+        let mem = svc.memory.lock().expect("lock");
+        for n in &found.notes {
+            match mem.propose(now(), &id, &n.text, &n.why, &label) {
+                Ok(Some(_)) => added += 1,
+                _ => known += 1,
+            }
+        }
+    }
+    let d = found.dropped;
+    svc.log_event(
+        "session.notes_suggested",
+        &id,
+        &[
+            ("added", added.into()),
+            ("already_known", known.into()),
+            (
+                "dropped",
+                (d.instruction_like + d.secret + d.invalid + d.over_limit).into(),
+            ),
+        ],
+    );
+    Json(json!({
+        "added": added,
+        "already_known": known,
+        "dropped": {"instruction_like": d.instruction_like, "secret": d.secret, "invalid": d.invalid, "over_limit": d.over_limit},
+    }))
+    .into_response()
+}
+
+async fn session_note_accept(
+    axum::Extension(svc): Svc,
+    UrlPath((id, sid)): UrlPath<(String, String)>,
+) -> Response {
+    // a fact read from a conversation that names a project belongs to that project
+    let project: Option<String> = svc
+        .store
+        .lock()
+        .expect("lock")
+        .connection()
+        .query_row("SELECT project FROM sessions WHERE id = ?1", [&id], |r| {
+            r.get(0)
+        })
+        .unwrap_or(None);
+    match svc
+        .memory
+        .lock()
+        .expect("lock")
+        .accept_proposal(now(), &sid, &id, project)
+    {
+        Ok(kk_memory::Remembered::Added(m)) => {
+            svc.log_event(
+                "memory.suggestion_accepted",
+                &id,
+                &[("memory", m.clone().into()), ("suggestion", sid.into())],
+            );
+            Json(json!({"id": m, "added": true})).into_response()
+        }
+        Ok(kk_memory::Remembered::AlreadyKnown(m)) => {
+            Json(json!({"id": m, "added": false})).into_response()
+        }
+        Err(e) => memory_error(e),
+    }
+}
+
 async fn session_forget(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
     svc.compaction_wait.lock().expect("lock").remove(&id);
     let removed = {
@@ -3257,6 +3364,8 @@ async fn session_forget(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>)
             "there is no such kept conversation",
         );
     }
+    // suggestions read from this conversation and not yet decided are cleared with it; notes the owner accepted are theirs
+    let _ = svc.memory.lock().expect("lock").dismiss_pending(now(), &id);
     svc.log_event("session.forgotten", &id, &[]);
     Json(json!({"forgotten": true})).into_response()
 }
@@ -6287,6 +6396,19 @@ impl Extension for Routes {
             .route("/api/sessions/{id}/rename", post(session_rename))
             .route("/api/sessions/{id}/forget", post(session_forget))
             .route("/api/sessions/{id}/fork", post(session_fork))
+            .route(
+                "/api/sessions/{id}/suggest-notes",
+                post(session_suggest_notes),
+            )
+            .route("/api/sessions/{id}/suggested-notes", get(suggestions_list))
+            .route(
+                "/api/sessions/{id}/suggested-notes/{sid}/accept",
+                post(session_note_accept),
+            )
+            .route(
+                "/api/sessions/{id}/suggested-notes/{sid}/dismiss",
+                post(suggestion_dismiss),
+            )
             .route("/api/route/attest", post(route_attest))
             .route("/api/route/gateway", post(route_gateway))
             .route("/api/search/status", get(search_status))

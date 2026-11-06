@@ -44,6 +44,46 @@ export function Chat() {
   const [branches, setBranches] = createSignal<{ id: string; title: string; fork_at: number | null; turns: number }[]>([]);
   const [forkAt, setForkAt] = createSignal<number | null>(null);
   const [copiedAt, setCopiedAt] = createSignal<number | null>(null);
+  // Suggestions read from the open conversation, when the owner asked; each waits for a decision.
+  const [suggested, setSuggested] = createSignal<{ id: string; text: string; why: string; untrusted: boolean }[]>([]);
+  const [notesBusy, setNotesBusy] = createSignal(false);
+  const [notesInfo, setNotesInfo] = createSignal("");
+  const loadSuggested = async (id: string) => {
+    try {
+      const r = await api.suggestedNotes(id);
+      if (session() === id) setSuggested(r.suggestions);
+    } catch {
+      /* the suggestions are a convenience; the conversation is unaffected */
+    }
+  };
+  const findNotes = async () => {
+    const id = session();
+    if (!id || notesBusy()) return;
+    setNotesBusy(true);
+    setNotesInfo("");
+    try {
+      const r = await api.suggestNotes(id);
+      await loadSuggested(id);
+      const left = r.dropped.instruction_like + r.dropped.secret;
+      setNotesInfo(r.added === 0 ? t("chat.notesNone") : t("chat.notesFound", { n: r.added }) + (left > 0 ? " " + t("chat.notesDropped", { n: left }) : ""));
+    } catch (err) {
+      setNotesInfo(err instanceof ApiError ? err.message : t("chat.notesError"));
+    } finally {
+      setNotesBusy(false);
+    }
+  };
+  const decideNote = async (sid: string, keepIt: boolean) => {
+    const id = session();
+    if (!id) return;
+    try {
+      if (keepIt) await api.acceptSuggestedNote(id, sid);
+      else await api.dismissSuggestedNote(id, sid);
+      setSuggested((list) => list.filter((x) => x.id !== sid));
+      setNotesInfo(keepIt ? t("chat.notesKept") : "");
+    } catch (err) {
+      setNotesInfo(err instanceof ApiError ? err.message : t("chat.notesError"));
+    }
+  };
   const show = (next: string | null, nextTurns: Shown[], summary = "") => {
     if (busy()) abort?.abort();
     view++;
@@ -55,6 +95,8 @@ export function Chat() {
       setSummaryText(summary);
       setBranches([]);
       setForkAt(null);
+      setSuggested([]);
+      setNotesInfo("");
       setTextRaw(loadDraft(draftKey(next)));
     });
   };
@@ -166,6 +208,9 @@ export function Chat() {
       setProject(r.project ?? "");
       show(id, r.turns.map(({ role, content }) => ({ role, content })), r.summary?.text ?? "");
       setBranches(r.branches ?? []);
+      setSuggested([]);
+      setNotesInfo("");
+      void loadSuggested(id);
       setForkAt(r.parent ? (r.fork_at ?? null) : null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("chat.error"));
@@ -416,6 +461,31 @@ export function Chat() {
           <Show when={!session()}><button type="button" onClick={keep}>{t("chat.keep")}</button></Show>
           <Show when={session()}><span class="chip ok">{t("chat.keptNow")}</span> <button type="button" onClick={() => show(null, [])}>{t("chat.newChat")}</button></Show>
         </div>
+        <Show when={session()}>
+          <div class="stack notes-find">
+            <p class="muted">{t("chat.notesHelp")}</p>
+            <div class="actions">
+              <button type="button" disabled={notesBusy() || busy() || turns().length === 0} onClick={() => void findNotes()}>{notesBusy() ? t("chat.notesFinding") : t("chat.notesFind")}</button>
+              <Show when={notesInfo()}><span role="status" class="muted">{notesInfo()}</span></Show>
+            </div>
+            <Show when={suggested().length > 0}>
+              <ul class="plain stack" aria-label={t("chat.notesTitle")}>
+                <For each={suggested()}>
+                  {(n) => (
+                    <li class="card stack">
+                      <p class="mem-text">{n.text}</p>
+                      <p class="muted">{t("chat.notesFrom")} ({n.why})</p>
+                      <div class="actions">
+                        <button type="button" class="primary" onClick={() => void decideNote(n.id, true)}>{t("chat.notesKeep")}</button>
+                        <button type="button" onClick={() => void decideNote(n.id, false)}>{t("chat.notesDismiss")}</button>
+                      </div>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
+          </div>
+        </Show>
         <Show when={(kept() ?? []).length > 0}>
           <p><strong>{t("chat.keptTitle")}</strong></p>
           <label class="sr" for="chat-search">{t("chat.search")}</label>

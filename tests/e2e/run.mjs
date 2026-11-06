@@ -1085,6 +1085,24 @@ try {
   check("Answer again opens a version that asks the same question again, and the original stays whole", (await page.locator(".msg").count()) === 4 && (await page.locator(".msg.user").nth(1).innerText()).includes("branchtwo words"), JSON.stringify(await page.locator(".msg").allInnerTexts()).slice(0, 500));
   const sw = page.getByRole("navigation", { name: "Other versions of this conversation" });
   check("both other versions are listed from here", (await sw.getByRole("button").count()) === 2, (await sw.innerText().catch(() => "no nav")).replace(/\n/g, " | "));
+  // finding notes worth keeping: asked for, read by the model, every fact waits, instructions are left out
+  const findBtn = page.getByRole("button", { name: "Find notes worth keeping" });
+  const memBefore = await page.evaluate(async () => (await (await fetch("/api/memories")).json()).memories.length);
+  await findBtn.click();
+  await page.getByText("2 suggested. Each waits for your decision.").waitFor();
+  check("reading the conversation suggests the plain facts and leaves out the injected instruction, saying so", (await page.getByText("1 left out because they looked like instructions or held a secret.").count()) === 1 && (await page.getByText("Acme pays invoices on the 5th of each month.").count()) === 1 && (await page.getByText("evil@example.com").count()) === 0);
+  check("nothing became a note by itself", (await page.evaluate(async () => (await (await fetch("/api/memories")).json()).memories.length)) === memBefore);
+  check("a suggestion says it was written by the assistant and offers Keep and Not this", (await page.getByText("Written by the assistant from this conversation").count()) === 2 && (await page.getByRole("button", { name: "Keep this note" }).count()) === 2);
+  await axeCheck(page, "chat with suggested notes");
+  await page.screenshot({ path: join(shots, "13d-suggested-notes.png") });
+  await page.getByRole("button", { name: "Keep this note" }).first().click();
+  await page.getByText("Kept in your notes.").waitFor();
+  check("keeping one adds exactly one note, marked as written by the model", (await page.evaluate(async () => (await (await fetch("/api/memories")).json()).memories.filter((m) => m.text.startsWith("Acme pays")).length)) === 1 && (await page.getByRole("button", { name: "Keep this note" }).count()) === 1);
+  await page.getByRole("button", { name: "Not this" }).click();
+  await page.getByRole("button", { name: "Keep this note" }).waitFor({ state: "detached" });
+  await findBtn.click();
+  await page.getByText("Nothing new worth keeping was found.").waitFor();
+  check("asking again finds nothing new: a kept or dismissed fact is not suggested twice", (await page.getByRole("button", { name: "Keep this note" }).count()) === 0);
   // tidy up: forget every kept conversation so the steps after this see only their own
   for (let guard = 0; guard < 6; guard++) {
     const forgets = page.getByRole("button", { name: "Forget", exact: true });

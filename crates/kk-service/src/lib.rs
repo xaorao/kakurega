@@ -2,6 +2,7 @@ pub mod backup;
 mod budget;
 mod compaction;
 pub mod deliver;
+mod extraction;
 mod fixfiles;
 pub mod keys;
 pub mod service;

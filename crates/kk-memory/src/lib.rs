@@ -1534,6 +1534,18 @@ impl Memories {
         Ok(r)
     }
 
+    /// Dismisses every suggestion still waiting for the owner from one source, clearing its text. Returns how many.
+    pub fn dismiss_pending(&self, now: i64, job_id: &str) -> Result<usize, MemoryError> {
+        let n = self.conn().execute(
+            "UPDATE proposals SET status = 'dismissed', text = '', why = '' WHERE job_id = ?1 AND status = 'pending'",
+            params![job_id],
+        )?;
+        if n > 0 {
+            self.event(now, "dismiss_pending", job_id, "the source was forgotten")?;
+        }
+        Ok(n)
+    }
+
     pub fn dismiss_proposal(&self, now: i64, id: &str, job_id: &str) -> Result<(), MemoryError> {
         let n = self.conn().execute("UPDATE proposals SET status = 'dismissed', text = '', why = '' WHERE id = ?1 AND job_id = ?2 AND status = 'pending'", params![id, job_id])?;
         if n == 0 {
@@ -1919,6 +1931,7 @@ impl Recalled {
 fn explain(m: &Memory) -> String {
     let src = match &m.source {
         Source::User => "you asked to remember it".to_string(),
+        Source::Review(id) if id.starts_with("chat-") => format!("it came from conversation {id}"),
         Source::Review(id) => format!("it came from review {id}"),
     };
     let window = match (m.valid_from, m.valid_to) {

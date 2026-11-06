@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 128, PARTIAL 61, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 2, OWED-L 41. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 128, PARTIAL 62, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 1, OWED-L 41. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -178,7 +178,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 
 | Key | Capability | Matrix decision | Status | Evidence or reason |
 |---|---|---|---|---|
-| E-M1 | Extraction from conversations | ADAPT idea (ADD-only, id aliasing, date grounding); BUILD the pass so its output always la | OWED-M | chat turns are not mined for suggested notes (only reviews propose notes) |
+| E-M1 | Extraction from conversations | ADAPT idea (ADD-only, id aliasing, date grounding); BUILD the pass so its output always la | PARTIAL | owner-requested reading of a kept conversation: suggestions only, injection/secret filter, dedupe, project scope; web only; real-model quality NOT VERIFIED (memory.md) |
 | E-M2 | Exact dedupe | keep | KEPT | fingerprint on write |
 | E-M3 | Near-duplicate / paraphrase dedupe | ADAPT algorithm (Apache), output = "possible duplicate" proposals for the owner | BUILT | look-alike report (row 26) and owner-confirmed merge with undo (me32-me40, sv70-sv74) |
 | E-M4 | Update / contradiction handling | IMPROVE: add `conflicts_with` proposals (same subject, overlapping validity); ADAPT Hermes | BUILT | disagreeing notes: same-subject and changed-claim readings, keep one with history or both right; web, service, terminal; measured 12/12 found, 0/13 unrelated flagged, look-alikes listed (memory.md) |
