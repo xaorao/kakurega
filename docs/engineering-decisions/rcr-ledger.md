@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 121, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 15, OWED-L 41. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 122, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 14, OWED-L 41. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -214,7 +214,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | E-A8 | Planning / todo | NOT READ enough to decide; revisit after A2 | LATER | after the worker loop |
 | E-A9 | Skills and review checks as files | BUILD owner-authored checks; they are instructions to a model, so they are first-class tru | LATER | owner-authored checks |
 | E-A10 | Critic / second opinion | EXCLUDE remote critic; optional local-model critic stays behind the same label rules | EXCLUDED | no remote critic |
-| E-C1 | Patch format | IMPROVE: allow several hunks and several files in one fix, each exactly-once; ADAPT the Co | OWED-M | one fix can name several files; several hunks per file and multi-file fixes owed (trace row 4) |
+| E-C1 | Patch format | IMPROVE: allow several hunks and several files in one fix, each exactly-once; ADAPT the Co | BUILT | several changes per file joined into one exact change (exact-once with overlap-aware counting, no shared text, bounded span); real line diff with separate hunks; apply_all refuses duplicate files; fix-format.md |
 | E-C2 | Fuzzy matching | IMPROVE narrowly: allow OpenCode-style normalised fallback only when it yields exactly one | OWED-L | exact matching only |
 | E-C3 | Two-phase apply (compute, then write) | IMPROVE: per-path lock and re-check hash after taking it (read-to-rename window is lock-fr | BUILT | logged, flushed, re-read, per-review lock (ff01-ff14) |
 | E-C4 | Snapshots, checkpoints, undo | BUILD: before apply, store the original bytes in the vault (encrypted, labelled) keyed by  | BUILT | originals stored, undo guarded (ff, sv24) |

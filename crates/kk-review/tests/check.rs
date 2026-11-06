@@ -1,9 +1,9 @@
 use kk_review::check::{
-    apply_all, apply_fix, clean_text, compare_test_runs, is_test_path, js_closure, missing_package,
-    names_sandbox_path, node_major, parse_finding, parse_fix, parse_node_test, parse_unittest,
-    python_closure, run_project_tests, run_project_tests_for, run_reproducer, unified_diff,
-    unified_diff_all, verify_fix, verify_fix_with_tests, CheckEnv, CheckStatus, ClosureError, Edit,
-    Finding, Fix, FixStatus, Language, TestRun, TestVerdict,
+    apply_all, apply_fix, clean_text, compare_test_runs, consolidate, is_test_path, js_closure,
+    missing_package, names_sandbox_path, node_major, parse_finding, parse_fix, parse_node_test,
+    parse_unittest, python_closure, run_project_tests, run_project_tests_for, run_reproducer,
+    unified_diff, unified_diff_all, verify_fix, verify_fix_with_tests, CheckEnv, CheckStatus,
+    ClosureError, Edit, Finding, Fix, FixStatus, Language, TestRun, TestVerdict,
 };
 use kk_review::import::{scan_tree, ImportedFile};
 use kk_sandbox::{Exit, Transport};
@@ -516,7 +516,7 @@ fn f05_a_fix_that_stops_the_reproducer_but_breaks_the_projects_passing_tests_is_
 }
 
 #[test]
-fn f06_a_fix_may_carry_up_to_three_more_changes_in_other_files_and_nothing_odd() {
+fn f06_a_fix_may_carry_up_to_three_more_files_and_nothing_odd() {
     let known: BTreeSet<String> = ["a.py", "b.py", "c.py", "d.py", "e.py"]
         .iter()
         .map(|s| s.to_string())
@@ -555,14 +555,6 @@ fn f06_a_fix_may_carry_up_to_three_more_changes_in_other_files_and_nothing_odd()
         (
             "four more",
             serde_json::json!([edit("b.py"), edit("c.py"), edit("d.py"), edit("e.py")]),
-        ),
-        (
-            "the same file as the first",
-            serde_json::json!([edit("a.py")]),
-        ),
-        (
-            "the same file twice",
-            serde_json::json!([edit("b.py"), edit("b.py")]),
         ),
         ("an unknown file", serde_json::json!([edit("zzz.py")])),
         ("not a list", serde_json::json!({"file": "b.py"})),
@@ -1539,4 +1531,568 @@ fn rd01_the_node_version_is_read_from_its_own_answer_and_nothing_else_counts() {
     ] {
         assert_eq!(node_major(bad), None, "{bad:?}");
     }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// several changes in one file
+
+fn hunk(file: &str, old: &str, new: &str) -> Edit {
+    Edit {
+        file: file.into(),
+        old_text: old.into(),
+        new_text: new.into(),
+    }
+}
+
+fn fix_of(edits: Vec<Edit>) -> Fix {
+    let mut it = edits.into_iter();
+    let first = it.next().unwrap();
+    Fix {
+        title: "t".into(),
+        file: first.file,
+        old_text: first.old_text,
+        new_text: first.new_text,
+        also: it.collect(),
+        explanation: String::new(),
+    }
+}
+
+fn index_of(files: Vec<&ImportedFile>) -> BTreeMap<String, &ImportedFile> {
+    files.into_iter().map(|f| (f.path.clone(), f)).collect()
+}
+
+/// Applies a unified diff made by `unified_diff_all` for one file to its text. Panics if a hunk does not fit: the check that
+/// the diff people read is the change that would be made.
+fn apply_unified(original: &str, diff: &str) -> String {
+    let lines: Vec<&str> = original
+        .strip_suffix('\n')
+        .unwrap_or(original)
+        .split('\n')
+        .collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut at = 0usize;
+    let mut it = diff.lines().peekable();
+    while let Some(l) = it.next() {
+        if l.starts_with("--- ") || l.starts_with("+++ ") {
+            continue;
+        }
+        let Some(rest) = l.strip_prefix("@@ -") else {
+            panic!("unexpected line outside a hunk: {l:?}");
+        };
+        let (old_part, tail) = rest.split_once(" +").unwrap();
+        let (new_part, _) = tail.split_once(" @@").unwrap();
+        let (old_start, old_len) = old_part.split_once(',').map_or_else(
+            || (old_part.parse::<usize>().unwrap(), 1),
+            |(a, b)| (a.parse::<usize>().unwrap(), b.parse::<usize>().unwrap()),
+        );
+        let (_, new_len) = new_part.split_once(',').map_or_else(
+            || (new_part.parse::<usize>().unwrap(), 1),
+            |(a, b)| (a.parse::<usize>().unwrap(), b.parse::<usize>().unwrap()),
+        );
+        let start = if old_len == 0 {
+            old_start
+        } else {
+            old_start - 1
+        };
+        while at < start {
+            out.push(lines[at].to_string());
+            at += 1;
+        }
+        let (mut seen_old, mut seen_new) = (0, 0);
+        while seen_old < old_len || seen_new < new_len {
+            let h = it.next().expect("the hunk ends before its counts say");
+            match h.chars().next() {
+                Some(' ') => {
+                    assert_eq!(&h[1..], lines[at], "context line differs");
+                    out.push(lines[at].to_string());
+                    at += 1;
+                    seen_old += 1;
+                    seen_new += 1;
+                }
+                Some('-') => {
+                    assert_eq!(&h[1..], lines[at], "removed line differs");
+                    at += 1;
+                    seen_old += 1;
+                }
+                Some('+') => {
+                    out.push(h[1..].to_string());
+                    seen_new += 1;
+                }
+                other => panic!("bad hunk line {other:?}: {h:?}"),
+            }
+        }
+    }
+    while at < lines.len() {
+        out.push(lines[at].to_string());
+        at += 1;
+    }
+    let mut text = out.join("\n");
+    if original.ends_with('\n') {
+        text.push('\n');
+    }
+    text
+}
+
+#[test]
+fn f20_several_changes_in_one_file_become_one_exact_change_that_applies_and_diffs_correctly() {
+    let text = "import os\n\ndef a():\n    return 1\n\ndef b():\n    return 2\n\ndef c():\n    return 3\n\nMAIN = a()\n";
+    let (m, other) = (
+        imported("m.py", text),
+        imported("n.py", "name = old\nrest\n"),
+    );
+    let files = index_of(vec![&m, &other]);
+    let fix = fix_of(vec![
+        hunk("m.py", "    return 1\n", "    return 10\n"),
+        hunk("n.py", "old", "new"),
+        hunk("m.py", "    return 3\n", "    return 30\n"),
+    ]);
+    let merged = consolidate(&files, fix).expect("consolidates");
+    let edits = merged.edits();
+    assert_eq!(
+        edits.len(),
+        2,
+        "one change per file after consolidation: {edits:?}"
+    );
+    assert_eq!(edits[0].file, "m.py");
+    assert_eq!(edits[1].file, "n.py");
+    let done = apply_all(&files, &merged).expect("applies");
+    let want = "import os\n\ndef a():\n    return 10\n\ndef b():\n    return 2\n\ndef c():\n    return 30\n\nMAIN = a()\n";
+    assert_eq!(String::from_utf8_lossy(&done["m.py"]), want);
+    assert_eq!(done["n.py"], b"name = new\nrest\n");
+    // the diff shows only the two changed lines of m.py, not the unchanged function between them
+    let diff = unified_diff_all(&files, &merged);
+    let m_diff: String = diff.split("--- a/n.py").next().unwrap().to_string();
+    assert!(
+        !m_diff.contains("-def b()") && !m_diff.contains("+def b()"),
+        "{m_diff}"
+    );
+    assert!(
+        m_diff.contains("-    return 1\n+    return 10\n")
+            && m_diff.contains("-    return 3\n+    return 30\n"),
+        "{m_diff}"
+    );
+    assert_eq!(
+        apply_unified(text, &m_diff),
+        want,
+        "the diff is the change:\n{m_diff}"
+    );
+    // the hunks may be listed in any order and may touch
+    let reversed = fix_of(vec![
+        hunk("m.py", "    return 3\n", "    return 30\n"),
+        hunk("m.py", "    return 1\n", "    return 10\n"),
+    ]);
+    let again = consolidate(&files, reversed).expect("any order");
+    assert_eq!(apply_all(&files, &again).unwrap()["m.py"], want.as_bytes());
+    let touching = imported("t.py", "aaa\nbbb\nccc\n");
+    let tf = index_of(vec![&touching]);
+    let t = consolidate(
+        &tf,
+        fix_of(vec![
+            hunk("t.py", "aaa\n", "AAA\n"),
+            hunk("t.py", "bbb\n", "BBB\n"),
+        ]),
+    )
+    .expect("touching hunks are fine");
+    assert_eq!(apply_all(&tf, &t).unwrap()["t.py"], b"AAA\nBBB\nccc\n");
+}
+
+#[test]
+fn f21_a_set_of_changes_that_could_be_ambiguous_overlapping_or_missing_is_not_a_fix() {
+    let f = imported("m.py", "x = 1\nx = 1\ny = 2\naaa\nz = 3\nabc abc\n");
+    let g = imported("n.py", "q = 1\n");
+    let files = index_of(vec![&f, &g]);
+    let bad: Vec<(&str, Fix)> = vec![
+        (
+            "a hunk that is not there",
+            fix_of(vec![
+                hunk("m.py", "y = 2", "y = 3"),
+                hunk("m.py", "nope", "x"),
+            ]),
+        ),
+        (
+            "a hunk that is there twice",
+            fix_of(vec![
+                hunk("m.py", "y = 2", "y = 3"),
+                hunk("m.py", "x = 1", "x = 9"),
+            ]),
+        ),
+        (
+            "two hunks on the same text",
+            fix_of(vec![
+                hunk("m.py", "y = 2", "y = 3"),
+                hunk("m.py", "y = 2", "y = 4"),
+            ]),
+        ),
+        (
+            "overlapping hunks",
+            fix_of(vec![
+                hunk("m.py", "y = 2\naaa", "y = 3\naaa"),
+                hunk("m.py", "aaa\nz = 3", "bbb\nz = 3"),
+            ]),
+        ),
+        (
+            "a hunk inside another",
+            fix_of(vec![
+                hunk("m.py", "y = 2\naaa\nz", "Y\nz"),
+                hunk("m.py", "aaa", "bbb"),
+            ]),
+        ),
+        (
+            "a text that overlaps itself",
+            fix_of(vec![
+                hunk("m.py", "aa", "bb"),
+                hunk("m.py", "y = 2", "y = 3"),
+            ]),
+        ),
+        (
+            "a missing file",
+            fix_of(vec![
+                hunk("m.py", "y = 2", "y = 3"),
+                hunk("zzz.py", "a", "b"),
+                hunk("m.py", "z = 3", "z = 4"),
+            ]),
+        ),
+        (
+            "one bad file among good ones",
+            fix_of(vec![
+                hunk("m.py", "y = 2", "y = 3"),
+                hunk("m.py", "z = 3", "z = 4"),
+                hunk("n.py", "absent", "x"),
+            ]),
+        ),
+    ];
+    for (label, fix) in bad {
+        // joined, and then made: a fix is only a fix if both steps work
+        let made = consolidate(&files, fix).and_then(|f| {
+            apply_all(&files, &f)
+                .map(|_| ())
+                .ok_or_else(|| "cannot apply".to_string())
+        });
+        assert!(made.is_err(), "{label}");
+    }
+    // a file that is not text cannot take several hunks
+    let bin = ImportedFile {
+        path: "b.bin".into(),
+        sha256: String::new(),
+        bytes: vec![0xff, 0xfe, b'x', b'y', 0xff, b'z'],
+        label: kk_types::label::Label::new(Level::Internal),
+        notes: vec![],
+    };
+    let bf = index_of(vec![&bin]);
+    assert!(consolidate(
+        &bf,
+        fix_of(vec![hunk("b.bin", "x", "q"), hunk("b.bin", "z", "w")])
+    )
+    .is_err());
+    // too far apart to be one span
+    let big = imported(
+        "big.txt",
+        &format!("first\n{}last\n", "filler line\n".repeat(30_000)),
+    );
+    let bg = index_of(vec![&big]);
+    assert!(
+        consolidate(
+            &bg,
+            fix_of(vec![
+                hunk("big.txt", "first", "FIRST"),
+                hunk("big.txt", "last", "LAST")
+            ])
+        )
+        .is_err(),
+        "the span between two hunks is bounded"
+    );
+    // a fix of one change per file is returned as it is
+    let single = fix_of(vec![
+        hunk("m.py", "y = 2", "y = 3"),
+        hunk("n.py", "q = 1", "q = 2"),
+    ]);
+    assert_eq!(consolidate(&files, single.clone()).unwrap(), single);
+}
+
+#[test]
+fn f22_exactly_once_means_once_even_when_the_text_overlaps_itself() {
+    // "aa" occurs twice in "aaa" (at 0 and at 1); counting only non-overlapping matches calls it once
+    let single = hunk("m.py", "aa", "bb");
+    assert!(apply_fix(b"aaa\n", &fix_of(vec![single.clone()])).is_none());
+    assert!(apply_fix(b"xaay\n", &fix_of(vec![single])).is_some());
+    assert!(
+        apply_fix(b"abab\n", &fix_of(vec![hunk("m.py", "aba", "x")])).is_some(),
+        "one real occurrence"
+    );
+    assert!(
+        apply_fix(b"ababa\n", &fix_of(vec![hunk("m.py", "aba", "x")])).is_none(),
+        "two overlapping occurrences"
+    );
+}
+
+#[test]
+fn f23_for_any_set_of_disjoint_changes_the_diff_applied_to_the_file_is_the_changed_file() {
+    // a small fixed generator, so a failure can be repeated
+    let mut state: u64 = 0x2545f4914f6cdd1d;
+    let mut next = move |m: u64| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state % m
+    };
+    for round in 0..300 {
+        let n_lines = 5 + next(60) as usize;
+        let lines: Vec<String> = (0..n_lines)
+            .map(|i| format!("line {i} of the file"))
+            .collect();
+        let text = lines.join("\n") + "\n";
+        let f = imported("r.py", &text);
+        let files = index_of(vec![&f]);
+        // pick up to 5 disjoint line ranges; each replaced by 0..3 new lines
+        let mut starts: Vec<usize> = Vec::new();
+        for _ in 0..(1 + next(5)) {
+            let s = next(n_lines as u64) as usize;
+            if starts.iter().all(|x| x.abs_diff(s) > 3) {
+                starts.push(s);
+            }
+        }
+        let mut edits = Vec::new();
+        for &s in &starts {
+            let len = 1 + next(2) as usize;
+            let len = len.min(n_lines - s);
+            let old = lines[s..s + len].join("\n") + "\n";
+            let new_count = next(4) as usize;
+            let new: String = (0..new_count)
+                .map(|k| format!("changed {round}-{s}-{k}\n"))
+                .collect();
+            edits.push(hunk("r.py", &old, &new));
+        }
+        let fix = fix_of(edits.clone());
+        let merged = consolidate(&files, fix).unwrap_or_else(|e| panic!("round {round}: {e}"));
+        let done =
+            apply_all(&files, &merged).unwrap_or_else(|| panic!("round {round} does not apply"));
+        // what the changes mean, done by hand from the end of the file backwards
+        let mut want = text.clone();
+        let mut ordered = edits.clone();
+        ordered.sort_by_key(|e| text.find(e.old_text.as_str()).unwrap());
+        for e in ordered.iter().rev() {
+            want = want.replacen(e.old_text.as_str(), &e.new_text, 1);
+        }
+        assert_eq!(
+            String::from_utf8_lossy(&done["r.py"]),
+            want,
+            "round {round}"
+        );
+        let diff = unified_diff_all(&files, &merged);
+        if want == text {
+            continue;
+        }
+        assert_eq!(
+            apply_unified(&text, &diff),
+            want,
+            "round {round}: the diff is not the change\n{diff}"
+        );
+    }
+}
+
+#[test]
+fn f24_a_fix_has_at_most_eight_changes_in_at_most_four_files_and_each_text_is_bounded() {
+    let known: BTreeSet<String> = ["a.py", "b.py", "c.py", "d.py", "e.py"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let doc = |n: usize, files: &[&str], size: usize| {
+        let also: Vec<serde_json::Value> = (1..n)
+            .map(|i| serde_json::json!({"file": files[i % files.len()], "old_text": format!("old {i}"), "new_text": "n".repeat(size)}))
+            .collect();
+        serde_json::json!({"title": "t", "file": files[0], "old_text": "old 0", "new_text": "n".repeat(size), "also": also}).to_string()
+    };
+    assert!(
+        parse_fix(doc(8, &["a.py", "b.py"], 3).as_bytes(), &known).is_some(),
+        "eight changes"
+    );
+    assert!(
+        parse_fix(doc(9, &["a.py", "b.py"], 3).as_bytes(), &known).is_none(),
+        "nine changes"
+    );
+    assert!(
+        parse_fix(
+            doc(4, &["a.py", "b.py", "c.py", "d.py"], 3).as_bytes(),
+            &known
+        )
+        .is_some(),
+        "four files"
+    );
+    assert!(
+        parse_fix(
+            doc(5, &["a.py", "b.py", "c.py", "d.py", "e.py"], 3).as_bytes(),
+            &known
+        )
+        .is_none(),
+        "five files"
+    );
+    assert!(
+        parse_fix(doc(2, &["a.py"], 8000).as_bytes(), &known).is_some(),
+        "8,000 characters of new text"
+    );
+    assert!(
+        parse_fix(doc(2, &["a.py"], 8001).as_bytes(), &known).is_none(),
+        "8,001 characters of new text"
+    );
+    // eight changes that each add the most they may still make one file that grows by 8 x 8,000
+    let mut text = String::new();
+    for i in 0..8 {
+        text.push_str(&format!("marker {i}\nfiller\n"));
+    }
+    let f = imported("m.py", &text);
+    let files = index_of(vec![&f]);
+    let edits: Vec<Edit> = (0..8)
+        .map(|i| {
+            hunk(
+                "m.py",
+                &format!("marker {i}\n"),
+                &format!("{}\n", "x".repeat(7999)),
+            )
+        })
+        .collect();
+    let merged = consolidate(&files, fix_of(edits)).expect("joins");
+    let done = apply_all(&files, &merged).expect("a file may grow by what eight changes may add");
+    assert!(done["m.py"].len() > text.len() + 60_000);
+}
+
+#[test]
+fn f25_a_very_large_rewrite_still_gets_a_correct_diff() {
+    let lines: Vec<String> = (0..6000).map(|i| format!("line {i}")).collect();
+    let text = lines.join("\n") + "\n";
+    let f = imported("big.py", &text);
+    let files = index_of(vec![&f]);
+    // 3,000 lines in the middle replaced by 3,000 different ones: too large for the table, shown as one replacement
+    let old = lines[1000..4000].join("\n") + "\n";
+    let new: String = (0..3000).map(|i| format!("different {i}\n")).collect();
+    let fix = fix_of(vec![hunk("big.py", &old, &new)]);
+    let diff = unified_diff_all(&files, &fix);
+    let want =
+        String::from_utf8(apply_all(&files, &fix).unwrap().remove("big.py").unwrap()).unwrap();
+    assert_eq!(apply_unified(&text, &diff), want);
+    // a change that makes no difference has no diff
+    assert_eq!(
+        unified_diff(b"a\nb\n", &fix_of(vec![hunk("x", "zzz", "yyy")])),
+        ""
+    );
+}
+
+#[test]
+fn f26_changes_that_share_even_one_byte_are_refused_and_ones_that_only_touch_are_not() {
+    let f = imported("o.txt", "abcde");
+    let files = index_of(vec![&f]);
+    assert!(
+        consolidate(
+            &files,
+            fix_of(vec![hunk("o.txt", "abc", "X"), hunk("o.txt", "cde", "Y")])
+        )
+        .is_err(),
+        "they share the c"
+    );
+    let ok = consolidate(
+        &files,
+        fix_of(vec![hunk("o.txt", "abc", "X"), hunk("o.txt", "de", "Y")]),
+    )
+    .expect("they only touch");
+    assert_eq!(apply_all(&files, &ok).unwrap()["o.txt"], b"XY");
+}
+
+#[test]
+fn f27_changes_close_together_share_a_hunk_and_changes_apart_do_not() {
+    let lines: Vec<String> = (0..40).map(|i| format!("L{i}")).collect();
+    let text = lines.join("\n") + "\n";
+    let f = imported("h.txt", &text);
+    let files = index_of(vec![&f]);
+    let hunks_for = |a: usize, b: usize| {
+        let fix = fix_of(vec![
+            hunk("h.txt", &format!("L{a}\n"), "A\n"),
+            hunk("h.txt", &format!("L{b}\n"), "B\n"),
+        ]);
+        let merged = consolidate(&files, fix).unwrap();
+        let diff = unified_diff_all(&files, &merged);
+        let want = String::from_utf8(apply_all(&files, &merged).unwrap().remove("h.txt").unwrap())
+            .unwrap();
+        assert_eq!(apply_unified(&text, &diff), want, "{a},{b}\n{diff}");
+        diff.matches("\n@@ ").count()
+    };
+    assert_eq!(hunks_for(10, 11), 1);
+    assert_eq!(
+        hunks_for(10, 17),
+        1,
+        "six unchanged lines between: the contexts meet"
+    );
+    assert_eq!(
+        hunks_for(10, 18),
+        2,
+        "seven unchanged lines between: two hunks"
+    );
+    assert_eq!(hunks_for(3, 35), 2);
+}
+
+#[test]
+fn f28_when_a_rewrite_is_too_large_to_compare_it_is_shown_whole_and_still_correct() {
+    let lines: Vec<String> = (0..6000).map(|i| format!("line {i}")).collect();
+    let text = lines.join("\n") + "\n";
+    let f = imported("big.py", &text);
+    let files = index_of(vec![&f]);
+    // every second line of 3,000 stays the same
+    let old = lines[1000..4000].join("\n") + "\n";
+    let new: String = (1000..4000)
+        .map(|i| {
+            if i % 2 == 0 {
+                format!("line {i}\n")
+            } else {
+                format!("changed {i}\n")
+            }
+        })
+        .collect();
+    let fix = fix_of(vec![hunk("big.py", &old, &new)]);
+    let diff = unified_diff_all(&files, &fix);
+    let want =
+        String::from_utf8(apply_all(&files, &fix).unwrap().remove("big.py").unwrap()).unwrap();
+    assert_eq!(apply_unified(&text, &diff), want);
+    assert_eq!(
+        diff.matches("\n-line").count(),
+        2999,
+        "shown as one replacement, not as the 1,500 changed lines"
+    );
+    // a rewrite that is small enough is compared line by line
+    let small: Vec<String> = (0..200).map(|i| format!("line {i}")).collect();
+    let stext = small.join("\n") + "\n";
+    let sf = imported("s.py", &stext);
+    let sfiles = index_of(vec![&sf]);
+    let sold = small[20..120].join("\n") + "\n";
+    let snew: String = (20..120)
+        .map(|i| {
+            if i % 2 == 0 {
+                format!("line {i}\n")
+            } else {
+                format!("changed {i}\n")
+            }
+        })
+        .collect();
+    let sdiff = unified_diff_all(&sfiles, &fix_of(vec![hunk("s.py", &sold, &snew)]));
+    assert_eq!(
+        sdiff.matches("\n-line").count(),
+        50,
+        "only the 50 lines that differ: {sdiff}"
+    );
+}
+
+#[test]
+fn f29_a_fix_that_names_a_file_twice_is_never_applied_as_if_it_named_it_once() {
+    let f = imported("m.py", "a = 1\nb = 2\n");
+    let files = index_of(vec![&f]);
+    let unjoined = fix_of(vec![
+        hunk("m.py", "a = 1", "a = 9"),
+        hunk("m.py", "b = 2", "b = 8"),
+    ]);
+    assert!(
+        apply_all(&files, &unjoined).is_none(),
+        "the second change would overwrite the first"
+    );
+    let joined = consolidate(&files, unjoined).unwrap();
+    assert_eq!(
+        apply_all(&files, &joined).unwrap()["m.py"],
+        b"a = 9\nb = 8\n"
+    );
 }

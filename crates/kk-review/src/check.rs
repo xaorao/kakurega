@@ -539,7 +539,14 @@ pub struct Edit {
     pub new_text: String,
 }
 
-pub const MAX_ALSO: usize = 3;
+/// Changes in one fix, however they are spread over files. Several may be in the same file.
+pub const MAX_EDITS: usize = 8;
+/// Different files one fix may change.
+pub const MAX_FILES: usize = 4;
+/// The text from the first to the last change in one file, which several changes there are joined into.
+pub const MAX_SPAN: usize = 200_000;
+/// How much longer than the original one file may become.
+const MAX_GROWTH: usize = MAX_FIX_TEXT * MAX_EDITS;
 
 impl Fix {
     /// Every change in this fix, the first one first.
@@ -606,7 +613,7 @@ pub fn parse_fix(bytes: &[u8], known_files: &BTreeSet<String>) -> Option<Fix> {
     let mut also = Vec::new();
     if let Some(list) = o.get("also") {
         let list = list.as_array()?;
-        if list.len() > MAX_ALSO {
+        if list.len() + 1 > MAX_EDITS {
             return None;
         }
         for item in list {
@@ -622,12 +629,16 @@ pub fn parse_fix(bytes: &[u8], known_files: &BTreeSet<String>) -> Option<Fix> {
                 m.get("new_text")?.as_str()?,
                 known_files,
             )?;
-            // one change per file keeps every change independent and every diff and undo exact
-            if e.file == first.file || also.iter().any(|x: &Edit| x.file == e.file) {
-                return None;
-            }
             also.push(e);
         }
+    }
+    let mut files: Vec<&str> = std::iter::once(first.file.as_str())
+        .chain(also.iter().map(|e| e.file.as_str()))
+        .collect();
+    files.sort_unstable();
+    files.dedup();
+    if files.len() > MAX_FILES {
+        return None;
     }
     Some(Fix {
         title: clean_text(o.get("title")?.as_str()?, MAX_TITLE),
@@ -645,11 +656,113 @@ pub fn parse_fix(bytes: &[u8], known_files: &BTreeSet<String>) -> Option<Fix> {
 /// Exactly one occurrence of `old_text` is replaced; anything else is not a fix.
 pub fn apply_fix(original: &[u8], fix: &Fix) -> Option<Vec<u8>> {
     let text = std::str::from_utf8(original).ok()?;
-    if text.matches(fix.old_text.as_str()).count() != 1 {
-        return None;
+    let at = match occurrences(text, fix.old_text.as_str()).as_slice() {
+        [one] => *one,
+        _ => return None,
+    };
+    let out = format!(
+        "{}{}{}",
+        &text[..at],
+        fix.new_text,
+        &text[at + fix.old_text.len()..]
+    );
+    (out.len() <= original.len() + MAX_GROWTH).then(|| out.into_bytes())
+}
+
+/// Where `pat` starts in `text`, every place, including places that overlap each other: "aa" is in "aaa" twice, so a change
+/// to "aa" there is ambiguous.
+pub fn occurrences(text: &str, pat: &str) -> Vec<usize> {
+    let mut at = Vec::new();
+    if pat.is_empty() {
+        return at;
     }
-    let out = text.replacen(fix.old_text.as_str(), &fix.new_text, 1);
-    (out.len() <= original.len() + MAX_FIX_TEXT).then(|| out.into_bytes())
+    let mut from = 0;
+    while let Some(i) = text[from..].find(pat) {
+        let start = from + i;
+        at.push(start);
+        if at.len() > 2 {
+            break;
+        }
+        from = start + text[start..].chars().next().map_or(1, char::len_utf8);
+    }
+    at
+}
+
+/// Joins several changes in one file into one change of the span they cover, so that everything after the model's answer can
+/// keep working with one exact change per file (checksums, applying, undoing, the saved copy). Each change must be in the
+/// file exactly once as it is now and no two may share any text; the order they were written in does not matter. The result
+/// is the same text a person would get by making the changes one by one.
+pub fn consolidate(files: &BTreeMap<String, &ImportedFile>, fix: Fix) -> Result<Fix, String> {
+    let edits = fix.edits();
+    let mut order: Vec<String> = Vec::new();
+    let mut groups: BTreeMap<String, Vec<Edit>> = BTreeMap::new();
+    for e in edits {
+        if !groups.contains_key(&e.file) {
+            order.push(e.file.clone());
+        }
+        groups.entry(e.file.clone()).or_default().push(e);
+    }
+    if groups.len() > MAX_FILES {
+        return Err(format!("a fix may change at most {MAX_FILES} files"));
+    }
+    if groups.values().all(|g| g.len() == 1) {
+        return Ok(fix);
+    }
+    let mut merged: Vec<Edit> = Vec::new();
+    for file in &order {
+        let group = &groups[file];
+        if group.len() == 1 {
+            merged.push(group[0].clone());
+            continue;
+        }
+        let orig = files
+            .get(file)
+            .ok_or_else(|| format!("{file} is not in the project"))?;
+        let text = std::str::from_utf8(&orig.bytes)
+            .map_err(|_| format!("{file} is not text, so several changes cannot be made in it"))?;
+        let mut spans: Vec<(usize, usize, &Edit)> = Vec::new();
+        for e in group {
+            match occurrences(text, e.old_text.as_str()).as_slice() {
+                [at] => spans.push((*at, *at + e.old_text.len(), e)),
+                [] => return Err(format!("text to replace is not in {file}")),
+                _ => return Err(format!("text to replace is in {file} more than once")),
+            }
+        }
+        spans.sort_by_key(|(start, _, _)| *start);
+        for pair in spans.windows(2) {
+            if pair[1].0 < pair[0].1 {
+                return Err(format!("two changes in {file} share some of the same text"));
+            }
+        }
+        let (first, last) = (spans[0].0, spans[spans.len() - 1].1);
+        if last - first > MAX_SPAN {
+            return Err(format!(
+                "the changes in {file} are too far apart to be made as one"
+            ));
+        }
+        let mut new_text = String::new();
+        for (i, (_, end, e)) in spans.iter().enumerate() {
+            new_text.push_str(&e.new_text);
+            if let Some(next) = spans.get(i + 1) {
+                new_text.push_str(&text[*end..next.0]);
+            }
+        }
+        merged.push(Edit {
+            file: file.clone(),
+            old_text: text[first..last].to_string(),
+            new_text,
+        });
+    }
+    let mut it = merged.into_iter();
+    let head = it.next().expect("a fix has at least one change");
+    Ok(Fix {
+        title: fix.title,
+        file: head.file,
+        old_text: head.old_text,
+        new_text: head.new_text,
+        also: it.collect(),
+        explanation: fix.explanation,
+    })
 }
 
 /// Applies every change of a fix to the files it names. All of them apply or the result is `None`.
@@ -659,6 +772,10 @@ pub fn apply_all(
 ) -> Option<BTreeMap<String, Vec<u8>>> {
     let mut out = BTreeMap::new();
     for e in fix.edits() {
+        // one change per file: several in a file are joined by `consolidate` first, never applied one over another
+        if out.contains_key(&e.file) {
+            return None;
+        }
         let orig = files.get(&e.file)?;
         let single = Fix {
             title: String::new(),
@@ -1156,66 +1273,140 @@ pub fn verify_fix(
     }
 }
 
-/// A plain unified diff of the one replacement with three lines of context on each side, for people to read; applying
-/// uses `apply_fix`, never this text.
+/// A plain unified diff of what one change does to a file, for people to read; applying uses `apply_fix`, never this text.
+/// Lines that are the same before and after are context, so a change that rewrites a block shows only the lines that differ,
+/// and changes far apart are separate hunks.
 pub fn unified_diff(original: &[u8], fix: &Fix) -> String {
-    let text = String::from_utf8_lossy(original);
-    // A change inside a line is shown as the whole line before and after, the way a code review shows it.
-    let at = text.find(fix.old_text.as_str()).unwrap_or(0);
-    let end = (at + fix.old_text.len()).min(text.len());
-    let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
-    let line_end = if end > 0 && text.as_bytes()[end - 1] == b'\n' {
-        end
-    } else {
-        text[end..].find('\n').map_or(text.len(), |i| end + i + 1)
+    let before = String::from_utf8_lossy(original).into_owned();
+    let after = match apply_fix(original, fix) {
+        Some(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        // not applicable: still show what was meant, as a plain replacement of the first place it is found
+        None => before.replacen(fix.old_text.as_str(), &fix.new_text, 1),
     };
-    let whole = Fix {
-        old_text: text[line_start..line_end].to_string(),
-        new_text: format!(
-            "{}{}{}",
-            &text[line_start..at],
-            fix.new_text,
-            &text[end..line_end]
-        ),
-        ..fix.clone()
-    };
-    let fix = &whole;
-    let at = line_start;
-    let body = text.strip_suffix('\n').unwrap_or(&text);
-    let lines: Vec<&str> = body.split('\n').collect();
-    let first = text[..at].matches('\n').count();
-    let removed = fix.old_text.matches('\n').count() + usize::from(!fix.old_text.ends_with('\n'));
-    let last = (first + removed).min(lines.len());
-    let before_start = first.saturating_sub(3);
-    let after_end = (last + 3).min(lines.len());
-    let old_len = (last - first) + (first - before_start) + (after_end - last);
-    let new_lines: Vec<&str> = fix
-        .new_text
-        .trim_end_matches('\n')
+    diff_text(&fix.file, &before, &after)
+}
+
+fn split_lines(text: &str) -> Vec<&str> {
+    text.strip_suffix('\n')
+        .unwrap_or(text)
         .split('\n')
-        .filter(|_| !fix.new_text.is_empty())
+        .collect()
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Op {
+    Same,
+    Del,
+    Add,
+}
+
+/// The line-by-line difference of two texts: the common start and end are trimmed, and what is left is compared with a
+/// longest-common-subsequence table (or shown as one replacement if that would be too large).
+fn line_ops<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<(Op, &'a str)> {
+    let mut start = 0;
+    while start < a.len() && start < b.len() && a[start] == b[start] {
+        start += 1;
+    }
+    let (mut ea, mut eb) = (a.len(), b.len());
+    while ea > start && eb > start && a[ea - 1] == b[eb - 1] {
+        ea -= 1;
+        eb -= 1;
+    }
+    let mut ops: Vec<(Op, &str)> = a[..start].iter().map(|l| (Op::Same, *l)).collect();
+    let (ma, mb) = (&a[start..ea], &b[start..eb]);
+    if ma.len().saturating_mul(mb.len()) > 4_000_000 {
+        ops.extend(ma.iter().map(|l| (Op::Del, *l)));
+        ops.extend(mb.iter().map(|l| (Op::Add, *l)));
+    } else {
+        let (n, m) = (ma.len(), mb.len());
+        let mut table = vec![0u32; (n + 1) * (m + 1)];
+        let at = |i: usize, j: usize| i * (m + 1) + j;
+        for i in (0..n).rev() {
+            for j in (0..m).rev() {
+                table[at(i, j)] = if ma[i] == mb[j] {
+                    table[at(i + 1, j + 1)] + 1
+                } else {
+                    table[at(i + 1, j)].max(table[at(i, j + 1)])
+                };
+            }
+        }
+        let (mut i, mut j) = (0, 0);
+        while i < n || j < m {
+            if i < n && j < m && ma[i] == mb[j] {
+                ops.push((Op::Same, ma[i]));
+                i += 1;
+                j += 1;
+            } else if i < n && (j == m || table[at(i + 1, j)] >= table[at(i, j + 1)]) {
+                ops.push((Op::Del, ma[i]));
+                i += 1;
+            } else {
+                ops.push((Op::Add, mb[j]));
+                j += 1;
+            }
+        }
+    }
+    ops.extend(a[ea..].iter().map(|l| (Op::Same, *l)));
+    ops
+}
+
+fn diff_text(file: &str, before: &str, after: &str) -> String {
+    const CONTEXT: usize = 3;
+    let (a, b) = (split_lines(before), split_lines(after));
+    let ops = line_ops(&a, &b);
+    let changed: Vec<usize> = ops
+        .iter()
+        .enumerate()
+        .filter(|(_, (op, _))| *op != Op::Same)
+        .map(|(i, _)| i)
         .collect();
-    let new_len = new_lines.len() + (first - before_start) + (after_end - last);
-    let mut out = format!(
-        "--- a/{}\n+++ b/{}\n@@ -{},{} +{},{} @@\n",
-        fix.file,
-        fix.file,
-        before_start + 1,
-        old_len,
-        before_start + 1,
-        new_len
-    );
-    for l in &lines[before_start..first] {
-        out.push_str(&format!(" {l}\n"));
+    if changed.is_empty() {
+        return String::new();
     }
-    for l in fix.old_text.trim_end_matches('\n').split('\n') {
-        out.push_str(&format!("-{l}\n"));
+    // runs of changes that are close enough to share their context become one hunk
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    for &i in &changed {
+        match ranges.last_mut() {
+            Some((_, end)) if i - *end <= 2 * CONTEXT + 1 => *end = i,
+            _ => ranges.push((i, i)),
+        }
     }
-    for l in &new_lines {
-        out.push_str(&format!("+{l}\n"));
-    }
-    for l in &lines[last..after_end] {
-        out.push_str(&format!(" {l}\n"));
+    let mut out = format!("--- a/{file}\n+++ b/{file}\n");
+    for (first, last) in ranges {
+        let from = first.saturating_sub(CONTEXT);
+        let to = (last + 1 + CONTEXT).min(ops.len());
+        let old_before = ops[..from].iter().filter(|(op, _)| *op != Op::Add).count();
+        let new_before = ops[..from].iter().filter(|(op, _)| *op != Op::Del).count();
+        let old_len = ops[from..to]
+            .iter()
+            .filter(|(op, _)| *op != Op::Add)
+            .count();
+        let new_len = ops[from..to]
+            .iter()
+            .filter(|(op, _)| *op != Op::Del)
+            .count();
+        let old_start = if old_len == 0 {
+            old_before
+        } else {
+            old_before + 1
+        };
+        let new_start = if new_len == 0 {
+            new_before
+        } else {
+            new_before + 1
+        };
+        out.push_str(&format!(
+            "@@ -{old_start},{old_len} +{new_start},{new_len} @@\n"
+        ));
+        for (op, line) in &ops[from..to] {
+            let mark = match op {
+                Op::Same => ' ',
+                Op::Del => '-',
+                Op::Add => '+',
+            };
+            out.push(mark);
+            out.push_str(line);
+            out.push('\n');
+        }
     }
     out
 }

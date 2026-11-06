@@ -223,6 +223,10 @@ pub fn run_job(
         let Some(fix) = crate::check::parse_fix(&bytes, &known) else {
             continue;
         };
+        // several changes in one file become one exact change of that file; a set that cannot be made is not offered
+        let Ok(fix) = crate::check::consolidate(&index, fix) else {
+            continue;
+        };
         let Some((finding, before)) = report
             .findings
             .iter()

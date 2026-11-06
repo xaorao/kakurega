@@ -164,7 +164,7 @@ pub fn fix_tool() -> ToolSpec {
                 "explanation": {"type": "string"},
                 "also": {
                     "type": "array",
-                    "description": "Further changes that belong to the same fix, in other files (at most three). Each has file, old_text and new_text, and old_text must appear exactly once in that file.",
+                    "description": "Further changes that belong to the same fix, in other files or in other places of the same file (at most seven, in at most four different files). Each has file, old_text and new_text; old_text must appear exactly once in that file as it is now, and no two changes may share any of the same text.",
                     "items": {"type": "object", "properties": {"file": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["file", "old_text", "new_text"]}
                 }
             },

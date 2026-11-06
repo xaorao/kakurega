@@ -78,7 +78,14 @@
           "file": "payments/auth/session.py",
           "old_text": "    # Clears the browser cookie on the client side; the server keeps the entry.\n    cookie_jar = {\"session\": token}\n    cookie_jar.pop(\"session\", None)\n",
           "new_text": "    ACTIVE_TOKENS.pop(token, None)\n",
-          "explanation": "Remove the token from the server-side table when the user logs out."
+          "explanation": "Remove the token from the server-side table when the user logs out.",
+          "also": [
+            {
+              "file": "payments/auth/session.py",
+              "old_text": "_counter = 0\n",
+              "new_text": "_counter = 0  # counts logins\n"
+            }
+          ]
         }
       },
       {

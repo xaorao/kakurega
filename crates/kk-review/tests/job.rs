@@ -486,6 +486,73 @@ fn j08_proposed_fixes_are_checked_against_the_reproducer_stay_with_the_owner_and
 }
 
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn j11_a_fix_with_several_changes_in_one_file_is_checked_as_one_exact_change_and_one_that_cannot_be_made_is_not_offered(
+) {
+    use kk_review::check::FixStatus;
+    let old = "    # Clears the browser cookie on the client side; the server keeps the entry.\n    cookie_jar = {\"session\": token}\n    cookie_jar.pop(\"session\", None)\n";
+    let title = "Token still valid after logout";
+    let finding = json!({"title": title, "file": "payments/auth/session.py", "line": 15, "explanation": "logout() only pops a local dict.", "reproducer": REPRO});
+    let (routes, ev) = scripted(vec![
+        calls(vec![("report_finding", finding)]),
+        calls(vec![
+            // the fix in logout, and a second change at the top of the same file
+            (
+                "propose_fix",
+                json!({"title": title, "file": "payments/auth/session.py", "old_text": old, "new_text": "    ACTIVE_TOKENS.pop(token, None)\n", "explanation": "remove the server-side entry",
+                       "also": [{"file": "payments/auth/session.py", "old_text": "_counter = 0\n", "new_text": "_counter = 0  # counts logins\n"}]}),
+            ),
+            // a second change on text that is not in the file: the whole fix is not offered
+            (
+                "propose_fix",
+                json!({"title": title, "file": "payments/auth/session.py", "old_text": old, "new_text": "    ACTIVE_TOKENS.pop(token, None)\n",
+                       "also": [{"file": "payments/auth/session.py", "old_text": "not in the file", "new_text": "x"}]}),
+            ),
+            // two changes that share text: not offered
+            (
+                "propose_fix",
+                json!({"title": title, "file": "payments/auth/session.py", "old_text": "ACTIVE_TOKENS = {}", "new_text": "ACTIVE_TOKENS = {1: 2}",
+                       "also": [{"file": "payments/auth/session.py", "old_text": "ACTIVE_TOKENS = {}\n_counter", "new_text": "X\n_counter"}]}),
+            ),
+        ]),
+        ChatMessage::new("assistant", "done"),
+    ]);
+    let report = run_job(&config("j11"), routes, ev, &|_, _| {});
+    assert_eq!(report.error, None);
+    assert_eq!(
+        report.fixes.len(),
+        1,
+        "{:?}",
+        report.fixes.iter().map(|f| &f.status).collect::<Vec<_>>()
+    );
+    let fx = &report.fixes[0];
+    assert_eq!(
+        fx.status,
+        FixStatus::FixesTheReproducer,
+        "{:?} {}",
+        fx.status,
+        fx.tests
+    );
+    assert!(
+        fx.fix.also.is_empty(),
+        "one change for the file after joining: {:?}",
+        fx.fix.also
+    );
+    assert!(
+        fx.diff.contains("+    ACTIVE_TOKENS.pop(token, None)")
+            && fx.diff.contains("+_counter = 0  # counts logins"),
+        "{}",
+        fx.diff
+    );
+    assert!(
+        !fx.diff.contains("-def login"),
+        "the unchanged code between the two changes is context, not a change: {}",
+        fx.diff
+    );
+    assert_eq!(fx.file_sha256.len(), 64);
+}
+
+#[test]
 fn pr01_the_prompt_teaches_both_languages_and_the_rules_the_checks_enforce() {
     let p = kk_review::job::SYSTEM_PROMPT;
     for needle in [

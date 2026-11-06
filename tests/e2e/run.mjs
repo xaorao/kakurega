@@ -352,6 +352,8 @@ try {
   await fixesCard.locator("details").first().locator("summary").click();
   const diffBox = fixesCard.locator("pre.diff").first();
   check("the change is shown as a readable diff with signs, line numbers and the removed and added lines marked", (await diffBox.locator(".dl.add").count()) >= 1 && (await diffBox.locator(".dl.del").count()) >= 1 && (await diffBox.locator(".dl.add .sign").first().innerText()) === "+" && (await diffBox.locator(".dl.del .sign").first().innerText()) === "-" && (await diffBox.innerText()).includes("ACTIVE_TOKENS.pop(token, None)") && /\d/.test(await diffBox.locator(".dl.del .ln").first().innerText()));
+  const twoChanges = await diffBox.innerText();
+  check("a fix that changes two places of one file shows both changes in one diff and not the unchanged code between them", twoChanges.includes("counts logins") && twoChanges.includes("ACTIVE_TOKENS.pop(token, None)") && !/^\s*[-+]\s*def login/m.test(twoChanges), twoChanges.slice(0, 200));
   await axeCheck(page, "fix diff open");
   await fixesCard.locator("details").nth(1).locator("summary").click();
   const swapped = fixesCard.locator("pre.diff").nth(1);
@@ -376,6 +378,7 @@ try {
   await fixesCard.getByText("Applied to payments/auth/session.py.").waitFor();
   const afterFix = readFileSync(sessionPath, "utf8");
   check("applying edits the file on disk exactly as shown and nothing else", afterFix.includes("ACTIVE_TOKENS.pop(token, None)") && !afterFix.includes("cookie_jar") && afterFix.includes("def validate") && afterFix.length < beforeFix.length);
+  check("both changes of the one fix are in the file, and the code between them is untouched", afterFix.includes("_counter = 0  # counts logins\n") && afterFix.includes("def login(user_id: str) -> str:") && afterFix.split("\n").length === beforeFix.split("\n").length - 2);
   await fixesCard.getByRole("button", { name: /^Undo/ }).click();
   await fixesCard.getByText("Restored payments/auth/session.py.").waitFor();
   check("Undo puts the original bytes back exactly", readFileSync(sessionPath, "utf8") === beforeFix);
