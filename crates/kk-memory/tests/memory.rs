@@ -2695,3 +2695,519 @@ fn me47_a_note_the_owner_corrected_from_a_review_note_goes_with_the_review_but_f
         "the newer version was not part of forgetting the old one"
     );
 }
+
+fn subject_note(text: &str, subject: &str) -> NewMemory {
+    let mut n = nm(text, internal());
+    n.subject = Some(subject.into());
+    n
+}
+
+fn note_in(text: &str, project: &str) -> NewMemory {
+    let mut n = nm(text, internal());
+    n.project = Some(project.into());
+    n
+}
+
+/// The pairs of note texts reported as disagreeing, each pair in the order the notes were written.
+fn disagreements(m: &Memories) -> Vec<(String, String)> {
+    m.conflicts(&internal(), 100, Scope::All)
+        .unwrap()
+        .pairs
+        .into_iter()
+        .map(|c| {
+            let (a, b) = (c.a.memory, c.b.memory);
+            if a.created_at <= b.created_at {
+                (a.text, b.text)
+            } else {
+                (b.text, a.text)
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn me48_notes_with_almost_the_same_words_but_a_different_claim_are_reported_and_plain_duplicates_and_strangers_are_not(
+) {
+    let m = mem(&dir());
+    for (i, t) in [
+        "Acme pays invoices on the 15th of every month",
+        "Acme pays invoices on the 20th of every month",
+        "The deploy target for the billing service is Azure Container Apps",
+        "The deploy target for the billing service is not Azure Container Apps",
+        "Priya is the team lead for the payments squad",
+        "Tom is the team lead for the payments squad",
+        "The team prefers tabs over spaces in all Rust code",
+        "The team prefers spaces over tabs in all Rust code",
+        // unrelated, and a plain duplicate of the first note
+        "Quarterly reports are rounded half up",
+        "Acme pays invoices on the 15th of every month.",
+        "Zorblax keeps its sessions in an in-process dictionary",
+    ]
+    .iter()
+    .enumerate()
+    {
+        m.remember(1 + i as i64, nm(t, internal())).unwrap();
+    }
+    let found = disagreements(&m);
+    let has = |a: &str, b: &str| {
+        found
+            .iter()
+            .any(|(x, y)| (x.contains(a) && y.contains(b)) || (x.contains(b) && y.contains(a)))
+    };
+    assert!(has("15th", "20th"), "{found:?}");
+    assert!(
+        has(
+            "deploy target for the billing service is Azure",
+            "is not Azure"
+        ),
+        "{found:?}"
+    );
+    assert!(has("Priya", "Tom"), "{found:?}");
+    assert!(has("tabs over spaces", "spaces over tabs"), "{found:?}");
+    assert!(
+        !found.iter().any(|(a, b)| a.contains("Quarterly")
+            || b.contains("Quarterly")
+            || a.contains("Zorblax")
+            || b.contains("Zorblax")),
+        "{found:?}"
+    );
+    assert!(
+        !found.iter().any(|(a, b)| a.ends_with("15th of every month") && b.ends_with("15th of every month.")),
+        "a plain duplicate is for the similar-notes list, not a disagreement: {found:?}"
+    );
+}
+
+#[test]
+fn me49_notes_about_the_same_subject_disagree_even_when_the_words_differ_unless_one_is_no_longer_valid(
+) {
+    let m = mem(&dir());
+    m.remember(
+        1,
+        subject_note("We deploy everything to Azure", "deploy target"),
+    )
+    .unwrap();
+    m.remember(
+        2,
+        subject_note("Releases go out through the AWS account", "Deploy Target"),
+    )
+    .unwrap();
+    m.remember(
+        3,
+        subject_note("Invoices are paid by bank transfer", "payment method"),
+    )
+    .unwrap();
+    m.remember(
+        4,
+        subject_note("Support is reachable by chat on weekdays", "support hours"),
+    )
+    .unwrap();
+    let found = disagreements(&m);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].0.contains("Azure") && found[0].1.contains("AWS"));
+    let c = m.conflicts(&internal(), 100, Scope::All).unwrap();
+    assert!(
+        format!("{:?}", c.pairs[0].why)
+            .to_lowercase()
+            .contains("subject"),
+        "{:?}",
+        c.pairs[0].why
+    );
+    // an older note that stopped being valid is history, not a disagreement
+    let m2 = mem(&dir());
+    let mut old = subject_note("We deploy everything to Azure", "deploy target");
+    old.valid_to = Some(50);
+    m2.remember(1, old).unwrap();
+    m2.remember(
+        2,
+        subject_note("Releases go out through the AWS account", "deploy target"),
+    )
+    .unwrap();
+    assert!(m2
+        .conflicts(&internal(), 100, Scope::All)
+        .unwrap()
+        .pairs
+        .is_empty());
+    // the same two notes are a disagreement while both are valid
+    assert_eq!(
+        m2.conflicts(&internal(), 10, Scope::All)
+            .unwrap()
+            .pairs
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn me50_notes_for_different_projects_or_one_global_and_one_for_a_project_may_differ() {
+    let m = mem(&dir());
+    m.remember(
+        1,
+        note_in(
+            "The deploy target is Azure Container Apps for the billing service",
+            "billing",
+        ),
+    )
+    .unwrap();
+    m.remember(
+        2,
+        note_in(
+            "The deploy target is AWS Elastic Beanstalk for the billing service",
+            "ledger",
+        ),
+    )
+    .unwrap();
+    m.remember(
+        3,
+        nm(
+            "The deploy target is Azure Container Apps for the billing service",
+            internal(),
+        ),
+    )
+    .unwrap();
+    m.remember(
+        4,
+        note_in(
+            "The deploy target is AWS Elastic Beanstalk for the billing service",
+            "billing",
+        ),
+    )
+    .unwrap();
+    let found = disagreements(&m);
+    assert_eq!(
+        found.len(),
+        1,
+        "only the two notes of the same project: {found:?}"
+    );
+    assert!(found[0].0.contains("Azure") && found[0].1.contains("AWS"));
+}
+
+#[test]
+fn me51_keeping_one_of_two_disagreeing_notes_replaces_the_other_with_history_and_refuses_everything_unclear(
+) {
+    let m = mem(&dir());
+    let a = id_of(
+        m.remember(
+            1,
+            nm("Acme pays invoices on the 15th of every month", internal()),
+        )
+        .unwrap(),
+    );
+    let b = id_of(
+        m.remember(
+            2,
+            nm("Acme pays invoices on the 20th of every month", internal()),
+        )
+        .unwrap(),
+    );
+    let other = id_of(
+        m.remember(
+            3,
+            nm(
+                "Zorblax keeps its sessions in an in-process dictionary",
+                internal(),
+            ),
+        )
+        .unwrap(),
+    );
+    assert!(m.supersede(4, &b, &b, &internal()).is_err(), "not itself");
+    assert!(m.supersede(4, &b, "missing", &internal()).is_err());
+    assert!(m.supersede(4, "missing", &a, &internal()).is_err());
+    m.supersede(5, &b, &a, &internal()).unwrap();
+    assert!(disagreements(&m).is_empty());
+    let left = m.recall("Acme invoices", &internal(), 6, 10).unwrap();
+    assert_eq!(left.len(), 1);
+    assert!(
+        left[0].memory.text.contains("20th"),
+        "the kept note is the one recalled"
+    );
+    let history = m.history(&b, &internal()).unwrap();
+    assert_eq!(
+        history.len(),
+        2,
+        "the replaced note stays as the earlier version: {history:?}"
+    );
+    assert!(history[0].text.contains("15th") && history[1].text.contains("20th"));
+    // the replaced note cannot be replaced or kept again
+    assert!(
+        m.supersede(6, &b, &a, &internal()).is_err(),
+        "already replaced"
+    );
+    assert!(
+        m.supersede(6, &a, &b, &internal()).is_err(),
+        "a replaced note cannot be the one kept"
+    );
+    // a note of another project, an unreadable note and a note others were merged under are refused
+    let p = id_of(
+        m.remember(
+            7,
+            note_in("Acme pays invoices on the 20th of every month", "billing"),
+        )
+        .unwrap(),
+    );
+    assert!(
+        m.supersede(8, &b, &p, &internal()).is_err(),
+        "different project"
+    );
+    let secret = id_of(
+        m.remember(
+            9,
+            nm(
+                "Acme pays invoices on the 25th of every month",
+                Label::new(Level::Restricted),
+            ),
+        )
+        .unwrap(),
+    );
+    assert!(
+        m.supersede(10, &b, &secret, &internal()).is_err(),
+        "the owner's reading level for this call is lower than the note's"
+    );
+    let twin = id_of(
+        m.remember(
+            11,
+            nm("Acme pays invoices on the 20th each month", internal()),
+        )
+        .unwrap(),
+    );
+    m.merge(12, &b, std::slice::from_ref(&twin), &internal())
+        .unwrap();
+    let rival = id_of(
+        m.remember(
+            13,
+            nm("Acme pays invoices on the 30th of every month", internal()),
+        )
+        .unwrap(),
+    );
+    assert!(
+        m.supersede(14, &rival, &b, &internal()).is_err(),
+        "notes were merged under it: unmerge first"
+    );
+    assert!(!gone(&m, &other) && !gone(&m, &rival));
+}
+
+#[test]
+fn me52_saying_both_notes_are_right_hides_that_pair_until_one_of_them_changes() {
+    let m = mem(&dir());
+    let a = id_of(
+        m.remember(
+            1,
+            nm("Acme pays invoices on the 15th of every month", internal()),
+        )
+        .unwrap(),
+    );
+    let b = id_of(
+        m.remember(
+            2,
+            nm("Acme pays invoices on the 20th of every month", internal()),
+        )
+        .unwrap(),
+    );
+    assert_eq!(disagreements(&m).len(), 1);
+    assert!(m.dismiss_conflict(3, "missing", &b, &internal()).is_err());
+    assert!(m.dismiss_conflict(3, &a, &a, &internal()).is_err());
+    m.dismiss_conflict(3, &b, &a, &internal()).unwrap();
+    assert!(disagreements(&m).is_empty(), "either order hides the pair");
+    assert!(
+        m.dismiss_conflict(3, &a, &b, &internal()).is_ok(),
+        "saying it twice is harmless"
+    );
+    // a corrected note is a new note and is judged again
+    let c = m
+        .correct(
+            4,
+            &b,
+            nm("Acme pays invoices on the 21st of every month", internal()),
+        )
+        .unwrap();
+    assert_eq!(
+        disagreements(&m).len(),
+        1,
+        "the new wording disagrees with the other one again"
+    );
+    // forgetting a note removes what was said about it
+    m.forget(5, &c, "r").unwrap();
+    let rows: i64 = m_conn(&m)
+        .query_row(
+            "SELECT count(*) FROM conflict_dismissed WHERE a = ?1 OR b = ?1",
+            [&b],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(rows, 0, "no row names a forgotten note");
+}
+
+#[test]
+fn me53_how_well_the_rules_tell_disagreements_from_everything_else_is_measured() {
+    let conflicts: &[(&str, &str)] = &[
+        (
+            "The invoice approval limit is 5000 euros",
+            "The invoice approval limit is 8000 euros",
+        ),
+        (
+            "Support answers within 4 hours on weekdays",
+            "Support answers within 8 hours on weekdays",
+        ),
+        (
+            "The staging database is hosted in Frankfurt",
+            "The staging database is hosted in Dublin",
+        ),
+        (
+            "Maria is the owner of the refunds process",
+            "Dmitri is the owner of the refunds process",
+        ),
+        (
+            "The backup job runs every night at 2",
+            "The backup job does not run every night at 2",
+        ),
+        (
+            "Customers may pay by card in the web shop",
+            "Customers may not pay by card in the web shop",
+        ),
+        (
+            "The release train leaves on Thursdays",
+            "The release train leaves on Wednesdays",
+        ),
+        (
+            "Contracts above 50k need two signatures",
+            "Contracts above 100k need two signatures",
+        ),
+        (
+            "The office is closed on the first Monday of May",
+            "The office is open on the first Monday of May",
+        ),
+        (
+            "Alerts go to the on-call phone first then email",
+            "Alerts go to email first then the on-call phone",
+        ),
+        (
+            "Python 3.11 is the supported runtime for the worker",
+            "Python 3.12 is the supported runtime for the worker",
+        ),
+        (
+            "The vendor rate is 5 percent per year",
+            "The vendor rate is 7 percent per year",
+        ),
+    ];
+    let not_conflicts: &[(&str, &str)] = &[
+        (
+            "The invoice approval limit is 5000 euros",
+            "Invoices are approved by the finance team lead",
+        ),
+        (
+            "Support answers within 4 hours on weekdays",
+            "Support is staffed by three people in Pune",
+        ),
+        (
+            "The staging database is hosted in Frankfurt",
+            "The production database is backed up nightly",
+        ),
+        (
+            "Maria is the owner of the refunds process",
+            "Maria prefers meetings in the morning",
+        ),
+        (
+            "The backup job runs every night at 2",
+            "The restore drill happens every quarter",
+        ),
+        (
+            "Customers may pay by card in the web shop",
+            "Customers can download invoices as PDF files",
+        ),
+        (
+            "The release train leaves on Thursdays",
+            "Release notes are written by the product manager",
+        ),
+        (
+            "Contracts above 50k need two signatures",
+            "Contracts are stored in the legal folder",
+        ),
+        (
+            "The office is closed on the first Monday of May",
+            "The office kitchen has a new coffee machine",
+        ),
+        (
+            "Python 3.11 is the supported runtime for the worker",
+            "The worker reads jobs from the nightly queue",
+        ),
+        (
+            "Zorblax keeps its sessions in memory",
+            "Quibblex stores its sessions in a database",
+        ),
+        (
+            "Rounding is half up in the monthly report",
+            "The monthly report is sent on the second working day",
+        ),
+        (
+            "Kestrel uses banker's rounding",
+            "Kestrel is deployed with the blue green strategy",
+        ),
+    ];
+    let measure = |pairs: &[(&str, &str)]| -> usize {
+        pairs
+            .iter()
+            .filter(|(a, b)| {
+                let m = mem(&dir());
+                m.remember(1, nm(a, internal())).unwrap();
+                m.remember(2, nm(b, internal())).unwrap();
+                !m.conflicts(&internal(), 100, Scope::All)
+                    .unwrap()
+                    .pairs
+                    .is_empty()
+            })
+            .count()
+    };
+    // The same sentence about two different people or places looks exactly like one fact changing ("Priya is the team lead" and
+    // "Tom is the team lead" disagree; "Alice joined in 2019" and "Bob joined in 2021" do not). No rule tells them apart, so
+    // they are listed and the owner says "both are right". This is the known limit of the reading, kept visible here.
+    let same_template: &[(&str, &str)] = &[
+        (
+            "Alice joined the company in 2019",
+            "Bob joined the company in 2021",
+        ),
+        (
+            "The Berlin office has 40 desks",
+            "The Pune office has 60 desks",
+        ),
+        (
+            "Zorblax keeps its sessions in memory",
+            "Quibblex keeps its sessions in memory",
+        ),
+    ];
+    let found = measure(conflicts);
+    let false_alarms = measure(not_conflicts);
+    let look_alikes = measure(same_template);
+    eprintln!(
+        "disagreements found {found}/{}; false alarms on unrelated notes {false_alarms}/{}; same-sentence look-alikes listed {look_alikes}/{}",
+        conflicts.len(),
+        not_conflicts.len(),
+        same_template.len()
+    );
+    assert!(
+        found * 100 >= conflicts.len() * 75,
+        "found {found} of {}",
+        conflicts.len()
+    );
+    assert_eq!(false_alarms, 0, "unrelated notes are never reported");
+}
+
+#[test]
+fn me54_notes_of_fewer_than_four_words_are_compared_by_subject_only() {
+    let m = mem(&dir());
+    m.remember(1, nm("Prefer tabs always", internal())).unwrap();
+    m.remember(2, nm("Prefer spaces always", internal()))
+        .unwrap();
+    assert!(
+        disagreements(&m).is_empty(),
+        "too short to compare by wording"
+    );
+    let m2 = mem(&dir());
+    m2.remember(1, subject_note("Prefer tabs always", "indentation"))
+        .unwrap();
+    m2.remember(2, subject_note("Prefer spaces always", "indentation"))
+        .unwrap();
+    assert_eq!(
+        disagreements(&m2).len(),
+        1,
+        "but the owner's own subject says they are about the same thing"
+    );
+}

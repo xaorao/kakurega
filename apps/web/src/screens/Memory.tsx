@@ -226,6 +226,63 @@ function Merged(props: { onChange: (msg?: string) => void }) {
   );
 }
 
+/** Notes that disagree: the owner keeps one (the other stays as its earlier version) or says both are right. */
+function Disagreements(props: { onChange: (msg?: string) => void }) {
+  const [open, setOpen] = createSignal(false);
+  const [found, { refetch }] = createResource(open, (on) => (on ? api.memoryConflicts() : Promise.resolve(null)));
+  const [problem, setProblem] = createSignal("");
+  const act = async (fn: () => Promise<unknown>, msg: string) => {
+    setProblem("");
+    try {
+      await fn();
+      props.onChange(msg);
+      await refetch();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("mem.error"));
+    }
+  };
+  return (
+    <details class="card stack" id="mem-conflicts" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>{t("mem.conf.title")}</summary>
+      <Show when={open()}>
+        <p class="muted">{t("mem.conf.lead")}</p>
+        <Show when={problem()}><p role="alert" class="bad">{problem()}</p></Show>
+        <Show when={found()} fallback={<p class="muted">{t("review.loading")}</p>}>
+          {(f) => (
+            <>
+              <p class="muted">{t("mem.similar.checked", { n: f().scanned })}{" "}{f().complete ? "" : t("mem.similar.partial", { n: f().scanned })}</p>
+              <Show when={f().pairs.length > 0} fallback={<p>{t("mem.conf.none")}</p>}>
+                <ul class="plain stack">
+                  <For each={f().pairs}>
+                    {(p) => (
+                      <li class="card stack">
+                        <p class="muted">{p.why === "same_subject" ? t("mem.conf.subject", { subject: p.subject ?? "" }) : t("mem.conf.words")}</p>
+                        <For each={[p.a, p.b]}>
+                          {(m) => (
+                            <div class="stack">
+                              <p class="mem-text">{m.text}</p>
+                              <div class="actions">
+                                <button type="button" aria-label={t("mem.conf.keepFor", { text: m.text.slice(0, 40) })} onClick={() => void act(() => api.keepNote(m.id, (m.id === p.a.id ? p.b : p.a).id), t("mem.conf.kept"))}>{t("mem.conf.keep")}</button>
+                              </div>
+                            </div>
+                          )}
+                        </For>
+                        <div class="actions">
+                          <button type="button" onClick={() => void act(() => api.bothRight(p.a.id, p.b.id), t("mem.conf.dismissed"))}>{t("mem.conf.both")}</button>
+                        </div>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </Show>
+            </>
+          )}
+        </Show>
+      </Show>
+    </details>
+  );
+}
+
 /** Everything one review left in memory (notes and waiting suggestions), forgotten in one step. */
 function ReviewSources(props: { onChange: (msg?: string) => void }) {
   const [open, setOpen] = createSignal(false);
@@ -327,6 +384,7 @@ export function Memory() {
         <input id="mem-search" type="search" placeholder={t("mem.search")} value={query()} onInput={(e) => setQuery(e.currentTarget.value)} />
       </div>
       <Similar onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
+      <Disagreements onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <Merged onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <ReviewSources onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <ul class="plain stack">

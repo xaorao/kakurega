@@ -1141,6 +1141,74 @@ async fn memories_similar(axum::Extension(svc): Svc) -> Response {
     }
 }
 
+/// Pairs of notes that disagree, for the owner to settle. Nothing is changed by looking.
+async fn memories_conflicts(axum::Extension(svc): Svc) -> Response {
+    let mem = svc.memory.lock().expect("lock");
+    let res = mem
+        .owner_clearance()
+        .and_then(|c| mem.conflicts(&c, now(), kk_memory::Scope::All));
+    match res {
+        Ok(found) => Json(json!({
+            "pairs": found.pairs.iter().map(|p| {
+                let (why, subject) = match &p.why {
+                    kk_memory::ConflictWhy::SameSubject(s) => ("same_subject", Some(s.clone())),
+                    kk_memory::ConflictWhy::OtherClaim => ("other_claim", None),
+                };
+                json!({"a": memory_json(&p.a), "b": memory_json(&p.b), "why": why, "subject": subject})
+            }).collect::<Vec<_>>(),
+            "scanned": found.scanned,
+            "complete": found.complete,
+            "note": "Looking changes nothing. Keep one note (the other stays as its earlier version), or say both are right. Two notes about different people or places that are worded alike can be listed here: say both are right.",
+        }))
+        .into_response(),
+        Err(e) => memory_error(e),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct KeepBody {
+    keep: String,
+    replaced: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BothBody {
+    a: String,
+    b: String,
+}
+
+async fn memories_conflict_keep(axum::Extension(svc): Svc, Json(b): Json<KeepBody>) -> Response {
+    let res = {
+        let mem = svc.memory.lock().expect("lock");
+        mem.owner_clearance()
+            .and_then(|c| mem.supersede(now(), &b.keep, &b.replaced, &c))
+    };
+    match res {
+        Ok(()) => {
+            svc.log_event("memory.conflict_kept", &b.keep, &[]);
+            Json(json!({"kept": b.keep, "replaced": b.replaced})).into_response()
+        }
+        Err(e) => memory_error(e),
+    }
+}
+
+async fn memories_conflict_both(axum::Extension(svc): Svc, Json(b): Json<BothBody>) -> Response {
+    let res = {
+        let mem = svc.memory.lock().expect("lock");
+        mem.owner_clearance()
+            .and_then(|c| mem.dismiss_conflict(now(), &b.a, &b.b, &c))
+    };
+    match res {
+        Ok(()) => {
+            svc.log_event("memory.conflict_dismissed", &b.a, &[]);
+            Json(json!({"dismissed": true})).into_response()
+        }
+        Err(e) => memory_error(e),
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MergeBody {
@@ -1705,11 +1773,14 @@ async fn suggestion_dismiss(
     }
 }
 
+/// How many of the newest events the Activity screen lists. The whole signed log can always be exported.
+const ACTIVITY_WINDOW: usize = 100;
+
 async fn log_summary(axum::Extension(svc): Svc) -> Response {
     let head = svc.log.head().ok().flatten();
     let recent: Vec<Value> = svc
         .log
-        .recent(50)
+        .recent(ACTIVITY_WINDOW)
         .unwrap_or_default()
         .iter()
         .filter_map(|e| serde_json::from_str::<Value>(e).ok())
@@ -5678,6 +5749,9 @@ impl Extension for Routes {
             .route("/api/log/export", get(log_export))
             .route("/api/memories", get(memories_list).post(memory_add))
             .route("/api/memories/similar", get(memories_similar))
+            .route("/api/memories/conflicts", get(memories_conflicts))
+            .route("/api/memories/conflicts/keep", post(memories_conflict_keep))
+            .route("/api/memories/conflicts/both", post(memories_conflict_both))
             .route("/api/memories/merge", post(memories_merge))
             .route("/api/memories/merged", get(memories_merged_all))
             .route("/api/memories/{id}/unmerge", post(memory_unmerge))

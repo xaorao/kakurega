@@ -93,6 +93,13 @@ export interface ReviewSource {
   suggestions: number;
 }
 
+export interface MemoryConflicts {
+  pairs: { a: MemoryItem; b: MemoryItem; why: "same_subject" | "other_claim"; subject: string | null }[];
+  scanned: number;
+  complete: boolean;
+  note: string;
+}
+
 export interface SimilarMemories { groups: MemoryItem[][]; scanned: number; complete: boolean; note: string }
 export interface KeptChat { id: string; title: string; created: number; updated: number; turns: number; project?: string | null }
 export interface ModelProof { verified: boolean; model: string; checked_at?: number; means?: string[]; does_not_mean?: string[]; deployments?: { signer: string; tcb: string; advisories: string[]; gpu_verified: boolean; compose_hash: string | null; os_image_hash: string | null; nonce: string }[] }
@@ -191,6 +198,9 @@ export const api = {
   similarMemories: () => request<SimilarMemories>("GET", "/api/memories/similar"),
   instructions: () => request<Instructions>("GET", "/api/instructions"),
   setInstruction: (project: string | undefined, text: string) => request<{ saved?: boolean; removed?: boolean }>("POST", "/api/instructions", project ? { project, text } : { text }),
+  memoryConflicts: () => request<MemoryConflicts>("GET", "/api/memories/conflicts"),
+  keepNote: (keep: string, replaced: string) => request<{ kept: string }>("POST", "/api/memories/conflicts/keep", { keep, replaced }),
+  bothRight: (a: string, b: string) => request<{ dismissed: boolean }>("POST", "/api/memories/conflicts/both", { a, b }),
   reviewSources: () => request<{ sources: ReviewSource[] }>("GET", "/api/memories/sources"),
   forgetReview: (job: string) => request<ReviewSource & { forgotten: boolean }>("POST", `/api/memories/sources/${encodeURIComponent(job)}/forget`, {}),
   mergeMemories: (keep: string, merge: string[]) => request<{ merged: number; kept: string }>("POST", "/api/memories/merge", { keep, merge }),

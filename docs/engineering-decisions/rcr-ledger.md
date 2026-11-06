@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 124, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 12, OWED-L 41. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 125, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 11, OWED-L 41. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -181,7 +181,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | E-M1 | Extraction from conversations | ADAPT idea (ADD-only, id aliasing, date grounding); BUILD the pass so its output always la | OWED-M | chat turns are not mined for suggested notes (only reviews propose notes) |
 | E-M2 | Exact dedupe | keep | KEPT | fingerprint on write |
 | E-M3 | Near-duplicate / paraphrase dedupe | ADAPT algorithm (Apache), output = "possible duplicate" proposals for the owner | BUILT | look-alike report (row 26) and owner-confirmed merge with undo (me32-me40, sv70-sv74) |
-| E-M4 | Update / contradiction handling | IMPROVE: add `conflicts_with` proposals (same subject, overlapping validity); ADAPT Hermes | OWED-M | no conflicts_with proposals; corrections replace one note by hand |
+| E-M4 | Update / contradiction handling | IMPROVE: add `conflicts_with` proposals (same subject, overlapping validity); ADAPT Hermes | BUILT | disagreeing notes: same-subject and changed-claim readings, keep one with history or both right; web, service, terminal; measured 12/12 found, 0/13 unrelated flagged, look-alikes listed (memory.md) |
 | E-M5 | Temporal validity | keep; IMPROVE: add "expires soon" listing, and `observed_at` separate from `created_at` | PARTIAL | valid_from and valid_to honoured by recall; no expiring-soon list |
 | E-M6 | Lexical retrieval | IMPROVE (porter/lemma tokeniser; keep the injection-proof query builder) | BUILT | BM25 and similar-wording rankings, injection-proof query (me tests); no stemmer |
 | E-M7 | Candidate pool before filtering | IMPROVE now: put level/compartment in the SQL `WHERE` (columns exist: `level`, `compartmen | PARTIAL | level and project are in the SQL before ranking; compartments are checked after ranking (recall in kk-memory) |

@@ -207,6 +207,12 @@ CREATE TABLE IF NOT EXISTS tombstones (
     reason TEXT NOT NULL,
     forgotten_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS conflict_dismissed (
+    a TEXT NOT NULL,
+    b TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (a, b)
+);
 CREATE TABLE IF NOT EXISTS forgotten_sources (
     source_ref TEXT PRIMARY KEY,
     reason TEXT NOT NULL,
@@ -310,6 +316,37 @@ fn fts_query(q: &str) -> Option<String> {
 
 /// How many of the newest notes are compared when looking for notes that say almost the same thing.
 pub const SIMILAR_SCAN: usize = 200;
+
+/// How many of the newest notes are compared for disagreements.
+pub const CONFLICT_SCAN: usize = 300;
+/// The most disagreeing pairs listed at once.
+pub const MAX_CONFLICTS: usize = 50;
+/// Two notes that share this much of their wording, and still do not say the same thing, disagree.
+const CONFLICT_SIMILARITY: f64 = 0.45;
+
+/// Why two notes are shown as disagreeing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConflictWhy {
+    /// Both are about this subject (the owner's own word for it) and say different things.
+    SameSubject(String),
+    /// Nearly the same words, but a changed number, a negation or a swapped word makes them say different things.
+    OtherClaim,
+}
+
+#[derive(Debug, Clone)]
+pub struct Conflict {
+    pub a: Recalled,
+    pub b: Recalled,
+    pub why: ConflictWhy,
+}
+
+#[derive(Debug, Clone)]
+pub struct Conflicts {
+    pub pairs: Vec<Conflict>,
+    pub scanned: usize,
+    /// False when there were more notes than were compared.
+    pub complete: bool,
+}
 
 /// Groups of look-alike notes, and how much of the store was compared.
 #[derive(Debug, Clone)]
@@ -815,6 +852,10 @@ impl Memories {
             )?;
             self.conn()
                 .execute("DELETE FROM memory_vectors WHERE id = ?1", params![mid])?;
+            self.conn().execute(
+                "DELETE FROM conflict_dismissed WHERE a = ?1 OR b = ?1",
+                params![mid],
+            )?;
             self.conn()
                 .execute("DELETE FROM memories WHERE id = ?1", params![mid])?;
             self.event(now, "forget", mid, "deleted")?;
@@ -1619,6 +1660,185 @@ impl Memories {
             scanned,
             complete: scanned < SIMILAR_SCAN,
         })
+    }
+
+    /// Pairs of notes, valid now and of the same project, that disagree: the owner gave them the same subject but they say
+    /// different things, or they share most of their words and still do not say the same thing. Pairs the owner already
+    /// called both right are left out. Only a reading: nothing is changed.
+    pub fn conflicts(
+        &self,
+        clearance: &Label,
+        as_of: i64,
+        scope: Scope,
+    ) -> Result<Conflicts, MemoryError> {
+        let notes = self.list_scoped(clearance, as_of, CONFLICT_SCAN, scope)?;
+        let scanned = notes.len();
+        let dismissed: BTreeSet<(String, String)> = {
+            let mut st = self.conn().prepare("SELECT a, b FROM conflict_dismissed")?;
+            let rows =
+                st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        let grams: Vec<_> = notes
+            .iter()
+            .map(|n| fuse::trigrams(&n.memory.text))
+            .collect();
+        let words: Vec<usize> = notes
+            .iter()
+            .map(|n| word_sequence(&n.memory.text).len())
+            .collect();
+        let subject = |n: &Recalled| {
+            n.memory
+                .subject
+                .as_deref()
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+        };
+        let mut found: Vec<(f64, usize, usize, ConflictWhy)> = Vec::new();
+        for i in 0..notes.len() {
+            for j in i + 1..notes.len() {
+                let (x, y) = (&notes[i].memory, &notes[j].memory);
+                if x.project != y.project || x.id == y.id {
+                    continue;
+                }
+                let key = if x.id < y.id {
+                    (x.id.clone(), y.id.clone())
+                } else {
+                    (y.id.clone(), x.id.clone())
+                };
+                if dismissed.contains(&key) {
+                    continue;
+                }
+                let same_subject = matches!((subject(&notes[i]), subject(&notes[j])), (Some(a), Some(b)) if a == b);
+                let sim = if words[i] >= 4 && words[j] >= 4 {
+                    fuse::jaccard(&grams[i], &grams[j])
+                } else {
+                    0.0
+                };
+                if same_subject && !same_claim(&x.text, &y.text) {
+                    found.push((
+                        2.0 + sim,
+                        i,
+                        j,
+                        ConflictWhy::SameSubject(subject(&notes[i]).unwrap_or_default()),
+                    ));
+                } else if sim >= CONFLICT_SIMILARITY && !same_claim(&x.text, &y.text) {
+                    found.push((sim, i, j, ConflictWhy::OtherClaim));
+                }
+            }
+        }
+        found.sort_by(|p, q| q.0.total_cmp(&p.0));
+        found.truncate(MAX_CONFLICTS);
+        Ok(Conflicts {
+            pairs: found
+                .into_iter()
+                .map(|(_, i, j, why)| Conflict {
+                    a: notes[i].clone(),
+                    b: notes[j].clone(),
+                    why,
+                })
+                .collect(),
+            scanned,
+            complete: scanned < CONFLICT_SCAN,
+        })
+    }
+
+    fn load_readable(&self, id: &str, clearance: &Label) -> Result<Row, MemoryError> {
+        let row = self
+            .conn()
+            .query_row(
+                "SELECT * FROM memories WHERE id = ?1",
+                params![id],
+                row_to_memory,
+            )
+            .optional()?
+            .ok_or(MemoryError::NotFound)?;
+        if !row.m.label.confidentiality_within(clearance) {
+            return Err(MemoryError::NotFound);
+        }
+        Ok(row)
+    }
+
+    /// Keeps one of two disagreeing notes and replaces the other with it: the replaced note stops being recalled and stays
+    /// as the earlier version in the kept note's history. Both must be active notes of the same project the owner may read,
+    /// and no note may have been merged under the replaced one (unmerge those first).
+    pub fn supersede(
+        &self,
+        now: i64,
+        keep: &str,
+        replaced: &str,
+        clearance: &Label,
+    ) -> Result<(), MemoryError> {
+        if keep == replaced {
+            return refuse("a note is not replaced by itself");
+        }
+        let (k, r) = (
+            self.load_readable(keep, clearance)?,
+            self.load_readable(replaced, clearance)?,
+        );
+        if k.m.status != Status::Active || r.m.status != Status::Active {
+            return refuse("one of the notes is already replaced or merged");
+        }
+        if k.m.project != r.m.project {
+            return refuse("notes of different projects do not replace each other");
+        }
+        let under: i64 = self.conn().query_row(
+            "SELECT count(*) FROM memories WHERE merged_into = ?1",
+            params![replaced],
+            |row| row.get(0),
+        )?;
+        if under > 0 {
+            return refuse("notes were merged under the one to replace: bring them back first");
+        }
+        self.conn().execute_batch("SAVEPOINT supersede_note")?;
+        let done = (|| -> Result<(), MemoryError> {
+            self.conn().execute(
+                "UPDATE memories SET status = 'superseded', superseded_by = ?1 WHERE id = ?2 AND status = 'active'",
+                params![keep, replaced],
+            )?;
+            self.conn().execute(
+                "DELETE FROM memory_vectors WHERE id = ?1",
+                params![replaced],
+            )?;
+            self.event(now, "supersede", replaced, &format!("replaced by {keep}"))?;
+            Ok(())
+        })();
+        match done {
+            Ok(()) => self.conn().execute_batch("RELEASE supersede_note")?,
+            Err(e) => {
+                self.conn()
+                    .execute_batch("ROLLBACK TO supersede_note; RELEASE supersede_note")?;
+                return Err(e);
+            }
+        }
+        Ok(())
+    }
+
+    /// The owner says both notes are right: that pair is not shown again, until one of them is corrected into a new note.
+    pub fn dismiss_conflict(
+        &self,
+        now: i64,
+        a: &str,
+        b: &str,
+        clearance: &Label,
+    ) -> Result<(), MemoryError> {
+        if a == b {
+            return refuse("a note does not disagree with itself");
+        }
+        let (x, y) = (
+            self.load_readable(a, clearance)?,
+            self.load_readable(b, clearance)?,
+        );
+        if x.m.status != Status::Active || y.m.status != Status::Active {
+            return refuse("one of the notes is already replaced or merged");
+        }
+        let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+        self.conn().execute(
+            "INSERT OR IGNORE INTO conflict_dismissed(a, b, at) VALUES (?1, ?2, ?3)",
+            params![lo, hi, now],
+        )?;
+        self.event(now, "dismiss_conflict", lo, "both notes are right")?;
+        Ok(())
     }
 
     pub fn history(&self, id: &str, clearance: &Label) -> Result<Vec<Memory>, MemoryError> {

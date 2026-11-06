@@ -821,6 +821,31 @@ try {
   await page.getByText("No notes say almost the same thing.").waitFor();
   check("forgetting one copy ends the group", await page.getByText("No notes say almost the same thing.").isVisible());
   await page.getByText("Notes that say almost the same thing").click();
+  // two notes that say different things: listed, the owner keeps one (the other becomes its earlier version) or says both are right
+  for (const t of ["Vendor payments run every Tuesday evening", "Vendor payments run every Thursday evening", "The Berlin office has forty desks", "The Pune office has sixty desks"]) {
+    await page.getByLabel("What should be remembered").fill(t);
+    await page.getByRole("button", { name: "Remember" }).click();
+    await page.locator(".mem", { hasText: t }).first().waitFor();
+  }
+  await page.getByText("Notes that disagree", { exact: true }).click();
+  const conf = page.locator("#mem-conflicts");
+  await conf.getByText("Vendor payments run every Tuesday evening").waitFor();
+  check("two notes that say different things are listed side by side with a reason", (await conf.locator("li").count()) >= 1 && (await conf.innerText()).includes("Vendor payments run every Thursday evening") && (await conf.innerText()).includes("different things"));
+  await axeCheck(page, "memory (notes that disagree open)");
+  await page.screenshot({ path: join(shots, "11d-memory-disagree.png"), fullPage: true });
+  await conf.getByRole("button", { name: /^Keep the note that begins Vendor payments run every Thursd/ }).click();
+  await conf.getByText("Vendor payments run every Tuesday evening").waitFor({ state: "detached" });
+  check("keeping one removes the other from the list of notes and the disagreement is gone", (await page.locator(".mem", { hasText: "every Tuesday evening" }).count()) === 0 && (await page.locator(".mem", { hasText: "every Thursday evening" }).count()) === 1);
+  await page.locator(".mem", { hasText: "every Thursday evening" }).getByRole("button", { name: "History" }).click();
+  await page.locator(".mem", { hasText: "every Thursday evening" }).getByText("every Tuesday evening").waitFor();
+  check("the replaced note is still there as the earlier version", (await page.locator(".mem", { hasText: "every Thursday evening" }).innerText()).includes("every Tuesday evening"));
+  await page.locator(".mem", { hasText: "every Thursday evening" }).getByRole("button", { name: "Hide history" }).click();
+  await conf.getByText("The Berlin office has forty desks").waitFor();
+  check("the swapped meaning of the tabs and spaces notes written earlier is listed too", (await conf.innerText()).includes("tabs over spaces") || (await conf.innerText()).includes("spaces over tabs"));
+  await conf.locator("li", { hasText: "Berlin office" }).getByRole("button", { name: "Both are right" }).click();
+  await conf.getByText("The Berlin office has forty desks").waitFor({ state: "detached" });
+  check("saying both are right keeps both notes and hides that pair", (await page.locator(".mem", { hasText: "Berlin office" }).count()) === 1 && (await page.locator(".mem", { hasText: "Pune office" }).count()) === 1 && !(await conf.innerText()).includes("Berlin office"));
+  await page.getByText("Notes that disagree", { exact: true }).click();
   await page.getByRole("link", { name: "Chat" }).click();
   await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();
   check("the chat says what the project field does", await page.getByText("Notes you saved for this project are offered in this conversation").isVisible());

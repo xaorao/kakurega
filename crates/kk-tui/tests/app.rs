@@ -2641,3 +2641,106 @@ fn tu41_the_terminal_shows_sets_and_clears_the_owners_standing_instructions() {
     a.handle(key(KeyCode::Up));
     assert!(!a.input.contains("hunter2"), "{:?}", a.input);
 }
+
+#[test]
+fn tu42_the_terminal_lists_notes_that_disagree_and_keeps_one_or_says_both_are_right() {
+    assert_eq!(cmd::parse("/conflicts").unwrap(), Command::Conflicts);
+    assert_eq!(
+        cmd::parse("/choose m-1 m-2").unwrap(),
+        Command::Choose {
+            keep: "m-1".into(),
+            replaced: "m-2".into()
+        }
+    );
+    assert_eq!(
+        cmd::parse("/bothright m-1 m-2").unwrap(),
+        Command::BothRight {
+            a: "m-1".into(),
+            b: "m-2".into()
+        }
+    );
+    for bad in [
+        "/choose",
+        "/choose m-1",
+        "/choose m-1 m-2 m-3",
+        "/choose m-1 m-1",
+        "/bothright m-1",
+        "/bothright a/b c",
+        "/conflicts now",
+    ] {
+        assert!(cmd::parse(bad).is_err(), "{bad}");
+    }
+    let mut app = booted();
+    let r = enter(&mut app, "/conflicts");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].admin, r[0].method),
+        ("/api/memories/conflicts", false, Method::Get)
+    );
+    app.handle(ok(&r[0], 200, json!({"pairs": [{"a": {"id": "m-1", "text": "Acme pays on the 15th"}, "b": {"id": "m-2", "text": "Acme pays on the 20th"}, "why": "other_claim", "subject": null}, {"a": {"id": "m-3", "text": "We deploy to Azure"}, "b": {"id": "m-4", "text": "Releases go to AWS"}, "why": "same_subject", "subject": "deploy target"}], "scanned": 4, "complete": true})));
+    let t = text(&app);
+    for needle in [
+        "m-1",
+        "m-2",
+        "Acme pays on the 15th",
+        "Acme pays on the 20th",
+        "deploy target",
+        "/choose",
+        "/bothright",
+    ] {
+        assert!(t.contains(needle), "{needle}: {t}");
+    }
+    let mut a = booted();
+    let r = enter(&mut a, "/conflicts");
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"pairs": [], "scanned": 3, "complete": true}),
+    ));
+    assert!(text(&a).contains("No notes disagree"), "{}", text(&a));
+    // choosing asks first: only y sends, and it says which note stays
+    let mut a = booted();
+    assert!(enter(&mut a, "/choose m-2 m-1").is_empty());
+    let prompt = match &a.mode {
+        Mode::Confirm(c) => c.prompt.clone(),
+        other => panic!("not asking: {other:?}"),
+    };
+    assert!(
+        prompt.contains("m-2") && prompt.contains("m-1") && prompt.ends_with("[y/N]"),
+        "{prompt}"
+    );
+    for k in [KeyCode::Enter, KeyCode::Char('n'), KeyCode::Esc] {
+        let mut b = booted();
+        enter(&mut b, "/choose m-2 m-1");
+        assert!(b.handle(key(k)).is_empty() && matches!(b.mode, Mode::Normal));
+    }
+    let r = a.handle(key(KeyCode::Char('y')));
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/memories/conflicts/keep", Method::Post)
+    );
+    assert_eq!(r[0].body, Some(json!({"keep": "m-2", "replaced": "m-1"})));
+    a.handle(ok(&r[0], 200, json!({"kept": "m-2", "replaced": "m-1"})));
+    assert!(text(&a).contains("Kept"), "{}", text(&a));
+    // both are right needs no question: nothing is lost
+    let mut a = booted();
+    let r = enter(&mut a, "/bothright m-1 m-2");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/memories/conflicts/both", Method::Post)
+    );
+    assert_eq!(r[0].body, Some(json!({"a": "m-1", "b": "m-2"})));
+    a.handle(ok(&r[0], 200, json!({"dismissed": true})));
+    assert!(text(&a).contains("Both notes stay"), "{}", text(&a));
+    let r = enter(&mut a, "/choose m-9 m-8");
+    assert!(r.is_empty());
+    a.handle(key(KeyCode::Char('y')));
+    let mut a2 = booted();
+    enter(&mut a2, "/choose m-9 m-8");
+    let r = a2.handle(key(KeyCode::Char('y')));
+    a2.handle(ok(
+        &r[0],
+        404,
+        json!({"error": {"code": "NO_MEMORY", "message": "no such memory"}}),
+    ));
+    assert!(text(&a2).contains("no such memory"));
+}

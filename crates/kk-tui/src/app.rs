@@ -99,6 +99,9 @@ enum Intent {
     ForgetReview,
     InstructionsShow,
     InstructionsSet,
+    ConflictsList,
+    ChooseNote,
+    BothRight,
     Log,
     Chat,
     SearchPropose,
@@ -129,6 +132,8 @@ pub struct ConfirmView {
     pub forget_id: String,
     /// Everything one review left in memory, waiting for a yes: the review's id.
     pub review: Option<String>,
+    /// Two disagreeing notes waiting for a yes: the one to keep, the one it replaces.
+    pub choose: Option<(String, String)>,
     pub apply: Option<(String, usize, String)>,
     pub undo: bool,
     /// A web request waiting for a yes: ("search" or "read", request id, digest of exactly what was shown).
@@ -811,6 +816,7 @@ impl App {
                 let undo = c.undo;
                 let web = c.web.clone();
                 let review = c.review.clone();
+                let choose = c.choose.clone();
                 match k.code {
                     KeyCode::Char('y') | KeyCode::Char('Y') if !ctrl && web.is_some() => {
                         self.mode = Mode::Normal;
@@ -847,6 +853,17 @@ impl App {
                             Method::Post,
                             &format!("/api/jobs/{job}/fixes/{}/{what}", n - 1),
                             Some(json!({"file": file})),
+                        )]
+                    }
+                    KeyCode::Char('y') | KeyCode::Char('Y') if !ctrl && choose.is_some() => {
+                        self.mode = Mode::Normal;
+                        let (keep, replaced) = choose.expect("checked");
+                        vec![self.req(
+                            Intent::ChooseNote,
+                            false,
+                            Method::Post,
+                            "/api/memories/conflicts/keep",
+                            Some(json!({"keep": keep, "replaced": replaced})),
                         )]
                     }
                     KeyCode::Char('y') | KeyCode::Char('Y') if !ctrl && review.is_some() => {
@@ -1415,6 +1432,7 @@ impl App {
                     ),
                     forget_id: String::new(),
                     review: None,
+                    choose: None,
                     apply: Some((j, n, file)),
                     undo: false,
                     web: None,
@@ -1440,6 +1458,7 @@ impl App {
                     prompt: format!("Restore the original {file} on this computer now? [y/N]"),
                     forget_id: String::new(),
                     review: None,
+                    choose: None,
                     apply: Some((j, n, file)),
                     undo: true,
                     web: None,
@@ -1538,6 +1557,32 @@ impl App {
                 &format!("/api/memories/{id}/correct"),
                 Some(json!({"text": text, "reason": "you corrected it in the terminal"})),
             )],
+            Command::Conflicts => vec![self.req(
+                Intent::ConflictsList,
+                false,
+                Method::Get,
+                "/api/memories/conflicts",
+                None,
+            )],
+            Command::Choose { keep, replaced } => {
+                self.mode = Mode::Confirm(ConfirmView {
+                    prompt: format!("Keep {keep} and make {replaced} its earlier version? Nothing is deleted. [y/N]"),
+                    forget_id: String::new(),
+                    review: None,
+                    choose: Some((keep, replaced)),
+                    apply: None,
+                    undo: false,
+                    web: None,
+                });
+                Vec::new()
+            }
+            Command::BothRight { a, b } => vec![self.req(
+                Intent::BothRight,
+                false,
+                Method::Post,
+                "/api/memories/conflicts/both",
+                Some(json!({"a": a, "b": b})),
+            )],
             Command::Instructions(action) => {
                 use crate::cmd::InstructionsAction as A;
                 match action {
@@ -1584,7 +1629,7 @@ impl App {
                 None,
             )],
             Command::Forget(id) => {
-                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id, review: None, apply: None, undo: false, web: None });
+                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id, review: None, choose: None, apply: None, undo: false, web: None });
                 Vec::new()
             }
             Command::Log => vec![self.req(Intent::Log, false, Method::Get, "/api/log", None)],
@@ -2358,6 +2403,57 @@ impl App {
                 );
                 Vec::new()
             }
+            Intent::ConflictsList => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let pairs = body["pairs"].as_array().cloned().unwrap_or_default();
+                if pairs.is_empty() {
+                    self.say(Kind::Info, "No notes disagree.");
+                    return Vec::new();
+                }
+                let mut lines: Vec<String> = Vec::new();
+                for p in &pairs {
+                    let why = match (p["why"].as_str(), p["subject"].as_str()) {
+                        (Some("same_subject"), Some(s)) => format!("both about \"{}\"", clean(s)),
+                        _ => "almost the same words, a different claim".to_string(),
+                    };
+                    lines.push(format!("Disagree ({why}):"));
+                    for side in ["a", "b"] {
+                        lines.push(format!(
+                            "  {}  {}",
+                            clean(p[side]["id"].as_str().unwrap_or("?")),
+                            clean(p[side]["text"].as_str().unwrap_or(""))
+                        ));
+                    }
+                }
+                lines.push("/choose KEEP_ID OVER_ID keeps one (the other becomes its earlier version); /bothright ID ID keeps both.".into());
+                self.push(Kind::Info, Some("Notes that disagree"), lines);
+                Vec::new()
+            }
+            Intent::ChooseNote => {
+                self.say(
+                    if ok { Kind::Ok } else { Kind::Error },
+                    if ok {
+                        "Kept. The other note is now an earlier version.".to_string()
+                    } else {
+                        err_text(status, &body)
+                    },
+                );
+                Vec::new()
+            }
+            Intent::BothRight => {
+                self.say(
+                    if ok { Kind::Ok } else { Kind::Error },
+                    if ok {
+                        "Both notes stay. They will not be listed together again.".to_string()
+                    } else {
+                        err_text(status, &body)
+                    },
+                );
+                Vec::new()
+            }
             Intent::InstructionsShow => {
                 if !ok {
                     self.say(Kind::Error, err_text(status, &body));
@@ -2425,7 +2521,7 @@ impl App {
                 self.mode = Mode::Confirm(ConfirmView {
                     prompt: format!("Forget {notes} notes and {waiting} waiting suggestions that review {job} left? The text is deleted and will not be saved again. [y/N]"),
                     forget_id: String::new(),
-                    review: Some(job),
+                    review: Some(job), choose: None,
                     apply: None,
                     undo: false,
                     web: None,
@@ -2575,6 +2671,7 @@ impl App {
                     },
                     forget_id: String::new(),
                     review: None,
+                    choose: None,
                     apply: None,
                     undo: false,
                     web: Some((

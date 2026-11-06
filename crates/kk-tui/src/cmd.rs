@@ -58,6 +58,15 @@ pub enum Command {
     Forget(String),
     ForgetReview(String),
     Instructions(InstructionsAction),
+    Conflicts,
+    Choose {
+        keep: String,
+        replaced: String,
+    },
+    BothRight {
+        a: String,
+        b: String,
+    },
     Log,
     Clear,
     Keep,
@@ -98,6 +107,9 @@ pub const NAMES: &[&str] = &[
     "forget",
     "forgetreview",
     "instructions",
+    "conflicts",
+    "choose",
+    "bothright",
     "log",
     "verify",
     "clear",
@@ -138,6 +150,9 @@ pub fn describe(name: &str) -> &'static str {
         "forget" => "delete a saved note for good",
         "forgetreview" => "delete everything one review left in memory",
         "instructions" => "your standing orders to the assistant",
+        "conflicts" => "notes that seem to disagree",
+        "choose" => "keep one of two disagreeing notes",
+        "bothright" => "two notes that look alike are both right",
         "log" => "the signed activity log",
         "verify" => "check a capsule offline",
         "clear" => "start a fresh conversation",
@@ -204,6 +219,9 @@ pub fn usage(name: &str) -> &'static str {
         "forget" => "/forget ID",
         "forgetreview" => "/forgetreview JOB",
         "instructions" => "/instructions [set [in PROJECT:] TEXT | clear [PROJECT]]",
+        "conflicts" => "/conflicts",
+        "choose" => "/choose KEEP_ID OVER_ID",
+        "bothright" => "/bothright ID ID",
         "verify" => "/verify FILE",
         "proof" => "/proof [MODEL]",
         "search" => "/search [--day|--week|--month|--year] WORDS",
@@ -409,6 +427,31 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 Err(format!("usage: {}", usage("forget")))
             } else {
                 Ok(Command::Forget(rest.to_string()))
+            }
+        }
+        "conflicts" => {
+            if rest.is_empty() {
+                Ok(Command::Conflicts)
+            } else {
+                Err(format!("usage: {}", usage("conflicts")))
+            }
+        }
+        "choose" | "bothright" => {
+            let ids: Vec<&str> = rest.split_whitespace().collect();
+            let plain = |i: &&str| !i.contains(['/', '\\']) && !i.chars().any(char::is_control);
+            match ids.as_slice() {
+                [x, y] if x != y && plain(x) && plain(y) => Ok(if name == "choose" {
+                    Command::Choose {
+                        keep: x.to_string(),
+                        replaced: y.to_string(),
+                    }
+                } else {
+                    Command::BothRight {
+                        a: x.to_string(),
+                        b: y.to_string(),
+                    }
+                }),
+                _ => Err(format!("usage: {}", usage(&name))),
             }
         }
         "instructions" => {

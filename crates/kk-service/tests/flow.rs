@@ -8523,3 +8523,138 @@ fn kk_cli_tool_names() -> Vec<String> {
         })
         .unwrap_or_default()
 }
+
+#[test]
+fn sv87_notes_that_disagree_are_listed_and_the_owner_keeps_one_or_says_both_are_right() {
+    let (c, w, _seen, _root) = instructions_service("conflicts");
+    let anon = Web::new(c.addr);
+    assert_eq!(anon.get("/api/memories/conflicts").0, 401);
+    assert_eq!(
+        anon.post(
+            "/api/memories/conflicts/keep",
+            json!({"keep": "a", "replaced": "b"})
+        )
+        .0,
+        401
+    );
+    assert_eq!(
+        anon.post("/api/memories/conflicts/both", json!({"a": "a", "b": "b"}))
+            .0,
+        401
+    );
+    let add = |text: &str| add_note(&w, text);
+    let a = add("Acme pays invoices on the 15th of every month");
+    let b = add("Acme pays invoices on the 20th of every month");
+    add("Zorblax keeps its sessions in an in-process dictionary");
+    let (s, v) = w.get("/api/memories/conflicts");
+    assert_eq!(s, 200, "{v}");
+    let pairs = v["pairs"].as_array().unwrap();
+    assert_eq!(pairs.len(), 1, "{v}");
+    let ids: Vec<&str> = vec![
+        pairs[0]["a"]["id"].as_str().unwrap(),
+        pairs[0]["b"]["id"].as_str().unwrap(),
+    ];
+    assert!(ids.contains(&a.as_str()) && ids.contains(&b.as_str()));
+    assert_eq!(pairs[0]["why"], "other_claim");
+    assert!(v["scanned"].as_i64().unwrap() >= 3);
+    // refusals change nothing
+    for body in [
+        json!({"keep": a, "replaced": a}),
+        json!({"keep": a, "replaced": "nope"}),
+        json!({"keep": "nope", "replaced": a}),
+        json!({"keep": a}),
+        json!({"keep": a, "replaced": b, "extra": 1}),
+    ] {
+        let (s, _) = w.post("/api/memories/conflicts/keep", body.clone());
+        assert!(s == 404 || s == 422 || s == 400, "{body}: {s}");
+    }
+    assert_eq!(
+        w.get("/api/memories/conflicts").1["pairs"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    // both are right: the pair is hidden, and the notes are untouched
+    let (s, v) = w.post("/api/memories/conflicts/both", json!({"a": b, "b": a}));
+    assert_eq!((s, v["dismissed"].clone()), (200, json!(true)), "{v}");
+    assert!(w.get("/api/memories/conflicts").1["pairs"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        w.get("/api/memories").1["memories"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    // another pair, kept: the other note is replaced and shows as an earlier version
+    let c2 = add("The invoice approval limit is 5000 euros");
+    let d2 = add("The invoice approval limit is 8000 euros");
+    let (s, v) = w.post(
+        "/api/memories/conflicts/keep",
+        json!({"keep": d2, "replaced": c2}),
+    );
+    assert_eq!((s, v["kept"].clone()), (200, json!(d2)), "{v}");
+    let texts: Vec<String> = w.get("/api/memories").1["memories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["text"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        texts.iter().any(|t| t.contains("8000")) && !texts.iter().any(|t| t.contains("5000")),
+        "{texts:?}"
+    );
+    let (_, hist) = w.get(&format!("/api/memories/{d2}/history"));
+    assert_eq!(hist["versions"].as_array().unwrap().len(), 2, "{hist}");
+    assert!(w.get("/api/memories/conflicts").1["pairs"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    // the signed log records what the owner decided, without the words
+    let log = log_text(
+        &format!("http://127.0.0.1:{}", c.addr.port()),
+        c.security.admin_token(),
+    );
+    let kinds: Vec<String> = log
+        .split("\\\"kind\\\":\\\"")
+        .skip(1)
+        .map(|p| p.split("\\\"").next().unwrap().to_string())
+        .collect();
+    assert!(
+        kinds.iter().any(|k| k == "memory.conflict_kept")
+            && kinds.iter().any(|k| k == "memory.conflict_dismissed"),
+        "{kinds:?}"
+    );
+    assert!(!log.contains("8000 euros"), "the words are not in the log");
+}
+
+#[test]
+fn sv88_the_activity_list_holds_the_newest_hundred_events_and_the_export_holds_all_of_them() {
+    let (c, w, _seen, _root) = instructions_service("activity-window");
+    for i in 0..130 {
+        let (s, _) = w.post(
+            "/api/instructions",
+            json!({"project": format!("p{}", i % 25), "text": format!("Be brief {i}.")}),
+        );
+        assert_eq!(s, 200);
+    }
+    let (_, v) = w.get("/api/log");
+    let recent = v["recent"].as_array().unwrap();
+    assert_eq!(recent.len(), 100, "the newest hundred");
+    assert!(
+        v["count"].as_i64().unwrap() >= 130,
+        "the log itself holds every event: {}",
+        v["count"]
+    );
+    let export = log_text(
+        &format!("http://127.0.0.1:{}", c.addr.port()),
+        c.security.admin_token(),
+    );
+    assert!(
+        export.matches("instructions.changed").count() >= 130,
+        "the export has them all"
+    );
+}
