@@ -51,6 +51,8 @@ pub enum Command {
         folder: String,
         question: String,
     },
+    /// A question put to the assistant that is not part of the conversation and is never saved.
+    Aside(String),
     Correct {
         id: String,
         text: String,
@@ -113,6 +115,7 @@ pub const NAMES: &[&str] = &[
     "deliver",
     "memory",
     "ask",
+    "aside",
     "remember",
     "correct",
     "forget",
@@ -163,6 +166,7 @@ pub fn describe(name: &str) -> &'static str {
         "deliver" => "sign and deliver an approved release",
         "memory" => "list or search saved notes",
         "ask" => "ask about documents; every quote is checked",
+        "aside" => "ask something that stays out of the conversation and is not saved",
         "remember" => "save a note",
         "correct" => "change a saved note",
         "forget" => "delete a saved note for good",
@@ -240,6 +244,7 @@ pub fn usage(name: &str) -> &'static str {
         "project" => "/project [NAME | none]",
         "similar" => "/similar",
         "ask" => "/ask FOLDER : QUESTION",
+        "aside" => "/aside QUESTION",
         "correct" => "/correct ID NEW TEXT",
         "forget" => "/forget ID",
         "forgetreview" => "/forgetreview JOB",
@@ -421,6 +426,13 @@ pub fn parse(line: &str) -> Result<Command, String> {
             }),
             _ => Err(format!("usage: {}", usage("ask"))),
         },
+        "aside" => {
+            if rest.is_empty() {
+                Err(format!("usage: {}", usage("aside")))
+            } else {
+                Ok(Command::Aside(rest.to_string()))
+            }
+        }
         "remember" => {
             if rest.is_empty() {
                 Err(format!("usage: {}", usage("remember")))

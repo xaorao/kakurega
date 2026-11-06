@@ -10735,3 +10735,51 @@ fn sv107_a_conversation_can_be_pinned_to_the_top_or_archived_out_of_sight_and_no
         "no words in the log"
     );
 }
+
+#[test]
+fn sv108_a_chat_sent_without_a_session_leaves_every_kept_conversation_and_the_search_untouched() {
+    let (root, _repo) = repo_copy("aside");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (_, s) = w.post("/api/sessions", json!({"title": ""}));
+    let id = s["id"].as_str().unwrap().to_string();
+    let (st, _) = w.post(
+        "/api/chat",
+        json!({"message": "Quillfeather kept question", "session": id}),
+    );
+    assert_eq!(st, 200);
+    let before = w.get(&format!("/api/sessions/{id}")).1;
+    let (st, r) = w.post(
+        "/api/chat",
+        json!({"message": "Zephyrbloom private aside", "history": [{"role": "user", "content": "Quillfeather kept question"}, {"role": "assistant", "content": "ok"}]}),
+    );
+    assert_eq!((st, &r["saved"]), (200, &json!(false)), "{r}");
+    assert_eq!(
+        w.get(&format!("/api/sessions/{id}")).1,
+        before,
+        "the kept conversation did not change"
+    );
+    let (_, found) = w.get("/api/sessions/search?q=Zephyrbloom");
+    assert!(
+        found.to_string().matches("Zephyrbloom").count() == 0,
+        "the aside cannot be found afterwards: {found}"
+    );
+    let (_, list) = w.get("/api/sessions");
+    assert_eq!(
+        list["sessions"].as_array().unwrap().len(),
+        1,
+        "no new conversation appeared"
+    );
+}

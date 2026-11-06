@@ -3455,3 +3455,72 @@ fn tu53_path_completion_is_asked_only_where_it_makes_sense_and_hostile_answers_c
     typed(&mut fresh, "/review pa");
     assert!(tab_and_ask(&mut fresh).is_none());
 }
+
+#[test]
+fn tu54_an_aside_is_asked_without_a_session_shown_apart_and_kept_out_of_the_conversation() {
+    let mut app = booted();
+    app.session = Some("chat-1".into());
+    app.chat_history
+        .push(("user".into(), "earlier question".into()));
+    app.chat_history
+        .push(("assistant".into(), "earlier answer".into()));
+    let r = enter(&mut app, "/aside what is the capital of Peru");
+    assert_eq!(r.len(), 1);
+    assert_eq!(
+        r[0].path, "/api/chat",
+        "the plain chat, not the stream that appends to a kept conversation"
+    );
+    let body = r[0].body.as_ref().unwrap();
+    assert!(
+        body.get("session").is_none(),
+        "no session id: nothing can be appended"
+    );
+    assert_eq!(body["message"], "what is the capital of Peru");
+    assert_eq!(
+        body["history"].as_array().unwrap().len(),
+        2,
+        "it sees the conversation so far"
+    );
+    assert!(!app.chat_waiting, "the conversation is not marked busy");
+    app.handle(ok(&r[0], 200, json!({"reply": "Lima.", "saved": false})));
+    let all = text(&app);
+    assert!(
+        all.contains("Aside") && all.contains("Lima.") && all.contains("not saved"),
+        "{all}"
+    );
+    assert_eq!(
+        app.chat_history.len(),
+        2,
+        "neither the question nor the answer joined the history"
+    );
+    let conv = app.transcript_text();
+    assert!(
+        !conv.contains("Lima.") && !conv.contains("Peru"),
+        "not in what is exported, copied or searched: {conv}"
+    );
+    // later turns do not carry it
+    let r = enter(&mut app, "next real question");
+    let sent = r[0].body.as_ref().unwrap()["history"].to_string();
+    assert!(!sent.contains("Lima") && !sent.contains("Peru"), "{sent}");
+    // refused while an answer is arriving, empty, or too long
+    let mut busy = booted();
+    enter(&mut busy, "a real question");
+    assert!(enter(&mut busy, "/aside hi").is_empty());
+    assert!(text(&busy).contains("still arriving"));
+    let mut a = booted();
+    assert!(enter(&mut a, "/aside").is_empty());
+    assert!(text(&a).contains("usage: /aside QUESTION"));
+    assert!(enter(&mut a, &format!("/aside {}", "x".repeat(4001))).is_empty());
+    assert!(text(&a).contains("4000"));
+    // a failure is an error, not an answer; hostile characters in the reply are cleaned
+    let r = enter(&mut a, "/aside hello");
+    a.handle(ok(&r[0], 200, json!({"reply": "fine\u{1b}[2Jgone"})));
+    assert!(!text(&a).contains('\u{1b}'));
+    let r = enter(&mut a, "/aside again");
+    a.handle(ok(
+        &r[0],
+        502,
+        json!({"error": {"code": "NO_MODEL", "message": "no model is running"}}),
+    ));
+    assert!(text(&a).contains("no model"), "{}", text(&a));
+}

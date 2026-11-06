@@ -52,6 +52,9 @@ pub enum Kind {
     Error,
 }
 
+/// The title of an answer to `/aside`: shown on the screen, and left out of the conversation text that is searched, copied and exported.
+pub const ASIDE_TITLE: &str = "Aside";
+
 /// The title of the card that lists what `/transcript` found.
 const SEARCH_TITLE: &str = "Search in this conversation";
 
@@ -102,6 +105,7 @@ enum Intent {
     Config,
     HistoryLoad,
     HistorySave,
+    Aside,
     HistoryClear,
     Proof,
     GatewayProof,
@@ -1909,6 +1913,33 @@ impl App {
                 self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id, review: None, choose: None, copy: None, apply: None, undo: false, web: None });
                 Vec::new()
             }
+            Command::Aside(text) => {
+                if self.chat_waiting {
+                    self.say(
+                        Kind::Warn,
+                        "An answer is still arriving. Ask the aside when it is finished.",
+                    );
+                    return Vec::new();
+                }
+                if text.chars().count() > 4000 {
+                    self.say(
+                        Kind::Warn,
+                        "That question is over 4000 characters; shorten it.",
+                    );
+                    return Vec::new();
+                }
+                let start = self.chat_history.len().saturating_sub(18);
+                let history: Vec<Value> = self.chat_history[start..]
+                    .iter()
+                    .map(|(r, c)| json!({"role": r, "content": c}))
+                    .collect();
+                // no session id is sent, so the service has nothing to append the exchange to
+                let mut body = json!({"message": text, "history": history});
+                if let Some(p) = &self.chat_project {
+                    body["project"] = json!(p);
+                }
+                vec![self.req(Intent::Aside, false, Method::Post, "/api/chat", Some(body))]
+            }
             Command::Log => vec![self.req(Intent::Log, false, Method::Get, "/api/log", None)],
             Command::Verify(path) => {
                 self.verify_file(&path);
@@ -1979,7 +2010,7 @@ impl App {
                     blocks.push(format!("You: {line}"));
                 }
                 // what a search found is about the conversation, not part of it
-                (_, Some(t)) if t == SEARCH_TITLE => {}
+                (_, Some(t)) if t == SEARCH_TITLE || t == ASIDE_TITLE => {}
                 (_, Some(t)) => blocks.push(format!("{t}:\n{}", c.lines.join("\n"))),
                 (_, None) => blocks.push(c.lines.join("\n")),
             }
@@ -3289,6 +3320,17 @@ impl App {
                         .into(),
                 );
                 self.push(Kind::Info, Some("Read"), lines);
+                Vec::new()
+            }
+            Intent::Aside => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let mut lines = text_lines(body["reply"].as_str().unwrap_or(""));
+                lines.push(String::new());
+                lines.push("Aside: not part of this conversation and not saved.".into());
+                self.push(Kind::Info, Some(ASIDE_TITLE), lines);
                 Vec::new()
             }
             Intent::Chat => {

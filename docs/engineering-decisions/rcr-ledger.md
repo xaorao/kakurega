@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 135, PARTIAL 84, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 13. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 135, PARTIAL 85, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 12. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -401,7 +401,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | A-A22 | Input history | see the section in matrix A | BUILT | saved command history; history recall never replaces a draft (3f24557) |
 | A-A23 | Drafts and stash | see the section in matrix A | BUILT | draft stash (01efa8c) |
 | A-A24 | Shell escape and inline command interpolation | see the section in matrix A | EXCLUDED | no shell escape: the terminal has no effects of its own |
-| A-A25 | Side question that does not enter the conversation | see the section in matrix A | OWED-L | no side question that stays out of the conversation |
+| A-A25 | Side question that does not enter the conversation | see the section in matrix A | PARTIAL | /aside: session-less chat, apart card, kept out of history/export/search; service unchanged (sv108); pty-verified; OpenCode/Codex sources read only to matrix depth (terminal-transcript.md) |
 | A-A26 | Goal, plan mode, todo panel | see the section in matrix A | LATER | plan and todo with the worker loop |
 | A-A27 | Diff viewing and edit flows | see the section in matrix A | PARTIAL | /fixes shows the diff; no changed-word marks |
 | A-A28 | Streaming rendering | see the section in matrix A | BUILT | streamed answers (71e541f) |

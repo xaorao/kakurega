@@ -293,6 +293,8 @@ try:
     send("/remember the password is hunter2hunter2\r")
     check("a secret is refused", wait_for(r"secrets are never stored") is not None)
     check("and hidden from the transcript", "text hidden" in screen_text())
+    send("/aside which colour is the sky\r")
+    check("an aside is answered apart and says it is not saved", wait_for(r"not part of this conversation and not saved", 60) is not None)
     send("/keep\r")
     check("a conversation is kept so a later launch can resume it", wait_for(r"Kept\. From now on", 20) is not None)
     send("resumecanary words\r")
