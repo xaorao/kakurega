@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 113, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 23, OWED-L 41. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 115, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 21, OWED-L 41. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -239,7 +239,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | F-S5 | Decoded-secret detection | ADAPT behaviour: decode candidate segments (bounded depth and size) before scanning, in im | BUILT | base64, hex, percent, unicode escapes, bounded depth (sk03) |
 | F-S6 | Release egress check against known withheld values | IMPROVE (highest value in this document): at release assembly, for each Restricted value a | BUILT | values of withheld files and their encodings are refused at release (rs08, rs09) |
 | F-S7 | Independent second detector at egress | ADAPT: run the S1 table (our single Rust table) over every released file in addition to S6 | BUILT | the release check uses the same table as import (one crate); an independent second detector is not run |
-| F-S8 | User-declared withhold list | BUILD `.kakuignore`-style file honoured by the importer (labels Restricted, same path as ` | OWED-M | `.kakuignore` is not built |
+| F-S8 | User-declared withhold list | BUILD `.kakuignore`-style file honoured by the importer (labels Restricted, same path as ` | BUILT | `.kakuignore` honoured by the importer, fail closed (withhold-list.md; ki01-ki07; live review 3 withheld) |
 | F-S9 | Crypto-wallet secrets (NEAR relevance) | BUILD (nothing to reuse): `ed25519:<base58 88>` private keys, BIP-39 word runs checked aga | BUILT | NEAR and Solana key formats and a recovery-phrase shape rule; no BIP-39 word list yet |
 | F-S10 | Live validation of found credentials | EXCLUDE: validation sends the secret to a third party, breaking the privacy promise | EXCLUDED | sending a secret to a third party |
 | F-P1 | Pattern + checksum + context recognisers | ADAPT the checksum/invalidation logic and score-plus-context model into Rust for cards, IB | BUILT | Luhn and Verhoeff in kk-secrets pii.rs (tests pii) |
@@ -370,7 +370,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | G-GH-84 | Data disclosure and privacy pages: "AI processing is a transfer", back | BUILD a plain "what leaves, to whom, when" page generated from the route table | BUILT | same page; the address, not the label, decides what stays here (privacy-page.md) |
 | G-GH-85 | Pricing and limits: download free, model usage billed (0G balance), no | EXCLUDE points, referrals, seasons, token (H7, H50 CUT). Pricing for us is open | EXCLUDED | no points, referrals or token |
 | G-GH-86 | Capability economy: defined claim, evidence, bond, three-day challenge | Out of Ghast-parity scope; keep as later work (`NEAR_VERSION_OF_GHAST.md` section 4) | LATER | capability economy |
-| G-GH-87 | Documentation as tested examples: stable-version walkthroughs with the | ADAPT: every public how-to has a test that executes it (our own rule, section 5.30 of the  | OWED-M | published how-to steps are not all run by tests (QA guide 5.30) |
+| G-GH-87 | Documentation as tested examples: stable-version walkthroughs with the | ADAPT: every public how-to has a test that executes it (our own rule, section 5.30 of the  | BUILT | `scripts/docs_check.py` runs in scripts/test: every link, path, script, test target, command, flag, the MCP tool table and the config example in the public docs are checked against the repository and the built binary; it found four gaps in docs/mcp.md (fixed) and a mutation run proves it fails on each kind of false claim |
 | G-GH-88 | Atomic JSON persistence with a `.bak` copy and 0600 file mode (0700 di | ADAPT for any non-database file (MIT pattern); on Windows use ACLs | OWED-L | atomic write with a .bak copy for non-database files: NOT VERIFIED |
 
 ## Matrix A: Terminal and sessions (sections A01-A46)

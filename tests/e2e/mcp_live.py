@@ -163,6 +163,31 @@ try:
     check("a call record names only a known tool and carries only an outcome", all(set(e["data"].keys()) == {"outcome"} and e["subject"] in tools_used and e["data"]["outcome"] in ("ok", "error", "refused") for e in calls), json.dumps(calls[:2]))
     check("refused calls are recorded as refused", any(e["subject"] == "start_review" and e["data"]["outcome"] == "refused" for e in calls))
     check("no call record contains a path, a recipient or review text", not any(w in json.dumps(calls) for w in ["payments-service", "Acme Audit", "mcp-agent", "session.py", "hunter2"]))
+    # the owner's own withhold list, through a real sandboxed review
+    shutil.copytree(work / "root/payments-service", work / "root/payments-listed")
+    (work / "root/payments-listed/.kakuignore").write_text("# never leave this computer\ndocs/\nREADME.md\n")
+    k = subprocess.Popen([kaku, "mcp", "--data-dir", str(data)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1, cwd=str(work))
+    kn = 0
+
+    def krpc(method, params=None):
+        global kn
+        kn += 1
+        k.stdin.write(json.dumps({"jsonrpc": "2.0", "id": kn, "method": method, "params": params or {}}) + "\n")
+        k.stdin.flush()
+        return json.loads(k.stdout.readline())
+
+    krpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}})
+    kstart = krpc("tools/call", {"name": "start_review", "arguments": {"repo": str(work / "root/payments-listed"), "recipient": "Acme Audit"}})["result"]
+    kjob = kstart["structuredContent"]["id"]
+    kst = {}
+    for _ in range(200):
+        kst = krpc("tools/call", {"name": "review_status", "arguments": {"id": kjob}})["result"]["structuredContent"]
+        if kst["state"] != "running":
+            break
+        time.sleep(0.4)
+    check("a review of a project with a .kakuignore withholds the two listed files as well as the secret", kst.get("state") == "ready" and kst.get("files_withheld") == 3, json.dumps(kst)[:200])
+    k.stdin.close()
+    k.wait(timeout=10)
     lm.stdin.close()
     lm.wait(timeout=10)
 finally:

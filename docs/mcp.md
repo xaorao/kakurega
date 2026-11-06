@@ -24,13 +24,23 @@ The service must be running (`kaku serve`, or the desktop app, or the terminal w
 
 Every tool has an input schema that forbids extra fields, an output schema, and annotations. The published list is a contract: `crates/kk-cli/tests/mcp_tools.golden.json` fails the build when it changes, so a schema change is always deliberate.
 
+## Limiting what an agent can do
+
+Three switches on `kaku mcp` narrow the tools an agent is offered. They combine, and none of them can widen what another took away.
+
+- `--read-only` hides `start_review` and `request_approval`: the agent can only read counts and statuses. The same as setting `KAKU_MCP_READ_ONLY=1`.
+- `--allow TOOL,TOOL` offers exactly the tools named and no others. A name that is not a tool is refused when the server starts.
+- `--leased` keeps the two tools that act (`start_review`, `request_approval`) behind your permission. They are offered, and work, only while you hold a lease for them: a number of uses for a number of minutes, which you can take back at once. Without a lease a call changes nothing and the answer says how you can allow it.
+
+You give and take leases with `kaku agent grant start_review --uses 3 --minutes 60`, `kaku agent revoke [TOOL]` and `kaku agent status`, or on the Agent access screen of the web workspace. The count is kept by the service, so restarting the agent's server does not reset it. A lease never approves or sends anything: approval stays yours alone.
+
 ## What an agent cannot do
 
 An MCP client is a sink, not a principal with your privileges. The server has no tool to approve or deliver a release, and none that returns source files, findings, memory text, chat text or release contents. Files given to `verify_*` must end in `.kkg` or `.json`, be regular files under 20 MB, and every failure reads "cannot read that file", so the tool cannot be used to probe your file system.
 
 ## Checked
 
-`cargo test -p kk-cli --test mcp` (protocol, the golden contract, argument validation, uniform file errors) and `python3 tests/e2e/mcp_live.py` (a live agent session against a real sandboxed review that scans every response for source, finding and memory text).
+`cargo test -p kk-cli --test mcp_frames` and `--test mcp` (protocol, the golden contract, argument validation, uniform file errors) and `python3 tests/e2e/mcp_live.py` (a live agent session against a real sandboxed review that scans every response for source, finding and memory text).
 
 ## Limits
 

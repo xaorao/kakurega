@@ -7,6 +7,7 @@ Status: working prototype on macOS and Linux. Not a finished product: see [docs/
 ## What it does today
 
 - Review a project privately: an agent reads it inside a sealed sandbox, secrets are withheld from it, and the kernel re-runs each finding's reproducer on a minimal extract. Only confirmed findings can be released.
+- Keep chosen files out of every review: list them in a `.kakuignore` file at the top of the project (names, folders and `*`/`?`/`**` patterns, like a `.gitignore`); they are withheld from the model and from the release like secrets, and a list that cannot be read withholds everything.
 - Release only what you approve: you see the exact files, the cumulative disclosure to that recipient and what the release does not establish, then approve in the desktop window (Touch ID prompt), the terminal workspace or `kaku approve`.
 - A signed capsule the recipient verifies offline, in a browser at `/verify` or with `kaku verify`, with a second independent verifier in JavaScript.
 - Private memory and chat on your computer: notes with privacy labels, a reason and a history; forgetting deletes the text for good; chat uses notes as data and keeps instruction-like notes away from the model.
@@ -14,7 +15,8 @@ Status: working prototype on macOS and Linux. Not a finished product: see [docs/
 - Web research you approve first: you see the exact addresses (or the exact search words and the one site that would receive them) before anything is requested; pages and search results reach the model only as untrusted data. Search needs a provider you choose (`KAKUREGA_SEARCH_URL`, an https SearXNG-style endpoint that answers `format=json`, which a stock SearXNG does only after `json` is added under `search.formats`); none is bundled. Public SearXNG sites mostly rate-limit or turn JSON off, so a site you run yourself is the dependable choice.
 - An encrypted backup of all your data with a recovery key (`kaku backup`, `kaku restore`), notes brought in from other assistants (web Memory screen or `kaku memory import`), notes that belong to one project, and recall by meaning when an embedding model is installed (`ollama pull nomic-embed-text`).
 - Signed update announcements that can be checked offline (`kaku update check|verify-file`). Nothing downloads or installs updates yet.
-- Surfaces: browser workspace (English and Hindi), full-screen terminal workspace (`kaku`), desktop app (Electron), MCP server (`kaku mcp`, counts only), a minimum-permission browser extension, a read-only Telegram bridge.
+- Surfaces: browser workspace (English and Hindi), full-screen terminal workspace (`kaku`), desktop app (Electron), MCP server (`kaku mcp`: counts and statuses; the tools that start a review or ask for approval stay behind owner leases with `--leased`, see `docs/mcp.md`; every call is recorded in the signed log), a minimum-permission browser extension, a read-only Telegram bridge.
+- A page that says where your data goes (what stays on this computer, what can leave, and when), read from the running service; notes that say almost the same thing can be merged by you, with undo; what these public documents promise is checked against the code by `python3 scripts/docs_check.py`.
 - Models: a local model through Ollama. NEAR AI Cloud model attestation is verified for real; NEAR completions, encrypted inference and signed responses need an API key and are not wired yet.
 
 ## Run it (macOS)

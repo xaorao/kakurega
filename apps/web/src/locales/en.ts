@@ -243,7 +243,7 @@ export const en = {
   "privacy.notes.title": "Your notes and conversations",
   "privacy.notes.body": "{n} note(s), stored encrypted on this computer. They leave only inside a question to the model above. A backup is a file you save yourself, encrypted with a recovery key.",
   "privacy.reviews.title": "Reviews and what you release",
-  "privacy.reviews.body": "A review reads only folders you allowed, in a sandbox with no network. Nothing is released until you approve the exact files. The recipient gets only the capsule you deliver.",
+  "privacy.reviews.body": "A review reads only folders you allowed, in a sandbox with no network. Secrets, and anything you list in a .kakuignore file at the top of the project, are withheld from it. Nothing is released until you approve the exact files. The recipient gets only the capsule you deliver.",
   "privacy.reviews.signed": "Your approval is signed with a key you enrolled.",
   "privacy.reviews.unsigned": "No signing key is enrolled: approval needs the typed digest but is not signed.",
   "privacy.web.title": "Searching the web",

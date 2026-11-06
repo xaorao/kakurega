@@ -6,6 +6,8 @@ use sha2::Sha256;
 use std::fs;
 use std::path::Path;
 
+use crate::withhold::Withhold;
+
 pub const MAX_FILE_BYTES: u64 = 2 << 20;
 pub const MAX_FILES: usize = 5000;
 
@@ -37,6 +39,37 @@ pub struct Manifest {
     pub file_count: usize,
 }
 
+/// The owner's withhold list at the top of the project.
+pub const WITHHOLD_FILE: &str = ".kakuignore";
+const WITHHOLD_MAX_BYTES: u64 = 64 * 1024;
+
+/// What the project's `.kakuignore` turned out to be.
+enum ListState {
+    /// There is none.
+    Absent,
+    List(Withhold),
+    /// There is one but it cannot be trusted to say what is private (a link, a folder, too big, not text): everything is
+    /// withheld rather than guessing what the owner meant.
+    Unreadable,
+}
+
+fn load_list(root: &Path) -> ListState {
+    let path = root.join(WITHHOLD_FILE);
+    let Ok(meta) = fs::symlink_metadata(&path) else {
+        return ListState::Absent;
+    };
+    if !meta.is_file() || meta.len() > WITHHOLD_MAX_BYTES {
+        return ListState::Unreadable;
+    }
+    match fs::read(&path) {
+        Ok(bytes) if !bytes.contains(&0) => match String::from_utf8(bytes) {
+            Ok(text) => ListState::List(Withhold::parse(&text)),
+            Err(_) => ListState::Unreadable,
+        },
+        _ => ListState::Unreadable,
+    }
+}
+
 const SECRET_NAMES: &[&str] = &[
     ".env",
     "id_rsa",
@@ -58,7 +91,12 @@ const INJECTION_PHRASES: &[&str] = &[
     "send its entire contents",
 ];
 
-fn classify(path: &str, text: Option<&str>, default_level: Level) -> (Label, Vec<String>) {
+fn classify(
+    path: &str,
+    text: Option<&str>,
+    default_level: Level,
+    list: &ListState,
+) -> (Label, Vec<String>) {
     let mut notes = Vec::new();
     let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
     let mut secret = SECRET_NAMES.iter().any(|n| name == *n)
@@ -84,10 +122,27 @@ fn classify(path: &str, text: Option<&str>, default_level: Level) -> (Label, Vec
             .with_compartment("secrets")
             .untrusted();
     }
+    // what the owner wrote down as private is withheld exactly like a secret file, under its own compartment
+    let owner_note = match list {
+        ListState::List(w) if w.matches(path) => Some("withheld by your .kakuignore"),
+        ListState::Unreadable => {
+            Some("your withhold list could not be read, so everything is withheld")
+        }
+        _ => None,
+    };
+    if let Some(n) = owner_note {
+        notes.push(n.into());
+        label = Label::new(Level::Restricted)
+            .with_compartment("owner-withheld")
+            .untrusted();
+        if secret {
+            label = label.with_compartment("secrets");
+        }
+    }
     (label, notes)
 }
 
-fn walk(root: &Path, dir: &Path, out: &mut Imported, default_level: Level) {
+fn walk(root: &Path, dir: &Path, out: &mut Imported, default_level: Level, list: &ListState) {
     let Ok(rd) = fs::read_dir(dir) else { return };
     let mut entries: Vec<_> = rd.flatten().collect();
     entries.sort_by_key(|e| e.file_name());
@@ -120,13 +175,24 @@ fn walk(root: &Path, dir: &Path, out: &mut Imported, default_level: Level) {
                 });
                 continue;
             }
-            walk(root, &p, out, default_level);
+            walk(root, &p, out, default_level, list);
             continue;
         }
         if !meta.is_file() {
             out.skipped.push(Skipped {
                 path: rel,
                 reason: "not a regular file".into(),
+            });
+            continue;
+        }
+        if rel == WITHHOLD_FILE {
+            out.skipped.push(Skipped {
+                path: rel,
+                reason: if matches!(list, ListState::Unreadable) {
+                    "your withhold list could not be read (everything is withheld)".into()
+                } else {
+                    "your withhold list (never sent)".into()
+                },
             });
             continue;
         }
@@ -166,7 +232,7 @@ fn walk(root: &Path, dir: &Path, out: &mut Imported, default_level: Level) {
             });
             continue;
         }
-        let (label, notes) = classify(&rel, text, default_level);
+        let (label, notes) = classify(&rel, text, default_level, list);
         let sha256 = sha256_hex(&bytes);
         out.files.push(ImportedFile {
             path: rel,
@@ -183,7 +249,8 @@ pub fn scan_tree(root: &Path, default_level: Level) -> Imported {
         files: Vec::new(),
         skipped: Vec::new(),
     };
-    walk(root, root, &mut out, default_level);
+    let list = load_list(root);
+    walk(root, root, &mut out, default_level, &list);
     out
 }
 

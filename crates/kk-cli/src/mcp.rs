@@ -688,7 +688,38 @@ fn cancelled_id(line: &str) -> Option<String> {
     (id.is_string() || id.is_i64() || id.is_u64()).then(|| id.to_string())
 }
 
+/// The options `kaku mcp` knows. Anything else is refused: an option that is misspelled must never quietly leave an agent
+/// with more tools than its owner meant to give.
+const MCP_FLAGS: [&str; 3] = ["--read-only", "--leased", "--allow"];
+
+/// Why the arguments are not acceptable, or None. `--data-dir` and `--allow` each take a value.
+fn unknown_option(args: &[String]) -> Option<String> {
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if a == "--data-dir" || a == "--allow" {
+            let value = args.get(i + 1).map(String::as_str).unwrap_or("");
+            if value.is_empty() || value.starts_with("--") {
+                return Some(format!("{a} needs a value"));
+            }
+            i += 2;
+            continue;
+        }
+        if !MCP_FLAGS.contains(&a) {
+            return Some(format!("unknown option `{a}`"));
+        }
+        i += 1;
+    }
+    None
+}
+
 pub fn run(args: &[String]) -> u8 {
+    if let Some(why) = unknown_option(args) {
+        eprintln!(
+            "{why}\nusage: kaku mcp [--read-only] [--allow TOOL,TOOL] [--leased] [--data-dir DIR]"
+        );
+        return 2;
+    }
     let args: std::sync::Arc<Vec<String>> = std::sync::Arc::new(args.to_vec());
     let mut ctx = Ctx::new(&crate::data_dir(&args))
         .leased(args.iter().any(|a| a == "--leased"))

@@ -1215,3 +1215,51 @@ fn mc33_a_message_without_an_id_runs_nothing_and_is_not_reported() {
         "a notification is not a call"
     );
 }
+
+#[test]
+fn mc34_an_option_the_server_does_not_know_is_refused_so_a_typo_never_widens_what_an_agent_can_do()
+{
+    let dir = fresh("mc34");
+    for bad in [
+        vec!["--read-onyl"],
+        vec!["--readonly"],
+        vec!["--lease"],
+        vec!["--read-only", "--bogus"],
+        vec!["stray"],
+        vec!["--allow"],
+        vec!["--allow", ""],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_kaku"))
+            .args(["mcp", "--data-dir"])
+            .arg(&dir)
+            .args(&bad)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{bad:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(out.stdout.is_empty(), "{bad:?}: nothing is served");
+        assert!(!out.stderr.is_empty(), "{bad:?}: the refusal says why");
+    }
+    // the options that exist still work, alone and together
+    for good in [
+        vec!["--read-only"],
+        vec!["--leased"],
+        vec!["--allow", "overview"],
+        vec![
+            "--leased",
+            "--read-only",
+            "--allow",
+            "overview,start_review",
+        ],
+    ] {
+        let mut s = live_with(&dir, &good);
+        s.send(&ping(json!(1)));
+        assert_eq!(s.recv()["id"], 1, "{good:?}");
+        assert!(s.close().is_empty());
+    }
+}
