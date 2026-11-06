@@ -50,6 +50,12 @@ fn tool(name: &str, title: &str, description: &str, input: Value, output: Value)
     })
 }
 
+/// The SHA-256 of a list of tool definitions as they are written on the wire. Any change to a name, a description or a
+/// schema changes it, so a client that pinned the digest sees a swapped or altered server.
+pub fn catalog_digest(list: &Value) -> String {
+    kk_evidence::capsule::sha256_hex(list.to_string().as_bytes())
+}
+
 pub fn tools() -> Value {
     let error_out = json!({"type": "object", "properties": {"error": {"type": "string"}}, "required": ["error"]});
     let _ = error_out;
@@ -205,6 +211,8 @@ pub struct Ctx {
     allow: Option<Vec<String>>,
     /// The tools that act are listed and callable only while the owner holds a lease for them, and every call spends a use.
     leased: bool,
+    /// The last few verification reports this connection produced, so an agent can hand over a link instead of copying text.
+    reports: std::sync::Mutex<std::collections::VecDeque<(String, &'static str, String)>>,
 }
 
 impl Ctx {
@@ -221,6 +229,7 @@ impl Ctx {
             read_only: false,
             allow: None,
             leased: false,
+            reports: Default::default(),
         }
     }
 
@@ -291,6 +300,35 @@ impl Ctx {
         )
     }
 
+    /// Keeps a verification report and returns the address it can be read from. Keeps eight, newest last; a report over
+    /// 64 KiB gets no address.
+    fn keep_report(&self, tool: &'static str, report: &Value) -> Option<String> {
+        let text = report.to_string();
+        if text.len() > REPORT_MAX_BYTES {
+            return None;
+        }
+        let id: String = kk_evidence::capsule::sha256_hex(text.as_bytes())
+            .chars()
+            .take(16)
+            .collect();
+        let mut q = self.reports.lock().unwrap_or_else(|e| e.into_inner());
+        if !q.iter().any(|(i, _, _)| *i == id) {
+            if q.len() >= REPORT_KEEP {
+                q.pop_front();
+            }
+            q.push_back((id.clone(), tool, text));
+        }
+        Some(format!("{REPORT_PREFIX}{id}"))
+    }
+
+    /// The text of a kept report, if this connection may call the tool that made it.
+    fn report_text(&self, uri: &str) -> Option<(&'static str, String)> {
+        let id = uri.strip_prefix(REPORT_PREFIX)?;
+        let q = self.reports.lock().unwrap_or_else(|e| e.into_inner());
+        let (_, tool, text) = q.iter().find(|(i, _, _)| i == id)?;
+        self.sees(tool).then(|| (*tool, text.clone()))
+    }
+
     fn allows(&self, canonical: &std::path::Path) -> bool {
         self.roots.iter().any(|r| canonical.starts_with(r))
     }
@@ -317,7 +355,20 @@ fn read_small(ctx: &Ctx, path: &str, suffixes: &[&str]) -> Result<Vec<u8>, Strin
 }
 
 fn call(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, name: &str, a: &Value) -> Value {
-    let result = call_unchecked(admin, ctx, name, a);
+    let mut result = call_unchecked(admin, ctx, name, a);
+    // a verification report is handed over as a link to read, never embedded in the result
+    if result["isError"] == false && matches!(name, "verify_capsule" | "verify_log") {
+        let tool: &'static str = if name == "verify_capsule" {
+            "verify_capsule"
+        } else {
+            "verify_log"
+        };
+        if let Some(uri) = ctx.keep_report(tool, &result["structuredContent"]) {
+            if let Some(items) = result["content"].as_array_mut() {
+                items.push(json!({"type": "resource_link", "uri": uri, "name": "verification report", "description": "The full report of this check, as JSON.", "mimeType": "application/json"}));
+            }
+        }
+    }
     // A success reply is only passed on as structured data if it fits the tool's own output schema. The data comes from
     // another process, so a wrong shape is refused here rather than handed to an agent that trusts the schema.
     if result["isError"] == false {
@@ -553,7 +604,7 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
                 Some(_) => return err(-32602, "protocolVersion must be text"),
             };
             ok(
-                json!({"protocolVersion": requested, "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false, "subscribe": false}, "prompts": {"listChanged": false}}, "serverInfo": {"name": "kakurega", "title": "Kakurega", "version": env!("CARGO_PKG_VERSION")}, "instructions": "Counts and statuses only. Source text, memory text and findings are never returned. Approvals happen in a window or terminal the owner controls."}),
+                json!({"protocolVersion": requested, "_meta": {"com.kakurega/catalogDigest": catalog_digest(&tools())}, "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false, "subscribe": false}, "prompts": {"listChanged": false}}, "serverInfo": {"name": "kakurega", "title": "Kakurega", "version": env!("CARGO_PKG_VERSION")}, "instructions": "Counts and statuses only. Source text, memory text and findings are never returned. Approvals happen in a window or terminal the owner controls."}),
             )
         }
         "ping" => ok(json!({})),
@@ -562,7 +613,11 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
             -32602,
             "there is only one page of tools; no cursor is needed",
         ),
-        "tools/list" => ok(json!({"tools": ctx.listed(admin)})),
+        "tools/list" => {
+            let listed = ctx.listed(admin);
+            let meta = json!({"com.kakurega/catalogDigest": catalog_digest(&tools()), "com.kakurega/listedDigest": catalog_digest(&listed)});
+            ok(json!({"tools": listed, "_meta": meta}))
+        }
         "resources/list" | "resources/templates/list" | "prompts/list"
             if msg["params"].get("cursor").is_some_and(|c| !c.is_null()) =>
         {
@@ -575,6 +630,20 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
                 Some(Value::String(u)) => u.as_str(),
                 _ => return err(-32602, "params.uri is required and must be text"),
             };
+            if uri.starts_with(REPORT_PREFIX) {
+                return match ctx.report_text(uri) {
+                    Some((tool, text)) => {
+                        report(admin, tool, "ok");
+                        ok(
+                            json!({"contents": [{"uri": uri, "mimeType": "application/json", "text": text}]}),
+                        )
+                    }
+                    None => {
+                        report(admin, "unknown", "refused");
+                        err(-32002, "resource not found")
+                    }
+                };
+            }
             let Some((tool, args)) = resource_target(ctx, uri) else {
                 // an address that is not exactly a listed resource is never written anywhere
                 report(admin, "unknown", "refused");
@@ -623,6 +692,9 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
 }
 
 const OVERVIEW_URI: &str = "kakurega://overview";
+const REPORT_PREFIX: &str = "kakurega://verification/";
+const REPORT_KEEP: usize = 8;
+const REPORT_MAX_BYTES: usize = 64 * 1024;
 const STATUS_PREFIX: &str = "kakurega://review/";
 const STATUS_SUFFIX: &str = "/status";
 const PROMPT_NAME: &str = "private_review";
@@ -888,6 +960,16 @@ pub(crate) fn parse_allow(list: &str) -> Result<Vec<String>, String> {
 }
 
 pub fn run(args: &[String]) -> u8 {
+    if args.first().map(String::as_str) == Some("--print-catalog-digest") {
+        if args.len() > 1 {
+            eprintln!("--print-catalog-digest takes no other option");
+            return 2;
+        }
+        use std::io::Write;
+        // stdout is the protocol's, so the one value this flag prints is written deliberately
+        let _ = writeln!(std::io::stdout(), "{}", catalog_digest(&tools()));
+        return 0;
+    }
     if args.first().map(String::as_str) == Some("install") {
         return crate::mcp_install::run(&args[1..]);
     }

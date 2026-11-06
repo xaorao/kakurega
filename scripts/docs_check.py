@@ -157,6 +157,8 @@ offered = {x["uri"] for x in ask("resources/list").get("resources", [])}
 offered |= {x["uriTemplate"] for x in ask("resources/templates/list").get("resourceTemplates", [])}
 offered_prompts = {x["name"] for x in ask("prompts/list").get("prompts", [])}
 named = set(re.findall(r"`(kakurega://[^`\s]+)`", mcp))
+# report links are made per result (`kakurega://verification/` and an id); they are not in any list, and the test mc43 proves them
+named = {u for u in named if not u.startswith("kakurega://verification/")}
 for uri in named:
     checked += 1
     template_form = re.sub(r"/job-\d+/", "/{id}/", uri)

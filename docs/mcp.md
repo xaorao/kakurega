@@ -40,6 +40,12 @@ Some clients show resources and prompts to their user instead of letting the mod
 - `kakurega://review/{id}/status` is the same as `review_status` for one review, for example `kakurega://review/job-3/status`. Any other address is "resource not found" and reaches nothing.
 - `private_review` is a prompt with two arguments, `repo` and `recipient`. It lays out the steps (start the review, wait, ask for approval, tell the owner) and says the owner approves, never the agent. It is offered only while all three tools it uses are allowed, so it never walks an agent into a refusal. The two values are inserted as quoted text and must be plain text of reasonable length.
 
+## A tool list you can pin, and report links
+
+`kaku mcp --print-catalog-digest` prints the SHA-256 of the full tool list without serving anything. The same value is in the `initialize` answer (`_meta`, key `com.kakurega/catalogDigest`) and in every `tools/list` answer, next to `com.kakurega/listedDigest`, the digest of exactly the tools that connection was shown. A client that pinned the first value sees any change to a name, a description or a schema, including a swapped program. It proves the list did not change; it does not prove who built the program.
+
+`verify_capsule` and `verify_log` hand over their full report as a `resource_link` (`kakurega://verification/ID`) beside the text, and never embed it. The link is read with `resources/read` on the same connection, which applies the same limits as the tool. The newest eight reports of a connection are kept; older ones read as "resource not found".
+
 ## Limiting what an agent can do
 
 Three switches on `kaku mcp` narrow the tools an agent is offered. They combine, and none of them can widen what another took away.

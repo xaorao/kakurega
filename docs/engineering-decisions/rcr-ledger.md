@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 126, PARTIAL 56, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 9, OWED-L 41. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 128, PARTIAL 56, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 7, OWED-L 41. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -152,10 +152,10 @@ No OWED-H row remains. The medium rows below come next, in order.
 | D-D17 | Structured output and `outputSchema` | IMPROVE now (section 5), then SDK typed outputs. | BUILT | outputSchema on every tool, replies checked against it (conforms) |
 | D-D18 | Annotations | KEEP; add a test that ties each annotation to behaviour. | BUILT | readOnlyHint and friends follow MUTATING (mcp_tools.golden.json) |
 | D-D19 | Tool execution errors | KEEP; whitelist the forwarded message set instead of passing `v["error"]["message"]` throu | PARTIAL | errors are tool errors with a message; forwarded text not whitelisted |
-| D-D20 | Catalog stability and rug-pull defence | IMPROVE: expose a catalog digest in `server/discover` `_meta` (`com.kakurega/catalogDigest | OWED-M | no catalog digest exposed; the golden file guards drift in CI only |
+| D-D20 | Catalog stability and rug-pull defence | IMPROVE: expose a catalog digest in `server/discover` `_meta` (`com.kakurega/catalogDigest | BUILT | catalog digest in initialize and tools/list _meta and `kaku mcp --print-catalog-digest`; listed digest for filtered lists (mc42) |
 | D-D21 | Tool profiles and allowlists | BUILD: `kaku mcp --profile observer` (overview, list, status, verify), `--profile reviewer | BUILT | --read-only, --allow and --leased (mc06, mc15-mc17, mc22-mc29) |
 | D-D22 | New tools: a path for every safe capability | BUILD in tiers. | LATER | tiers exist; more tools when worker loop arrives |
-| D-D23 | `resource_link` and embedded resources in results | BUILD: return `resource_link` for verification reports and capsule files, never embedded c | OWED-M | no resource links in results |
+| D-D23 | `resource_link` and embedded resources in results | BUILD: return `resource_link` for verification reports and capsule files, never embedded c | BUILT | verify_capsule and verify_log hand over resource_link to a kept report, never embedded; read through resources/read, newest eight kept (mc43, mc44) |
 | D-D24 | Resources (list, read) | BUILD under a custom scheme `kakurega://` with read-only resources: `kakurega://overview`, | BUILT | `kakurega://overview` resource, gated like the tool, audited as `overview` (mc35-41, live 51/51) |
 | D-D25 | Resource templates | BUILD with D24: `kakurega://review/{id}/status`. | BUILT | `kakurega://review/{id}/status` template; only the exact shape resolves (mc38, 17 hostile addresses) |
 | D-D26 | Prompts | BUILD static prompts, no data: `private_review` (walks through start, wait, request approv | BUILT | `private_review` prompt, offered only while its three tools are allowed, values quoted (mc40, mc39) |

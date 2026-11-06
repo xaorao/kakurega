@@ -85,6 +85,9 @@ try:
     server = json.loads(printed.stdout)["mcpServers"]["kakurega"]
     ro = subprocess.run([server["command"], *server["args"]], input=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}) + "\n", capture_output=True, text=True, timeout=30)
     ro_names = [t["name"] for t in json.loads(ro.stdout.splitlines()[0])["result"]["tools"]]
+    digest = subprocess.run([kaku, "mcp", "--print-catalog-digest"], capture_output=True, text=True).stdout.strip()
+    init = rpc("initialize", {})["result"]
+    check("the tool list digest printed by the program is the one the server announces", len(digest) == 64 and init["_meta"]["com.kakurega/catalogDigest"] == digest, digest)
     check("the command that `kaku mcp install --print` prints starts a server with the limit it was given", printed.returncode == 0 and "start_review" not in ro_names and "overview" in ro_names, str(ro_names))
     started = tool("start_review", repo=str(work / "root/payments-service"), recipient="mcp-agent")
     check("an agent can start a review", started["isError"] is False and started["structuredContent"]["id"].startswith("job-"))

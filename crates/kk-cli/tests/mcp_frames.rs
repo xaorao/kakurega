@@ -1656,3 +1656,295 @@ fn mc41_a_resource_that_cannot_be_produced_is_an_error_and_every_read_is_audited
         "{all}"
     );
 }
+
+fn sha256_of(text: &str) -> String {
+    kk_evidence::capsule::sha256_hex(text.as_bytes())
+}
+
+#[test]
+fn mc42_the_tool_list_has_a_digest_a_client_can_pin_and_it_is_the_same_everywhere_it_is_shown() {
+    let dir = fresh("mc42");
+    let mut s = live(&dir);
+    s.send(&rpc(1, "initialize", json!({})));
+    let init = s.recv();
+    let key = "com.kakurega/catalogDigest";
+    let digest = init["result"]["_meta"][key]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert_eq!(digest.len(), 64, "{init}");
+    assert!(digest.bytes().all(|b| b.is_ascii_hexdigit()));
+    s.send(&rpc(2, "tools/list", json!({})));
+    let list = s.recv();
+    // the digest in the list is the digest of exactly the tools listed
+    let listed = list["result"]["tools"].to_string();
+    assert_eq!(
+        list["result"]["_meta"]["com.kakurega/listedDigest"],
+        sha256_of(&listed)
+    );
+    // with every tool allowed, what is listed is the whole catalog
+    assert_eq!(list["result"]["_meta"][key], digest.as_str());
+    assert_eq!(
+        list["result"]["_meta"]["com.kakurega/listedDigest"],
+        digest.as_str(),
+        "nothing hidden: listed equals catalog"
+    );
+    assert!(s.close().is_empty());
+    // the same program prints it without serving, and a second start gives the same one
+    let printed = Command::new(env!("CARGO_BIN_EXE_kaku"))
+        .args(["mcp", "--print-catalog-digest"])
+        .output()
+        .unwrap();
+    assert!(
+        printed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&printed.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&printed.stdout).trim(), digest);
+    let mut again = live(&fresh("mc42b"));
+    again.send(&rpc(1, "initialize", json!({})));
+    assert_eq!(
+        again.recv()["result"]["_meta"][key],
+        digest.as_str(),
+        "stable across starts"
+    );
+    assert!(again.close().is_empty());
+    // a connection that is shown fewer tools says so: the full-catalog digest stays, the listed digest differs
+    let mut ro = live_with(&fresh("mc42c"), &["--read-only"]);
+    ro.send(&rpc(1, "initialize", json!({})));
+    assert_eq!(ro.recv()["result"]["_meta"][key], digest.as_str());
+    ro.send(&rpc(2, "tools/list", json!({})));
+    let l = ro.recv();
+    assert_eq!(
+        l["result"]["_meta"]["com.kakurega/listedDigest"],
+        sha256_of(&l["result"]["tools"].to_string())
+    );
+    assert_ne!(
+        l["result"]["_meta"]["com.kakurega/listedDigest"],
+        digest.as_str()
+    );
+    assert!(ro.close().is_empty());
+    // the flag takes nothing else, and nothing is printed to a mistyped one
+    let bad = Command::new(env!("CARGO_BIN_EXE_kaku"))
+        .args(["mcp", "--print-catalog-digest", "--read-only"])
+        .output()
+        .unwrap();
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(bad.stdout.is_empty());
+}
+
+/// A real signed log export with `n` events, written into `dir` as `name`.
+fn write_log(dir: &Path, name: &str, n: i64) {
+    use kk_eventlog::{Datum, EventLog};
+    use kk_vault::{Vault, VaultKey};
+    let db = dir.join(format!("{name}.db"));
+    let _ = std::fs::remove_file(&db);
+    let log = EventLog::open(
+        Vault::create(&db, &VaultKey::from_bytes([4; 32])).unwrap(),
+        [7; 32],
+    )
+    .unwrap();
+    for i in 0..n {
+        log.append(
+            100 + i,
+            "job.finished",
+            &format!("job-{i}"),
+            &[("findings", Datum::Int(i))],
+        )
+        .unwrap();
+    }
+    std::fs::write(dir.join(name), log.export().unwrap()).unwrap();
+    let _ = std::fs::remove_file(&db);
+}
+
+fn live_in(data: &Path, cwd: &Path, extra: &[&str]) -> Live {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kaku"))
+        .current_dir(cwd)
+        .args(["mcp", "--data-dir"])
+        .arg(data)
+        .args(extra)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.take().unwrap();
+    let out = child.stdout.take().unwrap();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(out).lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    Live { child, stdin, rx }
+}
+
+#[test]
+fn mc43_a_verification_report_is_handed_over_as_a_link_that_is_read_through_the_gated_door_and_never_embedded(
+) {
+    let dir = fresh("mc43");
+    let work = fresh("mc43w").canonicalize().unwrap();
+    for n in 1..=10 {
+        write_log(&work, &format!("log{n}.json"), n);
+    }
+    std::fs::write(work.join("junk.json"), "not a log").unwrap();
+    let mut s = live_in(&dir, &work, &[]);
+    let verify = |s: &mut Live, id: u32, file: &str| {
+        s.send(&call(
+            id,
+            "verify_log",
+            json!({"path": work.join(file).to_string_lossy()}),
+        ));
+        s.recv()["result"].clone()
+    };
+    let first = verify(&mut s, 1, "log1.json");
+    assert_eq!(first["isError"], false, "{first}");
+    let types: Vec<&str> = first["content"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(types, ["text", "resource_link"], "{first}");
+    assert!(
+        !first.to_string().contains("\"type\":\"resource\""),
+        "never embedded"
+    );
+    let link = first["content"][1]["uri"].as_str().unwrap().to_string();
+    assert!(
+        link.starts_with("kakurega://verification/")
+            && link.len() == "kakurega://verification/".len() + 16,
+        "{link}"
+    );
+    assert_eq!(first["content"][1]["mimeType"], "application/json");
+    // reading it gives exactly the structured report
+    s.send(&rpc(2, "resources/read", json!({"uri": link})));
+    let read = s.recv();
+    let got: Value =
+        serde_json::from_str(read["result"]["contents"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(got, first["structuredContent"], "{read}");
+    assert_eq!(
+        read["result"]["contents"][0]["mimeType"],
+        "application/json"
+    );
+    // the same report has the same address; a different one has another
+    let again = verify(&mut s, 3, "log1.json");
+    assert_eq!(again["content"][1]["uri"].as_str().unwrap(), link);
+    let other = verify(&mut s, 4, "log2.json");
+    assert_ne!(other["content"][1]["uri"].as_str().unwrap(), link);
+    // a failure carries no link
+    // a file that is not a log is a report that says so (and has a link like any report); a missing file is an error
+    let junk = verify(&mut s, 6, "junk.json");
+    assert_eq!(junk["isError"], false);
+    assert_eq!(junk["structuredContent"]["valid"], false, "{junk}");
+    assert_eq!(junk["content"][1]["type"], "resource_link");
+    let bad = verify(&mut s, 5, "missing.json");
+    assert_eq!(bad["isError"], true);
+    assert!(
+        bad["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["type"] == "text"),
+        "{bad}"
+    );
+    // only the newest eight are kept
+    for n in 3..=10 {
+        verify(&mut s, 10 + n as u32, &format!("log{n}.json"));
+    }
+    s.send(&rpc(30, "resources/read", json!({"uri": link})));
+    assert_eq!(
+        s.recv()["error"]["code"],
+        -32002,
+        "the oldest report was let go"
+    );
+    let last = verify(&mut s, 31, "log10.json");
+    s.send(&rpc(
+        32,
+        "resources/read",
+        json!({"uri": last["content"][1]["uri"]}),
+    ));
+    assert!(s.recv()["result"]["contents"].is_array());
+    // odd addresses are not found and reach nothing
+    for uri in [
+        "kakurega://verification/",
+        "kakurega://verification/0123456789abcdef0",
+        "kakurega://verification/0123456789ABCDEF",
+        "kakurega://verification/../overview",
+        "kakurega://verification/0123456789abcdeg",
+        "kakurega://verification/0123456789abcdef/x",
+    ] {
+        s.send(&rpc(40, "resources/read", json!({"uri": uri})));
+        assert_eq!(s.recv()["error"]["code"], -32002, "{uri}");
+    }
+    assert!(s.close().is_empty());
+    // a connection that cannot call the tool cannot read what it made, and another connection never sees this one's reports
+    let mut other_conn = live_in(&dir, &work, &[]);
+    other_conn.send(&rpc(1, "resources/read", json!({"uri": link})));
+    assert_eq!(other_conn.recv()["error"]["code"], -32002);
+    assert!(other_conn.close().is_empty());
+}
+
+#[test]
+fn mc44_the_same_report_does_not_crowd_out_others_and_reading_a_link_is_recorded_as_the_tool_that_made_it(
+) {
+    let dir = fresh("mc44");
+    let work = fresh("mc44w").canonicalize().unwrap();
+    for n in 1..=2 {
+        write_log(&work, &format!("log{n}.json"), n);
+    }
+    let (admin, bodies) = audit_admin("tok-44", 200);
+    admin.publish(&dir);
+    let mut s = live_in(&dir, &work, &[]);
+    let verify = |s: &mut Live, id: u32, file: &str| {
+        s.send(&call(
+            id,
+            "verify_log",
+            json!({"path": work.join(file).to_string_lossy()}),
+        ));
+        s.recv()["result"].clone()
+    };
+    let one = verify(&mut s, 1, "log1.json")["content"][1]["uri"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for i in 0..12 {
+        verify(&mut s, 10 + i, "log2.json");
+    }
+    s.send(&rpc(50, "resources/read", json!({"uri": one})));
+    assert!(
+        s.recv()["result"]["contents"].is_array(),
+        "a report asked for again twelve times did not push the first one out"
+    );
+    s.send(&rpc(
+        51,
+        "resources/read",
+        json!({"uri": "kakurega://verification/0123456789abcdef"}),
+    ));
+    assert_eq!(s.recv()["error"]["code"], -32002);
+    assert!(s.close().is_empty());
+    let got: Vec<(String, String)> = bodies
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|b| {
+            (
+                b["tool"].as_str().unwrap_or("?").to_string(),
+                b["outcome"].as_str().unwrap_or("?").to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(got.len(), 15, "{got:?}");
+    assert_eq!(
+        got[13],
+        ("verify_log".to_string(), "ok".to_string()),
+        "the read of a link is recorded as its tool: {got:?}"
+    );
+    assert_eq!(got[14], ("unknown".to_string(), "refused".to_string()));
+    let all = serde_json::to_string(&*bodies.lock().unwrap()).unwrap();
+    assert!(
+        !all.contains("kakurega://") && !all.contains("log1.json"),
+        "no address or path in the record"
+    );
+}
