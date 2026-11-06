@@ -192,6 +192,11 @@ try:
     check("the status line says the service is ready", wait_for(r"ready", 30) is not None)
     send("/help\r")
     check("/help lists the commands", wait_for(r"/review FOLDER for RECIPIENT") is not None)
+    send("/review payments-s\t")
+    _ok = wait_for(r"/review payments-service/", 15) is not None
+    check("Tab after /review completes the folder from the service's listing", _ok, screen_text()[-700:].replace("\n", " | "))
+    send("\x1b")
+    pump(0.3)
     send("/revi\t")
     pump(0.5)
     send(" payments-service for acme-audit\r")

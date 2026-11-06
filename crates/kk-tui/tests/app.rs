@@ -3345,3 +3345,113 @@ fn tu51_a_finished_review_asks_for_one_bell_and_a_title_that_names_nothing_of_th
     running.handle(ok(&r[0], 202, json!({"id": "job-4"})));
     assert!(running.attention.is_none() && running.waiting.is_none());
 }
+
+fn tab_and_ask(app: &mut App) -> Option<Req> {
+    app.handle(key(KeyCode::Tab));
+    app.drain_background()
+        .into_iter()
+        .find(|r| r.path.starts_with("/api/fs"))
+}
+
+fn dirs(names: &[&str]) -> Value {
+    json!({"path": "/home/u/projects", "parent": null, "dirs": names.iter().map(|n| json!({"name": n, "path": format!("/home/u/projects/{n}")})).collect::<Vec<_>>()})
+}
+
+#[test]
+fn tu52_tab_after_review_finishes_the_folder_from_the_services_listing_of_allowed_folders() {
+    let mut app = booted();
+    typed(&mut app, "/review pay");
+    let r = tab_and_ask(&mut app).expect("asks the service");
+    assert_eq!(
+        r.path, "/api/fs?path=/home/u/projects/",
+        "the service's root, not this terminal's folder"
+    );
+    app.handle(ok(
+        &r,
+        200,
+        dirs(&["payments", "web", "Pay-docs", "toppay"]),
+    ));
+    assert_eq!(
+        app.input, "/review pay",
+        "two matches that share no more than what is typed change nothing"
+    );
+    assert!(
+        text(&app).contains("Pay-docs/")
+            && text(&app).contains("payments/")
+            && !text(&app).contains("web/")
+            && !text(&app).contains("toppay")
+    );
+    // one match completes and ends with a slash so the next level can be asked for
+    let mut app = booted();
+    typed(&mut app, "/review we");
+    let r = tab_and_ask(&mut app).unwrap();
+    app.handle(ok(&r, 200, dirs(&["payments", "web"])));
+    assert_eq!(app.input, "/review web/");
+    // a shared start is filled in
+    let mut app = booted();
+    typed(&mut app, "/review p");
+    let r = tab_and_ask(&mut app).unwrap();
+    app.handle(ok(&r, 200, dirs(&["payments-api", "payments-web"])));
+    assert_eq!(app.input, "/review payments-");
+    // deeper levels ask for that folder
+    let mut app = booted();
+    typed(&mut app, "/review ./payments-api/s");
+    let r = tab_and_ask(&mut app).unwrap();
+    assert_eq!(r.path, "/api/fs?path=/home/u/projects/payments-api/");
+    app.handle(ok(&r, 200, dirs(&["src", "scripts"])));
+    assert_eq!(app.input, "/review ./payments-api/s");
+    let mut app = booted();
+    typed(&mut app, "/review /home/u/projects/payments-api/sr");
+    let r = tab_and_ask(&mut app).unwrap();
+    assert_eq!(r.path, "/api/fs?path=/home/u/projects/payments-api/");
+    app.handle(ok(&r, 200, dirs(&["src"])));
+    assert_eq!(app.input, "/review /home/u/projects/payments-api/src/");
+}
+
+#[test]
+fn tu53_path_completion_is_asked_only_where_it_makes_sense_and_hostile_answers_change_nothing() {
+    // not after /review's folder is finished, not for other commands, not for odd spacing
+    for line in ["/review a for acme", "/ask pa", "pa", "/review  pa"] {
+        let mut app = booted();
+        typed(&mut app, line);
+        assert!(tab_and_ask(&mut app).is_none(), "{line:?}");
+    }
+    // names with spaces or control characters are never offered
+    let mut app = booted();
+    typed(&mut app, "/review a");
+    let r = tab_and_ask(&mut app).unwrap();
+    app.handle(ok(&r, 200, dirs(&["a b", "a\u{1b}[2J", "a\ttab", "a-ok"])));
+    assert_eq!(app.input, "/review a-ok/");
+    // an answer that arrives after the line changed is dropped
+    let mut app = booted();
+    typed(&mut app, "/review a");
+    let r = tab_and_ask(&mut app).unwrap();
+    typed(&mut app, "x");
+    app.handle(ok(&r, 200, dirs(&["abc"])));
+    assert_eq!(app.input, "/review ax");
+    // a refusal or a failure changes nothing and says nothing
+    let mut app = booted();
+    typed(&mut app, "/review ../../etc/");
+    let r = tab_and_ask(&mut app).unwrap();
+    let before = text(&app);
+    app.handle(ok(
+        &r,
+        403,
+        json!({"error": {"code": "NOT_ALLOWED", "message": "that folder is not available"}}),
+    ));
+    assert_eq!(app.input, "/review ../../etc/");
+    assert_eq!(text(&app), before);
+    // characters that could add a query parameter are encoded
+    let mut app = booted();
+    typed(&mut app, "/review x&path=/etc/");
+    let r = tab_and_ask(&mut app).unwrap();
+    assert!(
+        !r.path.contains('&') && r.path.contains("%26"),
+        "{}",
+        r.path
+    );
+    // no roots known yet: nothing to ask
+    let mut fresh = App::new();
+    typed(&mut fresh, "/review pa");
+    assert!(tab_and_ask(&mut fresh).is_none());
+}

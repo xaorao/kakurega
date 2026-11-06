@@ -648,6 +648,25 @@ fn sv03_folders_outside_the_allowed_roots_are_refused() {
     assert_eq!(code, 400, "a symlink out of the root is refused");
     assert_eq!(w.get(&format!("/api/fs?path={}", "/etc")).0, 403);
     assert_eq!(w.get("/api/fs").0, 200);
+    // the listing the terminal completes folders from never offers the link out of the root, nor a hidden folder
+    std::fs::create_dir_all(root.join(".hidden")).unwrap();
+    std::fs::create_dir_all(root.join("plain")).unwrap();
+    let (_, listing) = w.get("/api/fs");
+    let names: Vec<&str> = listing["dirs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|d| d["name"].as_str())
+        .collect();
+    assert!(
+        names.contains(&"plain") && !names.contains(&"escape") && !names.contains(&".hidden"),
+        "{names:?}"
+    );
+    assert_eq!(
+        w.get(&format!("/api/fs?path={}", link.display())).0,
+        403,
+        "listing through the link is refused too"
+    );
     let (code, _) = w.post(
         "/api/jobs",
         json!({"repo": repo.to_string_lossy(), "recipient": ""}),

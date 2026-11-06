@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 135, PARTIAL 83, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 14. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 135, PARTIAL 84, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 13. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -394,7 +394,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | A-A15 | Slash command registry | see the section in matrix A | BUILT | slash command registry (cmd.rs) |
 | A-A16 | Completion popup and argument completion | see the section in matrix A | PARTIAL | command completion list (30eec04); no argument completion |
 | A-A17 | @-mentions and file references | see the section in matrix A | EXCLUDED | no @ references for now: the service must resolve files (matrix A fixed constraint) |
-| A-A18 | Path and directory completion | see the section in matrix A | OWED-L | no path completion |
+| A-A18 | Path and directory completion | see the section in matrix A | PARTIAL | Tab after /review completes folders from /api/fs (service view, prefix, safe names, encoded, stale-proof); pty-verified; OpenCode directory-completion not read, other commands not covered (terminal-transcript.md) |
 | A-A19 | Multi-line composer and editing quality | see the section in matrix A | BUILT | multi-line composer (7d5a796) |
 | A-A20 | External editor for drafts | see the section in matrix A | BUILT | Ctrl-G external editor (afb6ec0, c8c148e) |
 | A-A21 | Paste handling | see the section in matrix A | BUILT | folded pastes |

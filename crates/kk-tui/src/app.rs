@@ -113,6 +113,12 @@ enum Intent {
     ForgetChat(String),
     Readiness,
     Jobs,
+    /// Folder names asked for to finish the folder being typed after /review: the line as it was and the part typed so far.
+    PathComplete {
+        line: String,
+        head: String,
+        partial: String,
+    },
     StartReview,
     Poll(String),
     Findings,
@@ -238,6 +244,8 @@ pub struct App {
     pub editor_request: Option<String>,
     /// Text the owner agreed to put on the system clipboard; the screen loop writes the clipboard sequence for it.
     pub clipboard_request: Option<String>,
+    /// Set by Tab after /review: the folder to list, the line it was asked for, what comes before the last name, the part typed.
+    path_request: Option<(String, String, String, String)>,
     /// Set when a review finished or stopped; the screen loop takes it and rings the bell once.
     pub attention: Option<crate::attention::Attention>,
     /// What the terminal last said about focus; unknown until it says.
@@ -260,6 +268,19 @@ pub struct App {
     pub search_hits: Vec<String>,
     /// Pages the owner approved in this conversation: (page id, address). They go to the model as untrusted sources.
     pub web_pages: Vec<(String, String)>,
+}
+
+/// A path as a query value: everything but letters, digits and `-_.~/` becomes %XX, so no folder name can add a parameter.
+pub fn percent_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~' | b'/') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }
 
 pub fn clean(s: &str) -> String {
@@ -332,6 +353,7 @@ impl App {
             approver: None,
             editor_request: None,
             clipboard_request: None,
+            path_request: None,
             attention: None,
             focused: None,
             waiting: None,
@@ -415,6 +437,19 @@ impl App {
                 None,
             ));
         }
+        if let Some((dir, line, head, partial)) = self.path_request.take() {
+            out.push(self.req(
+                Intent::PathComplete {
+                    line,
+                    head,
+                    partial,
+                },
+                false,
+                Method::Get,
+                &format!("/api/fs?path={}", percent_encode(&dir)),
+                None,
+            ));
+        }
         for line in std::mem::take(&mut self.history_to_save) {
             out.push(self.req(
                 Intent::HistorySave,
@@ -425,6 +460,32 @@ impl App {
             ));
         }
         out
+    }
+
+    /// What to ask the service when Tab is pressed while the folder after /review is being typed: the folder to list, the line
+    /// as it is, the text that stays in front of the last name, and the part of the name typed so far. The listing is always
+    /// the service's own view of its allowed folders, never this terminal's working directory.
+    fn folder_request(&self) -> Option<(String, String, String, String)> {
+        let rest = self.input.strip_prefix("/review ")?;
+        if rest.contains(" for ") || rest.trim_start() != rest {
+            return None;
+        }
+        let root = self.roots.first()?.trim_end_matches('/').to_string();
+        let (head, partial) = match rest.rfind('/') {
+            Some(i) => (&rest[..=i], &rest[i + 1..]),
+            None => ("", rest),
+        };
+        let dir = if head.starts_with('/') {
+            head.to_string()
+        } else {
+            format!("{root}/{}", head.trim_start_matches("./"))
+        };
+        Some((
+            dir,
+            self.input.clone(),
+            format!("/review {head}"),
+            partial.to_string(),
+        ))
     }
 
     /// The command names to offer while the first word of the line is being typed.
@@ -1132,6 +1193,8 @@ impl App {
                 if let Some(c) = cmd::complete(&self.input) {
                     self.input = c;
                     self.cursor = self.input.chars().count();
+                } else {
+                    self.path_request = self.folder_request();
                 }
             }
             KeyCode::Esc => {
@@ -2142,6 +2205,66 @@ impl App {
                         }),
                         checks,
                     );
+                }
+                Vec::new()
+            }
+            Intent::PathComplete {
+                line,
+                head,
+                partial,
+            } => {
+                if !ok || self.input != line {
+                    return Vec::new();
+                }
+                let want = partial.to_ascii_lowercase();
+                let mut names: Vec<String> = body["dirs"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|d| d["name"].as_str())
+                            .filter(|n| {
+                                !n.is_empty()
+                                    && clean(n) == *n
+                                    && !n.chars().any(char::is_whitespace)
+                                    && n.to_ascii_lowercase().starts_with(&want)
+                            })
+                            .map(String::from)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                names.sort();
+                match names.as_slice() {
+                    [] => {}
+                    [one] => {
+                        self.input = format!("{head}{one}/");
+                        self.cursor = self.input.chars().count();
+                    }
+                    many => {
+                        let first = &many[0];
+                        let mut common = first.chars().count();
+                        for m in many {
+                            common = common.min(
+                                first
+                                    .chars()
+                                    .zip(m.chars())
+                                    .take_while(|(a, b)| a.eq_ignore_ascii_case(b))
+                                    .count(),
+                            );
+                        }
+                        if common > partial.chars().count() {
+                            let stem: String = first.chars().take(common).collect();
+                            self.input = format!("{head}{stem}");
+                            self.cursor = self.input.chars().count();
+                        }
+                        let shown: Vec<String> =
+                            many.iter().take(12).map(|n| format!("{n}/")).collect();
+                        let more = many.len().saturating_sub(12);
+                        let mut lines = vec![shown.join("  ")];
+                        if more > 0 {
+                            lines.push(format!("and {more} more"));
+                        }
+                        self.push(Kind::Info, Some("Folders"), lines);
+                    }
                 }
                 Vec::new()
             }
