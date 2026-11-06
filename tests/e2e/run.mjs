@@ -319,6 +319,16 @@ try {
   await sugg.waitFor();
   check("the review's two suggestions are shown, flagged untrusted", (await sugg.locator("li").count()) === 2 && (await sugg.getByText("from untrusted content").count()) === 2);
   await axeCheck(page, "findings tab with suggested memories");
+  // one proposed fix is shown with a controlled one-line replacement, to see which words are marked
+  await page.route(/\/api\/jobs\/[^/]+\/fixes$/, async (route) => {
+    const real = await route.fetch();
+    const body = await real.json();
+    if (body.fixes?.[1]) body.fixes[1].diff = "--- a/m.py\n+++ b/m.py\n@@ -7,2 +7,2 @@\n     keep = 1\n-    return a == b\n+    return a != b\n";
+    await route.fulfill({ response: real, body: JSON.stringify(body) });
+  });
+  await page.reload();
+  await page.waitForLoadState("load");
+  await page.getByRole("tab", { name: "Findings" }).click();
   // proposed fixes: kept for the owner, one accepted by the reproducer and one refused, applied only after a second confirmation
   const fixesCard = page.getByRole("region", { name: "Proposed fixes" });
   await fixesCard.waitFor();
@@ -328,6 +338,15 @@ try {
   const diffBox = fixesCard.locator("pre.diff").first();
   check("the change is shown as a readable diff with signs, line numbers and the removed and added lines marked", (await diffBox.locator(".dl.add").count()) >= 1 && (await diffBox.locator(".dl.del").count()) >= 1 && (await diffBox.locator(".dl.add .sign").first().innerText()) === "+" && (await diffBox.locator(".dl.del .sign").first().innerText()) === "-" && (await diffBox.innerText()).includes("ACTIVE_TOKENS.pop(token, None)") && /\d/.test(await diffBox.locator(".dl.del .ln").first().innerText()));
   await axeCheck(page, "fix diff open");
+  await fixesCard.locator("details").nth(1).locator("summary").click();
+  const swapped = fixesCard.locator("pre.diff").nth(1);
+  const delMarks = await swapped.locator(".dl.del mark.chg").allInnerTexts();
+  const addMarks = await swapped.locator(".dl.add mark.chg").allInnerTexts();
+  check("a replaced line has exactly its changed words marked on the removed and the added side", JSON.stringify(delMarks) === '["=="]' && JSON.stringify(addMarks) === '["!="]', JSON.stringify([delMarks, addMarks]));
+  check("marks are underlined and bold, so they show without colour", await swapped.locator("mark.chg").first().evaluate((el) => { const c = getComputedStyle(el); return c.textDecorationLine.includes("underline") && Number(c.fontWeight) >= 700; }));
+  check("the marked lines still read as the same text and the context line has no marks", (await swapped.locator(".dl.del").innerText()).includes("return a == b") && (await swapped.locator(".dl.add").innerText()).includes("return a != b") && (await swapped.locator(".dl.ctx mark.chg").count()) === 0);
+  await axeCheck(page, "fix diff with marked words");
+  await page.unroute(/\/api\/jobs\/[^/]+\/fixes$/);
   check("only the accepted fix offers Apply", (await fixesCard.getByRole("button", { name: /^Apply to/ }).count()) === 1);
   await axeCheck(page, "findings tab with proposed fixes");
   await page.screenshot({ path: join(shots, "15-fixes.png"), fullPage: true });
