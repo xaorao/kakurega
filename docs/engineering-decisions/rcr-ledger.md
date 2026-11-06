@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 134, PARTIAL 73, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 25. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 134, PARTIAL 74, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 24. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -222,7 +222,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | E-C6 | Running tests and linters safely | BUILD: test/lint runner in `kk-sandbox`, no network, project read-only, scratch writable,  | BUILT | in the sandbox, no network |
 | E-C7 | Language coverage | BUILD closure per language (start JS/TS and Rust); ast-grep (MIT, per project standard) fo | PARTIAL | Python and JavaScript; TypeScript and Rust owed |
 | E-C8 | Withheld-file handling | keep | KEPT | withheld files never leave |
-| E-C9 | Error messages that quote file text | ADAPT the rule: any hint quoting source goes through the label check for the viewer | OWED-L | hint text that quotes source has not been audited against the label check: NOT VERIFIED |
+| E-C9 | Error messages that quote file text | ADAPT the rule: any hint quoting source goes through the label check for the viewer | PARTIAL | audit found no message quoting source or program output beyond a validated package name; name-based guard script added to scripts/test; OpenCode edit.ts block read (fix-format.md) |
 | E-C10 | Diff review UX | IMPROVE: real unified diff with context using `similar` (Apache-2.0, add to NOTICE); side- | BUILT | fix diff viewer (row 19) |
 | E-C11 | Permission gating of edits | keep; explicitly do NOT adopt a second rule engine (policy stays in `kk-policy`) | KEPT | one policy engine |
 | E-C12 | Repo mapping / context building | Study before deciding; candidate: tree-sitter symbol map built locally, labelled per file | LATER | study before deciding |

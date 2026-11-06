@@ -5,6 +5,8 @@ python3 scripts/scan_secrets.py --selftest
 python3 scripts/scan_secrets.py
 python3 scripts/check_layers.py --selftest
 python3 scripts/check_layers.py
+python3 scripts/check_error_text.py --selftest
+python3 scripts/check_error_text.py
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace

@@ -21,3 +21,9 @@
 
 ## Not covered
 - Hunks in a file larger than the span bound, files that are not UTF-8, deleting or creating files, renaming. The model's choice of hunks is not judged, only that they apply exactly.
+
+## Error text that could quote source (ledger E-C9)
+- Reference: OpenCode `packages/core/src/tool/plugin/edit.ts` (fe04656, MIT), lines 290-345 of 368 read by me (the not-found, many-matches and no-change failures): a "miss hint" that shows file contents is produced only when reading that file is already permitted, and the other failure messages quote the path and counts, never file text.
+- Audit of ours (VERIFIED by reading and by a scan): the only message that carries anything derived from program output is `missing_package` (check.rs), which accepts a Python module or an npm package name only after a character-by-character test and repeats only the top segment (test c23). The edit and fix failures (`CouldNotApply` and the test-run summaries) are fixed words and counts. No `format!`, `write!`, `println!`, `panic!` or `anyhow!` in `kk-review`, `kk-worker`, `kk-sandbox`, `kk-run` or `kk-kernel` interpolates a variable named stdout, stderr, output, content, text, source, body, snippet or diff.
+- Guard added: `scripts/check_error_text.py` (with a self-test that finds four planted violations and passes four clean lines) runs in `scripts/test` and fails if such an interpolation ever appears, unless it is named in ALLOWED with a reason. It is a name-based scan, so a variable with another name would pass; the label check on what a viewer may see stays the real control.
+- Not covered: messages in `kk-service` and the web page that show findings or reproducer output to the owner (these are shown to the owner, who may see their own files; the release path to a recipient is governed by the disclosure pipeline, not by this scan).
