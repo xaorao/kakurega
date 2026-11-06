@@ -1,6 +1,7 @@
 import { againPoint, editPoint, type BranchPoint } from "../branching";
+import { fileNotes, room, sizeText, MAX_BYTES } from "../attach";
 import { batch, createEffect, createResource, createSignal, For, on, onCleanup, Show } from "solid-js";
-import { api, ApiError, streamChat, type ChatHit, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
+import { api, ApiError, streamChat, type AttachmentRead, type AttachmentSummary, type ChatHit, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
 import { t } from "../i18n";
 import { Markdown } from "../components/Markdown";
 import { HistoryPicker } from "../components/HistoryPicker";
@@ -8,6 +9,7 @@ import { draftKey, exchangeWasSaved, opensHistoryPicker, forgetDraft, forgetSent
 import { meterLine, noteNotes, pageNotes, savedLine, summaryNotes } from "../meter";
 
 interface Shown extends ChatTurn {
+  attached?: string[];
   foot?: string[];
   notes?: { id: string; text: string; why: string; untrusted: boolean; project?: string | null }[];
 }
@@ -48,6 +50,65 @@ export function Chat() {
   const [suggested, setSuggested] = createSignal<{ id: string; text: string; why: string; untrusted: boolean }[]>([]);
   const [notesBusy, setNotesBusy] = createSignal(false);
   const [notesInfo, setNotesInfo] = createSignal("");
+  // Files attached to the message being written: read on this computer, held in memory, sent with the next message.
+  const [files, setFiles] = createSignal<AttachmentSummary[]>([]);
+  const [fileInfo, setFileInfo] = createSignal("");
+  const [reading, setReading] = createSignal("");
+  const [shown, setShown] = createSignal<Record<string, AttachmentRead | "loading">>({});
+  const [dragging, setDragging] = createSignal(false);
+  let picker: HTMLInputElement | undefined;
+  const addFiles = async (incoming: File[]) => {
+    if (incoming.length === 0) return;
+    const { take, over } = room(files().length, incoming);
+    const problems: string[] = over > 0 ? [t("files.tooMany", { n: over })] : [];
+    for (const f of take) {
+      if (f.size > MAX_BYTES) {
+        problems.push(t("files.tooBig", { name: f.name, max: sizeText(MAX_BYTES) }));
+        continue;
+      }
+      setReading(t("files.reading", { name: f.name }));
+      try {
+        const a = await api.attachFile(f);
+        setFiles([...files(), a]);
+      } catch (err) {
+        problems.push(t("files.error", { name: f.name, why: err instanceof ApiError ? err.message : t("chat.error") }));
+      }
+    }
+    setReading("");
+    setFileInfo(problems.join(" "));
+  };
+  const dropFile = async (id: string) => {
+    setFiles(files().filter((f) => f.id !== id));
+    setShown((m) => {
+      const { [id]: _gone, ...rest } = m;
+      return rest;
+    });
+    try {
+      await api.removeAttachment(id);
+    } catch {
+      /* it expires by itself; it is already gone from this message */
+    }
+  };
+  const toggleRead = async (id: string) => {
+    if (shown()[id]) {
+      setShown((m) => {
+        const { [id]: _gone, ...rest } = m;
+        return rest;
+      });
+      return;
+    }
+    setShown((m) => ({ ...m, [id]: "loading" }));
+    try {
+      const r = await api.attachment(id);
+      setShown((m) => ({ ...m, [id]: r }));
+    } catch (err) {
+      setShown((m) => {
+        const { [id]: _gone, ...rest } = m;
+        return rest;
+      });
+      setFileInfo(err instanceof ApiError ? err.message : t("chat.error"));
+    }
+  };
   const loadSuggested = async (id: string) => {
     try {
       const r = await api.suggestedNotes(id);
@@ -377,7 +438,8 @@ export function Chat() {
     setUnseen(false);
     const history: ChatTurn[] = turns().slice(-18).map(({ role, content }) => ({ role, content }));
     const turnsBefore = turns().length;
-    setTurns([...turns(), { role: "user", content: message }]);
+    const attached = files();
+    setTurns([...turns(), { role: "user", content: message, attached: attached.map((f) => f.name) }]);
     setText("");
     setBusy(true);
     setError("");
@@ -385,7 +447,7 @@ export function Chat() {
     setLive("");
     abort = new AbortController();
     try {
-      const r = await streamChat({ message, history, sources: pages().filter((p) => p.page_id && !p.looks_like_instructions).map((p) => p.page_id as string), ...(session() ? { session: session(), project: project().trim() } : project().trim() ? { project: project().trim() } : {}) }, (d) => setLive((x) => x + d), abort.signal);
+      const r = await streamChat({ message, history, ...(attached.length > 0 ? { attachments: attached.map((f) => f.id) } : {}), sources: pages().filter((p) => p.page_id && !p.looks_like_instructions).map((p) => p.page_id as string), ...(session() ? { session: session(), project: project().trim() } : project().trim() ? { project: project().trim() } : {}) }, (d) => setLive((x) => x + d), abort.signal);
       if (myView !== view) {
         if ("stopped" in r) saveDraft(sentKey, message);
         return;
@@ -407,10 +469,13 @@ export function Chat() {
       }
       if (session()) foot.push(t(savedLine(r)));
       for (const p of pageNotes(r)) foot.push(t(p.key, { n: p.n }));
+      for (const p of fileNotes(r.files)) foot.push(t(p.key, { n: p.n }));
       if (r.notes_withheld > 0) foot.push(t("chat.withheld", { n: r.notes_withheld }));
       for (const p of noteNotes(r)) foot.push(t(p.key, { n: p.n }));
       if (r.usage?.summary_text) setSummaryText(r.usage.summary_text);
       setTurns([...turns(), { role: "assistant", content: r.reply, foot, notes: r.notes }]);
+      // the files went with this message; the next one starts without them
+      if (attached.length > 0) setFiles((cur) => cur.filter((f) => !attached.some((a) => a.id === f.id)));
       if (session()) await refetch();
     } catch (err) {
       // a message whose reply was cut short by switching conversations goes back to the draft it was written in
@@ -691,6 +756,7 @@ export function Chat() {
             <li class={`card stack msg ${m.role}`}>
               <strong>{m.role === "user" ? t("chat.you") : t("chat.assistant")}</strong>
               {m.role === "assistant" ? <Markdown text={m.content} /> : <p class="mem-text">{m.content}</p>}
+              <Show when={(m.attached ?? []).length > 0}><p class="muted">{t("files.attached", { names: m.attached!.join(", ") })}</p></Show>
               <Show when={m.foot}>{(f) => <p class="muted">{f().join(" · ")}</p>}</Show>
               <div class="actions msg-actions">
                 <button type="button" class="linklike" onClick={() => void copyTurn(i(), m.content)}>{copiedAt() === i() ? t("chat.copied") : t("chat.copy")}</button>
@@ -716,6 +782,70 @@ export function Chat() {
       <Show when={unseen()}><button type="button" class="jump" onClick={jump}>{t("chat.jump")}</button></Show>
       <form class="card stack" onSubmit={send}>
         <label for="chat-input">{t("chat.input")}</label>
+        <div
+          class={dragging() ? "stack attach drop" : "stack attach"}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragging(false);
+            void addFiles(Array.from(e.dataTransfer?.files ?? []));
+          }}
+        >
+          <div class="actions">
+            <input ref={picker} type="file" multiple hidden aria-label={t("files.attach")} onChange={(e) => {
+              void addFiles(Array.from(e.currentTarget.files ?? []));
+              e.currentTarget.value = "";
+            }} />
+            <button type="button" disabled={busy() || !!reading()} onClick={() => picker?.click()}>{t("files.attach")}</button>
+            <span class="muted">{t("files.drop")}</span>
+            <Show when={reading()}><span role="status" class="muted">{reading()}</span></Show>
+          </div>
+          <p class="muted">{t("files.attachHelp")}</p>
+          <Show when={fileInfo()}><p role="alert" class="bad">{fileInfo()}</p></Show>
+          <Show when={files().length > 0}>
+            <ul class="plain stack" aria-label={t("files.attach")}>
+              <For each={files()}>
+                {(f) => (
+                  <li class="card stack file-chip">
+                    <p><strong>{f.name}</strong> <span class="chip">{f.kind_label}</span> <span class="muted">{sizeText(f.bytes)} · {t("files.chars", { n: f.chars })} · {t("files.passages", { n: f.passages })}</span></p>
+                    <Show when={f.truncated}><p class="muted">{t("files.truncated")}</p></Show>
+                    <For each={f.notes}>{(n) => <p class="muted">{n}</p>}</For>
+                    <Show when={f.flagged.instruction_like > 0}><p class="bad">{t("files.flaggedInstructions", { n: f.flagged.instruction_like })}</p></Show>
+                    <Show when={f.flagged.secret > 0}><p class="bad">{t("files.flaggedSecrets", { n: f.flagged.secret })}</p></Show>
+                    <Show when={f.passages === 0}><p class="muted">{t("files.noText")}</p></Show>
+                    <div class="actions">
+                      <button type="button" class="linklike" onClick={() => void toggleRead(f.id)}>{shown()[f.id] && shown()[f.id] !== "loading" ? t("files.hide") : t("files.show")}</button>
+                      <button type="button" class="linklike" onClick={() => void dropFile(f.id)}>{t("files.remove")}</button>
+                    </div>
+                    <Show when={shown()[f.id] && shown()[f.id] !== "loading"}>
+                      <ul class="plain stack read-passages">
+                        <For each={(shown()[f.id] as AttachmentRead).read.slice(0, 60)}>
+                          {(p) => (
+                            <li>
+                              <code>{p.anchor}</code>
+                              <For each={p.lines.slice(0, 40)}>
+                                {(l) => (
+                                  <p class={l.flagged ? "mem-text muted struck" : "mem-text"}>
+                                    {l.text.length > 300 ? l.text.slice(0, 300) + "…" : l.text}
+                                    <Show when={l.flagged}> <span class="chip">{t(l.flagged === "secret" ? "files.passageFlagSecret" : "files.passageFlag")}</span></Show>
+                                  </p>
+                                )}
+                              </For>
+                            </li>
+                          )}
+                        </For>
+                      </ul>
+                    </Show>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </Show>
+        </div>
         <textarea
           ref={box}
           id="chat-input"

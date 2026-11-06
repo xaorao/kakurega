@@ -7,6 +7,7 @@ mod log;
 mod mcp;
 mod mcp_install;
 mod memory_import;
+mod parse_child;
 #[cfg(test)]
 mod recall_bench;
 mod runner;
@@ -46,6 +47,8 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = match args.first().map(String::as_str) {
         Some("serve") => serve::run(&args[1..]),
+        // started by the service to read one attached file; not for people to run
+        Some("parse-attachment") => return parse_child::child(&args[1..]),
         Some("pair") => approve::pair(&args[1..]),
         Some("approve") => approve::run(&args[1..]),
         Some("verify") => verify::run(&args[1..]),

@@ -1,0 +1,742 @@
+[
+ {
+  "doc": "report.pdf",
+  "kind": "text",
+  "text": "The audit found that session tokens remain valid after logout in the payments service.",
+  "page": 1
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Finding",
+  "page": 2,
+  "row": 0,
+  "col": 0
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Severity",
+  "page": 2,
+  "row": 0,
+  "col": 1
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "File",
+  "page": 2,
+  "row": 0,
+  "col": 2
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Line",
+  "page": 2,
+  "row": 0,
+  "col": 3
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Issue 1",
+  "page": 2,
+  "row": 1,
+  "col": 0
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Low",
+  "page": 2,
+  "row": 1,
+  "col": 1
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "src/module_1/handler.rs",
+  "page": 2,
+  "row": 1,
+  "col": 2
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "17",
+  "page": 2,
+  "row": 1,
+  "col": 3
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Issue 2",
+  "page": 2,
+  "row": 2,
+  "col": 0
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Medium",
+  "page": 2,
+  "row": 2,
+  "col": 1
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "src/module_2/handler.rs",
+  "page": 2,
+  "row": 2,
+  "col": 2
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "24",
+  "page": 2,
+  "row": 2,
+  "col": 3
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Issue 3",
+  "page": 2,
+  "row": 3,
+  "col": 0
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "High",
+  "page": 2,
+  "row": 3,
+  "col": 1
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "src/module_3/handler.rs",
+  "page": 2,
+  "row": 3,
+  "col": 2
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "31",
+  "page": 2,
+  "row": 3,
+  "col": 3
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Issue 4",
+  "page": 2,
+  "row": 4,
+  "col": 0
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Low",
+  "page": 2,
+  "row": 4,
+  "col": 1
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "src/module_4/handler.rs",
+  "page": 2,
+  "row": 4,
+  "col": 2
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "38",
+  "page": 2,
+  "row": 4,
+  "col": 3
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Issue 5",
+  "page": 2,
+  "row": 5,
+  "col": 0
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Medium",
+  "page": 2,
+  "row": 5,
+  "col": 1
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "src/module_5/handler.rs",
+  "page": 2,
+  "row": 5,
+  "col": 2
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "45",
+  "page": 2,
+  "row": 5,
+  "col": 3
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Issue 6",
+  "page": 2,
+  "row": 6,
+  "col": 0
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "High",
+  "page": 2,
+  "row": 6,
+  "col": 1
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "src/module_6/handler.rs",
+  "page": 2,
+  "row": 6,
+  "col": 2
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "52",
+  "page": 2,
+  "row": 6,
+  "col": 3
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Issue 7",
+  "page": 2,
+  "row": 7,
+  "col": 0
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Low",
+  "page": 2,
+  "row": 7,
+  "col": 1
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "src/module_7/handler.rs",
+  "page": 2,
+  "row": 7,
+  "col": 2
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "59",
+  "page": 2,
+  "row": 7,
+  "col": 3
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Issue 8",
+  "page": 2,
+  "row": 8,
+  "col": 0
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Medium",
+  "page": 2,
+  "row": 8,
+  "col": 1
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "src/module_8/handler.rs",
+  "page": 2,
+  "row": 8,
+  "col": 2
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "66",
+  "page": 2,
+  "row": 8,
+  "col": 3
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Issue 9",
+  "page": 2,
+  "row": 9,
+  "col": 0
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "High",
+  "page": 2,
+  "row": 9,
+  "col": 1
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "src/module_9/handler.rs",
+  "page": 2,
+  "row": 9,
+  "col": 2
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "73",
+  "page": 2,
+  "row": 9,
+  "col": 3
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Issue 10",
+  "page": 2,
+  "row": 10,
+  "col": 0
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "Low",
+  "page": 2,
+  "row": 10,
+  "col": 1
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "src/module_10/handler.rs",
+  "page": 2,
+  "row": 10,
+  "col": 2
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "cell",
+  "text": "80",
+  "page": 2,
+  "row": 10,
+  "col": 3
+ },
+ {
+  "doc": "report.pdf",
+  "kind": "text",
+  "text": "Remediation requires revoking the token server side before the response is returned.",
+  "page": 3
+ },
+ {
+  "doc": "small_table.pdf",
+  "kind": "cell",
+  "text": "Finding",
+  "page": 1,
+  "row": 0,
+  "col": 0
+ },
+ {
+  "doc": "small_table.pdf",
+  "kind": "cell",
+  "text": "Severity",
+  "page": 1,
+  "row": 0,
+  "col": 1
+ },
+ {
+  "doc": "small_table.pdf",
+  "kind": "cell",
+  "text": "File",
+  "page": 1,
+  "row": 0,
+  "col": 2
+ },
+ {
+  "doc": "small_table.pdf",
+  "kind": "cell",
+  "text": "Line",
+  "page": 1,
+  "row": 0,
+  "col": 3
+ },
+ {
+  "doc": "small_table.pdf",
+  "kind": "cell",
+  "text": "Token reuse",
+  "page": 1,
+  "row": 1,
+  "col": 0
+ },
+ {
+  "doc": "small_table.pdf",
+  "kind": "cell",
+  "text": "High",
+  "page": 1,
+  "row": 1,
+  "col": 1
+ },
+ {
+  "doc": "small_table.pdf",
+  "kind": "cell",
+  "text": "auth/session.rs",
+  "page": 1,
+  "row": 1,
+  "col": 2
+ },
+ {
+  "doc": "small_table.pdf",
+  "kind": "cell",
+  "text": "88",
+  "page": 1,
+  "row": 1,
+  "col": 3
+ },
+ {
+  "doc": "small_table.pdf",
+  "kind": "cell",
+  "text": "Verbose error",
+  "page": 1,
+  "row": 2,
+  "col": 0
+ },
+ {
+  "doc": "small_table.pdf",
+  "kind": "cell",
+  "text": "Low",
+  "page": 1,
+  "row": 2,
+  "col": 1
+ },
+ {
+  "doc": "small_table.pdf",
+  "kind": "cell",
+  "text": "api/errors.rs",
+  "page": 1,
+  "row": 2,
+  "col": 2
+ },
+ {
+  "doc": "small_table.pdf",
+  "kind": "cell",
+  "text": "17",
+  "page": 1,
+  "row": 2,
+  "col": 3
+ },
+ {
+  "doc": "small_table.pdf",
+  "kind": "cell",
+  "text": "Weak default",
+  "page": 1,
+  "row": 3,
+  "col": 0
+ },
+ {
+  "doc": "small_table.pdf",
+  "kind": "cell",
+  "text": "Medium",
+  "page": 1,
+  "row": 3,
+  "col": 1
+ },
+ {
+  "doc": "small_table.pdf",
+  "kind": "cell",
+  "text": "config/defaults.rs",
+  "page": 1,
+  "row": 3,
+  "col": 2
+ },
+ {
+  "doc": "small_table.pdf",
+  "kind": "cell",
+  "text": "42",
+  "page": 1,
+  "row": 3,
+  "col": 3
+ },
+ {
+  "doc": "contract.docx",
+  "kind": "text",
+  "text": "The supplier shall deliver the review within thirty days of signature."
+ },
+ {
+  "doc": "contract.docx",
+  "kind": "cell",
+  "text": "Party",
+  "row": 0,
+  "col": 0
+ },
+ {
+  "doc": "contract.docx",
+  "kind": "cell",
+  "text": "Role",
+  "row": 0,
+  "col": 1
+ },
+ {
+  "doc": "contract.docx",
+  "kind": "cell",
+  "text": "Acme Corp",
+  "row": 1,
+  "col": 0
+ },
+ {
+  "doc": "contract.docx",
+  "kind": "cell",
+  "text": "Customer",
+  "row": 1,
+  "col": 1
+ },
+ {
+  "doc": "contract.docx",
+  "kind": "cell",
+  "text": "Northwind Ltd",
+  "row": 2,
+  "col": 0
+ },
+ {
+  "doc": "contract.docx",
+  "kind": "cell",
+  "text": "Supplier",
+  "row": 2,
+  "col": 1
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "Region",
+  "sheet": "Q1",
+  "row": 0,
+  "col": 0
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "Revenue",
+  "sheet": "Q1",
+  "row": 0,
+  "col": 1
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "Cost",
+  "sheet": "Q1",
+  "row": 0,
+  "col": 2
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "North",
+  "sheet": "Q1",
+  "row": 1,
+  "col": 0
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "1200",
+  "sheet": "Q1",
+  "row": 1,
+  "col": 1
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "800",
+  "sheet": "Q1",
+  "row": 1,
+  "col": 2
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "South",
+  "sheet": "Q1",
+  "row": 2,
+  "col": 0
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "950",
+  "sheet": "Q1",
+  "row": 2,
+  "col": 1
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "700",
+  "sheet": "Q1",
+  "row": 2,
+  "col": 2
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "West",
+  "sheet": "Q1",
+  "row": 3,
+  "col": 0
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "1430",
+  "sheet": "Q1",
+  "row": 3,
+  "col": 1
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "910",
+  "sheet": "Q1",
+  "row": 3,
+  "col": 2
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "Region",
+  "sheet": "Q2",
+  "row": 0,
+  "col": 0
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "Revenue",
+  "sheet": "Q2",
+  "row": 0,
+  "col": 1
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "Cost",
+  "sheet": "Q2",
+  "row": 0,
+  "col": 2
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "North",
+  "sheet": "Q2",
+  "row": 1,
+  "col": 0
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "1310",
+  "sheet": "Q2",
+  "row": 1,
+  "col": 1
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "820",
+  "sheet": "Q2",
+  "row": 1,
+  "col": 2
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "South",
+  "sheet": "Q2",
+  "row": 2,
+  "col": 0
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "990",
+  "sheet": "Q2",
+  "row": 2,
+  "col": 1
+ },
+ {
+  "doc": "figures.xlsx",
+  "kind": "cell",
+  "text": "715",
+  "sheet": "Q2",
+  "row": 2,
+  "col": 2
+ },
+ {
+  "doc": "page.html",
+  "kind": "text",
+  "text": "Version 2.4 fixes the logout bug."
+ },
+ {
+  "doc": "page.html",
+  "kind": "cell",
+  "text": "Component",
+  "row": 0,
+  "col": 0
+ },
+ {
+  "doc": "page.html",
+  "kind": "cell",
+  "text": "Change",
+  "row": 0,
+  "col": 1
+ },
+ {
+  "doc": "page.html",
+  "kind": "cell",
+  "text": "auth",
+  "row": 1,
+  "col": 0
+ },
+ {
+  "doc": "page.html",
+  "kind": "cell",
+  "text": "revoke on logout",
+  "row": 1,
+  "col": 1
+ }
+]

@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 128, PARTIAL 62, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 1, OWED-L 41. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 128, PARTIAL 63, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 41. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -295,7 +295,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | G-GH-09 | Auto-update with release notes, notarised installer; companion tray us | BUILD: signed updates with a key pinned in the app, no third-party analytics, update notes | PARTIAL | signed announcements (row 25); installer waits for signing |
 | G-GH-10 | Crash diagnostics "only with approval", feedback with consent; but Pos | BUILD a local diagnostics bundle the user can read and attach; no analytics SDKs. Honest c | OWED-L | no readable local diagnostics bundle |
 | G-GH-11 | One calm composer for everything: attach (+), model picker, reasoning  | IMPROVE: one composer plus our additions: route badge and what-leaves line | PARTIAL | one composer with route and meter; attachments and picker not in it |
-| G-GH-12 | Attachments: PDF, DOCX, ZIP, images | BUILD attach through the offline parser, each file labeled on entry | OWED-M | chat has no attach; PDF and DOCX parsing for Documents not verified |
+| G-GH-12 | Attachments: PDF, DOCX, ZIP, images | BUILD attach through the offline parser, each file labeled on entry | PARTIAL | attach files in the web chat: Word, Excel, PDF text layer, web pages, text, archives read in an isolated process; what is read is shown; hostile lines left out; no OCR, no PDF table structure (attachments.md) |
 | G-GH-13 | Model picker with search, families, capability badges, reasoning level | BUILD with eligibility, not only capability: each model shows route class and whether the  | LATER | one route until NEAR credits |
 | G-GH-14 | Permission shield in the composer (screenshot shows a yellow shield; w | KEEP; adopt a visible mode indicator in the composer showing the current policy | OWED-L | no visible mode indicator in the composer |
 | G-GH-15 | Context meter, automatic and manual cleanup, custom limit, prompt cach | BUILD; caching only on routes whose docs allow it (NEAR docs warn about cross-customer pre | BUILT | meter, warning, automatic summary (sv49-sv56) |

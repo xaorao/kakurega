@@ -1,3 +1,4 @@
+mod attachments;
 pub mod backup;
 mod budget;
 mod compaction;

@@ -245,3 +245,8 @@ button.linklike { background: none; border: 0; padding: 2px 0; min-height: 0; co
 button.linklike:hover { color: var(--ink); }
 .row-wrap { display: flex; flex-wrap: wrap; gap: 6px 16px; }
 .branches p { margin: 0; }
+
+.attach.drop { outline: 2px dashed var(--ink); outline-offset: 4px; border-radius: var(--radius-s); }
+.file-chip p { margin: 0; }
+.read-passages li p { margin: 2px 0 0; }
+.struck { text-decoration: line-through; }

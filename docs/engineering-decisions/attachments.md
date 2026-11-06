@@ -1,0 +1,31 @@
+# Attached files (ledger G-GH-12)
+
+## Target experience
+A person drops a contract, a spreadsheet or a PDF into the chat, sees exactly what was read from it and where, and asks about it. Nothing leaves the computer until they send, a stranger's file cannot give the assistant orders, a secret in it never goes to a model that is not on this computer, and a file that cannot be read says why instead of failing silently.
+
+## References and reading depth
+- AnythingLLM collector (MIT, commit eda0eb5): FULL read of `processSingleFile/index.js`, `convert/asTxt.js`, `asXlsx.js`, `asDocx.js`; `utils/files/index.js` `isTextType` (read for the text-detection idea). NOT READ: `asPDF/` (PDFLoader), `asEPub`, `asMbox`, `asImage`, `asAudio`.
+- Docling (MIT), by our own run X8 (`offline-parsing.md`): found 95 of 95 seeded items on the same files, including table cells with row and column. NOT used as the engine: it needs Python and 1.3 GB of models, so it cannot be a default part of an installed program.
+- Decision per capability: REBUILD the readers in Rust with MIT crates for the container formats (zip, quick-xml, lopdf) and our own walkers; take the text-decoding order and the ISO-date and exact-number rules from AnythingLLM as ideas (no code); EXCLUDE OCR and speech for now (said to the owner, never faked).
+
+## What was built
+- `crates/kk-parse`: text (UTF-8, UTF-8 with BOM, UTF-16 with BOM, Windows-1252; 40-line blocks anchored `lines A-B`), web pages (visible text only), Word (paragraphs, tables with `table T, row R, column C`, headers, footers, footnotes, endnotes, comments), Excel (every non-empty cell with its address, blocks of 25 rows anchored `Sheet!A1:C25`, dates as ISO, exact long numbers, formulas as their last value), PDF (text layer per page, anchored `page N`), archives (members read one by one, anchored `archive > member > place`), pictures (named, not read).
+- What the owner sees is what is read: hidden text, deleted tracked changes, hidden sheets, rows and columns, hidden page elements and comments are left out and counted in plain words.
+- Hard limits: 8 MiB file, 400,000 characters out, 16 MiB per unpacked part, 48 MiB unpacked in all, 200 files per archive, 2 levels of archives, 400 PDF pages, 40 sheets, 200,000 cells, a ratio of 200 between packed and unpacked parts, XML nested at most 256 deep, no custom entity ever expanded.
+- The service never parses a file itself in production: `kaku parse-attachment` is started as a separate process with no environment, a 30 second limit and a 12 MiB output cap; bytes in on standard input, one JSON line out.
+- `POST /api/attachments?name=` (raw bytes), `GET /api/attachments/{id}` (what was read, line by line, with each line that would be left out marked), `POST /api/attachments/{id}/remove`. Files live in memory only, at most 12 and 3,000,000 characters at once, for two hours. The log records that a file was read (kind, size, characters), never its name or text.
+- Chat: `attachments: [ids]` (at most 5) go to the model as one labelled block of DATA with the bracketed place of each passage. Lines that read like instructions (the shared injection reader) are always left out; lines holding a secret are left out when the model does not run on this computer. Only the offending lines go, except an order split over several lines, which takes its whole passage. The answer reports files read, cut to fit, left out, and the parts withheld. A kept conversation records `[attached: name]`, never contents.
+- Web: Attach files button, drop onto the message box, a card per file (kind, size, characters, notes, flags), What was read (each line, struck through when left out), Remove.
+
+## Evidence
+- kk-parse: fixtures from independent tools (python-docx, openpyxl, reportlab): the same 95 truth items as X8, each found with the right anchor (fx01); hostile and edge cases kp01–kp20 (size, names, encodings, hidden text in web pages and Word, entity attacks, nesting, Excel dates and hidden parts, compression bombs by size, ratio, entries, total and depth, paths in archives, password-protected PDF and zip, scans, 540 deterministic mutations of the fixtures without a panic or hang); 33 mutants on the safeguards, all caught after assertions were added; the PDF empty-password call was removed as dead (the library decrypts on load).
+- kk-service: attachments unit at01–at11; flow sv96–sv102 (upload and read back of every kind, refusals with reasons, labelled data to the model, remote-model secret withholding, kept conversation records names only, limits, window budget).
+- kk-cli: pc01–pc06 (a hung, crashing, flooding or lying reader costs one attachment; the reader gets no environment) and pa01–pa03 against the real binary.
+- Browser: attach, refusals, flags, What was read, send, drop, Remove, five-file limit (e2e 296/296).
+
+## Not covered, said plainly
+- No OCR: scanned PDFs and pictures are named, not read. NOT VERIFIED on a real scan.
+- PDF text comes from the text layer in reading order; table structure (rows and columns) is not recovered, so a PDF table cell is anchored to its page only. Docling does better here. Text hidden in a PDF (white or tiny text) is not distinguished.
+- The reader process has no operating-system sandbox profile (no network deny, no memory cap) beyond the time, output and environment limits; it has no network code path. A Seatbelt or seccomp profile is owed.
+- Old `.doc`, `.xls`, `.ppt`, OpenDocument, EPUB, mbox, audio and video are not read (they are refused as an unsupported kind).
+- Extraction quality on large real-world documents beyond the 95 seeded items was not measured. A hostile PDF that exploits the parser itself is bounded by the process limits, not proven harmless.

@@ -80,7 +80,7 @@ export interface Suggestion { id: string; text: string; why: string; level: stri
 export interface LogEntry { seq: number; at: number; kind: string; subject: string; data: Record<string, string | number> }
 export interface LogSummary { count: number; head: string | null; public_key: string; recent: LogEntry[] }
 export interface ChatTurn { role: "user" | "assistant"; content: string }
-export interface ChatReply { instructions_used?: boolean; project?: string | null; reply: string; route: { id: string; class: string; simulated: boolean; stays_here?: boolean; host?: string | null }; notes_used: number; notes?: { id: string; text: string; why: string; untrusted: boolean; project?: string | null }[]; notes_withheld: number; notes_left_out?: number; web_sources_used: number; web_sources_trimmed?: number; web_sources_left_out?: number; saved?: boolean; not_saved?: "full" | "forgotten" | "error" | null; usage?: { context_tokens?: number; context_window?: number | null; estimate?: boolean; context_tokens_estimate: number; reply_tokens_estimate: number; history_turns_sent: number; history_turns_dropped: number; history_turns_summarized?: number; summary_text?: string | null; compacted_now?: boolean; compaction_failed?: string | null } }
+export interface ChatReply { instructions_used?: boolean; project?: string | null; reply: string; route: { id: string; class: string; simulated: boolean; stays_here?: boolean; host?: string | null }; notes_used: number; notes?: { id: string; text: string; why: string; untrusted: boolean; project?: string | null }[]; notes_withheld: number; notes_left_out?: number; files?: { used: number; trimmed: number; left_out: number; withheld_instructions: number; withheld_secrets: number }; web_sources_used: number; web_sources_trimmed?: number; web_sources_left_out?: number; saved?: boolean; not_saved?: "full" | "forgotten" | "error" | null; usage?: { context_tokens?: number; context_window?: number | null; estimate?: boolean; context_tokens_estimate: number; reply_tokens_estimate: number; history_turns_sent: number; history_turns_dropped: number; history_turns_summarized?: number; summary_text?: string | null; compacted_now?: boolean; compaction_failed?: string | null } }
 export interface Instructions {
   global: { text: string; updated_at: number } | null;
   projects: { project: string; text: string; updated_at: number }[];
@@ -180,6 +180,23 @@ export interface Release {
   personal_data?: { file: string; found: string }[];
 }
 
+export interface AttachmentSummary { id: string; name: string; kind: string; kind_label: string; bytes: number; chars: number; passages: number; notes: string[]; truncated: boolean; flagged: { instruction_like: number; secret: number } }
+export interface AttachmentRead extends AttachmentSummary { read: { anchor: string; lines: { text: string; flagged: "instruction_like" | "secret" | null }[] }[] }
+
+/** Sends one file to be read on this computer. The bytes go as they are; the name is only a label. */
+async function attachFile(file: File): Promise<AttachmentSummary> {
+  const res = await fetch(`/api/attachments?name=${encodeURIComponent(file.name)}`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-kk-csrf": csrf }, credentials: "same-origin", body: file });
+  const text = await res.text();
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  if (!res.ok) throw new ApiError(res.status, data?.error?.code ?? "ERROR", data?.error?.message ?? `request failed (${res.status})`);
+  return data as AttachmentSummary;
+}
+
 export const api = {
   health: () => request<{ ok: boolean }>("GET", "/api/health"),
   pair: (code: string) => request<{ csrf: string }>("POST", "/api/pair", { code }),
@@ -227,6 +244,9 @@ export const api = {
   searchChats: (q: string) => request<{ results: ChatHit[] }>("GET", `/api/sessions/search?q=${encodeURIComponent(q)}`),
   renameChat: (id: string, title: string) => request<{ renamed: boolean }>("POST", `/api/sessions/${id}/rename`, { title }),
   keepChat: (title: string, project?: string) => request<{ id: string }>("POST", "/api/sessions", project ? { title, project } : { title }),
+  attachFile: (file: File) => attachFile(file),
+  attachment: (id: string) => request<AttachmentRead>("GET", `/api/attachments/${id}`),
+  removeAttachment: (id: string) => request<{ removed: boolean }>("POST", `/api/attachments/${id}/remove`, {}),
   keptChat: (id: string) => request<{ id: string; project?: string | null; parent?: string | null; fork_at?: number | null; branches?: { id: string; title: string; fork_at: number | null; turns: number }[]; turns: ChatTurn[]; summary?: { covered: number; text: string } | null }>("GET", `/api/sessions/${id}`),
   suggestNotes: (id: string) => request<{ added: number; already_known: number; dropped: { instruction_like: number; secret: number; invalid: number; over_limit: number } }>("POST", `/api/sessions/${id}/suggest-notes`, {}),
   suggestedNotes: (id: string) => request<{ suggestions: { id: string; text: string; why: string; untrusted: boolean }[] }>("GET", `/api/sessions/${id}/suggested-notes`),

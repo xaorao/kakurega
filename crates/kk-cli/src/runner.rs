@@ -154,6 +154,14 @@ impl JobRunner for ReviewRunner {
         })
     }
 
+    fn parse_attachment(
+        &self,
+        name: &str,
+        bytes: &[u8],
+    ) -> Result<kk_parse::Parsed, kk_parse::ParseError> {
+        crate::parse_child::run_isolated(name, bytes)
+    }
+
     fn summarize(&self, messages: Vec<kk_types::chat::ChatMessage>) -> Result<String, String> {
         if self.scripted.is_some() {
             // a reading for notes gets a fixed list (one entry is an injected instruction, to show it is left out)
