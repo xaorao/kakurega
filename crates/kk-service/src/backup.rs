@@ -144,7 +144,8 @@ pub fn restore(file: &[u8], recovery_key_text: &str, data_dir: &Path) -> Result<
     for (name, _) in entries.iter().filter(|(n, _)| n != KEY_FILE) {
         fs::rename(staging.join(name), data_dir.join(name)).map_err(|e| e.to_string())?;
     }
-    write_private(&data_dir.join(KEY_FILE), key_hex.trim().as_bytes())?;
+    kk_vault::durable::write_atomic(&data_dir.join(KEY_FILE), key_hex.trim().as_bytes(), 0o600)
+        .map_err(|e| e.to_string())?;
     let _ = fs::remove_dir_all(&staging);
     Ok(Restored {
         databases: dbs,

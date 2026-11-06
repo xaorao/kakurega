@@ -732,3 +732,197 @@ mod context {
         let _ = small.id();
     }
 }
+
+mod retries {
+    use kk_route::retry::Retry;
+    use kk_route::{ChatMessage, CompletionRequest, OllamaRoute, Route, RouteError};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// What the mock server does with one connection.
+    #[derive(Clone)]
+    enum Act {
+        Reply(&'static str),
+        Drop,
+        Hang,
+    }
+
+    const OK: &str = "{\"message\":{\"role\":\"assistant\",\"content\":\"hello\"},\"prompt_eval_count\":3,\"eval_count\":2}";
+
+    fn http(status: &str, body: &str) -> String {
+        format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+    }
+
+    /// Serves one scripted act per connection and counts connections. The last act repeats.
+    fn serve(acts: Vec<Act>) -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let count = Arc::new(AtomicUsize::new(0));
+        let c = count.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut s) = stream else { continue };
+                let n = c.fetch_add(1, Ordering::SeqCst);
+                let act = acts.get(n).or(acts.last()).cloned().unwrap();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 8192];
+                    let _ = s.set_read_timeout(Some(Duration::from_millis(300)));
+                    let _ = s.read(&mut buf);
+                    match act {
+                        Act::Reply(text) => {
+                            let _ = s.write_all(text.as_bytes());
+                        }
+                        Act::Drop => {}
+                        Act::Hang => std::thread::sleep(Duration::from_secs(5)),
+                    }
+                });
+            }
+        });
+        (url, count)
+    }
+
+    fn fast() -> Retry {
+        Retry {
+            retries: 2,
+            first_delay: Duration::from_millis(5),
+            max_delay: Duration::from_millis(20),
+        }
+    }
+
+    fn req() -> CompletionRequest {
+        CompletionRequest {
+            messages: vec![ChatMessage::new("user", "hi")],
+            tools: vec![],
+            max_tokens: 50,
+            temperature: 0.0,
+        }
+    }
+
+    fn reply(status: &str, body: &str) -> Act {
+        Act::Reply(Box::leak(http(status, body).into_boxed_str()))
+    }
+
+    #[test]
+    fn rt10_a_model_that_is_busy_twice_then_answers_completes() {
+        let (url, count) = serve(vec![
+            reply("503 Service Unavailable", "{}"),
+            reply("429 Too Many Requests", "{}"),
+            reply("200 OK", OK),
+        ]);
+        let r = OllamaRoute::new(&url, "m").unwrap().with_retry(fast());
+        let done = r.complete(&req()).unwrap();
+        assert_eq!(done.message.content, "hello");
+        assert_eq!(count.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn rt11_a_dropped_connection_is_tried_again() {
+        let (url, count) = serve(vec![Act::Drop, reply("200 OK", OK)]);
+        let r = OllamaRoute::new(&url, "m").unwrap().with_retry(fast());
+        assert_eq!(r.complete(&req()).unwrap().message.content, "hello");
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn rt12_a_model_that_stays_busy_fails_after_three_tries_and_says_so() {
+        let (url, count) = serve(vec![reply("503 Service Unavailable", "{}")]);
+        let r = OllamaRoute::new(&url, "m").unwrap().with_retry(fast());
+        let e = r.complete(&req()).unwrap_err();
+        assert!(
+            matches!(&e, RouteError::Busy(m) if m.contains("tried 3 times")),
+            "{e}"
+        );
+        assert_eq!(count.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn rt13_refusals_and_bad_requests_are_asked_once() {
+        for (status, body) in [
+            ("400 Bad Request", "{\"error\":\"bad\"}"),
+            ("404 Not Found", "{\"error\":\"model not found\"}"),
+            ("500 Internal Server Error", "{\"error\":\"boom\"}"),
+            ("401 Unauthorized", "{}"),
+        ] {
+            let (url, count) = serve(vec![reply(status, body)]);
+            let r = OllamaRoute::new(&url, "m").unwrap().with_retry(fast());
+            let e = r.complete(&req()).unwrap_err();
+            assert!(matches!(e, RouteError::BadResponse(_)), "{status}: {e}");
+            assert_eq!(count.load(Ordering::SeqCst), 1, "{status}");
+        }
+        let (url, count) = serve(vec![reply("400 Bad Request", "{\"error\":\"request (9999 tokens) exceeds the available context size (4096 tokens)\"}")]);
+        let e = OllamaRoute::new(&url, "m")
+            .unwrap()
+            .with_retry(fast())
+            .complete(&req())
+            .unwrap_err();
+        assert!(matches!(e, RouteError::ContextTooLong { .. }), "{e}");
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn rt14_a_call_that_runs_out_of_time_is_not_asked_again() {
+        let (url, count) = serve(vec![Act::Hang]);
+        let r = OllamaRoute::new(&url, "m")
+            .unwrap()
+            .with_retry(fast())
+            .with_timeout(Duration::from_millis(400));
+        let started = std::time::Instant::now();
+        let e = r.complete(&req()).unwrap_err();
+        assert!(matches!(e, RouteError::TimedOut(_)), "{e}");
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn rt15_a_streamed_reply_is_retried_only_before_it_begins() {
+        let line = "{\"message\":{\"content\":\"hi\"},\"done\":false}\n{\"message\":{\"content\":\"\"},\"done\":true,\"prompt_eval_count\":1,\"eval_count\":1}\n";
+        let (url, count) = serve(vec![
+            reply("503 Service Unavailable", "{}"),
+            Act::Reply(Box::leak(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{line}",
+                    line.len()
+                )
+                .into_boxed_str(),
+            )),
+        ]);
+        let r = OllamaRoute::new(&url, "m").unwrap().with_retry(fast());
+        let mut got = String::new();
+        let out = r.stream(&req(), &mut |t| {
+            got.push_str(t);
+            true
+        });
+        assert!(out.is_ok(), "{out:?}");
+        assert_eq!(got, "hi");
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+        // a stream that breaks after it began is an error, not a second attempt
+        let broken = "{\"message\":{\"content\":\"partial\"},\"done\":false}\n";
+        let (url, count) = serve(vec![Act::Reply(Box::leak(
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{broken}",
+                broken.len()
+            )
+            .into_boxed_str(),
+        ))]);
+        let mut seen = String::new();
+        let r = OllamaRoute::new(&url, "m").unwrap().with_retry(fast());
+        let e = r.stream(&req(), &mut |t| {
+            seen.push_str(t);
+            true
+        });
+        assert!(matches!(e, Err(RouteError::BadResponse(_))), "{e:?}");
+        assert_eq!(seen, "partial");
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "nothing was sent twice after text was delivered"
+        );
+    }
+}

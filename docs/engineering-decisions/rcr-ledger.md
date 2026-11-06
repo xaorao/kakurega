@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 130, PARTIAL 65, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 37. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 132, PARTIAL 65, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 35. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -208,7 +208,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | E-A2 | Context compaction | BUILD in the OpenHands shape (tombstone event, View) with Hermes pieces (verbatim user tex | BUILT | summaries with data labelling and a wait after failure (sv55, sv56, sv68) |
 | E-A3 | Large tool output handling | ADAPT idea: spill to a labelled artifact handle, never to /tmp (plaintext) | LATER | worker loop |
 | E-A4 | Stuck / loop detection | ADAPT (MIT/Apache) at the worker, nudge once then end the run with a visible reason | OWED-L | the worker is bounded by max_turns and a token budget; no detector for repeated identical calls |
-| E-A5 | Tool-call recovery | IMPROVE: bounded retry with backoff for transient model errors, never for policy denials | OWED-L | no bounded retry for transient model errors beyond the reviewer's own |
+| E-A5 | Tool-call recovery | IMPROVE: bounded retry with backoff for transient model errors, never for policy denials | BUILT | bounded retry with backoff for busy or unreachable local models, never for refusals, bad requests, timeouts or mid-stream failures (model-retry.md) |
 | E-A6 | Budgets | keep | KEPT | budget.rs |
 | E-A7 | Subagents | BUILD later as separate sandboxed workers under the same broker with their own labels and  | LATER | separate sandboxed workers |
 | E-A8 | Planning / todo | NOT READ enough to decide; revisit after A2 | LATER | after the worker loop |
@@ -371,7 +371,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | G-GH-85 | Pricing and limits: download free, model usage billed (0G balance), no | EXCLUDE points, referrals, seasons, token (H7, H50 CUT). Pricing for us is open | EXCLUDED | no points, referrals or token |
 | G-GH-86 | Capability economy: defined claim, evidence, bond, three-day challenge | Out of Ghast-parity scope; keep as later work (`NEAR_VERSION_OF_GHAST.md` section 4) | LATER | capability economy |
 | G-GH-87 | Documentation as tested examples: stable-version walkthroughs with the | ADAPT: every public how-to has a test that executes it (our own rule, section 5.30 of the  | BUILT | `scripts/docs_check.py` runs in scripts/test: every link, path, script, test target, command, flag, the MCP tool table and the config example in the public docs are checked against the repository and the built binary; it found four gaps in docs/mcp.md (fixed) and a mutation run proves it fails on each kind of false claim |
-| G-GH-88 | Atomic JSON persistence with a `.bak` copy and 0600 file mode (0700 di | ADAPT for any non-database file (MIT pattern); on Windows use ACLs | OWED-L | atomic write with a .bak copy for non-database files: NOT VERIFIED |
+| G-GH-88 | Atomic JSON persistence with a `.bak` copy and 0600 file mode (0700 di | ADAPT for any non-database file (MIT pattern); on Windows use ACLs | BUILT | kk_vault::durable atomic and fsynced writes with a whole backup; vault.key created atomically with a copy and restored; Telegram bound chat and update marker 0600 atomic (durable-files.md) |
 
 ## Matrix A: Terminal and sessions (sections A01-A46)
 

@@ -296,6 +296,15 @@ fn load_bound(dir: &Path) -> Option<i64> {
         .and_then(|v| v["chat"].as_i64())
 }
 
+/// Remembers which chat the bridge is bound to: whole or not at all, readable only by the owner.
+fn save_bound(dir: &Path, chat: i64) {
+    let _ = kk_vault::durable::write_atomic(
+        &bound_path(dir),
+        json!({"chat": chat}).to_string().as_bytes(),
+        0o600,
+    );
+}
+
 pub fn run(args: &[String]) -> u8 {
     let dir = crate::data_dir(args);
     let admin = match crate::approve::connect(args) {
@@ -441,7 +450,7 @@ pub fn run(args: &[String]) -> u8 {
                     offset = offset.max(u["update_id"].as_i64().unwrap_or(0) + 1);
                     let (outs, bound) = bridge.handle_update(&mut admin, &u);
                     if let Some(chat) = bound {
-                        let _ = std::fs::write(bound_path(&dir), json!({"chat": chat}).to_string());
+                        save_bound(&dir, chat);
                         let _ = std::fs::remove_file(dir.join("telegram.pairing"));
                     }
                     for o in outs {
@@ -825,6 +834,43 @@ impl Outbox {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tg60_the_bound_chat_is_saved_whole_and_for_the_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = std::env::temp_dir().join(format!("kk-tg-bound-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        assert_eq!(load_bound(&d), None);
+        save_bound(&d, 4242);
+        assert_eq!(load_bound(&d), Some(4242));
+        assert_eq!(
+            std::fs::metadata(bound_path(&d))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        // a file that was open to everyone before is closed again by the next save
+        std::fs::set_permissions(bound_path(&d), std::fs::Permissions::from_mode(0o644)).unwrap();
+        save_bound(&d, -100123);
+        assert_eq!(load_bound(&d), Some(-100123));
+        assert_eq!(
+            std::fs::metadata(bound_path(&d))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        let left: Vec<_> = std::fs::read_dir(&d)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(left, ["telegram.json"], "no temporary file is left");
+    }
+
     use super::*;
 
     struct Fake {

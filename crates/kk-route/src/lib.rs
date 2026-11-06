@@ -24,6 +24,7 @@ impl RouteClass {
 
 pub use kk_types::chat::{ChatMessage, ToolCall, ToolSpec};
 
+pub mod retry;
 pub mod tokens;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +57,10 @@ pub struct RouteEvidence {
 pub enum RouteError {
     EndpointNotLoopback(String),
     Unreachable(String),
+    /// The model answered that it is busy or restarting (429, 502, 503, 504): worth trying again in a moment.
+    Busy(String),
+    /// The call ran out of time. Not retried: the model was working, and a second try would wait as long again.
+    TimedOut(String),
     BadResponse(String),
     NoEligibleRoute,
     ScriptExhausted,
@@ -73,6 +78,8 @@ impl fmt::Display for RouteError {
                 write!(f, "device-only route refuses a non-loopback endpoint: {u}")
             }
             RouteError::Unreachable(m) => write!(f, "model unreachable: {m}"),
+            RouteError::Busy(m) => write!(f, "model busy: {m}"),
+            RouteError::TimedOut(m) => write!(f, "model took too long: {m}"),
             RouteError::BadResponse(m) => write!(f, "unexpected model response: {m}"),
             RouteError::NoEligibleRoute => {
                 f.write_str("no route is eligible for this data; refusing instead of falling back")
@@ -106,6 +113,12 @@ pub trait Route: Send + Sync {
 /// the owner is told to shorten it instead of being shown a bare status.
 fn refusal(status: impl fmt::Display, body: &mut ureq::Body) -> RouteError {
     use std::io::Read;
+    if matches!(
+        status.to_string().split_whitespace().next(),
+        Some("429" | "502" | "503" | "504")
+    ) {
+        return RouteError::Busy(format!("status {status}"));
+    }
     let mut text = String::new();
     let _ = body.as_reader().take(4096).read_to_string(&mut text);
     let message = serde_json::from_str::<Value>(&text)
@@ -162,6 +175,7 @@ pub struct OllamaRoute {
     model: String,
     agent: ureq::Agent,
     context_tokens: u32,
+    retry: retry::Retry,
 }
 
 impl OllamaRoute {
@@ -180,6 +194,43 @@ impl OllamaRoute {
             model: model.to_string(),
             agent: config.into(),
             context_tokens: DEFAULT_CONTEXT_TOKENS,
+            retry: retry::Retry::default(),
+        })
+    }
+
+    /// Sets how a call that fails for a passing reason is tried again.
+    pub fn with_retry(mut self, retry: retry::Retry) -> Self {
+        self.retry = retry;
+        self
+    }
+
+    /// Sets how long one call may take.
+    pub fn with_timeout(mut self, limit: Duration) -> Self {
+        let config = ureq::Agent::config_builder()
+            .timeout_global(Some(limit))
+            .max_redirects(0)
+            .http_status_as_error(false)
+            .build();
+        self.agent = config.into();
+        self
+    }
+
+    /// Posts a chat request, trying again while the model is starting up or busy. Returns once a response with a success status
+    /// has arrived; nothing of the answer has been read, so a streamed reply is never started twice.
+    fn post_chat(&self, body: &Value) -> Result<ureq::http::Response<ureq::Body>, RouteError> {
+        retry::run(&self.retry, &std::thread::sleep, || {
+            let mut resp = self
+                .agent
+                .post(&format!("{}/api/chat", self.base))
+                .send_json(body)
+                .map_err(|e| match e {
+                    ureq::Error::Timeout(_) => RouteError::TimedOut(e.to_string()),
+                    other => RouteError::Unreachable(other.to_string()),
+                })?;
+            if !resp.status().is_success() {
+                return Err(refusal(resp.status(), resp.body_mut()));
+            }
+            Ok(resp)
         })
     }
 
@@ -271,14 +322,7 @@ impl Route for OllamaRoute {
         if !tools.is_empty() {
             body["tools"] = Value::Array(tools);
         }
-        let mut resp = self
-            .agent
-            .post(&format!("{}/api/chat", self.base))
-            .send_json(&body)
-            .map_err(|e| RouteError::Unreachable(e.to_string()))?;
-        if !resp.status().is_success() {
-            return Err(refusal(resp.status(), resp.body_mut()));
-        }
+        let mut resp = self.post_chat(&body)?;
         let v: Value = resp
             .body_mut()
             .read_json()
@@ -333,14 +377,7 @@ impl OllamaRoute {
             "messages": messages,
             "options": self.options(request),
         });
-        let mut resp = self
-            .agent
-            .post(&format!("{}/api/chat", self.base))
-            .send_json(&body)
-            .map_err(|e| RouteError::Unreachable(e.to_string()))?;
-        if !resp.status().is_success() {
-            return Err(refusal(resp.status(), resp.body_mut()));
-        }
+        let mut resp = self.post_chat(&body)?;
         let mut reader = std::io::BufReader::new(resp.body_mut().as_reader());
         let mut text = String::new();
         let (mut prompt_tokens, mut completion_tokens) = (0, 0);

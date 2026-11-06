@@ -4,6 +4,7 @@ use std::fmt;
 use std::path::Path;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+pub mod durable;
 pub use rusqlite;
 
 pub const KEY_LEN: usize = 32;

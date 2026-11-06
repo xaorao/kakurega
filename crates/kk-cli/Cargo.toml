@@ -23,11 +23,11 @@ kk-route = { path = "../kk-route" }
 kk-sandbox = { path = "../kk-sandbox" }
 kk-types = { path = "../kk-types" }
 kk-parse = { path = "../kk-parse" }
+kk-vault = { path = "../kk-vault" }
 serde_json = "1"
 ureq = { version = "3", default-features = false, features = ["json", "rustls"] }
 
 [dev-dependencies]
-kk-vault = { path = "../kk-vault" }
 serde = { version = "1", features = ["derive"] }
 rmcp = { version = "=3.8.0", default-features = false, features = ["client", "transport-child-process"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process"] }

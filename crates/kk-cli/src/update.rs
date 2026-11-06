@@ -203,7 +203,11 @@ fn offer_of(args: &[String], remember: bool) -> Result<(kk_update::Offer, Vec<u8
         if let Some(v) = kk_update::announced_version(&bytes) {
             if seen.is_none_or(|s| v > s) {
                 let _ = std::fs::create_dir_all(crate::data_dir(args));
-                let _ = std::fs::write(seen_path(args), format!("{} {v}", root.version));
+                let _ = kk_vault::durable::write_atomic(
+                    &seen_path(args),
+                    format!("{} {v}", root.version).as_bytes(),
+                    0o600,
+                );
             }
         }
     }
