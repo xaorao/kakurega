@@ -73,12 +73,17 @@ let excusedRequests = 0;
 let excusedConsole = 0;
 // The one lease the script asks for with zero uses, to see the service's refusal shown in words: the browser logs its 400.
 let leaseRefusals = 1;
+let forgottenWordsRefusals = 0; // the one deliberate 422 when forgotten words are typed in again
 page.on("request", (r) => { try { requestOrigins.add(new URL(r.url()).origin); } catch { /* data: urls */ } });
 page.on("console", (m) => {
   if (m.type() !== "error") return;
   // The browser logs every non-2xx fetch as a console error. The model-proof refusal is a deliberate 422 that the page
   // shows as a message (checked by its own steps), so only that exact response is excused.
   if (m.location().url.endsWith("/api/route/attest") && /status of 422/.test(m.text())) return;
+  if (m.location().url.endsWith("/api/memories") && /status of 422/.test(m.text()) && forgottenWordsRefusals > 0) {
+    forgottenWordsRefusals--;
+    return;
+  }
   if (m.location().url.endsWith("/api/agent-access/grant") && /status of 400/.test(m.text()) && leaseRefusals > 0) {
     leaseRefusals--;
     return;
@@ -751,6 +756,28 @@ try {
   // a conversation about a project gets that project's notes and no other project's
   await page.getByRole("link", { name: "Memory" }).click();
   await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
+  // everything one review left behind is listed with its counts and forgotten in one step, and cannot come back
+  const reviewNote = await page.locator(".mem").first().locator(".mem-text").innerText();
+  await page.getByText("Notes and suggestions from a review", { exact: true }).click();
+  const reviewsBox = page.locator("#mem-sources");
+  await reviewsBox.getByText("2 notes, 0 suggestions waiting").waitFor();
+  await axeCheck(page, "memory (review sources open)");
+  await reviewsBox.getByRole("button", { name: "Forget everything from this review" }).click();
+  check("forgetting a review asks first and says exactly how much goes", (await reviewsBox.innerText()).includes("Forget 2 notes and 0 waiting suggestions for good?"));
+  await reviewsBox.getByRole("button", { name: "Cancel" }).click();
+  check("cancelling forgets nothing", (await page.locator(".mem").count()) === 1);
+  await reviewsBox.getByRole("button", { name: "Forget everything from this review" }).click();
+  await reviewsBox.getByRole("button", { name: "Yes, forget them" }).click();
+  await reviewsBox.getByText("No review has left notes or waiting suggestions here.").waitFor();
+  await page.locator(".mem").first().waitFor({ state: "detached" });
+  check("the review's note and the owner's correction of it are both gone and the page says what was forgotten", (await page.locator(".mem").count()) === 0 && (await page.getByText("Forgot 2 notes and 0 suggestions.").count()) === 1);
+  forgottenWordsRefusals = 1;
+  await page.getByLabel("What should be remembered").fill(reviewNote);
+  await page.getByRole("button", { name: "Remember" }).click();
+  await page.getByRole("alert").filter({ hasText: /forget this/i }).first().waitFor();
+  check("the same words cannot be saved again by hand", (await page.locator(".mem").count()) === 0);
+  await page.getByLabel("What should be remembered").fill("");
+  await page.getByText("Notes and suggestions from a review", { exact: true }).click();
   await page.getByLabel("What should be remembered").fill("Zorblax rounding in kestrel is banker's");
   await page.getByLabel("Only for this project (optional folder name)").fill("kestrel");
   await page.getByRole("button", { name: "Remember" }).click();

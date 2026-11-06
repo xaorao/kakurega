@@ -35,6 +35,7 @@ pub enum Command {
         text: String,
     },
     Forget(String),
+    ForgetReview(String),
     Log,
     Clear,
     Keep,
@@ -73,6 +74,7 @@ pub const NAMES: &[&str] = &[
     "remember",
     "correct",
     "forget",
+    "forgetreview",
     "log",
     "verify",
     "clear",
@@ -111,6 +113,7 @@ pub fn describe(name: &str) -> &'static str {
         "remember" => "save a note",
         "correct" => "change a saved note",
         "forget" => "delete a saved note for good",
+        "forgetreview" => "delete everything one review left in memory",
         "log" => "the signed activity log",
         "verify" => "check a capsule offline",
         "clear" => "start a fresh conversation",
@@ -175,6 +178,7 @@ pub fn usage(name: &str) -> &'static str {
         "ask" => "/ask FOLDER : QUESTION",
         "correct" => "/correct ID NEW TEXT",
         "forget" => "/forget ID",
+        "forgetreview" => "/forgetreview JOB",
         "verify" => "/verify FILE",
         "proof" => "/proof [MODEL]",
         "search" => "/search [--day|--week|--month|--year] WORDS",
@@ -380,6 +384,13 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 Err(format!("usage: {}", usage("forget")))
             } else {
                 Ok(Command::Forget(rest.to_string()))
+            }
+        }
+        "forgetreview" => {
+            if rest.is_empty() || rest.contains(char::is_whitespace) {
+                Err(format!("usage: {}", usage("forgetreview")))
+            } else {
+                Ok(Command::ForgetReview(rest.to_string()))
             }
         }
         "verify" => {

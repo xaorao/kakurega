@@ -8006,3 +8006,161 @@ fn sv81_a_chat_reply_says_whether_the_model_that_answered_is_this_computer_by_it
         );
     }
 }
+
+fn review_with_suggestions(tag: &str) -> (kk_companion::Companion, Web, String, PathBuf) {
+    let (root, repo) = repo_copy(tag);
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (_, started) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "suggester"}),
+    );
+    let job = started["id"].as_str().unwrap().to_string();
+    wait_for(&w, &job, &["ready", "nothing_to_release"]);
+    (c, w, job, root)
+}
+
+#[test]
+fn sv82_everything_a_review_left_behind_can_be_seen_and_forgotten_in_one_step() {
+    let (_c, w, job, _root) = review_with_suggestions("srcforget");
+    let (_, listed) = w.get(&format!("/api/jobs/{job}/memory-suggestions"));
+    let items = listed["suggestions"].as_array().unwrap();
+    let good = items[0]["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        w.post(
+            &format!("/api/jobs/{job}/memory-suggestions/{good}/accept"),
+            json!({})
+        )
+        .0,
+        200
+    );
+    // one note from the review, one suggestion still waiting
+    let (s, sources) = w.get("/api/memories/sources");
+    assert_eq!(s, 200);
+    let list = sources["sources"].as_array().unwrap();
+    assert_eq!(list.len(), 1, "{sources}");
+    assert_eq!(
+        (
+            list[0]["job"].as_str().unwrap(),
+            list[0]["notes"].as_i64().unwrap(),
+            list[0]["suggestions"].as_i64().unwrap()
+        ),
+        (job.as_str(), 1, 1)
+    );
+    let (s, preview) = w.get(&format!("/api/memories/sources/{job}"));
+    assert_eq!(
+        (
+            s,
+            preview["notes"].as_i64(),
+            preview["suggestions"].as_i64()
+        ),
+        (200, Some(1), Some(1))
+    );
+    let text = w.get("/api/memories").1["memories"][0]["text"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (s, done) = w.post(&format!("/api/memories/sources/{job}/forget"), json!({}));
+    assert_eq!(s, 200, "{done}");
+    assert_eq!(
+        (
+            done["forgotten"].clone(),
+            done["notes"].as_i64(),
+            done["suggestions"].as_i64()
+        ),
+        (json!(true), Some(1), Some(1))
+    );
+    assert_eq!(
+        w.get("/api/memories").1["memories"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    assert!(
+        w.get(&format!("/api/jobs/{job}/memory-suggestions")).1["suggestions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(w.get("/api/memories/sources").1["sources"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(
+        !w.get("/api/memories/export").1.to_string().contains(&text),
+        "the words are in no export"
+    );
+    // the same words cannot be saved by hand
+    assert_eq!(w.post("/api/memories", json!({"text": text})).0, 422);
+    // the decision is in the signed log, with counts and no words
+    let log = log_text(
+        &format!("http://127.0.0.1:{}", _c.addr.port()),
+        _c.security.admin_token(),
+    );
+    let kinds: Vec<String> = log
+        .split("\\\"kind\\\":\\\"")
+        .skip(1)
+        .map(|p| p.split("\\\"").next().unwrap().to_string())
+        .collect();
+    assert!(
+        kinds.iter().any(|k| k == "memory.source_forgotten"),
+        "{kinds:?}"
+    );
+    assert!(!log.contains(&text), "the log never holds a note's words");
+    // repeating it is harmless
+    let (s, again) = w.post(&format!("/api/memories/sources/{job}/forget"), json!({}));
+    assert_eq!((s, again["notes"].as_i64()), (200, Some(0)));
+}
+
+#[test]
+fn sv83_forgetting_a_review_needs_the_owner_names_a_real_review_and_cannot_be_used_to_block_future_ones(
+) {
+    let (c, w, job, _root) = review_with_suggestions("srcauth");
+    let anon = Web::new(c.addr);
+    for path in [
+        "/api/memories/sources".to_string(),
+        format!("/api/memories/sources/{job}"),
+    ] {
+        assert_eq!(anon.get(&path).0, 401, "{path}");
+    }
+    assert_eq!(
+        anon.post(&format!("/api/memories/sources/{job}/forget"), json!({}))
+            .0,
+        401
+    );
+    for bad in ["job%20one", "job-1%3Bdrop", &"j".repeat(100), "..%2Fx"] {
+        let (s, _) = w.post(&format!("/api/memories/sources/{bad}/forget"), json!({}));
+        assert!(s == 400 || s == 404 || s == 422, "{bad}: {s}");
+    }
+    // a review that does not exist cannot be "forgotten in advance"
+    assert_eq!(
+        w.post("/api/memories/sources/job-999/forget", json!({})).0,
+        404
+    );
+    let (s, _) = w.post(
+        &format!("/api/memories/sources/{job}/forget"),
+        json!({"unknown": 1}),
+    );
+    assert_eq!(s, 422, "unknown fields are refused");
+    // the real one still has its suggestions: nothing above changed it
+    assert_eq!(
+        w.get(&format!("/api/jobs/{job}/memory-suggestions")).1["suggestions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}

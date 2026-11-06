@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 122, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 14, OWED-L 41. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 123, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 13, OWED-L 41. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -197,7 +197,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | E-M17 | Owner-gated writes by background agents | keep; ADAPT pin-on-stage for corrections | KEPT | suggestions need the owner |
 | E-M18 | Deletion guarantee: our own store | IMPROVE now: blank `proposals` rows whose fingerprint equals a forgotten fingerprint, and  | BUILT | forget deletes text, vectors, blanks matching proposals, blocks the wording (me tests) |
 | E-M19 | Deletion guarantee: references | IMPROVE: (a) encrypt the backup with a passphrase, (b) forget returns a list "copies this  | PARTIAL | forget cascades to merged notes (me35); an older backup file still holds old text |
-| E-M20 | Lineage purge | BUILD `forget_by_source(review_job)` and a "forgotten source" tombstone so a re-run of tha | OWED-M | no forget-by-source for a review's suggestions |
+| E-M20 | Lineage purge | BUILD `forget_by_source(review_job)` and a "forgotten source" tombstone so a re-run of tha | BUILT | forget_source + footprint + tombstoned source; web, service, terminal; lineage forward and back (memory.md) |
 | E-M21 | Tombstone against resurrection | keep (ours is better: normalised and keyed) | KEPT | normalised and keyed |
 | E-M22 | Import / export / backup | IMPROVE: encrypted backup, carry label, validity, source and tombstones; imported text pas | BUILT | encrypted backup with recovery key, notes export and import (backup tests) |
 | E-M23 | Explainability | IMPROVE small: show matched terms and rank | PARTIAL | each note says why it is kept; matched terms and rank not shown |

@@ -119,6 +119,13 @@ pub enum Status {
     Merged,
 }
 
+/// What forgetting a review removes (or would remove).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Purge {
+    pub notes: usize,
+    pub suggestions: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Remembered {
     Added(String),
@@ -197,6 +204,11 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
 END;
 CREATE TABLE IF NOT EXISTS tombstones (
     fingerprint BLOB PRIMARY KEY,
+    reason TEXT NOT NULL,
+    forgotten_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS forgotten_sources (
+    source_ref TEXT PRIMARY KEY,
     reason TEXT NOT NULL,
     forgotten_at INTEGER NOT NULL
 );
@@ -603,6 +615,11 @@ impl Memories {
 
     pub fn remember(&self, now: i64, m: NewMemory) -> Result<Remembered, MemoryError> {
         self.check(&m.text, &m.reason, &m.subject)?;
+        if let Source::Review(job) = &m.source {
+            if self.source_is_forgotten(job)? {
+                return refuse("that review was forgotten, so nothing more from it is kept");
+            }
+        }
         Self::check_project(&m.project)?;
         if let (Some(a), Some(b)) = (m.valid_from, m.valid_to) {
             if b <= a {
@@ -703,55 +720,18 @@ impl Memories {
         if reason.len() > MAX_REASON || has_hidden_chars(reason) {
             return refuse("the reason is too long or contains control characters");
         }
-        let mut chain = vec![id.to_string()];
-        let mut i = 0;
-        while i < chain.len() {
-            let prev: Vec<String> = {
-                let mut st = self.conn().prepare(
-                    "SELECT id FROM memories WHERE superseded_by = ?1 OR merged_into = ?1",
-                )?;
-                let rows = st.query_map(params![chain[i]], |r| r.get(0))?;
-                rows.collect::<Result<_, _>>()?
-            };
-            chain.extend(prev);
-            i += 1;
-        }
         self.conn().execute_batch("SAVEPOINT forget")?;
         let r = (|| -> Result<(), MemoryError> {
-            let mut found = false;
-            for mid in &chain {
-                let fp: Option<Vec<u8>> = self
-                    .conn()
-                    .query_row(
-                        "SELECT fingerprint FROM memories WHERE id = ?1",
-                        params![mid],
-                        |r| r.get(0),
-                    )
-                    .optional()?;
-                let Some(fp) = fp else { continue };
-                found = true;
-                self.conn().execute("INSERT OR REPLACE INTO tombstones(fingerprint, reason, forgotten_at) VALUES (?1, ?2, ?3)", params![fp, reason, now])?;
-                // Any review suggestion holding the same text is part of the same forget decision.
-                self.conn().execute(
-                    "UPDATE proposals SET text = '', why = '', status = CASE WHEN status = 'pending' THEN 'dismissed' ELSE status END WHERE fingerprint = ?1",
-                    params![fp],
-                )?;
-                self.conn().execute(
-                    "UPDATE memories SET text = '', subject = NULL, project = NULL, reason = '' WHERE id = ?1",
-                    params![mid],
-                )?;
-                self.conn()
-                    .execute("DELETE FROM memory_vectors WHERE id = ?1", params![mid])?;
-                self.conn()
-                    .execute("DELETE FROM memories WHERE id = ?1", params![mid])?;
-                self.event(now, "forget", mid, "deleted")?;
+            let chain = self.lineage_of(&[id.to_string()], false)?;
+            if self.erase_notes(now, &chain, reason)? == 0 {
+                return Err(MemoryError::NotFound);
             }
-            if found {
-                Ok(())
-            } else {
-                Err(MemoryError::NotFound)
-            }
+            Ok(())
         })();
+        self.finish_forget(r)
+    }
+
+    fn finish_forget(&self, r: Result<(), MemoryError>) -> Result<(), MemoryError> {
         match r {
             Ok(()) => self.conn().execute_batch("RELEASE forget")?,
             Err(e) => {
@@ -762,6 +742,207 @@ impl Memories {
         }
         self.conn().execute_batch("INSERT INTO memories_fts(memories_fts) VALUES('optimize'); PRAGMA wal_checkpoint(TRUNCATE);")?;
         Ok(())
+    }
+
+    /// The notes with these ids and every note that is one of their earlier versions or was merged under them. With `forward`,
+    /// also every later version that replaced them, and the earlier versions and merged notes of those.
+    fn lineage_of(&self, roots: &[String], forward: bool) -> Result<Vec<String>, MemoryError> {
+        let mut chain: Vec<String> = Vec::new();
+        for r in roots {
+            if !chain.contains(r) {
+                chain.push(r.clone());
+            }
+        }
+        let mut i = 0;
+        while i < chain.len() {
+            let prev: Vec<String> = {
+                let mut st = self.conn().prepare(
+                    "SELECT id FROM memories WHERE superseded_by = ?1 OR merged_into = ?1",
+                )?;
+                let rows = st.query_map(params![chain[i]], |r| r.get(0))?;
+                rows.collect::<Result<_, _>>()?
+            };
+            for p in prev {
+                if !chain.contains(&p) {
+                    chain.push(p);
+                }
+            }
+            if forward {
+                let next: Option<String> = self
+                    .conn()
+                    .query_row(
+                        "SELECT superseded_by FROM memories WHERE id = ?1",
+                        params![chain[i]],
+                        |r| r.get(0),
+                    )
+                    .optional()?
+                    .flatten();
+                if let Some(n) = next {
+                    if !chain.contains(&n) {
+                        chain.push(n);
+                    }
+                }
+            }
+            i += 1;
+        }
+        Ok(chain)
+    }
+
+    /// Erases these notes for good: their words are blanked, then the rows and their meaning vectors are deleted, the same
+    /// words are blocked from being saved again and any suggestion holding them is dismissed. Returns how many existed.
+    fn erase_notes(&self, now: i64, ids: &[String], reason: &str) -> Result<usize, MemoryError> {
+        let mut found = 0;
+        for mid in ids {
+            let fp: Option<Vec<u8>> = self
+                .conn()
+                .query_row(
+                    "SELECT fingerprint FROM memories WHERE id = ?1",
+                    params![mid],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let Some(fp) = fp else { continue };
+            found += 1;
+            self.conn().execute("INSERT OR REPLACE INTO tombstones(fingerprint, reason, forgotten_at) VALUES (?1, ?2, ?3)", params![fp, reason, now])?;
+            // Any review suggestion holding the same text is part of the same forget decision.
+            self.conn().execute(
+                "UPDATE proposals SET text = '', why = '', status = CASE WHEN status = 'pending' THEN 'dismissed' ELSE status END WHERE fingerprint = ?1",
+                params![fp],
+            )?;
+            self.conn().execute(
+                "UPDATE memories SET text = '', subject = NULL, project = NULL, reason = '' WHERE id = ?1",
+                params![mid],
+            )?;
+            self.conn()
+                .execute("DELETE FROM memory_vectors WHERE id = ?1", params![mid])?;
+            self.conn()
+                .execute("DELETE FROM memories WHERE id = ?1", params![mid])?;
+            self.event(now, "forget", mid, "deleted")?;
+        }
+        Ok(found)
+    }
+
+    fn check_source_name(job_id: &str) -> Result<(), MemoryError> {
+        let ok = !job_id.is_empty()
+            && job_id.len() <= 64
+            && job_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+        if ok {
+            Ok(())
+        } else {
+            refuse("a review is named by letters, digits, dashes and underscores, at most 64")
+        }
+    }
+
+    /// What forgetting this review would remove: the notes it produced with their earlier versions and anything merged under
+    /// them, and the suggestions still waiting. Changes nothing.
+    pub fn source_footprint(&self, job_id: &str) -> Result<Purge, MemoryError> {
+        Self::check_source_name(job_id)?;
+        let roots: Vec<String> = {
+            let mut st = self.conn().prepare(
+                "SELECT id FROM memories WHERE source_kind = 'review' AND source_ref = ?1",
+            )?;
+            let rows = st.query_map(params![job_id], |r| r.get(0))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        let notes = self.lineage_of(&roots, true)?.len();
+        let suggestions: i64 = self.conn().query_row(
+            "SELECT count(*) FROM proposals WHERE job_id = ?1 AND status = 'pending'",
+            params![job_id],
+            |r| r.get(0),
+        )?;
+        Ok(Purge {
+            notes,
+            suggestions: suggestions as usize,
+        })
+    }
+
+    /// Forgets everything one review produced: the notes it wrote (with earlier versions and anything merged under them,
+    /// as forgetting one note does), and the suggestions still waiting. The review is written down as forgotten first, so
+    /// it can neither suggest nor save anything again, and the exact words of what was removed stay blocked from being
+    /// saved again. All or nothing. A review that produced nothing is recorded too.
+    pub fn forget_source(
+        &self,
+        now: i64,
+        job_id: &str,
+        reason: &str,
+    ) -> Result<Purge, MemoryError> {
+        Self::check_source_name(job_id)?;
+        if reason.len() > MAX_REASON || has_hidden_chars(reason) {
+            return refuse("the reason is too long or contains control characters");
+        }
+        self.conn().execute_batch("SAVEPOINT forget")?;
+        let r = (|| -> Result<Purge, MemoryError> {
+            self.conn().execute(
+                "INSERT OR REPLACE INTO forgotten_sources(source_ref, reason, forgotten_at) VALUES (?1, ?2, ?3)",
+                params![job_id, reason, now],
+            )?;
+            let roots: Vec<String> = {
+                let mut st = self.conn().prepare(
+                    "SELECT id FROM memories WHERE source_kind = 'review' AND source_ref = ?1",
+                )?;
+                let rows = st.query_map(params![job_id], |r| r.get(0))?;
+                rows.collect::<Result<_, _>>()?
+            };
+            let chain = self.lineage_of(&roots, true)?;
+            let notes = self.erase_notes(now, &chain, reason)?;
+            // suggestions that were never accepted: their words are blocked and then blanked
+            self.conn().execute(
+                "INSERT OR REPLACE INTO tombstones(fingerprint, reason, forgotten_at) SELECT fingerprint, ?2, ?3 FROM proposals WHERE job_id = ?1 AND status = 'pending'",
+                params![job_id, reason, now],
+            )?;
+            let suggestions = self.conn().execute(
+                "UPDATE proposals SET text = '', why = '', status = 'dismissed' WHERE job_id = ?1 AND status = 'pending'",
+                params![job_id],
+            )?;
+            self.event(now, "forget_source", job_id, "forgotten")?;
+            Ok(Purge { notes, suggestions })
+        })();
+        match r {
+            Ok(p) => {
+                self.finish_forget(Ok(()))?;
+                Ok(p)
+            }
+            Err(e) => {
+                self.finish_forget(Err(e))?;
+                unreachable!("finish_forget returns the error it is given")
+            }
+        }
+    }
+
+    /// The reviews that have notes or waiting suggestions here, newest first, with what forgetting each would remove. At most 200.
+    pub fn review_sources(&self) -> Result<Vec<(String, Purge)>, MemoryError> {
+        let jobs: Vec<String> = {
+            let mut st = self.conn().prepare(
+                "SELECT source_ref FROM memories WHERE source_kind = 'review' AND source_ref IS NOT NULL
+                 UNION SELECT job_id FROM proposals WHERE status = 'pending'
+                 ORDER BY 1 DESC LIMIT 200",
+            )?;
+            let rows = st.query_map([], |r| r.get(0))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        let mut out = Vec::new();
+        for job in jobs {
+            if let Ok(p) = self.source_footprint(&job) {
+                if p.notes + p.suggestions > 0 {
+                    out.push((job, p));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    fn source_is_forgotten(&self, job_id: &str) -> Result<bool, MemoryError> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT 1 FROM forgotten_sources WHERE source_ref = ?1",
+                params![job_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
     }
 
     /// Most notes merged in one step.
@@ -1172,6 +1353,9 @@ impl Memories {
             || has_hidden_chars(text)
             || has_hidden_chars(why)
         {
+            return Ok(None);
+        }
+        if self.source_is_forgotten(job_id)? {
             return Ok(None);
         }
         let fp = self.fingerprint(text);

@@ -2356,3 +2356,342 @@ fn me41_disguised_instructions_are_recognised_and_a_note_with_text_hidden_in_tag
     let ok = m.remember(1, nm("Acme pays on the 20th.", internal()));
     assert!(ok.is_ok());
 }
+
+fn review_note(text: &str, job: &str) -> NewMemory {
+    let mut n = nm(text, internal());
+    n.source = Source::Review(job.into());
+    n.reason = format!("suggested by review {job}");
+    n
+}
+
+fn id_of(r: Remembered) -> String {
+    match r {
+        Remembered::Added(id) | Remembered::AlreadyKnown(id) => id,
+    }
+}
+
+fn note_texts(m: &Memories) -> Vec<String> {
+    m.recall("note", &internal(), 1, 50)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.memory.text)
+        .collect()
+}
+
+fn gone(m: &Memories, id: &str) -> bool {
+    m.history(id, &internal())
+        .map(|h| h.is_empty())
+        .unwrap_or(true)
+}
+
+#[test]
+fn me42_forgetting_a_review_removes_everything_it_produced_and_nothing_else() {
+    let m = mem(&dir());
+    let a = id_of(
+        m.remember(1, review_note("note about invoices from job one", "job-1"))
+            .unwrap(),
+    );
+    let b = id_of(
+        m.remember(1, review_note("note about refunds from job one", "job-1"))
+            .unwrap(),
+    );
+    let other = id_of(
+        m.remember(1, review_note("note about audits from job two", "job-2"))
+            .unwrap(),
+    );
+    let mine = id_of(
+        m.remember(1, nm("note I wrote myself about payroll", internal()))
+            .unwrap(),
+    );
+    let p1 = m
+        .propose(
+            2,
+            "job-1",
+            "note: suggested only, not accepted",
+            "w",
+            &internal(),
+        )
+        .unwrap()
+        .unwrap();
+    m.propose(
+        2,
+        "job-2",
+        "note: another job's suggestion",
+        "w",
+        &internal(),
+    )
+    .unwrap()
+    .unwrap();
+    let before = m.source_footprint("job-1").unwrap();
+    assert_eq!(
+        (before.notes, before.suggestions),
+        (2, 1),
+        "the preview counts what will go"
+    );
+    let purged = m.forget_source(3, "job-1", "the review was wrong").unwrap();
+    assert_eq!((purged.notes, purged.suggestions), (2, 1));
+    let left = note_texts(&m);
+    assert!(
+        left.iter().any(|t| t.contains("audits")) && left.iter().any(|t| t.contains("payroll")),
+        "{left:?}"
+    );
+    assert!(
+        !left
+            .iter()
+            .any(|t| t.contains("invoices") || t.contains("refunds")),
+        "{left:?}"
+    );
+    assert!(gone(&m, &a) && gone(&m, &b));
+    assert!(!gone(&m, &other) && !gone(&m, &mine));
+    assert!(m.pending_proposals("job-1").unwrap().is_empty());
+    assert_eq!(
+        m.pending_proposals("job-2").unwrap().len(),
+        1,
+        "another job's suggestions stay"
+    );
+    assert!(matches!(
+        m.accept_proposal(4, &p1, "job-1", None),
+        Err(MemoryError::NotFound)
+    ));
+    // not even the dismissed suggestion keeps its words, and the forgetting is written down
+    let held: i64 = m_conn(&m)
+        .query_row(
+            "SELECT count(*) FROM proposals WHERE job_id = 'job-1' AND (text != '' OR why != '')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(held, 0);
+    let events = m.events().unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|e| e.1 == "forget_source" && e.2 == "job-1"),
+        "{events:?}"
+    );
+    // forgetting a review that produced nothing is not an error
+    let none = m.forget_source(5, "job-9", "just in case").unwrap();
+    assert_eq!((none.notes, none.suggestions), (0, 0));
+}
+
+#[test]
+fn me43_a_forgotten_review_cannot_put_anything_back_by_any_door() {
+    let m = mem(&dir());
+    m.remember(1, review_note("note about invoices from job one", "job-1"))
+        .unwrap();
+    m.propose(
+        2,
+        "job-1",
+        "note: a suggestion that was never accepted",
+        "w",
+        &internal(),
+    )
+    .unwrap()
+    .unwrap();
+    m.forget_source(3, "job-1", "bad review").unwrap();
+    // the same review cannot suggest or save anything more
+    assert_eq!(
+        m.propose(4, "job-1", "note: a brand new suggestion", "w", &internal())
+            .unwrap(),
+        None
+    );
+    assert!(m
+        .remember(
+            4,
+            review_note("note: saved straight from the forgotten review", "job-1")
+        )
+        .is_err());
+    // another review cannot bring back the same words, accepted or only suggested
+    assert_eq!(
+        m.propose(
+            5,
+            "job-2",
+            "note about invoices from job one",
+            "w",
+            &internal()
+        )
+        .unwrap(),
+        None
+    );
+    assert_eq!(
+        m.propose(
+            5,
+            "job-2",
+            "note: a suggestion that was never accepted",
+            "w",
+            &internal()
+        )
+        .unwrap(),
+        None
+    );
+    assert!(
+        m.remember(5, nm("note about invoices from job one", internal()))
+            .is_err(),
+        "the exact words stay forgotten"
+    );
+    // an unrelated suggestion from another review still works, and repeating the forget is harmless
+    assert!(m
+        .propose(
+            6,
+            "job-2",
+            "note: something entirely different",
+            "w",
+            &internal()
+        )
+        .unwrap()
+        .is_some());
+    assert!(m.forget_source(7, "job-1", "again").is_ok());
+}
+
+#[test]
+fn me44_notes_in_the_same_lineage_go_with_it_and_notes_the_owner_wrote_apart_from_it_stay() {
+    let m = mem(&dir());
+    let old = id_of(
+        m.remember(1, nm("note: the rate is three percent", internal()))
+            .unwrap(),
+    );
+    let from_review = m
+        .correct(
+            2,
+            &old,
+            review_note("note: the rate is four percent", "job-1"),
+        )
+        .unwrap();
+    let twin = id_of(
+        m.remember(3, nm("note: rate four per cent as well", internal()))
+            .unwrap(),
+    );
+    m.merge(4, &from_review, std::slice::from_ref(&twin), &internal())
+        .unwrap();
+    let keep = id_of(
+        m.remember(5, nm("note: an unrelated fact of mine", internal()))
+            .unwrap(),
+    );
+    let preview = m.source_footprint("job-1").unwrap();
+    assert_eq!(
+        preview.notes, 3,
+        "the note, its earlier version and the note merged under it: {preview:?}"
+    );
+    let purged = m.forget_source(6, "job-1", "wrong").unwrap();
+    assert_eq!(purged.notes, 3);
+    assert!(gone(&m, &old) && gone(&m, &twin) && gone(&m, &from_review));
+    assert!(!gone(&m, &keep), "the unrelated note stays");
+}
+
+#[test]
+fn me45_hostile_source_names_and_reasons_are_refused_and_change_nothing() {
+    let m = mem(&dir());
+    m.remember(1, review_note("note about invoices from job one", "job-1"))
+        .unwrap();
+    for bad_job in [
+        "",
+        " ",
+        "job 1",
+        "job-1; drop table memories",
+        &"j".repeat(200),
+        "../x",
+        "job-1\n",
+    ] {
+        assert!(m.forget_source(2, bad_job, "r").is_err(), "{bad_job:?}");
+        assert!(m.source_footprint(bad_job).is_err(), "{bad_job:?}");
+    }
+    assert!(m.forget_source(2, "job-1", &"r".repeat(5000)).is_err());
+    assert!(m.forget_source(2, "job-1", "bad\u{202e}reason").is_err());
+    assert_eq!(
+        note_texts(&m).len(),
+        1,
+        "nothing was forgotten by a refused request"
+    );
+    assert!(m
+        .propose(3, "job-1", "note: still allowed", "w", &internal())
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn me46_the_reviews_that_left_something_behind_are_listed_with_what_forgetting_each_would_remove() {
+    let m = mem(&dir());
+    assert!(m.review_sources().unwrap().is_empty());
+    m.remember(1, review_note("note one from job-1", "job-1"))
+        .unwrap();
+    m.remember(1, review_note("note two from job-1", "job-1"))
+        .unwrap();
+    m.propose(2, "job-2", "note: waiting suggestion", "w", &internal())
+        .unwrap()
+        .unwrap();
+    m.remember(3, nm("note I wrote", internal())).unwrap();
+    let listed = m.review_sources().unwrap();
+    let simple: Vec<(String, usize, usize)> = listed
+        .iter()
+        .map(|(j, p)| (j.clone(), p.notes, p.suggestions))
+        .collect();
+    assert_eq!(
+        simple,
+        [("job-2".to_string(), 0, 1), ("job-1".to_string(), 2, 0)]
+    );
+    m.forget_source(4, "job-1", "r").unwrap();
+    assert_eq!(m.review_sources().unwrap().len(), 1);
+}
+
+#[test]
+fn me47_a_note_the_owner_corrected_from_a_review_note_goes_with_the_review_but_forgetting_an_old_version_alone_does_not_reach_forward(
+) {
+    let m = mem(&dir());
+    let r = id_of(
+        m.remember(
+            1,
+            review_note("note: the vendor rate is five percent", "job-1"),
+        )
+        .unwrap(),
+    );
+    // the owner corrects the review's note; the correction is the live note and the review's is the old version
+    let fixed = m
+        .correct(
+            2,
+            &r,
+            nm(
+                "note: the vendor rate is five percent, paid monthly",
+                internal(),
+            ),
+        )
+        .unwrap();
+    let again = m
+        .correct(
+            3,
+            &fixed,
+            nm(
+                "note: the vendor rate is five percent, paid monthly in euros",
+                internal(),
+            ),
+        )
+        .unwrap();
+    let apart = id_of(
+        m.remember(4, nm("note: something else the owner wrote", internal()))
+            .unwrap(),
+    );
+    let preview = m.source_footprint("job-1").unwrap();
+    assert_eq!(
+        preview.notes, 3,
+        "the review's note and both corrections of it: {preview:?}"
+    );
+    let purged = m.forget_source(5, "job-1", "wrong").unwrap();
+    assert_eq!(purged.notes, 3);
+    for id in [&r, &fixed, &again] {
+        assert!(gone(&m, id), "{id}");
+    }
+    assert!(!gone(&m, &apart));
+    // forgetting by the id of an old version is still about that note and its earlier versions only (unchanged behaviour)
+    let m2 = mem(&dir());
+    let a = id_of(
+        m2.remember(1, nm("note: first wording of a fact", internal()))
+            .unwrap(),
+    );
+    let b = m2
+        .correct(2, &a, nm("note: second wording of a fact", internal()))
+        .unwrap();
+    assert!(m2.forget(3, &a, "r").is_ok());
+    assert!(
+        !gone(&m2, &b),
+        "the newer version was not part of forgetting the old one"
+    );
+}

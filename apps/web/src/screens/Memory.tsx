@@ -226,6 +226,54 @@ function Merged(props: { onChange: (msg?: string) => void }) {
   );
 }
 
+/** Everything one review left in memory (notes and waiting suggestions), forgotten in one step. */
+function ReviewSources(props: { onChange: (msg?: string) => void }) {
+  const [open, setOpen] = createSignal(false);
+  const [sources, { refetch }] = createResource(open, (on) => (on ? api.reviewSources().then((r) => r.sources) : Promise.resolve([])));
+  const [confirming, setConfirming] = createSignal("");
+  const [problem, setProblem] = createSignal("");
+  const forget = async (job: string) => {
+    setProblem("");
+    try {
+      const r = await api.forgetReview(job);
+      setConfirming("");
+      props.onChange(t("mem.src.done", { notes: r.notes, sugg: r.suggestions }));
+      await refetch();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("mem.error"));
+    }
+  };
+  return (
+    <details class="card stack" id="mem-sources" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>{t("mem.src.title")}</summary>
+      <Show when={open()}>
+        <p class="muted">{t("mem.src.lead")}</p>
+        <Show when={problem()}><p role="alert" class="bad">{problem()}</p></Show>
+        <ul class="plain stack">
+          <For each={sources()} fallback={<li class="muted">{sources.loading ? t("review.loading") : t("mem.src.none")}</li>}>
+            {(s) => (
+              <li class="card stack">
+                <p><code>{s.job}</code> <span class="muted">{t("mem.src.counts", { notes: s.notes, sugg: s.suggestions })}</span></p>
+                <div class="actions">
+                  <Show when={confirming() !== s.job} fallback={
+                    <span class="confirm" role="group">
+                      <span class="bad">{t("mem.src.confirm", { notes: s.notes, sugg: s.suggestions })}</span>{" "}
+                      <button class="danger" onClick={() => void forget(s.job)}>{t("mem.src.yes")}</button>
+                      <button onClick={() => setConfirming("")}>{t("mem.cancel")}</button>
+                    </span>
+                  }>
+                    <button type="button" onClick={() => setConfirming(s.job)}>{t("mem.src.forget")}</button>
+                  </Show>
+                </div>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
+    </details>
+  );
+}
+
 export function Memory() {
   const [query, setQuery] = createSignal("");
   const [items, { refetch }] = createResource(query, (q) => api.memories(q.trim() || undefined).then((r) => r.memories));
@@ -280,6 +328,7 @@ export function Memory() {
       </div>
       <Similar onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <Merged onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
+      <ReviewSources onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <ul class="plain stack">
         <For each={items()} fallback={<li class="muted">{items.loading ? t("review.loading") : query().trim() ? t("mem.nomatch") : t("mem.none")}</li>}>
           {(m) => <Item m={m} onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />}

@@ -80,7 +80,10 @@ enum Intent {
     Release,
     ApproveRequest(String),
     ApproveJob(String),
-    ApprovalDetail { job: String, aid: String },
+    ApprovalDetail {
+        job: String,
+        aid: String,
+    },
     ApproveSubmit,
     ApprovalWatch(String),
     Deny,
@@ -91,6 +94,9 @@ enum Intent {
     Ask,
     Correct,
     Forget,
+    /// The counts of what forgetting a review would remove, asked for before anything is confirmed.
+    ReviewFootprint(String),
+    ForgetReview,
     Log,
     Chat,
     SearchPropose,
@@ -119,6 +125,8 @@ pub const ESC_ARM_TICKS: u8 = 6;
 pub struct ConfirmView {
     pub prompt: String,
     pub forget_id: String,
+    /// Everything one review left in memory, waiting for a yes: the review's id.
+    pub review: Option<String>,
     pub apply: Option<(String, usize, String)>,
     pub undo: bool,
     /// A web request waiting for a yes: ("search" or "read", request id, digest of exactly what was shown).
@@ -800,6 +808,7 @@ impl App {
                 let apply = c.apply.clone();
                 let undo = c.undo;
                 let web = c.web.clone();
+                let review = c.review.clone();
                 match k.code {
                     KeyCode::Char('y') | KeyCode::Char('Y') if !ctrl && web.is_some() => {
                         self.mode = Mode::Normal;
@@ -836,6 +845,17 @@ impl App {
                             Method::Post,
                             &format!("/api/jobs/{job}/fixes/{}/{what}", n - 1),
                             Some(json!({"file": file})),
+                        )]
+                    }
+                    KeyCode::Char('y') | KeyCode::Char('Y') if !ctrl && review.is_some() => {
+                        self.mode = Mode::Normal;
+                        let job = review.expect("checked");
+                        vec![self.req(
+                            Intent::ForgetReview,
+                            false,
+                            Method::Post,
+                            &format!("/api/memories/sources/{job}/forget"),
+                            Some(json!({"reason": "you asked to forget this review in the terminal"})),
                         )]
                     }
                     KeyCode::Char('y') | KeyCode::Char('Y') if !ctrl => {
@@ -1392,6 +1412,7 @@ impl App {
                         "Change {file} on this computer now? This edits your own file. [y/N]"
                     ),
                     forget_id: String::new(),
+                    review: None,
                     apply: Some((j, n, file)),
                     undo: false,
                     web: None,
@@ -1416,6 +1437,7 @@ impl App {
                 self.mode = Mode::Confirm(ConfirmView {
                     prompt: format!("Restore the original {file} on this computer now? [y/N]"),
                     forget_id: String::new(),
+                    review: None,
                     apply: Some((j, n, file)),
                     undo: true,
                     web: None,
@@ -1514,8 +1536,15 @@ impl App {
                 &format!("/api/memories/{id}/correct"),
                 Some(json!({"text": text, "reason": "you corrected it in the terminal"})),
             )],
+            Command::ForgetReview(job) => vec![self.req(
+                Intent::ReviewFootprint(job.clone()),
+                false,
+                Method::Get,
+                &format!("/api/memories/sources/{job}"),
+                None,
+            )],
             Command::Forget(id) => {
-                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id, apply: None, undo: false, web: None });
+                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id, review: None, apply: None, undo: false, web: None });
                 Vec::new()
             }
             Command::Log => vec![self.req(Intent::Log, false, Method::Get, "/api/log", None)],
@@ -2282,6 +2311,42 @@ impl App {
                 );
                 Vec::new()
             }
+            Intent::ReviewFootprint(job) => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let notes = body["notes"].as_u64().unwrap_or(0);
+                let waiting = body["suggestions"].as_u64().unwrap_or(0);
+                if notes + waiting == 0 {
+                    self.say(Kind::Info, format!("Review {job} left nothing in memory."));
+                    return Vec::new();
+                }
+                self.mode = Mode::Confirm(ConfirmView {
+                    prompt: format!("Forget {notes} notes and {waiting} waiting suggestions that review {job} left? The text is deleted and will not be saved again. [y/N]"),
+                    forget_id: String::new(),
+                    review: Some(job),
+                    apply: None,
+                    undo: false,
+                    web: None,
+                });
+                Vec::new()
+            }
+            Intent::ForgetReview => {
+                self.say(
+                    if ok { Kind::Ok } else { Kind::Error },
+                    if ok {
+                        format!(
+                            "Forgot {} notes and {} suggestions. The text is deleted and will not be saved again.",
+                            body["notes"].as_u64().unwrap_or(0),
+                            body["suggestions"].as_u64().unwrap_or(0)
+                        )
+                    } else {
+                        err_text(status, &body)
+                    },
+                );
+                Vec::new()
+            }
             Intent::Forget => {
                 self.say(
                     if ok { Kind::Ok } else { Kind::Error },
@@ -2409,6 +2474,7 @@ impl App {
                         "Request exactly these addresses? [y/N]".into()
                     },
                     forget_id: String::new(),
+                    review: None,
                     apply: None,
                     undo: false,
                     web: Some((

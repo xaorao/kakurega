@@ -1499,6 +1499,72 @@ async fn memory_forget(
     }
 }
 
+fn purge_json(job: &str, p: &kk_memory::Purge) -> Value {
+    json!({"job": job, "notes": p.notes, "suggestions": p.suggestions})
+}
+
+/// The reviews that left notes or waiting suggestions in memory, and what forgetting each would remove.
+async fn memory_sources(axum::Extension(svc): Svc) -> Response {
+    match svc.memory.lock().expect("lock").review_sources() {
+        Ok(list) => {
+            Json(json!({"sources": list.iter().map(|(j, p)| purge_json(j, p)).collect::<Vec<_>>()}))
+                .into_response()
+        }
+        Err(e) => memory_error(e),
+    }
+}
+
+async fn memory_source_footprint(
+    axum::Extension(svc): Svc,
+    UrlPath(job): UrlPath<String>,
+) -> Response {
+    match svc.memory.lock().expect("lock").source_footprint(&job) {
+        Ok(p) => Json(purge_json(&job, &p)).into_response(),
+        Err(e) => memory_error(e),
+    }
+}
+
+/// Forgets everything one review produced. Only a review this service ran, or one that left something in memory, can be
+/// named: forgetting an id nobody used would block a future review that gets that id.
+async fn memory_source_forget(
+    axum::Extension(svc): Svc,
+    UrlPath(job): UrlPath<String>,
+    Json(b): Json<ForgetBody>,
+) -> Response {
+    let footprint = match svc.memory.lock().expect("lock").source_footprint(&job) {
+        Ok(p) => p,
+        Err(e) => return memory_error(e),
+    };
+    let ran = svc.inner.lock().expect("lock").jobs.contains_key(&job);
+    if !ran && footprint.notes + footprint.suggestions == 0 {
+        return error(StatusCode::NOT_FOUND, "NO_REVIEW", "no such review");
+    }
+    let reason = b
+        .reason
+        .unwrap_or_else(|| "you asked to forget this review".into());
+    match svc
+        .memory
+        .lock()
+        .expect("lock")
+        .forget_source(now(), &job, &reason)
+    {
+        Ok(p) => {
+            svc.log_event(
+                "memory.source_forgotten",
+                &job,
+                &[
+                    ("notes", p.notes.into()),
+                    ("suggestions", p.suggestions.into()),
+                ],
+            );
+            let mut v = purge_json(&job, &p);
+            v["forgotten"] = json!(true);
+            Json(v).into_response()
+        }
+        Err(e) => memory_error(e),
+    }
+}
+
 async fn memory_history(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
     let mem = svc.memory.lock().expect("lock");
     match mem.owner_clearance().and_then(|c| mem.history(&id, &c)) {
@@ -5462,6 +5528,12 @@ impl Extension for Routes {
             .route("/api/memories/import", post(memories_import))
             .route("/api/memories/import-notes", post(memories_import_notes))
             .route("/api/memories/{id}/correct", post(memory_correct))
+            .route("/api/memories/sources", get(memory_sources))
+            .route("/api/memories/sources/{job}", get(memory_source_footprint))
+            .route(
+                "/api/memories/sources/{job}/forget",
+                post(memory_source_forget),
+            )
             .route("/api/memories/{id}/forget", post(memory_forget))
             .route("/api/memories/{id}/history", get(memory_history))
             .route("/api/jobs/{id}/memory-suggestions", get(suggestions_list))

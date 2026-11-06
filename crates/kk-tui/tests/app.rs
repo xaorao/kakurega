@@ -1427,7 +1427,8 @@ fn tu31_typing_a_slash_offers_matching_commands_that_can_be_chosen_completed_or_
     // a command typed out in full runs as typed, even when a longer name also matches
     a.handle(ctrl('u'));
     typed(&mut a, "/review");
-    assert_eq!(a.completions(), ["review", "reviews"]);
+    // letters that appear in order also match, so a longer name that contains them is offered last
+    assert_eq!(a.completions(), ["review", "reviews", "forgetreview"]);
     assert!(a.handle(key(KeyCode::Enter)).is_empty());
     assert!(
         a.input.is_empty() && text(&a).contains("usage: /review FOLDER for RECIPIENT"),
@@ -1437,7 +1438,7 @@ fn tu31_typing_a_slash_offers_matching_commands_that_can_be_chosen_completed_or_
     a.handle(ctrl('u'));
     typed(&mut a, "/revie");
     let ws = a.completions();
-    assert_eq!(ws, ["review", "reviews"]);
+    assert_eq!(ws, ["review", "reviews", "forgetreview"]);
     a.handle(key(KeyCode::Down));
     let r = a.handle(key(KeyCode::Enter));
     assert_eq!(r[0].path, "/api/jobs", "/reviews ran");
@@ -2443,5 +2444,95 @@ fn tu61_an_optional_check_that_fails_is_marked_optional_not_todo() {
     assert!(
         t.contains("[todo] Odd"),
         "only a real false makes a check optional: {t}"
+    );
+}
+
+#[test]
+fn tu40_forgetting_everything_from_a_review_shows_what_goes_asks_first_and_reports_what_went() {
+    use kk_tui::cmd;
+    assert!(cmd::parse("/forgetreview").is_err());
+    assert!(cmd::parse("/forgetreview a b").is_err());
+    assert!(cmd::parse("/forgetreview job-4").is_ok());
+    let mut app = booted();
+    // the first step only looks: it asks the service what would be removed
+    let r = enter(&mut app, "/forgetreview job-4");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].admin),
+        ("/api/memories/sources/job-4", false)
+    );
+    assert_eq!(r[0].method, Method::Get, "looking is a read");
+    assert!(
+        matches!(app.mode, Mode::Normal),
+        "nothing to confirm before the counts are known"
+    );
+    app.handle(ok(
+        &r[0],
+        200,
+        json!({"job": "job-4", "notes": 3, "suggestions": 2}),
+    ));
+    let prompt = match &app.mode {
+        Mode::Confirm(c) => c.prompt.clone(),
+        other => panic!("not asking: {other:?}"),
+    };
+    assert!(
+        prompt.contains("Forget 3 notes and 2 waiting suggestions")
+            && prompt.contains("job-4")
+            && prompt.ends_with("[y/N]"),
+        "{prompt}"
+    );
+    // Enter and n are not a yes
+    for k in [KeyCode::Enter, KeyCode::Char('n'), KeyCode::Esc] {
+        let mut a = booted();
+        let r = enter(&mut a, "/forgetreview job-4");
+        a.handle(ok(
+            &r[0],
+            200,
+            json!({"job": "job-4", "notes": 3, "suggestions": 2}),
+        ));
+        let out = a.handle(key(k));
+        assert!(
+            out.is_empty()
+                && matches!(a.mode, Mode::Normal)
+                && text(&a).contains("Nothing was forgotten"),
+            "{}",
+            text(&a)
+        );
+    }
+    let r = app.handle(key(KeyCode::Char('y')));
+    assert_eq!(
+        (r[0].path.as_str(), r[0].admin),
+        ("/api/memories/sources/job-4/forget", false)
+    );
+    assert_eq!(r[0].method, Method::Post);
+    app.handle(ok(
+        &r[0],
+        200,
+        json!({"forgotten": true, "job": "job-4", "notes": 3, "suggestions": 2}),
+    ));
+    assert!(
+        text(&app).contains("Forgot 3 notes and 2 suggestions"),
+        "{}",
+        text(&app)
+    );
+    // a review that left nothing, and a refusal, are said plainly
+    let mut a = booted();
+    let r = enter(&mut a, "/forgetreview job-9");
+    a.handle(ok(
+        &r[0],
+        404,
+        json!({"error": {"code": "NO_REVIEW", "message": "no such review"}}),
+    ));
+    assert!(text(&a).contains("no such review") && matches!(a.mode, Mode::Normal));
+    let mut a = booted();
+    let r = enter(&mut a, "/forgetreview job-5");
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"job": "job-5", "notes": 0, "suggestions": 0}),
+    ));
+    assert!(
+        matches!(a.mode, Mode::Normal) && text(&a).contains("left nothing"),
+        "{}",
+        text(&a)
     );
 }
