@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 135, PARTIAL 80, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 17. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 135, PARTIAL 81, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 16. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -265,7 +265,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | F-E5 | 17: validate IPC sender | KEEP; if IPC is added, port per window with frame-origin check (record already says so) | KEPT | no IPC added |
 | F-E6 | 18: avoid `file://`, use a custom protocol | IMPROVE: custom scheme or loopback with per-launch secret in a header added by the main pr | BUILT | per-launch shell secret on stdin, 403 SHELL_ONLY for every other program; pairing lockout no longer blocks the right code (ws13b/c, ws20-22, Electron e2e) |
 | F-E7 | 19: fuses | IMPROVE: review `LoadBrowserProcessSpecificV8Snapshot` and `EnableEmbeddedAsarIntegrityVal | BUILT | fuses and asar integrity with a tested tamper response (II-13b, II-13c) |
-| F-E8 | 16: current Electron | BUILD update policy | OWED-L | no update policy for Electron itself |
+| F-E8 | 16: current Electron | BUILD update policy | PARTIAL | update policy read from Electron's docs; scripts/check_electron.py (offline-tested logic); pin moved 45.2.2 to 45.2.3 and desktop suites green; no schedule, release notes unread (desktop-shell.md) |
 | F-E9 | Single instance lock | ADAPT from OpenCode (MIT) | BUILT | second launch exits (desktop-shell.md) |
 | F-E10 | Signing / notarization / hardened runtime | BUILD Developer ID signing + notarization + hardened runtime entitlements; OpenCode's buil | LATER | needs an Apple Developer ID; deferred by the owner |
 | F-E11 | Auto-update with signature verification | BUILD an updater that verifies the signature and a pinned publisher; do not copy OpenCode' | PARTIAL | signed announcements with rollback and expiry (row 25); no installer step until signing exists |
