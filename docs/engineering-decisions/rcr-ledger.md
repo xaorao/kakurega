@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 134, PARTIAL 74, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 24. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 134, PARTIAL 75, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 23. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -86,7 +86,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | C-4 | Bind to stable principal | IMPROVE: store `chat_id` and `from.id`, require equality on every update, drop `from.is_bo | BUILT | one private chat bound; strangers get silence (tg01) |
 | C-5 | Multiple chats / devices | BUILD later (low priority): up to 3 bound chats, each with id, label and paired-at, listed | LATER | low priority |
 | C-6 | Revocation and unpair | IMPROVE: bridge re-reads `telegram.json` every poll cycle (or the service owns binding sta | BUILT | `kaku telegram unpair`; the bound chat is re-read (code in telegram.rs; no named test: NOT VERIFIED) |
-| C-7 | Pairing UX | IMPROVE: call `getMe` at start to learn the username, print and QR the deep link; handle ` | OWED-L | doctor calls getMe; the pairing text does not yet name the bot's username |
+| C-7 | Pairing UX | IMPROVE: call `getMe` at start to learn the username, print and QR the deep link; handle ` | PARTIAL | kaku telegram pair prints the bot's t.me link from getMe, no link on any failure; no QR code; live bot NOT VERIFIED (telegram-bridge.md) |
 | C-8 | Unauthorised-sender reply policy | Keep. EXCLUDE hints and declines | BUILT | silence for strangers (tg01) |
 | C-9 | Owner vs member roles | EXCLUDE (no write powers exist to scope) | EXCLUDED | EXCLUDE (no write powers exist to scope) |
 | C-10 | Polling vs webhook | Keep polling for local mode (no public endpoint, which is the whole local-first point). AD | KEPT | polling, no public endpoint |

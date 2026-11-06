@@ -45,3 +45,9 @@ Real Telegram delivery, group chats, webhooks, media, rate limits imposed by Tel
 - Not taken, with reasons: replaceable-update skipping (we send no previews or typing), the five-minute delivery budget (the outbox already gives up after ten tries and 50 messages), a digest of many events (the row asks for one when more than five arrive; not built, owed), 30 s to ten minute restart backoff (ours is for the polling loop and starts at 2 s; a person waits on a notice, and a poll is cheap).
 - Evidence: tg66, tg67 and the earlier tg17 (bounds, adjusted for pacing); 5 mutants caught (one was equivalent code and was simplified).
 - Not covered: a live Telegram bot and a real 429.
+
+## Pairing names the bot (ledger C-7)
+- Reference: the matrix row (call `getMe` at pairing to learn the username and print the deep link); OpenClaw's pairing source NOT READ for this row. Telegram's own rule for usernames (five to thirty-two letters, digits or underscores) is used as the filter.
+- Behaviour: `kaku telegram pair` asks Telegram who the token belongs to (`getMe`, 8 second limit, the library's proxy default) and prints `Open your bot at https://t.me/<username> and send it this in a private chat within 5 minutes: /pair CODE`. The link is made only from a plain username; any failure (no token at hand, unreachable, an error status, junk, `ok: false`, no username, an odd username) leaves the old wording without a link, and pairing works exactly as before.
+- Evidence: tg68 (the link filter: ten hostile or malformed names refused), tg69 (a real answer, 401, junk, `ok: false`, a missing username, an error status that carries a username, an unreachable server). 6 mutants caught.
+- Not covered: a QR code (the matrix row names one; not built: needs a QR encoder dependency and a read of its licence), the whole `kaku telegram pair` command against a mock Telegram (it needs a running service first), a live bot.

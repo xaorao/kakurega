@@ -51,6 +51,28 @@ pub struct Out {
     pub silent: bool,
 }
 
+/// The link that opens the owner's own bot in Telegram, from the username Telegram reports: five to thirty-two letters, digits
+/// or underscores and nothing else, so a damaged or hostile answer cannot put anything else on the screen.
+fn bot_link(username: &str) -> Option<String> {
+    let ok = (5..=32).contains(&username.len())
+        && username
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_');
+    ok.then(|| format!("https://t.me/{username}"))
+}
+
+/// Asks Telegram who the token belongs to (`getMe`). `None` on any failure: the pairing text then simply omits the link.
+fn bot_username(agent: &ureq::Agent, api: &str, token: &str) -> Option<String> {
+    let mut r = agent.get(&format!("{api}/bot{token}/getMe")).call().ok()?;
+    if r.status().as_u16() != 200 {
+        return None;
+    }
+    let v: Value = r.body_mut().read_json().ok()?;
+    (v["ok"] == true)
+        .then(|| v["result"]["username"].as_str().map(str::to_string))
+        .flatten()
+}
+
 /// What `/mute` was asked for: `Some(None)` for off, `Some(Some(d))` for a length of time from 1 minute to 24 hours, `None` when
 /// it cannot be understood. A length needs a unit (`30m`, `2h`) so a bare number cannot be misread.
 fn parse_mute(arg: &str) -> Option<Option<Duration>> {
@@ -433,7 +455,31 @@ pub fn run(args: &[String]) -> u8 {
                 }
             }
         }
-        println!("Send this to your bot in a private chat within 5 minutes:\n  /pair {code}\nThen run `kaku telegram` to start the bridge. Any earlier pairing was removed.");
+        // when the token is at hand, name the bot so the owner opens the right chat
+        let link = read_token(
+            crate::flag(args, "--token-file")
+                .map(PathBuf::from)
+                .as_deref(),
+        )
+        .ok()
+        .and_then(|token| {
+            let api = crate::flag(args, "--api-base")
+                .unwrap_or_else(|| "https://api.telegram.org".into());
+            let agent: ureq::Agent = ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .timeout_global(Some(Duration::from_secs(8)))
+                .build()
+                .into();
+            bot_username(&agent, &api, &token)
+        })
+        .and_then(|u| bot_link(&u));
+        let whom = match &link {
+            Some(l) => {
+                format!("Open your bot at {l} and send it this in a private chat within 5 minutes")
+            }
+            None => "Send this to your bot in a private chat within 5 minutes".to_string(),
+        };
+        println!("{whom}:\n  /pair {code}\nThen run `kaku telegram` to start the bridge. Any earlier pairing was removed.");
         return 0;
     }
     if args.first().map(String::as_str) == Some("status") {
@@ -951,6 +997,104 @@ impl Outbox {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tg68_the_bot_link_is_made_only_from_a_plain_username() {
+        assert_eq!(
+            bot_link("kakurega_bot").as_deref(),
+            Some("https://t.me/kakurega_bot")
+        );
+        assert_eq!(bot_link("A1_b2").as_deref(), Some("https://t.me/A1_b2"));
+        for bad in [
+            "",
+            "abcd",
+            &"x".repeat(33),
+            "bad name",
+            "evil<script>",
+            "a/b/c/d",
+            "x\u{1b}[2Jyyy",
+            "user@host",
+            "ünicode_bot",
+            "https://evil.example",
+        ] {
+            assert_eq!(bot_link(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn tg69_the_username_comes_from_getme_and_any_failure_means_no_link() {
+        use std::io::{Read, Write};
+        let serve = |status: &'static str, body: &'static str| {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let api = format!("http://{}", l.local_addr().unwrap());
+            std::thread::spawn(move || {
+                if let Ok((mut s, _)) = l.accept() {
+                    let mut b = [0u8; 2048];
+                    let _ = s.read(&mut b);
+                    let _ = s.write_all(format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes());
+                }
+            });
+            api
+        };
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .proxy(None)
+            .timeout_global(Some(Duration::from_secs(3)))
+            .build()
+            .into();
+        assert_eq!(
+            bot_username(
+                &agent,
+                &serve(
+                    "200 OK",
+                    "{\"ok\":true,\"result\":{\"id\":1,\"username\":\"my_review_bot\"}}"
+                ),
+                "T"
+            )
+            .as_deref(),
+            Some("my_review_bot")
+        );
+        assert_eq!(
+            bot_username(&agent, &serve("401 Unauthorized", "{\"ok\":false}"), "T"),
+            None
+        );
+        assert_eq!(
+            bot_username(
+                &agent,
+                &serve(
+                    "500 Internal Server Error",
+                    "{\"ok\":true,\"result\":{\"username\":\"my_review_bot\"}}"
+                ),
+                "T"
+            ),
+            None,
+            "an error status is never trusted, whatever the body says"
+        );
+        assert_eq!(
+            bot_username(&agent, &serve("200 OK", "not json"), "T"),
+            None
+        );
+        assert_eq!(
+            bot_username(
+                &agent,
+                &serve(
+                    "200 OK",
+                    "{\"ok\":false,\"result\":{\"username\":\"x_bot_1\"}}"
+                ),
+                "T"
+            ),
+            None
+        );
+        assert_eq!(
+            bot_username(&agent, &serve("200 OK", "{\"ok\":true,\"result\":{}}"), "T"),
+            None
+        );
+        assert_eq!(
+            bot_username(&agent, "http://127.0.0.1:9", "T"),
+            None,
+            "unreachable"
+        );
+    }
+
     fn quiet(t: &str) -> Out {
         Out {
             chat: 7,
