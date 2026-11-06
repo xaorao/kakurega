@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { draftKey, saveDraft, loadDraft, forgetDraft, clearDrafts, draftCount, stopsReply, rememberSent, sentHistory, forgetSent, retagSent, idleHistory, historyStep, historyKey } from "../src/composer.ts";
+import { draftKey, saveDraft, loadDraft, forgetDraft, clearDrafts, draftCount, stopsReply, rememberSent, sentHistory, forgetSent, retagSent, idleHistory, historyStep, historyKey, historyMatches, opensHistoryPicker } from "../src/composer.ts";
 
 test("cm01 each conversation keeps its own draft and an empty draft is not kept", () => {
   clearDrafts();
@@ -112,4 +112,44 @@ test("cm09 forgetting one conversation removes only its messages, and keeping a 
   assert.equal(sentHistory().length, 3, "the same words in another conversation are their own entry");
   forgetSent("kept:4");
   assert.deepEqual(sentHistory(), ["in kept two", "same"]);
+});
+
+const key = (over = {}) => ({ key: "x", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, isComposing: false, ...over });
+
+test("cp20 Ctrl+G stops a reply being written, like Escape, and only then", () => {
+  assert.equal(stopsReply(key({ key: "g", ctrlKey: true }), true), true);
+  assert.equal(stopsReply(key({ key: "G", ctrlKey: true }), true), true);
+  assert.equal(stopsReply(key({ key: "g", ctrlKey: true }), false), false, "idle: Ctrl+G does nothing");
+  assert.equal(stopsReply(key({ key: "g" }), true), false, "a plain g is text");
+  assert.equal(stopsReply(key({ key: "g", ctrlKey: true, shiftKey: true }), true), false);
+  assert.equal(stopsReply(key({ key: "g", ctrlKey: true, metaKey: true }), true), false);
+  assert.equal(stopsReply(key({ key: "g", ctrlKey: true, isComposing: true }), true), false);
+});
+
+test("cp21 Shift+Up opens the picker only from an empty box with the caret at the start", () => {
+  const up = key({ key: "ArrowUp", shiftKey: true });
+  assert.equal(opensHistoryPicker(up, "", 0, 3), true);
+  assert.equal(opensHistoryPicker(up, "", 0, 0), false, "nothing was sent yet");
+  assert.equal(opensHistoryPicker(up, "draft", 0, 3), false, "never takes selection keys from text being written");
+  assert.equal(opensHistoryPicker(key({ key: "ArrowUp" }), "", 0, 3), false, "plain Up is the history step");
+  assert.equal(opensHistoryPicker(key({ key: "ArrowDown", shiftKey: true }), "", 0, 3), false);
+  assert.equal(opensHistoryPicker(key({ key: "ArrowUp", shiftKey: true, ctrlKey: true }), "", 0, 3), false);
+  assert.equal(opensHistoryPicker(key({ key: "ArrowUp", shiftKey: true, isComposing: true }), "", 0, 3), false);
+});
+
+test("cp22 the picker lists the newest first, once each, and narrows by every typed word", () => {
+  const sent = ["summarise the audit", "what changed in billing", "summarise the audit", "draft a reply to Acme about billing"];
+  assert.deepEqual(historyMatches(sent, ""), ["draft a reply to Acme about billing", "summarise the audit", "what changed in billing"]);
+  assert.deepEqual(historyMatches(sent, "billing"), ["draft a reply to Acme about billing", "what changed in billing"]);
+  assert.deepEqual(historyMatches(sent, "BILLING acme"), ["draft a reply to Acme about billing"], "every word, any case, any order");
+  assert.deepEqual(historyMatches(sent, "zzz"), []);
+  assert.deepEqual(historyMatches([], ""), []);
+});
+
+test("cp23 the picker shows at most fifty and ignores blank entries", () => {
+  const many = Array.from({ length: 80 }, (_, i) => `message number ${i}`);
+  const got = historyMatches(many, "");
+  assert.equal(got.length, 50);
+  assert.equal(got[0], "message number 79");
+  assert.deepEqual(historyMatches(["", "  ", "real"], ""), ["real"]);
 });

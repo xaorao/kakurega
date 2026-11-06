@@ -52,9 +52,11 @@ export interface KeyLike {
   isComposing: boolean;
 }
 
-/** Escape stops a reply that is being written. It never fires while an input method is composing (Hindi, Chinese, Japanese). */
+/** Escape, or Ctrl+G, stops a reply that is being written. Neither fires while an input method is composing (Hindi, Chinese, Japanese). */
 export function stopsReply(e: KeyLike, busy: boolean): boolean {
-  return busy && !e.isComposing && e.key === "Escape" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+  if (!busy || e.isComposing) return false;
+  if (e.key === "Escape") return !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+  return e.key.toLowerCase() === "g" && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
 }
 
 /** Remembers a sent message for Up and Down, only while the page is open. It is never stored anywhere: the chat promises
@@ -132,4 +134,28 @@ export function historyStep(
 export function historyKey(e: KeyLike): "up" | "down" | null {
   if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return null;
   return e.key === "ArrowUp" ? "up" : e.key === "ArrowDown" ? "down" : null;
+}
+
+/** At most this many earlier messages are listed in the picker. */
+export const PICKER_LIMIT = 50;
+
+/** Shift+Up opens the picker, only from an empty box, so it never takes selection keys from a message being written. */
+export function opensHistoryPicker(e: KeyLike, text: string, cursor: number, sentCount: number): boolean {
+  if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey || !e.shiftKey || e.key !== "ArrowUp") return false;
+  return sentCount > 0 && text.length === 0 && cursor === 0;
+}
+
+/** Earlier messages for the picker: newest first, each text once, only those containing every typed word (any case, any order). */
+export function historyMatches(entries: readonly string[], query: string): string[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (let i = entries.length - 1; i >= 0 && out.length < PICKER_LIMIT; i--) {
+    const text = entries[i]!;
+    if (!text.trim() || seen.has(text)) continue;
+    seen.add(text);
+    const low = text.toLowerCase();
+    if (words.every((w) => low.includes(w))) out.push(text);
+  }
+  return out;
 }

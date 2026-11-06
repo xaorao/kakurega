@@ -2,7 +2,8 @@ import { batch, createEffect, createResource, createSignal, For, on, onCleanup, 
 import { api, ApiError, streamChat, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
 import { t } from "../i18n";
 import { Markdown } from "../components/Markdown";
-import { draftKey, forgetDraft, forgetSent, historyKey, historyStep, idleHistory, loadDraft, rememberSent, retagSent, saveDraft, sentHistory, stopsReply } from "../composer";
+import { HistoryPicker } from "../components/HistoryPicker";
+import { draftKey, opensHistoryPicker, forgetDraft, forgetSent, historyKey, historyStep, idleHistory, loadDraft, rememberSent, retagSent, saveDraft, sentHistory, stopsReply } from "../composer";
 import { meterLine, noteNotes, pageNotes, savedLine, summaryNotes } from "../meter";
 
 interface Shown extends ChatTurn {
@@ -14,6 +15,7 @@ export function Chat() {
   const [turns, setTurns] = createSignal<Shown[]>([]);
   const [text, setTextRaw] = createSignal(loadDraft(draftKey(null)));
   const [busy, setBusy] = createSignal(false);
+  const [picking, setPicking] = createSignal(false);
   const [live, setLive] = createSignal("");
   let abort: AbortController | null = null;
   const [error, setError] = createSignal("");
@@ -516,6 +518,11 @@ export function Chat() {
               abort?.abort();
               return;
             }
+            if (opensHistoryPicker(e, e.currentTarget.value, e.currentTarget.selectionStart, sentHistory().length)) {
+              e.preventDefault();
+              setPicking(true);
+              return;
+            }
             const dir = historyKey(e);
             if (dir) {
               const el = e.currentTarget;
@@ -543,6 +550,25 @@ export function Chat() {
           <button type="button" disabled={busy() || turns().length === 0} onClick={() => { setTurns([]); setError(""); forgetSent(draftKey(session())); hist = idleHistory(); }}>{t("chat.clear")}</button>
           <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
         </div>
+        <p class="muted">{t("chat.pick.hint")}</p>
+        <Show when={picking()}>
+          <HistoryPicker
+            entries={sentHistory()}
+            onPick={(m) => {
+              setPicking(false);
+              hist = idleHistory();
+              setText(m);
+              queueMicrotask(() => {
+                box?.focus();
+                box?.setSelectionRange(m.length, m.length);
+              });
+            }}
+            onClose={() => {
+              setPicking(false);
+              queueMicrotask(() => box?.focus());
+            }}
+          />
+        </Show>
       </form>
     </section>
   );

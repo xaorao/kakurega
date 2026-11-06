@@ -679,6 +679,27 @@ try {
   check("Up in an empty box brings back the last message sent", (await page.getByLabel("Your message").inputValue()) === "draftcanary unsent words");
   await page.getByLabel("Your message").press("ArrowDown");
   check("Down returns to what was being written", (await page.getByLabel("Your message").inputValue()) === "");
+  // Shift+Up in an empty box lists earlier messages; typing narrows them, Escape leaves the box as it was, Enter fills it
+  const messageBox = page.getByLabel("Your message");
+  await messageBox.press("Shift+ArrowUp");
+  const picker = page.getByRole("group", { name: "Earlier messages" });
+  await picker.waitFor();
+  check("Shift+Up in an empty box opens the list of earlier messages with focus in its search", await picker.getByRole("combobox").evaluate((el) => el === document.activeElement) && (await picker.getByRole("option").count()) >= 1);
+  await axeCheck(page, "earlier messages list");
+  await page.keyboard.type("canary");
+  check("typing narrows the earlier messages", (await picker.getByRole("option").count()) === 1 && (await picker.getByRole("option").first().innerText()) === "draftcanary unsent words");
+  await page.keyboard.press("Escape");
+  check("Escape closes the list and leaves the message box empty and focused", (await picker.count()) === 0 && (await messageBox.inputValue()) === "" && (await page.evaluate(() => document.activeElement?.id === "chat-input")));
+  const msgsBefore = await page.locator(".msg").count();
+  await messageBox.press("Shift+ArrowUp");
+  await picker.waitFor();
+  await page.keyboard.press("Enter");
+  check("Enter puts the chosen message in the box and sends nothing", (await picker.count()) === 0 && (await messageBox.inputValue()) === "draftcanary unsent words" && (await page.locator(".msg").count()) === msgsBefore && (await page.evaluate(() => document.activeElement?.id === "chat-input")));
+  await messageBox.fill("half text");
+  await messageBox.press("Home");
+  await messageBox.press("Shift+ArrowUp");
+  check("Shift+Up in a box with text selects as usual and opens nothing", (await picker.count()) === 0);
+  await messageBox.fill("");
   await page.getByLabel("Your message").fill("half written");
   await page.getByLabel("Your message").press("Home");
   await page.getByLabel("Your message").press("ArrowUp");
