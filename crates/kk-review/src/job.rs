@@ -37,6 +37,8 @@ pub struct JobConfig {
     pub commitment_key: [u8; 32],
     pub job_name: String,
     pub extra_files: Vec<crate::import::ImportedFile>,
+    /// The scanner for the optional pattern-rule second opinion, or why there is none.
+    pub semgrep: Result<PathBuf, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +76,8 @@ pub struct JobReport {
     pub worker_stderr: String,
     pub findings: Vec<(Finding, CheckResult)>,
     pub unparsed_findings: usize,
+    /// A second opinion from pattern rules; never changes whether a finding is confirmed.
+    pub pattern: crate::pattern::PatternScan,
     pub draft: Result<ReleaseDraft, Rejection>,
     pub audit: Vec<AuditEvent>,
     pub route_evidence: Vec<RouteEvidence>,
@@ -127,6 +131,7 @@ pub fn run_job(
         worker_stderr: String::new(),
         findings: Vec::new(),
         unparsed_findings: 0,
+        pattern: crate::pattern::PatternScan::default(),
         draft: Err(Rejection::NothingConfirmed),
         audit: Vec::new(),
         route_evidence,
@@ -209,6 +214,25 @@ pub fn run_job(
             None => report.unparsed_findings += 1,
         }
     }
+    report.pattern = match &cfg.semgrep {
+        Err(why) => crate::pattern::PatternScan::NotRun(why.clone()),
+        Ok(path) => {
+            progress(
+                "patterns",
+                "running pattern rules over the files the model could see",
+            );
+            let visible: Vec<&crate::import::ImportedFile> = files
+                .iter()
+                .filter(|f| f.label.level < Level::Restricted)
+                .collect();
+            crate::pattern::scan(
+                path,
+                &visible,
+                &std::env::temp_dir(),
+                crate::pattern::TIME_LIMIT,
+            )
+        }
+    };
     let fix_written: Vec<_> = broker
         .written
         .iter()

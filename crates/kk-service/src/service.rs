@@ -5585,10 +5585,20 @@ async fn audit(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Respo
 async fn findings(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
     match snap_of(&svc, &id) {
         Err(r) => r,
-        Ok(s) => Json(json!({"findings": s.findings.iter().map(|f| json!({
-            "title": f.title, "file": f.file, "line": f.line, "explanation": f.explanation, "reproducer": f.reproducer,
-            "language": f.language, "status": f.status, "output": f.output, "sample": f.sample,
-        })).collect::<Vec<_>>(), "unparsed": s.unparsed}))
+        Ok(s) => {
+            let scan = s.summary["pattern_scan"].clone();
+            let matches = scan["matches"].as_array().cloned().unwrap_or_default();
+            Json(json!({"findings": s.findings.iter().map(|f| json!({
+                "title": f.title, "file": f.file, "line": f.line, "explanation": f.explanation, "reproducer": f.reproducer,
+                "language": f.language, "status": f.status, "output": f.output, "sample": f.sample,
+                // a match of a pattern rule in the same file: a second opinion on the shape of the code, never a reproduction
+                "pattern_matches": matches.iter().filter(|m| m["file"] == f.file).cloned().collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(), "unparsed": s.unparsed, "pattern_scan": json!({
+                "status": scan["status"], "reason": scan["reason"], "files": scan["files"], "truncated": scan["truncated"],
+                "matches": matches.len(),
+                "note": "Pattern rules look for code of a known shape. A match is not a reproduction and no match does not mean the code is safe.",
+            })}))
+        }
         .into_response(),
     }
 }

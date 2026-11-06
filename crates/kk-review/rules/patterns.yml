@@ -1,0 +1,99 @@
+rules:
+  - id: kk-py-eval-exec
+    languages: [python]
+    severity: WARNING
+    message: eval or exec of a value that is not a literal
+    patterns:
+      - pattern-either:
+          - pattern: eval($X)
+          - pattern: exec($X)
+      - pattern-not: eval("...")
+      - pattern-not: exec("...")
+  - id: kk-py-subprocess-shell
+    languages: [python]
+    severity: WARNING
+    message: a command run through a shell (shell=True)
+    pattern: subprocess.$F(..., shell=True, ...)
+  - id: kk-py-os-system
+    languages: [python]
+    severity: WARNING
+    message: a command run through os.system or os.popen
+    pattern-either:
+      - pattern: os.system($X)
+      - pattern: os.popen($X)
+  - id: kk-py-pickle-load
+    languages: [python]
+    severity: WARNING
+    message: pickle load, which runs code from its input
+    pattern-either:
+      - pattern: pickle.load(...)
+      - pattern: pickle.loads(...)
+  - id: kk-py-yaml-load
+    languages: [python]
+    severity: WARNING
+    message: yaml.load without a safe loader
+    patterns:
+      - pattern: yaml.load(...)
+      - pattern-not: yaml.load(..., Loader=yaml.SafeLoader)
+      - pattern-not: yaml.load(..., Loader=yaml.CSafeLoader)
+  - id: kk-py-weak-hash
+    languages: [python]
+    severity: INFO
+    message: md5 or sha1, which are weak for security uses
+    pattern-either:
+      - pattern: hashlib.md5(...)
+      - pattern: hashlib.sha1(...)
+  - id: kk-py-tls-verify-off
+    languages: [python]
+    severity: WARNING
+    message: certificate checking switched off (verify=False)
+    pattern: requests.$M(..., verify=False, ...)
+  - id: kk-py-sql-built-from-text
+    languages: [python]
+    severity: WARNING
+    message: a database query built from text instead of parameters
+    pattern-either:
+      - pattern: $C.execute(f"...")
+      - pattern: $C.execute("..." + $X)
+      - pattern: $C.execute("..." % $X)
+      - pattern: $C.execute("...".format(...))
+  - id: kk-py-hardcoded-credential
+    languages: [python]
+    severity: WARNING
+    message: a literal value assigned to a name that says password, secret or token
+    patterns:
+      - pattern: $X = "..."
+      - metavariable-regex:
+          metavariable: $X
+          regex: (?i)^(.*_)?(password|passwd|secret|api_?key|token)(_.*)?$
+      - pattern-not: $X = ""
+  - id: kk-js-eval
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: eval or new Function of a value that is not a literal
+    patterns:
+      - pattern-either:
+          - pattern: eval($X)
+          - pattern: new Function(...)
+      - pattern-not: eval("...")
+  - id: kk-js-child-process-exec
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: a command run through a shell from text
+    pattern-either:
+      - pattern: $CP.exec($X, ...)
+      - pattern: $CP.execSync($X, ...)
+  - id: kk-js-inner-html
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: HTML written from a value (innerHTML or document.write)
+    pattern-either:
+      - pattern: $E.innerHTML = $X
+      - pattern: document.write($X)
+  - id: kk-js-weak-hash
+    languages: [javascript, typescript]
+    severity: INFO
+    message: md5 or sha1, which are weak for security uses
+    pattern-either:
+      - pattern: $C.createHash("md5")
+      - pattern: $C.createHash("sha1")

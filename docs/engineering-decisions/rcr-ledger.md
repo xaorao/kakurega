@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 135, PARTIAL 89, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 8. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 135, PARTIAL 90, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 7. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -252,7 +252,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | F-I4 | Evaluation harness | ADAPT harness shape ("KakuDojo"): N repos x M injection goals (read `.env`, send to other  | PARTIAL | attack suites exist; no repo-by-goal grid |
 | F-I5 | Deterministic exfil grading with canaries | ADAPT: plant per-run canaries in Restricted files, grade by canary presence (S6 variants)  | PARTIAL | canary checks in vault and service tests; no per-run planted canaries in Restricted files |
 | F-I6 | Red-team plugin library | ADAPT as test generators for the existing attack suite (offline, local model or fixtures); | LATER | test generators |
-| F-I7 | Independent ground truth for findings | ADAPT as an optional external signal: run `semgrep` as a subprocess on the sandboxed copy, | OWED-L | no semgrep signal for findings |
+| F-I7 | Independent ground truth for findings | ADAPT as an optional external signal: run `semgrep` as a subprocess on the sandboxed copy, | PARTIAL | optional semgrep second opinion (KAKU_SEMGREP): own rules, untrusted-input handling, shown per finding as pattern match not reproduction; real semgrep run by hand (fixture: 0 matches); not in the gate; no web view (pattern-rules.md) |
 | F-D1 | Layout-aware PDF/DOCX/XLSX/HTML parse with anchors | ADAPT as an optional sandboxed parser process (Python is a second runtime: run it inside t | LATER | sandboxed parser option |
 | F-D2 | Page anchors survive extraction | EXCLUDE for adoption; keep as the cautionary case. Sandboxed Docling path above is better  | EXCLUDED | cautionary case, not adopted |
 | F-D3 | OCR | ADAPT: OCR through Docling inside the sandbox; label OCR text lower confidence; never feed | LATER | inside the sandbox later |

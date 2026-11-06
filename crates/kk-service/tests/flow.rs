@@ -230,6 +230,28 @@ impl JobRunner for CannedRunner {
             worker_stderr: String::new(),
             findings,
             unparsed_findings: 0,
+            pattern: if recipient.starts_with("patternfail") {
+                kk_review::pattern::PatternScan::Failed("semgrep did not finish in time".into())
+            } else if recipient.starts_with("pattern") {
+                kk_review::pattern::PatternScan::Ran {
+                    matches: vec![
+                        kk_review::pattern::PatternMatch {
+                            rule: "kk-py-eval-exec".into(),
+                            file: "payments/auth/session.py".into(),
+                            line: 9,
+                        },
+                        kk_review::pattern::PatternMatch {
+                            rule: "kk-py-weak-hash".into(),
+                            file: "payments/auth/tokens.py".into(),
+                            line: 4,
+                        },
+                    ],
+                    files: 12,
+                    truncated: false,
+                }
+            } else {
+                kk_review::pattern::PatternScan::default()
+            },
             draft,
             audit: vec![],
             route_evidence: vec![RouteEvidence {
@@ -11012,5 +11034,68 @@ fn sv110_the_owners_allowlist_keeps_named_values_out_of_the_release_notice_and_s
             .unwrap()
             .len(),
         1
+    );
+}
+
+#[test]
+fn sv111_pattern_rule_results_are_a_second_opinion_per_file_and_never_change_what_is_confirmed() {
+    let (root, repo) = repo_copy("patternscan");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let run = |recipient: &str| {
+        let (_, s) = w.post(
+            "/api/jobs",
+            json!({"repo": repo.to_string_lossy(), "recipient": recipient}),
+        );
+        let job = s["id"].as_str().unwrap().to_string();
+        wait_for(&w, &job, &["ready"]);
+        w.get(&format!("/api/jobs/{job}/findings")).1
+    };
+    // not asked for: said plainly, no matches on any finding
+    let plain = run("acme-audit");
+    assert_eq!(plain["pattern_scan"]["status"], "not_run");
+    assert_eq!(plain["findings"][0]["pattern_matches"], json!([]));
+    // ran: the finding's own file gets its matches, the other file's match is counted but not attached
+    let ran = run("pattern-audit");
+    assert_eq!(ran["pattern_scan"]["status"], "ran");
+    assert_eq!(ran["pattern_scan"]["matches"], 2);
+    assert!(ran["pattern_scan"]["note"]
+        .as_str()
+        .unwrap()
+        .contains("not a reproduction"));
+    let pm = ran["findings"][0]["pattern_matches"].as_array().unwrap();
+    assert_eq!(pm.len(), 1, "{pm:?}");
+    assert_eq!(
+        (pm[0]["rule"].as_str(), pm[0]["line"].as_u64()),
+        (Some("kk-py-eval-exec"), Some(9))
+    );
+    assert_eq!(
+        pm[0]["what"], "eval or exec of a value that is not a literal",
+        "the sentence is ours"
+    );
+    // the finding's status is whatever the reproducer said, with or without matches
+    assert_eq!(ran["findings"][0]["status"], plain["findings"][0]["status"]);
+    // failed: the reason is shown and the findings are untouched
+    let failed = run("patternfail-audit");
+    assert_eq!(failed["pattern_scan"]["status"], "failed");
+    assert_eq!(
+        failed["pattern_scan"]["reason"],
+        "semgrep did not finish in time"
+    );
+    assert_eq!(
+        failed["findings"][0]["status"],
+        plain["findings"][0]["status"]
     );
 }

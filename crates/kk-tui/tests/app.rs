@@ -3880,3 +3880,47 @@ fn tu62_pii_lists_adds_and_removes_through_the_service_and_reports_what_happened
         assert!(text(&app).contains("usage: /pii"));
     }
 }
+
+#[test]
+fn tu63_findings_show_pattern_matches_as_a_second_opinion_and_say_when_the_rules_could_not_run() {
+    let mut app = booted();
+    let finding = json!({"title": "Token not revoked", "file": "a.py", "line": 3, "explanation": "x", "reproducer": "", "status": "reproduced",
+        "pattern_matches": [{"rule": "kk-py-eval-exec", "line": 9, "what": "eval or exec of a value\u{1b}[2J that is not a literal"}]});
+    app.jobs.push(kk_tui::app::JobRow {
+        id: "job-4".into(),
+        recipient: "x".into(),
+        state: "ready".into(),
+    });
+    let r = enter(&mut app, "/findings");
+    app.handle(ok(&r[0], 200, json!({"findings": [finding], "unparsed": 0, "pattern_scan": {"status": "ran", "files": 12, "matches": 2}})));
+    let all = text(&app);
+    assert!(
+        all.contains("Pattern rules also matched in this file")
+            && all.contains("not a reproduction"),
+        "{all}"
+    );
+    assert!(all.contains("line 9: eval or exec"), "{all}");
+    assert!(!all.contains('\u{1b}'));
+    assert!(all.contains("Pattern rules ran over 12 files and matched 2 place(s)"));
+    let mut b = booted();
+    b.jobs.push(kk_tui::app::JobRow {
+        id: "job-4".into(),
+        recipient: "x".into(),
+        state: "ready".into(),
+    });
+    let r = enter(&mut b, "/findings");
+    b.handle(ok(&r[0], 200, json!({"findings": [], "unparsed": 0, "pattern_scan": {"status": "failed", "reason": "semgrep did not finish in time"}})));
+    assert!(text(&b).contains("Pattern rules could not run: semgrep did not finish in time"));
+    let mut c = booted();
+    c.jobs.push(kk_tui::app::JobRow {
+        id: "job-4".into(),
+        recipient: "x".into(),
+        state: "ready".into(),
+    });
+    let r = enter(&mut c, "/findings");
+    c.handle(ok(&r[0], 200, json!({"findings": [], "unparsed": 0, "pattern_scan": {"status": "not_run", "reason": "pattern rules were not asked for"}})));
+    assert!(
+        !text(&c).contains("Pattern rules"),
+        "not asked for, so nothing is said"
+    );
+}

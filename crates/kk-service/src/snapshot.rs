@@ -110,6 +110,27 @@ pub struct Snapshot {
     pub error: Option<String>,
 }
 
+/// The pattern-rule second opinion as stored: what happened, and the matches with the fixed sentence of each rule. The words
+/// come from our own rule file, never from the scanner.
+fn pattern_json(p: &kk_review::pattern::PatternScan) -> Value {
+    use kk_review::pattern::PatternScan;
+    match p {
+        PatternScan::NotRun(why) => json!({"status": "not_run", "reason": why}),
+        PatternScan::Failed(why) => json!({"status": "failed", "reason": why}),
+        PatternScan::Ran {
+            matches,
+            files,
+            truncated,
+        } => json!({
+            "status": "ran", "files": files, "truncated": truncated,
+            "matches": matches.iter().map(|m| json!({
+                "rule": m.rule, "file": m.file, "line": m.line,
+                "what": kk_review::pattern::rule_message(&m.rule).unwrap_or_default(),
+            })).collect::<Vec<_>>(),
+        }),
+    }
+}
+
 fn status_text(s: &CheckStatus) -> String {
     match s {
         CheckStatus::Reproduced => "reproduced".into(),
@@ -130,6 +151,7 @@ impl Snapshot {
             "route": r.route_evidence.iter().map(|e| serde_json::to_value(e).unwrap_or(Value::Null)).collect::<Vec<_>>(),
             "worker_exit": r.worker_exit.as_ref().map(|e| format!("{e:?}")),
             "final_taint": r.final_taint.as_ref().map(|t| json!({"level": level_name(t.level), "integrity": format!("{:?}", t.integrity).to_lowercase(), "compartments": t.compartments})),
+            "pattern_scan": pattern_json(&r.pattern),
             "findings": r.findings.len(),
             "confirmed": r.findings.iter().filter(|(_, c)| c.status == CheckStatus::Reproduced).count(),
             "manifest_digest": r.manifest.digest,

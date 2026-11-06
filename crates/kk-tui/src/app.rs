@@ -2497,6 +2497,23 @@ impl App {
                         lines.push(format!("Checked with {language}"));
                     }
                     lines.extend(text_lines(f["explanation"].as_str().unwrap_or("")));
+                    let found: Vec<String> = f["pattern_matches"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .take(5)
+                        .map(|m| {
+                            format!(
+                                "  line {}: {}",
+                                m["line"],
+                                clean(m["what"].as_str().unwrap_or(""))
+                            )
+                        })
+                        .collect();
+                    if !found.is_empty() {
+                        lines.push("Pattern rules also matched in this file (code of that shape; not a reproduction):".into());
+                        lines.extend(found);
+                    }
                     self.push(
                         if status == "reproduced" {
                             Kind::Ok
@@ -2506,6 +2523,24 @@ impl App {
                         Some(&clean(f["title"].as_str().unwrap_or("finding"))),
                         lines,
                     );
+                }
+                let scan = &body["pattern_scan"];
+                match scan["status"].as_str() {
+                    Some("ran") => self.say(
+                        Kind::Info,
+                        format!(
+                            "Pattern rules ran over {} files and matched {} place(s). A match is not a reproduction, and no match does not mean the code is safe.",
+                            scan["files"], scan["matches"]
+                        ),
+                    ),
+                    Some("failed") => self.say(
+                        Kind::Warn,
+                        format!(
+                            "Pattern rules could not run: {}",
+                            clean(scan["reason"].as_str().unwrap_or("unknown reason"))
+                        ),
+                    ),
+                    _ => {}
                 }
                 Vec::new()
             }

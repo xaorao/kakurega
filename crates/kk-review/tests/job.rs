@@ -96,6 +96,7 @@ fn config(name: &str) -> JobConfig {
         policy_version: "policy-1".into(),
         commitment_key: [9u8; 32],
         extra_files: Vec::new(),
+        semgrep: kk_review::pattern::from_setting(None),
         job_name: name.into(),
     }
 }
@@ -767,4 +768,67 @@ fn j10_a_finding_whose_language_does_not_match_its_script_is_never_confirmed() {
         report.draft.is_err(),
         "nothing confirmed, nothing to release"
     );
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn j12_pattern_rules_run_over_the_files_the_model_could_see_and_leave_the_finding_as_the_reproducer_decided(
+) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut cfg = config("j12");
+    let dir = std::env::temp_dir().join(format!("kk-j12-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let probe = dir.join("seen.txt");
+    let fake = dir.join("semgrep");
+    fs::write(
+        &fake,
+        format!(
+            "#!/bin/sh\nfind . -type f | sort > '{}'\nprintf '{{\"results\":[{{\"check_id\":\"r.kk-py-eval-exec\",\"path\":\"payments/auth/session.py\",\"start\":{{\"line\":15}}}}]}}'\n",
+            probe.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    cfg.semgrep = Ok(fake);
+    let (routes, ev) = scripted(vec![
+        calls(vec![("list_files", json!({}))]),
+        calls(vec![(
+            "report_finding",
+            json!({"title": "Token still valid after logout", "file": "payments/auth/session.py", "line": 15, "explanation": "logout() does not remove the token", "reproducer": "from payments.auth import session\nt = session.login('alice')\nassert session.validate(t)\nprint('CONTROL_OK')\nsession.logout(t)\nprint('REPRODUCED' if session.validate(t) else 'NOT REPRODUCED')\n"}),
+        )]),
+        ChatMessage::new("assistant", "done"),
+    ]);
+    let report = run_job(&cfg, routes, ev, &|_, _| {});
+    assert_eq!(report.error, None);
+    let seen = fs::read_to_string(&probe).unwrap();
+    assert!(seen.contains("payments/auth/session.py"), "{seen}");
+    assert!(
+        !seen.contains(".env"),
+        "a file the model may not see is not given to the scanner either: {seen}"
+    );
+    match &report.pattern {
+        kk_review::pattern::PatternScan::Ran { matches, .. } => {
+            assert_eq!(matches.len(), 1);
+            assert_eq!(
+                (matches[0].file.as_str(), matches[0].line),
+                ("payments/auth/session.py", 15)
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        report.findings[0].1.status,
+        CheckStatus::Reproduced,
+        "{:?}",
+        report.findings[0].1
+    );
+    // not asked for: not run, and said so
+    let (routes, ev) = scripted(vec![ChatMessage::new("assistant", "nothing")]);
+    let plain = run_job(&config("j12b"), routes, ev, &|_, _| {});
+    assert!(matches!(
+        plain.pattern,
+        kk_review::pattern::PatternScan::NotRun(_)
+    ));
+    let _ = fs::remove_dir_all(&dir);
 }

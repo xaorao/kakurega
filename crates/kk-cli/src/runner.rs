@@ -62,6 +62,9 @@ impl JobRunner for ReviewRunner {
             commitment_key: self.commitment_key,
             job_name: job_name.to_string(),
             extra_files: extra,
+            semgrep: kk_review::pattern::from_setting(
+                std::env::var("KAKU_SEMGREP").ok().as_deref(),
+            ),
         };
         if let Some(path) = &self.scripted {
             let script: Vec<ChatMessage> = match std::fs::read_to_string(path)
