@@ -38,13 +38,22 @@ pub fn fuse(lists: &[Vec<String>]) -> Vec<Fused> {
     fuse_weighted(lists, &[])
 }
 
+/// The weight a list really counts for: an unusable one counts as one, a large one as `MAX_WEIGHT`.
+pub fn effective_weight(w: f64) -> f64 {
+    if w.is_finite() && w >= 0.0 {
+        w.min(MAX_WEIGHT)
+    } else {
+        1.0
+    }
+}
+
 /// `fuse`, where list `i` counts `weights[i]` times as much. A missing, negative or non-finite weight counts as one, a weight
 /// past `MAX_WEIGHT` as `MAX_WEIGHT`, and a weight of zero makes a list count for nothing (a note only that list found is
 /// left out). All ones is exactly `fuse`.
 pub fn fuse_weighted(lists: &[Vec<String>], weights: &[f64]) -> Vec<Fused> {
     let weight = |li: usize| match weights.get(li) {
-        Some(w) if w.is_finite() && *w >= 0.0 => w.min(MAX_WEIGHT),
-        _ => 1.0,
+        Some(w) => effective_weight(*w),
+        None => 1.0,
     };
     let mut acc: BTreeMap<&str, Fused> = BTreeMap::new();
     for (li, list) in lists.iter().enumerate() {

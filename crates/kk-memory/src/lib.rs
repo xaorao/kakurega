@@ -1,4 +1,5 @@
 mod fuse;
+mod retention;
 mod secret;
 
 use hmac::{Hmac, Mac};
@@ -230,6 +231,11 @@ CREATE TABLE IF NOT EXISTS proposals (
     unknown_sensitivity INTEGER NOT NULL,
     status TEXT NOT NULL,
     created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memory_use (
+    id TEXT PRIMARY KEY,
+    last_at INTEGER NOT NULL,
+    uses INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS memory_events (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -857,6 +863,8 @@ impl Memories {
                 params![mid],
             )?;
             self.conn()
+                .execute("DELETE FROM memory_use WHERE id = ?1", params![mid])?;
+            self.conn()
                 .execute("DELETE FROM memories WHERE id = ?1", params![mid])?;
             self.event(now, "forget", mid, "deleted")?;
         }
@@ -1237,11 +1245,13 @@ impl Memories {
             ranked
         };
         let by_meaning = self.rank_by_meaning(query, as_of, level, pool, scope, &mut by_id);
-        let mut out = Vec::new();
-        for f in fuse::fuse_weighted(
+        let mut fused = fuse::fuse_weighted(
             &[keyword, similar, by_meaning],
             &[1.0, 1.0, self.meaning_weight],
-        ) {
+        );
+        self.apply_freshness(as_of, &by_id, &mut fused);
+        let mut out = Vec::new();
+        for f in fused {
             let Some(r) = by_id.remove(&f.id) else {
                 continue;
             };
@@ -1269,6 +1279,76 @@ impl Memories {
             }
         }
         Ok(out)
+    }
+
+    /// Lowers the score of stale, unused notes by at most `retention::FRESHNESS_SPAN` and puts the list back in order. It
+    /// only reorders notes that the rankings already found, and the span is small enough that a note a few places better
+    /// still comes first: it settles between notes that match about equally.
+    fn apply_freshness(
+        &self,
+        as_of: i64,
+        found: &std::collections::HashMap<String, Row>,
+        fused: &mut [fuse::Fused],
+    ) {
+        let mut used: std::collections::HashMap<String, (i64, u32)> =
+            std::collections::HashMap::new();
+        if let Ok(mut st) = self
+            .conn()
+            .prepare("SELECT id, last_at, uses FROM memory_use")
+        {
+            if let Ok(rows) = st.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            }) {
+                for (id, at, n) in rows.flatten() {
+                    used.insert(id, (at, n.clamp(0, u32::MAX as i64) as u32));
+                }
+            }
+        }
+        for f in fused.iter_mut() {
+            let Some(r) = found.get(&f.id) else { continue };
+            let (last, n) = used.get(&f.id).map_or((None, 0), |(a, n)| (Some(*a), *n));
+            let half = retention::half_life_days(r.m.project.is_some());
+            let keep = retention::retention(as_of, r.m.created_at, last, n, half);
+            f.score *= 1.0 - retention::FRESHNESS_SPAN * (1.0 - keep);
+        }
+        // a stable sort keeps the merge's own tie order (better best rank, then id) for notes that end up equal
+        fused.sort_by(|a, b| b.score.total_cmp(&a.score));
+    }
+
+    /// Records that these notes were given to a model or shown as an answer, which makes them rank a little higher next
+    /// time. It changes nothing about the notes themselves. Unknown ids and ids the owner forgot are ignored.
+    pub fn record_use(&self, now: i64, ids: &[String]) -> Result<(), MemoryError> {
+        for id in ids.iter().take(50) {
+            self.conn().execute(
+                "INSERT INTO memory_use(id, last_at, uses)
+                 SELECT ?1, ?2, 1 WHERE EXISTS (SELECT 1 FROM memories WHERE id = ?1)
+                 ON CONFLICT(id) DO UPDATE SET last_at = excluded.last_at, uses = uses + 1",
+                params![id, now],
+            )?;
+        }
+        Ok(())
+    }
+
+    #[doc(hidden)]
+    pub fn use_count_for_test(&self, id: &str) -> i64 {
+        self.conn()
+            .query_row(
+                "SELECT uses FROM memory_use WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0)
+    }
+
+    #[doc(hidden)]
+    pub fn use_rows_for_test(&self) -> i64 {
+        self.conn()
+            .query_row("SELECT COUNT(*) FROM memory_use", [], |r| r.get(0))
+            .unwrap_or(-1)
     }
 
     /// Ranks readable notes by closeness of meaning to the query. Missing vectors are made on the way (a few at a time, so a

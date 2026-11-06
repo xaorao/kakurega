@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 135, PARTIAL 87, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 10. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 135, PARTIAL 88, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 9. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -190,7 +190,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | E-M10 | Entity / graph boost | BUILD later, low priority; the label problem is that an entity index can leak existence of | LATER | low priority |
 | E-M11 | Context packing | IMPROVE: query-relevant recall, token budget, diversity cap; ADAPT packer logic | BUILT | notes get a third of the window, whole notes only (sv52); recall by query |
 | E-M12 | Scoping / namespaces | BUILD `scope` column (project id) distinct from compartments: scope decides relevance, lab | BUILT | project scope (me tests, row 27) |
-| E-M13 | Retention / decay | ADAPT formula for RANKING only; any archiving is a proposal the owner accepts (Hermes rule | OWED-L | ranking decay not built |
+| E-M13 | Retention / decay | ADAPT formula for RANKING only; any archiving is a proposal the owner accepts (Hermes rule | PARTIAL | freshness nudge in recall (<=5% of score, half-life 90/180 days, log-scaled use records written only when notes reach the model); no dormant/archive/pin; half-lives untuned (memory.md) |
 | E-M14 | Memory provenance and origin class | IMPROVE: add `origin` closed set; mark memory text injected into a review so `suggest_memo | PARTIAL | source and untrusted flag shown; no origin set |
 | E-M15 | Promotion gate | keep owner gate; ADAPT bounded-loss + hash-recheck if a consolidation pass is ever built | KEPT | owner gate |
 | E-M16 | Secret and instruction detection | IMPROVE: when detectors change, rescan the store and quarantine hits (hide from recall, sh | PARTIAL | checked on write and for suggestions; no rescan when detectors change |

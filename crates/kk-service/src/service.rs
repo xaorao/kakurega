@@ -402,6 +402,12 @@ fn init_store(v: &Vault) -> Result<(), String> {
 }
 
 impl Service {
+    /// How many notes have a use record: a test reads it to see that answers count the notes they used.
+    #[doc(hidden)]
+    pub fn memory_use_rows(&self) -> i64 {
+        self.memory.lock().expect("lock").use_rows_for_test()
+    }
+
     fn log_event(&self, kind: &str, subject: &str, data: &[(&str, kk_eventlog::Datum)]) -> bool {
         self.log.append(now(), kind, subject, data).is_ok()
     }
@@ -2543,6 +2549,11 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
                 })
             })
             .collect();
+        // the notes the model was really given count as used, so what keeps helping ranks a little higher next time
+        let _ = mem.record_use(
+            now(),
+            &hits.iter().map(|h| h.memory.id.clone()).collect::<Vec<_>>(),
+        );
         (
             text,
             hits.len(),

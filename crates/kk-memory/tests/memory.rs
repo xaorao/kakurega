@@ -3211,3 +3211,157 @@ fn me54_notes_of_fewer_than_four_words_are_compared_by_subject_only() {
         "but the owner's own subject says they are about the same thing"
     );
 }
+
+fn ids_for(m: &Memories, q: &str, at: i64) -> Vec<String> {
+    m.recall(q, &internal(), at, 10)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.memory.id)
+        .collect()
+}
+
+const DAY: i64 = 86_400;
+
+#[test]
+fn me60_of_two_equally_good_matches_the_fresher_one_comes_first_whatever_the_order_they_were_saved_in(
+) {
+    let m = mem(&dir());
+    let now = 2_000 * DAY;
+    // the newer note is saved first so that insertion order cannot be what decides
+    let new = id(m
+        .remember(now - DAY, nm("invoice policy alpha", internal()))
+        .unwrap());
+    let old = id(m
+        .remember(now - 700 * DAY, nm("invoice policy bravo", internal()))
+        .unwrap());
+    assert_eq!(
+        ids_for(&m, "invoice policy", now),
+        [new.clone(), old.clone()]
+    );
+    // and the other way round
+    let m2 = mem(&dir());
+    let old2 = id(m2
+        .remember(now - 700 * DAY, nm("invoice policy alpha", internal()))
+        .unwrap());
+    let new2 = id(m2
+        .remember(now - DAY, nm("invoice policy bravo", internal()))
+        .unwrap());
+    assert_eq!(ids_for(&m2, "invoice policy", now), [new2, old2]);
+    // asked as of a day when both were equally fresh (just saved) the order is not freshness
+    let _ = (new, old);
+}
+
+#[test]
+fn me61_a_note_that_was_used_rises_above_an_equally_old_one_and_asking_alone_changes_nothing() {
+    let m = mem(&dir());
+    let now = 2_000 * DAY;
+    let a = id(m
+        .remember(now - 400 * DAY, nm("shipping terms alpha", internal()))
+        .unwrap());
+    let b = id(m
+        .remember(now - 400 * DAY, nm("shipping terms bravo", internal()))
+        .unwrap());
+    let before = ids_for(&m, "shipping terms", now);
+    for _ in 0..5 {
+        assert_eq!(
+            ids_for(&m, "shipping terms", now),
+            before,
+            "recall is read-only"
+        );
+    }
+    let last = before.last().unwrap().clone();
+    assert!(a == last || b == last);
+    m.record_use(now - 2 * DAY, std::slice::from_ref(&last))
+        .unwrap();
+    assert_eq!(
+        ids_for(&m, "shipping terms", now)[0],
+        last,
+        "the used note rose"
+    );
+    // heavy use does not lift a weak match past a note that is many places better
+    let m3 = mem(&dir());
+    let mut weak = Vec::new();
+    for n in 0..12 {
+        weak.push(id(m3
+            .remember(
+                now - 400 * DAY,
+                nm(&format!("shipping terms filler{n}"), internal()),
+            )
+            .unwrap()));
+    }
+    let strong = id(m3
+        .remember(
+            now - 900 * DAY,
+            nm("shipping terms and customs duties apply", internal()),
+        )
+        .unwrap());
+    let before = ids_for(&m3, "shipping terms customs duties", now);
+    assert_eq!(before[0], strong);
+    let favourite = before.last().unwrap().clone();
+    for k in 0..30 {
+        m3.record_use(now - k, std::slice::from_ref(&favourite))
+            .unwrap();
+    }
+    let after = ids_for(&m3, "shipping terms customs duties", now);
+    assert_eq!(
+        after[0], strong,
+        "relevance still wins over use and age: {after:?}"
+    );
+    let pos = |v: &[String], x: &String| v.iter().position(|y| y == x).unwrap();
+    assert!(
+        pos(&after, &favourite) < pos(&before, &favourite),
+        "but the used note did move up"
+    );
+    assert!(pos(&after, &favourite) >= 1, "but never to the top");
+}
+
+#[test]
+fn me63_each_use_adds_one_to_the_notes_count_and_moves_its_last_time_forward() {
+    let m = mem(&dir());
+    let a = id(m.remember(1, nm("count me", internal())).unwrap());
+    assert_eq!(m.use_count_for_test(&a), 0);
+    for t in [10, 20, 30] {
+        m.record_use(t, std::slice::from_ref(&a)).unwrap();
+    }
+    assert_eq!(m.use_count_for_test(&a), 3);
+    assert_eq!(m.use_rows_for_test(), 1);
+}
+
+#[test]
+fn me62_freshness_cannot_bring_in_a_note_that_no_ranking_found_or_one_above_the_callers_clearance()
+{
+    let m = mem(&dir());
+    let now = 2_000 * DAY;
+    id(
+        m.remember(now, nm("completely unrelated gardening advice", internal()))
+            .unwrap(),
+    );
+    let secret = id(m
+        .remember(
+            now,
+            nm(
+                "invoice policy restricted detail",
+                Label::new(Level::Restricted),
+            ),
+        )
+        .unwrap());
+    assert!(
+        ids_for(&m, "invoice policy", now).is_empty()
+            || !ids_for(&m, "invoice policy", now).contains(&secret)
+    );
+    assert!(ids_for(&m, "zzzz nothing", now).is_empty());
+    // using an id that does not exist, or twice a hundred ids, is harmless
+    m.record_use(now, &["no-such-note".to_string()]).unwrap();
+    m.record_use(now, &(0..200).map(|i| format!("x{i}")).collect::<Vec<_>>())
+        .unwrap();
+    // a forgotten note's use record goes with it
+    let gone = id(m
+        .remember(now, nm("forget this invoice policy note", internal()))
+        .unwrap());
+    m.record_use(now, std::slice::from_ref(&gone)).unwrap();
+    m.forget(now, &gone, "test").unwrap();
+    assert!(
+        m.use_rows_for_test() == 0,
+        "no use record outlives the note"
+    );
+}

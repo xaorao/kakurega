@@ -10783,3 +10783,49 @@ fn sv108_a_chat_sent_without_a_session_leaves_every_kept_conversation_and_the_se
         "no new conversation appeared"
     );
 }
+
+#[test]
+fn sv109_notes_given_to_the_model_count_as_used_and_a_chat_that_found_none_records_nothing() {
+    let (root, _repo) = repo_copy("uses");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    w.post(
+        "/api/memories",
+        json!({"text": "Acme pays invoices on the fifteenth"}),
+    );
+    assert_eq!(svc.memory_use_rows(), 0, "saving a note is not using it");
+    let (st, r) = w.post(
+        "/api/chat",
+        json!({"message": "completely different topic zzz"}),
+    );
+    assert_eq!((st, r["notes_used"].clone()), (200, json!(0)));
+    assert_eq!(svc.memory_use_rows(), 0, "no note given, no use recorded");
+    let (st, r) = w.post(
+        "/api/chat",
+        json!({"message": "when does Acme pay invoices"}),
+    );
+    assert_eq!(st, 200);
+    assert!(r["notes_used"].as_u64().unwrap() >= 1, "{r}");
+    assert_eq!(svc.memory_use_rows(), 1);
+    w.post(
+        "/api/chat",
+        json!({"message": "when does Acme pay invoices"}),
+    );
+    assert_eq!(
+        svc.memory_use_rows(),
+        1,
+        "a second use updates the same record"
+    );
+}
