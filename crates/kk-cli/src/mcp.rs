@@ -404,11 +404,19 @@ fn outcome_of(result: &Value) -> &'static str {
 
 /// Tells the service a tool was used and how it ended, so the owner's signed log shows what an agent did. Only the tool's
 /// name and the outcome go: never the arguments or the answer. A service that cannot be reached changes nothing for the agent.
-fn report(admin: &dyn Fn() -> Result<Admin, String>, tool: &str, outcome: &str) {
+fn report(
+    admin: &dyn Fn() -> Result<Admin, String>,
+    tool: &str,
+    outcome: &str,
+    trace: Option<&str>,
+) {
     if let Ok(a) = admin() {
         let _ = a.post_within(
             "/admin/agent-calls",
-            json!({"tool": tool, "outcome": outcome}),
+            match trace {
+                Some(t) => json!({"tool": tool, "outcome": outcome, "trace": t}),
+                None => json!({"tool": tool, "outcome": outcome}),
+            },
             2,
         );
     }
@@ -633,24 +641,24 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
             if uri.starts_with(REPORT_PREFIX) {
                 return match ctx.report_text(uri) {
                     Some((tool, text)) => {
-                        report(admin, tool, "ok");
+                        report(admin, tool, "ok", None);
                         ok(
                             json!({"contents": [{"uri": uri, "mimeType": "application/json", "text": text}]}),
                         )
                     }
                     None => {
-                        report(admin, "unknown", "refused");
+                        report(admin, "unknown", "refused", None);
                         err(-32002, "resource not found")
                     }
                 };
             }
             let Some((tool, args)) = resource_target(ctx, uri) else {
                 // an address that is not exactly a listed resource is never written anywhere
-                report(admin, "unknown", "refused");
+                report(admin, "unknown", "refused", None);
                 return err(-32002, "resource not found");
             };
             let result = call(admin, ctx, tool, &args);
-            report(admin, tool, outcome_of(&result));
+            report(admin, tool, outcome_of(&result), None);
             if result["isError"] == false {
                 ok(
                     json!({"contents": [{"uri": uri, "mimeType": "application/json", "text": result["structuredContent"].to_string()}]}),
@@ -675,7 +683,7 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
                 .is_some_and(|t| t.iter().any(|t| t["name"] == name))
             {
                 // a name the agent made up is never written anywhere
-                report(admin, "unknown", "refused");
+                report(admin, "unknown", "refused", None);
                 return err(-32602, "unknown tool");
             }
             let args = p
@@ -683,12 +691,21 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
                 .cloned()
                 .unwrap_or(Value::Object(Map::new()));
             let result = call(admin, ctx, name, &args);
-            report(admin, name, outcome_of(&result));
+            report(admin, name, outcome_of(&result), traceparent(&p));
             ok(result)
         }
         m if m.starts_with("notifications/") => None,
         _ => err(-32601, "method not found"),
     }
+}
+
+/// The `traceparent` a client put in `params._meta`, if it is a string; the service decides whether it is well formed.
+fn traceparent(params: &Value) -> Option<&str> {
+    params
+        .get("_meta")?
+        .get("traceparent")?
+        .as_str()
+        .filter(|t| t.len() <= 64)
 }
 
 const OVERVIEW_URI: &str = "kakurega://overview";
@@ -1260,6 +1277,31 @@ mod tests {
                     t["name"]
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod trace_tests {
+    use super::*;
+
+    #[test]
+    fn mc45_a_clients_traceparent_is_passed_on_as_a_string_of_sane_length_and_nothing_else() {
+        let p = json!({"name": "overview", "_meta": {"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}});
+        assert_eq!(
+            traceparent(&p),
+            Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+        );
+        for none in [
+            json!({}),
+            json!({"_meta": {}}),
+            json!({"_meta": {"traceparent": 5}}),
+            json!({"_meta": {"traceparent": null}}),
+            json!({"_meta": "x"}),
+            json!({"_meta": {"traceparent": "x".repeat(65)}}),
+            json!({"traceparent": "00-a-b-01"}),
+        ] {
+            assert_eq!(traceparent(&none), None, "{none}");
         }
     }
 }

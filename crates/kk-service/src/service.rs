@@ -4573,6 +4573,27 @@ const CALLS_LOGGED_PER_MINUTE: usize = 120;
 struct AgentCallBody {
     tool: String,
     outcome: String,
+    /// The W3C `traceparent` the agent's client sent with the call, kept so the call can be matched to the client's own trace.
+    #[serde(default)]
+    trace: Option<String>,
+}
+
+/// A W3C trace-context `traceparent` (`00-<32 hex>-<16 hex>-<2 hex>`, ids not all zero) exactly as sent, or `None`. The
+/// client chose it, so it is stored and never trusted: it decides nothing.
+fn valid_traceparent(t: &str) -> bool {
+    let p: Vec<&str> = t.split('-').collect();
+    let hex = |s: &str, n: usize| {
+        s.len() == n
+            && s.bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    };
+    p.len() == 4
+        && p[0] == "00"
+        && hex(p[1], 32)
+        && hex(p[2], 16)
+        && hex(p[3], 2)
+        && p[1].bytes().any(|c| c != b'0')
+        && p[2].bytes().any(|c| c != b'0')
 }
 
 /// Records that an agent used a tool through the MCP door: the tool's name and how it ended (ok, error, refused), nothing
@@ -4606,11 +4627,12 @@ async fn agent_call(axum::Extension(svc): Svc, Json(b): Json<AgentCallBody>) -> 
     };
     match action {
         Some(None) => {
-            svc.log_event(
-                "mcp.call",
-                &b.tool,
-                &[("outcome", b.outcome.as_str().into())],
-            );
+            let mut data: Vec<(&str, kk_eventlog::Datum)> =
+                vec![("outcome", b.outcome.as_str().into())];
+            if let Some(t) = b.trace.as_deref().filter(|t| valid_traceparent(t)) {
+                data.push(("trace", t.into()));
+            }
+            svc.log_event("mcp.call", &b.tool, &data);
         }
         Some(Some(dropped)) => {
             svc.log_event(

@@ -1948,3 +1948,24 @@ fn mc44_the_same_report_does_not_crowd_out_others_and_reading_a_link_is_recorded
         "no address or path in the record"
     );
 }
+
+#[test]
+fn mc46_a_trace_id_in_the_call_meta_is_sent_with_the_report_and_nothing_else_is() {
+    let dir = fresh("mc46");
+    let (admin, bodies) = audit_admin("tok-46", 200);
+    admin.publish(&dir);
+    let mut s = live(&dir);
+    let trace = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+    s.send(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "overview", "arguments": {}, "_meta": {"traceparent": trace, "secret": "do not forward"}}}).to_string());
+    assert_eq!(s.recv()["result"]["isError"], false);
+    s.send(&call(2, "overview", json!({})));
+    assert_eq!(s.recv()["result"]["isError"], false);
+    assert!(s.close().is_empty());
+    assert_eq!(
+        bodies.lock().unwrap().clone(),
+        vec![
+            json!({"tool": "overview", "outcome": "ok", "trace": trace}),
+            json!({"tool": "overview", "outcome": "ok"}),
+        ]
+    );
+}

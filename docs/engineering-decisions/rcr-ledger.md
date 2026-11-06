@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 132, PARTIAL 66, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 34. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 133, PARTIAL 66, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 33. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -146,7 +146,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | D-D11 | Logging capability | EXCLUDE. Log to stderr only, structured, no payloads. | EXCLUDED | logs go to stderr only |
 | D-D12 | Completion | BUILD later, only for review ids. | LATER | only useful with prompts and resources |
 | D-D13 | Ping | ADAPT via SDK. | BUILT | ping answered |
-| D-D14 | Trace context | BUILD small: copy the trace id into the signed log entry for the call. | OWED-L | no trace id in the signed log entry |
+| D-D14 | Trace context | BUILD small: copy the trace id into the signed log entry for the call. | BUILT | well-formed traceparent from params._meta kept in the signed mcp.call entry, malformed dropped; real-client sending NOT VERIFIED (mcp.md) |
 | D-D15 | Tool schema design and names | KEEP. Keep names at most 24 characters and ASCII `[a-z_]` only (no dots) so Cline and Open | BUILT | names a-z and underscore, short |
 | D-D16 | Input validation | IMPROVE: keep Kakurega's rules as validated newtypes (`ReviewId`, `RecipientName`, `Folder | BUILT | schemas forbid extra fields; check_args |
 | D-D17 | Structured output and `outputSchema` | IMPROVE now (section 5), then SDK typed outputs. | BUILT | outputSchema on every tool, replies checked against it (conforms) |
