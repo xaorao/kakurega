@@ -1,5 +1,6 @@
 import { againPoint, editPoint, type BranchPoint } from "../branching";
 import { fileNotes, room, sizeText, MAX_BYTES } from "../attach";
+import { findMatches, stepTo, type Match } from "../find";
 import { batch, createEffect, createResource, createSignal, For, on, onCleanup, Show } from "solid-js";
 import { api, ApiError, streamChat, type AttachmentRead, type AttachmentSummary, type ChatHit, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
 import { t } from "../i18n";
@@ -56,6 +57,66 @@ export function Chat() {
   const [reading, setReading] = createSignal("");
   const [shown, setShown] = createSignal<Record<string, AttachmentRead | "loading">>({});
   const [dragging, setDragging] = createSignal(false);
+  // Find in the open conversation: matches are read from what is on the screen, so they always agree with it.
+  const [findText, setFindText] = createSignal("");
+  const [findAt, setFindAt] = createSignal<number | null>(null);
+  const [found, setFound] = createSignal<Match[]>([]);
+  let listEl: HTMLUListElement | undefined;
+  const bodies = () => Array.from(listEl?.querySelectorAll<HTMLElement>(".msg-body") ?? []);
+  const rangeFor = (el: HTMLElement, start: number, end: number): Range | null => {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let pos = 0;
+    let range: Range | null = null;
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const len = (n.nodeValue ?? "").length;
+      if (!range && start < pos + len) {
+        range = document.createRange();
+        range.setStart(n, start - pos);
+      }
+      if (range && end <= pos + len) {
+        range.setEnd(n, end - pos);
+        return range;
+      }
+      pos += len;
+    }
+    return null;
+  };
+  const paintFind = (matches: Match[], current: number | null) => {
+    const reg = (globalThis as unknown as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights;
+    const H = (globalThis as unknown as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
+    if (!reg || !H) return;
+    const els = bodies();
+    const ranges = matches.map((m) => {
+      const el = els[m.turn];
+      return el ? rangeFor(el, m.start, m.end) : null;
+    });
+    reg.set("find", new H(...ranges.filter((r): r is Range => r !== null)));
+    const cur = current === null ? null : (ranges[current] ?? null);
+    if (cur) reg.set("find-current", new H(cur));
+    else reg.delete("find-current");
+    if (cur) cur.startContainer.parentElement?.scrollIntoView({ block: "center" });
+  };
+  const runFind = (q: string, keep = false) => {
+    setFindText(q);
+    const matches = findMatches(bodies().map((b) => b.textContent ?? ""), q);
+    setFound(matches);
+    const at = matches.length === 0 ? null : keep && findAt() !== null && findAt()! < matches.length ? findAt() : 0;
+    setFindAt(at);
+    paintFind(matches, at);
+  };
+  const stepFind = (step: 1 | -1) => {
+    const at = stepTo(found().length, findAt(), step);
+    setFindAt(at);
+    paintFind(found(), at);
+  };
+  const clearFind = () => {
+    setFindText("");
+    setFound([]);
+    setFindAt(null);
+    const reg = (globalThis as unknown as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights;
+    reg?.delete("find");
+    reg?.delete("find-current");
+  };
   let picker: HTMLInputElement | undefined;
   const addFiles = async (incoming: File[]) => {
     if (incoming.length === 0) return;
@@ -750,12 +811,31 @@ export function Chat() {
           </ul>
         </nav>
       </Show>
-      <ul class="plain stack chat" aria-live="polite">
+      <Show when={turns().length > 0}>
+        <div class="find-bar" role="search">
+          <label class="sr" for="chat-find">{t("chatfind.label")}</label>
+          <input id="chat-find" type="search" maxlength="200" placeholder={t("chatfind.label")} value={findText()} onInput={(e) => runFind(e.currentTarget.value)} onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              stepFind(e.shiftKey ? -1 : 1);
+            } else if (e.key === "Escape" && findText() !== "") {
+              e.stopPropagation();
+              clearFind();
+            }
+          }} />
+          <Show when={findText().trim() !== ""}>
+            <span class="muted" role="status">{found().length === 0 ? t("chatfind.none") : t("chatfind.count", { n: (findAt() ?? 0) + 1, of: found().length })}</span>
+            <button type="button" class="linklike" disabled={found().length === 0} onClick={() => stepFind(-1)}>{t("chatfind.prev")}</button>
+            <button type="button" class="linklike" disabled={found().length === 0} onClick={() => stepFind(1)}>{t("chatfind.next")}</button>
+          </Show>
+        </div>
+      </Show>
+      <ul ref={listEl} class="plain stack chat" aria-live="polite">
         <For each={turns()} fallback={<li class="muted">{t("chat.empty")}</li>}>
           {(m, i) => (
             <li class={`card stack msg ${m.role}`}>
               <strong>{m.role === "user" ? t("chat.you") : t("chat.assistant")}</strong>
-              {m.role === "assistant" ? <Markdown text={m.content} /> : <p class="mem-text">{m.content}</p>}
+              <div class="msg-body">{m.role === "assistant" ? <Markdown text={m.content} /> : <p class="mem-text">{m.content}</p>}</div>
               <Show when={(m.attached ?? []).length > 0}><p class="muted">{t("files.attached", { names: m.attached!.join(", ") })}</p></Show>
               <Show when={m.foot}>{(f) => <p class="muted">{f().join(" · ")}</p>}</Show>
               <div class="actions msg-actions">

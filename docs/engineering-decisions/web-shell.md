@@ -75,3 +75,9 @@ Performance of Solid with long streaming transcripts at our scale; accessibility
 - Behaviour: `GET /api/config` returns `approvals: {asks_every_release: true, signing_key_enrolled}`; the header badge reads "Releases ask you" (with ", signed" when an approval key is enrolled) and its title says there is no setting that turns it off. It is a status, not a control.
 - Evidence: kk-service (the config before and after an approval key is enrolled, in the approver test), e2e (the badge and its title). The constant is a statement about the product, backed by the tests that refuse a delivery without an approval (sv06 and the approval tests), not a flag that is read.
 - Not covered: the badge lives in the header of every screen, not inside the composer itself; the terminal and the desktop shell show it only through the web page.
+
+## Find in the open conversation (ledger B-W08)
+- Reference: OpenCode's in-session find (technique in the matrix: no DOM rewriting). Source for this row NOT READ; the technique used is the browser's CSS Custom Highlight API, which colours ranges without touching the markup, so there is no injection or style-escape surface.
+- Behaviour: above the messages a search box counts matches (`2 of 5`), Enter and Shift+Enter step with wrap, Escape clears. The query is plain text (never a pattern), case is ignored, at most 200 characters and 500 matches. Matches are read from what is on the screen, so they agree with it. A browser without the highlight feature still gets the count and the jump.
+- Evidence: web unit fd01–fd06 (all matches, no overlap, plain text, bounds, a text whose lower case has another length is skipped, wrap), e2e 306/306 (capitals, count, highlight present and no `mark` elements added, stepping, no match, Escape). 5 of 6 mutants caught by hand.
+- Not covered: highlighting inside the kept-conversation list and in the terminal, regular expressions by design, a browser without the highlight feature (not run).

@@ -1145,6 +1145,21 @@ try {
   check("Answer again opens a version that asks the same question again, and the original stays whole", (await page.locator(".msg").count()) === 4 && (await page.locator(".msg.user").nth(1).innerText()).includes("branchtwo words"), JSON.stringify(await page.locator(".msg").allInnerTexts()).slice(0, 500));
   const sw = page.getByRole("navigation", { name: "Other versions of this conversation" });
   check("both other versions are listed from here", (await sw.getByRole("button").count()) === 2, (await sw.innerText().catch(() => "no nav")).replace(/\n/g, " | "));
+  // find in the open conversation: counted from what is on the screen, stepped with Enter, cleared with Escape
+  await page.getByLabel("Find in this conversation").fill("BRANCHTWO");
+  await page.getByText("1 of 1", { exact: true }).waitFor();
+  check("typing in capitals finds the message and says how many matches there are", (await page.getByText("1 of 1", { exact: true }).count()) === 1);
+  check("the match is coloured by the browser's own highlight and the page's markup is untouched", (await page.evaluate(() => (globalThis.CSS?.highlights?.get("find")?.size ?? -1))) === 1 && (await page.locator(".msg-body mark").count()) === 0);
+  await page.getByLabel("Find in this conversation").fill("words");
+  await page.getByText("1 of 2", { exact: true }).waitFor();
+  await page.getByLabel("Find in this conversation").press("Enter");
+  await page.getByText("2 of 2", { exact: true }).waitFor();
+  await page.getByLabel("Find in this conversation").press("Enter");
+  await page.getByText("1 of 2", { exact: true }).waitFor();
+  await page.getByLabel("Find in this conversation").fill("zzzznomatch");
+  await page.getByText("No match", { exact: true }).waitFor();
+  await page.getByLabel("Find in this conversation").press("Escape");
+  check("Escape clears the search and its highlight", (await page.getByLabel("Find in this conversation").inputValue()) === "" && (await page.evaluate(() => (globalThis.CSS?.highlights?.has("find") ?? false))) === false);
   // finding notes worth keeping: asked for, read by the model, every fact waits, instructions are left out
   const findBtn = page.getByRole("button", { name: "Find notes worth keeping" });
   const memBefore = await page.evaluate(async () => (await (await fetch("/api/memories")).json()).memories.length);

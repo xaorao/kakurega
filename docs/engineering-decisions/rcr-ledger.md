@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 133, PARTIAL 69, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 30. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 133, PARTIAL 70, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 29. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -29,7 +29,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | B-W05b | Workspaces / projects | BUILD, with AnythingLLM's "workspace owns documents + threads + memory scope + route prefe | PARTIAL | projects scope notes and chats (f808980); documents are per folder; no single workspace object |
 | B-W06 | Conversation and job list | ADAPT unread-from-timestamps rule, pin, archive. Delete is a kernel operation (see W44) | OWED-L | kept conversations list with open and forget; no unread, pin or archive |
 | B-W07 | Search across conversations | ADAPT `search.ts` (MIT) for the multi-source/abort/rank mechanics. IMPROVE: full-text inde | BUILT | search across kept conversations (content and title, every word, bounded, owner session) on web and terminal; stale answers dropped, not cancelled (web-shell.md) |
-| B-W08 | Find in the open conversation | ADAPT the technique (no DOM rewriting, so no CSP or XSS issue). Fall back to no highlight  | OWED-L | the browser's own find works on the page; no in-app find |
+| B-W08 | Find in the open conversation | ADAPT the technique (no DOM rewriting, so no CSP or XSS issue). Fall back to no highlight  | PARTIAL | in-conversation find with count, stepping and browser highlight, no DOM rewriting; OpenCode source NOT READ (web-shell.md) |
 | B-W09 | Command palette | ADAPT `command.tsx` registry (MIT, Effect `Schema` used for persistence only: replace). IM | BUILT | command palette with ranking, group headers, page and section keys (pm01-pm10, e2e) |
 | B-W10 | Keyboard shortcuts, help, rebinding | ADAPT: declarative table + help dialog (opened by `?`/Cmd+Shift+/), recorder later | PARTIAL | declarative shortcut table, help dialog generated from it (? and Ctrl+/), tied to the real handlers; no rebinding or recorder (web-shell.md) |
 | B-W11 | Multiple open threads (tabs) | BUILD later, low priority; not needed until background agents run in parallel | LATER | tabs: not needed until background agents run in the page |
