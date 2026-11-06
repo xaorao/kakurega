@@ -212,6 +212,10 @@ pub fn scope_args(l: &Limits, unit: &str) -> Vec<OsString> {
         OsString::from(format!("MemoryMax={}", l.memory_bytes)),
         OsString::from("-p"),
         OsString::from("MemorySwapMax=0"),
+        // The kernel already kills what goes over its memory. Without this, systemd also stops the whole scope with SIGTERM,
+        // and which of the two deaths the host sees first varies from run to run.
+        OsString::from("-p"),
+        OsString::from("OOMPolicy=continue"),
     ]
 }
 

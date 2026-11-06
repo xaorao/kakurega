@@ -54,3 +54,27 @@ fn w02_only_a_plain_worker_unit_name_is_ever_used() {
         assert!(!valid_unit_name(bad), "{bad:?}");
     }
 }
+
+#[test]
+fn w_scope_limits_are_set_and_an_out_of_memory_kill_does_not_make_systemd_stop_the_whole_scope() {
+    let args: Vec<String> = kk_sandbox::scope_args(&kk_sandbox::Limits::default(), "kk-worker-1-1")
+        .into_iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    for want in [
+        "--user",
+        "--scope",
+        "--unit=kk-worker-1-1",
+        "MemorySwapMax=0",
+    ] {
+        assert!(args.iter().any(|a| a == want), "missing {want}: {args:?}");
+    }
+    assert!(
+        args.iter().any(|a| a.starts_with("TasksMax="))
+            && args.iter().any(|a| a.starts_with("MemoryMax="))
+    );
+    // The kernel kills the process that goes over its memory. By default systemd then also sends SIGTERM to the rest of the
+    // scope, which races with the sandbox seeing the real death and makes the reported result vary (SIGKILL one time, SIGTERM
+    // the next). The kill is already the enforcement, so the scope is left alone.
+    assert!(args.iter().any(|a| a == "OOMPolicy=continue"), "{args:?}");
+}
