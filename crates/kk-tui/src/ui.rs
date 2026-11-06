@@ -27,7 +27,17 @@ impl Theme {
     }
 }
 
+thread_local! {
+    static WRAPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times `wrap` ran on this thread: a test counts it to prove a frame does work only for what is on the screen.
+pub fn wrap_calls() -> usize {
+    WRAPS.with(|c| c.get())
+}
+
 pub fn wrap(text: &str, width: usize) -> Vec<String> {
+    WRAPS.with(|c| c.set(c.get() + 1));
     let width = width.max(8);
     let mut out = Vec::new();
     for raw in text.split('\n') {
@@ -132,6 +142,40 @@ fn card_lines(c: &Card, width: usize, th: &Theme) -> Vec<Line<'static>> {
     out
 }
 
+/// The `h` lines to show when the owner has scrolled `back` lines up from the newest, and how far back that really is (it cannot
+/// go past the oldest line). Cards are wrapped from the newest backwards and only until enough lines exist, so a conversation of
+/// thousands of cards costs what the screen shows, not what the conversation holds. The result is the same as wrapping every
+/// card and cutting the window out of the whole.
+pub fn window_lines(
+    cards: &[Card],
+    width: usize,
+    th: &Theme,
+    h: usize,
+    back: usize,
+) -> (Vec<Line<'static>>, usize) {
+    let need = h.saturating_add(back);
+    let mut chunks: Vec<Vec<Line<'static>>> = Vec::new();
+    let mut total = 0usize;
+    for c in cards.iter().rev() {
+        let l = card_lines(c, width, th);
+        total += l.len();
+        chunks.push(l);
+        if total >= need {
+            break;
+        }
+    }
+    let back = back.min(total.saturating_sub(h));
+    let start = total.saturating_sub(h + back);
+    let visible = chunks
+        .into_iter()
+        .rev()
+        .flatten()
+        .skip(start)
+        .take(h)
+        .collect();
+    (visible, back)
+}
+
 pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
     let area = f.area();
     let input_lines = app.input.split('\n').count().clamp(1, 6) as u16;
@@ -152,16 +196,8 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
     f.render_widget(Paragraph::new(head), rows[0]);
 
     let width = rows[1].width as usize;
-    let mut lines: Vec<Line> = Vec::new();
-    for c in &app.cards {
-        lines.extend(card_lines(c, width, th));
-    }
     let h = rows[1].height as usize;
-    let total = lines.len();
-    let max_back = total.saturating_sub(h);
-    let back = app.scroll_back.min(max_back);
-    let start = total.saturating_sub(h + back);
-    let visible: Vec<Line> = lines.into_iter().skip(start).take(h).collect();
+    let (visible, back) = window_lines(&app.cards, width, th, h, app.scroll_back);
     f.render_widget(Paragraph::new(visible), rows[1]);
     if back > 0 {
         let note = format!(" {back} more line(s) below · PageDown ");

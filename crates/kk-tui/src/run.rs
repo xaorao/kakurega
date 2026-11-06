@@ -107,6 +107,7 @@ fn event_loop(http: Http, data_dir: &Path, resume: bool) -> Result<(), String> {
     }
     let notify = std::env::var("KAKU_NOTIFY").ok();
     let mut shown_title: Option<Option<crate::attention::Attention>> = None;
+    let mut dirty = true;
     loop {
         if shown_title != Some(app.waiting) {
             shown_title = Some(app.waiting);
@@ -125,8 +126,11 @@ fn event_loop(http: Http, data_dir: &Path, resume: bool) -> Result<(), String> {
                 let _ = out.flush();
             }
         }
-        term.draw(|f| draw(f, &app, &theme))
-            .map_err(|e| e.to_string())?;
+        if dirty {
+            term.draw(|f| draw(f, &app, &theme))
+                .map_err(|e| e.to_string())?;
+            dirty = false;
+        }
         if app.quit {
             return Ok(());
         }
@@ -136,9 +140,14 @@ fn event_loop(http: Http, data_dir: &Path, resume: bool) -> Result<(), String> {
                 CtEvent::Paste(t) => Some(Event::Paste(t)),
                 CtEvent::FocusGained => Some(Event::Focus(true)),
                 CtEvent::FocusLost => Some(Event::Focus(false)),
+                CtEvent::Resize(..) => {
+                    dirty = true;
+                    None
+                }
                 _ => None,
             };
             if let Some(ev) = ev {
+                dirty = true;
                 for r in app.handle(ev) {
                     let _ = req_tx.send(r);
                 }
@@ -171,11 +180,13 @@ fn event_loop(http: Http, data_dir: &Path, resume: bool) -> Result<(), String> {
                     )
                     .map_err(|e| e.to_string())?;
                     term.clear().map_err(|e| e.to_string())?;
+                    dirty = true;
                     app.finish_edit(result);
                 }
             }
         }
         while let Ok(ev) = ev_rx.try_recv() {
+            dirty = true;
             for r in app.handle(ev) {
                 let _ = req_tx.send(r);
             }

@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 135, PARTIAL 85, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 12. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 135, PARTIAL 86, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 11. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -406,7 +406,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | A-A27 | Diff viewing and edit flows | see the section in matrix A | PARTIAL | /fixes shows the diff; no changed-word marks |
 | A-A28 | Streaming rendering | see the section in matrix A | BUILT | streamed answers (71e541f) |
 | A-A29 | Markdown and syntax rendering of model text | see the section in matrix A | PARTIAL | plain text; no markdown rendering in the terminal |
-| A-A30 | Long output, collapsing, verbosity, virtual lists | see the section in matrix A | OWED-L | no collapsing of long output or verbosity levels |
+| A-A30 | Long output, collapsing, verbosity, virtual lists | see the section in matrix A | PARTIAL | step 1 built: window_lines wraps only what is shown (5000 cards under 80 wraps), redraw on change; collapsing cards and verbosity levels still owed (terminal-transcript.md) |
 | A-A31 | Transcript view, search, copy, export | see the section in matrix A | PARTIAL | terminal /transcript search, /copy (asks, OSC 52) and /export (service writes a new 0600 file in exports); no overlay or region selection (terminal-transcript.md) |
 | A-A32 | Scrollback model: alt screen versus inline, mouse | see the section in matrix A | BUILT | alt screen, scroll back, restore on exit (tui_pty.py 27/27) |
 | A-A33 | Keyboard model, keymap config, command palette | see the section in matrix A | LATER | keymap config |

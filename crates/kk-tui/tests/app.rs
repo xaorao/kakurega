@@ -3524,3 +3524,64 @@ fn tu54_an_aside_is_asked_without_a_session_shown_apart_and_kept_out_of_the_conv
     ));
     assert!(text(&a).contains("no model"), "{}", text(&a));
 }
+
+fn many_cards(n: usize) -> Vec<kk_tui::app::Card> {
+    (0..n)
+        .map(|i| kk_tui::app::Card {
+            kind: if i % 3 == 0 { Kind::User } else { Kind::Info },
+            title: (i % 2 == 0).then(|| format!("Card {i}")),
+            lines: (0..(i % 5) + 1)
+                .map(|j| format!("card {i} line {j} {}", "word ".repeat((i + j) % 40)))
+                .collect(),
+        })
+        .collect()
+}
+
+#[test]
+fn tu55_the_window_of_a_long_conversation_is_the_same_as_cutting_it_from_the_whole_and_costs_only_what_is_shown(
+) {
+    use kk_tui::ui::{window_lines, wrap_calls};
+    let th = Theme { color: false };
+    let cards = many_cards(300);
+    for width in [20usize, 47, 100] {
+        let full = window_lines(&cards, width, &th, 1_000_000, 0).0;
+        assert!(full.len() > 600);
+        for h in [1usize, 5, 30] {
+            for back in [
+                0usize,
+                1,
+                7,
+                100,
+                full.len() - h,
+                full.len(),
+                full.len() + 500,
+            ] {
+                let (got, used) = window_lines(&cards, width, &th, h, back);
+                let want_back = back.min(full.len().saturating_sub(h));
+                let start = full.len().saturating_sub(h + want_back);
+                let want: Vec<_> = full[start..].iter().take(h).cloned().collect();
+                assert_eq!(
+                    (got, used),
+                    (want, want_back),
+                    "width {width} h {h} back {back}"
+                );
+            }
+        }
+    }
+    // five thousand cards: a frame wraps a handful of them, not all
+    let big = many_cards(5000);
+    let before = wrap_calls();
+    let (lines, back) = window_lines(&big, 80, &th, 30, 0);
+    let used = wrap_calls() - before;
+    assert_eq!((lines.len(), back), (30, 0));
+    assert!(used < 80, "wrapped {used} times for a 30-line window");
+    // scrolled back by 200 lines it still does not touch the whole conversation
+    let before = wrap_calls();
+    window_lines(&big, 80, &th, 30, 200);
+    assert!(wrap_calls() - before < 400);
+    // empty, and a window taller than the conversation
+    assert_eq!(window_lines(&[], 80, &th, 10, 5), (Vec::new(), 0));
+    let few = many_cards(2);
+    let (l, b) = window_lines(&few, 80, &th, 100, 0);
+    assert!(l.len() < 100 && b == 0);
+}
