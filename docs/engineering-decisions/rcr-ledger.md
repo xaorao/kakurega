@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 133, PARTIAL 67, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 32. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 133, PARTIAL 68, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 31. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -293,7 +293,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | G-GH-07 | 11 interface languages | IMPROVE: move strings out of components first (`desktop-ghast-comparison.md` item 5); loca | PARTIAL | English and Hindi; more languages need strings reviewed by people |
 | G-GH-08 | Theme: system, light, dark; greeting line "Start with something that c | BUILD | BUILT | system, light, dark (e2e) |
 | G-GH-09 | Auto-update with release notes, notarised installer; companion tray us | BUILD: signed updates with a key pinned in the app, no third-party analytics, update notes | PARTIAL | signed announcements (row 25); installer waits for signing |
-| G-GH-10 | Crash diagnostics "only with approval", feedback with consent; but Pos | BUILD a local diagnostics bundle the user can read and attach; no analytics SDKs. Honest c | OWED-L | no readable local diagnostics bundle |
+| G-GH-10 | Crash diagnostics "only with approval", feedback with consent; but Pos | BUILD a local diagnostics bundle the user can read and attach; no analytics SDKs. Honest c | PARTIAL | kaku diagnostics: readable report of versions, checks, counts and event kinds, no names, paths or text; no crash capture, no screen (diagnostics.md) |
 | G-GH-11 | One calm composer for everything: attach (+), model picker, reasoning  | IMPROVE: one composer plus our additions: route badge and what-leaves line | PARTIAL | one composer with route and meter; attachments and picker not in it |
 | G-GH-12 | Attachments: PDF, DOCX, ZIP, images | BUILD attach through the offline parser, each file labeled on entry | PARTIAL | attach files in the web chat (Word, Excel, PDF text layer, web pages, text, archives) via an isolated reader; OCR owed: AnythingLLM asPDF read, falls back to OCR, we do not yet (attachments.md) |
 | G-GH-13 | Model picker with search, families, capability badges, reasoning level | BUILD with eligibility, not only capability: each model shows route class and whether the  | LATER | one route until NEAR credits |

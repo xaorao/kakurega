@@ -2,6 +2,7 @@ mod agent;
 mod approve;
 mod approver;
 mod backup;
+mod diagnostics;
 mod extension;
 mod log;
 mod mcp;
@@ -37,6 +38,7 @@ Usage:
   kaku restore FILE [--data-dir DIR] restore a backup into an empty folder (asks for the recovery key)
   kaku memory import DIR [--source NAME]   add notes from another assistant's markdown files as untrusted notes
   kaku update check|verify-file|keygen|sign   signed update announcements (nothing is downloaded or installed)
+  kaku diagnostics [--out FILE]     a readable report of versions, checks and counts to attach to a bug report (no names, paths or text)
   kaku log export [--out FILE]      save the signed event log
   kaku log verify FILE [--pin KEY] [--anchor COUNT:HEAD]   check a saved log offline
   kaku verify CAPSULE [--pin KEY]   check a capsule offline (KEY: base64url public key)
@@ -59,6 +61,7 @@ fn main() -> ExitCode {
             memory_import::run(&args[2..])
         }
         Some("log") => log::run(&args[1..]),
+        Some("diagnostics") => diagnostics::run(&args[1..]),
         Some("agent") => agent::run(&args[1..]),
         Some("extension") => extension::run(&args[1..]),
         Some("approver") => approver::run(&args[1..]),

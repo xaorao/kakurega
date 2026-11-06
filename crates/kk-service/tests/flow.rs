@@ -9649,6 +9649,8 @@ struct FileRunner {
     seen: Arc<std::sync::Mutex<Vec<kk_types::chat::ChatMessage>>>,
     endpoint: &'static str,
     window: u64,
+    /// Text a test wants inside a readiness detail (for example the data folder), set after the service exists.
+    note: Arc<std::sync::Mutex<String>>,
 }
 
 impl FileRunner {
@@ -9657,6 +9659,7 @@ impl FileRunner {
             seen: Default::default(),
             endpoint,
             window,
+            note: Default::default(),
         }
     }
 
@@ -9682,6 +9685,14 @@ impl JobRunner for FileRunner {
         progress: &dyn Fn(&str, &str),
     ) -> kk_review::job::JobReport {
         CannedRunner { confirm: true }.run(repo, recipient, job, now, extra, progress)
+    }
+    fn readiness(&self) -> Vec<Value> {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let note = self.note.lock().unwrap().clone();
+        vec![
+            json!({"id": "models", "ok": true, "required": true, "detail": format!("models are kept in {home}/.ollama and answer")}),
+            json!({"id": "folder", "ok": false, "required": false, "detail": format!("{note} {}", "x".repeat(500))}),
+        ]
     }
     fn route_info(&self) -> Value {
         let mut v = CannedRunner { confirm: true }.route_info();
@@ -10161,4 +10172,82 @@ fn sv103_a_clients_trace_id_is_kept_with_the_call_only_when_it_is_well_formed_an
         text.matches("mcp.call").count() >= 10,
         "every call is recorded, with or without an id"
     );
+}
+
+#[test]
+fn sv104_diagnostics_hold_versions_checks_counts_and_event_kinds_and_never_names_paths_or_words() {
+    let runner = FileRunner::new("http://127.0.0.1:11434", 16384);
+    let note = runner.note.clone();
+    let (c, w, root) = file_service("diag", runner);
+    *note.lock().unwrap() = format!("data folder is {}", root.join("data").display());
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    let tok = c.security.admin_token().to_string();
+    assert_eq!(admin(&base, &tok, "GET", "/admin/diagnostics", None).0, 200);
+    assert_eq!(
+        anon_get(&base, "/admin/diagnostics"),
+        401,
+        "the admin token is needed"
+    );
+    let (_, s) = w.post("/api/sessions", json!({"title": "Secret client plan"}));
+    let id = s["id"].as_str().unwrap().to_string();
+    w.post(
+        "/api/chat",
+        json!({"message": "The merger with Zorblax Corp closes Friday", "session": id}),
+    );
+    let (st, v) = admin(&base, &tok, "GET", "/admin/diagnostics", None);
+    assert_eq!(st, 200);
+    assert_eq!(v["version"], json!(env!("CARGO_PKG_VERSION")));
+    assert_eq!(v["counts"]["kept_conversations"], json!(1));
+    assert!(
+        v["recent_event_kinds"]["chat.turn"].as_u64().unwrap() >= 1,
+        "{v}"
+    );
+    assert_eq!(v["checks"][0]["id"], json!("models"));
+    let folder = &v["checks"][1];
+    assert_eq!(
+        (folder["ok"].as_bool(), folder["required"].as_bool()),
+        (Some(false), Some(false))
+    );
+    assert!(
+        folder["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("data folder is <data> "),
+        "{folder}"
+    );
+    assert!(
+        folder["detail"].as_str().unwrap().chars().count() <= 300,
+        "a detail is cut at 300 characters"
+    );
+    assert_eq!(
+        v["checks"][0]["detail"],
+        json!("models are kept in ~/.ollama and answer"),
+        "the home folder is shortened"
+    );
+    let text = v.to_string();
+    for private in [
+        "Zorblax",
+        "Secret client plan",
+        id.as_str(),
+        &root.to_string_lossy(),
+        tok.as_str(),
+    ] {
+        assert!(
+            !text.contains(private),
+            "{private} is in the diagnostics: {text}"
+        );
+    }
+}
+
+fn anon_get(base: &str, path: &str) -> u16 {
+    let cfg = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build();
+    let agent: ureq::Agent = cfg.into();
+    agent
+        .get(&format!("{base}{path}"))
+        .call()
+        .unwrap()
+        .status()
+        .as_u16()
 }

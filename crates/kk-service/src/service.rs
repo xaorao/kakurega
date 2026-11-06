@@ -2013,6 +2013,72 @@ async fn log_summary(axum::Extension(svc): Svc) -> Response {
     .into_response()
 }
 
+/// What the owner can read, check and attach to a bug report: versions, the checks and how they came out, counts, and the kinds
+/// of the last events. Never a name, a path, a word of any note, conversation or file, or any key. Paths inside a check's own
+/// text are shortened to `~` or `<data>` before they are shown.
+async fn diagnostics(axum::Extension(svc): Svc) -> Json<Value> {
+    let svc2 = svc.clone();
+    let checks = tokio::task::spawn_blocking(move || svc2.runner.readiness())
+        .await
+        .unwrap_or_default();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let scrub = |t: &str| -> String {
+        let mut out = t.to_string();
+        for (from, to) in [
+            (svc.data_dir.to_string_lossy().into_owned(), "<data>"),
+            (home.clone(), "~"),
+        ] {
+            if from.len() > 1 {
+                out = out.replace(&from, to);
+            }
+        }
+        out.chars().take(300).collect()
+    };
+    let checks: Vec<Value> = checks
+        .iter()
+        .map(|c| {
+            json!({
+                "id": c["id"].as_str().unwrap_or(""),
+                "ok": c["ok"] == true,
+                "required": c["required"] != false,
+                "detail": scrub(c["detail"].as_str().unwrap_or("")),
+            })
+        })
+        .collect();
+    let count = |sql: &str| -> i64 {
+        svc.store
+            .lock()
+            .expect("lock")
+            .connection()
+            .query_row(sql, [], |r| r.get(0))
+            .unwrap_or(-1)
+    };
+    let mut kinds: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    for e in svc.log.recent(200).unwrap_or_default() {
+        if let Ok(v) = serde_json::from_str::<Value>(&e) {
+            if let Some(k) = v["kind"].as_str().or_else(|| v["entry"]["kind"].as_str()) {
+                *kinds.entry(k.to_string()).or_default() += 1;
+            }
+        }
+    }
+    let route = svc.route_for_owner();
+    Json(json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "test_mode": svc.test_mode,
+        "route": {"id": route["id"], "class": route["class"], "model": route["model"], "stays_here": route["stays_here"], "context_tokens": route["context_tokens"], "simulated": route["simulated"]},
+        "checks": checks,
+        "counts": {
+            "reviews": count("SELECT count(*) FROM jobs"),
+            "kept_conversations": count("SELECT count(*) FROM sessions"),
+            "log_entries": svc.log.head().ok().flatten().map(|h| h.0 as i64).unwrap_or(0),
+        },
+        "recent_event_kinds": kinds,
+        "holds_no": ["file names", "paths", "note, conversation or file text", "keys or tokens"],
+    }))
+}
+
 async fn log_export(axum::Extension(svc): Svc) -> Response {
     match svc.log.export() {
         Ok(text) => (
@@ -6753,6 +6819,7 @@ impl Extension for Routes {
             .route("/api/jobs/{id}/deliver", post(do_deliver))
             .route("/api/jobs/{id}/capsule", get(download))
             .route("/admin/log", get(log_export))
+            .route("/admin/diagnostics", get(diagnostics))
             .route(
                 "/admin/approvers",
                 get(admin_approver_list).post(admin_approver_enroll),
