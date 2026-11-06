@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 120, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 16, OWED-L 41. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 121, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 15, OWED-L 41. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -248,7 +248,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | F-P4 | Silent auto-redaction | EXCLUDE: a bypass of approval; false positives become silent rewrites the model reads (Pri | EXCLUDED | would bypass approval |
 | F-I1 | Value-level capabilities with readers | IMPROVE inside the same lattice: add an optional per-compartment recipient allow-set that  | LATER | label lattice already in place; per-compartment readers later |
 | F-I2 | Quarantined parsing | BUILD option: for documents, parse with the deterministic Docling path and give the agent  | LATER | offline-parsing.md; sandboxed parser option not adopted |
-| F-I3 | Injection detection | IMPROVE: one shared normalised matcher (confusables, leet, whitespace, paraphrase patterns | OWED-M | instruction_like exists; no shared normalised matcher for confusables, spacing and leetspeak |
+| F-I3 | Injection detection | IMPROVE: one shared normalised matcher (confusables, leet, whitespace, paraphrase patterns | BUILT | shared `kk_types::injection` reader: disguises, other languages, hidden and smuggled text, chat markup; special tokens removed at the route boundary; measured on 7,945 real documents (injection-reader.md) |
 | F-I4 | Evaluation harness | ADAPT harness shape ("KakuDojo"): N repos x M injection goals (read `.env`, send to other  | PARTIAL | attack suites exist; no repo-by-goal grid |
 | F-I5 | Deterministic exfil grading with canaries | ADAPT: plant per-run canaries in Restricted files, grade by canary presence (S6 variants)  | PARTIAL | canary checks in vault and service tests; no per-run planted canaries in Restricted files |
 | F-I6 | Red-team plugin library | ADAPT as test generators for the existing attack suite (offline, local model or fixtures); | LATER | test generators |

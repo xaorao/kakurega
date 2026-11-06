@@ -248,9 +248,8 @@ fn normalise(text: &str) -> String {
 }
 
 fn has_hidden_chars(s: &str) -> bool {
-    s.chars().any(|c| {
-        (c.is_control() && c != '\n' && c != '\t') || matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{feff}')
-    })
+    s.chars().any(|c| c.is_control() && c != '\n' && c != '\t')
+        || kk_types::injection::hidden_chars(s)
 }
 
 fn new_id() -> String {
@@ -415,43 +414,7 @@ const NEAR_SPELLING: f64 = 0.5;
 
 /// True when saved text reads like an instruction to an AI system. Such notes stay in memory but are never handed to a model as context.
 pub fn instruction_like(text: &str) -> bool {
-    let t = text.to_lowercase();
-    let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
-    const PHRASES: &[&str] = &[
-        "ignore all previous",
-        "ignore previous",
-        "ignore the previous",
-        "ignore prior",
-        "ignore the above",
-        "ignore all prior",
-        "ignore your instructions",
-        "ignore any instructions",
-        "disregard all",
-        "disregard previous",
-        "disregard the previous",
-        "disregard your",
-        "forget your instructions",
-        "forget all previous",
-        "forget previous instructions",
-        "new instructions:",
-        "system prompt",
-        "you are now",
-        "you must now",
-        "from now on you",
-        "act as ",
-        "pretend to be",
-        "pretend you are",
-        "reply only with",
-        "respond only with",
-        "answer only with",
-        "do not tell the user",
-        "don't tell the user",
-        "without telling the user",
-        "override your",
-        "jailbreak",
-        "developer mode",
-    ];
-    PHRASES.iter().any(|p| t.contains(p))
+    kk_types::injection::scan(text).instruction_like()
 }
 
 struct Row {

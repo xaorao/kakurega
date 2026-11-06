@@ -88,6 +88,12 @@ impl fmt::Display for RouteError {
 
 impl std::error::Error for RouteError {}
 
+/// What of a message is sent to a model. The tokens a chat template reserves for its own structure are replaced, because a
+/// document, web page or note must never be able to write a system turn into the conversation.
+fn outgoing(content: &str) -> std::borrow::Cow<'_, str> {
+    kk_types::injection::neutralise_special_tokens(content)
+}
+
 pub trait Route: Send + Sync {
     fn id(&self) -> &str;
     fn class(&self) -> RouteClass;
@@ -236,7 +242,7 @@ impl Route for OllamaRoute {
             .messages
             .iter()
             .map(|m| {
-                let mut o = json!({"role": m.role, "content": m.content});
+                let mut o = json!({"role": m.role, "content": outgoing(&m.content)});
                 if !m.tool_calls.is_empty() {
                     o["tool_calls"] = Value::Array(
                         m.tool_calls
@@ -318,7 +324,7 @@ impl OllamaRoute {
         let messages: Vec<Value> = request
             .messages
             .iter()
-            .map(|m| json!({"role": m.role, "content": m.content}))
+            .map(|m| json!({"role": m.role, "content": outgoing(&m.content)}))
             .collect();
         let body = json!({
             "model": self.model,

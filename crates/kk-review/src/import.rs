@@ -80,16 +80,6 @@ const SECRET_NAMES: &[&str] = &[
     ".netrc",
 ];
 const SECRET_SUFFIXES: &[&str] = &[".pem", ".key", ".p12", ".pfx", ".env", ".keystore", ".jks"];
-const INJECTION_PHRASES: &[&str] = &[
-    "ignore all previous instructions",
-    "ignore previous instructions",
-    "disregard the above",
-    "system notice",
-    "for ai assistants",
-    "for automated tools",
-    "do not mention this",
-    "send its entire contents",
-];
 
 fn classify(
     path: &str,
@@ -111,9 +101,15 @@ fn classify(
             }
             secret = true;
         }
-        let lower = t.to_ascii_lowercase();
-        if INJECTION_PHRASES.iter().any(|p| lower.contains(p)) {
+        let read = kk_types::injection::scan(t);
+        if read.instruction_like() {
             notes.push("contains text addressed to AI tools (possible prompt injection)".into());
+        }
+        if read
+            .reasons()
+            .contains(&kk_types::injection::Reason::HiddenText)
+        {
+            notes.push("contains characters that show nothing (hidden text)".into());
         }
     }
     let mut label = Label::new(default_level).untrusted();
