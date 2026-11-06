@@ -1117,8 +1117,73 @@ async fn memories_similar(axum::Extension(svc): Svc) -> Response {
             "groups": found.groups.iter().map(|g| g.iter().map(memory_json).collect::<Vec<_>>()).collect::<Vec<_>>(),
             "scanned": found.scanned,
             "complete": found.complete,
-            "note": "Nothing is merged or forgotten for you. Forget the copies you do not want; notes for different projects are never compared with each other.",
+            "note": "Nothing is merged or forgotten unless you choose it. Keep one note and merge the others into it, or forget the copies you do not want; notes for different projects are never compared with each other.",
         }))
+        .into_response(),
+        Err(e) => memory_error(e),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MergeBody {
+    keep: String,
+    merge: Vec<String>,
+}
+
+/// The owner chose one of a group of look-alike notes to keep; the others are hidden under it and can be brought back.
+async fn memories_merge(axum::Extension(svc): Svc, Json(b): Json<MergeBody>) -> Response {
+    let res = {
+        let mem = svc.memory.lock().expect("lock");
+        mem.owner_clearance()
+            .and_then(|c| mem.merge(now(), &b.keep, &b.merge, &c))
+    };
+    match res {
+        Ok(n) => {
+            svc.log_event("memory.merged", &b.keep, &[("count", n.into())]);
+            Json(json!({"merged": n, "kept": b.keep})).into_response()
+        }
+        Err(e) => memory_error(e),
+    }
+}
+
+async fn memory_unmerge(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    let res = {
+        let mem = svc.memory.lock().expect("lock");
+        mem.owner_clearance()
+            .and_then(|c| mem.unmerge(now(), &id, &c))
+    };
+    match res {
+        Ok(()) => {
+            svc.log_event("memory.unmerged", &id, &[]);
+            Json(json!({"restored": true})).into_response()
+        }
+        Err(e) => memory_error(e),
+    }
+}
+
+async fn memories_merged_all(axum::Extension(svc): Svc) -> Response {
+    let mem = svc.memory.lock().expect("lock");
+    match mem.owner_clearance().and_then(|c| mem.merged_notes(&c)) {
+        Ok(notes) => Json(json!({"merged": notes.iter().map(|(m, into)| json!({
+            "id": m.id, "text": m.text, "created_at": m.created_at, "project": m.project, "merged_into": into,
+            "level": format!("{:?}", m.label.level).to_lowercase(),
+        })).collect::<Vec<_>>()}))
+        .into_response(),
+        Err(e) => memory_error(e),
+    }
+}
+
+async fn memory_merged(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    let mem = svc.memory.lock().expect("lock");
+    match mem
+        .owner_clearance()
+        .and_then(|c| mem.merged_under(&id, &c))
+    {
+        Ok(notes) => Json(json!({"merged": notes.iter().map(|m| json!({
+            "id": m.id, "text": m.text, "created_at": m.created_at, "project": m.project,
+            "level": format!("{:?}", m.label.level).to_lowercase(),
+        })).collect::<Vec<_>>()}))
         .into_response(),
         Err(e) => memory_error(e),
     }
@@ -5245,6 +5310,10 @@ impl Extension for Routes {
             .route("/api/log/export", get(log_export))
             .route("/api/memories", get(memories_list).post(memory_add))
             .route("/api/memories/similar", get(memories_similar))
+            .route("/api/memories/merge", post(memories_merge))
+            .route("/api/memories/merged", get(memories_merged_all))
+            .route("/api/memories/{id}/unmerge", post(memory_unmerge))
+            .route("/api/memories/{id}/merged", get(memory_merged))
             .route("/api/memories/export", get(memories_export))
             .route("/api/memories/import", post(memories_import))
             .route("/api/memories/import-notes", post(memories_import_notes))

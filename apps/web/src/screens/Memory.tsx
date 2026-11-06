@@ -139,11 +139,23 @@ function ImportNotes(props: { onDone: () => void }) {
 function Similar(props: { onChange: (msg?: string) => void }) {
   const [open, setOpen] = createSignal(false);
   const [found, { refetch }] = createResource(open, (on) => (on ? api.similarMemories() : Promise.resolve(null)));
+  const [problem, setProblem] = createSignal("");
+  const merge = async (keep: string, others: string[]) => {
+    setProblem("");
+    try {
+      const r = await api.mergeMemories(keep, others);
+      props.onChange(t("mem.merge.done", { n: r.merged }));
+      await refetch();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("mem.error"));
+    }
+  };
   return (
     <details class="card stack" onToggle={(e) => setOpen(e.currentTarget.open)}>
       <summary>{t("mem.similar.title")}</summary>
       <Show when={open()}>
         <p class="muted">{t("mem.similar.lead")}</p>
+        <Show when={problem()}><p role="alert" class="bad">{problem()}</p></Show>
         <Show when={found()} fallback={<p class="muted">{t("review.loading")}</p>}>
           {(f) => (
             <>
@@ -154,7 +166,16 @@ function Similar(props: { onChange: (msg?: string) => void }) {
                     <div class="stack">
                       <p><strong>{t("mem.similar.group", { n: g.length })}</strong></p>
                       <ul class="plain stack">
-                        <For each={g}>{(m) => <Item m={m} onChange={(msg) => { props.onChange(msg); void refetch(); }} />}</For>
+                        <For each={g}>
+                          {(m) => (
+                            <>
+                              <Item m={m} onChange={(msg) => { props.onChange(msg); void refetch(); }} />
+                              <li class="actions">
+                                <button type="button" aria-label={t("mem.merge.keepFor", { text: m.text.slice(0, 40) })} onClick={() => void merge(m.id, g.filter((o) => o.id !== m.id).map((o) => o.id).slice(0, 8))}>{t("mem.merge.keep")}</button>
+                              </li>
+                            </>
+                          )}
+                        </For>
                       </ul>
                     </div>
                   )}
@@ -162,6 +183,43 @@ function Similar(props: { onChange: (msg?: string) => void }) {
               </Show>
             </>
           )}
+        </Show>
+      </Show>
+    </details>
+  );
+}
+
+function Merged(props: { onChange: (msg?: string) => void }) {
+  const [open, setOpen] = createSignal(false);
+  const [list, { refetch }] = createResource(open, (on) => (on ? api.mergedMemories().then((r) => r.merged) : Promise.resolve([])));
+  const [problem, setProblem] = createSignal("");
+  const back = async (id: string) => {
+    setProblem("");
+    try {
+      await api.unmergeMemory(id);
+      props.onChange(t("mem.merged.restored"));
+      await refetch();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("mem.error"));
+    }
+  };
+  return (
+    <details class="card stack" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>{t("mem.merged.title")}</summary>
+      <Show when={open()}>
+        <p class="muted">{t("mem.merged.lead")}</p>
+        <Show when={problem()}><p role="alert" class="bad">{problem()}</p></Show>
+        <Show when={(list() ?? []).length > 0} fallback={<p role="status">{t("mem.merged.none")}</p>}>
+          <ul class="plain stack">
+            <For each={list() ?? []}>
+              {(m) => (
+                <li class="card stack">
+                  <p>{m.text}</p>
+                  <div class="actions"><button type="button" onClick={() => void back(m.id)}>{t("mem.merged.back")}</button></div>
+                </li>
+              )}
+            </For>
+          </ul>
         </Show>
       </Show>
     </details>
@@ -221,6 +279,7 @@ export function Memory() {
         <input id="mem-search" type="search" placeholder={t("mem.search")} value={query()} onInput={(e) => setQuery(e.currentTarget.value)} />
       </div>
       <Similar onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
+      <Merged onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <ul class="plain stack">
         <For each={items()} fallback={<li class="muted">{items.loading ? t("review.loading") : query().trim() ? t("mem.nomatch") : t("mem.none")}</li>}>
           {(m) => <Item m={m} onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />}

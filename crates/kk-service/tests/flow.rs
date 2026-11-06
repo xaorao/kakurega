@@ -7454,3 +7454,172 @@ fn sv69_the_wait_after_a_failed_summary_belongs_to_that_conversation_only() {
         "the first conversation's wait must not stop the second"
     );
 }
+
+fn add_note(w: &Web, text: &str) -> String {
+    let (s, v) = w.post("/api/memories", json!({"text": text}));
+    assert_eq!(s, 201, "{v}");
+    v["id"].as_str().unwrap().to_string()
+}
+
+fn look_alikes(w: &Web) -> (String, String, String) {
+    (
+        add_note(w, "Acme pays invoices within thirty days of receipt"),
+        add_note(w, "Acme pays its invoices within thirty days of receipt"),
+        add_note(w, "Acme will pay invoices within thirty days of receipt"),
+    )
+}
+
+fn note_ids(w: &Web) -> Vec<String> {
+    w.get("/api/memories").1["memories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn sv70_the_owner_merges_look_alike_notes_and_only_the_chosen_one_remains_visible() {
+    let (_c, w, _repo, _root, _svc) = boot("merge-basic", true);
+    let (a, b, c) = look_alikes(&w);
+    let groups = w.get("/api/memories/similar").1["groups"].clone();
+    assert_eq!(groups.as_array().unwrap().len(), 1, "{groups}");
+    let (s, v) = w.post("/api/memories/merge", json!({"keep": b, "merge": [a, c]}));
+    assert_eq!((s, v["merged"].clone()), (200, json!(2)), "{v}");
+    assert_eq!(note_ids(&w), vec![b.clone()]);
+    assert_eq!(
+        w.get("/api/memories/similar").1["groups"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    let (s, v) = w.get(&format!("/api/memories/{b}/merged"));
+    assert_eq!(s, 200);
+    assert_eq!(v["merged"].as_array().unwrap().len(), 2, "{v}");
+    assert!(
+        v["merged"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("thirty days"),
+        "the owner can read what was merged"
+    );
+    // the encrypted-store recall used by chat no longer offers the merged notes
+    let hits = w.get("/api/memories?q=Acme+invoices").1;
+    assert!(!hits.to_string().contains("will pay"), "{hits}");
+}
+
+#[test]
+fn sv71_an_undo_brings_a_merged_note_back_and_bad_requests_change_nothing() {
+    let (c, w, _repo, _root, _svc) = boot("merge-undo", true);
+    let (a, b, cc) = look_alikes(&w);
+    for (body, code) in [
+        (json!({"keep": b, "merge": []}), "MEMORY_REFUSED"),
+        (json!({"keep": b, "merge": [b]}), "MEMORY_REFUSED"),
+        (json!({"keep": b, "merge": ["no-such"]}), "NO_MEMORY"),
+        (json!({"keep": "no-such", "merge": [a]}), "NO_MEMORY"),
+    ] {
+        let (s, v) = w.post("/api/memories/merge", body.clone());
+        assert!(s == 422 || s == 404, "{body}: {s} {v}");
+        assert_eq!(v["error"]["code"], code, "{body}: {v}");
+    }
+    assert_eq!(note_ids(&w).len(), 3, "refused merges changed nothing");
+    assert!(
+        w.post(
+            "/api/memories/merge",
+            json!({"keep": b, "merge": [a], "extra": 1})
+        )
+        .0 >= 400
+    );
+    w.post("/api/memories/merge", json!({"keep": b, "merge": [a, cc]}));
+    let (s, v) = w.post(&format!("/api/memories/{a}/unmerge"), json!({}));
+    assert_eq!((s, v["restored"].clone()), (200, json!(true)), "{v}");
+    let mut now = note_ids(&w);
+    now.sort();
+    let mut want = vec![a.clone(), b.clone()];
+    want.sort();
+    assert_eq!(now, want);
+    let (s, v) = w.post(&format!("/api/memories/{a}/unmerge"), json!({}));
+    assert_eq!(
+        (s, v["error"]["code"].clone()),
+        (422, json!("MEMORY_REFUSED")),
+        "{v}"
+    );
+    // only the paired owner: no session, no merge
+    let anon = Web::new(c.addr);
+    assert_eq!(
+        anon.post("/api/memories/merge", json!({"keep": b, "merge": [cc]}))
+            .0,
+        401
+    );
+    assert_eq!(
+        anon.post(&format!("/api/memories/{cc}/unmerge"), json!({}))
+            .0,
+        401
+    );
+    assert_eq!(anon.get(&format!("/api/memories/{b}/merged")).0, 401);
+}
+
+#[test]
+fn sv72_forgetting_the_chosen_note_forgets_what_was_merged_into_it() {
+    let (_c, w, _repo, _root, _svc) = boot("merge-forget", true);
+    let (a, b, c) = look_alikes(&w);
+    w.post("/api/memories/merge", json!({"keep": b, "merge": [a, c]}));
+    let (s, v) = w.post(&format!("/api/memories/{b}/forget"), json!({}));
+    assert_eq!((s, v["forgotten"].clone()), (200, json!(true)), "{v}");
+    assert!(note_ids(&w).is_empty());
+    let (s, _) = w.get(&format!("/api/memories/{b}/merged"));
+    assert_eq!(s, 200);
+    assert_eq!(
+        w.get(&format!("/api/memories/{b}/merged")).1["merged"],
+        json!([])
+    );
+    assert_eq!(
+        w.post(&format!("/api/memories/{a}/unmerge"), json!({})).0,
+        404,
+        "the merged copy was forgotten with it"
+    );
+}
+
+#[test]
+fn sv73_merges_and_undos_are_logged_with_counts_and_no_note_text() {
+    let (c, w, _repo, _root, _svc) = boot("merge-log", true);
+    let (a, b, cc) = look_alikes(&w);
+    w.post("/api/memories/merge", json!({"keep": b, "merge": [a, cc]}));
+    w.post(&format!("/api/memories/{a}/unmerge"), json!({}));
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    let (_, log) = admin(&base, c.security.admin_token(), "GET", "/admin/log", None);
+    let text = log.to_string();
+    assert!(
+        text.contains("memory.merged") && text.contains("memory.unmerged"),
+        "{text}"
+    );
+    assert!(!text.contains("thirty days"), "no note text in the log");
+}
+
+#[test]
+fn sv74_all_merged_notes_are_listed_with_the_note_they_went_into_so_any_can_be_brought_back() {
+    let (c, w, _repo, _root, _svc) = boot("merge-all", true);
+    let (a, b, cc) = look_alikes(&w);
+    assert_eq!(w.get("/api/memories/merged").1["merged"], json!([]));
+    w.post("/api/memories/merge", json!({"keep": b, "merge": [a, cc]}));
+    let (s, v) = w.get("/api/memories/merged");
+    assert_eq!(s, 200);
+    let list = v["merged"].as_array().unwrap();
+    assert_eq!(list.len(), 2, "{v}");
+    assert!(list.iter().all(
+        |m| m["merged_into"] == json!(b) && m["text"].as_str().unwrap().contains("thirty days")
+    ));
+    assert_eq!(
+        w.post(&format!("/api/memories/{a}/unmerge"), json!({})).0,
+        200
+    );
+    assert_eq!(
+        w.get("/api/memories/merged").1["merged"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(Web::new(c.addr).get("/api/memories/merged").0, 401);
+}

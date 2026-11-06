@@ -115,6 +115,8 @@ pub struct Memory {
 pub enum Status {
     Active,
     Superseded,
+    /// Hidden because the owner merged it into another note; it can be brought back.
+    Merged,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,7 +180,8 @@ CREATE TABLE IF NOT EXISTS memories (
     valid_from INTEGER,
     valid_to INTEGER,
     status TEXT NOT NULL,
-    superseded_by TEXT
+    superseded_by TEXT,
+    merged_into TEXT
 );
 CREATE INDEX IF NOT EXISTS memories_fp ON memories(fingerprint);
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(text, content='memories', content_rowid='rowid', tokenize='unicode61');
@@ -489,10 +492,10 @@ fn row_to_memory(r: &kk_vault::rusqlite::Row<'_>) -> kk_vault::rusqlite::Result<
             created_at: r.get("created_at")?,
             valid_from: r.get("valid_from")?,
             valid_to: r.get("valid_to")?,
-            status: if status == "active" {
-                Status::Active
-            } else {
-                Status::Superseded
+            status: match status.as_str() {
+                "active" => Status::Active,
+                "merged" => Status::Merged,
+                _ => Status::Superseded,
             },
             superseded_by: r.get("superseded_by")?,
         },
@@ -512,6 +515,17 @@ impl Memories {
             vault
                 .connection()
                 .execute_batch("ALTER TABLE memories ADD COLUMN project TEXT;")?;
+        }
+        let has_merged: bool = vault
+            .connection()
+            .prepare("PRAGMA table_info(memories)")?
+            .query_map([], |r| r.get::<_, String>(1))?
+            .flatten()
+            .any(|c| c == "merged_into");
+        if !has_merged {
+            vault
+                .connection()
+                .execute_batch("ALTER TABLE memories ADD COLUMN merged_into TEXT;")?;
         }
         vault.connection().execute_batch("CREATE TABLE IF NOT EXISTS memory_vectors(id TEXT PRIMARY KEY, model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL);")?;
         Ok(Memories {
@@ -681,6 +695,9 @@ impl Memories {
         match old.as_deref() {
             None => return Err(MemoryError::NotFound),
             Some("active") => {}
+            Some("merged") => {
+                return refuse("that note was merged into another one; undo the merge first")
+            }
             Some(_) => return refuse("that memory was already replaced; correct the current one"),
         }
         let fp = self.fingerprint(&replacement.text);
@@ -727,9 +744,9 @@ impl Memories {
         let mut i = 0;
         while i < chain.len() {
             let prev: Vec<String> = {
-                let mut st = self
-                    .conn()
-                    .prepare("SELECT id FROM memories WHERE superseded_by = ?1")?;
+                let mut st = self.conn().prepare(
+                    "SELECT id FROM memories WHERE superseded_by = ?1 OR merged_into = ?1",
+                )?;
                 let rows = st.query_map(params![chain[i]], |r| r.get(0))?;
                 rows.collect::<Result<_, _>>()?
             };
@@ -782,6 +799,174 @@ impl Memories {
         }
         self.conn().execute_batch("INSERT INTO memories_fts(memories_fts) VALUES('optimize'); PRAGMA wal_checkpoint(TRUNCATE);")?;
         Ok(())
+    }
+
+    /// Most notes merged in one step.
+    pub const MAX_MERGE: usize = 8;
+
+    /// Merges look-alike notes the owner has chosen: `others` stop appearing in lists, recall and reports and point at
+    /// `survivor`, whose words are not changed. Nothing is deleted, so `unmerge` can bring each note back. All the notes
+    /// must be active, readable at `clearance` and in the same project, and either every note is merged or none.
+    /// Returns how many notes were merged.
+    pub fn merge(
+        &self,
+        now: i64,
+        survivor: &str,
+        others: &[String],
+        clearance: &Label,
+    ) -> Result<usize, MemoryError> {
+        let mut ids: Vec<&String> = Vec::new();
+        for o in others {
+            if !ids.contains(&o) {
+                ids.push(o);
+            }
+        }
+        if ids.is_empty() {
+            return refuse("choose at least one other note to merge into it");
+        }
+        if ids.iter().any(|o| o.as_str() == survivor) {
+            return refuse("a note is not merged into itself");
+        }
+        if ids.len() > Self::MAX_MERGE {
+            return refuse("merge at most eight notes at a time");
+        }
+        let load = |id: &str| -> Result<Row, MemoryError> {
+            let row = self
+                .conn()
+                .query_row(
+                    "SELECT * FROM memories WHERE id = ?1",
+                    params![id],
+                    row_to_memory,
+                )
+                .optional()?
+                .ok_or(MemoryError::NotFound)?;
+            if !row.m.label.confidentiality_within(clearance) {
+                return Err(MemoryError::NotFound);
+            }
+            Ok(row)
+        };
+        let keep = load(survivor)?;
+        if keep.m.status != Status::Active {
+            return refuse("the note to keep is not an active note");
+        }
+        let mut rows = Vec::new();
+        for o in &ids {
+            let row = load(o)?;
+            if row.m.status != Status::Active {
+                return refuse("one of the notes is already merged or replaced");
+            }
+            if row.m.project != keep.m.project {
+                return refuse("notes of different projects are not merged");
+            }
+            rows.push(row);
+        }
+        self.conn().execute_batch("SAVEPOINT merge_notes")?;
+        let r = (|| -> Result<(), MemoryError> {
+            for row in &rows {
+                self.conn().execute(
+                    "UPDATE memories SET status = 'merged', merged_into = ?1 WHERE id = ?2 AND status = 'active'",
+                    params![survivor, row.m.id],
+                )?;
+                self.conn().execute(
+                    "DELETE FROM memory_vectors WHERE id = ?1",
+                    params![row.m.id],
+                )?;
+                self.event(now, "merge", &row.m.id, &format!("merged into {survivor}"))?;
+            }
+            Ok(())
+        })();
+        match r {
+            Ok(()) => self.conn().execute_batch("RELEASE merge_notes")?,
+            Err(e) => {
+                self.conn()
+                    .execute_batch("ROLLBACK TO merge_notes; RELEASE merge_notes")?;
+                return Err(e);
+            }
+        }
+        Ok(rows.len())
+    }
+
+    /// Brings a merged note back as an active note. Its words were never changed.
+    pub fn unmerge(&self, now: i64, id: &str, clearance: &Label) -> Result<(), MemoryError> {
+        let row = self
+            .conn()
+            .query_row(
+                "SELECT * FROM memories WHERE id = ?1",
+                params![id],
+                row_to_memory,
+            )
+            .optional()?
+            .ok_or(MemoryError::NotFound)?;
+        if !row.m.label.confidentiality_within(clearance) {
+            return Err(MemoryError::NotFound);
+        }
+        let n = self.conn().execute(
+            "UPDATE memories SET status = 'active', merged_into = NULL WHERE id = ?1 AND status = 'merged'",
+            params![id],
+        )?;
+        if n == 0 {
+            return refuse("that note is not merged");
+        }
+        self.event(now, "unmerge", id, "brought back")
+    }
+
+    /// Every merged note `clearance` may read with the note it was merged into, newest first. At most 500.
+    pub fn merged_notes(&self, clearance: &Label) -> Result<Vec<(Memory, String)>, MemoryError> {
+        let mut st = self.conn().prepare(
+            "SELECT * FROM memories WHERE status = 'merged' ORDER BY created_at DESC, rowid DESC LIMIT 500",
+        )?;
+        let rows = st.query_map([], |r| {
+            Ok((
+                row_to_memory(r)?,
+                r.get::<_, Option<String>>("merged_into")?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (row, into) = row?;
+            let into = into.unwrap_or_default();
+            // a note merged into one the caller may not read would give away that the other note exists
+            if row.m.label.confidentiality_within(clearance) && self.readable(&into, clearance)? {
+                out.push((row.m, into));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Whether a note exists and `clearance` may read it.
+    fn readable(&self, id: &str, clearance: &Label) -> Result<bool, MemoryError> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT * FROM memories WHERE id = ?1",
+                params![id],
+                row_to_memory,
+            )
+            .optional()?
+            .is_some_and(|r| r.m.label.confidentiality_within(clearance)))
+    }
+
+    /// The notes merged into `survivor` that `clearance` may read, newest first.
+    pub fn merged_under(
+        &self,
+        survivor: &str,
+        clearance: &Label,
+    ) -> Result<Vec<Memory>, MemoryError> {
+        if !self.readable(survivor, clearance)? {
+            return Ok(Vec::new());
+        }
+        let mut st = self.conn().prepare(
+            "SELECT * FROM memories WHERE merged_into = ?1 AND status = 'merged' ORDER BY created_at DESC, rowid DESC",
+        )?;
+        let rows = st.query_map(params![survivor], row_to_memory)?;
+        let mut out = Vec::new();
+        for row in rows {
+            let row = row?;
+            if row.m.label.confidentiality_within(clearance) {
+                out.push(row.m);
+            }
+        }
+        Ok(out)
     }
 
     pub fn lift_forget(&self, now: i64, text: &str) -> Result<bool, MemoryError> {

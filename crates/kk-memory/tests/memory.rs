@@ -1922,3 +1922,408 @@ fn me37_asking_for_every_note_returns_every_note_not_just_the_newest_two_hundred
         "a backup asks for everything and must get everything"
     );
 }
+
+fn three_look_alikes(m: &Memories) -> (String, String, String) {
+    let a = id(m
+        .remember(
+            10,
+            nm(
+                "Acme pays invoices within thirty days of receipt",
+                internal(),
+            ),
+        )
+        .unwrap());
+    let b = id(m
+        .remember(
+            20,
+            nm(
+                "Acme pays its invoices within thirty days of receipt",
+                internal(),
+            ),
+        )
+        .unwrap());
+    let c = id(m
+        .remember(
+            30,
+            nm(
+                "Acme will pay invoices within thirty days of receipt",
+                internal(),
+            ),
+        )
+        .unwrap());
+    (a, b, c)
+}
+
+fn listed(m: &Memories) -> Vec<String> {
+    m.list(&internal(), 99, 50)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.memory.id)
+        .collect()
+}
+
+#[test]
+fn me32_merging_keeps_the_chosen_note_unchanged_and_hides_the_others_everywhere() {
+    let m = mem(&dir());
+    let (a, b, c) = three_look_alikes(&m);
+    let before = m.history(&a, &internal()).unwrap()[0].text.clone();
+    let kept = m
+        .merge(100, &b, &[a.clone(), c.clone()], &internal())
+        .unwrap();
+    assert_eq!(kept, 2, "two notes were merged into the chosen one");
+    assert_eq!(
+        listed(&m),
+        vec![b.clone()],
+        "only the chosen note is listed"
+    );
+    let hits = m
+        .recall("Acme invoices thirty days", &internal(), 200, 10)
+        .unwrap();
+    assert_eq!(
+        hits.iter().map(|h| h.memory.id.clone()).collect::<Vec<_>>(),
+        vec![b.clone()],
+        "recall finds only it"
+    );
+    assert!(
+        m.similar_notes(&internal(), 200, Scope::Global)
+            .unwrap()
+            .groups
+            .is_empty(),
+        "no look-alikes remain"
+    );
+    assert_eq!(
+        m.counts_by_level()
+            .unwrap()
+            .iter()
+            .map(|(_, n)| n)
+            .sum::<i64>(),
+        1
+    );
+    let survivor = &m.list(&internal(), 99, 5).unwrap()[0].memory;
+    assert_eq!(
+        survivor.text, "Acme pays its invoices within thirty days of receipt",
+        "the chosen note's words are untouched"
+    );
+    assert_eq!(
+        m.history(&a, &internal()).unwrap()[0].text,
+        before,
+        "a merged note's own text is kept, not deleted"
+    );
+}
+
+#[test]
+fn me33_a_merge_is_refused_unless_every_note_is_active_readable_and_in_the_same_project() {
+    let m = mem(&dir());
+    let (a, b, c) = three_look_alikes(&m);
+    let secret = id(m
+        .remember(
+            40,
+            nm(
+                "Acme pays invoices within thirty days of receipt, board only",
+                Label::new(Level::Restricted),
+            ),
+        )
+        .unwrap());
+    let proj = id(m
+        .remember(
+            50,
+            NewMemory {
+                project: Some("alpha".into()),
+                ..nm(
+                    "Acme pays invoices within thirty days of receipt, alpha",
+                    internal(),
+                )
+            },
+        )
+        .unwrap());
+    let refused = |r: Result<usize, MemoryError>| matches!(r, Err(MemoryError::Refused(_)));
+    assert!(
+        refused(m.merge(100, &b, &[], &internal())),
+        "nothing to merge"
+    );
+    assert!(
+        refused(m.merge(100, &b, std::slice::from_ref(&b), &internal())),
+        "a note is not merged into itself"
+    );
+    assert_eq!(
+        m.merge(100, &b, &[a.clone(), a.clone()], &internal())
+            .unwrap(),
+        1,
+        "a repeated id is merged once"
+    );
+    assert!(m.unmerge(101, &a, &internal()).is_ok());
+    assert!(matches!(
+        m.merge(100, &b, &["no-such".into()], &internal()),
+        Err(MemoryError::NotFound)
+    ));
+    assert!(matches!(
+        m.merge(100, "no-such", std::slice::from_ref(&c), &internal()),
+        Err(MemoryError::NotFound)
+    ));
+    assert!(
+        matches!(
+            m.merge(100, &b, std::slice::from_ref(&secret), &internal()),
+            Err(MemoryError::NotFound)
+        ),
+        "a note above the caller's clearance looks like no note"
+    );
+    assert!(matches!(
+        m.merge(100, &secret, std::slice::from_ref(&b), &internal()),
+        Err(MemoryError::NotFound)
+    ));
+    assert!(
+        refused(m.merge(100, &b, std::slice::from_ref(&proj), &internal())),
+        "notes of different projects are not merged"
+    );
+    let many: Vec<String> = (0..9)
+        .map(|i| {
+            id(m.remember(
+                60 + i,
+                nm(
+                    &format!("Acme pays invoices within thirty days of receipt number {i}"),
+                    internal(),
+                ),
+            )
+            .unwrap())
+        })
+        .collect();
+    assert!(
+        refused(m.merge(100, &b, &many, &internal())),
+        "at most eight at once"
+    );
+    // after a merge, a merged note cannot be merged again or used as the chosen one
+    let _ = m.merge(110, &b, std::slice::from_ref(&c), &internal());
+    assert!(
+        refused(m.merge(120, &b, std::slice::from_ref(&c), &internal())),
+        "already merged"
+    );
+    assert!(
+        refused(m.merge(120, &c, std::slice::from_ref(&a), &internal())),
+        "a merged note cannot be the chosen one"
+    );
+    // the failed attempts changed nothing for the notes they named and could not see
+    let in_project = m
+        .list_scoped(&internal(), 99, 50, Scope::Project("alpha"))
+        .unwrap();
+    assert!(
+        in_project.iter().any(|r| r.memory.id == proj),
+        "the project note was never touched"
+    );
+}
+
+#[test]
+fn me34_unmerging_brings_a_note_back_to_lists_and_recall() {
+    let m = mem(&dir());
+    let (a, b, c) = three_look_alikes(&m);
+    m.merge(100, &b, &[a.clone(), c.clone()], &internal())
+        .unwrap();
+    assert_eq!(m.merged_under(&b, &internal()).unwrap().len(), 2);
+    m.unmerge(110, &a, &internal()).unwrap();
+    let mut now = listed(&m);
+    now.sort();
+    let mut want = vec![a.clone(), b.clone()];
+    want.sort();
+    assert_eq!(now, want);
+    assert_eq!(m.merged_under(&b, &internal()).unwrap().len(), 1);
+    let hits = m
+        .recall("Acme invoices thirty days", &internal(), 200, 10)
+        .unwrap();
+    assert!(
+        hits.iter().any(|h| h.memory.id == a),
+        "the restored note is found again"
+    );
+    assert!(
+        matches!(
+            m.unmerge(120, &a, &internal()),
+            Err(MemoryError::Refused(_))
+        ),
+        "an active note is not merged, so there is nothing to undo"
+    );
+    assert!(matches!(
+        m.unmerge(120, "no-such", &internal()),
+        Err(MemoryError::NotFound)
+    ));
+}
+
+#[test]
+fn me35_forgetting_the_chosen_note_forgets_what_was_merged_into_it_and_it_cannot_come_back() {
+    let m = mem(&dir());
+    let (a, b, c) = three_look_alikes(&m);
+    m.merge(100, &b, &[a.clone(), c.clone()], &internal())
+        .unwrap();
+    m.forget(110, &b, "wrong").unwrap();
+    assert!(listed(&m).is_empty());
+    assert!(m.merged_under(&b, &internal()).unwrap().is_empty());
+    for old in [&a, &c] {
+        assert!(
+            m.history(old, &internal()).unwrap().is_empty(),
+            "the merged note's words are gone"
+        );
+        assert!(matches!(
+            m.unmerge(120, old, &internal()),
+            Err(MemoryError::NotFound)
+        ));
+    }
+    let again = m.remember(
+        130,
+        nm(
+            "Acme pays invoices within thirty days of receipt",
+            internal(),
+        ),
+    );
+    assert!(
+        matches!(again, Err(MemoryError::Refused(_))),
+        "the forgotten wording is not stored again: {again:?}"
+    );
+}
+
+#[test]
+fn me36_the_history_of_the_chosen_note_stays_its_own_versions_and_a_merged_note_can_still_be_corrected_after_unmerge(
+) {
+    let m = mem(&dir());
+    let (a, b, c) = three_look_alikes(&m);
+    let b2 = m
+        .correct(
+            50,
+            &b,
+            nm(
+                "Acme pays its invoices within forty days of receipt",
+                internal(),
+            ),
+        )
+        .unwrap();
+    m.merge(100, &b2, &[a.clone(), c.clone()], &internal())
+        .unwrap();
+    let h = m.history(&b2, &internal()).unwrap();
+    assert_eq!(
+        h.len(),
+        2,
+        "the two versions of the chosen note, not the merged ones"
+    );
+    match m.correct(110, &a, nm("changed", internal())) {
+        Err(MemoryError::Refused(why)) => {
+            assert!(why.contains("merged"), "the refusal says why: {why}")
+        }
+        other => panic!("a merged note is not edited: {other:?}"),
+    }
+    m.unmerge(120, &a, &internal()).unwrap();
+    assert!(m
+        .correct(
+            130,
+            &a,
+            nm(
+                "Acme pays invoices within thirty five days of receipt",
+                internal()
+            )
+        )
+        .is_ok());
+}
+
+#[test]
+fn me37_the_event_log_records_merges_and_undos_without_the_words_of_any_note() {
+    let m = mem(&dir());
+    let (a, b, _c) = three_look_alikes(&m);
+    m.merge(100, &b, std::slice::from_ref(&a), &internal())
+        .unwrap();
+    m.unmerge(110, &a, &internal()).unwrap();
+    let kinds: Vec<String> = m.events().unwrap().into_iter().map(|e| e.1).collect();
+    assert!(
+        kinds.contains(&"merge".to_string()) && kinds.contains(&"unmerge".to_string()),
+        "{kinds:?}"
+    );
+    let all = format!("{:?}", m.events().unwrap());
+    assert!(
+        !all.contains("thirty days"),
+        "no note text in the events: {all}"
+    );
+}
+
+#[test]
+fn me38_merging_is_all_or_nothing_and_a_store_made_before_merging_existed_opens_and_works() {
+    let d = dir();
+    let m = mem(&d);
+    let (a, b, c) = three_look_alikes(&m);
+    // one bad id in the middle: nothing is merged
+    let r = m.merge(
+        100,
+        &b,
+        &[a.clone(), "no-such".into(), c.clone()],
+        &internal(),
+    );
+    assert!(r.is_err());
+    assert_eq!(
+        listed(&m).len(),
+        3,
+        "a refused merge leaves every note active"
+    );
+    drop(m);
+    // reopening keeps a merge made earlier
+    let m = mem_reopen(&d);
+    assert_eq!(listed(&m).len(), 3);
+    m.merge(110, &b, std::slice::from_ref(&a), &internal())
+        .unwrap();
+    drop(m);
+    let m = mem_reopen(&d);
+    assert_eq!(listed(&m).len(), 2);
+    assert_eq!(m.merged_under(&b, &internal()).unwrap().len(), 1);
+}
+
+fn mem_reopen(d: &std::path::Path) -> Memories {
+    Memories::open(Vault::open(&d.join("m.db"), &key(7)).unwrap(), [9; 32]).unwrap()
+}
+
+#[test]
+fn me39_every_merged_note_can_be_listed_with_the_note_it_went_into_and_only_if_readable() {
+    let m = mem(&dir());
+    let (a, b, c) = three_look_alikes(&m);
+    let secret = id(m
+        .remember(
+            40,
+            nm(
+                "Acme pays invoices within thirty days of receipt, board only",
+                Label::new(Level::Restricted),
+            ),
+        )
+        .unwrap());
+    let top = Label::new(Level::Restricted);
+    m.merge(100, &b, &[a.clone(), c.clone()], &internal())
+        .unwrap();
+    m.merge(101, &secret, std::slice::from_ref(&b), &top)
+        .unwrap();
+    let seen = m.merged_notes(&internal()).unwrap();
+    let mut ids: Vec<&str> = seen.iter().map(|(n, _)| n.id.as_str()).collect();
+    ids.sort();
+    let mut want = vec![a.as_str(), c.as_str()];
+    want.sort();
+    assert_eq!(
+        ids, want,
+        "the restricted merge is invisible at internal clearance"
+    );
+    assert!(seen.iter().all(|(_, into)| into == &b));
+    assert_eq!(m.merged_notes(&top).unwrap().len(), 3);
+    assert!(
+        m.merged_under(&secret, &internal()).unwrap().is_empty(),
+        "nothing is said about a note the caller cannot read"
+    );
+    assert_eq!(m.merged_under(&secret, &top).unwrap().len(), 1);
+}
+
+#[test]
+fn me40_a_merged_note_leaves_no_meaning_vector_behind_and_gets_one_again_when_it_comes_back() {
+    let m = mem_with(Concepts::new("merge-vectors"));
+    let (a, b, c) = three_look_alikes(&m);
+    m.recall("invoices thirty days", &internal(), 200, 10)
+        .unwrap();
+    assert_eq!(
+        m.vector_count(),
+        3,
+        "every note has a vector after a recall"
+    );
+    m.merge(100, &b, &[a.clone(), c.clone()], &internal())
+        .unwrap();
+    assert_eq!(m.vector_count(), 1, "the merged notes' vectors are removed");
+    m.unmerge(110, &a, &internal()).unwrap();
+    m.recall("invoices thirty days", &internal(), 200, 10)
+        .unwrap();
+    assert_eq!(m.vector_count(), 2, "the restored note is embedded again");
+}

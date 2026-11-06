@@ -672,6 +672,23 @@ try {
   await page.getByText("2 notes say almost the same").waitFor();
   check("two copies of one note are listed as a group, and the swapped meaning is not in it", (await page.getByText("2 notes say almost the same").count()) === 1 && (await page.getByText("3 notes say almost the same").count()) === 0 && (await page.getByText("notes compared").first().isVisible()));
   await page.screenshot({ path: join(shots, "11b-memory-similar.png") });
+  // the owner keeps one of the two copies and merges the other into it; it is hidden, listed under Merged notes, and can come back
+  const similar = page.locator("details", { hasText: "Notes that say almost the same thing" });
+  await similar.getByRole("button", { name: /^Keep / }).first().click();
+  await page.getByText("No notes say almost the same thing.").waitFor();
+  check("merging keeps one copy and the group is gone", (await page.getByText("1 note(s) merged", { exact: false }).count()) >= 1 && (await page.locator(".mem", { hasText: "Quibblex invoices are rounded half up" }).count()) === 1);
+  await page.getByText("Merged notes", { exact: true }).click();
+  await page.getByRole("button", { name: "Bring back" }).waitFor();
+  check("the merged copy is listed under Merged notes with its words intact", (await page.getByRole("button", { name: "Bring back" }).count()) === 1 && (await page.getByText("Quibblex invoices are rounded half up in all reports").count()) >= 2);
+  await axeCheck(page, "memory (merged notes open)");
+  await page.screenshot({ path: join(shots, "11c-memory-merged.png"), fullPage: true });
+  await page.getByRole("button", { name: "Bring back" }).click();
+  await page.getByText("The note is back.").waitFor();
+  await page.getByText("Merged notes", { exact: true }).click();
+  await similar.locator("summary").click();
+  await similar.locator("summary").click();
+  await page.getByText("2 notes say almost the same").waitFor();
+  check("bringing the copy back makes the group appear again", (await page.getByText("2 notes say almost the same").count()) === 1);
   const group = page.locator("details", { hasText: "Notes that say almost the same thing" }).locator(".mem").first();
   await group.getByRole("button", { name: "Forget", exact: true }).click();
   await group.getByRole("button", { name: "Yes, forget it" }).click();
