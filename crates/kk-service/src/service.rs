@@ -195,6 +195,8 @@ pub struct Service {
     attest_cooldown: Mutex<std::time::Duration>,
     research: Mutex<Research>,
     fix_locks: fixfiles::JobLocks,
+    /// Seconds added to the clock when leases are judged; only tests move it.
+    lease_skew: std::sync::atomic::AtomicI64,
     pub test_mode: bool,
 }
 
@@ -302,6 +304,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS schedules(id TEXT PRIMARY KEY, repo TEXT NOT NULL, recipient TEXT NOT NULL, every_secs INTEGER NOT NULL, next_at INTEGER NOT NULL, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS schedule_runs(id INTEGER PRIMARY KEY AUTOINCREMENT, schedule TEXT NOT NULL, at INTEGER NOT NULL, outcome TEXT NOT NULL, job TEXT);
              CREATE TABLE IF NOT EXISTS approvers(key_id TEXT PRIMARY KEY, public BLOB NOT NULL, label TEXT NOT NULL, created INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS agent_leases(tool TEXT PRIMARY KEY, remaining INTEGER NOT NULL, granted INTEGER NOT NULL, expires_at INTEGER NOT NULL, issued_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);",
         )
         .map_err(|e| e.to_string())?;
@@ -612,6 +615,7 @@ impl Service {
             attest_cooldown: Mutex::new(std::time::Duration::from_secs(3)),
             research: Mutex::new(Research::default()),
             fix_locks: fixfiles::JobLocks::default(),
+            lease_skew: std::sync::atomic::AtomicI64::new(0),
             test_mode,
         });
         settle_all_fixes(&svc);
@@ -2997,6 +3001,212 @@ impl Service {
     }
 }
 
+/// The tools an owner may lease to an agent: the two that act, as opposed to the ones that only read.
+pub const LEASABLE_TOOLS: [&str; 2] = ["start_review", "request_approval"];
+const MAX_LEASE_USES: i64 = 1000;
+const MAX_LEASE_MINUTES: i64 = 1440;
+
+impl Service {
+    fn lease_now(&self) -> i64 {
+        now() + self.lease_skew.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Moves the clock leases are judged by. For tests of expiry; nothing else reads it.
+    #[doc(hidden)]
+    pub fn advance_clock_for_tests(&self, secs: i64) {
+        self.lease_skew
+            .fetch_add(secs, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn lease_list(&self) -> Vec<Value> {
+        let t = self.lease_now();
+        let store = self.store.lock().expect("lock");
+        let c = store.connection();
+        let Ok(mut st) = c.prepare("SELECT tool, remaining, expires_at, issued_at FROM agent_leases WHERE remaining > 0 AND expires_at > ?1 ORDER BY tool") else { return vec![] };
+        st.query_map([t], |r| {
+            Ok(json!({"tool": r.get::<_, String>(0)?, "remaining": r.get::<_, i64>(1)?, "expires_at": r.get::<_, i64>(2)?, "issued_at": r.get::<_, i64>(3)?}))
+        })
+        .map(|rows| rows.flatten().collect())
+        .unwrap_or_default()
+    }
+
+    fn lease_grant(&self, tool: &str, uses: i64, minutes: i64) -> Response {
+        if !LEASABLE_TOOLS.contains(&tool) {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "BAD_TOOL",
+                &format!("a lease can cover {} only", LEASABLE_TOOLS.join(" and ")),
+            );
+        }
+        if !(1..=MAX_LEASE_USES).contains(&uses) || !(1..=MAX_LEASE_MINUTES).contains(&minutes) {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "BAD_LEASE",
+                &format!("uses must be 1 to {MAX_LEASE_USES} and minutes 1 to {MAX_LEASE_MINUTES}"),
+            );
+        }
+        let t = self.lease_now();
+        let ok = {
+            let store = self.store.lock().expect("lock");
+            store
+                .connection()
+                .execute(
+                    "INSERT OR REPLACE INTO agent_leases(tool, remaining, granted, expires_at, issued_at) VALUES (?1, ?2, ?2, ?3, ?4)",
+                    kk_vault::rusqlite::params![tool, uses, t + minutes * 60, t],
+                )
+                .is_ok()
+        };
+        if !ok {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "LEASE_NOT_SAVED",
+                "the lease could not be saved",
+            );
+        }
+        self.log_event(
+            "agent.lease.granted",
+            tool,
+            &[
+                ("uses", (uses as usize).into()),
+                ("minutes", (minutes as usize).into()),
+            ],
+        );
+        Json(json!({"tool": tool, "remaining": uses, "expires_at": t + minutes * 60}))
+            .into_response()
+    }
+
+    fn lease_revoke(&self, tool: Option<&str>) -> Response {
+        let n = {
+            let store = self.store.lock().expect("lock");
+            let c = store.connection();
+            match tool {
+                Some(t) => c.execute("DELETE FROM agent_leases WHERE tool = ?1", [t]),
+                None => c.execute("DELETE FROM agent_leases", []),
+            }
+            .unwrap_or(0)
+        };
+        if n > 0 {
+            self.log_event(
+                "agent.lease.revoked",
+                tool.unwrap_or("all"),
+                &[("leases", n.into())],
+            );
+        }
+        Json(json!({"revoked": n})).into_response()
+    }
+
+    /// Gives back a use that was spent on a call that then failed, so a refused or broken call does not cost the owner's
+    /// allowance. Never above what was granted.
+    fn lease_refund(&self, tool: &str) -> Value {
+        let gave = {
+            let store = self.store.lock().expect("lock");
+            store
+                .connection()
+                .execute(
+                    "UPDATE agent_leases SET remaining = remaining + 1 WHERE tool = ?1 AND remaining < granted",
+                    [tool],
+                )
+                .unwrap_or(0)
+        };
+        if gave == 1 {
+            self.log_event("agent.lease.refunded", tool, &[]);
+        }
+        json!({"refunded": gave == 1})
+    }
+
+    /// Spends one use of a lease, or says why it cannot. The count goes down in one statement under the store lock, so two
+    /// calls at once cannot both take the last use.
+    fn lease_use(&self, tool: &str) -> Value {
+        let t = self.lease_now();
+        let (allowed, remaining, reason) = {
+            let store = self.store.lock().expect("lock");
+            let c = store.connection();
+            let took = c
+                .execute(
+                    "UPDATE agent_leases SET remaining = remaining - 1 WHERE tool = ?1 AND remaining > 0 AND expires_at > ?2",
+                    kk_vault::rusqlite::params![tool, t],
+                )
+                .unwrap_or(0);
+            if took == 1 {
+                let left: i64 = c
+                    .query_row(
+                        "SELECT remaining FROM agent_leases WHERE tool = ?1",
+                        [tool],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                (true, left, "")
+            } else {
+                let row: Option<(i64, i64)> = c
+                    .query_row(
+                        "SELECT remaining, expires_at FROM agent_leases WHERE tool = ?1",
+                        [tool],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .ok();
+                let reason = match row {
+                    None => "no_lease",
+                    Some((_, exp)) if exp <= t => "expired",
+                    Some(_) => "exhausted",
+                };
+                (false, 0, reason)
+            }
+        };
+        if allowed {
+            self.log_event(
+                "agent.lease.used",
+                tool,
+                &[("remaining", (remaining as usize).into())],
+            );
+            json!({"allowed": true, "remaining": remaining})
+        } else {
+            self.log_event("agent.lease.refused", tool, &[]);
+            json!({"allowed": false, "reason": reason})
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeaseGrantBody {
+    tool: String,
+    uses: i64,
+    minutes: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeaseToolBody {
+    tool: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeaseRevokeBody {
+    tool: Option<String>,
+}
+
+async fn lease_list_route(axum::Extension(svc): Svc) -> Response {
+    Json(json!({"leases": svc.lease_list(), "leasable": LEASABLE_TOOLS, "now": svc.lease_now()}))
+        .into_response()
+}
+
+async fn lease_grant_route(axum::Extension(svc): Svc, Json(b): Json<LeaseGrantBody>) -> Response {
+    svc.lease_grant(&b.tool, b.uses, b.minutes)
+}
+
+async fn lease_revoke_route(axum::Extension(svc): Svc, Json(b): Json<LeaseRevokeBody>) -> Response {
+    svc.lease_revoke(b.tool.as_deref())
+}
+
+async fn lease_refund_route(axum::Extension(svc): Svc, Json(b): Json<LeaseToolBody>) -> Response {
+    Json(svc.lease_refund(&b.tool)).into_response()
+}
+
+async fn lease_use_route(axum::Extension(svc): Svc, Json(b): Json<LeaseToolBody>) -> Response {
+    Json(svc.lease_use(&b.tool)).into_response()
+}
+
 async fn admin_ext_pairing(axum::Extension(svc): Svc) -> Response {
     let mut b = [0u8; 6];
     getrandom::fill(&mut b).expect("randomness");
@@ -5046,6 +5256,14 @@ impl Extension for Routes {
                 get(admin_approver_list).post(admin_approver_enroll),
             )
             .route("/admin/approvers/revoke", post(admin_approver_revoke))
+            .route("/admin/agent-access", get(lease_list_route))
+            .route("/admin/agent-access/grant", post(lease_grant_route))
+            .route("/admin/agent-access/revoke", post(lease_revoke_route))
+            .route("/admin/agent-access/use", post(lease_use_route))
+            .route("/admin/agent-access/refund", post(lease_refund_route))
+            .route("/api/agent-access", get(lease_list_route))
+            .route("/api/agent-access/grant", post(lease_grant_route))
+            .route("/api/agent-access/revoke", post(lease_revoke_route))
             .route("/admin/extension", get(admin_ext_status))
             .route("/admin/extension/pairing", post(admin_ext_pairing))
             .route("/admin/extension/revoke", post(admin_ext_revoke))

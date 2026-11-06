@@ -7,6 +7,9 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+/// Answers a request from its path and body: (status, JSON text).
+type Route = Arc<dyn Fn(&str, &str) -> (u16, String) + Send + Sync>;
+
 /// A stand-in for `kaku serve`'s admin door. It records every request that carried the right token.
 struct FakeAdmin {
     port: u16,
@@ -32,6 +35,15 @@ impl FakeAdmin {
     /// Like `start_slow`, with the exact body every answer carries.
     fn start_with(token: &str, delay_ms: u64, payload: &str) -> FakeAdmin {
         let payload = payload.to_string();
+        FakeAdmin::start_router(
+            token,
+            delay_ms,
+            Arc::new(move |_, _| (200, payload.clone())),
+        )
+    }
+
+    /// Answers each request from its path and body: (status, JSON text).
+    fn start_router(token: &str, delay_ms: u64, route: Route) -> FakeAdmin {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let seen = Arc::new(Mutex::new(Vec::new()));
@@ -68,6 +80,12 @@ impl FakeAdmin {
                 }
                 let mut body = vec![0u8; length];
                 let _ = reader.read_exact(&mut body);
+                let path = request_line
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or("")
+                    .to_string();
+                let (status, payload) = route(&path, &String::from_utf8_lossy(&body));
                 std::thread::sleep(Duration::from_millis(delay_ms));
                 if authorized {
                     seen_t
@@ -79,7 +97,7 @@ impl FakeAdmin {
                 }
                 let _ = write!(
                     stream,
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}",
+                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}",
                     payload.len()
                 );
             }
@@ -124,24 +142,7 @@ fn fresh(tag: &str) -> PathBuf {
 }
 
 fn live(dir: &Path) -> Live {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_kaku"))
-        .args(["mcp", "--data-dir"])
-        .arg(dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let stdin = child.stdin.take().unwrap();
-    let out = child.stdout.take().unwrap();
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        for line in BufReader::new(out).lines().map_while(Result::ok) {
-            if tx.send(line).is_err() {
-                break;
-            }
-        }
-    });
-    Live { child, stdin, rx }
+    live_with(dir, &[])
 }
 
 impl Live {
@@ -720,5 +721,350 @@ fn mc21_at_most_four_service_calls_run_at_once_and_the_fifth_is_refused_at_once(
     // and when they are done there is room again
     s.send(&call(5, "overview", json!({})));
     assert_eq!(s.recv()["id"], 5);
+    assert!(s.close().is_empty());
+}
+
+/// A service stand-in that holds owner leases the way the real one does: a use takes one, a refund gives one back.
+struct Leases {
+    left: Mutex<std::collections::BTreeMap<String, i64>>,
+    jobs_fail: Mutex<bool>,
+}
+
+fn leased_admin(token: &str, leases: &[(&str, i64)]) -> (FakeAdmin, Arc<Leases>) {
+    let state = Arc::new(Leases {
+        left: Mutex::new(leases.iter().map(|(t, n)| (t.to_string(), *n)).collect()),
+        jobs_fail: Mutex::new(false),
+    });
+    let st = state.clone();
+    let admin = FakeAdmin::start_router(
+        token,
+        0,
+        Arc::new(move |path, body| {
+            let tool = serde_json::from_str::<Value>(body)
+                .ok()
+                .and_then(|v| v["tool"].as_str().map(str::to_string))
+                .unwrap_or_default();
+            let mut left = st.left.lock().unwrap();
+            match path {
+                "/admin/agent-access" => (
+                    200,
+                    json!({"leases": left.iter().map(|(t, n)| json!({"tool": t, "remaining": n})).collect::<Vec<_>>()}).to_string(),
+                ),
+                "/admin/agent-access/use" => match left.get_mut(&tool) {
+                    Some(n) if *n > 0 => {
+                        *n -= 1;
+                        (200, json!({"allowed": true, "remaining": *n}).to_string())
+                    }
+                    Some(_) => (200, json!({"allowed": false, "reason": "exhausted"}).to_string()),
+                    None => (200, json!({"allowed": false, "reason": "no_lease"}).to_string()),
+                },
+                "/admin/agent-access/refund" => {
+                    *left.entry(tool).or_insert(0) += 1;
+                    (200, json!({"refunded": true}).to_string())
+                }
+                "/admin/jobs" if *st.jobs_fail.lock().unwrap() => (409, json!({"error": {"code": "NOPE", "message": "that folder is not allowed"}}).to_string()),
+                "/admin/jobs" => (200, json!({"id": "job-1"}).to_string()),
+                p if p.ends_with("/approval") => (200, json!({"state": "waiting"}).to_string()),
+                _ => (200, r#"{"ready":true,"reviews":{},"jobs":[],"id":"job-1"}"#.to_string()),
+            }
+        }),
+    );
+    (admin, state)
+}
+
+fn names(listing: &Value) -> Vec<String> {
+    listing["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect()
+}
+
+fn list(id: u32) -> String {
+    json!({"jsonrpc": "2.0", "id": id, "method": "tools/list"}).to_string()
+}
+
+fn text_of(r: &Value) -> String {
+    r["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[test]
+fn mc22_in_leased_mode_the_tools_that_act_are_listed_only_while_the_owner_has_leased_them() {
+    let dir = fresh("mc22");
+    let (admin, state) = leased_admin("tok-22", &[]);
+    admin.publish(&dir);
+    let mut s = live_with(&dir, &["--leased"]);
+    s.send(&list(1));
+    let none = names(&s.recv());
+    assert!(
+        !none.iter().any(|n| MUTATING.contains(&n.as_str())),
+        "{none:?}"
+    );
+    assert!(
+        none.contains(&"overview".to_string()),
+        "the tools that only read are always there: {none:?}"
+    );
+    // the owner grants one tool while the agent is connected: the next listing shows it, and only it
+    state.left.lock().unwrap().insert("start_review".into(), 2);
+    s.send(&list(2));
+    let one = names(&s.recv());
+    assert!(
+        one.contains(&"start_review".to_string()) && !one.contains(&"request_approval".to_string()),
+        "{one:?}"
+    );
+    // the owner revokes: it is gone again at once
+    state.left.lock().unwrap().clear();
+    s.send(&list(3));
+    assert!(!names(&s.recv()).contains(&"start_review".to_string()));
+    assert!(s.close().is_empty());
+}
+
+const MUTATING: [&str; 2] = ["start_review", "request_approval"];
+
+#[test]
+fn mc23_a_call_to_a_tool_without_a_lease_changes_nothing_and_says_how_to_get_one() {
+    let dir = fresh("mc23");
+    let (admin, _state) = leased_admin("tok-23", &[]);
+    admin.publish(&dir);
+    let mut s = live_with(&dir, &["--leased"]);
+    s.send(&call(
+        1,
+        "start_review",
+        json!({"repo": "/tmp", "recipient": "Acme"}),
+    ));
+    let r = s.recv();
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    let text = text_of(&r);
+    assert!(
+        text.contains("owner") && text.contains("kaku agent grant start_review"),
+        "{text}"
+    );
+    s.send(&call(2, "request_approval", json!({"id": "job-1"})));
+    assert_eq!(s.recv()["result"]["isError"], true);
+    let seen = admin.seen();
+    assert!(
+        !seen.iter().any(|l| l.contains("/admin/jobs")),
+        "nothing reached the service's job door: {seen:?}"
+    );
+    assert!(s.close().is_empty());
+}
+
+#[test]
+fn mc24_a_leased_call_spends_one_use_and_the_last_use_is_the_last() {
+    let dir = fresh("mc24");
+    let (admin, state) = leased_admin("tok-24", &[("start_review", 2)]);
+    admin.publish(&dir);
+    let mut s = live_with(&dir, &["--leased"]);
+    for id in 1..=2 {
+        s.send(&call(
+            id,
+            "start_review",
+            json!({"repo": "/tmp", "recipient": "Acme"}),
+        ));
+        assert_eq!(s.recv()["result"]["isError"], false, "use {id}");
+    }
+    assert_eq!(state.left.lock().unwrap()["start_review"], 0);
+    s.send(&call(
+        3,
+        "start_review",
+        json!({"repo": "/tmp", "recipient": "Acme"}),
+    ));
+    let r = s.recv();
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    assert!(text_of(&r).contains("no uses left"), "{}", text_of(&r));
+    let jobs = admin
+        .seen()
+        .iter()
+        .filter(|l| l.contains("POST /admin/jobs"))
+        .count();
+    assert_eq!(jobs, 2, "the third call never reached the service");
+    s.send(&list(4));
+    assert!(
+        !names(&s.recv()).contains(&"start_review".to_string()),
+        "a lease with no uses left is not offered, even if the service still lists it"
+    );
+    assert!(s.close().is_empty());
+}
+
+#[test]
+fn mc25_a_call_that_fails_or_is_malformed_does_not_cost_the_owner_a_use() {
+    let dir = fresh("mc25");
+    let (admin, state) = leased_admin("tok-25", &[("start_review", 3)]);
+    admin.publish(&dir);
+    let mut s = live_with(&dir, &["--leased"]);
+    // wrong arguments are refused before a use is spent
+    s.send(&call(1, "start_review", json!({"recipient": "Acme"})));
+    assert_eq!(s.recv()["result"]["isError"], true);
+    assert_eq!(
+        state.left.lock().unwrap()["start_review"],
+        3,
+        "a malformed call spent nothing"
+    );
+    assert!(
+        !admin.seen().iter().any(|l| l.contains("agent-access/use")),
+        "not even asked"
+    );
+    // the service refusing the work gives the use back
+    *state.jobs_fail.lock().unwrap() = true;
+    s.send(&call(
+        2,
+        "start_review",
+        json!({"repo": "/tmp", "recipient": "Acme"}),
+    ));
+    let r = s.recv();
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    assert_eq!(
+        state.left.lock().unwrap()["start_review"],
+        3,
+        "the failed call was refunded"
+    );
+    assert!(admin
+        .seen()
+        .iter()
+        .any(|l| l.contains("agent-access/refund")));
+    // and a call that works keeps its cost
+    *state.jobs_fail.lock().unwrap() = false;
+    s.send(&call(
+        3,
+        "start_review",
+        json!({"repo": "/tmp", "recipient": "Acme"}),
+    ));
+    assert_eq!(s.recv()["result"]["isError"], false);
+    assert_eq!(state.left.lock().unwrap()["start_review"], 2);
+    assert!(s.close().is_empty());
+}
+
+#[test]
+fn mc26_when_the_service_cannot_be_asked_the_tools_that_act_are_hidden_and_refused() {
+    let dir = fresh("mc26");
+    // no admin.json: the service is not running
+    let mut s = live_with(&dir, &["--leased"]);
+    s.send(&list(1));
+    let n = names(&s.recv());
+    assert!(!n.iter().any(|t| MUTATING.contains(&t.as_str())), "{n:?}");
+    s.send(&call(
+        2,
+        "start_review",
+        json!({"repo": "/tmp", "recipient": "Acme"}),
+    ));
+    let r = s.recv();
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    assert!(
+        text_of(&r).contains("cannot be reached") && text_of(&r).contains("Nothing was started"),
+        "{}",
+        text_of(&r)
+    );
+    assert!(s.close().is_empty());
+}
+
+#[test]
+fn mc27_without_the_flag_nothing_changes_and_the_lease_door_is_never_touched() {
+    let dir = fresh("mc27");
+    let (admin, _state) = leased_admin("tok-27", &[]);
+    admin.publish(&dir);
+    let mut s = live(&dir);
+    s.send(&list(1));
+    let n = names(&s.recv());
+    assert!(MUTATING.iter().all(|m| n.contains(&m.to_string())), "{n:?}");
+    s.send(&call(
+        2,
+        "start_review",
+        json!({"repo": "/tmp", "recipient": "Acme"}),
+    ));
+    assert_eq!(s.recv()["result"]["isError"], false);
+    assert!(
+        !admin.seen().iter().any(|l| l.contains("agent-access")),
+        "{:?}",
+        admin.seen()
+    );
+    assert!(s.close().is_empty());
+}
+
+#[test]
+fn mc28_a_lease_cannot_widen_what_read_only_or_the_allow_list_took_away() {
+    let dir = fresh("mc28");
+    let (admin, state) = leased_admin("tok-28", &[("start_review", 5), ("request_approval", 5)]);
+    admin.publish(&dir);
+    let mut ro = live_with(&dir, &["--leased", "--read-only"]);
+    ro.send(&list(1));
+    assert!(!names(&ro.recv())
+        .iter()
+        .any(|t| MUTATING.contains(&t.as_str())));
+    ro.send(&call(
+        2,
+        "start_review",
+        json!({"repo": "/tmp", "recipient": "Acme"}),
+    ));
+    let r = ro.recv();
+    assert!(
+        r["error"].is_object() || r["result"]["isError"] == true,
+        "{r}"
+    );
+    assert!(ro.close().is_empty());
+    let mut only = live_with(&dir, &["--leased", "--allow", "overview,start_review"]);
+    only.send(&list(1));
+    let n = names(&only.recv());
+    assert_eq!(
+        n.iter().filter(|t| MUTATING.contains(&t.as_str())).count(),
+        1,
+        "{n:?}"
+    );
+    assert!(n.contains(&"start_review".to_string()) && n.contains(&"overview".to_string()));
+    only.send(&call(2, "request_approval", json!({"id": "job-1"})));
+    let r = only.recv();
+    assert!(
+        r["error"].is_object() || r["result"]["isError"] == true,
+        "{r}"
+    );
+    assert_eq!(
+        state.left.lock().unwrap()["request_approval"],
+        5,
+        "a tool the list excludes spends nothing"
+    );
+    assert!(only.close().is_empty());
+}
+
+#[test]
+fn mc29_a_lease_check_the_service_cannot_answer_starts_nothing() {
+    let dir = fresh("mc29");
+    let admin = FakeAdmin::start_router(
+        "tok-29",
+        0,
+        Arc::new(|path, _| match path {
+            "/admin/agent-access" => (
+                200,
+                json!({"leases": [{"tool": "start_review", "remaining": 3}]}).to_string(),
+            ),
+            "/admin/agent-access/use" => (
+                500,
+                json!({"error": {"code": "BROKEN", "message": "store unavailable"}}).to_string(),
+            ),
+            "/admin/jobs" => (200, json!({"id": "job-1"}).to_string()),
+            _ => (200, "{}".to_string()),
+        }),
+    );
+    admin.publish(&dir);
+    let mut s = live_with(&dir, &["--leased"]);
+    s.send(&call(
+        1,
+        "start_review",
+        json!({"repo": "/tmp", "recipient": "Acme"}),
+    ));
+    let r = s.recv();
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    assert!(
+        text_of(&r).contains("could not be checked"),
+        "{}",
+        text_of(&r)
+    );
+    assert!(
+        !admin.seen().iter().any(|l| l.contains("POST /admin/jobs")),
+        "{:?}",
+        admin.seen()
+    );
     assert!(s.close().is_empty());
 }

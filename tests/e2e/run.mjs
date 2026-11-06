@@ -71,12 +71,18 @@ const requestOrigins = new Set();
 let injectedResets = 0;
 let excusedRequests = 0;
 let excusedConsole = 0;
+// The one lease the script asks for with zero uses, to see the service's refusal shown in words: the browser logs its 400.
+let leaseRefusals = 1;
 page.on("request", (r) => { try { requestOrigins.add(new URL(r.url()).origin); } catch { /* data: urls */ } });
 page.on("console", (m) => {
   if (m.type() !== "error") return;
   // The browser logs every non-2xx fetch as a console error. The model-proof refusal is a deliberate 422 that the page
   // shows as a message (checked by its own steps), so only that exact response is excused.
   if (m.location().url.endsWith("/api/route/attest") && /status of 422/.test(m.text())) return;
+  if (m.location().url.endsWith("/api/agent-access/grant") && /status of 400/.test(m.text()) && leaseRefusals > 0) {
+    leaseRefusals--;
+    return;
+  }
   if (m.location().url.endsWith("/api/chat/stream") && /ERR_CONNECTION_RESET/.test(m.text()) && excusedConsole < injectedResets) {
     excusedConsole++;
     return;
@@ -455,6 +461,30 @@ try {
   await page.waitForLoadState("load");
   await page.reload();
   await page.waitForLoadState("load");
+  // agent access: the owner leases the tools that act to a connected agent, sees the lease, and takes it back
+  await page.getByRole("link", { name: "Agent access" }).click();
+  await page.getByRole("heading", { name: "Agent access", exact: true }).waitFor();
+  check("with no lease the screen says an agent cannot start reviews or ask for approvals", (await page.getByText("No lease is active.").count()) === 1);
+  check("the screen names the command that makes an agent subject to leases", (await page.getByText("kaku mcp --leased").count()) === 1);
+  await page.getByLabel("Number of uses").fill("abc");
+  await page.getByRole("button", { name: "Give lease" }).click();
+  check("uses that are not a number are refused in words, before anything is sent", (await page.getByRole("alert").innerText()).includes("whole numbers"));
+  await page.getByLabel("Number of uses").fill("0");
+  await page.getByRole("button", { name: "Give lease" }).click();
+  await page.getByText("uses must be 1 to 1000", { exact: false }).waitFor();
+  check("a number the service refuses shows the service's reason and makes no lease", (await page.getByText("No lease is active.").count()) === 1);
+  await page.getByLabel("Number of uses").fill("2");
+  await page.getByLabel("Minutes it lasts").fill("30");
+  await page.getByLabel("What the agent may do").selectOption("start_review");
+  await page.getByRole("button", { name: "Give lease" }).click();
+  await page.getByText("2 use(s) left", { exact: false }).waitFor();
+  const leaseRow = page.getByRole("region", { name: "Active leases" });
+  check("a given lease is listed with its uses and minutes", (await leaseRow.innerText()).includes("Start a review") && /\b(29|30) minute\(s\) remaining/.test(await leaseRow.innerText()));
+  check("the service holds the same lease", (await page.evaluate(async () => { const r = await (await fetch("/api/agent-access")).json(); return r.leases.length === 1 && r.leases[0].tool === "start_review" && r.leases[0].remaining === 2; })));
+  await axeCheck(page, "agent access screen (with a lease)");
+  await page.getByRole("button", { name: "Revoke", exact: true }).click();
+  await page.getByText("No lease is active.").waitFor();
+  check("revoking removes the lease at the service", (await page.evaluate(async () => (await (await fetch("/api/agent-access")).json()).leases.length)) === 0);
   // repeating reviews: add one for a chosen folder and recipient, see it listed, remove it
   await page.getByRole("link", { name: "New review" }).click();
   await page.getByRole("button", { name: "payments-service" }).click();

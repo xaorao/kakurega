@@ -203,6 +203,8 @@ pub struct Ctx {
     read_only: bool,
     /// When set, only these tools are listed and callable, whatever else the tool list holds.
     allow: Option<Vec<String>>,
+    /// The tools that act are listed and callable only while the owner holds a lease for them, and every call spends a use.
+    leased: bool,
 }
 
 impl Ctx {
@@ -218,7 +220,14 @@ impl Ctx {
             roots,
             read_only: false,
             allow: None,
+            leased: false,
         }
+    }
+
+    /// Makes the tools that act depend on the owner's leases.
+    pub fn leased(mut self, on: bool) -> Ctx {
+        self.leased = on;
+        self
     }
 
     /// Limits this connection to exactly the named tools.
@@ -247,6 +256,36 @@ impl Ctx {
                     self.allow
                         .as_ref()
                         .is_none_or(|names| names.iter().any(|n| t["name"] == n.as_str()))
+                })
+                .collect(),
+        )
+    }
+
+    /// What this connection is shown right now. In leased mode a tool that acts appears only while the service reports a lease
+    /// for it; when the service cannot be asked, none does.
+    fn listed(&self, admin: &dyn Fn() -> Result<Admin, String>) -> Value {
+        let all = self.visible();
+        if !self.leased {
+            return all;
+        }
+        let leased: Vec<String> = admin()
+            .and_then(|a| a.get("/admin/agent-access"))
+            .ok()
+            .filter(|(code, _)| *code == 200)
+            .and_then(|(_, v)| v["leases"].as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter(|l| l["remaining"].as_i64().unwrap_or(0) > 0)
+            .filter_map(|l| l["tool"].as_str().map(str::to_string))
+            .collect();
+        Value::Array(
+            all.as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|t| {
+                    let name = t["name"].as_str().unwrap_or_default();
+                    !MUTATING.contains(&name) || leased.iter().any(|l| l == name)
                 })
                 .collect(),
         )
@@ -299,7 +338,57 @@ fn call(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, name: &str, a: &Va
     result
 }
 
+/// Why a lease did not let a call through, in words the agent can pass on to the owner.
+fn lease_refusal(tool: &str, reason: &str) -> String {
+    let why = match reason {
+        "expired" => "the owner's lease for it has run out of time".to_string(),
+        "exhausted" => "the owner's lease for it has no uses left".to_string(),
+        _ => "the owner has not allowed it".to_string(),
+    };
+    format!(
+        "{tool} acts on the owner's behalf and {why}. Nothing was started. The owner can allow it with: kaku agent grant {tool} --uses 3 --minutes 60"
+    )
+}
+
+/// In leased mode a tool that acts must first win a use from the service, which keeps the count where a restart of this
+/// process cannot reset it. A use spent on a call that then fails is given back.
 fn call_unchecked(
+    admin: &dyn Fn() -> Result<Admin, String>,
+    ctx: &Ctx,
+    name: &str,
+    a: &Value,
+) -> Value {
+    if !(ctx.leased && MUTATING.contains(&name)) {
+        return call_inner(admin, ctx, name, a);
+    }
+    // arguments are checked first, so a malformed call costs nothing and asks nothing
+    let def = ctx.visible();
+    let Some(def) = def
+        .as_array()
+        .and_then(|t| t.iter().find(|t| t["name"] == name).cloned())
+    else {
+        return fail("unknown tool");
+    };
+    if let Err(e) = check_args(&def["inputSchema"], a) {
+        return fail(&e);
+    }
+    let service = match admin() {
+        Ok(s) => s,
+        Err(_) => return fail("the owner's service cannot be reached, so the owner's lease cannot be checked. Nothing was started"),
+    };
+    match service.post("/admin/agent-access/use", json!({"tool": name})) {
+        Ok((200, v)) if v["allowed"] == true => {}
+        Ok((200, v)) => return fail(&lease_refusal(name, v["reason"].as_str().unwrap_or(""))),
+        _ => return fail("the owner's lease could not be checked. Nothing was started"),
+    }
+    let result = call_inner(admin, ctx, name, a);
+    if result["isError"] == true {
+        let _ = service.post("/admin/agent-access/refund", json!({"tool": name}));
+    }
+    result
+}
+
+fn call_inner(
     admin: &dyn Fn() -> Result<Admin, String>,
     ctx: &Ctx,
     name: &str,
@@ -448,7 +537,7 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
             -32602,
             "there is only one page of tools; no cursor is needed",
         ),
-        "tools/list" => ok(json!({"tools": ctx.visible()})),
+        "tools/list" => ok(json!({"tools": ctx.listed(admin)})),
         // Not offered, but clients that probe for them get an empty answer instead of an error to log.
         "resources/list" => ok(json!({"resources": []})),
         "resources/templates/list" => ok(json!({"resourceTemplates": []})),
@@ -572,10 +661,12 @@ fn cancelled_id(line: &str) -> Option<String> {
 
 pub fn run(args: &[String]) -> u8 {
     let args: std::sync::Arc<Vec<String>> = std::sync::Arc::new(args.to_vec());
-    let mut ctx = Ctx::new(&crate::data_dir(&args)).read_only(
-        args.iter().any(|a| a == "--read-only")
-            || std::env::var("KAKU_MCP_READ_ONLY").is_ok_and(|v| v == "1"),
-    );
+    let mut ctx = Ctx::new(&crate::data_dir(&args))
+        .leased(args.iter().any(|a| a == "--leased"))
+        .read_only(
+            args.iter().any(|a| a == "--read-only")
+                || std::env::var("KAKU_MCP_READ_ONLY").is_ok_and(|v| v == "1"),
+        );
     if let Some(list) = crate::flag(&args, "--allow") {
         let names: Vec<String> = list
             .split(',')
@@ -704,6 +795,15 @@ pub fn run(args: &[String]) -> u8 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ml01_the_tools_that_act_are_exactly_the_tools_an_owner_can_lease() {
+        let mut a: Vec<&str> = MUTATING.to_vec();
+        let mut b: Vec<&str> = kk_service::LEASABLE_TOOLS.to_vec();
+        a.sort();
+        b.sort();
+        assert_eq!(a, b);
+    }
+
     use super::*;
 
     #[test]

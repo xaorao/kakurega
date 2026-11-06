@@ -7011,3 +7011,384 @@ fn sv62_the_admin_overview_and_the_readiness_page_agree_on_whether_the_machine_i
         assert_eq!(o["optional_missing"], json!(optional_bad), "{o}");
     }
 }
+
+fn lease_world(tag: &str) -> (kk_companion::Companion, Web, String, Arc<Service>, PathBuf) {
+    let (c, w, _repo, root, svc) = boot(tag, true);
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    (c, w, base, svc, root)
+}
+
+#[test]
+fn sv63_an_owner_lease_lets_an_agent_use_a_tool_a_limited_number_of_times_and_then_stops() {
+    let (c, _w, base, _svc, _root) = lease_world("lease-use");
+    let tok = c.security.admin_token().to_string();
+    let call = |m: &str, p: &str, b: Option<Value>| admin(&base, &tok, m, p, b);
+    let (s, v) = call("GET", "/admin/agent-access", None);
+    assert_eq!(
+        (s, v["leases"].clone()),
+        (200, json!([])),
+        "no lease at the start: {v}"
+    );
+    // nothing granted: every use is refused with the reason
+    let (s, v) = call(
+        "POST",
+        "/admin/agent-access/use",
+        Some(json!({"tool": "start_review"})),
+    );
+    assert_eq!(
+        (s, v["allowed"].clone(), v["reason"].clone()),
+        (200, json!(false), json!("no_lease")),
+        "{v}"
+    );
+    let (s, v) = call(
+        "POST",
+        "/admin/agent-access/grant",
+        Some(json!({"tool": "start_review", "uses": 2, "minutes": 30})),
+    );
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["remaining"], 2);
+    let (_, v) = call("GET", "/admin/agent-access", None);
+    assert_eq!(v["leases"][0]["tool"], "start_review");
+    assert_eq!(v["leases"][0]["remaining"], 2);
+    // each use takes one, and the third is refused as exhausted
+    for left in [1, 0] {
+        let (_, v) = call(
+            "POST",
+            "/admin/agent-access/use",
+            Some(json!({"tool": "start_review"})),
+        );
+        assert_eq!(
+            (v["allowed"].clone(), v["remaining"].clone()),
+            (json!(true), json!(left)),
+            "{v}"
+        );
+    }
+    let (_, v) = call(
+        "POST",
+        "/admin/agent-access/use",
+        Some(json!({"tool": "start_review"})),
+    );
+    assert_eq!(
+        (v["allowed"].clone(), v["reason"].clone()),
+        (json!(false), json!("exhausted")),
+        "{v}"
+    );
+    // a spent lease is no longer listed as something the agent can use
+    let (_, v) = call("GET", "/admin/agent-access", None);
+    assert_eq!(v["leases"], json!([]), "{v}");
+    // a lease for one tool does not cover the other
+    call(
+        "POST",
+        "/admin/agent-access/grant",
+        Some(json!({"tool": "start_review", "uses": 5, "minutes": 30})),
+    );
+    let (_, v) = call(
+        "POST",
+        "/admin/agent-access/use",
+        Some(json!({"tool": "request_approval"})),
+    );
+    assert_eq!(v["reason"], "no_lease", "{v}");
+}
+
+#[test]
+fn sv64_a_lease_expires_is_revoked_at_once_and_a_new_grant_replaces_the_old_one() {
+    let (c, _w, base, svc, _root) = lease_world("lease-time");
+    let tok = c.security.admin_token().to_string();
+    let call = |m: &str, p: &str, b: Option<Value>| admin(&base, &tok, m, p, b);
+    call(
+        "POST",
+        "/admin/agent-access/grant",
+        Some(json!({"tool": "start_review", "uses": 9, "minutes": 10})),
+    );
+    let use_it = || {
+        call(
+            "POST",
+            "/admin/agent-access/use",
+            Some(json!({"tool": "start_review"})),
+        )
+        .1
+    };
+    assert_eq!(use_it()["allowed"], true);
+    // ten minutes and a second later the lease is gone, however many uses were left
+    svc.advance_clock_for_tests(601);
+    let v = use_it();
+    assert_eq!(
+        (v["allowed"].clone(), v["reason"].clone()),
+        (json!(false), json!("expired")),
+        "{v}"
+    );
+    assert_eq!(
+        call("GET", "/admin/agent-access", None).1["leases"],
+        json!([])
+    );
+    // a new grant starts fresh and replaces what was there
+    call(
+        "POST",
+        "/admin/agent-access/grant",
+        Some(json!({"tool": "start_review", "uses": 1, "minutes": 5})),
+    );
+    call(
+        "POST",
+        "/admin/agent-access/grant",
+        Some(json!({"tool": "start_review", "uses": 3, "minutes": 5})),
+    );
+    let (_, v) = call("GET", "/admin/agent-access", None);
+    assert_eq!(
+        (
+            v["leases"].as_array().unwrap().len(),
+            v["leases"][0]["remaining"].clone()
+        ),
+        (1, json!(3)),
+        "{v}"
+    );
+    // revoking one tool leaves the other; revoking everything leaves none; the next use is refused at once
+    call(
+        "POST",
+        "/admin/agent-access/grant",
+        Some(json!({"tool": "request_approval", "uses": 3, "minutes": 5})),
+    );
+    let (_, v) = call(
+        "POST",
+        "/admin/agent-access/revoke",
+        Some(json!({"tool": "start_review"})),
+    );
+    assert_eq!(v["revoked"], 1, "{v}");
+    assert_eq!(use_it()["reason"], "no_lease");
+    let (_, v) = call("GET", "/admin/agent-access", None);
+    assert_eq!(v["leases"].as_array().unwrap().len(), 1);
+    let (_, v) = call("POST", "/admin/agent-access/revoke", Some(json!({})));
+    assert_eq!(v["revoked"], 1, "{v}");
+    assert_eq!(
+        call("GET", "/admin/agent-access", None).1["leases"],
+        json!([])
+    );
+    let (_, v) = call("POST", "/admin/agent-access/revoke", Some(json!({})));
+    assert_eq!(v["revoked"], 0, "revoking nothing is not an error: {v}");
+}
+
+#[test]
+fn sv65_grants_are_validated_and_only_the_owner_can_make_them() {
+    let (c, w, base, _svc, _root) = lease_world("lease-guard");
+    let tok = c.security.admin_token().to_string();
+    let grant = |b: Value| admin(&base, &tok, "POST", "/admin/agent-access/grant", Some(b));
+    for (body, code) in [
+        (
+            json!({"tool": "delete_everything", "uses": 1, "minutes": 5}),
+            "BAD_TOOL",
+        ),
+        (
+            json!({"tool": "list_jobs", "uses": 1, "minutes": 5}),
+            "BAD_TOOL",
+        ),
+        (
+            json!({"tool": "start_review", "uses": 0, "minutes": 5}),
+            "BAD_LEASE",
+        ),
+        (
+            json!({"tool": "start_review", "uses": 1001, "minutes": 5}),
+            "BAD_LEASE",
+        ),
+        (
+            json!({"tool": "start_review", "uses": 1, "minutes": 0}),
+            "BAD_LEASE",
+        ),
+        (
+            json!({"tool": "start_review", "uses": 1, "minutes": 1441}),
+            "BAD_LEASE",
+        ),
+        (
+            json!({"tool": "start_review", "uses": -1, "minutes": 5}),
+            "BAD_LEASE",
+        ),
+    ] {
+        let (s, v) = grant(body.clone());
+        assert_eq!(
+            (s, v["error"]["code"].clone()),
+            (400, json!(code)),
+            "{body}: {v}"
+        );
+    }
+    let (s, _) = grant(json!({"tool": "start_review", "uses": 1, "minutes": 5, "extra": true}));
+    assert!(s == 400 || s == 422, "unknown fields are refused, got {s}");
+    assert_eq!(
+        admin(&base, &tok, "GET", "/admin/agent-access", None).1["leases"],
+        json!([]),
+        "nothing above made a lease"
+    );
+    // no credential, no access: neither the grant nor the use
+    assert_eq!(
+        admin(
+            &base,
+            "wrong",
+            "POST",
+            "/admin/agent-access/grant",
+            Some(json!({"tool": "start_review", "uses": 1, "minutes": 5}))
+        )
+        .0,
+        401
+    );
+    assert_eq!(
+        admin(
+            &base,
+            "wrong",
+            "POST",
+            "/admin/agent-access/use",
+            Some(json!({"tool": "start_review"}))
+        )
+        .0,
+        401
+    );
+    // the paired browser is the owner too, and can grant, list and revoke
+    let (s, v) = w.post(
+        "/api/agent-access/grant",
+        json!({"tool": "start_review", "uses": 2, "minutes": 5}),
+    );
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(w.get("/api/agent-access").1["leases"][0]["remaining"], 2);
+    // but the page cannot spend a lease: using one is the agent door's call, with the admin credential
+    assert_ne!(
+        w.post("/api/agent-access/use", json!({"tool": "start_review"}))
+            .0,
+        200
+    );
+    assert_eq!(
+        w.post("/api/agent-access/revoke", json!({})).1["revoked"],
+        1
+    );
+    // a browser with no session sees nothing
+    let anon = Web::new(c.addr);
+    assert_eq!(anon.get("/api/agent-access").0, 401);
+}
+
+#[test]
+fn sv66_leases_survive_a_restart_and_the_log_records_grants_uses_refusals_and_revokes_without_review_data(
+) {
+    let (root, _repo) = repo_copy("lease-restart");
+    let data = root.join("data");
+    let boot_svc = || {
+        let svc = Service::new(
+            &data,
+            vec![root.clone()],
+            Arc::new(CannedRunner { confirm: true }),
+            true,
+        )
+        .unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let base = format!("http://127.0.0.1:{}", c.addr.port());
+        (c, base)
+    };
+    {
+        let (c, base) = boot_svc();
+        let tok = c.security.admin_token().to_string();
+        admin(
+            &base,
+            &tok,
+            "POST",
+            "/admin/agent-access/grant",
+            Some(json!({"tool": "start_review", "uses": 2, "minutes": 60})),
+        );
+        assert_eq!(
+            admin(
+                &base,
+                &tok,
+                "POST",
+                "/admin/agent-access/use",
+                Some(json!({"tool": "start_review"}))
+            )
+            .1["remaining"],
+            1
+        );
+        assert_eq!(
+            admin(
+                &base,
+                &tok,
+                "POST",
+                "/admin/agent-access/use",
+                Some(json!({"tool": "request_approval"}))
+            )
+            .1["allowed"],
+            false
+        );
+    }
+    // a restart (an agent restarting its server, the owner restarting the app) does not give uses back
+    let (c, base) = boot_svc();
+    let tok = c.security.admin_token().to_string();
+    let (_, v) = admin(&base, &tok, "GET", "/admin/agent-access", None);
+    assert_eq!(v["leases"][0]["remaining"], 1, "{v}");
+    admin(
+        &base,
+        &tok,
+        "POST",
+        "/admin/agent-access/revoke",
+        Some(json!({"tool": "start_review"})),
+    );
+    let (_, log) = admin(&base, &tok, "GET", "/admin/log", None);
+    let text = log.to_string();
+    for kind in [
+        "agent.lease.granted",
+        "agent.lease.used",
+        "agent.lease.refused",
+        "agent.lease.revoked",
+    ] {
+        assert!(text.contains(kind), "the log has no {kind}: {text}");
+    }
+    assert!(
+        !text.contains(&root.to_string_lossy().to_string()),
+        "no paths in lease events"
+    );
+}
+
+#[test]
+fn sv67_a_use_given_back_after_a_failed_call_never_takes_a_lease_above_what_was_granted() {
+    let (c, _w, base, _svc, _root) = lease_world("lease-refund");
+    let tok = c.security.admin_token().to_string();
+    let call = |p: &str, b: Value| admin(&base, &tok, "POST", p, Some(b)).1;
+    let tool = json!({"tool": "start_review"});
+    call(
+        "/admin/agent-access/grant",
+        json!({"tool": "start_review", "uses": 2, "minutes": 30}),
+    );
+    assert_eq!(
+        call("/admin/agent-access/refund", tool.clone())["refunded"],
+        false,
+        "nothing was spent, so nothing comes back"
+    );
+    assert_eq!(
+        call("/admin/agent-access/use", tool.clone())["remaining"],
+        1
+    );
+    assert_eq!(
+        call("/admin/agent-access/refund", tool.clone())["refunded"],
+        true
+    );
+    assert_eq!(
+        call("/admin/agent-access/refund", tool.clone())["refunded"],
+        false,
+        "a second refund has nothing to give back"
+    );
+    let (_, v) = admin(&base, &tok, "GET", "/admin/agent-access", None);
+    assert_eq!(v["leases"][0]["remaining"], 2, "{v}");
+    // a tool with no lease cannot be refunded into existence
+    assert_eq!(
+        call(
+            "/admin/agent-access/refund",
+            json!({"tool": "request_approval"})
+        )["refunded"],
+        false
+    );
+    assert_eq!(
+        admin(
+            &base,
+            "wrong",
+            "POST",
+            "/admin/agent-access/refund",
+            Some(tool)
+        )
+        .0,
+        401
+    );
+}

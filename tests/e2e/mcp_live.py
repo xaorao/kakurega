@@ -109,6 +109,54 @@ try:
         check(f"no response ever contained `{marker}`", marker not in everything)
     mcp.stdin.close()
     mcp.wait(timeout=10)
+
+    # leased mode against the live service: the owner's lease, not the agent, decides whether a review can be started
+    def owner(*args):
+        return subprocess.run([kaku, "agent", *args, "--data-dir", str(data)], capture_output=True, text=True)
+
+    lm = subprocess.Popen([kaku, "mcp", "--leased", "--data-dir", str(data)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1, cwd=str(work))
+    ln = 0
+
+    def lrpc(method, params=None):
+        global ln
+        ln += 1
+        lm.stdin.write(json.dumps({"jsonrpc": "2.0", "id": ln, "method": method, "params": params or {}}) + "\n")
+        lm.stdin.flush()
+        return json.loads(lm.stdout.readline())
+
+    def lnames():
+        return [t["name"] for t in lrpc("tools/list")["result"]["tools"]]
+
+    lrpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}})
+    start_args = {"repo": str(work / "root/payments-service"), "recipient": "Acme Audit"}
+
+    def lstart():
+        return lrpc("tools/call", {"name": "start_review", "arguments": start_args})["result"]
+
+    check("leased: with no lease the tools that act are not offered", "start_review" not in lnames() and "request_approval" not in lnames() and "overview" in lnames())
+    r0 = lstart()
+    check("leased: a start without a lease is refused and says how to get one", r0["isError"] is True and "kaku agent grant start_review" in r0["content"][0]["text"], r0["content"][0]["text"][:120])
+    g = owner("grant", "start_review", "--uses", "1", "--minutes", "5")
+    check("the owner grants one use from the terminal", g.returncode == 0 and "1 time(s)" in g.stdout, g.stdout + g.stderr)
+    check("leased: the granted tool appears at once, the other does not", "start_review" in lnames() and "request_approval" not in lnames())
+    r1 = lstart()
+    check("leased: the leased start really starts a review", r1["isError"] is False and r1["structuredContent"]["id"].startswith("job-"), json.dumps(r1)[:160])
+    r2 = lstart()
+    check("leased: the second start is refused because the single use is spent", r2["isError"] is True and "no uses left" in r2["content"][0]["text"], r2["content"][0]["text"][:120])
+    st = owner("status")
+    check("the owner sees that no lease is left", st.returncode == 0 and "No lease is active" in st.stdout, st.stdout)
+    owner("grant", "start_review", "--uses", "5", "--minutes", "5")
+    rv = owner("revoke", "start_review")
+    check("the owner revokes", rv.returncode == 0 and "Revoked 1" in rv.stdout, rv.stdout)
+    r3 = lstart()
+    check("leased: after the revoke the very next call is refused", r3["isError"] is True and "not allowed it" in r3["content"][0]["text"], r3["content"][0]["text"][:120])
+    bad = owner("grant", "overview")
+    check("a lease for a tool that only reads is refused", bad.returncode == 2, bad.stderr)
+    exp = subprocess.run([kaku, "log", "export", "--out", str(work / "lease-log.json"), "--data-dir", str(data)], capture_output=True, text=True)
+    logtext = (work / "lease-log.json").read_text()
+    check("the signed log records the grant, the use, the refusals and the revoke", exp.returncode == 0 and all(k in logtext for k in ["agent.lease.granted", "agent.lease.used", "agent.lease.refused", "agent.lease.revoked"]))
+    lm.stdin.close()
+    lm.wait(timeout=10)
 finally:
     srv.kill()
 

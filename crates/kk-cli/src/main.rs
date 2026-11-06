@@ -1,3 +1,4 @@
+mod agent;
 mod approve;
 mod approver;
 mod backup;
@@ -24,9 +25,10 @@ Usage:
              [--transport lima|local] [--vm NAME] [--worker-bin PATH] [--launcher PATH]
   kaku pair                         print a new one-time pairing link for the browser
   kaku approve [APPROVAL-ID]        review the exact release in this terminal and approve it
-  kaku mcp [--read-only] [--allow TOOL,TOOL]   speak MCP on stdin and stdout for an agent client (cannot approve; --read-only hides the tools that start a review or ask for an approval; --allow gives the agent exactly the tools named)
+  kaku mcp [--read-only] [--allow TOOL,TOOL] [--leased]   speak MCP on stdin and stdout for an agent client (cannot approve; --read-only hides the tools that start a review or ask for an approval; --allow gives the agent exactly the tools named)
   kaku telegram pair | kaku telegram   notifications and counts on your phone (never contents)
   kaku approver enroll|list|revoke   key that signs approvals (required once enrolled)
+  kaku agent grant TOOL [--uses N] [--minutes M] | revoke [TOOL] | status   lease the tools that act to an agent started with `kaku mcp --leased`
   kaku extension pair|status|revoke  connect the browser extension (it can only queue suggestions)
   kaku backup [--out FILE]          save an encrypted copy of all your data; prints a recovery key once
   kaku restore FILE [--data-dir DIR] restore a backup into an empty folder (asks for the recovery key)
@@ -52,6 +54,7 @@ fn main() -> ExitCode {
             memory_import::run(&args[2..])
         }
         Some("log") => log::run(&args[1..]),
+        Some("agent") => agent::run(&args[1..]),
         Some("extension") => extension::run(&args[1..]),
         Some("approver") => approver::run(&args[1..]),
         Some("telegram") => telegram::run(&args[1..]),
