@@ -1099,6 +1099,24 @@ try {
   const rows = await page.locator("tbody tr").allInnerTexts();
   check("the activity list shows approvals, delivery and memory changes in plain words", ["Release approved", "Delivery finished", "Memory forgotten", "Review finished", "Suggestion accepted"].every((w) => rows.join("\n").includes(w)));
   check("the activity page never shows memory text or file contents", !rows.join("\n").includes("in-process dictionary") && !rows.join("\n").includes("euros"));
+  // model usage: per route, over a range of days, tokens and speed, no words
+  const usageCard = page.locator("#usage");
+  await usageCard.getByRole("cell", { name: /test model/i }).first().waitFor();
+  const usageText = await usageCard.innerText();
+  check("usage lists the route that answered with its replies, tokens and speed and a total", /test model/i.test(usageText) && /ms a reply/.test(usageText) && usageText.includes("Total"), usageText.replace(/\n/g, " | ").slice(0, 200));
+  check("no word of any conversation is on the usage card", !usageText.includes("rounding") && !usageText.includes("keptcanary") && !usageText.includes("canary"));
+  await axeCheck(page, "activity with usage");
+  await page.getByLabel("From").fill("2099-01-01");
+  await page.getByLabel("To (included)").fill("2099-01-02");
+  await usageCard.getByText("No replies in these days.").waitFor();
+  check("a range with no replies says so", await usageCard.getByText("No replies in these days.").isVisible());
+  await page.getByLabel("From").fill("2099-02-01");
+  await usageCard.getByRole("alert").waitFor();
+  check("a first day after the last day is refused with a reason", (await usageCard.getByRole("alert").innerText()).includes("first day"));
+  await page.getByLabel("From").fill("2000-01-01");
+  await page.getByLabel("To (included)").fill("2026-01-01");
+  await usageCard.getByRole("alert").waitFor();
+  check("a range longer than 366 days is refused", (await usageCard.getByRole("alert").innerText()).includes("366"));
   // the owner's standing instructions: written once, kept, sent with chat questions, and refused if they hold a secret
   await page.getByRole("link", { name: "Instructions" }).click();
   await page.getByRole("heading", { name: "Your standing instructions", exact: true }).waitFor();

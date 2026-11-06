@@ -87,6 +87,14 @@ export interface Instructions {
   max_chars: number;
 }
 
+export interface Usage {
+  from: number;
+  to: number;
+  routes: { route: string; class: string; simulated: boolean; turns: number; prompt_tokens: number; measured_turns: number; reply_tokens: number; avg_ms: number; max_ms: number; reply_tokens_per_second: number }[];
+  total: { turns: number; prompt_tokens: number; reply_tokens: number };
+  note: string;
+}
+
 export interface ReviewSource {
   job: string;
   notes: number;
@@ -209,6 +217,7 @@ export const api = {
   memoryConflicts: () => request<MemoryConflicts>("GET", "/api/memories/conflicts"),
   keepNote: (keep: string, replaced: string) => request<{ kept: string }>("POST", "/api/memories/conflicts/keep", { keep, replaced }),
   bothRight: (a: string, b: string) => request<{ dismissed: boolean }>("POST", "/api/memories/conflicts/both", { a, b }),
+  usage: (from?: number, to?: number) => request<Usage>("GET", `/api/usage${from !== undefined && to !== undefined ? `?from=${from}&to=${to}` : ""}`),
   reviewSources: () => request<{ sources: ReviewSource[] }>("GET", "/api/memories/sources"),
   forgetReview: (job: string) => request<ReviewSource & { forgotten: boolean }>("POST", `/api/memories/sources/${encodeURIComponent(job)}/forget`, {}),
   mergeMemories: (keep: string, merge: string[]) => request<{ merged: number; kept: string }>("POST", "/api/memories/merge", { keep, merge }),

@@ -101,6 +101,7 @@ enum Intent {
     InstructionsSet,
     ConflictsList,
     FindChats,
+    UsageShow,
     RenameChat,
     ChooseNote,
     BothRight,
@@ -1559,6 +1560,20 @@ impl App {
                 &format!("/api/memories/{id}/correct"),
                 Some(json!({"text": text, "reason": "you corrected it in the terminal"})),
             )],
+            Command::Usage(days) => {
+                let to = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs() as i64)
+                    + 1;
+                let from = to - i64::from(days) * 86_400;
+                vec![self.req(
+                    Intent::UsageShow,
+                    false,
+                    Method::Get,
+                    &format!("/api/usage?from={from}&to={to}"),
+                    None,
+                )]
+            }
             Command::Find(words) => {
                 let q: String = words
                     .bytes()
@@ -2429,6 +2444,43 @@ impl App {
                         err_text(status, &body)
                     },
                 );
+                Vec::new()
+            }
+            Intent::UsageShow => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let routes = body["routes"].as_array().cloned().unwrap_or_default();
+                if routes.is_empty() {
+                    self.say(Kind::Info, "No replies in these days.");
+                    return Vec::new();
+                }
+                let mut lines: Vec<String> = Vec::new();
+                for r in &routes {
+                    let star = if r["measured_turns"].as_i64() < r["turns"].as_i64() {
+                        "*"
+                    } else {
+                        ""
+                    };
+                    lines.push(format!(
+                        "{}{}  {} replies, {}{star} tokens read, {} written, {} ms a reply, {} tokens a second",
+                        clean(r["route"].as_str().unwrap_or("?")),
+                        if r["simulated"] == true { " (test model)" } else { "" },
+                        r["turns"].as_i64().unwrap_or(0),
+                        r["prompt_tokens"].as_i64().unwrap_or(0),
+                        r["reply_tokens"].as_i64().unwrap_or(0),
+                        r["avg_ms"].as_i64().unwrap_or(0),
+                        r["reply_tokens_per_second"].as_f64().unwrap_or(0.0)
+                    ));
+                }
+                lines.push(format!(
+                    "Total  {} replies, {} tokens read, {} written. * part of this is an estimate; no prices are known, so no cost is shown.",
+                    body["total"]["turns"].as_i64().unwrap_or(0),
+                    body["total"]["prompt_tokens"].as_i64().unwrap_or(0),
+                    body["total"]["reply_tokens"].as_i64().unwrap_or(0)
+                ));
+                self.push(Kind::Info, Some("Model usage"), lines);
                 Vec::new()
             }
             Intent::FindChats => {

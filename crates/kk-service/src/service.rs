@@ -309,6 +309,8 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS schedule_runs(id INTEGER PRIMARY KEY AUTOINCREMENT, schedule TEXT NOT NULL, at INTEGER NOT NULL, outcome TEXT NOT NULL, job TEXT);
              CREATE TABLE IF NOT EXISTS approvers(key_id TEXT PRIMARY KEY, public BLOB NOT NULL, label TEXT NOT NULL, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS agent_leases(tool TEXT PRIMARY KEY, remaining INTEGER NOT NULL, granted INTEGER NOT NULL, expires_at INTEGER NOT NULL, issued_at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS usage_ledger(id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, route TEXT NOT NULL, class TEXT NOT NULL, simulated INTEGER NOT NULL, prompt_tokens INTEGER NOT NULL, measured INTEGER NOT NULL, reply_tokens INTEGER NOT NULL, elapsed_ms INTEGER NOT NULL);
+             CREATE INDEX IF NOT EXISTS usage_ledger_at ON usage_ledger(at);
              CREATE TABLE IF NOT EXISTS owner_instructions(scope TEXT PRIMARY KEY, text TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);",
         )
@@ -1571,6 +1573,85 @@ async fn memory_forget(
 /// The owner's instruction for every conversation (text, written at), and one per project (name, text, written at).
 type StandingInstructions = (Option<(String, i64)>, Vec<(String, String, i64)>);
 
+/// The usage ledger keeps 400 days.
+const USAGE_KEEP_SECS: i64 = 400 * 86_400;
+/// The longest range one question may cover.
+const USAGE_MAX_RANGE_SECS: i64 = 366 * 86_400;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UsageQuery {
+    from: Option<i64>,
+    to: Option<i64>,
+}
+
+type UsageRow = (String, String, i64, i64, i64, i64, i64, i64, i64);
+
+/// What each route answered between two moments (the last 30 days by default): replies, tokens in and out, how many counts
+/// came from the model itself, and how long replies took. Tokens and time only: this program knows no prices.
+async fn usage_summary(
+    axum::Extension(svc): Svc,
+    query: Result<Query<UsageQuery>, axum::extract::rejection::QueryRejection>,
+) -> Response {
+    let bad = || {
+        error(
+            StatusCode::BAD_REQUEST,
+            "BAD_RANGE",
+            "from and to are seconds since 1970, from before to, at most 366 days apart",
+        )
+    };
+    let Ok(Query(q)) = query else {
+        return bad();
+    };
+    // the end is not included, so by default it is one second ahead: a reply finished this second is counted
+    let to = q.to.unwrap_or_else(|| now() + 1);
+    let from = q.from.unwrap_or(to - 30 * 86_400);
+    if from < 0 || to < 0 || from >= to || to - from > USAGE_MAX_RANGE_SECS {
+        return bad();
+    }
+    let store = svc.store.lock().expect("lock");
+    let c = store.connection();
+    let Ok(mut st) = c.prepare(
+        "SELECT route, class, simulated, count(*), sum(prompt_tokens), sum(measured), sum(reply_tokens), sum(elapsed_ms), max(elapsed_ms)
+         FROM usage_ledger WHERE at >= ?1 AND at < ?2 GROUP BY route, class, simulated ORDER BY count(*) DESC, route",
+    ) else {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "STORE", "could not read the usage");
+    };
+    let rows: Vec<UsageRow> = st
+        .query_map(kk_vault::rusqlite::params![from, to], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+                r.get(7)?,
+                r.get(8)?,
+            ))
+        })
+        .map(|it| it.flatten().collect())
+        .unwrap_or_default();
+    let routes: Vec<Value> = rows
+        .iter()
+        .map(|(route, class, sim, turns, prompt, measured, reply, ms, max)| {
+            json!({
+                "route": route, "class": class, "simulated": *sim != 0, "turns": turns,
+                "prompt_tokens": prompt, "measured_turns": measured, "reply_tokens": reply,
+                "avg_ms": if *turns > 0 { ms / turns } else { 0 }, "max_ms": max,
+                "reply_tokens_per_second": if *ms > 0 { (*reply as f64 * 1000.0 / *ms as f64 * 10.0).round() / 10.0 } else { 0.0 },
+            })
+        })
+        .collect();
+    let total = json!({
+        "turns": rows.iter().map(|r| r.3).sum::<i64>(),
+        "prompt_tokens": rows.iter().map(|r| r.4).sum::<i64>(),
+        "reply_tokens": rows.iter().map(|r| r.6).sum::<i64>(),
+    });
+    Json(json!({"from": from, "to": to, "routes": routes, "total": total, "note": "Token counts are the model's own where it gave them (measured_turns) and an estimate otherwise. No prices are known here, so no cost is shown."})).into_response()
+}
+
 const MAX_INSTRUCTION_CHARS: usize = 4000;
 const MAX_INSTRUCTION_PROJECTS: i64 = 30;
 
@@ -1854,6 +1935,8 @@ fn chat_clean(s: &str) -> bool {
 const COMPACTION_WAIT_TURNS: usize = 6;
 
 struct ChatRun {
+    /// When the question arrived, so the ledger can say how long a finished reply took.
+    started: std::time::Instant,
     body: ChatBody,
     kept: Option<String>,
     message_to_keep: String,
@@ -1917,6 +2000,7 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
     let message_to_keep = b.message.clone();
     let Some(id) = b.session.clone() else {
         return Ok(ChatRun {
+            started: std::time::Instant::now(),
             body: b,
             kept: None,
             message_to_keep,
@@ -2010,6 +2094,7 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
         })
         .collect();
     Ok(ChatRun {
+        started: std::time::Instant::now(),
         body: ChatBody { history, ..b },
         kept: Some(id),
         message_to_keep,
@@ -2290,6 +2375,15 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
     let window = svc.runner.route_info()["context_tokens"].as_u64();
     let estimated = kk_route::tokens::estimate_messages(&ctx.messages);
     let measured = r.prompt_tokens.filter(|n| *n > 0);
+    svc.record_usage(
+        &r.route_id,
+        &r.class,
+        r.simulated,
+        measured.unwrap_or(estimated),
+        measured.is_some(),
+        kk_route::tokens::estimate_text(&r.text),
+        run.started.elapsed().as_millis() as i64,
+    );
     let usage = json!({"context_tokens": measured.unwrap_or(estimated), "context_tokens_estimate": estimated, "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "history_turns_summarized": run.summarized, "summary_text": run.summary, "compacted_now": run.compacted_now, "compaction_failed": run.compaction_failed, "estimate": measured.is_none()});
     json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated, "stays_here": svc.route_for_owner()["stays_here"], "host": svc.route_for_owner()["host"]}, "instructions_used": ctx.instructions_used, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "saved": saved, "not_saved": not_saved, "project": run.body.project})
 }
@@ -3590,6 +3684,32 @@ impl Service {
             self.log_event("agent.lease.refunded", tool, &[]);
         }
         json!({"refunded": gave == 1})
+    }
+
+    /// Adds one finished reply to the usage ledger: which route answered, how many tokens went in and came out and whether
+    /// the model counted them, and how long it took. No words of any conversation are kept here.
+    #[allow(clippy::too_many_arguments)]
+    fn record_usage(
+        &self,
+        route: &str,
+        class: &str,
+        simulated: bool,
+        prompt: u64,
+        measured: bool,
+        reply: u64,
+        elapsed_ms: i64,
+    ) {
+        let store = self.store.lock().expect("lock");
+        let c = store.connection();
+        let _ = c.execute(
+            "INSERT INTO usage_ledger(at, route, class, simulated, prompt_tokens, measured, reply_tokens, elapsed_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            kk_vault::rusqlite::params![now(), route, class, simulated as i64, prompt as i64, measured as i64, reply as i64, elapsed_ms],
+        );
+        // a ledger older than a year and a month is dropped as new rows come in
+        let _ = c.execute(
+            "DELETE FROM usage_ledger WHERE at < ?1",
+            [now() - USAGE_KEEP_SECS],
+        );
     }
 
     /// The owner's standing instructions: the one for every conversation and one per project.
@@ -5924,6 +6044,7 @@ impl Extension for Routes {
                 "/api/instructions",
                 get(instructions_get).post(instructions_set),
             )
+            .route("/api/usage", get(usage_summary))
             .route("/api/memories/sources", get(memory_sources))
             .route("/api/memories/sources/{job}", get(memory_source_footprint))
             .route(

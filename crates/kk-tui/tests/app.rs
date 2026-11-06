@@ -2818,3 +2818,50 @@ fn tu43_the_terminal_finds_kept_conversations_by_words_and_renames_one() {
     ));
     assert!(text(&a).contains("no such kept conversation"));
 }
+
+#[test]
+fn tu44_the_terminal_shows_model_usage_for_a_number_of_days() {
+    assert_eq!(cmd::parse("/usage").unwrap(), Command::Usage(30));
+    assert_eq!(cmd::parse("/usage 7").unwrap(), Command::Usage(7));
+    for bad in [
+        "/usage 0",
+        "/usage 367",
+        "/usage abc",
+        "/usage 7 8",
+        "/usage -1",
+    ] {
+        assert!(cmd::parse(bad).is_err(), "{bad}");
+    }
+    let mut app = booted();
+    let r = enter(&mut app, "/usage 7");
+    assert_eq!(
+        (
+            r[0].path.starts_with("/api/usage?from="),
+            r[0].admin,
+            r[0].method
+        ),
+        (true, false, Method::Get)
+    );
+    let q = &r[0].path["/api/usage?from=".len()..];
+    let (from, to) = q.split_once("&to=").expect("a range");
+    let (from, to): (i64, i64) = (from.parse().unwrap(), to.parse().unwrap());
+    assert_eq!(
+        to - from,
+        7 * 86_400,
+        "seven days ending one second ahead of now: {q}"
+    );
+    app.handle(ok(&r[0], 200, json!({"from": from, "to": to, "routes": [{"route": "ollama:qwen2.5:3b", "class": "device_only", "simulated": false, "turns": 12, "prompt_tokens": 3400, "measured_turns": 12, "reply_tokens": 900, "avg_ms": 2100, "max_ms": 5000, "reply_tokens_per_second": 14.5}], "total": {"turns": 12, "prompt_tokens": 3400, "reply_tokens": 900}, "note": "n"})));
+    let t = text(&app);
+    for needle in ["ollama:qwen2.5:3b", "12", "3400", "900", "14.5", "Total"] {
+        assert!(t.contains(needle), "{needle}: {t}");
+    }
+    // some replies had no count from the model: the figure is marked as partly an estimate
+    let mut e = booted();
+    let r = enter(&mut e, "/usage");
+    e.handle(ok(&r[0], 200, json!({"from": 0, "to": 1, "routes": [{"route": "r", "class": "device_only", "simulated": false, "turns": 12, "prompt_tokens": 3400, "measured_turns": 3, "reply_tokens": 900, "avg_ms": 2100, "max_ms": 5000, "reply_tokens_per_second": 14.5}], "total": {"turns": 12, "prompt_tokens": 3400, "reply_tokens": 900}, "note": "n"})));
+    assert!(text(&e).contains("3400* tokens read"), "{}", text(&e));
+    let mut a = booted();
+    let r = enter(&mut a, "/usage");
+    a.handle(ok(&r[0], 200, json!({"from": 0, "to": 1, "routes": [], "total": {"turns": 0, "prompt_tokens": 0, "reply_tokens": 0}, "note": "n"})));
+    assert!(text(&a).contains("No replies"), "{}", text(&a));
+}

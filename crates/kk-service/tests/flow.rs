@@ -8797,3 +8797,102 @@ fn sv89_kept_conversations_are_searched_by_what_was_said_and_by_title_and_can_be
     w.post(&format!("/api/sessions/{a}/forget"), json!({}));
     assert!(found("deadline").is_empty());
 }
+
+#[test]
+fn sv90_every_chat_reply_is_counted_per_route_for_a_date_range_and_the_totals_equal_what_the_replies_reported(
+) {
+    let (c, w, _seen, _root) = instructions_service("usage");
+    let anon = Web::new(c.addr);
+    assert_eq!(anon.get("/api/usage").0, 401);
+    let (s, v) = w.get("/api/usage");
+    assert_eq!(s, 200, "{v}");
+    assert!(
+        v["routes"].as_array().unwrap().is_empty(),
+        "nothing yet: {v}"
+    );
+    let mut reported_ctx = 0i64;
+    let mut reported_reply = 0i64;
+    for i in 0..3 {
+        let (s, r) = w.post(
+            "/api/chat",
+            json!({"message": format!("question number {i} about rounding")}),
+        );
+        assert_eq!(s, 200, "{r}");
+        reported_ctx += r["usage"]["context_tokens"].as_i64().unwrap();
+        reported_reply += r["usage"]["reply_tokens_estimate"].as_i64().unwrap();
+    }
+    let (_, v) = w.get("/api/usage");
+    let routes = v["routes"].as_array().unwrap();
+    assert_eq!(routes.len(), 1, "{v}");
+    let r = &routes[0];
+    assert_eq!(r["turns"], 3);
+    assert_eq!(
+        r["prompt_tokens"].as_i64().unwrap(),
+        reported_ctx,
+        "the ledger adds up to what each reply reported"
+    );
+    assert_eq!(r["reply_tokens"].as_i64().unwrap(), reported_reply);
+    assert_eq!(
+        r["measured_turns"], 0,
+        "the scripted route gives no model count, so these are estimates"
+    );
+    assert!(r["route"].is_string() && r["simulated"].is_boolean() && r["class"].is_string());
+    assert!(
+        r["avg_ms"].as_i64().unwrap() >= 0
+            && r["max_ms"].as_i64().unwrap() >= r["avg_ms"].as_i64().unwrap()
+    );
+    assert_eq!(v["total"]["turns"], 3);
+    // no word of any conversation is in the answer
+    assert!(!v.to_string().contains("rounding"), "{v}");
+    // the range: everything from an hour ago, nothing from tomorrow, nothing before an hour ago
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let in_range = |from: i64, to: i64| {
+        w.get(&format!("/api/usage?from={from}&to={to}")).1["total"]["turns"]
+            .as_i64()
+            .unwrap()
+    };
+    assert_eq!(in_range(now - 3600, now + 3600), 3);
+    assert_eq!(in_range(now + 3600, now + 7200), 0);
+    assert_eq!(in_range(now - 7200, now - 3600), 0);
+    // what is refused
+    for q in [
+        "from=abc",
+        "from=10&to=5",
+        "from=0&to=99999999999",
+        "from=-5",
+        "to=x",
+        "from=1&to=2&extra=1",
+    ] {
+        let (s, _) = w.get(&format!("/api/usage?{q}"));
+        assert_eq!(s, 400, "{q}");
+    }
+    // the same kind of reply measured by the model is counted as measured
+    let (c2, w2, _s, _r) = {
+        let (root, _repo) = repo_copy("usage-measured2");
+        let svc = Service::new(
+            &root.join("data"),
+            vec![root.clone()],
+            Arc::new(MeasuredRunner {
+                inner: CannedRunner { confirm: true },
+            }),
+            true,
+        )
+        .unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        (c, w, (), root)
+    };
+    let _ = &c2;
+    w2.post("/api/chat", json!({"message": "hello there"}));
+    let (_, v2) = w2.get("/api/usage");
+    assert_eq!(v2["routes"][0]["measured_turns"], 1, "{v2}");
+    assert_eq!(v2["routes"][0]["prompt_tokens"], 4321);
+}

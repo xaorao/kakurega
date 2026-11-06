@@ -59,6 +59,7 @@ pub enum Command {
     ForgetReview(String),
     Instructions(InstructionsAction),
     Find(String),
+    Usage(u32),
     RenameChat {
         id: String,
         title: String,
@@ -113,6 +114,7 @@ pub const NAMES: &[&str] = &[
     "forgetreview",
     "instructions",
     "find",
+    "usage",
     "rename",
     "conflicts",
     "choose",
@@ -158,6 +160,7 @@ pub fn describe(name: &str) -> &'static str {
         "forgetreview" => "delete everything one review left in memory",
         "instructions" => "your standing orders to the assistant",
         "find" => "search kept conversations by words",
+        "usage" => "what each model route answered over some days",
         "rename" => "rename a kept conversation",
         "conflicts" => "notes that seem to disagree",
         "choose" => "keep one of two disagreeing notes",
@@ -229,6 +232,7 @@ pub fn usage(name: &str) -> &'static str {
         "forgetreview" => "/forgetreview JOB",
         "instructions" => "/instructions [set [in PROJECT:] TEXT | clear [PROJECT]]",
         "find" => "/find WORDS",
+        "usage" => "/usage [DAYS]",
         "rename" => "/rename ID NEW TITLE",
         "conflicts" => "/conflicts",
         "choose" => "/choose KEEP_ID OVER_ID",
@@ -438,6 +442,16 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 Err(format!("usage: {}", usage("forget")))
             } else {
                 Ok(Command::Forget(rest.to_string()))
+            }
+        }
+        "usage" => {
+            if rest.is_empty() {
+                Ok(Command::Usage(30))
+            } else {
+                match rest.parse::<u32>() {
+                    Ok(d) if (1..=366).contains(&d) => Ok(Command::Usage(d)),
+                    _ => Err(format!("usage: {}", usage("usage"))),
+                }
             }
         }
         "find" => {
