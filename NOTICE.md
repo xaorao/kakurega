@@ -41,3 +41,5 @@ Personal-data allowlist (`crates/kk-secrets/src/pii.rs`): the idea of an operato
 Pattern rules (`crates/kk-review/src/pattern.rs`, `rules/patterns.yml`): Semgrep (LGPL-2.1, Semgrep, Inc.) is run as a separate program the owner installs and names in `KAKU_SEMGREP`; it is not linked, bundled or modified, and none of its registry rules are used. The rules in this repository are written here.
 
 Attaching files in the web workspace (`apps/web/src/attach.ts`, `screens/Chat.tsx`): the ideas of accepting a file drop anywhere on the page, showing a drop target only for drags that carry files, clearing it on Escape or when the pointer leaves the window, pasting files from the clipboard, and not attaching the same file twice follow OpenCode (MIT, Anomaly) `packages/app/src/composer/attachments/attachments.ts` and `dropzone.tsx`; the code is written here.
+
+Slash commands in the web chat (`apps/web/src/slash.ts`): the popover's states and keys follow OpenCode (MIT, Anomaly) `packages/app/src/composer/suggestions/machine.ts` (read in full); the code is written here.

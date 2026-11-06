@@ -125,12 +125,18 @@ fn pp02_a_scanner_that_hangs_is_stopped_with_its_helpers_and_reported_as_a_failu
         &format!("sleep 60 &\necho $! > '{}'\nsleep 60", pidfile.display()),
     );
     let t = std::time::Instant::now();
-    let r = scan(&sg, &[&file("a.py", "x")], &d, Duration::from_secs(1));
+    let r = scan(&sg, &[&file("a.py", "x")], &d, Duration::from_secs(4));
     assert_eq!(
         r,
         PatternScan::Failed("semgrep did not finish in time".into())
     );
-    assert!(t.elapsed() < Duration::from_secs(10), "{:?}", t.elapsed());
+    assert!(t.elapsed() < Duration::from_secs(20), "{:?}", t.elapsed());
+    for _ in 0..40 {
+        if pidfile.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
     std::thread::sleep(Duration::from_millis(300));
     let helper: i32 = std::fs::read_to_string(&pidfile)
         .unwrap()

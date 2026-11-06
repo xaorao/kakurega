@@ -1,7 +1,8 @@
 import { againPoint, editPoint, type BranchPoint } from "../branching";
 import { carriesFiles, fileNotes, fingerprint, pastedFiles, room, sizeText, MAX_BYTES } from "../attach";
 import { findMatches, stepTo, type Match } from "../find";
-import { batch, createEffect, createResource, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
+import { afterInput, closedAtStart, matches as slashMatches, onKey as slashKey, parseLine, slashQuery, validJob, type PopoverState, type SlashCommand } from "../slash";
+import { batch, createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { api, ApiError, streamChat, type AttachmentRead, type AttachmentSummary, type ChatHit, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
 import { t } from "../i18n";
 import { Markdown } from "../components/Markdown";
@@ -57,6 +58,62 @@ export function Chat() {
   const [reading, setReading] = createSignal("");
   const [shown, setShown] = createSignal<Record<string, AttachmentRead | "loading">>({});
   const [dragging, setDragging] = createSignal(false);
+  // slash commands: a list opens while the box holds only a slash and letters, and a typed command line runs instead of being sent
+  const [slash, setSlash] = createSignal<PopoverState>(closedAtStart);
+  const [slashNote, setSlashNote] = createSignal("");
+  const slashRows = createMemo(() => {
+    const q = slashQuery(text());
+    return q === null ? [] : slashMatches(q);
+  });
+  const slashOpen = () => slashQuery(text()) !== null && !slash().dismissed;
+  const runSlash = async (cmd: SlashCommand, arg: string) => {
+    setSlashNote("");
+    const go = cmd.go;
+    if ("hash" in go) {
+      location.hash = go.hash;
+    } else if ("help" in go) {
+      window.dispatchEvent(new CustomEvent("kk:help"));
+    } else if ("newChat" in go) {
+      if (session()) show(null, []);
+      else {
+        setTurns([]);
+        setError("");
+        forgetSent(draftKey(session()));
+        hist = idleHistory();
+      }
+    } else {
+      let id = arg;
+      if (id !== "" && !validJob(id)) {
+        setSlashNote(t("slash.badJob"));
+        return;
+      }
+      if (id === "") {
+        try {
+          const list = (await api.jobs()).jobs;
+          id = list.length ? list.reduce((a, b) => (b.created > a.created ? b : a)).id : "";
+        } catch {
+          id = "";
+        }
+        if (id === "") {
+          setSlashNote(t("slash.noReviews"));
+          return;
+        }
+      }
+      location.hash = `#/job/${id}`;
+      setSlashNote(go.job === "approve" ? t("slash.approveNote") : t("slash.opened", { what: id }));
+    }
+  };
+  const chooseSlash = (i: number) => {
+    const cmd = slashRows()[i];
+    if (!cmd) return;
+    if (cmd.job) {
+      setText(`/${cmd.name} `);
+      queueMicrotask(() => box?.setSelectionRange(box.value.length, box.value.length));
+      return;
+    }
+    setText("");
+    void runSlash(cmd, "");
+  };
   // Find in the open conversation: matches are read from what is on the screen, so they always agree with it.
   const [findText, setFindText] = createSignal("");
   const [findAt, setFindAt] = createSignal<number | null>(null);
@@ -549,6 +606,13 @@ export function Chat() {
     e?.preventDefault();
     const message = text().trim();
     if (!message || busy()) return;
+    const line = parseLine(message);
+    if (line) {
+      setText("");
+      setSlash(closedAtStart);
+      await runSlash(line.cmd, line.arg);
+      return;
+    }
     const myView = view;
     const sentKey = draftKey(session());
     rememberSent(message, sentKey);
@@ -983,7 +1047,17 @@ export function Chat() {
           id="chat-input"
           rows="3"
           value={text()}
-          onInput={(e) => setText(e.currentTarget.value)}
+          role="combobox"
+          aria-expanded={slashOpen()}
+          aria-controls="slash-list"
+          aria-autocomplete="list"
+          aria-activedescendant={slashOpen() && slash().active >= 0 ? `slash-${slashRows()[slash().active]?.name}` : undefined}
+          onInput={(e) => {
+            setText(e.currentTarget.value);
+            const q = slashQuery(e.currentTarget.value);
+            setSlash(afterInput(slash(), q === null ? 0 : slashMatches(q).length));
+            setSlashNote("");
+          }}
           onPaste={(e) => {
             const pasted = pastedFiles(e.clipboardData?.items);
             if (pasted.length === 0) return;
@@ -991,6 +1065,25 @@ export function Chat() {
             if (!busy()) void addFiles(pasted);
           }}
           onKeyDown={(e) => {
+            if (slashOpen() && slashRows().length > 0) {
+              const step = slashKey(slash(), slashRows().length, { key: e.key, ctrlKey: e.ctrlKey, isComposing: e.isComposing || e.keyCode === 229 });
+              if (step.kind === "move" || step.kind === "close") {
+                e.preventDefault();
+                setSlash(step.state);
+                return;
+              }
+              // a command typed out in full needs no help: Enter runs it, as in the terminal; Tab still completes
+              const exact = parseLine(text().trim()) !== null && e.key === "Enter";
+              if (step.kind === "choose" && !exact) {
+                e.preventDefault();
+                chooseSlash(step.index);
+                return;
+              }
+            } else if (slashOpen() && e.key === "Escape") {
+              e.preventDefault();
+              setSlash({ ...slash(), dismissed: true });
+              return;
+            }
             if (stopsReply(e, busy())) {
               e.preventDefault();
               abort?.abort();
@@ -1022,6 +1115,32 @@ export function Chat() {
             }
           }}
         />
+        <Show when={slashOpen()}>
+          <Show
+            when={slashRows().length > 0}
+            fallback={<p class="muted" role="status">{t("slash.none")}</p>}
+          >
+            <ul id="slash-list" class="slash" role="listbox" aria-label={t("slash.title")}>
+              <For each={slashRows()}>
+                {(c, i) => (
+                  <li
+                    id={`slash-${c.name}`}
+                    role="option"
+                    aria-selected={slash().active === i()}
+                    class={slash().active === i() ? "slash-row on" : "slash-row"}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      chooseSlash(i());
+                    }}
+                  >
+                    <code>/{c.name}{c.job ? " …" : ""}</code> <span class="muted">{t(c.about)}</span>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </Show>
+        </Show>
+        <Show when={slashNote()}><p class="muted" role="status">{slashNote()}</p></Show>
         <div class="actions">
           <button class="primary" type="submit" disabled={busy() || text().trim().length === 0}>{t("chat.send")}</button>
           <Show when={busy()}><button type="button" onClick={() => abort?.abort()}>{t("chat.stop")}</button></Show>

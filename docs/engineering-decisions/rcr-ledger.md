@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 136, PARTIAL 91, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 5. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 136, PARTIAL 93, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 3. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -50,7 +50,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | B-W26 | Document library / indexing | BUILD workspace sources: local embedding in the kernel, per-file state (pending, indexed,  | PARTIAL | Documents reads the chosen folder per question; no persistent index |
 | B-W27 | Artifacts and rich previews | EXCLUDE interactive artifacts for now: running model-written code in the page is the oppos | EXCLUDED | interactive artifacts not offered |
 | B-W28 | Composer behaviour | ADAPT the reducer (pure TS, MIT) including the `composing` guard; fix the IME bug independ | BUILT | composer: IME-safe Enter, drafts per conversation, history, picker, Esc/Ctrl+G (cm01-cp24, e2e) |
-| B-W29 | Slash commands and mentions | ADAPT; slash set matches the terminal workspace (`/review`, `/ask`, `/where`, `/memory`, ` | OWED-L | palette covers actions; no slash commands or mentions in the web composer |
+| B-W29 | Slash commands and mentions | ADAPT; slash set matches the terminal workspace (`/review`, `/ask`, `/where`, `/memory`, ` | PARTIAL | slash popover in the web chat with the terminal's words (15 commands), Enter runs an exact command, /approve opens the page and approves nothing; OpenCode machine.ts read in full; no @ mentions, no in-conversation commands (web-shell.md) |
 | B-W30 | Saved prompts and variables | BUILD later, vault-stored; low | LATER | saved prompts: low |
 | B-W31 | Route and model chooser | IMPROVE. Chooser lists only routes the kernel allows for this workspace and shows class (l | LATER | one route today; a chooser matters once NEAR credits give a second route |
 | B-W32 | Provider and credential management | BUILD a minimal key form that POSTs once to the companion, never echoes the key back, neve | LATER | needs the NEAR key and credits |
@@ -300,7 +300,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | G-GH-14 | Permission shield in the composer (screenshot shows a yellow shield; w | KEEP; adopt a visible mode indicator in the composer showing the current policy | PARTIAL | approvals badge in the header of every screen; not inside the composer, no mode choice by design (web-shell.md) |
 | G-GH-15 | Context meter, automatic and manual cleanup, custom limit, prompt cach | BUILD; caching only on routes whose docs allow it (NEAR docs warn about cross-customer pre | BUILT | meter, warning, automatic summary (sv49-sv56) |
 | G-GH-16 | Usage page: per-model cost, custom date range, response speed | BUILD a local usage ledger per route | PARTIAL | usage ledger per route for chat replies with date range, measured vs estimated tokens and speed (web, service, terminal); no cost (no prices known), ask and reviews not counted (web-shell.md) |
-| G-GH-17 | Slash commands and a commands menu for tools, skills, MCP, saved promp | IMPROVE web and desktop to match | OWED-L | web has no slash commands (palette instead) |
+| G-GH-17 | Slash commands and a commands menu for tools, skills, MCP, saved promp | IMPROVE web and desktop to match | PARTIAL | web slash commands menu built (navigation and review commands); tools/skills/MCP/saved-prompt entries and in-conversation commands not built (web-shell.md) |
 | G-GH-18 | Plan mode | BUILD: plan is shown before any effect; the plan is not an approval | LATER | plan mode with the worker loop |
 | G-GH-19 | Personal AGENTS instructions for chat and coding | BUILD as labeled "owner instruction" memory, kept separate from data memory so injected te | BUILT | owner standing instructions: encrypted store, owner-session only, global + per project, one labelled system block, logged without words; web, terminal; not applied to ask or reviews (owner-instructions.md) |
 | G-GH-20 | Interactive previews and artifacts rendered in a sandbox page (CSP `co | ADAPT the idea: render model-made HTML in a sandboxed frame with no network, no storage | EXCLUDED | no model-written HTML is run |

@@ -317,3 +317,9 @@ button.linklike:hover { color: var(--ink); }
 }
 
 .row-check { display: flex; align-items: center; gap: 8px; font-weight: 400; }
+
+.slash { list-style: none; margin: 0; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius-s); max-height: 14rem; overflow-y: auto; }
+.slash-row { padding: 6px 8px; border-radius: var(--radius-s); cursor: pointer; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.slash-row.on { background: var(--veil); color: var(--ink); outline: 2px solid var(--cipher); outline-offset: -2px; }
+.slash-row.on .muted { color: var(--stone); }
+@media (forced-colors: active) { .slash-row.on { outline: 2px solid Highlight; } }

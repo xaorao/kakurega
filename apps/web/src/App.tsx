@@ -144,6 +144,11 @@ export function App() {
   const [waiting, setWaiting] = createSignal(0);
   const [paletteOpen, setPaletteOpen] = createSignal(false);
   const [helpOpen, setHelpOpen] = createSignal(false);
+  {
+    const open = () => setHelpOpen(true);
+    window.addEventListener("kk:help", open);
+    onCleanup(() => window.removeEventListener("kk:help", open));
+  }
   let searchBox: HTMLInputElement | undefined;
   const shown = createMemo(() => {
     const q = query().trim().toLowerCase();
