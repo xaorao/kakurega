@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 135, PARTIAL 77, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 20. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 135, PARTIAL 78, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 19. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -207,7 +207,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | E-A1 | Event-sourced state, checkpoint after every step, resume | keep | KEPT | job store resumes |
 | E-A2 | Context compaction | BUILD in the OpenHands shape (tombstone event, View) with Hermes pieces (verbatim user tex | BUILT | summaries with data labelling and a wait after failure (sv55, sv56, sv68) |
 | E-A3 | Large tool output handling | ADAPT idea: spill to a labelled artifact handle, never to /tmp (plaintext) | LATER | worker loop |
-| E-A4 | Stuck / loop detection | ADAPT (MIT/Apache) at the worker, nudge once then end the run with a visible reason | OWED-L | the worker is bounded by max_turns and a token budget; no detector for repeated identical calls |
+| E-A4 | Stuck / loop detection | ADAPT (MIT/Apache) at the worker, nudge once then end the run with a visible reason | PARTIAL | worker stuck detector: repeated and alternating responses, told once then stopped with state saved; OpenHands detector read FULL; real-model effect NOT VERIFIED (worker-loop.md) |
 | E-A5 | Tool-call recovery | IMPROVE: bounded retry with backoff for transient model errors, never for policy denials | BUILT | bounded retry with backoff for busy or unreachable local models, never for refusals, bad requests, timeouts or mid-stream failures (model-retry.md) |
 | E-A6 | Budgets | keep | KEPT | budget.rs |
 | E-A7 | Subagents | BUILD later as separate sandboxed workers under the same broker with their own labels and  | LATER | separate sandboxed workers |

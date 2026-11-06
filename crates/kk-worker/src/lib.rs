@@ -2,6 +2,7 @@ use kk_evidence::b64;
 use kk_types::chat::{ChatMessage, ToolCall, ToolSpec};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+pub mod stuck;
 use std::io::{BufRead, Write};
 
 pub const STATE_VERSION: u64 = 1;
@@ -121,6 +122,8 @@ impl AgentState {
 pub enum Outcome {
     Finished(String),
     TurnLimit,
+    /// The agent was going round in circles and did not change course when told; the reason is for the owner.
+    Stuck(String),
     Cancelled,
 }
 
@@ -344,6 +347,17 @@ pub fn run(
         if state.turn >= config.max_turns {
             save(link, &state)?;
             return Ok(Outcome::TurnLimit);
+        }
+        match stuck::check(&state.messages) {
+            stuck::Verdict::Fine => {}
+            stuck::Verdict::Nudge(text) => {
+                state.messages.push(ChatMessage::new("user", &text));
+                save(link, &state)?;
+            }
+            stuck::Verdict::Stop(reason) => {
+                save(link, &state)?;
+                return Ok(Outcome::Stuck(reason));
+            }
         }
         let reply = link.call(json!({"op": "model.complete", "messages": state.messages, "tools": all_tools, "max_tokens": config.max_tokens}))?;
         let result = ok_result(reply)?;

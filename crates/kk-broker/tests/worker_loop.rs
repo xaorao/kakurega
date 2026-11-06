@@ -452,3 +452,104 @@ fn w07_a_restored_conversation_brings_its_taint_and_cannot_move_to_a_weaker_sess
         "{denied}"
     );
 }
+
+#[test]
+fn w20_a_model_that_repeats_one_call_is_told_once_and_then_stopped_with_its_state_saved() {
+    let calls: Vec<ChatMessage> = (0..9)
+        .map(|_| assistant_calls(vec![("c1", "list_files", json!({}))]))
+        .collect();
+    let mut b = broker_with(calls);
+    let s = session(&mut b, Label::new(Level::Internal));
+    let outcome = {
+        let mut link = InProc::new(&mut b, s);
+        run(
+            &mut link,
+            AgentState::new("sys", "task"),
+            &config(50),
+            &|| false,
+        )
+        .expect("run")
+    };
+    assert!(
+        matches!(&outcome, Outcome::Stuck(r) if r.contains("5 times") && r.contains("did not change course")),
+        "{outcome:?}"
+    );
+    let mut link = InProc::new(&mut b, s);
+    link.next = 500;
+    let saved = load_state(&mut link).unwrap().expect("state was saved");
+    let notices: Vec<&ChatMessage> = saved
+        .messages
+        .iter()
+        .filter(|m| m.role == "user" && m.content.starts_with(kk_worker::stuck::NOTICE_PREFIX))
+        .collect();
+    assert_eq!(notices.len(), 1, "told exactly once");
+    let asked = saved
+        .messages
+        .iter()
+        .filter(|m| m.role == "assistant" && !m.tool_calls.is_empty())
+        .count();
+    assert_eq!(asked, 5, "the model was asked five times, no more");
+    assert!(
+        saved
+            .messages
+            .iter()
+            .position(|m| m.content.starts_with(kk_worker::stuck::NOTICE_PREFIX))
+            .unwrap()
+            < saved.messages.len() - 2,
+        "the notice came before the last attempts"
+    );
+}
+
+#[test]
+fn w21_a_model_that_changes_course_after_the_notice_finishes_normally() {
+    let mut script: Vec<ChatMessage> = (0..3)
+        .map(|_| assistant_calls(vec![("c1", "list_files", json!({}))]))
+        .collect();
+    script.push(assistant_calls(vec![(
+        "c2",
+        "read_file",
+        json!({"path": "a.txt"}),
+    )]));
+    script.push(ChatMessage::new("assistant", "done"));
+    let mut b = broker_with(script);
+    let s = session(&mut b, Label::new(Level::Internal));
+    let mut link = InProc::new(&mut b, s);
+    let outcome = run(
+        &mut link,
+        AgentState::new("sys", "task"),
+        &config(50),
+        &|| false,
+    )
+    .expect("run");
+    assert_eq!(outcome, Outcome::Finished("done".into()));
+}
+
+#[test]
+fn w22_a_stopped_run_can_be_resumed_and_is_stopped_again_at_once_if_nothing_changed() {
+    let calls: Vec<ChatMessage> = (0..12)
+        .map(|_| assistant_calls(vec![("c1", "list_files", json!({}))]))
+        .collect();
+    let mut b = broker_with(calls);
+    let s = session(&mut b, Label::new(Level::Internal));
+    {
+        let mut link = InProc::new(&mut b, s);
+        assert!(matches!(
+            run(
+                &mut link,
+                AgentState::new("sys", "task"),
+                &config(50),
+                &|| false
+            )
+            .unwrap(),
+            Outcome::Stuck(_)
+        ));
+    }
+    let mut link = InProc::new(&mut b, s);
+    link.next = 600;
+    let state = load_state(&mut link).unwrap().unwrap();
+    let again = run(&mut link, state, &config(50), &|| false).unwrap();
+    assert!(
+        matches!(again, Outcome::Stuck(_)),
+        "the saved conversation still shows the loop: {again:?}"
+    );
+}

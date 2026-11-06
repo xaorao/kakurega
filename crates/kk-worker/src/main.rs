@@ -39,6 +39,10 @@ fn real_main() -> i32 {
             0
         }
         Ok(Outcome::TurnLimit) => 4,
+        Ok(Outcome::Stuck(reason)) => {
+            eprintln!("{}", json!({"worker_stopped": reason}));
+            6
+        }
         Ok(Outcome::Cancelled) => 5,
         Err(e) => report(&e),
     }
