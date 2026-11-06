@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 135, PARTIAL 90, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 7. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 135, PARTIAL 91, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 6. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -46,7 +46,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | B-W22 | Source/file viewer | ADAPT `@pierre/trees` and Pierre file view (Apache-2.0, credit in NOTICE) if CSP-clean; ot | PARTIAL | passage viewer with line numbers (row 15); no file tree |
 | B-W23 | Diff viewer and review | ADAPT `@pierre/diffs` (check CSP and wasm first, NOT VERIFIED) or own unified renderer; EX | BUILT | fix diff viewer with numbers, signs, changed words (df01-df12, e2e) |
 | B-W24 | Citations and source navigation | IMPROVE. Click a citation to open the file at that line with the quote highlighted, and sh | BUILT | quotes checked against files, passage opens in place, Copy location (row 15) |
-| B-W25 | Attachments and drag-drop | ADAPT the classify/dedupe/track/overlay logic. IMPROVE: dropping a file is an import into  | OWED-L | no drag and drop of files into chat; Documents asks about a chosen folder |
+| B-W25 | Attachments and drag-drop | ADAPT the classify/dedupe/track/overlay logic. IMPROVE: dropping a file is an import into  | PARTIAL | drop anywhere on the page, files-only drop target with Escape/leave, paste files, no duplicates (hash+name); OpenCode dropzone.tsx and attachments.ts read in full; no workspace-tree @mention drop (attachments.md) |
 | B-W26 | Document library / indexing | BUILD workspace sources: local embedding in the kernel, per-file state (pending, indexed,  | PARTIAL | Documents reads the chosen folder per question; no persistent index |
 | B-W27 | Artifacts and rich previews | EXCLUDE interactive artifacts for now: running model-written code in the page is the oppos | EXCLUDED | interactive artifacts not offered |
 | B-W28 | Composer behaviour | ADAPT the reducer (pure TS, MIT) including the `composing` guard; fix the IME bug independ | BUILT | composer: IME-safe Enter, drafts per conversation, history, picker, Esc/Ctrl+G (cm01-cp24, e2e) |

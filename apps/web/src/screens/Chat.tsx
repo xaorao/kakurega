@@ -1,7 +1,7 @@
 import { againPoint, editPoint, type BranchPoint } from "../branching";
-import { fileNotes, room, sizeText, MAX_BYTES } from "../attach";
+import { carriesFiles, fileNotes, fingerprint, pastedFiles, room, sizeText, MAX_BYTES } from "../attach";
 import { findMatches, stepTo, type Match } from "../find";
-import { batch, createEffect, createResource, createSignal, For, on, onCleanup, Show } from "solid-js";
+import { batch, createEffect, createResource, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { api, ApiError, streamChat, type AttachmentRead, type AttachmentSummary, type ChatHit, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
 import { t } from "../i18n";
 import { Markdown } from "../components/Markdown";
@@ -124,6 +124,8 @@ export function Chat() {
     reg?.delete("find-current");
   };
   let picker: HTMLInputElement | undefined;
+  // what each attached file is (its name and bytes), so the same file is not attached twice
+  const attachedKeys = new Map<string, string>();
   const addFiles = async (incoming: File[]) => {
     if (incoming.length === 0) return;
     const { take, over } = room(files().length, incoming);
@@ -133,9 +135,15 @@ export function Chat() {
         problems.push(t("files.tooBig", { name: f.name, max: sizeText(MAX_BYTES) }));
         continue;
       }
+      const key = await fingerprint(f);
+      if ([...attachedKeys.values()].includes(key)) {
+        problems.push(t("files.duplicate", { name: f.name }));
+        continue;
+      }
       setReading(t("files.reading", { name: f.name }));
       try {
         const a = await api.attachFile(f);
+        attachedKeys.set(a.id, key);
         setFiles([...files(), a]);
       } catch (err) {
         problems.push(t("files.error", { name: f.name, why: err instanceof ApiError ? err.message : t("chat.error") }));
@@ -145,6 +153,7 @@ export function Chat() {
     setFileInfo(problems.join(" "));
   };
   const dropFile = async (id: string) => {
+    attachedKeys.delete(id);
     setFiles(files().filter((f) => f.id !== id));
     setShown((m) => {
       const { [id]: _gone, ...rest } = m;
@@ -251,6 +260,37 @@ export function Chat() {
   };
   window.addEventListener("scroll", onScroll, { passive: true });
   onCleanup(() => window.removeEventListener("scroll", onScroll));
+  // A file dropped anywhere on the page is attached here; without this the browser would open it in place of the page and the
+  // message being written would be lost. Only drags that carry files count, so dragging selected text shows no drop target.
+  onMount(() => {
+    const over = (e: DragEvent) => {
+      if (!carriesFiles(e.dataTransfer?.types)) return;
+      e.preventDefault();
+      setDragging(true);
+    };
+    const leave = (e: DragEvent) => {
+      if (!e.relatedTarget) setDragging(false);
+    };
+    const drop = (e: DragEvent) => {
+      if (!carriesFiles(e.dataTransfer?.types)) return;
+      e.preventDefault();
+      setDragging(false);
+      if (!busy()) void addFiles(Array.from(e.dataTransfer?.files ?? []));
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDragging(false);
+    };
+    document.addEventListener("dragover", over);
+    document.addEventListener("dragleave", leave);
+    document.addEventListener("drop", drop);
+    document.addEventListener("keydown", esc);
+    onCleanup(() => {
+      document.removeEventListener("dragover", over);
+      document.removeEventListener("dragleave", leave);
+      document.removeEventListener("drop", drop);
+      document.removeEventListener("keydown", esc);
+    });
+  });
   const toEnd = () => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "auto" });
   let frame = 0;
   createEffect(
@@ -885,16 +925,6 @@ export function Chat() {
         <label for="chat-input">{t("chat.input")}</label>
         <div
           class={dragging() ? "stack attach drop" : "stack attach"}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragging(false);
-            void addFiles(Array.from(e.dataTransfer?.files ?? []));
-          }}
         >
           <div class="actions">
             <input ref={picker} type="file" multiple hidden aria-label={t("files.attach")} onChange={(e) => {
@@ -903,6 +933,7 @@ export function Chat() {
             }} />
             <button type="button" disabled={busy() || !!reading()} onClick={() => picker?.click()}>{t("files.attach")}</button>
             <span class="muted">{t("files.drop")}</span>
+            <Show when={dragging()}><strong role="status">{t("files.dropNow")}</strong></Show>
             <Show when={reading()}><span role="status" class="muted">{reading()}</span></Show>
           </div>
           <p class="muted">{t("files.attachHelp")}</p>
@@ -953,6 +984,12 @@ export function Chat() {
           rows="3"
           value={text()}
           onInput={(e) => setText(e.currentTarget.value)}
+          onPaste={(e) => {
+            const pasted = pastedFiles(e.clipboardData?.items);
+            if (pasted.length === 0) return;
+            e.preventDefault();
+            if (!busy()) void addFiles(pasted);
+          }}
           onKeyDown={(e) => {
             if (stopsReply(e, busy())) {
               e.preventDefault();

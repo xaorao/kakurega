@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fileNotes, room, sizeText, MAX_FILES, MAX_BYTES } from "../src/attach.ts";
+import { carriesFiles, fileNotes, fingerprint, pastedFiles, room, sizeText, MAX_FILES, MAX_BYTES } from "../src/attach.ts";
 import { en } from "../src/locales/en.ts";
 import { hi } from "../src/locales/hi.ts";
 
@@ -58,4 +58,38 @@ test("at06 the size limit is the service's, and a file at the limit is allowed w
   assert.equal(MAX_BYTES, 8 * 1024 * 1024);
   assert.ok(MAX_BYTES <= MAX_BYTES);
   assert.ok(MAX_BYTES + 1 > MAX_BYTES);
+});
+
+test("at10 only a drag that carries files shows a drop target", () => {
+  assert.equal(carriesFiles(["Files"]), true);
+  assert.equal(carriesFiles(["text/uri-list", "Files", "text/plain"]), true);
+  assert.equal(carriesFiles(["text/plain"]), false, "dragged text");
+  assert.equal(carriesFiles(["text/uri-list"]), false, "a dragged link");
+  assert.equal(carriesFiles([]), false);
+  assert.equal(carriesFiles(null), false);
+  assert.equal(carriesFiles(undefined), false);
+  assert.equal(carriesFiles(["files"]), false, "the type is case-sensitive, as the browser's is");
+});
+
+test("at11 a paste gives its files only, and a paste of text gives none so it is left alone", () => {
+  const file = (n) => new File(["x"], n);
+  const item = (kind, f) => ({ kind, getAsFile: () => f ?? null });
+  assert.deepEqual(pastedFiles([item("string"), item("string")]).length, 0);
+  assert.deepEqual(pastedFiles([item("file", file("a.png")), item("string"), item("file", file("b.txt"))]).map((f) => f.name), ["a.png", "b.txt"]);
+  assert.deepEqual(pastedFiles([item("file", null)]), [], "a file item that gives nothing");
+  assert.deepEqual(pastedFiles(null), []);
+  assert.deepEqual(pastedFiles(undefined), []);
+});
+
+test("at12 the same name and bytes are the same attachment; a different name or different bytes are not", async () => {
+  const f = (name, body, t = 1) => new File([body], name, { lastModified: t });
+  const a = await fingerprint(f("a.txt", "hello"));
+  assert.equal(a, await fingerprint(f("a.txt", "hello", 999)), "the modified time does not matter when the bytes can be summed up");
+  assert.notEqual(a, await fingerprint(f("b.txt", "hello")));
+  assert.notEqual(a, await fingerprint(f("a.txt", "hellp")));
+  // without a way to read the bytes the weaker key is used, and still tells these apart
+  const weak = (name, size, t) => fingerprint({ name, size, lastModified: t });
+  assert.equal(await weak("a.txt", 5, 1), await weak("a.txt", 5, 1));
+  assert.notEqual(await weak("a.txt", 5, 1), await weak("a.txt", 6, 1));
+  assert.notEqual(await weak("a.txt", 5, 1), await weak("a.txt", 5, 2));
 });

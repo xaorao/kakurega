@@ -932,6 +932,67 @@ try {
   await page.locator(".file-chip", { hasText: "dropped.txt" }).getByRole("button", { name: "Remove" }).click();
   await page.locator(".file-chip").waitFor({ state: "detached" });
   check("a dropped file is read like a chosen one and Remove takes it away", (await page.locator(".file-chip").count()) === 0);
+  // a drag of text shows no drop target; a drag of files shows one anywhere on the page and Escape takes it away
+  const dragEvent = (type, types, target = "body") => page.evaluate(([type, types, target]) => {
+    const dt = new DataTransfer();
+    for (const t of types) { if (t === "Files") dt.items.add(new File(["x\n"], "probe.txt", { type: "text/plain" })); else dt.setData(t, "x"); }
+    document.querySelector(target).dispatchEvent(new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }));
+  }, [type, types, target]);
+  await dragEvent("dragover", ["text/plain"]);
+  check("dragging text over the page shows no drop target", (await page.getByText("Drop to attach", { exact: true }).count()) === 0);
+  await dragEvent("dragover", ["Files"], "h1");
+  await page.getByText("Drop to attach", { exact: true }).waitFor();
+  await page.screenshot({ path: join(shots, "13f-drop-target.png") });
+  await page.keyboard.press("Escape");
+  await page.getByText("Drop to attach", { exact: true }).waitFor({ state: "detached" });
+  check("dragging files over any part of the page shows the drop target and Escape takes it away", true);
+  // a file dropped outside the message box is attached, not opened in place of the page (which would lose the message)
+  await page.getByLabel("Your message").fill("keep this draft");
+  const urlBefore = page.url();
+  await page.evaluate(async () => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(["outside words\n"], "outside.txt", { type: "text/plain" }));
+    window.__dropPrevented = !document.querySelector("h1").dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+  });
+  await page.locator(".file-chip", { hasText: "outside.txt" }).waitFor();
+  check("a file dropped outside the message box is attached, the browser's own handling is cancelled and the draft stays", (await page.evaluate(() => window.__dropPrevented)) === true && page.url() === urlBefore && (await page.getByLabel("Your message").inputValue()) === "keep this draft");
+  // the same file again is not attached twice, and says so
+  await page.evaluate(async () => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(["outside words\n"], "outside.txt", { type: "text/plain" }));
+    document.querySelector(".attach").dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+  });
+  await page.getByText("outside.txt is already attached.").waitFor();
+  check("the same file dropped twice is attached once and the page says it is already attached", (await page.locator(".file-chip", { hasText: "outside.txt" }).count()) === 1);
+  // a file pasted into the message box is attached; pasted text still just pastes
+  await page.evaluate(async () => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(["pasted words\n"], "pasted.txt", { type: "text/plain" }));
+    window.__filePastePrevented = !document.querySelector("#chat-input").dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+  });
+  await page.locator(".file-chip", { hasText: "pasted.txt" }).waitFor();
+  check("a file pasted into the message box is attached and the browser does not paste it as text", (await page.evaluate(() => window.__filePastePrevented)) === true);
+  await page.getByLabel("Your message").fill("");
+  await page.getByLabel("Your message").focus();
+  await page.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.setData("text/plain", "plain pasted text");
+    window.__textPastePrevented = !document.querySelector("#chat-input").dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+  });
+  check("pasting text only is left to the browser", (await page.evaluate(() => window.__textPastePrevented)) === false && (await page.locator(".file-chip").count()) === 2);
+  await page.getByLabel("Your message").fill("");
+  for (let i = 0; i < 2; i++) await page.locator(".file-chip").first().getByRole("button", { name: "Remove" }).click();
+  await page.locator(".file-chip").waitFor({ state: "detached" });
+  // a removed file can be attached again
+  await page.evaluate(async () => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(["outside words\n"], "outside.txt", { type: "text/plain" }));
+    document.querySelector(".attach").dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+  });
+  await page.locator(".file-chip", { hasText: "outside.txt" }).waitFor();
+  check("a file that was removed can be attached again", (await page.getByText("outside.txt is already attached.").count()) === 0);
+  await page.locator(".file-chip").first().getByRole("button", { name: "Remove" }).click();
+  await page.locator(".file-chip").waitFor({ state: "detached" });
   // a file over the size limit is refused by the page, with its reason, before anything is sent
   await page.locator('input[type="file"]').setInputFiles([{ name: "huge.txt", mimeType: "text/plain", buffer: Buffer.alloc(8 * 1024 * 1024 + 1, 97) }]);
   await page.getByText("huge.txt is larger than 8 MB and was not sent.").waitFor();
