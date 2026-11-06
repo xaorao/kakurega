@@ -399,6 +399,70 @@ impl Backoff {
     }
 }
 
+/// How long Telegram may hold a poll open waiting for a message, and how long this side waits for the answer.
+pub const LONG_POLL_SECS: u64 = 25;
+const POLL_CLIENT_TIMEOUT_SECS: u64 = 35;
+
+/// What one poll came back with, as the polling thread reports it to the one that owns the bridge.
+#[derive(Debug)]
+enum Polled {
+    Updates(Vec<Value>),
+    /// 401: the token is no longer accepted.
+    Rejected,
+    /// 409: another bridge is polling this bot, or a webhook is set.
+    Conflict,
+    Refused(u16),
+    Unreachable(String),
+}
+
+/// Asks Telegram for messages again and again, on a thread of its own, so that waiting for a message never delays anything else
+/// the bridge does (announcing a finished review, flushing the outbox, writing its status). A poll that finds nothing is held
+/// open by Telegram for up to `LONG_POLL_SECS`, so an idle bridge makes a few requests a minute instead of one every two
+/// seconds, and a message that arrives ends the wait at once. Errors back off with a growing, jittered pause. The offset is
+/// moved past a batch only after it has been handed over.
+fn poll_loop(api: String, token: String, tx: std::sync::mpsc::Sender<Polled>) {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_global(Some(Duration::from_secs(POLL_CLIENT_TIMEOUT_SECS)))
+        .build()
+        .into();
+    let mut offset: i64 = 0;
+    let mut backoff = Backoff::default();
+    loop {
+        let url = format!("{api}/bot{token}/getUpdates?timeout={LONG_POLL_SECS}&offset={offset}&allowed_updates=%5B%22message%22%5D");
+        let msg = match agent.get(&url).call() {
+            Ok(mut r) if r.status().as_u16() == 200 => {
+                backoff.succeeded();
+                let v: Value = r.body_mut().read_json().unwrap_or(Value::Null);
+                let list = v["result"].as_array().cloned().unwrap_or_default();
+                let next = list
+                    .iter()
+                    .filter_map(|u| u["update_id"].as_i64())
+                    .max()
+                    .map_or(offset, |m| offset.max(m + 1));
+                if tx.send(Polled::Updates(list)).is_err() {
+                    return;
+                }
+                offset = next;
+                continue;
+            }
+            Ok(r) if r.status().as_u16() == 401 => Polled::Rejected,
+            Ok(r) if r.status().as_u16() == 409 => Polled::Conflict,
+            Ok(r) => Polled::Refused(r.status().as_u16()),
+            Err(e) => Polled::Unreachable(scrub(&e.to_string(), &token)),
+        };
+        let (pause, stop) = match &msg {
+            Polled::Rejected => (Duration::ZERO, true),
+            Polled::Conflict => (Duration::from_secs(10), false),
+            _ => (backoff.failed(jitter()), false),
+        };
+        if tx.send(msg).is_err() || stop {
+            return;
+        }
+        std::thread::sleep(pause);
+    }
+}
+
 fn jitter() -> f64 {
     f64::from(
         std::time::SystemTime::now()
@@ -545,12 +609,15 @@ pub fn run(args: &[String]) -> u8 {
         );
     }
     println!("Telegram bridge running. It sends counts and ids only, never file contents. Ctrl-C stops it.");
-    let mut offset: i64 = 0;
+    let (poll_tx, polled) = std::sync::mpsc::channel::<Polled>();
+    {
+        let (api, token) = (api.clone(), token.clone());
+        std::thread::spawn(move || poll_loop(api, token, poll_tx));
+    }
     let mut outbox = Outbox::default();
     let mut tracked: BTreeMap<String, i64> = BTreeMap::new();
     let mut last_poll = Instant::now() - Duration::from_secs(10);
     let mut status = Status::default();
-    let mut backoff = Backoff::default();
     let mut status_written = Instant::now() - Duration::from_secs(60);
     loop {
         reload_code(&mut bridge);
@@ -576,17 +643,13 @@ pub fn run(args: &[String]) -> u8 {
             }
             r
         });
-        let url = format!("{api}/bot{token}/getUpdates?timeout=2&offset={offset}&allowed_updates=%5B%22message%22%5D");
-        match agent.get(&url).call() {
-            Ok(mut r) if r.status().as_u16() == 200 => {
-                backoff.succeeded();
+        match polled.recv_timeout(Duration::from_millis(500)) {
+            Ok(Polled::Updates(list)) => {
                 status.last_poll_ok = Some(unix_now());
                 if status.last_error == "Telegram is not reachable" {
                     status.last_error.clear();
                 }
-                let v: Value = r.body_mut().read_json().unwrap_or(Value::Null);
-                for u in v["result"].as_array().cloned().unwrap_or_default() {
-                    offset = offset.max(u["update_id"].as_i64().unwrap_or(0) + 1);
+                for u in list {
                     let (outs, bound) = bridge.handle_update(&mut admin, &u);
                     if let Some(chat) = bound {
                         save_bound(&dir, chat);
@@ -597,25 +660,24 @@ pub fn run(args: &[String]) -> u8 {
                     }
                 }
             }
-            Ok(r) if r.status().as_u16() == 401 => {
+            Ok(Polled::Rejected) => {
                 eprintln!("Telegram rejected the bot token (401). Check TELEGRAM_BOT_TOKEN; the bridge is stopping.");
                 return 1;
             }
-            Ok(r) if r.status().as_u16() == 409 => {
-                eprintln!("Telegram reports a conflict (409): another bridge is polling this bot, or a webhook is set for it. Stop the other one; trying again in 10 seconds.");
-                std::thread::sleep(Duration::from_secs(10));
+            Ok(Polled::Conflict) => {
+                eprintln!("Telegram reports a conflict (409): another bridge is polling this bot, or a webhook is set for it. Stop the other bridge or remove the webhook; this one keeps trying.");
             }
-            Ok(r) => {
-                eprintln!("telegram answered {}", r.status());
-                std::thread::sleep(backoff.failed(jitter()));
+            Ok(Polled::Refused(code)) => {
+                eprintln!("telegram answered {code}");
             }
-            Err(e) => {
+            Ok(Polled::Unreachable(why)) => {
                 status.last_error = "Telegram is not reachable".into();
-                eprintln!(
-                    "telegram is not reachable: {}",
-                    scrub(&e.to_string(), &token)
-                );
-                std::thread::sleep(backoff.failed(jitter()));
+                eprintln!("telegram is not reachable: {why}");
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                eprintln!("the polling thread stopped unexpectedly; the bridge is stopping.");
+                return 1;
             }
         }
         if status_written.elapsed() >= Duration::from_secs(30) {

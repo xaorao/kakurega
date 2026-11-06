@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 import urllib.request
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 repo = Path(__file__).resolve().parent.parent.parent
@@ -21,6 +21,8 @@ os.rename(work / "root/payments-service/_env", work / "root/payments-service/.en
 kaku = str(repo / "target/debug/kaku")
 data = work / "data"
 TOKEN = "123456789:FAKE-token-for-tests-AAAA"
+BAD = "111111111:revoked-token-for-tests-BBBB"
+CONFLICT = "222222222:second-poller-for-tests-CCCC"
 
 results = []
 
@@ -49,14 +51,30 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        for tok, code in ((BAD, 401), (CONFLICT, 409)):
+            if self.path.startswith(f"/bot{tok}/getUpdates"):
+                body = json.dumps({"ok": False, "description": "test"}).encode()
+                self.send_response(code)
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
         if not self.path.startswith(f"/bot{TOKEN}/getUpdates"):
             self.send_response(404); self.end_headers(); return
+        hold = int(self.path.split("timeout=")[1].split("&")[0]) if "timeout=" in self.path else 0
         with lock:
-            offset = int(self.path.split("offset=")[1].split("&")[0]) if "offset=" in self.path else 0
-            # like Telegram, updates below the requested offset are confirmed and gone
-            queue[:] = [u for u in queue if u["update_id"] >= offset]
-            ups = list(queue)
-        time.sleep(0.2)
+            polls.append((time.time(), hold))
+        # like Telegram: a poll with nothing to return is held open until a message arrives or the timeout passes
+        end = time.time() + hold
+        while True:
+            with lock:
+                offset = int(self.path.split("offset=")[1].split("&")[0]) if "offset=" in self.path else 0
+                # updates below the requested offset are confirmed and gone
+                queue[:] = [u for u in queue if u["update_id"] >= offset]
+                ups = list(queue)
+            if ups or time.time() >= end or closing[0]:
+                break
+            time.sleep(0.05)
         self.reply({"ok": True, "result": ups})
 
     def do_POST(self):
@@ -81,9 +99,11 @@ class H(BaseHTTPRequestHandler):
 
 
 menus = []
+polls = []
+closing = [False]
 edits = []
 msg_ids = [100]
-fake = HTTPServer(("127.0.0.1", 0), H)
+fake = ThreadingHTTPServer(("127.0.0.1", 0), H)
 threading.Thread(target=fake.serve_forever, daemon=True).start()
 api = f"http://127.0.0.1:{fake.server_port}"
 
@@ -129,7 +149,8 @@ try:
     say(222, f"/pair {code}", "group")
     say(111, "/status")
     time.sleep(2)
-    check("the phone's command menu is set once to exactly the three commands the bridge answers", len(menus) >= 1 and [c["command"] for c in menus[0]["commands"]] == ["status", "reviews", "help"], str(menus)[:120])
+    check("every poll asks Telegram to hold it open for 25 seconds", len(polls) >= 1 and all(h == 25 for _, h in polls), str(polls[:3]))
+    check("the phone's command menu is set once to exactly the four commands the bridge answers", len(menus) >= 1 and [c["command"] for c in menus[0]["commands"]] == ["status", "reviews", "mute", "help"], str(menus)[:120])
     st = data / "telegram-status.json"
     for _ in range(100):
         if st.exists(): break
@@ -159,8 +180,10 @@ try:
     job = started["id"]
     m = wait_sent(lambda m: job in m["text"] and "finished" in m["text"], timeout=120)
     check("a finished review is announced with its id and counts", m is not None, (m or {}).get("text", "")[:120])
+    t_ap = time.time()
     ap = adm(f"/admin/jobs/{job}/approval", {})
     m = wait_sent(lambda m: "approval for " + job in m["text"])
+    check("a notice is not delayed by the open poll: it is sent within 6 seconds of the approval being requested", m is not None and time.time() - t_ap < 6, f"{time.time() - t_ap:.1f}s")
     check("a waiting approval is announced and says to decide on the computer", m is not None and "Nothing is sent until you approve there" in m["text"])
 
     aid = ap.get("id") or ap.get("approval") or ap.get("approval_id")
@@ -179,10 +202,19 @@ try:
     b1.terminate(); b1.wait(timeout=10)
     n_before = len(sent)
     b2 = start_bridge()
+    time.sleep(2)
+    t_say = time.time()
     say(111, "/reviews")
     m = wait_sent(lambda m: m["text"].startswith(job))
     check("after a restart the bridge still serves the same chat without pairing", m is not None)
+    check("a message that arrives while a poll is held open is answered at once, not after the hold", m is not None and time.time() - t_say < 3, f"{time.time() - t_say:.1f}s")
     time.sleep(4)
+    with lock:
+        mark = len(polls)
+    time.sleep(12)
+    with lock:
+        idle = len(polls) - mark
+    check("an idle bridge makes at most one request in twelve seconds, not one every two", idle <= 1, f"{idle} requests")
     with lock:
         replay = [x for x in sent[n_before:] if "finished" in x["text"] or "approval for" in x["text"]]
     check("and does not replay old notifications", not replay, str(replay)[:100])
@@ -191,6 +223,23 @@ try:
     for marker in ["tg-recipient", "Acme", "payments", "session.py", "Token still valid", "hunter2", "/Users/", ".env"]:
         check(f"no message ever contained `{marker}`", marker not in everything)
 
+    # a token Telegram no longer accepts stops the bridge with a clear message; a second poller (409) does not stop it
+    bad = subprocess.Popen([kaku, "telegram", "--data-dir", str(data), "--api-base", api], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(env, TELEGRAM_BOT_TOKEN=BAD))
+    bridges.append(bad)
+    try:
+        bad.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        pass
+    bout, berr = (bad.communicate(timeout=5) if bad.poll() is not None else ("", ""))
+    check("a token that Telegram rejects (401) stops the bridge with a message that says so", bad.returncode == 1 and "rejected the bot token (401)" in berr and BAD not in berr and BAD.split(":")[1] not in berr, f"rc={bad.returncode} {berr[:120]}")
+    conflict = subprocess.Popen([kaku, "telegram", "--data-dir", str(data), "--api-base", api], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(env, TELEGRAM_BOT_TOKEN=CONFLICT))
+    bridges.append(conflict)
+    time.sleep(4)
+    alive = conflict.poll() is None
+    conflict.terminate()
+    cout, cerr = conflict.communicate(timeout=10)
+    check("a conflict (409) is explained once, not over and over, and does not stop the bridge", alive and "conflict (409)" in cerr and cerr.count("conflict (409)") <= 1, f"alive={alive} said {cerr.count(chr(99) + 'onflict (409)')} times {cerr[:120]}")
+    closing[0] = True
     fake.shutdown()
     fake.server_close()
     time.sleep(6)
