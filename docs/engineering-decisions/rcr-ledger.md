@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 119, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 17, OWED-L 41. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 120, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 16, OWED-L 41. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -263,7 +263,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | F-E3 | 7: Content-Security-Policy | Re-verify in the packaged app | BUILT | CSP blocks inline script, eval, beacons (desktop attack suite 23/23) |
 | F-E4 | 13, 14, 15: navigation, new windows, `openExternal` | KEEP; add `will-redirect` and `will-attach-webview` (present) review | BUILT | navigation, new windows, will-redirect refused (desktop attack suite) |
 | F-E5 | 17: validate IPC sender | KEEP; if IPC is added, port per window with frame-origin check (record already says so) | KEPT | no IPC added |
-| F-E6 | 18: avoid `file://`, use a custom protocol | IMPROVE: custom scheme or loopback with per-launch secret in a header added by the main pr | OWED-M | per-launch secret for the loopback origin still open |
+| F-E6 | 18: avoid `file://`, use a custom protocol | IMPROVE: custom scheme or loopback with per-launch secret in a header added by the main pr | BUILT | per-launch shell secret on stdin, 403 SHELL_ONLY for every other program; pairing lockout no longer blocks the right code (ws13b/c, ws20-22, Electron e2e) |
 | F-E7 | 19: fuses | IMPROVE: review `LoadBrowserProcessSpecificV8Snapshot` and `EnableEmbeddedAsarIntegrityVal | BUILT | fuses and asar integrity with a tested tamper response (II-13b, II-13c) |
 | F-E8 | 16: current Electron | BUILD update policy | OWED-L | no update policy for Electron itself |
 | F-E9 | Single instance lock | ADAPT from OpenCode (MIT) | BUILT | second launch exits (desktop-shell.md) |

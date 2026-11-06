@@ -71,16 +71,12 @@ impl Security {
         code
     }
 
+    /// Exchanges a one-time pairing code for a session.
+    ///
+    /// The code is checked first. A code is 128 random bits, so guessing one is hopeless however fast it is tried; what the
+    /// throttle protects is the log and the CPU, not the code. If a lockout also refused the right code, any local program
+    /// could keep the owner out of their own app by sending wrong codes, so only wrong guesses are ever throttled.
     pub fn pair(&self, code: &str) -> Result<(String, SessionInfo), PairError> {
-        {
-            let mut f = self.failures.lock().expect("failure lock");
-            if let Some(until) = f.1 {
-                if Instant::now() < until {
-                    return Err(PairError::Locked);
-                }
-                *f = (0, None);
-            }
-        }
         let h = hash(code);
         let ok = {
             let mut p = self.pairing.lock().expect("pairing lock");
@@ -91,12 +87,19 @@ impl Security {
         };
         if !ok {
             let mut f = self.failures.lock().expect("failure lock");
+            if let Some(until) = f.1 {
+                if Instant::now() < until {
+                    return Err(PairError::Locked);
+                }
+                *f = (0, None);
+            }
             f.0 += 1;
             if f.0 >= MAX_FAILED_PAIRINGS {
                 f.1 = Some(Instant::now() + LOCKOUT);
             }
             return Err(PairError::Invalid);
         }
+        *self.failures.lock().expect("failure lock") = (0, None);
         let token = random_token(32);
         let csrf = random_token(32);
         self.sessions.lock().expect("session lock").insert(

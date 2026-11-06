@@ -18,6 +18,9 @@ pub struct Options {
     pub ui_dir: Option<PathBuf>,
     pub security: Arc<Security>,
     pub extension: Arc<dyn Extension>,
+    /// When set, the app answers only requests that carry it in `x-kk-shell`: the desktop shell adds it to its own window's
+    /// requests, so no other program on the computer can even load the page. At least 32 characters.
+    pub shell_secret: Option<String>,
 }
 
 impl Default for Options {
@@ -26,11 +29,18 @@ impl Default for Options {
             ui_dir: None,
             security: Arc::new(Security::new()),
             extension: Arc::new(NoExtension),
+            shell_secret: None,
         }
     }
 }
 
 pub fn start(options: Options) -> std::io::Result<Companion> {
+    if options.shell_secret.as_ref().is_some_and(|s| s.len() < 32) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "the shell secret must be at least 32 characters",
+        ));
+    }
     let listener = TcpListener::bind("127.0.0.1:0")?;
     listener.set_nonblocking(true)?;
     let addr = listener.local_addr()?;
@@ -39,6 +49,7 @@ pub fn start(options: Options) -> std::io::Result<Companion> {
         addr,
         ui_dir: options.ui_dir,
         extra: options.extension,
+        shell_secret: options.shell_secret,
     };
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     let thread = std::thread::spawn(move || {

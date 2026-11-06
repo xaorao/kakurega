@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 
 pub const BODY_LIMIT: usize = 1 << 20;
 pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
@@ -21,6 +22,7 @@ pub struct AppState {
     pub addr: SocketAddr,
     pub ui_dir: Option<PathBuf>,
     pub extra: Arc<dyn Extension>,
+    pub shell_secret: Option<String>,
 }
 
 pub trait Extension: Send + Sync {
@@ -116,6 +118,24 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
             "BAD_HOST",
             "this service answers only on its own loopback address",
         ));
+    }
+    if let Some(secret) = &state.shell_secret {
+        let path = req.uri().path();
+        // the admin door has its token and the extension door its own pairing; everything else is the shell's window
+        if !path.starts_with("/admin/") && !path.starts_with("/ext/") {
+            let presented = req
+                .headers()
+                .get("x-kk-shell")
+                .map(|h| h.as_bytes())
+                .unwrap_or_default();
+            if !bool::from(secret.as_bytes().ct_eq(presented)) {
+                return secure(error(
+                    StatusCode::FORBIDDEN,
+                    "SHELL_ONLY",
+                    "this app answers only its own window",
+                ));
+            }
+        }
     }
     let method = req.method().clone();
     let safe_method = matches!(method, Method::GET | Method::HEAD);

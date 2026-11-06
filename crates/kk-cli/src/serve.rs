@@ -116,7 +116,26 @@ fn serve(args: &[String]) -> Result<(), String> {
             .into_iter()
             .find(|p| p.join("index.html").exists())
         });
+    // The desktop shell hands over its per-launch secret on stdin, never in the environment or arguments, which the review
+    // workers would inherit and other programs could list.
+    let shell_secret = if args.iter().any(|a| a == "--shell-secret-stdin") {
+        let mut line = String::new();
+        std::io::stdin()
+            .read_line(&mut line)
+            .map_err(|e| format!("cannot read the shell secret: {e}"))?;
+        let secret = line.trim().to_string();
+        if secret.len() < 32 {
+            return Err(
+                "--shell-secret-stdin needs a secret of at least 32 characters on the first line"
+                    .into(),
+            );
+        }
+        Some(secret)
+    } else {
+        None
+    };
     let companion = start(Options {
+        shell_secret,
         ui_dir: ui_dir.clone(),
         extension: Arc::new(Routes(service.clone())),
         ..Options::default()

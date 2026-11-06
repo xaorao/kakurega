@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { readAdmin, adminClient } from "./admin.mjs";
 import { createApprover } from "./approval.mjs";
-import { isAppUrl, allowPermission, mayOpenExternally, windowOptions } from "./policy.mjs";
+import { randomBytes } from "node:crypto";
+import { isAppUrl, allowPermission, mayOpenExternally, windowOptions, newShellSecret, withShellSecret, SHELL_HEADER } from "./policy.mjs";
 import { createRestartPolicy, rendererCrashed } from "./recovery.mjs";
 
 const dataDir = process.env.KAKUREGA_DATA_DIR ?? join(homedir(), ".kakurega");
@@ -15,6 +16,9 @@ let child = null;
 let window = null;
 // The companion listens on a new port every time it starts, so everything that talks to it reads the current one.
 let current = null;
+// Chosen anew for every companion this shell starts and given to it on stdin. Only this window's requests carry it, so no
+// other program on the computer can load the app or try its pairing door.
+let shellSecret = null;
 const companionPolicy = createRestartPolicy();
 const rendererPolicy = createRestartPolicy({ baseDelayMs: 0 });
 
@@ -48,7 +52,7 @@ async function waitForAdmin() {
   for (let i = 0; i < 100; i++) {
     try {
       const admin = await readAdmin(dataDir);
-      const r = await fetch(admin.base + "/api/session");
+      const r = await fetch(admin.base + "/api/session", { headers: shellSecret ? { [SHELL_HEADER]: shellSecret } : {} });
       if (r.ok) return admin;
     } catch {}
     await sleep(100);
@@ -89,7 +93,10 @@ async function connect() {
 }
 
 function launchCompanion() {
-  child = spawn(kakuBin, ["serve", "--data-dir", dataDir, ...(process.env.KAKU_ARGS ? process.env.KAKU_ARGS.split(" ") : [])], { stdio: "ignore" });
+  shellSecret = newShellSecret(randomBytes);
+  child = spawn(kakuBin, ["serve", "--data-dir", dataDir, "--shell-secret-stdin", ...(process.env.KAKU_ARGS ? process.env.KAKU_ARGS.split(" ") : [])], { stdio: ["pipe", "ignore", "ignore"] });
+  child.stdin.on("error", () => {});
+  child.stdin.end(shellSecret + "\n");
   const mine = child;
   mine.on("exit", () => {
     if (app.isQuitting || child !== mine) return;
@@ -119,6 +126,9 @@ async function start() {
   session.defaultSession.setPermissionCheckHandler(() => allowPermission());
   session.defaultSession.setDevicePermissionHandler(() => false);
 
+  session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ["http://127.0.0.1/*"] }, (details, callback) => {
+    callback({ requestHeaders: withShellSecret(details.url, details.requestHeaders, current.admin.origin, shellSecret) });
+  });
   window = new BrowserWindow(windowOptions());
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (mayOpenExternally(url)) shell.openExternal(url);

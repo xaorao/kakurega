@@ -117,3 +117,29 @@ test("ds11 only a real crash counts: a window closing normally does not", () => 
   for (const reason of ["crashed", "oom", "killed", "launch-failed", "integrity-failure", "abnormal-exit"]) assert.equal(rendererCrashed({ reason }), true, reason);
   assert.equal(rendererCrashed(undefined), false);
 });
+
+import { randomBytes } from "node:crypto";
+import { newShellSecret, withShellSecret, SHELL_HEADER } from "../src/policy.mjs";
+
+test("ds20 a shell secret is long, fresh each time and safe in a header", () => {
+  const seen = new Set();
+  for (let i = 0; i < 50; i++) {
+    const s = newShellSecret(randomBytes);
+    assert.match(s, /^[A-Za-z0-9_-]{43}$/);
+    seen.add(s);
+  }
+  assert.equal(seen.size, 50);
+});
+
+test("ds21 the secret goes only to the companion's own origin and replaces anything a page set", () => {
+  const secret = "s".repeat(43);
+  const h = { Accept: "*/*" };
+  assert.deepEqual(withShellSecret(origin + "/api/health", h, origin, secret), { Accept: "*/*", [SHELL_HEADER]: secret });
+  for (const u of ["http://127.0.0.1:5001/", "http://127.0.0.1.evil.com:5000/", "https://127.0.0.1:5000/", "http://evil.com/#http://127.0.0.1:5000/", "http://127.0.0.1:5000@evil.com/", "not a url", ""]) {
+    assert.equal(withShellSecret(u, h, origin, secret), h, u);
+  }
+  assert.equal(withShellSecret(origin + "/", h, origin, null), h, "no secret, nothing added");
+  assert.equal(withShellSecret(origin + "/", h, origin, ""), h);
+  const sneaky = withShellSecret(origin + "/", { "X-KK-Shell": "page-supplied", Accept: "*/*" }, origin, secret);
+  assert.deepEqual(sneaky, { Accept: "*/*", [SHELL_HEADER]: secret }, "a page-supplied value never survives");
+});

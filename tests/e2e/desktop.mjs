@@ -1,3 +1,4 @@
+import "./quiet_crash.mjs";
 import { spawnSync } from "node:child_process";
 import { _electron as electron } from "playwright-core";
 import { cpSync, mkdirSync, renameSync, rmSync } from "node:fs";
@@ -44,6 +45,14 @@ try {
   check("the window opens the workspace already paired, no link typed", true);
   check("the pairing code is gone from the address", !page.url().includes("pair="), page.url());
   await page.screenshot({ path: join(shots, "desktop-01-workspace.png") });
+
+  // another program on this computer (this test runner is one) is refused everywhere, with and without a guess at the secret
+  const appOrigin = new URL(page.url()).origin;
+  for (const [path, init] of [["/", {}], ["/api/health", {}], ["/api/session", {}], ["/api/pair", { method: "POST", headers: { Origin: appOrigin, "content-type": "application/json" }, body: JSON.stringify({ code: "x" }) }], ["/", { headers: { "x-kk-shell": "guess".repeat(10) } }]]) {
+    const r = await fetch(appOrigin + path, init);
+    const body = await r.text();
+    check(`an outside program is refused at ${path}${init.headers?.["x-kk-shell"] ? " even with a guessed secret" : ""}`, r.status === 403 && body.includes("SHELL_ONLY"), `${r.status} ${body.slice(0, 80)}`);
+  }
 
   await app.evaluate(({ shell }) => { shell.openExternal = async () => {}; });
   const exposure = await page.evaluate(() => ({ require: typeof require, process: typeof process, electron: typeof window.electron, ipc: typeof window.ipcRenderer }));

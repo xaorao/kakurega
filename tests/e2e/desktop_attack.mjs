@@ -1,3 +1,4 @@
+import "./quiet_crash.mjs";
 import { _electron as electron } from "playwright-core";
 import { cpSync, mkdirSync, renameSync, rmSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -107,7 +108,8 @@ try {
   const withCookie = { cookie: `${cookieName}=${cookieValue}` };
   const base = { host: `127.0.0.1:${port}` };
   const ok = await rawHttp(port, { path: "/api/session", headers: { ...base, ...withCookie } });
-  check("control: the cookie works from the same host with no Origin header (a same-user local process with the cookie is not covered by the browser protections)", ok.status === 200, String(ok.status));
+  const shellOnly = ok.status === 403 && String(ok.body).includes("SHELL_ONLY");
+  check("a program outside the window is refused even with the session cookie (the per-launch shell secret; before it, a same-user process with the cookie was served)", shellOnly, `${ok.status} ${String(ok.body).slice(0, 60)}`);
   const evilOrigin = await rawHttp(port, { path: "/api/jobs", method: "POST", headers: { ...base, ...withCookie, origin: "http://evil.example", "content-type": "application/json" }, body: "{}" });
   const crossSite = await rawHttp(port, { path: "/api/jobs", method: "POST", headers: { ...base, ...withCookie, "sec-fetch-site": "cross-site", "content-type": "application/json" }, body: "{}" });
   const rebound = await rawHttp(port, { path: "/api/session", headers: { host: `evil.example:${port}`, ...withCookie } });

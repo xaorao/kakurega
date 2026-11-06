@@ -1,3 +1,4 @@
+import "./quiet_crash.mjs";
 import { _electron as electron } from "playwright-core";
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, renameSync, rmSync, readFileSync, existsSync } from "node:fs";

@@ -170,7 +170,7 @@ fn ws11_other_origins_cannot_use_the_service_even_from_localhost() {
 }
 
 #[test]
-fn ws13_pairing_codes_are_single_use_expire_and_lock_out_guessers() {
+fn ws13_pairing_codes_are_single_use_expire_and_throttle_guessers() {
     let c = start(Options::default()).unwrap();
     let code = c.security.issue_pairing_code();
     assert_eq!(pair_with(&c, &code).status, 200);
@@ -185,16 +185,65 @@ fn ws13_pairing_codes_are_single_use_expire_and_lock_out_guessers() {
     std::thread::sleep(Duration::from_millis(120));
     assert_eq!(pair_with(&c2, &expiring).status, 401, "expired");
     let c3 = start(Options::default()).unwrap();
-    let valid = c3.security.issue_pairing_code();
     for _ in 0..5 {
         assert_eq!(pair_with(&c3, "guess").status, 401);
     }
     assert_eq!(pair_with(&c3, "guess").status, 429);
+}
+
+#[test]
+fn ws13b_wrong_guesses_are_throttled_but_they_can_never_keep_the_owner_out() {
+    let c = start(Options::default()).unwrap();
+    let valid = c.security.issue_pairing_code();
+    for _ in 0..5 {
+        assert_eq!(pair_with(&c, "guess").status, 401);
+    }
+    assert_eq!(pair_with(&c, "guess").status, 429, "guessers are throttled");
+    assert_eq!(pair_with(&c, "").status, 429);
+    let r = pair_with(&c, &valid);
     assert_eq!(
-        pair_with(&c3, &valid).status,
-        429,
-        "even the right code waits out the lockout"
+        r.status, 200,
+        "the right code works even while guessers are throttled: {}",
+        r.body
     );
+    assert_eq!(
+        pair_with(&c, &valid).status,
+        401,
+        "and it is still single use"
+    );
+    for _ in 0..4 {
+        assert_eq!(
+            pair_with(&c, "guess").status,
+            401,
+            "a good pairing clears the count"
+        );
+    }
+    assert_eq!(pair_with(&c, "guess").status, 429);
+    // a flood of wrong codes, however long, never stops a code that was issued meanwhile
+    for _ in 0..200 {
+        let _ = pair_with(&c, "flood");
+    }
+    let later = c.security.issue_pairing_code();
+    assert_eq!(pair_with(&c, &later).status, 200);
+}
+
+#[test]
+fn ws13c_the_throttle_is_safe_only_because_a_pairing_code_cannot_be_guessed() {
+    let c = start(Options::default()).unwrap();
+    let codes: Vec<String> = (0..20).map(|_| c.security.issue_pairing_code()).collect();
+    for code in &codes {
+        assert!(code.len() >= 22, "{code}: at least 128 bits of base64");
+        assert!(code
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'));
+    }
+    let mut unique = codes.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), codes.len());
+    // a part of a valid code is not a valid code
+    assert_eq!(pair_with(&c, &codes[0][..codes[0].len() - 1]).status, 401);
+    assert_eq!(pair_with(&c, &codes[1].to_uppercase()).status, 401);
 }
 
 #[test]
@@ -509,4 +558,147 @@ fn ws15_the_session_status_endpoint_never_errors_and_never_leaks_a_token_without
         cross.status, 403,
         "the status endpoint is still protected from cross-site pages"
     );
+}
+
+const SHELL: &str = "k7Zp2QwL9xVbN4mRtY8uHc3JdFg6SaE1oPi5KeXrTwA";
+
+fn shell_companion() -> Companion {
+    start(Options {
+        shell_secret: Some(SHELL.to_string()),
+        ..Options::default()
+    })
+    .unwrap()
+}
+
+#[test]
+fn ws20_with_a_shell_secret_nothing_but_the_shell_gets_any_answer_from_the_app() {
+    let c = shell_companion();
+    let o = origin(&c);
+    let paths = [
+        "/",
+        "/index.html",
+        "/api/health",
+        "/api/session",
+        "/api/nothing",
+        "/assets/x.js",
+    ];
+    for p in paths {
+        let r = raw(&c, "GET", p, None, &[], None);
+        assert_eq!(r.status, 403, "{p}: {}", r.body);
+        assert!(r.body.contains("SHELL_ONLY"), "{p}: {}", r.body);
+        assert!(
+            r.header("content-security-policy").is_some(),
+            "{p}: refusals carry the security headers"
+        );
+    }
+    let r = raw(
+        &c,
+        "POST",
+        "/api/pair",
+        None,
+        &[("Origin", &o)],
+        Some(r#"{"code":"x"}"#),
+    );
+    assert_eq!(r.status, 403);
+    // wrong, near and empty secrets are refused alike
+    let near = format!("{SHELL}x");
+    let short = &SHELL[..SHELL.len() - 1];
+    let upper = SHELL.to_uppercase();
+    for bad in ["", "x", short, near.as_str(), upper.as_str()] {
+        let r = raw(&c, "GET", "/api/health", None, &[("x-kk-shell", bad)], None);
+        assert_eq!(r.status, 403, "{bad:?}");
+    }
+    // the right one gets the normal service, including pairing and a session
+    let r = raw(
+        &c,
+        "GET",
+        "/api/health",
+        None,
+        &[("x-kk-shell", SHELL)],
+        None,
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+    let code = c.security.issue_pairing_code();
+    let r = raw(
+        &c,
+        "POST",
+        "/api/pair",
+        None,
+        &[("Origin", &o), ("x-kk-shell", SHELL)],
+        Some(&format!("{{\"code\":\"{code}\"}}")),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+    // the secret is never echoed
+    for p in ["/api/health", "/api/session", "/"] {
+        for with in [true, false] {
+            let extra: Vec<(&str, &str)> = if with {
+                vec![("x-kk-shell", SHELL)]
+            } else {
+                vec![]
+            };
+            let r = raw(&c, "GET", p, None, &extra, None);
+            let all = format!("{:?}{}", r.headers, r.body);
+            assert!(!all.contains(SHELL), "{p}");
+        }
+    }
+}
+
+#[test]
+fn ws21_the_secret_does_not_touch_the_doors_that_have_their_own_proof() {
+    let c = shell_companion();
+    // the admin door still needs its bearer token and still refuses anything from a page
+    let r = raw(&c, "POST", "/admin/pairing", None, &[], Some("{}"));
+    assert_eq!(r.status, 401, "{}", r.body);
+    assert!(r.body.contains("ADMIN_AUTH"), "{}", r.body);
+    let bearer = format!("Bearer {}", c.security.admin_token());
+    let r = raw(
+        &c,
+        "POST",
+        "/admin/pairing",
+        None,
+        &[("Authorization", &bearer)],
+        Some("{}"),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+    // the shell secret does not stand in for the admin token
+    let r = raw(
+        &c,
+        "POST",
+        "/admin/pairing",
+        None,
+        &[("x-kk-shell", SHELL)],
+        Some("{}"),
+    );
+    assert_eq!(r.status, 401);
+    // the extension door answers by its own rule, not the shell's
+    let r = raw(&c, "GET", "/ext/anything", None, &[], None);
+    assert!(!r.body.contains("SHELL_ONLY"), "{}", r.body);
+    // a wrong host is still refused first
+    let r = raw(
+        &c,
+        "GET",
+        "/api/health",
+        Some("evil.test"),
+        &[("x-kk-shell", SHELL)],
+        None,
+    );
+    assert_eq!(r.status, 421);
+}
+
+#[test]
+fn ws22_without_a_shell_secret_nothing_changes_and_a_weak_one_is_refused_at_start() {
+    let c = start(Options::default()).unwrap();
+    assert_eq!(raw(&c, "GET", "/api/health", None, &[], None).status, 200);
+    for weak in ["", "short", &"a".repeat(31)] {
+        let r = start(Options {
+            shell_secret: Some(weak.to_string()),
+            ..Options::default()
+        });
+        assert!(r.is_err(), "{weak:?} must not be accepted");
+    }
+    assert!(start(Options {
+        shell_secret: Some("a".repeat(32)),
+        ..Options::default()
+    })
+    .is_ok());
 }

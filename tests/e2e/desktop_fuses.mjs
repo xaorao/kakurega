@@ -57,7 +57,7 @@ let served = false;
 for (let i = 0; i < 80 && !served; i++) {
   await new Promise((r) => setTimeout(r, 500));
   if (existsSync(join(data, "admin.json"))) {
-    try { const a = JSON.parse(readFileSync(join(data, "admin.json"), "utf8")); served = (await fetch(`http://127.0.0.1:${a.port}/`)).status === 200; } catch {}
+    try { const a = JSON.parse(readFileSync(join(data, "admin.json"), "utf8")); const r = await fetch(`http://127.0.0.1:${a.port}/`); served = r.status === 403 && (await r.text()).includes("SHELL_ONLY"); } catch {}
   }
 }
 spawnSync("pkill", ["-9", "-f", "electron-hardened"]);
