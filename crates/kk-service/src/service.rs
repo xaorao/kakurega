@@ -2636,6 +2636,164 @@ async fn sessions_list(axum::Extension(svc): Svc) -> Response {
     Json(json!({"sessions": rows, "note": "Only conversations you chose to keep are listed. Forget removes the text from the encrypted store."})).into_response()
 }
 
+#[derive(Deserialize)]
+struct SessionSearch {
+    q: Option<String>,
+}
+
+const SEARCH_MAX_QUERY: usize = 200;
+const SEARCH_MAX_WORDS: usize = 6;
+const SEARCH_MAX_TURNS: i64 = 20_000;
+const SEARCH_MAX_RESULTS: usize = 20;
+
+/// Finds kept conversations by what was said in them or their title: every word of the question must appear in the same
+/// conversation, in any case. Only text the owner chose to keep is read, inside the encrypted store; a question is plain
+/// words and never a pattern.
+async fn sessions_search(axum::Extension(svc): Svc, Query(q): Query<SessionSearch>) -> Response {
+    let raw = q.q.unwrap_or_default();
+    if raw.chars().count() > SEARCH_MAX_QUERY
+        || !chat_clean(&raw)
+        || raw.contains('\n')
+        || raw.contains('\t')
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_QUERY",
+            "a search is at most 200 characters of plain words",
+        );
+    }
+    let words: Vec<String> = raw
+        .split_whitespace()
+        .take(SEARCH_MAX_WORDS)
+        .map(|w| w.chars().take(64).collect::<String>().to_lowercase())
+        .collect();
+    if words.is_empty() {
+        return Json(json!({"results": []})).into_response();
+    }
+    let store = svc.store.lock().expect("lock");
+    let c = store.connection();
+    let Ok(mut st) =
+        c.prepare("SELECT id, title, updated, project FROM sessions ORDER BY updated DESC")
+    else {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "STORE",
+            "could not read the conversations",
+        );
+    };
+    let sessions: Vec<(String, String, i64, Option<String>)> = st
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .map(|it| it.flatten().collect())
+        .unwrap_or_default();
+    let Ok(mut tt) = c.prepare(
+        "SELECT session, role, content FROM session_turns ORDER BY at DESC, seq DESC LIMIT ?1",
+    ) else {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "STORE",
+            "could not read the conversations",
+        );
+    };
+    let mut turns: std::collections::HashMap<String, Vec<(String, String)>> =
+        std::collections::HashMap::new();
+    for row in tt
+        .query_map([SEARCH_MAX_TURNS], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })
+        .map(|it| it.flatten().collect::<Vec<_>>())
+        .unwrap_or_default()
+    {
+        turns.entry(row.0).or_default().push((row.1, row.2));
+    }
+    let mut results: Vec<Value> = Vec::new();
+    for (id, title, updated, project) in sessions {
+        let mine = turns.remove(&id).unwrap_or_default();
+        let lower_title = title.to_lowercase();
+        let lowered: Vec<String> = mine.iter().map(|(_, t)| t.to_lowercase()).collect();
+        let all_there = words.iter().all(|w| {
+            lower_title.contains(w.as_str()) || lowered.iter().any(|t| t.contains(w.as_str()))
+        });
+        if !all_there {
+            continue;
+        }
+        let snippets: Vec<Value> = mine
+            .iter()
+            .zip(&lowered)
+            .filter(|(_, low)| words.iter().any(|w| low.contains(w.as_str())))
+            .take(2)
+            .map(|((role, text), low)| {
+                let at = words
+                    .iter()
+                    .filter_map(|w| low.find(w.as_str()))
+                    .min()
+                    .unwrap_or(0);
+                // positions in the lower-cased text map to the original only when both have the same characters; fall back to the start
+                let start_char = low[..at].chars().count().saturating_sub(40);
+                let snippet: String = text.chars().skip(start_char).take(140).collect();
+                json!({"role": role, "text": snippet.replace('\n', " ")})
+            })
+            .collect();
+        results.push(json!({"id": id, "title": title, "updated": updated, "project": project, "snippets": snippets}));
+        if results.len() >= SEARCH_MAX_RESULTS {
+            break;
+        }
+    }
+    Json(json!({"results": results})).into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionRename {
+    title: String,
+}
+
+async fn session_rename(
+    axum::Extension(svc): Svc,
+    UrlPath(id): UrlPath<String>,
+    Json(b): Json<SessionRename>,
+) -> Response {
+    let title = b.title.trim();
+    if title.is_empty()
+        || title.chars().count() > 80
+        || !chat_clean(title)
+        || kk_types::injection::hidden_chars(title)
+        || !kk_secrets::scan(title).is_empty()
+        || kk_secrets::looks_secret(title).is_some()
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_TITLE",
+            "a title is 1 to 80 characters, with no control characters or secrets",
+        );
+    }
+    let store = svc.store.lock().expect("lock");
+    let n = store
+        .connection()
+        .execute(
+            "UPDATE sessions SET title = ?1 WHERE id = ?2",
+            kk_vault::rusqlite::params![title, id],
+        )
+        .unwrap_or(0);
+    drop(store);
+    if n == 0 {
+        return error(
+            StatusCode::NOT_FOUND,
+            "NO_SESSION",
+            "there is no such kept conversation",
+        );
+    }
+    svc.log_event(
+        "chat.renamed",
+        &id,
+        &[("chars", title.chars().count().into())],
+    );
+    Json(json!({"renamed": true})).into_response()
+}
+
 async fn session_new(axum::Extension(svc): Svc, Json(b): Json<SessionNew>) -> Response {
     if b.title.chars().count() > 80
         || !chat_clean(&b.title)
@@ -5736,7 +5894,9 @@ impl Extension for Routes {
             .route("/api/history", get(history_list).post(history_add))
             .route("/api/history/clear", post(history_clear))
             .route("/api/sessions", get(sessions_list).post(session_new))
+            .route("/api/sessions/search", get(sessions_search))
             .route("/api/sessions/{id}", get(session_get))
+            .route("/api/sessions/{id}/rename", post(session_rename))
             .route("/api/sessions/{id}/forget", post(session_forget))
             .route("/api/route/attest", post(route_attest))
             .route("/api/route/gateway", post(route_gateway))

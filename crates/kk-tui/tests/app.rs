@@ -1408,7 +1408,8 @@ fn tu31_typing_a_slash_offers_matching_commands_that_can_be_chosen_completed_or_
     a.handle(key(KeyCode::Backspace));
     a.handle(key(KeyCode::Backspace));
     typed(&mut a, "fi");
-    assert_eq!(a.completions()[..2], ["findings", "fixes"]);
+    assert_eq!(a.completions()[..3], ["find", "findings", "fixes"]);
+    a.handle(key(KeyCode::Down));
     a.handle(key(KeyCode::Down));
     a.handle(key(KeyCode::Tab));
     assert_eq!(
@@ -2743,4 +2744,77 @@ fn tu42_the_terminal_lists_notes_that_disagree_and_keeps_one_or_says_both_are_ri
         json!({"error": {"code": "NO_MEMORY", "message": "no such memory"}}),
     ));
     assert!(text(&a2).contains("no such memory"));
+}
+
+#[test]
+fn tu43_the_terminal_finds_kept_conversations_by_words_and_renames_one() {
+    assert_eq!(
+        cmd::parse("/find the deadline").unwrap(),
+        Command::Find("the deadline".into())
+    );
+    assert_eq!(
+        cmd::parse("/rename s-3 Client call").unwrap(),
+        Command::RenameChat {
+            id: "s-3".into(),
+            title: "Client call".into()
+        }
+    );
+    for bad in [
+        "/find",
+        "/find   ",
+        "/rename",
+        "/rename s-3",
+        "/rename a/b title",
+        "/rename s-3   ",
+    ] {
+        assert!(cmd::parse(bad).is_err(), "{bad}");
+    }
+    let mut app = booted();
+    let r = enter(&mut app, "/find deadline friday");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].admin, r[0].method),
+        (
+            "/api/sessions/search?q=deadline%20friday",
+            false,
+            Method::Get
+        )
+    );
+    app.handle(ok(&r[0], 200, json!({"results": [{"id": "s-3", "title": "Client call", "updated": 5, "project": null, "snippets": [{"role": "user", "text": "the client said the deadline moved to Friday"}]}]})));
+    let t = text(&app);
+    assert!(
+        t.contains("s-3") && t.contains("Client call") && t.contains("deadline moved to Friday"),
+        "{t}"
+    );
+    let mut a = booted();
+    let r = enter(&mut a, "/find nothing here");
+    a.handle(ok(&r[0], 200, json!({"results": []})));
+    assert!(
+        text(&a).contains("No kept conversation has all of those words"),
+        "{}",
+        text(&a)
+    );
+    // odd characters in the words are encoded, never sent as part of the path or query structure
+    let mut a = booted();
+    let r = enter(&mut a, "/find a&b=c#d %20é");
+    assert!(
+        r[0].path.starts_with("/api/sessions/search?q=")
+            && !r[0].path[23..].contains(['&', '#', ' ', '=']),
+        "{}",
+        r[0].path
+    );
+    let r = enter(&mut a, "/rename s-3 Client call, Friday");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/sessions/s-3/rename", Method::Post)
+    );
+    assert_eq!(r[0].body, Some(json!({"title": "Client call, Friday"})));
+    a.handle(ok(&r[0], 200, json!({"renamed": true})));
+    assert!(text(&a).contains("Renamed"), "{}", text(&a));
+    let r = enter(&mut a, "/rename s-9 x");
+    a.handle(ok(
+        &r[0],
+        404,
+        json!({"error": {"code": "NO_SESSION", "message": "there is no such kept conversation"}}),
+    ));
+    assert!(text(&a).contains("no such kept conversation"));
 }

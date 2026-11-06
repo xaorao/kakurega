@@ -100,6 +100,8 @@ enum Intent {
     InstructionsShow,
     InstructionsSet,
     ConflictsList,
+    FindChats,
+    RenameChat,
     ChooseNote,
     BothRight,
     Log,
@@ -1557,6 +1559,32 @@ impl App {
                 &format!("/api/memories/{id}/correct"),
                 Some(json!({"text": text, "reason": "you corrected it in the terminal"})),
             )],
+            Command::Find(words) => {
+                let q: String = words
+                    .bytes()
+                    .map(|b| {
+                        if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' {
+                            (b as char).to_string()
+                        } else {
+                            format!("%{b:02X}")
+                        }
+                    })
+                    .collect();
+                vec![self.req(
+                    Intent::FindChats,
+                    false,
+                    Method::Get,
+                    &format!("/api/sessions/search?q={q}"),
+                    None,
+                )]
+            }
+            Command::RenameChat { id, title } => vec![self.req(
+                Intent::RenameChat,
+                false,
+                Method::Post,
+                &format!("/api/sessions/{id}/rename"),
+                Some(json!({"title": title})),
+            )],
             Command::Conflicts => vec![self.req(
                 Intent::ConflictsList,
                 false,
@@ -2397,6 +2425,46 @@ impl App {
                     if ok { Kind::Ok } else { Kind::Error },
                     if ok {
                         format!("Applied to {file}.")
+                    } else {
+                        err_text(status, &body)
+                    },
+                );
+                Vec::new()
+            }
+            Intent::FindChats => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let results = body["results"].as_array().cloned().unwrap_or_default();
+                if results.is_empty() {
+                    self.say(Kind::Info, "No kept conversation has all of those words.");
+                    return Vec::new();
+                }
+                let mut lines: Vec<String> = Vec::new();
+                for r in &results {
+                    lines.push(format!(
+                        "{}  {}",
+                        clean(r["id"].as_str().unwrap_or("?")),
+                        clean(r["title"].as_str().unwrap_or(""))
+                    ));
+                    for sn in r["snippets"].as_array().cloned().unwrap_or_default() {
+                        lines.push(format!(
+                            "    {}: {}",
+                            clean(sn["role"].as_str().unwrap_or("?")),
+                            clean(sn["text"].as_str().unwrap_or(""))
+                        ));
+                    }
+                }
+                lines.push("/resume ID opens one; /rename ID TITLE renames it.".into());
+                self.push(Kind::Info, Some("Matching conversations"), lines);
+                Vec::new()
+            }
+            Intent::RenameChat => {
+                self.say(
+                    if ok { Kind::Ok } else { Kind::Error },
+                    if ok {
+                        "Renamed.".to_string()
                     } else {
                         err_text(status, &body)
                     },

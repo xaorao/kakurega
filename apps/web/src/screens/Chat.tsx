@@ -1,5 +1,5 @@
 import { batch, createEffect, createResource, createSignal, For, on, onCleanup, Show } from "solid-js";
-import { api, ApiError, streamChat, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
+import { api, ApiError, streamChat, type ChatHit, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
 import { t } from "../i18n";
 import { Markdown } from "../components/Markdown";
 import { HistoryPicker } from "../components/HistoryPicker";
@@ -114,6 +114,42 @@ export function Chat() {
       await refetch();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("chat.error"));
+    }
+  };
+  // search across kept conversations: the newest question wins, an answer to an older one is dropped
+  const [chatQuery, setChatQuery] = createSignal("");
+  const [chatHits, setChatHits] = createSignal<ChatHit[] | null>(null);
+  const [renaming, setRenaming] = createSignal("");
+  const [renameText, setRenameText] = createSignal("");
+  const [keptProblem, setKeptProblem] = createSignal("");
+  let searchSeq = 0;
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  const onSearch = (value: string) => {
+    setChatQuery(value);
+    clearTimeout(searchTimer);
+    const mine = ++searchSeq;
+    if (!value.trim()) {
+      setChatHits(null);
+      return;
+    }
+    searchTimer = setTimeout(async () => {
+      try {
+        const r = await api.searchChats(value.trim());
+        if (mine === searchSeq) setChatHits(r.results);
+      } catch {
+        if (mine === searchSeq) setChatHits([]);
+      }
+    }, 200);
+  };
+  const doRename = async (id: string) => {
+    setKeptProblem("");
+    try {
+      await api.renameChat(id, renameText());
+      setRenaming("");
+      await refetch();
+      if (chatQuery().trim()) onSearch(chatQuery());
+    } catch (e) {
+      setKeptProblem(e instanceof ApiError ? e.message : t("chat.renameError"));
     }
   };
   const openKept = async (id: string) => {
@@ -347,17 +383,46 @@ export function Chat() {
         </div>
         <Show when={(kept() ?? []).length > 0}>
           <p><strong>{t("chat.keptTitle")}</strong></p>
+          <label class="sr" for="chat-search">{t("chat.search")}</label>
+          <input id="chat-search" type="search" maxlength="200" placeholder={t("chat.search")} value={chatQuery()} onInput={(e) => onSearch(e.currentTarget.value)} />
+          <Show when={keptProblem()}><p role="alert" class="bad">{keptProblem()}</p></Show>
+          <Show when={chatHits()}>
+            {(hits) => (
+              <ul class="plain stack" aria-label={t("chat.searchResults")}>
+                <For each={hits()} fallback={<li class="muted">{t("chat.searchNone")}</li>}>
+                  {(h) => (
+                    <li class="stack">
+                      <div class="actions"><strong>{h.title || t("chat.untitled")}</strong><button type="button" onClick={() => openKept(h.id)}>{t("chat.open")}</button></div>
+                      <For each={h.snippets}>{(sn) => <p class="muted">{sn.role}: {sn.text}</p>}</For>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            )}
+          </Show>
+          <Show when={!chatHits()}>
           <ul class="plain stack">
             <For each={kept() ?? []}>
               {(k) => (
                 <li class="actions">
-                  <span>{k.title || t("chat.untitled")} · {t("chat.turns", { n: k.turns })}</span>
+                  <Show when={renaming() !== k.id} fallback={
+                    <span class="confirm" role="group">
+                      <label class="sr" for={`rename-${k.id}`}>{t("chat.renameLabel")}</label>
+                      <input id={`rename-${k.id}`} value={renameText()} maxlength="80" onInput={(e) => setRenameText(e.currentTarget.value)} />
+                      <button type="button" class="primary" onClick={() => void doRename(k.id)}>{t("chat.renameSave")}</button>
+                      <button type="button" onClick={() => setRenaming("")}>{t("mem.cancel")}</button>
+                    </span>
+                  }>
+                    <span>{k.title || t("chat.untitled")} · {t("chat.turns", { n: k.turns })}</span>
+                    <button type="button" onClick={() => { setRenaming(k.id); setRenameText(k.title); }}>{t("chat.rename")}</button>
+                  </Show>
                   <button type="button" onClick={() => openKept(k.id)}>{t("chat.open")}</button>
                   <button type="button" onClick={() => forget(k.id)}>{confirmForget() === k.id ? t("chat.forgetSure") : t("chat.forget")}</button>
                 </li>
               )}
             </For>
           </ul>
+          </Show>
         </Show>
       </div>
       <details class="card stack" id="model-proof">

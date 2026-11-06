@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 125, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 11, OWED-L 41. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 126, PARTIAL 56, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 9, OWED-L 41. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -28,7 +28,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | B-W05 | Connection loss and recovery | ADAPT the grace-period hook (MIT, tiny) and add a distinct "session expired, pair again" s | BUILT | live.ts reconnect with backoff, unreachable state, three-miss notice (lv01-lv06, e2e) |
 | B-W05b | Workspaces / projects | BUILD, with AnythingLLM's "workspace owns documents + threads + memory scope + route prefe | PARTIAL | projects scope notes and chats (f808980); documents are per folder; no single workspace object |
 | B-W06 | Conversation and job list | ADAPT unread-from-timestamps rule, pin, archive. Delete is a kernel operation (see W44) | OWED-L | kept conversations list with open and forget; no unread, pin or archive |
-| B-W07 | Search across conversations | ADAPT `search.ts` (MIT) for the multi-source/abort/rank mechanics. IMPROVE: full-text inde | OWED-M | no search across kept conversations |
+| B-W07 | Search across conversations | ADAPT `search.ts` (MIT) for the multi-source/abort/rank mechanics. IMPROVE: full-text inde | BUILT | search across kept conversations (content and title, every word, bounded, owner session) on web and terminal; stale answers dropped, not cancelled (web-shell.md) |
 | B-W08 | Find in the open conversation | ADAPT the technique (no DOM rewriting, so no CSP or XSS issue). Fall back to no highlight  | OWED-L | the browser's own find works on the page; no in-app find |
 | B-W09 | Command palette | ADAPT `command.tsx` registry (MIT, Effect `Schema` used for persistence only: replace). IM | BUILT | command palette with ranking, group headers, page and section keys (pm01-pm10, e2e) |
 | B-W10 | Keyboard shortcuts, help, rebinding | ADAPT: declarative table + help dialog (opened by `?`/Cmd+Shift+/), recorder later | OWED-M | no shortcut help dialog or rebinding; shortcuts exist (Ctrl+Shift+P, Esc, Ctrl+G, Shift+Up) |
@@ -306,7 +306,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | G-GH-20 | Interactive previews and artifacts rendered in a sandbox page (CSP `co | ADAPT the idea: render model-made HTML in a sandboxed frame with no network, no storage | EXCLUDED | no model-written HTML is run |
 | G-GH-21 | App-context capture with an optional global shortcut | BUILD as an explicit one-shot capture with preview and label, not a background recorder | LATER | explicit one-shot capture |
 | G-GH-22 | Voice input (local Whisper) and local TTS | BUILD local only; remote speech route only for Public-label audio | EXCLUDED | voice not built; remote speech excluded |
-| G-GH-23 | Chat search (Cmd+K), fork, archive, rename, Recent list | BUILD search over history in the vault, results filtered by label | OWED-M | kept conversations: list, open, forget; no search, rename or archive |
+| G-GH-23 | Chat search (Cmd+K), fork, archive, rename, Recent list | BUILD search over history in the vault, results filtered by label | PARTIAL | search and rename built (web, terminal); fork and archive not built |
 | G-GH-24 | Reply buttons, table copy and export, code copy, keyboard access | BUILD; export of a result is a release (goes through the one approval path) | PARTIAL | code copy; no table copy or export of a result |
 | G-GH-25 | Vision and images | BUILD later; images get a label at entry (screenshots hold secrets) | LATER | images get a label at entry |
 | G-GH-26 | Video generation | EXCLUDE (no private route) | EXCLUDED | no private route |

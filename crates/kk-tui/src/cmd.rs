@@ -58,6 +58,11 @@ pub enum Command {
     Forget(String),
     ForgetReview(String),
     Instructions(InstructionsAction),
+    Find(String),
+    RenameChat {
+        id: String,
+        title: String,
+    },
     Conflicts,
     Choose {
         keep: String,
@@ -107,6 +112,8 @@ pub const NAMES: &[&str] = &[
     "forget",
     "forgetreview",
     "instructions",
+    "find",
+    "rename",
     "conflicts",
     "choose",
     "bothright",
@@ -150,6 +157,8 @@ pub fn describe(name: &str) -> &'static str {
         "forget" => "delete a saved note for good",
         "forgetreview" => "delete everything one review left in memory",
         "instructions" => "your standing orders to the assistant",
+        "find" => "search kept conversations by words",
+        "rename" => "rename a kept conversation",
         "conflicts" => "notes that seem to disagree",
         "choose" => "keep one of two disagreeing notes",
         "bothright" => "two notes that look alike are both right",
@@ -219,6 +228,8 @@ pub fn usage(name: &str) -> &'static str {
         "forget" => "/forget ID",
         "forgetreview" => "/forgetreview JOB",
         "instructions" => "/instructions [set [in PROJECT:] TEXT | clear [PROJECT]]",
+        "find" => "/find WORDS",
+        "rename" => "/rename ID NEW TITLE",
         "conflicts" => "/conflicts",
         "choose" => "/choose KEEP_ID OVER_ID",
         "bothright" => "/bothright ID ID",
@@ -429,6 +440,22 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 Ok(Command::Forget(rest.to_string()))
             }
         }
+        "find" => {
+            if rest.is_empty() {
+                Err(format!("usage: {}", usage("find")))
+            } else {
+                Ok(Command::Find(rest.to_string()))
+            }
+        }
+        "rename" => match rest.split_once(char::is_whitespace) {
+            Some((id, title)) if !title.trim().is_empty() && !id.contains(['/', '\\']) => {
+                Ok(Command::RenameChat {
+                    id: id.to_string(),
+                    title: title.trim().to_string(),
+                })
+            }
+            _ => Err(format!("usage: {}", usage("rename"))),
+        },
         "conflicts" => {
             if rest.is_empty() {
                 Ok(Command::Conflicts)

@@ -100,6 +100,14 @@ export interface MemoryConflicts {
   note: string;
 }
 
+export interface ChatHit {
+  id: string;
+  title: string;
+  updated: number;
+  project: string | null;
+  snippets: { role: string; text: string }[];
+}
+
 export interface SimilarMemories { groups: MemoryItem[][]; scanned: number; complete: boolean; note: string }
 export interface KeptChat { id: string; title: string; created: number; updated: number; turns: number; project?: string | null }
 export interface ModelProof { verified: boolean; model: string; checked_at?: number; means?: string[]; does_not_mean?: string[]; deployments?: { signer: string; tcb: string; advisories: string[]; gpu_verified: boolean; compose_hash: string | null; os_image_hash: string | null; nonce: string }[] }
@@ -207,6 +215,8 @@ export const api = {
   unmergeMemory: (id: string) => request<{ restored: boolean }>("POST", `/api/memories/${id}/unmerge`, {}),
   mergedMemories: () => request<{ merged: { id: string; text: string; merged_into: string; project?: string | null; level: string }[] }>("GET", "/api/memories/merged"),
   keptChats: () => request<{ sessions: KeptChat[] }>("GET", "/api/sessions"),
+  searchChats: (q: string) => request<{ results: ChatHit[] }>("GET", `/api/sessions/search?q=${encodeURIComponent(q)}`),
+  renameChat: (id: string, title: string) => request<{ renamed: boolean }>("POST", `/api/sessions/${id}/rename`, { title }),
   keepChat: (title: string, project?: string) => request<{ id: string }>("POST", "/api/sessions", project ? { title, project } : { title }),
   keptChat: (id: string) => request<{ id: string; project?: string | null; turns: ChatTurn[]; summary?: { covered: number; text: string } | null }>("GET", `/api/sessions/${id}`),
   forgetChat: (id: string) => request<{ forgotten: boolean }>("POST", `/api/sessions/${id}/forget`, {}),

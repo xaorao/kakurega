@@ -976,6 +976,24 @@ try {
   await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();
   await page.getByRole("button", { name: "Open" }).first().waitFor();
   check("after a reload the kept conversation is listed and nothing else is shown until it is opened", (await page.locator(".msg").count()) === 0 && (await page.getByRole("button", { name: "Open" }).count()) === 1);
+  // search across kept conversations by what was said, and rename one
+  await page.getByLabel("Search kept conversations").fill("keptcanary");
+  const hitsList = page.getByRole("list", { name: "Matching conversations" });
+  await hitsList.waitFor();
+  check("searching for a word said in a kept conversation lists it with the words around it", (await hitsList.innerText()).includes("keptcanary line please"), (await hitsList.innerText()).slice(0, 120));
+  await axeCheck(page, "chat (kept conversation search)");
+  await page.getByLabel("Search kept conversations").fill("keptcanary nosuchwordanywhere");
+  await page.getByText("No kept conversation has all of those words.").waitFor();
+  check("a word that is not in the same conversation finds nothing", (await hitsList.getByRole("button", { name: "Open" }).count()) === 0);
+  await page.getByLabel("Search kept conversations").fill("");
+  await page.getByRole("button", { name: "Rename" }).first().click();
+  await page.getByLabel("New name for this conversation").fill("Canary conversation");
+  await page.getByRole("button", { name: "Save name" }).click();
+  await page.getByText("Canary conversation").first().waitFor();
+  check("a renamed conversation shows its new name in the list", (await page.getByText("Canary conversation").count()) >= 1);
+  await page.getByLabel("Search kept conversations").fill("canary conversation");
+  await hitsList.getByText("Canary conversation").waitFor();
+  await page.getByLabel("Search kept conversations").fill("");
   await page.route(/\/api\/sessions\/[^/]+$/, async (route) => {
     if (route.request().method() !== "GET") return route.continue();
     const real = await route.fetch();

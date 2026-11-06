@@ -8658,3 +8658,142 @@ fn sv88_the_activity_list_holds_the_newest_hundred_events_and_the_export_holds_a
         "the export has them all"
     );
 }
+
+#[test]
+fn sv89_kept_conversations_are_searched_by_what_was_said_and_by_title_and_can_be_renamed() {
+    let (c, w, _seen, _root) = instructions_service("sess-search");
+    let anon = Web::new(c.addr);
+    assert_eq!(anon.get("/api/sessions/search?q=deadline").0, 401);
+    assert_eq!(
+        anon.post("/api/sessions/x/rename", json!({"title": "t"})).0,
+        401
+    );
+    let make = |title: &str, msgs: &[&str]| {
+        let (s, v) = w.post("/api/sessions", json!({"title": title}));
+        assert_eq!(s, 201, "{v}");
+        let id = v["id"].as_str().unwrap().to_string();
+        for m in msgs {
+            let (s, r) = w.post("/api/chat", json!({"message": m, "session": id}));
+            assert_eq!(s, 200, "{r}");
+        }
+        id
+    };
+    let a = make(
+        "Client call",
+        &["The client said the deadline moved to Friday", "ok noted"],
+    );
+    let b = make(
+        "Rounding rules",
+        &["How does banker's rounding work in kestrel"],
+    );
+    let _c = make("Holiday plans", &["Where should we go in August"]);
+    let found = |q: &str| -> Vec<String> {
+        let (s, v) = w.get(&format!("/api/sessions/search?q={q}"));
+        assert_eq!(s, 200, "{q}: {v}");
+        v["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(found("deadline"), std::slice::from_ref(&a));
+    assert_eq!(
+        found("DEADLINE%20friday"),
+        std::slice::from_ref(&a),
+        "every word must be there, in any case"
+    );
+    assert_eq!(
+        found("deadline%20kestrel"),
+        Vec::<String>::new(),
+        "words in two different conversations are not a match"
+    );
+    assert_eq!(
+        found("rounding"),
+        std::slice::from_ref(&b),
+        "a title and a message both match"
+    );
+    assert_eq!(found("Holiday"), vec![_c.clone()], "a title alone matches");
+    let (_, v) = w.get("/api/sessions/search?q=deadline");
+    let hit = &v["results"][0];
+    assert_eq!(hit["title"], "Client call");
+    assert!(
+        hit["snippets"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("deadline moved to Friday"),
+        "{hit}"
+    );
+    assert!(hit["snippets"][0]["role"].is_string());
+    // what is asked for is bounded and cannot act as a pattern
+    for q in [
+        "",
+        "%20%20",
+        "%25",
+        "_",
+        "a%5Cb",
+        "%27%3B%20drop%20table%20sessions%3B--",
+    ] {
+        let (s, v) = w.get(&format!("/api/sessions/search?q={q}"));
+        assert!(s == 200 || s == 400, "{q}: {s}");
+        if s == 200 {
+            assert!(
+                v["results"].as_array().unwrap().is_empty(),
+                "{q} must not match everything: {v}"
+            );
+        }
+    }
+    assert_eq!(
+        w.get(&format!("/api/sessions/search?q={}", "x".repeat(300)))
+            .0,
+        400
+    );
+    assert_eq!(w.get("/api/sessions/search?q=a%00b").0, 400);
+    assert_eq!(
+        w.get("/api/sessions").1["sessions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3,
+        "the table survived"
+    );
+    // rename: checked like a title, and only for a kept conversation
+    let (s, v) = w.post(
+        &format!("/api/sessions/{a}/rename"),
+        json!({"title": "Client call, Friday deadline"}),
+    );
+    assert_eq!((s, v["renamed"].clone()), (200, json!(true)), "{v}");
+    assert_eq!(found("Friday%20deadline")[0], a);
+    for bad in [
+        json!({"title": ""}),
+        json!({"title": "x".repeat(81)}),
+        json!({"title": "a\u{202e}b"}),
+        json!({"title": format!("ok{}", char::from_u32(0xe0041).unwrap())}),
+        json!({"title": format!("key {}{}", "sk_li", "ve_abcdefghijklmnop0123")}),
+        json!({"title": "t", "extra": 1}),
+    ] {
+        let (s, _) = w.post(&format!("/api/sessions/{a}/rename"), bad.clone());
+        assert!(s == 400 || s == 422, "{bad}: {s}");
+    }
+    assert_eq!(
+        w.post("/api/sessions/nope/rename", json!({"title": "t"})).0,
+        404
+    );
+    let log = log_text(
+        &format!("http://127.0.0.1:{}", c.addr.port()),
+        c.security.admin_token(),
+    );
+    let kinds: Vec<String> = log
+        .split("\\\"kind\\\":\\\"")
+        .skip(1)
+        .map(|p| p.split("\\\"").next().unwrap().to_string())
+        .collect();
+    assert!(kinds.iter().any(|k| k == "chat.renamed"), "{kinds:?}");
+    assert!(
+        !log.contains("Friday deadline"),
+        "the title is not in the log"
+    );
+    // forgotten conversations are gone from search
+    w.post(&format!("/api/sessions/{a}/forget"), json!({}));
+    assert!(found("deadline").is_empty());
+}
