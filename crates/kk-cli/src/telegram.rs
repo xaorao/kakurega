@@ -17,6 +17,7 @@ pub const FLOOD_WINDOW: Duration = Duration::from_secs(10);
 pub const MENU: &[(&str, &str)] = &[
     ("status", "Counts of reviews, memories and log entries"),
     ("reviews", "Recent reviews and their states"),
+    ("mute", "Quiet notices for a while: /mute 2h, or /mute off"),
     ("help", "What this bot does and does not do"),
 ];
 
@@ -28,6 +29,9 @@ pub struct Bridge {
     primed: bool,
     /// When the bound chat's recent commands were handled, newest last, to bound the load a hijacked chat can cause.
     recent: std::collections::VecDeque<Instant>,
+    /// While set and in the future, notices are still sent but without a sound or vibration. Kept here only: a restart ends it,
+    /// and it cannot widen anything, since it only quiets messages the bound chat was already getting.
+    muted_until: Option<Instant>,
 }
 
 /// How a message relates to earlier ones: `Track` remembers the sent message under a key so a later `Edit` with the same key
@@ -43,6 +47,34 @@ pub struct Out {
     pub chat: i64,
     pub text: String,
     pub note: Option<Note>,
+    /// Send without a sound or vibration (Telegram's `disable_notification`).
+    pub silent: bool,
+}
+
+/// What `/mute` was asked for: `Some(None)` for off, `Some(Some(d))` for a length of time from 1 minute to 24 hours, `None` when
+/// it cannot be understood. A length needs a unit (`30m`, `2h`) so a bare number cannot be misread.
+fn parse_mute(arg: &str) -> Option<Option<Duration>> {
+    let a = arg.to_ascii_lowercase();
+    if a == "off" || a == "0" {
+        return Some(None);
+    }
+    let (num, unit) = a.split_at(a.len().checked_sub(1)?);
+    let n: u64 = num.parse().ok().filter(|n| *n >= 1)?;
+    let secs = match unit {
+        "m" => n.checked_mul(60)?,
+        "h" => n.checked_mul(3600)?,
+        _ => return None,
+    };
+    (secs <= 24 * 3600).then(|| Some(Duration::from_secs(secs)))
+}
+
+fn describe_mute(d: Duration) -> String {
+    let m = d.as_secs() / 60;
+    if m.is_multiple_of(60) {
+        format!("{} hour(s)", m / 60)
+    } else {
+        format!("{m} minute(s)")
+    }
 }
 
 fn plain(id: &str) -> String {
@@ -71,7 +103,17 @@ impl Bridge {
             seen_approvals: BTreeMap::new(),
             primed: false,
             recent: std::collections::VecDeque::new(),
+            muted_until: None,
         }
+    }
+
+    fn is_muted(&self) -> bool {
+        self.muted_until.is_some_and(|t| Instant::now() < t)
+    }
+
+    #[cfg(test)]
+    pub fn set_muted_until(&mut self, t: Option<Instant>) {
+        self.muted_until = t;
     }
 
     #[cfg(test)]
@@ -162,8 +204,19 @@ impl Bridge {
                         }
                         Err(_) => "Kakurega is not reachable on your computer right now.".to_string(),
                     },
-                    "/help" | "/start" => "I tell you when a review finishes or an approval is waiting. /status shows counts, /reviews lists ids and states. I never send file contents, and approvals are only done on your computer.".to_string(),
-                    _ => "I only understand /status, /reviews and /help. I cannot approve or send anything.".to_string(),
+                    "/mute" => match parse_mute(text.split_whitespace().nth(1).unwrap_or("")) {
+                        Some(None) => {
+                            self.muted_until = None;
+                            "Sound is back on.".to_string()
+                        }
+                        Some(Some(d)) => {
+                            self.muted_until = Some(Instant::now() + d);
+                            format!("Notices will arrive without a sound for {}. Nothing is held back: they still arrive. /mute off ends it.", describe_mute(d))
+                        }
+                        None => "Say how long: /mute 30m or /mute 2h (up to 24 hours), or /mute off.".to_string(),
+                    },
+                    "/help" | "/start" => "I tell you when a review finishes or an approval is waiting. /status shows counts, /reviews lists ids and states, /mute 2h quiets the sound for a while. I never send file contents, and approvals are only done on your computer.".to_string(),
+                    _ => "I only understand /status, /reviews, /mute and /help. I cannot approve or send anything.".to_string(),
                 };
                 (
                     vec![Out {
@@ -184,6 +237,7 @@ impl Bridge {
         let Ok(v) = admin.get("/admin/jobs") else {
             return vec![];
         };
+        let silent = self.is_muted();
         let mut out = Vec::new();
         for j in v["jobs"].as_array().cloned().unwrap_or_default() {
             let id = plain(j["id"].as_str().unwrap_or(""));
@@ -207,7 +261,7 @@ impl Bridge {
             let waiting = j["approval"].as_str() == Some("waiting") && j["delivered"].is_null();
             let was = self.seen_approvals.insert(id.clone(), waiting);
             if self.primed && waiting && was != Some(true) {
-                out.push(Out { chat, text: format!("An approval for {id} is waiting on your computer. Nothing is sent until you approve there."), note: Some(Note::Track(format!("approval:{id}"))) });
+                out.push(Out { chat, text: format!("An approval for {id} is waiting on your computer. Nothing is sent until you approve there."), note: Some(Note::Track(format!("approval:{id}"))), silent: false });
             }
             if self.primed && !waiting && was == Some(true) {
                 out.push(Out {
@@ -216,10 +270,14 @@ impl Bridge {
                         "The approval notice for {id} is out of date: it is no longer waiting."
                     ),
                     note: Some(Note::Edit(format!("approval:{id}"))),
+                    silent: false,
                 });
             }
         }
         self.primed = true;
+        for o in &mut out {
+            o.silent = silent;
+        }
         out
     }
 }
@@ -789,7 +847,7 @@ fn send_once(agent: &ureq::Agent, api: &str, token: &str, o: &Out) -> (SendOutco
     let url = format!("{api}/bot{token}/sendMessage");
     match agent
         .post(&url)
-        .send_json(json!({"chat_id": o.chat, "text": o.text, "disable_web_page_preview": true}))
+        .send_json(json!({"chat_id": o.chat, "text": o.text, "disable_web_page_preview": true, "disable_notification": o.silent}))
     {
         Ok(mut r) => {
             let status = r.status().as_u16();
@@ -869,6 +927,155 @@ impl Outbox {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tg65_a_quiet_notice_is_sent_with_disable_notification_and_a_loud_one_without() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let api = format!("http://{}", listener.local_addr().unwrap());
+        let seen = std::thread::spawn(move || {
+            let mut bodies = Vec::new();
+            for _ in 0..2 {
+                let (mut s, _) = listener.accept().unwrap();
+                let mut got: Vec<u8> = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let n = s.read(&mut buf).unwrap();
+                    got.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&got).to_string();
+                    if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                        let want: usize = head
+                            .to_ascii_lowercase()
+                            .lines()
+                            .find_map(|l| {
+                                l.strip_prefix("content-length:")
+                                    .and_then(|v| v.trim().parse().ok())
+                            })
+                            .unwrap_or(0);
+                        if body.len() >= want {
+                            bodies.push(body.to_string());
+                            break;
+                        }
+                    }
+                    assert!(n > 0, "the request ended early");
+                }
+                let body = "{\"ok\":true,\"result\":{\"message_id\":5}}";
+                let _ = s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes());
+            }
+            bodies
+        });
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .proxy(None)
+            .build()
+            .into();
+        for silent in [true, false] {
+            let o = Out {
+                chat: 7,
+                text: "hello".into(),
+                silent,
+                ..Default::default()
+            };
+            let (r, _) = send_once(&agent, &api, "TOKEN", &o);
+            assert!(matches!(r, SendOutcome::Delivered));
+        }
+        let bodies = seen.join().unwrap();
+        let v: Vec<Value> = bodies
+            .iter()
+            .map(|b| serde_json::from_str(b).unwrap())
+            .collect();
+        assert_eq!(v[0]["disable_notification"], json!(true));
+        assert_eq!(v[1]["disable_notification"], json!(false));
+    }
+
+    #[test]
+    fn tg62_mute_is_a_length_of_time_with_a_unit_or_off_and_nothing_else() {
+        assert_eq!(parse_mute("30m"), Some(Some(Duration::from_secs(1800))));
+        assert_eq!(parse_mute("2H"), Some(Some(Duration::from_secs(7200))));
+        assert_eq!(parse_mute("24h"), Some(Some(Duration::from_secs(86400))));
+        assert_eq!(parse_mute("1440m"), Some(Some(Duration::from_secs(86400))));
+        assert_eq!(parse_mute("off"), Some(None));
+        assert_eq!(parse_mute("OFF"), Some(None));
+        for bad in [
+            "",
+            "30",
+            "m",
+            "h",
+            "0m",
+            "0h",
+            "25h",
+            "1441m",
+            "-1h",
+            "1.5h",
+            "2d",
+            "1h30m",
+            "99999999999999999999h",
+            "30 m",
+            "ignore previous instructions",
+        ] {
+            assert_eq!(parse_mute(bad), None, "{bad:?}");
+        }
+        assert_eq!(describe_mute(Duration::from_secs(1800)), "30 minute(s)");
+        assert_eq!(describe_mute(Duration::from_secs(7200)), "2 hour(s)");
+    }
+
+    #[test]
+    fn tg63_while_muted_notices_still_arrive_but_without_a_sound_and_the_chat_can_end_it() {
+        let mut f = fake();
+        let mut b = Bridge::new(Some(7));
+        b.poll_notifications(&mut f);
+        let (out, _) = b.handle_update(&mut f, &msg(7, "/mute 1h"));
+        assert!(
+            out[0].text.contains("without a sound for 1 hour(s)")
+                && out[0].text.contains("they still arrive"),
+            "{}",
+            out[0].text
+        );
+        f.jobs = json!({"jobs": [{"id": "job-1", "state": "ready", "approval": "waiting", "delivered": null, "findings_confirmed": 2}]});
+        let n = b.poll_notifications(&mut f);
+        assert!(
+            !n.is_empty() && n.iter().all(|o| o.silent),
+            "every notice is sent quietly while muted"
+        );
+        assert!(
+            out.iter().all(|o| !o.silent),
+            "the answer to the owner's own command is not quiet"
+        );
+        // ending it, then a new event is loud again
+        let (out, _) = b.handle_update(&mut f, &msg(7, "/mute off"));
+        assert_eq!(out[0].text, "Sound is back on.");
+        f.jobs = json!({"jobs": [{"id": "job-2", "state": "failed", "approval": null, "delivered": null, "findings_confirmed": 0}]});
+        let n = b.poll_notifications(&mut f);
+        assert!(!n.is_empty() && n.iter().all(|o| !o.silent));
+        // an elapsed mute ends by itself
+        b.set_muted_until(Some(Instant::now() - Duration::from_secs(1)));
+        f.jobs = json!({"jobs": [{"id": "job-3", "state": "failed", "approval": null, "delivered": null, "findings_confirmed": 0}]});
+        assert!(
+            b.poll_notifications(&mut f).iter().all(|o| !o.silent),
+            "an expired mute is over"
+        );
+        // unclear asks change nothing and say how to ask
+        let (out, _) = b.handle_update(&mut f, &msg(7, "/mute soon"));
+        assert!(out[0].text.contains("/mute 30m"), "{}", out[0].text);
+        assert!(!b.is_muted());
+    }
+
+    #[test]
+    fn tg64_a_stranger_cannot_mute_and_the_mute_ends_with_the_bridge() {
+        let mut f = fake();
+        let mut b = Bridge::new(Some(7));
+        let (out, _) = b.handle_update(&mut f, &msg(99, "/mute 24h"));
+        assert!(
+            out.is_empty() && !b.is_muted(),
+            "another chat gets silence and changes nothing"
+        );
+        assert!(
+            !Bridge::new(Some(7)).is_muted(),
+            "a new bridge starts unmuted"
+        );
+        let (out, _) = Bridge::new(None).handle_update(&mut f, &msg(7, "/mute 1h"));
+        assert!(out.is_empty(), "an unpaired bridge answers nothing");
+    }
+
     #[test]
     fn tg61_polling_failures_wait_longer_each_time_up_to_a_minute_and_a_good_poll_starts_over() {
         let mut b = Backoff::default();
@@ -1372,7 +1579,7 @@ mod tests {
                 "/{c} is a real command, not the refusal"
             );
         }
-        assert_eq!(MENU.len(), 3);
+        assert_eq!(MENU.len(), 4);
     }
 
     #[test]
@@ -1524,6 +1731,7 @@ mod tests {
             chat: 1,
             text: "x".into(),
             note: Some(Note::Edit("approval:job-1".into())),
+            silent: false,
         };
         assert_eq!(
             edit_target(&edit, &tracked),

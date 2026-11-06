@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 134, PARTIAL 69, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 29. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 134, PARTIAL 70, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 28. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -105,7 +105,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | C-23 | Message size and splitting | Keep the cap; ADAPT IronClaw's `chunk_text_utf16` only if a digest can exceed it. Add "+N  | BUILT | long replies are cut (tg05) |
 | C-24 | Formatting | Keep plain. EXCLUDE markdown/HTML (every markup mode is an injection surface for ids and a | BUILT | plain text only |
 | C-25 | Per-chat pacing | BUILD small: at most 1 message/s per chat, burst of 3; digest when more than 5 events arri | OWED-L | inbound flood limit exists (tg20); outbound pacing does not |
-| C-26 | Quiet hours and mute | BUILD small: `/mute 1h` (bridge-local state, cannot widen access), `disable_notification=t | OWED-L | no /mute |
+| C-26 | Quiet hours and mute | BUILD small: `/mute 1h` (bridge-local state, cannot widen access), `disable_notification=t | PARTIAL | /mute 30m/2h/off in the bound chat: notices arrive without sound, none held back; reference sources NOT READ, live Telegram NOT VERIFIED (telegram-bridge.md) |
 | C-27 | Typing and ack reactions | EXCLUDE (cosmetic; reactions need extra update types) | EXCLUDED | EXCLUDE (cosmetic; reactions need extra update types) |
 | C-28 | Command set and menu | BUILD small: `setMyCommands` for exactly those commands at start (idempotent) so the phone | BUILT | menu lists exactly the commands answered (tg21) |
 | C-29 | Chat as agent (ask, review, remember) | EXCLUDE for now. If ever added: inbound text is untrusted data, carries Ghast-style proven | EXCLUDED | EXCLUDE for now. If ever added: inbound text is untrusted data, carries Ghast-style provenance (concept only), runs a chat with no tools, and its **answers** wo |
