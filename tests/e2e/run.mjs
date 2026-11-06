@@ -1052,6 +1052,49 @@ try {
   await page.getByRole("button", { name: "Keep this conversation" }).waitFor();
   await page.getByLabel("Your message").press("ArrowUp");
   check("after Forget, Up never brings back a message from the forgotten conversation", !(await page.getByLabel("Your message").inputValue()).includes("forgetcanary"));
+  // message actions: copy, edit and branch, answer again; the original is never changed and the versions are switchable
+  await ctx.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.getByRole("button", { name: "Keep this conversation" }).click();
+  await page.getByText("Kept", { exact: true }).waitFor();
+  for (const [i, w] of ["branchone words", "branchtwo words"].entries()) {
+    await page.getByLabel("Your message").fill(w);
+    await page.getByLabel("Your message").press("Enter");
+    await page.locator(".msg.assistant").nth(i).getByRole("button", { name: "Copy", exact: true }).waitFor();
+  }
+  check("every message offers Copy; only your messages offer Edit and branch and only replies offer Answer again", (await page.getByRole("button", { name: "Copy", exact: true }).count()) === 4 && (await page.getByRole("button", { name: "Edit and branch" }).count()) === 2 && (await page.getByRole("button", { name: "Answer again" }).count()) === 2, `copy=${await page.getByRole("button", { name: "Copy", exact: true }).count()} edit=${await page.getByRole("button", { name: "Edit and branch" }).count()} again=${await page.getByRole("button", { name: "Answer again" }).count()} msgs=${await page.locator(".msg").count()}`);
+  await page.locator(".msg.user").nth(1).getByRole("button", { name: "Copy", exact: true }).click();
+  await page.locator(".msg.user").nth(1).getByRole("button", { name: "Copied" }).waitFor();
+  check("Copy puts exactly the message on the clipboard", (await page.evaluate(() => navigator.clipboard.readText())) === "branchtwo words");
+  await axeCheck(page, "chat with message actions");
+  await page.screenshot({ path: join(shots, "13c-message-actions.png") });
+  await page.locator(".msg.user").nth(1).getByRole("button", { name: "Edit and branch" }).click();
+  await page.getByRole("navigation", { name: "Other versions of this conversation" }).waitFor();
+  check("Edit and branch opens a version holding only what came before, with the message back in the box", (await page.locator(".msg").count()) === 2 && (await page.getByLabel("Your message").inputValue()) === "branchtwo words");
+  await page.getByLabel("Your message").fill("branchtwo changed");
+  await page.getByLabel("Your message").press("Enter");
+  await page.getByText("Branched from an earlier conversation after message 2.").waitFor();
+  await page.locator(".msg.assistant").nth(1).getByRole("button", { name: "Copy", exact: true }).waitFor();
+  check("the new version continues with the changed question", (await page.locator(".msg.user").nth(1).innerText()).includes("branchtwo changed"));
+  await page.getByRole("navigation", { name: "Other versions of this conversation" }).getByRole("button").first().click();
+  await page.locator(".msg.user").nth(1).getByText("branchtwo words").waitFor();
+  const original = await page.locator(".msg").allInnerTexts();
+  check("the original is unchanged and the version switcher leads back to it", original.length === 4 && original[2].includes("branchtwo words") && !original.join(" ").includes("changed"), JSON.stringify(original).slice(0, 400));
+  await page.locator(".msg.assistant").nth(1).getByRole("button", { name: "Answer again" }).click();
+  await page.getByText("Branched from an earlier conversation after message 2.").waitFor();
+  await page.locator(".msg.assistant").nth(1).getByRole("button", { name: "Copy", exact: true }).waitFor();
+  check("Answer again opens a version that asks the same question again, and the original stays whole", (await page.locator(".msg").count()) === 4 && (await page.locator(".msg.user").nth(1).innerText()).includes("branchtwo words"), JSON.stringify(await page.locator(".msg").allInnerTexts()).slice(0, 500));
+  const sw = page.getByRole("navigation", { name: "Other versions of this conversation" });
+  check("both other versions are listed from here", (await sw.getByRole("button").count()) === 2, (await sw.innerText().catch(() => "no nav")).replace(/\n/g, " | "));
+  // tidy up: forget every kept conversation so the steps after this see only their own
+  for (let guard = 0; guard < 6; guard++) {
+    const forgets = page.getByRole("button", { name: "Forget", exact: true });
+    if ((await forgets.count()) === 0) break;
+    await forgets.first().click();
+    await page.getByRole("button", { name: "Press again to forget" }).first().click();
+    await page.waitForTimeout(300);
+  }
+  await page.getByRole("button", { name: "Keep this conversation" }).waitFor();
+  check("every version was forgotten", (await page.getByRole("button", { name: "Open" }).count()) === 0);
   // the connection drops after the service saved the exchange: the message does not come back to be sent twice
   await page.getByRole("button", { name: "Keep this conversation" }).click();
   await page.getByText("Kept", { exact: true }).waitFor();

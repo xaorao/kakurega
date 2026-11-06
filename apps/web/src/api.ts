@@ -117,7 +117,7 @@ export interface ChatHit {
 }
 
 export interface SimilarMemories { groups: MemoryItem[][]; scanned: number; complete: boolean; note: string }
-export interface KeptChat { id: string; title: string; created: number; updated: number; turns: number; project?: string | null }
+export interface KeptChat { id: string; title: string; created: number; updated: number; turns: number; project?: string | null; parent?: string | null; fork_at?: number | null }
 export interface ModelProof { verified: boolean; model: string; checked_at?: number; means?: string[]; does_not_mean?: string[]; deployments?: { signer: string; tcb: string; advisories: string[]; gpu_verified: boolean; compose_hash: string | null; os_image_hash: string | null; nonce: string }[] }
 export interface GatewayProofResult { verified: boolean; gateway?: { signer: string; tcb: string; advisories: string[]; compose_hash: string | null; tls_bound: boolean; tls_fingerprint: string | null; nonce: string }; means?: string[]; does_not_mean?: string[] }
 export interface Passage { file: string; start: number; focus: number; lines: string[] }
@@ -227,7 +227,8 @@ export const api = {
   searchChats: (q: string) => request<{ results: ChatHit[] }>("GET", `/api/sessions/search?q=${encodeURIComponent(q)}`),
   renameChat: (id: string, title: string) => request<{ renamed: boolean }>("POST", `/api/sessions/${id}/rename`, { title }),
   keepChat: (title: string, project?: string) => request<{ id: string }>("POST", "/api/sessions", project ? { title, project } : { title }),
-  keptChat: (id: string) => request<{ id: string; project?: string | null; turns: ChatTurn[]; summary?: { covered: number; text: string } | null }>("GET", `/api/sessions/${id}`),
+  keptChat: (id: string) => request<{ id: string; project?: string | null; parent?: string | null; fork_at?: number | null; branches?: { id: string; title: string; fork_at: number | null; turns: number }[]; turns: ChatTurn[]; summary?: { covered: number; text: string } | null }>("GET", `/api/sessions/${id}`),
+  forkChat: (id: string, at: number) => request<{ id: string; parent: string; fork_at: number }>("POST", `/api/sessions/${id}/fork`, { at }),
   forgetChat: (id: string) => request<{ forgotten: boolean }>("POST", `/api/sessions/${id}/forget`, {}),
   searchStatus: () => request<{ available: boolean; provider?: string; how_to_enable?: string }>("GET", "/api/search/status"),
   searchPropose: (query: string, recency?: string) => request<SearchProposal>("POST", "/api/search/propose", recency ? { query, recency } : { query }),

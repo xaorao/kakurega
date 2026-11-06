@@ -1,3 +1,4 @@
+import { againPoint, editPoint, type BranchPoint } from "../branching";
 import { batch, createEffect, createResource, createSignal, For, on, onCleanup, Show } from "solid-js";
 import { api, ApiError, streamChat, type ChatHit, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
 import { t } from "../i18n";
@@ -39,6 +40,10 @@ export function Chat() {
   let box: HTMLTextAreaElement | undefined;
   // What the model is sent in place of the oldest messages of the open conversation, so the owner can read it.
   const [summaryText, setSummaryText] = createSignal("");
+  // The other versions of the open conversation (branched at the same message), and the message it was branched at.
+  const [branches, setBranches] = createSignal<{ id: string; title: string; fork_at: number | null; turns: number }[]>([]);
+  const [forkAt, setForkAt] = createSignal<number | null>(null);
+  const [copiedAt, setCopiedAt] = createSignal<number | null>(null);
   const show = (next: string | null, nextTurns: Shown[], summary = "") => {
     if (busy()) abort?.abort();
     view++;
@@ -48,6 +53,8 @@ export function Chat() {
       setSession(next);
       setTurns(nextTurns);
       setSummaryText(summary);
+      setBranches([]);
+      setForkAt(null);
       setTextRaw(loadDraft(draftKey(next)));
     });
   };
@@ -158,8 +165,36 @@ export function Chat() {
       const r = await api.keptChat(id);
       setProject(r.project ?? "");
       show(id, r.turns.map(({ role, content }) => ({ role, content })), r.summary?.text ?? "");
+      setBranches(r.branches ?? []);
+      setForkAt(r.parent ? (r.fork_at ?? null) : null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("chat.error"));
+    }
+  };
+  // Branch the open kept conversation at a message. The original stays as it is; the branch is opened, and the message goes
+  // back into the box (edit) or is sent again (answer again).
+  const branchAt = async (p: BranchPoint | null, again: boolean) => {
+    const from = session();
+    if (!p || !from || busy()) return;
+    setError("");
+    try {
+      const f = await api.forkChat(from, p.at);
+      await openKept(f.id);
+      setText(p.text);
+      await refetch();
+      if (again) await send();
+      else box?.focus();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : t("chat.branchError"));
+    }
+  };
+  const copyTurn = async (i: number, content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedAt(i);
+      setTimeout(() => setCopiedAt((c) => (c === i ? null : c)), 1500);
+    } catch {
+      /* the browser refused the clipboard; nothing was copied and nothing is claimed */
     }
   };
   const forget = async (id: string) => {
@@ -571,13 +606,31 @@ export function Chat() {
       <Show when={summaryText()}>
         <details class="card stack summary-shown"><summary>{t("chat.summaryShow")}</summary><p class="muted">{t("chat.summaryExplain")}</p><p class="mem-text">{summaryText()}</p></details>
       </Show>
+      <Show when={session() && (branches().length > 0 || forkAt() !== null)}>
+        <nav class="card stack branches" aria-label={t("chat.branches")}>
+          <strong>{t("chat.branches")}</strong>
+          <p class="muted">{forkAt() !== null ? t("chat.branchFrom", { n: forkAt()! }) + " " : ""}{t("chat.branchesHelp")}</p>
+          <ul class="plain row-wrap">
+            <For each={branches()}>{(b) => <li><button type="button" class="linklike" onClick={() => void openKept(b.id)}>{t("chat.branchOf", { title: b.title, n: b.turns })}</button></li>}</For>
+          </ul>
+        </nav>
+      </Show>
       <ul class="plain stack chat" aria-live="polite">
         <For each={turns()} fallback={<li class="muted">{t("chat.empty")}</li>}>
-          {(m) => (
+          {(m, i) => (
             <li class={`card stack msg ${m.role}`}>
               <strong>{m.role === "user" ? t("chat.you") : t("chat.assistant")}</strong>
               {m.role === "assistant" ? <Markdown text={m.content} /> : <p class="mem-text">{m.content}</p>}
               <Show when={m.foot}>{(f) => <p class="muted">{f().join(" · ")}</p>}</Show>
+              <div class="actions msg-actions">
+                <button type="button" class="linklike" onClick={() => void copyTurn(i(), m.content)}>{copiedAt() === i() ? t("chat.copied") : t("chat.copy")}</button>
+                <Show when={session() && !busy() && editPoint(turns(), i())}>
+                  <button type="button" class="linklike" onClick={() => void branchAt(editPoint(turns(), i()), false)}>{t("chat.edit")}</button>
+                </Show>
+                <Show when={session() && !busy() && againPoint(turns(), i())}>
+                  <button type="button" class="linklike" onClick={() => void branchAt(againPoint(turns(), i()), true)}>{t("chat.again")}</button>
+                </Show>
+              </div>
               <Show when={(m.notes ?? []).length > 0}>
                 <details class="notes-used">
                   <summary>{t("chat.whichNotes", { n: m.notes!.length })}</summary>

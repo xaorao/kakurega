@@ -333,6 +333,26 @@ fn init_store(v: &Vault) -> Result<(), String> {
             .execute_batch("ALTER TABLE sessions ADD COLUMN project TEXT;")
             .map_err(|e| e.to_string())?;
     }
+    // stores made before a conversation could branch
+    let has_parent = {
+        let c = v.connection();
+        let mut st = c
+            .prepare("PRAGMA table_info(sessions)")
+            .map_err(|e| e.to_string())?;
+        let names: Vec<String> = st
+            .query_map([], |r| r.get::<_, String>(1))
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .collect();
+        names.iter().any(|n| n == "parent")
+    };
+    if !has_parent {
+        v.connection()
+            .execute_batch(
+                "ALTER TABLE sessions ADD COLUMN parent TEXT; ALTER TABLE sessions ADD COLUMN fork_at INTEGER;",
+            )
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -2824,11 +2844,11 @@ struct SessionNew {
 async fn sessions_list(axum::Extension(svc): Svc) -> Response {
     let store = svc.store.lock().expect("lock");
     let c = store.connection();
-    let Ok(mut st) = c.prepare("SELECT s.id, s.title, s.created, s.updated, (SELECT count(*) FROM session_turns t WHERE t.session = s.id), s.project FROM sessions s ORDER BY s.updated DESC, s.id LIMIT 200") else {
+    let Ok(mut st) = c.prepare("SELECT s.id, s.title, s.created, s.updated, (SELECT count(*) FROM session_turns t WHERE t.session = s.id), s.project, s.parent, s.fork_at FROM sessions s ORDER BY s.updated DESC, s.id LIMIT 200") else {
         return error(StatusCode::INTERNAL_SERVER_ERROR, "STORE", "could not read the conversations");
     };
     let rows: Vec<Value> = st
-        .query_map([], |r| Ok(json!({"id": r.get::<_, String>(0)?, "title": r.get::<_, String>(1)?, "created": r.get::<_, i64>(2)?, "updated": r.get::<_, i64>(3)?, "turns": r.get::<_, i64>(4)?, "project": r.get::<_, Option<String>>(5)?})))
+        .query_map([], |r| Ok(json!({"id": r.get::<_, String>(0)?, "title": r.get::<_, String>(1)?, "created": r.get::<_, i64>(2)?, "updated": r.get::<_, i64>(3)?, "turns": r.get::<_, i64>(4)?, "project": r.get::<_, Option<String>>(5)?, "parent": r.get::<_, Option<String>>(6)?, "fork_at": r.get::<_, Option<i64>>(7)?})))
         .map(|it| it.flatten().collect())
         .unwrap_or_default();
     Json(json!({"sessions": rows, "note": "Only conversations you chose to keep are listed. Forget removes the text from the encrypted store."})).into_response()
@@ -3071,9 +3091,153 @@ async fn session_get(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) ->
                     r.get(0)
                 })
                 .unwrap_or(None);
-            Json(json!({"id": id, "project": project, "summary": summary, "turns": t.into_iter().map(|(role, content)| json!({"role": role, "content": content})).collect::<Vec<_>>()})).into_response()
+            let (parent, fork_at, branches) = session_branches(&svc, &id);
+            Json(json!({"id": id, "project": project, "parent": parent, "fork_at": fork_at, "branches": branches, "summary": summary, "turns": t.into_iter().map(|(role, content)| json!({"role": role, "content": content})).collect::<Vec<_>>()})).into_response()
         }
     }
+}
+
+/// The conversations that share a fork point with this one, so the owner can move between versions of the same question: the
+/// conversation it was branched from, the other branches taken at the same message, and, for a conversation that was itself
+/// branched from, nothing else. A conversation that has been branched lists its own branches with the message each started at.
+fn session_branches(svc: &Service, id: &str) -> (Option<String>, Option<i64>, Vec<Value>) {
+    let store = svc.store.lock().expect("lock");
+    let c = store.connection();
+    let (parent, fork_at): (Option<String>, Option<i64>) = c
+        .query_row(
+            "SELECT parent, fork_at FROM sessions WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap_or((None, None));
+    let sql = "SELECT s.id, s.title, s.fork_at, (SELECT count(*) FROM session_turns t WHERE t.session = s.id) FROM sessions s \
+               WHERE s.id != ?1 AND (s.parent = ?1 OR (?2 IS NOT NULL AND (s.id = ?2 OR (s.parent = ?2 AND s.fork_at = ?3)))) \
+               ORDER BY s.created, s.id LIMIT 50";
+    let Ok(mut st) = c.prepare(sql) else {
+        return (parent, fork_at, Vec::new());
+    };
+    let rows = st
+        .query_map(kk_vault::rusqlite::params![id, parent, fork_at], |r| {
+            Ok(json!({"id": r.get::<_, String>(0)?, "title": r.get::<_, String>(1)?, "fork_at": r.get::<_, Option<i64>>(2)?, "turns": r.get::<_, i64>(3)?}))
+        })
+        .map(|it| it.flatten().collect())
+        .unwrap_or_default();
+    (parent, fork_at, rows)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ForkBody {
+    /// How many messages from the start the new conversation keeps: 0 starts empty, the length of the conversation keeps all.
+    at: usize,
+    #[serde(default)]
+    title: Option<String>,
+}
+
+/// Branches a kept conversation: a new kept conversation holding the first `at` messages of this one. The original is never
+/// changed, so both versions stay and either can be continued. Nothing is sent anywhere.
+async fn session_fork(
+    axum::Extension(svc): Svc,
+    UrlPath(id): UrlPath<String>,
+    Json(b): Json<ForkBody>,
+) -> Response {
+    let title = b.title.as_deref().map(str::trim);
+    if title.is_some_and(|t| {
+        t.chars().count() > 80 || !chat_clean(t) || !kk_secrets::scan(t).is_empty()
+    }) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_TITLE",
+            "a title is at most 80 characters, with no control characters or secrets",
+        );
+    }
+    let mut raw = [0u8; 6];
+    getrandom::fill(&mut raw).expect("operating system randomness");
+    let new_id = format!(
+        "chat-{}",
+        raw.iter().map(|x| format!("{x:02x}")).collect::<String>()
+    );
+    let kept = {
+        let store = svc.store.lock().expect("lock");
+        let c = store.connection();
+        let Some((old_title, project)) = c
+            .query_row(
+                "SELECT title, project FROM sessions WHERE id = ?1",
+                [&id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+            )
+            .ok()
+        else {
+            return error(
+                StatusCode::NOT_FOUND,
+                "NO_SESSION",
+                "there is no such kept conversation",
+            );
+        };
+        let total: i64 = c
+            .query_row(
+                "SELECT count(*) FROM session_turns WHERE session = ?1",
+                [&id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if b.at as i64 > total {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "BAD_POINT",
+                "the conversation has fewer messages than that",
+            );
+        }
+        let n: i64 = c
+            .query_row("SELECT count(*) FROM sessions", [], |r| r.get(0))
+            .unwrap_or(i64::MAX);
+        if n >= MAX_SESSIONS {
+            return error(
+                StatusCode::CONFLICT,
+                "TOO_MANY",
+                "forget some kept conversations first",
+            );
+        }
+        let name = match title {
+            Some(t) if !t.is_empty() => t.to_string(),
+            _ => {
+                let base: String = old_title.chars().take(70).collect();
+                format!("{base} (branch)")
+            }
+        };
+        let t = now();
+        let done = c
+            .execute(
+                "INSERT INTO sessions(id, title, created, updated, project, parent, fork_at) VALUES (?1, ?2, ?3, ?3, ?4, ?5, ?6)",
+                kk_vault::rusqlite::params![new_id, name, t, project, id, b.at as i64],
+            )
+            .is_ok()
+            && c.execute(
+                "INSERT INTO session_turns(session, seq, role, content, at) SELECT ?1, seq, role, content, at FROM session_turns WHERE session = ?2 AND seq < ?3",
+                kk_vault::rusqlite::params![new_id, id, b.at as i64],
+            )
+            .is_ok();
+        if !done {
+            let _ = c.execute("DELETE FROM session_turns WHERE session = ?1", [&new_id]);
+            let _ = c.execute("DELETE FROM sessions WHERE id = ?1", [&new_id]);
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "STORE",
+                "could not keep the branch",
+            );
+        }
+        b.at
+    };
+    svc.log_event(
+        "session.branched",
+        &new_id,
+        &[("from", id.as_str().into()), ("kept", kept.into())],
+    );
+    (
+        StatusCode::CREATED,
+        Json(json!({"id": new_id, "parent": id, "fork_at": kept})),
+    )
+        .into_response()
 }
 
 async fn session_forget(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
@@ -6122,6 +6286,7 @@ impl Extension for Routes {
             .route("/api/sessions/{id}", get(session_get))
             .route("/api/sessions/{id}/rename", post(session_rename))
             .route("/api/sessions/{id}/forget", post(session_forget))
+            .route("/api/sessions/{id}/fork", post(session_fork))
             .route("/api/route/attest", post(route_attest))
             .route("/api/route/gateway", post(route_gateway))
             .route("/api/search/status", get(search_status))

@@ -9049,3 +9049,281 @@ fn sv91_a_transcript_is_exported_to_a_file_the_owner_names_inside_the_exports_fo
         "the log has the event and not the words or the name"
     );
 }
+
+#[test]
+fn sv92_a_kept_conversation_can_be_branched_at_any_message_and_the_original_is_never_changed() {
+    let (c, w, _seen, _root) = instructions_service("sess-fork");
+    let anon = Web::new(c.addr);
+    assert_eq!(
+        anon.post("/api/sessions/x/fork", json!({"at": 0})).0,
+        401,
+        "branching needs the pairing"
+    );
+    let (s, v) = w.post(
+        "/api/sessions",
+        json!({"title": "Pricing question", "project": "alpha"}),
+    );
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    for m in ["first question", "second question"] {
+        assert_eq!(
+            w.post("/api/chat", json!({"message": m, "session": id})).0,
+            200
+        );
+    }
+    let before = w.get(&format!("/api/sessions/{id}")).1;
+    let n = before["turns"].as_array().unwrap().len();
+    assert_eq!(n, 4, "two questions and two answers: {before}");
+    assert_eq!(before["branches"], json!([]));
+    assert_eq!(before["parent"], Value::Null);
+
+    // branch before the second question: it keeps the first question and its answer, and the original stays whole
+    let (s, f) = w.post(&format!("/api/sessions/{id}/fork"), json!({"at": 2}));
+    assert_eq!(s, 201, "{f}");
+    let b1 = f["id"].as_str().unwrap().to_string();
+    assert_ne!(b1, id);
+    assert_eq!(
+        (f["parent"].as_str(), f["fork_at"].as_i64()),
+        (Some(id.as_str()), Some(2))
+    );
+    let (_, got) = w.get(&format!("/api/sessions/{b1}"));
+    let kept: Vec<String> = got["turns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["content"].as_str().unwrap().to_string())
+        .collect();
+    let orig: Vec<String> = before["turns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .take(2)
+        .map(|t| t["content"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        kept, orig,
+        "the branch holds exactly the first two messages"
+    );
+    assert_eq!(
+        got["project"],
+        json!("alpha"),
+        "it stays in the same project"
+    );
+    assert_eq!(got["parent"], json!(id));
+    assert_eq!(
+        w.get(&format!("/api/sessions/{id}")).1["turns"],
+        before["turns"],
+        "the original has not changed"
+    );
+
+    // the branch is its own conversation: continuing it does not touch the original
+    assert_eq!(
+        w.post(
+            "/api/chat",
+            json!({"message": "a different second question", "session": b1})
+        )
+        .0,
+        200
+    );
+    assert_eq!(
+        w.get(&format!("/api/sessions/{b1}")).1["turns"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
+    assert_eq!(
+        w.get(&format!("/api/sessions/{id}")).1["turns"],
+        before["turns"]
+    );
+
+    // branches at the same message are switchable: each sees the other and the original
+    let (_, f2) = w.post(
+        &format!("/api/sessions/{id}/fork"),
+        json!({"at": 2, "title": "Try B"}),
+    );
+    let b2 = f2["id"].as_str().unwrap().to_string();
+    let ids = |v: &Value| -> Vec<String> {
+        v["branches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let mut of_original = ids(&w.get(&format!("/api/sessions/{id}")).1);
+    of_original.sort();
+    let mut want = vec![b1.clone(), b2.clone()];
+    want.sort();
+    assert_eq!(of_original, want, "the original lists both branches");
+    let mut of_b1 = ids(&w.get(&format!("/api/sessions/{b1}")).1);
+    of_b1.sort();
+    let mut want = vec![id.clone(), b2.clone()];
+    want.sort();
+    assert_eq!(of_b1, want, "a branch lists the original and its sibling");
+    // a branch taken at another message is not a sibling
+    let (_, f3) = w.post(&format!("/api/sessions/{id}/fork"), json!({"at": 0}));
+    let b3 = f3["id"].as_str().unwrap().to_string();
+    assert!(!ids(&w.get(&format!("/api/sessions/{b1}")).1).contains(&b3));
+    assert_eq!(
+        w.get(&format!("/api/sessions/{b3}")).1["turns"],
+        json!([]),
+        "at 0 starts empty"
+    );
+    let listed = w.get("/api/sessions").1;
+    let row = listed["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == json!(b2))
+        .unwrap();
+    assert_eq!(
+        (
+            row["title"].as_str(),
+            row["parent"].as_str(),
+            row["fork_at"].as_i64()
+        ),
+        (Some("Try B"), Some(id.as_str()), Some(2))
+    );
+    let auto = listed["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == json!(b1))
+        .unwrap();
+    assert_eq!(auto["title"], json!("Pricing question (branch)"));
+
+    // hostile and wrong requests change nothing
+    let count = || {
+        w.get("/api/sessions").1["sessions"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    let total = count();
+    assert_eq!(
+        w.post(&format!("/api/sessions/{id}/fork"), json!({"at": 5}))
+            .0,
+        400,
+        "past the end"
+    );
+    assert_eq!(
+        w.post(&format!("/api/sessions/{id}/fork"), json!({"at": -1}))
+            .0,
+        422
+    );
+    assert_eq!(
+        w.post(&format!("/api/sessions/{id}/fork"), json!({})).0,
+        422
+    );
+    assert_eq!(
+        w.post(
+            &format!("/api/sessions/{id}/fork"),
+            json!({"at": 1, "extra": 1})
+        )
+        .0,
+        422
+    );
+    assert_eq!(
+        w.post("/api/sessions/chat-nope/fork", json!({"at": 0})).0,
+        404
+    );
+    for bad in [
+        "x".repeat(81),
+        "bell\u{7}".to_string(),
+        format!(
+            "key {}-{}",
+            "sk-ant", "api03-abcdefghijklmnopqrstuvwxyz0123456789"
+        ),
+    ] {
+        assert_eq!(
+            w.post(
+                &format!("/api/sessions/{id}/fork"),
+                json!({"at": 1, "title": bad})
+            )
+            .0,
+            400,
+            "{bad}"
+        );
+    }
+    assert_eq!(count(), total, "nothing was created by a refused request");
+
+    // forgetting the original leaves its branches whole
+    assert_eq!(
+        w.post(&format!("/api/sessions/{id}/forget"), json!({})).0,
+        200
+    );
+    assert_eq!(
+        w.get(&format!("/api/sessions/{b1}")).1["turns"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
+
+    // the signed log says that a branch was made, from which conversation and how many messages were kept, and no words
+    let log = log_text(
+        &format!("http://127.0.0.1:{}", c.addr.port()),
+        c.security.admin_token(),
+    );
+    assert!(log.contains("session.branched"), "{log}");
+    let before_kind = log.split("session.branched").next().unwrap();
+    let record: String = before_kind
+        .chars()
+        .rev()
+        .take(160)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    assert!(
+        record.contains(&format!("\\\"from\\\":\\\"{id}\\\"")) && record.contains("\\\"kept\\\":"),
+        "the record names the conversation it was branched from and how many messages it kept: {record}"
+    );
+    assert!(
+        !log.contains("second question") && !log.contains("Try B"),
+        "no conversation text in the log"
+    );
+}
+
+#[test]
+fn sv93_the_number_of_kept_conversations_is_limited_for_new_ones_and_for_branches() {
+    let (_c, w, _seen, _root) = instructions_service("sess-limit");
+    let (_, first) = w.post("/api/sessions", json!({"title": "first"}));
+    let first = first["id"].as_str().unwrap().to_string();
+    for i in 1..200 {
+        assert_eq!(
+            w.post("/api/sessions", json!({"title": format!("c{i}")})).0,
+            201,
+            "{i}"
+        );
+    }
+    let (s, v) = w.post("/api/sessions", json!({"title": "one too many"}));
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("TOO_MANY")),
+        "{v}"
+    );
+    let (s, v) = w.post(&format!("/api/sessions/{first}/fork"), json!({"at": 0}));
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("TOO_MANY")),
+        "{v}"
+    );
+    assert_eq!(
+        w.get("/api/sessions").1["sessions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        200
+    );
+    assert_eq!(
+        w.post(&format!("/api/sessions/{first}/forget"), json!({}))
+            .0,
+        200
+    );
+    assert_eq!(
+        w.post("/api/sessions", json!({"title": "room again"})).0,
+        201
+    );
+}
