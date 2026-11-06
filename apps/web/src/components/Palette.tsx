@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { t } from "../i18n";
-import { matchItems } from "../palette-match";
+import { matchItems, moveSection, moveSelection, sectionHeads } from "../palette-match";
 
 export interface PaletteItem {
   id: string;
@@ -13,6 +13,8 @@ export function Palette(props: { open: boolean; items: PaletteItem[]; onClose: (
   const [q, setQ] = createSignal("");
   const [sel, setSel] = createSignal(0);
   const shown = createMemo(() => matchItems(props.items, q()));
+  const heads = createMemo(() => new Set(sectionHeads(shown(), q())));
+  const browsing = () => q().trim() === "";
   let input: HTMLInputElement | undefined;
   let opener: Element | null = null;
   createEffect(() => {
@@ -42,12 +44,12 @@ export function Palette(props: { open: boolean; items: PaletteItem[]; onClose: (
     if (e.key === "Escape") {
       e.preventDefault();
       props.onClose();
-    } else if (e.key === "ArrowDown") {
+    } else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && e.altKey) {
       e.preventDefault();
-      setSel(n ? (sel() + 1) % n : 0);
-    } else if (e.key === "ArrowUp") {
+      setSel(moveSection(shown(), q(), sel(), e.key === "ArrowDown" ? 1 : -1));
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "PageDown" || e.key === "PageUp") {
       e.preventDefault();
-      setSel(n ? (sel() + n - 1) % n : 0);
+      setSel(moveSelection(sel(), n, e.key === "ArrowDown" ? "down" : e.key === "ArrowUp" ? "up" : e.key === "PageDown" ? "pageDown" : "pageUp"));
     } else if (e.key === "Enter") {
       e.preventDefault();
       choose(shown()[sel()]);
@@ -79,10 +81,15 @@ export function Palette(props: { open: boolean; items: PaletteItem[]; onClose: (
           <ul id="palette-list" role="listbox" class="plain">
             <For each={shown()} fallback={<li class="muted" role="status">{t("palette.none")}</li>}>
               {(i, idx) => (
-                <li id={`pal-${i.id}`} role="option" aria-selected={idx() === sel()} class={idx() === sel() ? "pal-item sel" : "pal-item"} onMouseMove={() => setSel(idx())} onClick={() => choose(i)}>
-                  <span>{i.label}</span>
-                  <span class="muted">{i.group}</span>
-                </li>
+                <>
+                  <Show when={heads().has(idx())}>
+                    <li class="pal-head" role="presentation" aria-hidden="true">{i.group}</li>
+                  </Show>
+                  <li id={`pal-${i.id}`} role="option" aria-selected={idx() === sel()} class={idx() === sel() ? "pal-item sel" : "pal-item"} onMouseMove={() => setSel(idx())} onClick={() => choose(i)}>
+                    <span>{i.label}</span>
+                    <span class={browsing() ? "visually-hidden" : "muted"}>{i.group}</span>
+                  </li>
+                </>
               )}
             </For>
           </ul>

@@ -205,6 +205,8 @@ button.danger { background: var(--redline); border-color: var(--redline); color:
 .pal-item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
 .pal-item.sel { background: var(--veil); color: var(--ink); outline: 2px solid var(--cipher); outline-offset: -2px; }
 .pal-item.sel .muted { color: var(--stone); }
+.pal-head { padding: 10px 10px 4px; font-size: 0.8125rem; font-weight: 600; color: var(--stone); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 .md p { margin: 0 0 0.6em; overflow-wrap: anywhere; }
 .md ul, .md ol { margin: 0 0 0.6em 1.2em; padding: 0; }

@@ -273,7 +273,7 @@ export function App() {
     <Show when={paired() !== null} fallback={<main class="center"><p class="muted">{t("app.connecting")}</p></main>}>
       <Show when={paired()} fallback={<Show when={unreachable()} fallback={<Pair onDone={() => { setPaired(null); }} />}><main class="center"><p role="alert" class="bad">{t("app.unreachable")}</p><button onClick={() => { setUnreachable(false); setPaired(null); }}>{t("app.retry")}</button></main></Show>}>
         <Palette open={paletteOpen()} items={paletteItems()} onClose={() => setPaletteOpen(false)} />
-        <div class="shell">
+        <div class="shell" inert={paletteOpen()}>
           <header class="top">
             <a class="brand" href="#/">kakurega</a>
             <Show when={config()}>{(c) => <Badge config={c()} />}</Show>

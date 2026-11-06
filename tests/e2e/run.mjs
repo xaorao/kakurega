@@ -505,6 +505,25 @@ try {
   await page.keyboard.type("new");
   check("the best match comes first: a command that starts with the word", (await palette.getByRole("option").first().innerText()).toLowerCase().startsWith("new"));
   await page.keyboard.press("Escape");
+  // browsing shows group headers and moves between groups; searching shows none
+  await page.keyboard.press("Control+Shift+P");
+  const heads = palette.locator(".pal-head");
+  const headCount = await heads.count();
+  check("browsing the commands shows a header where the group changes", headCount >= 2 && (await heads.first().isVisible()));
+  const selectedText = () => palette.locator('[aria-selected="true"]').innerText();
+  const firstSelected = await selectedText();
+  await page.keyboard.press("Alt+ArrowDown");
+  const afterJump = await selectedText();
+  check("Alt+Down jumps to the first command of the next group", afterJump !== firstSelected && (await palette.locator('.pal-head + [aria-selected="true"]').count()) === 1);
+  await page.keyboard.press("Alt+ArrowUp");
+  check("Alt+Up goes back to the first command of the group", (await selectedText()) === firstSelected);
+  await page.keyboard.press("PageDown");
+  const last = await palette.getByRole("option").count();
+  check("Page Down moves down and stops at the last command", (await palette.locator('[aria-selected="true"]').getAttribute("id")) === (await palette.getByRole("option").nth(Math.min(10, last - 1)).getAttribute("id")));
+  await axeCheck(page, "command palette (browsing with headers)");
+  await page.keyboard.type("memory");
+  check("searching shows no group headers", (await heads.count()) === 0);
+  await page.keyboard.press("Escape");
   // chat: a private assistant turn that can use a saved note, and nothing is saved
   await page.getByRole("link", { name: "Chat" }).click();
   await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();
