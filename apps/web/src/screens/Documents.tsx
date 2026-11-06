@@ -1,5 +1,6 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, type AskReply, type Passage } from "../api";
+import { editorLocation } from "../cite";
 import { t, type Key } from "../i18n";
 
 export function Documents() {
@@ -24,6 +25,15 @@ export function Documents() {
     }
   };
   const [passages, setPassages] = createSignal<Record<string, Passage | string>>({});
+  const [copied, setCopied] = createSignal("");
+  const copyLocation = async (loc: string) => {
+    try {
+      await navigator.clipboard.writeText(loc);
+      setCopied(t("docs.copied", { where: loc }));
+    } catch {
+      setCopied(t("docs.copyFailed"));
+    }
+  };
   const showPassage = async (file: string, line: number, folder: string) => {
     const key = `${file}:${line}`;
     if (passages()[key]) {
@@ -72,6 +82,7 @@ export function Documents() {
               <h3>{t("docs.checked")}</h3>
               <Show when={(r().citations ?? []).length > 0} fallback={<p class="muted">{t("docs.noQuotes")}</p>}>
                 <p><strong>{t("docs.count", { v: r().verified ?? 0, n: (r().citations ?? []).length })}</strong></p>
+                <Show when={copied()}><p role="status" class="ok">{copied()}</p></Show>
                 <ul class="plain stack">
                   <For each={r().citations}>
                     {(c) => (
@@ -80,6 +91,9 @@ export function Documents() {
                         <p class="muted"><code>{c.file}</code> <span class={`chip ${c.verdict === "verified" ? "ok" : "bad"}`}>{t(`docs.${c.verdict}` as Key, { line: c.line ?? 0 })}</span>
                           <Show when={c.verdict === "verified" && c.line}>
                             {" "}<button type="button" class="link" aria-expanded={!!passages()[`${c.file}:${c.line}`]} onClick={() => showPassage(c.file, c.line as number, chosen())}>{passages()[`${c.file}:${c.line}`] ? t("docs.hidePassage") : t("docs.showPassage")}</button>
+                          </Show>
+                          <Show when={c.verdict === "verified" && editorLocation(chosen(), c.file, c.line)}>
+                            {(loc) => <>{" "}<button type="button" class="link" onClick={() => void copyLocation(loc())}>{t("docs.copyLocation")}</button></>}
                           </Show>
                         </p>
                         <Show when={passages()[`${c.file}:${c.line}`]}>

@@ -928,6 +928,14 @@ try {
   await axeCheck(page, "documents screen with a passage open");
   await page.getByRole("button", { name: "Hide" }).click();
   check("Hide closes the passage", (await passage.count()) === 0);
+  // the verified quote can be opened in the owner's own editor: its location is copied as path:line
+  await ctx.grantPermissions(["clipboard-read", "clipboard-write"]);
+  check("only a verified quote offers to copy its location", (await page.getByRole("button", { name: "Copy location" }).count()) === 1);
+  await page.getByRole("button", { name: "Copy location" }).click();
+  await page.getByText("Copied:", { exact: false }).waitFor();
+  const copiedText = await page.evaluate(() => navigator.clipboard.readText());
+  check("the copied location is the folder, the file and the line, ready for an editor", /^\/.+\/[^/]+:\d+$/.test(copiedText) && copiedText.includes(".") && !copiedText.includes(".."), copiedText);
+  check("the message says what was copied", (await page.getByText("Copied:", { exact: false }).innerText()).includes(copiedText));
   await axeCheck(page, "documents screen");
   await page.screenshot({ path: join(shots, "14-documents.png") });
   // activity: the signed log lists what happened, downloads, and verifies offline with the CLI
