@@ -76,6 +76,11 @@ try:
     o = tool("overview")
     check("overview tells the agent whether approvals need a signature", isinstance(o["structuredContent"].get("approvals_require_signature"), bool))
     check("overview returns structured counts", o["isError"] is False and "reviews" in o["structuredContent"] and o["structuredContent"]["ready"] in (True, False), json.dumps(o["structuredContent"])[:140])
+    res = rpc("resources/read", {"uri": "kakurega://overview"})["result"]["contents"][0]
+    same = {k: v for k, v in json.loads(res["text"]).items() if k != "log"} == {k: v for k, v in o["structuredContent"].items() if k != "log"}
+    check("the overview resource carries the same data as the overview tool (the signed log has grown by the audited call)", same)
+    pr = rpc("prompts/get", {"name": "private_review", "arguments": {"repo": str(work / "root/payments-service"), "recipient": "mcp-agent"}})
+    check("the private review prompt names every step and leaves approval to the owner", all(w in pr["result"]["messages"][0]["content"]["text"] for w in ("start_review", "request_approval", "kaku approve")))
     started = tool("start_review", repo=str(work / "root/payments-service"), recipient="mcp-agent")
     check("an agent can start a review", started["isError"] is False and started["structuredContent"]["id"].startswith("job-"))
     job = started["structuredContent"]["id"]
@@ -87,6 +92,8 @@ try:
             break
         time.sleep(0.4)
     check("the review finishes and status shows counts only", state == "ready" and st["findings_confirmed"] == 1 and st["files_withheld"] == 1, json.dumps(st)[:200])
+    rs = rpc("resources/read", {"uri": f"kakurega://review/{job}/status"})["result"]["contents"][0]
+    check("the review status resource says the review is ready", json.loads(rs["text"])["state"] == "ready", rs["text"][:160])
     ap = tool("request_approval", id=job)
     check("the agent can only ASK for approval and is told where the owner decides", ap["isError"] is False and "kaku approve" in ap["structuredContent"]["how"])
     st2 = tool("review_status", id=job)["structuredContent"]

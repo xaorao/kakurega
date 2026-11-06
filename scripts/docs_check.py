@@ -133,6 +133,44 @@ for snippet in re.findall(r"```json\n(.*?)```", mcp, re.S):
         if '"id":1' not in r.stdout.replace(" ", "") or r.returncode != 0:
             bad("docs/mcp.md", f"starting `kaku {' '.join(server.get('args', []))}` as the example says does not answer: {r.stderr[:120]}")
 
+# resources and prompts the document names are really offered, and the ones offered are named
+def ask(method):
+    r = subprocess.run(
+        [str(kaku), "mcp", "--data-dir", str(repo / "target/docs-check-empty")],
+        input='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"docs","version":"0"}}}\n'
+        + json.dumps({"jsonrpc": "2.0", "id": 2, "method": method}) + "\n",
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    for out in r.stdout.strip().split("\n"):
+        try:
+            v = json.loads(out)
+        except ValueError:
+            continue
+        if v.get("id") == 2:
+            return v.get("result", {})
+    return {}
+
+
+offered = {x["uri"] for x in ask("resources/list").get("resources", [])}
+offered |= {x["uriTemplate"] for x in ask("resources/templates/list").get("resourceTemplates", [])}
+offered_prompts = {x["name"] for x in ask("prompts/list").get("prompts", [])}
+named = set(re.findall(r"`(kakurega://[^`\s]+)`", mcp))
+for uri in named:
+    checked += 1
+    template_form = re.sub(r"/job-\d+/", "/{id}/", uri)
+    if uri not in offered and template_form not in offered:
+        bad("docs/mcp.md", f"names {uri}, which the server does not offer")
+for uri in offered:
+    checked += 1
+    if uri not in named:
+        bad("docs/mcp.md", f"the server offers {uri}, which the document does not name")
+for name in offered_prompts:
+    checked += 1
+    if f"`{name}`" not in mcp:
+        bad("docs/mcp.md", f"the server offers the prompt {name}, which the document does not name")
+
 # 5. modes the MCP document must explain, because an agent owner needs them
 for needed in ("--read-only", "--allow", "--leased", "kaku agent"):
     checked += 1

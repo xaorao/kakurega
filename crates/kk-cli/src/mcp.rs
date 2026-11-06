@@ -553,7 +553,7 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
                 Some(_) => return err(-32602, "protocolVersion must be text"),
             };
             ok(
-                json!({"protocolVersion": requested, "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "kakurega", "title": "Kakurega", "version": env!("CARGO_PKG_VERSION")}, "instructions": "Counts and statuses only. Source text, memory text and findings are never returned. Approvals happen in a window or terminal the owner controls."}),
+                json!({"protocolVersion": requested, "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false, "subscribe": false}, "prompts": {"listChanged": false}}, "serverInfo": {"name": "kakurega", "title": "Kakurega", "version": env!("CARGO_PKG_VERSION")}, "instructions": "Counts and statuses only. Source text, memory text and findings are never returned. Approvals happen in a window or terminal the owner controls."}),
             )
         }
         "ping" => ok(json!({})),
@@ -563,10 +563,38 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
             "there is only one page of tools; no cursor is needed",
         ),
         "tools/list" => ok(json!({"tools": ctx.listed(admin)})),
-        // Not offered, but clients that probe for them get an empty answer instead of an error to log.
-        "resources/list" => ok(json!({"resources": []})),
-        "resources/templates/list" => ok(json!({"resourceTemplates": []})),
-        "prompts/list" => ok(json!({"prompts": []})),
+        "resources/list" | "resources/templates/list" | "prompts/list"
+            if msg["params"].get("cursor").is_some_and(|c| !c.is_null()) =>
+        {
+            err(-32602, "there is only one page; no cursor is needed")
+        }
+        "resources/list" => ok(json!({"resources": resources_listed(ctx)})),
+        "resources/templates/list" => ok(json!({"resourceTemplates": templates_listed(ctx)})),
+        "resources/read" => {
+            let uri = match msg["params"].get("uri") {
+                Some(Value::String(u)) => u.as_str(),
+                _ => return err(-32602, "params.uri is required and must be text"),
+            };
+            let Some((tool, args)) = resource_target(ctx, uri) else {
+                // an address that is not exactly a listed resource is never written anywhere
+                report(admin, "unknown", "refused");
+                return err(-32002, "resource not found");
+            };
+            let result = call(admin, ctx, tool, &args);
+            report(admin, tool, outcome_of(&result));
+            if result["isError"] == false {
+                ok(
+                    json!({"contents": [{"uri": uri, "mimeType": "application/json", "text": result["structuredContent"].to_string()}]}),
+                )
+            } else {
+                let why = result["content"][0]["text"]
+                    .as_str()
+                    .unwrap_or("the service could not be asked");
+                err(-32603, why)
+            }
+        }
+        "prompts/list" => ok(json!({"prompts": prompts_listed(ctx)})),
+        "prompts/get" => prompt_get(ctx, &msg["params"]).map_or_else(|m| err(-32602, &m), ok),
         "tools/call" => {
             let p = msg.get("params").cloned().unwrap_or(Value::Null);
             let Some(name) = p.get("name").and_then(Value::as_str) else {
@@ -592,6 +620,124 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
         m if m.starts_with("notifications/") => None,
         _ => err(-32601, "method not found"),
     }
+}
+
+const OVERVIEW_URI: &str = "kakurega://overview";
+const STATUS_PREFIX: &str = "kakurega://review/";
+const STATUS_SUFFIX: &str = "/status";
+const PROMPT_NAME: &str = "private_review";
+const PROMPT_TOOLS: [&str; 3] = ["start_review", "review_status", "request_approval"];
+
+impl Ctx {
+    fn sees(&self, tool: &str) -> bool {
+        self.visible()
+            .as_array()
+            .is_some_and(|t| t.iter().any(|t| t["name"] == tool))
+    }
+}
+
+fn resources_listed(ctx: &Ctx) -> Value {
+    if !ctx.sees("overview") {
+        return json!([]);
+    }
+    json!([{
+        "uri": OVERVIEW_URI,
+        "name": "overview",
+        "title": "Overview",
+        "description": "Counts and statuses of the reviews on this computer: how many are running, ready or delivered. Never source text.",
+        "mimeType": "application/json"
+    }])
+}
+
+fn templates_listed(ctx: &Ctx) -> Value {
+    if !ctx.sees("review_status") {
+        return json!([]);
+    }
+    json!([{
+        "uriTemplate": format!("{STATUS_PREFIX}{{id}}{STATUS_SUFFIX}"),
+        "name": "review_status",
+        "title": "Review status",
+        "description": "State and counts of one review, for example kakurega://review/job-3/status.",
+        "mimeType": "application/json"
+    }])
+}
+
+/// The tool, and its arguments, that produces what this address names. Only the exact listed shapes resolve, and only for a
+/// tool this connection may call; anything else is not a resource.
+fn resource_target(ctx: &Ctx, uri: &str) -> Option<(&'static str, Value)> {
+    if uri == OVERVIEW_URI {
+        return ctx.sees("overview").then(|| ("overview", json!({})));
+    }
+    let id = uri
+        .strip_prefix(STATUS_PREFIX)?
+        .strip_suffix(STATUS_SUFFIX)?;
+    let valid = (1..=64).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+    (valid && ctx.sees("review_status")).then(|| ("review_status", json!({"id": id})))
+}
+
+fn prompts_available(ctx: &Ctx) -> bool {
+    PROMPT_TOOLS.iter().all(|t| ctx.sees(t))
+}
+
+fn prompts_listed(ctx: &Ctx) -> Value {
+    if !prompts_available(ctx) {
+        return json!([]);
+    }
+    json!([{
+        "name": PROMPT_NAME,
+        "title": "Private review",
+        "description": "Review a project folder privately for a named recipient. The owner approves what is released.",
+        "arguments": [
+            {"name": "repo", "description": "Absolute path of the project folder.", "required": true},
+            {"name": "recipient", "description": "Who will receive the result.", "required": true}
+        ]
+    }])
+}
+
+fn prompt_get(ctx: &Ctx, params: &Value) -> Result<Value, String> {
+    if params.get("name").and_then(Value::as_str) != Some(PROMPT_NAME) || !prompts_available(ctx) {
+        return Err("unknown prompt".into());
+    }
+    let args = params
+        .get("arguments")
+        .and_then(Value::as_object)
+        .ok_or("arguments are required")?;
+    if let Some(extra) = args
+        .keys()
+        .find(|k| !matches!(k.as_str(), "repo" | "recipient"))
+    {
+        return Err(format!("unknown argument {extra}"));
+    }
+    let value = |name: &str, max: usize| -> Result<String, String> {
+        let v = args
+            .get(name)
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| format!("{name} is required and must be text"))?;
+        if v.chars().count() > max || v.chars().any(char::is_control) {
+            return Err(format!("{name} is too long or has control characters"));
+        }
+        Ok(v.to_string())
+    };
+    let repo = value("repo", 4096)?;
+    let recipient = value("recipient", 128)?;
+    // the values go in as quoted JSON text, so neither can add a line or end its own quotes
+    let (repo, recipient) = (json!(repo).to_string(), json!(recipient).to_string());
+    let text = format!(
+        "Review the project folder {repo} privately for the recipient {recipient}.\n\
+1. Call start_review with exactly those two values and keep the id it returns.\n\
+2. Call review_status with that id until the state is no longer running.\n\
+3. When the state is ready, call request_approval with the id. This only asks: nothing is released.\n\
+4. Tell the owner the review is waiting and that they approve or refuse it themselves with `kaku approve` or in the app.\n\
+You see counts and statuses only. Never try to read, copy or send the project's contents, and do not release anything. If a tool is refused, stop and tell the owner what was refused."
+    );
+    Ok(json!({
+        "description": "Review a project folder privately for a named recipient.",
+        "messages": [{"role": "user", "content": {"type": "text", "text": text}}]
+    }))
 }
 
 /// Reads one line without ever holding more than `max` bytes of it: the rest of an oversized line is discarded as it

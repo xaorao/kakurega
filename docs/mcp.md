@@ -24,6 +24,14 @@ The service must be running (`kaku serve`, or the desktop app, or the terminal w
 
 Every tool has an input schema that forbids extra fields, an output schema, and annotations. The published list is a contract: `crates/kk-cli/tests/mcp_tools.golden.json` fails the build when it changes, so a schema change is always deliberate.
 
+## Resources and a prompt
+
+Some clients show resources and prompts to their user instead of letting the model choose a tool. Both follow exactly the same limits as the tools they stand for (`--read-only`, `--allow`, `--leased`), and every read is recorded as the tool that produced it.
+
+- `kakurega://overview` is the same counts and statuses as the `overview` tool.
+- `kakurega://review/{id}/status` is the same as `review_status` for one review, for example `kakurega://review/job-3/status`. Any other address is "resource not found" and reaches nothing.
+- `private_review` is a prompt with two arguments, `repo` and `recipient`. It lays out the steps (start the review, wait, ask for approval, tell the owner) and says the owner approves, never the agent. It is offered only while all three tools it uses are allowed, so it never walks an agent into a refusal. The two values are inserted as quoted text and must be plain text of reasonable length.
+
 ## Limiting what an agent can do
 
 Three switches on `kaku mcp` narrow the tools an agent is offered. They combine, and none of them can widen what another took away.

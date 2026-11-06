@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 115, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 21, OWED-L 41. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 118, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 18, OWED-L 41. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -156,9 +156,9 @@ No OWED-H row remains. The medium rows below come next, in order.
 | D-D21 | Tool profiles and allowlists | BUILD: `kaku mcp --profile observer` (overview, list, status, verify), `--profile reviewer | BUILT | --read-only, --allow and --leased (mc06, mc15-mc17, mc22-mc29) |
 | D-D22 | New tools: a path for every safe capability | BUILD in tiers. | LATER | tiers exist; more tools when worker loop arrives |
 | D-D23 | `resource_link` and embedded resources in results | BUILD: return `resource_link` for verification reports and capsule files, never embedded c | OWED-M | no resource links in results |
-| D-D24 | Resources (list, read) | BUILD under a custom scheme `kakurega://` with read-only resources: `kakurega://overview`, | OWED-M | resources/list answers empty; no kakurega:// resources |
-| D-D25 | Resource templates | BUILD with D24: `kakurega://review/{id}/status`. | OWED-M | with resources |
-| D-D26 | Prompts | BUILD static prompts, no data: `private_review` (walks through start, wait, request approv | OWED-M | prompts/list answers empty; no static prompts |
+| D-D24 | Resources (list, read) | BUILD under a custom scheme `kakurega://` with read-only resources: `kakurega://overview`, | BUILT | `kakurega://overview` resource, gated like the tool, audited as `overview` (mc35-41, live 51/51) |
+| D-D25 | Resource templates | BUILD with D24: `kakurega://review/{id}/status`. | BUILT | `kakurega://review/{id}/status` template; only the exact shape resolves (mc38, 17 hostile addresses) |
+| D-D26 | Prompts | BUILD static prompts, no data: `private_review` (walks through start, wait, request approv | BUILT | `private_review` prompt, offered only while its three tools are allowed, values quoted (mc40, mc39) |
 | D-D27 | Change notifications and subscriptions | BUILD both: a cursor feed `review_events(after, limit)` over job events (any client works) | OWED-L | no subscriptions; clients re-list |
 | D-D28 | Long-running tasks | BUILD on Kakurega's own job store: a task is a view of a persisted job. Use the SDK only f | LATER | start_review returns an id; tasks protocol not used |
 | D-D29 | Elicitation, multi round-trip requests (MRTR) | EXCLUDE as an approval or consent channel. Optional later: a URL-mode elicitation that onl | EXCLUDED | not an approval channel |
