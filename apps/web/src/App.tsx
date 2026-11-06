@@ -7,6 +7,7 @@ import { Verify } from "./screens/Verify";
 import { Memory } from "./screens/Memory";
 import { Activity } from "./screens/Activity";
 import { AgentAccess } from "./screens/AgentAccess";
+import { Privacy } from "./screens/Privacy";
 import { Chat } from "./screens/Chat";
 import { Documents } from "./screens/Documents";
 import { Inbox } from "./screens/Inbox";
@@ -125,9 +126,18 @@ function Badge(props: { config: Config }) {
   const r = () => props.config.route;
   return (
     <div class="badges">
-      <span class="badge ok" title={t("badge.private.title")}>
-        <span class="dot" /> {t("badge.private")}
-      </span>
+      <Show
+        when={r().stays_here !== false || r().simulated}
+        fallback={
+          <span class="badge warn" title={t("badge.remote.title", { host: r().host ?? "" })}>
+            {r().host ? t("badge.remote", { host: r().host ?? "" }) : t("badge.unknown")}
+          </span>
+        }
+      >
+        <span class="badge ok" title={t("badge.private.title")}>
+          <span class="dot" /> {t("badge.private")}
+        </span>
+      </Show>
       <span class="badge" title={t("badge.sandbox.title")}>
         {r().transport ?? "sandbox"}
       </span>
@@ -256,6 +266,7 @@ export function App() {
       { id: "docs", label: t("nav.docs"), group: t("palette.screens"), run: go("#/docs") },
       { id: "chat", label: t("nav.chat"), group: t("palette.screens"), run: go("#/chat") },
       { id: "memory", label: t("nav.memory"), group: t("palette.screens"), run: go("#/memory") },
+      { id: "privacy", label: t("nav.privacy"), group: t("palette.screens"), run: go("#/privacy") },
       { id: "agent", label: t("nav.agent"), group: t("palette.screens"), run: go("#/agent") },
       { id: "activity", label: t("nav.activity"), group: t("palette.screens"), run: go("#/activity") },
     ];
@@ -297,6 +308,7 @@ export function App() {
               <a href="#/docs" class={hash() === "#/docs" ? "navlink active" : "navlink"}>{t("nav.docs")}</a>
               <a href="#/chat" class={hash() === "#/chat" ? "navlink active" : "navlink"}>{t("nav.chat")}</a>
               <a href="#/memory" class={hash() === "#/memory" ? "navlink active" : "navlink"}>{t("nav.memory")}</a>
+              <a href="#/privacy" class={hash() === "#/privacy" ? "navlink active" : "navlink"}>{t("nav.privacy")}</a>
               <a href="#/agent" class={hash() === "#/agent" ? "navlink active" : "navlink"}>{t("nav.agent")}</a>
               <a href="#/activity" class={hash() === "#/activity" ? "navlink active" : "navlink"}>{t("nav.activity")}</a>
               <label class="sr" for="search">{t("nav.search.label")}</label>
@@ -328,7 +340,7 @@ export function App() {
               <ErrorBoundary fallback={(_err, reset) => <section class="card stack" role="alert"><p>{t("app.crashed")}</p><button onClick={reset}>{t("app.reload")}</button></section>}>
               <Show when={config()}>
                 {(c) => (
-                  <Show when={hash() !== "#/memory" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/docs" && hash() !== "#/inbox" && hash() !== "#/agent"} fallback={hash() === "#/agent" ? <AgentAccess /> : hash() === "#/inbox" ? <Inbox /> : hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/docs" ? <Documents /> : <Memory />}>
+                  <Show when={hash() !== "#/memory" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/docs" && hash() !== "#/inbox" && hash() !== "#/agent" && hash() !== "#/privacy"} fallback={hash() === "#/privacy" ? <Privacy /> : hash() === "#/agent" ? <AgentAccess /> : hash() === "#/inbox" ? <Inbox /> : hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/docs" ? <Documents /> : <Memory />}>
                     <Show when={jobId()} fallback={<NewReview config={c()} onStarted={(id) => { void refresh(); location.hash = `#/job/${id}`; }} />}>
                     {(id) => <ReviewView id={id()} config={c()} onUpdate={() => void refresh()} />}
                     </Show>

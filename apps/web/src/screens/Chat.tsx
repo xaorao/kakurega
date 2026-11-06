@@ -279,7 +279,7 @@ export function Chat() {
         setText(message);
         return;
       }
-      const foot = [r.route.simulated ? t("chat.test") : t("chat.private"), t("chat.notesUsed", { n: r.notes_used })];
+      const foot = [r.route.simulated ? t("chat.test") : r.route.stays_here === false ? (r.route.host ? t("chat.remote", { host: r.route.host }) : t("chat.unknownPlace")) : t("chat.private"), t("chat.notesUsed", { n: r.notes_used })];
       if (r.project) foot.push(t("chat.projectUsed", { name: r.project }));
       if (r.usage) {
         const m = meterLine(r.usage);

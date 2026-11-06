@@ -8,22 +8,21 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 109, PARTIAL 56, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 3, OWED-M 23, OWED-L 41. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 113, PARTIAL 55, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 23, OWED-L 41. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
-### The owed high-value rows (to be built, in this order)
-1. B-W02 / G-GH-84: one page that says what stays on this computer and what can leave, and when, generated from the route and policy state.
-2. (done) D-D35: every MCP call recorded in the signed log (tool name and outcome, no content): BUILT.
-(Medium rows follow in the tables; they are taken in order once these are closed.)
-
+### High-value rows
+1. B-W02 / G-GH-84: the page that says what stays on this computer and what can leave: BUILT (privacy-page.md).
+2. D-D35: every MCP call in the signed log: BUILT.
+No OWED-H row remains. The medium rows below come next, in order.
 
 ## Matrix B: Web workspace
 
 | Key | Capability | Matrix decision | Status | Evidence or reason |
 |---|---|---|---|---|
 | B-W01 | First-run flow | BUILD (own flow). ADAPT the idea of a data-handling step. No tour library | PARTIAL | pairing then the readiness screen with one-click repair is the first run (e2e); no data-handling step (see W02) |
-| B-W02 | Data-handling disclosure | IMPROVE. Do not ship a hand-written policy table; derive the panel from the kernel's route | OWED-H | no single place says what stays on this computer and what can leave; derive it from the route and policy state |
+| B-W02 | Data-handling disclosure | IMPROVE. Do not ship a hand-written policy table; derive the panel from the kernel's route | BUILT | Where your data goes page, generated from live facts (privacy-page.md; sv77-sv81, pv01-pv03, e2e 231/231) |
 | B-W03 | Consent sentence before an irreversible action | ADAPT the pattern as a component used on release approval and on any route downgrade; copy | BUILT | forget asks twice and says it is permanent; release approval shows exact files and needs the typed digest (e2e) |
 | B-W04 | Pairing | EXCLUDE reuse; keep ours. QR/camera pairing for a phone is EXCLUDED until `hosted-mode.md` | KEPT | ours kept (pairing link and one-time code) |
 | B-W05 | Connection loss and recovery | ADAPT the grace-period hook (MIT, tiny) and add a distinct "session expired, pair again" s | BUILT | live.ts reconnect with backoff, unreachable state, three-miss notice (lv01-lv06, e2e) |
@@ -366,9 +365,9 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 | G-GH-79 | Bridge approvals: triggers on long reply (800 chars), outbound file, t | ADAPT triggers and Edit and Send. Rules: an edited message is re-hashed and re-approved; " | EXCLUDED | approval never happens in chat |
 | G-GH-80 | Mobile and remote access: only chat bridges and an extension; no nativ | BUILD the passkey approval path later; Ghast gives no mobile reference | LATER | passkey approval path |
 | G-GH-81 | Encrypted sync of chosen categories: key from the wallet private key b | ADAPT envelope-with-AAD, KDF label, and write-order-with-pointer-last (MIT). IMPROVE: rand | PARTIAL | encrypted backup and restore (row 7); no sync |
-| G-GH-82 | Honest limits page: "What this stack does not protect against" (malwar | KEEP and extend with a per-surface "what leaves" table | PARTIAL | docs/LIMITS.md exists; the per-surface what-leaves table is owed (see W02) |
+| G-GH-82 | Honest limits page: "What this stack does not protect against" (malwar | KEEP and extend with a per-surface "what leaves" table | BUILT | LIMITS.md plus the page's per-surface cards and its 'does not protect against' list |
 | G-GH-83 | Local data: wallet, tokens and bridge credentials encrypted; conversat | KEEP | KEPT | encrypted at rest |
-| G-GH-84 | Data disclosure and privacy pages: "AI processing is a transfer", back | BUILD a plain "what leaves, to whom, when" page generated from the route table | OWED-H | no plain what-leaves-to-whom-when page generated from route and policy state (same as B-W02) |
+| G-GH-84 | Data disclosure and privacy pages: "AI processing is a transfer", back | BUILD a plain "what leaves, to whom, when" page generated from the route table | BUILT | same page; the address, not the label, decides what stays here (privacy-page.md) |
 | G-GH-85 | Pricing and limits: download free, model usage billed (0G balance), no | EXCLUDE points, referrals, seasons, token (H7, H50 CUT). Pricing for us is open | EXCLUDED | no points, referrals or token |
 | G-GH-86 | Capability economy: defined claim, evidence, bond, three-day challenge | Out of Ghast-parity scope; keep as later work (`NEAR_VERSION_OF_GHAST.md` section 4) | LATER | capability economy |
 | G-GH-87 | Documentation as tested examples: stable-version walkthroughs with the | ADAPT: every public how-to has a test that executes it (our own rule, section 5.30 of the  | OWED-M | published how-to steps are not all run by tests (QA guide 5.30) |

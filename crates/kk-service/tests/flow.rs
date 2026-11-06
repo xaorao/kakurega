@@ -7700,3 +7700,309 @@ fn sv76_a_flood_of_calls_cannot_fill_the_log_one_summary_stands_for_the_rest() {
         "the calls that were not written one by one are counted"
     );
 }
+
+struct RouteRunner {
+    route: Value,
+}
+
+impl JobRunner for RouteRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> JobReport {
+        CannedRunner { confirm: true }.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        self.route.clone()
+    }
+    fn chat(&self, _m: Vec<kk_types::chat::ChatMessage>) -> Result<kk_service::ChatReply, String> {
+        Ok(kk_service::ChatReply {
+            text: "an answer".into(),
+            route_id: "o".into(),
+            class: "device_only".into(),
+            simulated: false,
+            prompt_tokens: None,
+        })
+    }
+}
+
+fn privacy_with(route: Value) -> (kk_companion::Companion, Web, Arc<Service>, PathBuf) {
+    static PRIVACY_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let (root, _repo) = repo_copy(&format!(
+        "privacy-{}",
+        PRIVACY_N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    ));
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(RouteRunner { route }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    (c, w, svc, root)
+}
+
+#[test]
+fn sv77_the_privacy_facts_say_where_the_model_runs_from_its_address_and_not_from_its_label() {
+    let cases = [
+        // (route, stays on this computer, host shown)
+        (
+            json!({"id": "o", "class": "device_only", "model": "m", "endpoint": "http://127.0.0.1:11434"}),
+            true,
+            "127.0.0.1",
+        ),
+        (
+            json!({"id": "o", "class": "device_only", "model": "m", "endpoint": "http://localhost:11434/api"}),
+            true,
+            "localhost",
+        ),
+        (
+            json!({"id": "o", "class": "device_only", "model": "m", "endpoint": "http://[::1]:11434"}),
+            true,
+            "::1",
+        ),
+        // a route that calls itself device-only but points elsewhere does not stay here
+        (
+            json!({"id": "o", "class": "device_only", "model": "m", "endpoint": "http://models.example.com:11434"}),
+            false,
+            "models.example.com",
+        ),
+        (
+            json!({"id": "o", "class": "device_only", "model": "m", "endpoint": "http://127.0.0.1.evil.example:11434"}),
+            false,
+            "127.0.0.1.evil.example",
+        ),
+        (
+            json!({"id": "o", "class": "device_only", "model": "m", "endpoint": "http://localhost.evil.example"}),
+            false,
+            "localhost.evil.example",
+        ),
+        (
+            json!({"id": "o", "class": "device_only", "model": "m", "endpoint": "http://user:secret@10.0.0.5:8080/v1?key=abc"}),
+            false,
+            "10.0.0.5",
+        ),
+        (
+            json!({"id": "n", "class": "verified_tee", "model": "m", "endpoint": "https://cloud-api.near.ai/v1"}),
+            false,
+            "cloud-api.near.ai",
+        ),
+        // no endpoint given: nothing is claimed about where it runs
+        (
+            json!({"id": "c", "class": "device_only", "simulated": true}),
+            false,
+            "",
+        ),
+    ];
+    for (route, stays, host) in cases {
+        let (_c, w, _svc, _root) = privacy_with(route.clone());
+        let (s, v) = w.get("/api/privacy");
+        assert_eq!(s, 200, "{route}: {v}");
+        assert_eq!(v["model"]["stays_here"], stays, "{route}: {v}");
+        assert_eq!(
+            v["model"]["host"],
+            json!(if host.is_empty() {
+                Value::Null
+            } else {
+                json!(host)
+            }),
+            "{route}: {v}"
+        );
+        let text = v.to_string();
+        assert!(
+            !text.contains("secret")
+                && !text.contains("key=abc")
+                && !text.contains("/v1")
+                && !text.contains("/api"),
+            "only the host is shown, never a password, path or query: {text}"
+        );
+    }
+}
+
+#[test]
+fn sv78_the_privacy_facts_report_the_class_the_test_mode_and_every_door_that_is_open() {
+    let (c, w, svc, root) = privacy_with(
+        json!({"id": "n", "class": "verified_tee", "model": "m", "simulated": false, "endpoint": "https://cloud-api.near.ai"}),
+    );
+    let v = w.get("/api/privacy").1;
+    assert_eq!(
+        (v["model"]["class"].clone(), v["model"]["simulated"].clone()),
+        (json!("verified_tee"), json!(false)),
+        "{v}"
+    );
+    // doors that are closed until the owner opens them
+    for door in ["search", "extension", "telegram"] {
+        assert_eq!(v[door]["on"], false, "{door} starts closed: {v}");
+    }
+    assert_eq!(v["agents"]["tools_open"], json!([]));
+    assert_eq!(v["agents"]["calls_are_logged"], true);
+    assert_eq!(v["updates"]["checks_in_background"], false);
+    // search: the provider's host is shown, never its address in full
+    svc.set_search_provider(Some("https://search.example.org/path?q=1&token=t0p".into()));
+    let v = w.get("/api/privacy").1;
+    assert_eq!(
+        (v["search"]["on"].clone(), v["search"]["host"].clone()),
+        (json!(true), json!("search.example.org")),
+        "{v}"
+    );
+    assert!(!v.to_string().contains("t0p"));
+    // Telegram: bound once the bridge has a chat
+    std::fs::write(root.join("data").join("telegram.json"), r#"{"chat": 7}"#).unwrap();
+    assert_eq!(w.get("/api/privacy").1["telegram"]["on"], true);
+    std::fs::write(root.join("data").join("telegram.json"), "not json").unwrap();
+    assert_eq!(
+        w.get("/api/privacy").1["telegram"]["on"],
+        false,
+        "a damaged file is not a paired chat"
+    );
+    for odd in [
+        r#"{"other": 1}"#,
+        r#"{"chat": "seven"}"#,
+        r#"{"chat": null}"#,
+        "[]",
+    ] {
+        std::fs::write(root.join("data").join("telegram.json"), odd).unwrap();
+        assert_eq!(
+            w.get("/api/privacy").1["telegram"]["on"],
+            false,
+            "{odd} is not a paired chat"
+        );
+    }
+    // extension: on only once a pairing code was used from the extension's own origin
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    let bearer = format!("Bearer {}", c.security.admin_token());
+    let code = raw(
+        &base,
+        "POST",
+        "/admin/extension/pairing",
+        &[("Authorization", &bearer)],
+        Some(json!({})),
+    )
+    .1["code"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        raw(
+            &base,
+            "POST",
+            "/ext/pair",
+            &[(
+                "Origin",
+                "chrome-extension://abcdefghijklmnopabcdefghijklmnop"
+            )],
+            Some(json!({"code": code}))
+        )
+        .0,
+        200
+    );
+    assert_eq!(w.get("/api/privacy").1["extension"]["on"], true);
+    // agents: an owner lease shows which acting tools are open now
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    admin(
+        &base,
+        c.security.admin_token(),
+        "POST",
+        "/admin/agent-access/grant",
+        Some(json!({"tool": "start_review", "uses": 2, "minutes": 5})),
+    );
+    assert_eq!(
+        w.get("/api/privacy").1["agents"]["tools_open"],
+        json!(["start_review"])
+    );
+}
+
+#[test]
+fn sv79_the_privacy_facts_need_the_owner_and_count_things_without_naming_any() {
+    let (c, w, _svc, _root) = privacy_with(
+        json!({"id": "o", "class": "device_only", "endpoint": "http://127.0.0.1:11434"}),
+    );
+    add_note(&w, "Acme pays invoices within thirty days of receipt");
+    add_note(&w, "Zeta prefers payment by bank transfer on Fridays");
+    let (s, v) = w.get("/api/privacy");
+    assert_eq!(s, 200);
+    assert!(v["notes"]["count"].as_i64().unwrap() >= 1, "{v}");
+    assert_eq!(v["notes"]["encrypted_at_rest"], true);
+    let text = v.to_string();
+    assert!(
+        !text.contains("Acme")
+            && !text.contains("Zeta")
+            && !text.contains("thirty")
+            && !text.contains("Fridays"),
+        "no note text in the facts: {text}"
+    );
+    assert_eq!(Web::new(c.addr).get("/api/privacy").0, 401);
+}
+
+#[test]
+fn sv80_the_route_shown_to_the_page_has_the_host_and_whether_it_is_this_computer_and_never_a_password(
+) {
+    for (endpoint, stays, host) in [
+        ("http://127.0.0.1:11434", true, "127.0.0.1"),
+        (
+            "http://user:secret@10.0.0.5:8080/v1?key=abc",
+            false,
+            "10.0.0.5",
+        ),
+        ("https://cloud-api.near.ai/v1", false, "cloud-api.near.ai"),
+    ] {
+        let (c, w, _svc, _root) = privacy_with(
+            json!({"id": "o", "class": "device_only", "model": "m", "endpoint": endpoint}),
+        );
+        let (s, v) = w.get("/api/config");
+        assert_eq!(s, 200);
+        assert_eq!(
+            (v["route"]["stays_here"].clone(), v["route"]["host"].clone()),
+            (json!(stays), json!(host)),
+            "{endpoint}: {v}"
+        );
+        let text = v.to_string();
+        assert!(
+            !text.contains("secret") && !text.contains("key=abc") && !text.contains("/v1"),
+            "no password, path or query reaches the page: {text}"
+        );
+        let base = format!("http://127.0.0.1:{}", c.addr.port());
+        let (_, o) = admin(
+            &base,
+            c.security.admin_token(),
+            "GET",
+            "/admin/overview",
+            None,
+        );
+        assert!(
+            !o.to_string().contains("secret"),
+            "nor the admin overview: {o}"
+        );
+    }
+}
+
+#[test]
+fn sv81_a_chat_reply_says_whether_the_model_that_answered_is_this_computer_by_its_address() {
+    for (endpoint, stays) in [
+        ("http://127.0.0.1:11434", true),
+        ("http://models.example.com:11434", false),
+    ] {
+        let (_c, w, _svc, _root) = privacy_with(
+            json!({"id": "o", "class": "device_only", "model": "m", "endpoint": endpoint}),
+        );
+        let (s, v) = w.post("/api/chat", json!({"message": "hello there"}));
+        assert_eq!(s, 200, "{v}");
+        assert_eq!(v["route"]["stays_here"], stays, "{endpoint}: {v}");
+        assert!(
+            !v.to_string().contains("11434"),
+            "the reply carries no port or address beyond the host: {v}"
+        );
+    }
+}

@@ -919,10 +919,23 @@ struct PathQuery {
 
 type Svc = axum::Extension<Arc<Service>>;
 
+impl Service {
+    /// The route as it is shown to the owner: its address reduced to the host (no password, path or query), and whether that
+    /// host is this computer. The label a route gives itself decides nothing here.
+    fn route_for_owner(&self) -> Value {
+        let mut route = self.runner.route_info();
+        let host = route["endpoint"].as_str().and_then(host_only);
+        route["stays_here"] = json!(host.as_deref().is_some_and(host_is_this_computer));
+        route["endpoint"] = json!(host);
+        route["host"] = json!(host);
+        route
+    }
+}
+
 async fn config(axum::Extension(svc): Svc) -> Json<Value> {
     Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "route": svc.runner.route_info(),
+        "route": svc.route_for_owner(),
         "roots": svc.roots.iter().map(|r| r.to_string_lossy()).collect::<Vec<_>>(),
         "test_mode": svc.test_mode,
         "signer": kk_evidence::keys::KeyId::of(&svc.signer_public()).as_str(),
@@ -2070,7 +2083,7 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
     let estimated = kk_route::tokens::estimate_messages(&ctx.messages);
     let measured = r.prompt_tokens.filter(|n| *n > 0);
     let usage = json!({"context_tokens": measured.unwrap_or(estimated), "context_tokens_estimate": estimated, "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "history_turns_summarized": run.summarized, "summary_text": run.summary, "compacted_now": run.compacted_now, "compaction_failed": run.compaction_failed, "estimate": measured.is_none()});
-    json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated}, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "saved": saved, "not_saved": not_saved, "project": run.body.project})
+    json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated, "stays_here": svc.route_for_owner()["stays_here"], "host": svc.route_for_owner()["host"]}, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "saved": saved, "not_saved": not_saved, "project": run.body.project})
 }
 
 async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
@@ -3283,6 +3296,75 @@ struct LeaseToolBody {
 #[serde(deny_unknown_fields)]
 struct LeaseRevokeBody {
     tool: Option<String>,
+}
+
+/// The host part of an address, lower case, without any user name, password, port, path or query. None when there is none.
+fn host_only(address: &str) -> Option<String> {
+    let rest = address.split_once("://").map_or(address, |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let hostport = authority.rsplit('@').next()?;
+    let host = if let Some(inner) = hostport.strip_prefix('[') {
+        inner.split(']').next()?
+    } else {
+        hostport.split(':').next()?
+    };
+    (!host.is_empty() && host.len() <= 253).then(|| host.to_ascii_lowercase())
+}
+
+/// Whether a host name or address is this computer: `localhost`, or a loopback address. `127.0.0.1.example.com` is not.
+fn host_is_this_computer(host: &str) -> bool {
+    host == "localhost"
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// What stays on this computer and what can leave it, as facts read from the running service. The page turns them into
+/// sentences. Hosts are shown without passwords, paths or queries, and nothing the owner wrote appears here, only counts.
+async fn privacy_facts(axum::Extension(svc): Svc) -> Response {
+    let route = svc.runner.route_info();
+    let host = route["endpoint"].as_str().and_then(host_only);
+    let local = host.as_deref().is_some_and(host_is_this_computer);
+    let search_host = svc
+        .search_provider
+        .lock()
+        .expect("lock")
+        .clone()
+        .and_then(|u| host_only(&u));
+    let telegram_on = std::fs::read_to_string(svc.data_dir.join("telegram.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .is_some_and(|v| v["chat"].as_i64().is_some());
+    let notes = svc
+        .memory
+        .lock()
+        .expect("lock")
+        .counts_by_level()
+        .map(|c| c.iter().map(|(_, n)| *n).sum::<i64>())
+        .unwrap_or(0);
+    let tools_open: Vec<String> = svc
+        .lease_list()
+        .iter()
+        .filter_map(|l| l["tool"].as_str().map(str::to_string))
+        .collect();
+    Json(json!({
+        "model": {
+            "class": route["class"],
+            "id": route["id"],
+            "name": route["model"],
+            "simulated": route["simulated"].as_bool().unwrap_or(false),
+            "host": host,
+            "stays_here": local,
+        },
+        "search": {"on": search_host.is_some(), "host": search_host},
+        "extension": {"on": svc.ext_token_row().is_some()},
+        "telegram": {"on": telegram_on},
+        "agents": {"tools_open": tools_open, "calls_are_logged": true},
+        "notes": {"count": notes, "encrypted_at_rest": true},
+        "approvals": {"signing_key_enrolled": svc.approvers_enrolled()},
+        "updates": {"checks_in_background": false},
+    }))
+    .into_response()
 }
 
 /// How many agent calls are written to the log one by one in a minute. The rest are counted.
@@ -5301,7 +5383,7 @@ async fn admin_overview(axum::Extension(svc): Svc) -> Response {
     let head = svc.log.head().ok().flatten();
     Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "route": svc.runner.route_info(),
+        "route": svc.route_for_owner(),
         "ready": machine_is_ready(&checks),
         "setup_problems": failing_labels(&checks, false),
         "optional_missing": failing_labels(&checks, true),
@@ -5418,6 +5500,7 @@ impl Extension for Routes {
                 get(admin_approver_list).post(admin_approver_enroll),
             )
             .route("/admin/approvers/revoke", post(admin_approver_revoke))
+            .route("/api/privacy", get(privacy_facts))
             .route("/admin/agent-access", get(lease_list_route))
             .route("/admin/agent-calls", post(agent_call))
             .route("/admin/agent-access/grant", post(lease_grant_route))

@@ -66,7 +66,7 @@ export async function streamChat(body: unknown, onDelta: (t: string) => void, si
 
 export interface Config {
   version: string;
-  route: { id: string; class: string; model?: string; simulated: boolean; transport?: string };
+  route: { id: string; class: string; model?: string; simulated: boolean; transport?: string; host?: string | null; stays_here?: boolean };
   roots: string[];
   test_mode: boolean;
   signer: string;
@@ -80,12 +80,13 @@ export interface Suggestion { id: string; text: string; why: string; level: stri
 export interface LogEntry { seq: number; at: number; kind: string; subject: string; data: Record<string, string | number> }
 export interface LogSummary { count: number; head: string | null; public_key: string; recent: LogEntry[] }
 export interface ChatTurn { role: "user" | "assistant"; content: string }
-export interface ChatReply { project?: string | null; reply: string; route: { id: string; class: string; simulated: boolean }; notes_used: number; notes?: { id: string; text: string; why: string; untrusted: boolean; project?: string | null }[]; notes_withheld: number; notes_left_out?: number; web_sources_used: number; web_sources_trimmed?: number; web_sources_left_out?: number; saved?: boolean; not_saved?: "full" | "forgotten" | "error" | null; usage?: { context_tokens?: number; context_window?: number | null; estimate?: boolean; context_tokens_estimate: number; reply_tokens_estimate: number; history_turns_sent: number; history_turns_dropped: number; history_turns_summarized?: number; summary_text?: string | null; compacted_now?: boolean; compaction_failed?: string | null } }
+export interface ChatReply { project?: string | null; reply: string; route: { id: string; class: string; simulated: boolean; stays_here?: boolean; host?: string | null }; notes_used: number; notes?: { id: string; text: string; why: string; untrusted: boolean; project?: string | null }[]; notes_withheld: number; notes_left_out?: number; web_sources_used: number; web_sources_trimmed?: number; web_sources_left_out?: number; saved?: boolean; not_saved?: "full" | "forgotten" | "error" | null; usage?: { context_tokens?: number; context_window?: number | null; estimate?: boolean; context_tokens_estimate: number; reply_tokens_estimate: number; history_turns_sent: number; history_turns_dropped: number; history_turns_summarized?: number; summary_text?: string | null; compacted_now?: boolean; compaction_failed?: string | null } }
 export interface SimilarMemories { groups: MemoryItem[][]; scanned: number; complete: boolean; note: string }
 export interface KeptChat { id: string; title: string; created: number; updated: number; turns: number; project?: string | null }
 export interface ModelProof { verified: boolean; model: string; checked_at?: number; means?: string[]; does_not_mean?: string[]; deployments?: { signer: string; tcb: string; advisories: string[]; gpu_verified: boolean; compose_hash: string | null; os_image_hash: string | null; nonce: string }[] }
 export interface GatewayProofResult { verified: boolean; gateway?: { signer: string; tcb: string; advisories: string[]; compose_hash: string | null; tls_bound: boolean; tls_fingerprint: string | null; nonce: string }; means?: string[]; does_not_mean?: string[] }
 export interface Passage { file: string; start: number; focus: number; lines: string[] }
+export interface PrivacyFacts { model: { class: string; id: string; name?: string | null; simulated: boolean; host: string | null; stays_here: boolean }; search: { on: boolean; host: string | null }; extension: { on: boolean }; telegram: { on: boolean }; agents: { tools_open: string[]; calls_are_logged: boolean }; notes: { count: number; encrypted_at_rest: boolean }; approvals: { signing_key_enrolled: boolean }; updates: { checks_in_background: boolean } }
 export interface Lease { tool: string; remaining: number; expires_at: number; issued_at: number }
 export interface InboxItem { kind: "approval_waiting" | "ready_to_review" | "ready_to_deliver" | "failed" | "suggestions"; job: string; recipient: string; since: number; what: string; count?: number }
 export interface Schedule { id: string; repo: string; recipient: string; every_hours: number; next_at: number }
@@ -168,6 +169,7 @@ export const api = {
   addSchedule: (repo: string, recipient: string, every_hours: number) => request<{ id: string }>("POST", "/api/schedules", { repo, recipient, every_hours }),
   removeSchedule: (id: string) => request<{ removed: boolean }>("POST", `/api/schedules/${id}/delete`, {}),
   inbox: () => request<{ items: InboxItem[]; count: number }>("GET", "/api/inbox"),
+  privacy: () => request<PrivacyFacts>("GET", "/api/privacy"),
   agentAccess: () => request<{ leases: Lease[]; leasable: string[]; now: number }>("GET", "/api/agent-access"),
   agentGrant: (tool: string, uses: number, minutes: number) => request<{ tool: string; remaining: number; expires_at: number }>("POST", "/api/agent-access/grant", { tool, uses, minutes }),
   agentRevoke: (tool?: string) => request<{ revoked: number }>("POST", "/api/agent-access/revoke", tool ? { tool } : {}),

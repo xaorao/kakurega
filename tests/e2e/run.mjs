@@ -519,6 +519,63 @@ try {
   await page.getByRole("button", { name: "Revoke", exact: true }).click();
   await page.getByText("No lease is active.").waitFor();
   check("revoking removes the lease at the service", (await page.evaluate(async () => (await (await fetch("/api/agent-access")).json()).leases.length)) === 0);
+  // where your data goes: facts read from the running service, written as sentences
+  await page.getByRole("link", { name: "Where your data goes" }).click();
+  await page.getByRole("heading", { name: "Where your data goes", exact: true }).first().waitFor();
+  await page.getByRole("heading", { name: "The model that answers" }).waitFor();
+  const privacyText = await page.locator("main").innerText();
+  const wanted = ["Test mode: replies are scripted", "No tool that acts is open", "stored encrypted on this computer"];
+  const missing = wanted.filter((w) => !privacyText.includes(w));
+  check("the page reads the real service: test mode, the acting tools closed, notes counted and stored encrypted", missing.length === 0 && /\d+ note\(s\), stored encrypted/.test(privacyText), `missing: ${JSON.stringify(missing)}; text: ${privacyText.replace(/\s+/g, " ").slice(0, 700)}`);
+  check("each door says whether it is open (search, Telegram, extension) in one of its two plain forms", (privacyText.includes("Search is off") || privacyText.includes("Search is on")) && (privacyText.includes("No chat is paired") || privacyText.includes("A chat is paired")) && (privacyText.includes("No extension is paired") || privacyText.includes("An extension is paired")));
+  const live = await page.evaluate(async () => (await fetch("/api/privacy")).json());
+  check("every card agrees with what the service reports right now", privacyText.includes(live.search.on ? "Search is on" : "Search is off") && privacyText.includes(live.telegram.on ? "A chat is paired" : "No chat is paired") && privacyText.includes(live.extension.on ? "An extension is paired" : "No extension is paired") && privacyText.includes(live.approvals.signing_key_enrolled ? "signed with a key" : "No signing key is enrolled") && privacyText.includes(live.agents.tools_open.length ? "open to agents right now: " : "No tool that acts is open") && (!live.search.on || privacyText.includes(live.search.host)), JSON.stringify(live));
+  check("it says plainly what it does not protect against", privacyText.includes("What this does not protect against") && privacyText.includes("read the service's key"));
+  await axeCheck(page, "where your data goes");
+  await page.screenshot({ path: join(shots, "15-privacy.png"), fullPage: true });
+  // the sentence follows the address, a mislabelled route is not called local, and the address is shown as text only
+  const factsFor = (model, extra = {}) => ({ model: { class: "device_only", id: "x", name: "the model", simulated: false, host: "127.0.0.1", stays_here: true, ...model }, search: { on: false, host: null }, extension: { on: false }, telegram: { on: false }, agents: { tools_open: [], calls_are_logged: true }, notes: { count: 3, encrypted_at_rest: true }, approvals: { signing_key_enrolled: false }, updates: { checks_in_background: false }, ...extra });
+  const showFacts = async (facts) => {
+    await page.route("**/api/privacy", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(facts) }));
+    await page.reload();
+    await page.getByRole("heading", { name: "The model that answers" }).waitFor();
+    const text = await page.locator("main").innerText();
+    await page.unroute("**/api/privacy");
+    return text;
+  };
+  const local = await showFacts(factsFor({}));
+  check("a model at a local address is said to run on this computer", local.includes("runs on this computer, at 127.0.0.1"));
+  const mislabelled = await showFacts(factsFor({ host: "models.example.com", stays_here: false }));
+  check("a route labelled device-only but at another computer is not said to run here", mislabelled.includes("not on this computer") && !mislabelled.includes("runs on this computer"), mislabelled.slice(0, 160));
+  const tee = await showFacts(factsFor({ class: "verified_tee", host: "cloud.example", stays_here: false }));
+  check("a hardware-protected remote model is described as sent encrypted to an enclave", tee.includes("hardware-protected enclave") && tee.includes("cloud.example"));
+  const doors = await showFacts(factsFor({}, { search: { on: true, host: "search.example.org" }, telegram: { on: true }, extension: { on: true }, agents: { tools_open: ["start_review"], calls_are_logged: true }, approvals: { signing_key_enrolled: true } }));
+  check("open doors are named: search host, Telegram, extension, the acting tool, a signed approval", doors.includes("search.example.org") && doors.includes("A chat is paired") && doors.includes("An extension is paired") && doors.includes("start_review") && doors.includes("signed with a key"));
+  const hostile = await showFacts(factsFor({ host: "<img src=x onerror=window.__pwned=1>", stays_here: false }));
+  check("an address with markup is shown as plain text and runs nothing", hostile.includes("<img src=x") && (await page.evaluate(() => window.__pwned === undefined)) && (await page.locator("main img").count()) === 0);
+  // the badge in the header follows the same fact: it never says "on this computer" for a model that is elsewhere
+  const withRoute = async (route) => {
+    await page.route("**/api/config", async (r) => {
+      const real = await r.fetch();
+      const body = await real.json();
+      body.route = { ...body.route, ...route };
+      await r.fulfill({ response: real, body: JSON.stringify(body) });
+    });
+    await page.reload();
+    await page.locator(".badges").waitFor();
+    const text = await page.locator(".badges").innerText();
+    await page.unroute("**/api/config");
+    return text;
+  };
+  const badgeLocal = await withRoute({ simulated: false, host: "127.0.0.1", stays_here: true });
+  check("the badge says the model runs on this computer when its address is this computer", badgeLocal.includes("Private: model runs on this computer"), badgeLocal);
+  const badgeRemote = await withRoute({ simulated: false, host: "models.example.com", stays_here: false, class: "device_only" });
+  check("a route that calls itself device-only but is elsewhere gets a badge naming the host, not the private one", badgeRemote.includes("Model at models.example.com, not on this computer") && !badgeRemote.includes("Private: model runs on this computer"), badgeRemote);
+  const badgeNone = await withRoute({ simulated: false, host: null, stays_here: false });
+  check("with no address reported the badge claims nothing", badgeNone.includes("not reported") && !badgeNone.includes("Private:"), badgeNone);
+  await axeCheck(page, "header with a remote-model badge");
+  await page.getByRole("link", { name: "Waiting for you" }).click();
+  await page.getByRole("heading", { name: "Waiting for you", exact: true }).waitFor();
   // repeating reviews: add one for a chosen folder and recipient, see it listed, remove it
   await page.getByRole("link", { name: "New review" }).click();
   await page.getByRole("button", { name: "payments-service" }).click();
@@ -806,6 +863,25 @@ try {
   const longReply = (word) => Array.from({ length: 80 }, (_, i) => `${word} ${i + 1} of a long answer.`).join("\n\n");
   const doneLine = (text) => JSON.stringify({ done: true, reply: text, route: { id: "scripted-test-model", class: "device_only", simulated: true }, notes_used: 0, notes: [], usage: { context_tokens: 100, context_tokens_estimate: 100, context_window: 16384, estimate: true, reply_tokens_estimate: 10, history_turns_sent: 0, history_turns_dropped: 0 }, web_sources_used: 0, notes_withheld: 0, saved: false }) + "\n";
   const inView = (loc) => loc.evaluate((el) => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= window.innerHeight; });
+  // the footer of an answer says where the model that answered runs, by its address
+  const replyFrom = async (route) => {
+    const line = JSON.parse(doneLine("An answer.")); line.route = route;
+    await page.route("**/api/chat/stream", (r) => r.fulfill({ status: 200, contentType: "application/x-ndjson", body: JSON.stringify(line) + "\n" }));
+    await page.getByLabel("Your message").fill("where did you run?");
+    await page.getByLabel("Your message").press("Enter");
+    await page.getByText("An answer.", { exact: true }).last().waitFor();
+    const foot = await page.locator(".msg.assistant").last().innerText();
+    await page.unroute("**/api/chat/stream");
+    await page.getByRole("button", { name: "Clear" }).click();
+    await page.waitForTimeout(300); // the page shrinks and the browser reports it as a scroll; let that settle before the next send
+    return foot;
+  };
+  const footLocal = await replyFrom({ id: "o", class: "device_only", simulated: false, stays_here: true, host: "127.0.0.1" });
+  check("an answer from a model at this computer says it was answered on this computer", footLocal.includes("Private: answered on this computer"), footLocal);
+  const footRemote = await replyFrom({ id: "o", class: "device_only", simulated: false, stays_here: false, host: "models.example.com" });
+  check("an answer from a model elsewhere names the host and does not say private", footRemote.includes("Answered by the model at models.example.com, not on this computer") && !footRemote.includes("Private: answered on this computer"), footRemote);
+  const footUnknown = await replyFrom({ id: "o", class: "device_only", simulated: false, stays_here: false, host: null });
+  check("an answer with no reported address claims nothing", footUnknown.includes("not reported") && !footUnknown.includes("Private:"), footUnknown);
   await page.route("**/api/chat/stream", (route) => route.fulfill({ status: 200, contentType: "application/x-ndjson", body: doneLine(longReply("Line")) }));
   await page.getByLabel("Your message").fill("give me a long answer");
   await page.getByLabel("Your message").press("Enter");
