@@ -2096,3 +2096,67 @@ fn f29_a_fix_that_names_a_file_twice_is_never_applied_as_if_it_named_it_once() {
         b"a = 9\nb = 8\n"
     );
 }
+
+#[test]
+fn fa01_a_change_that_differs_only_in_look_alikes_is_made_to_fit_and_what_is_applied_and_shown_is_the_files_own_text(
+) {
+    use kk_review::align::align_fix;
+    let source = "def greet(name):   \r\n    print(‘hello’, name)\r\n    return name\r\n";
+    let f = imported("app.py", source);
+    let files: BTreeMap<String, &ImportedFile> = [("app.py".to_string(), &f)].into_iter().collect();
+    let fix = Fix {
+        title: "t".into(),
+        file: "app.py".into(),
+        old_text: "def greet(name):\n    print('hello', name)\n".into(),
+        new_text: "def greet(name):\n    print('hello,', name)\n".into(),
+        also: vec![],
+        explanation: String::new(),
+    };
+    assert!(
+        apply_all(&files, &fix).is_none(),
+        "as the model wrote it, the text is not in the file"
+    );
+    let fixed = align_fix(&files, fix);
+    assert_eq!(
+        fixed.old_text,
+        "def greet(name):   \r\n    print(‘hello’, name)\r\n"
+    );
+    let applied = apply_all(&files, &fixed).expect("fits now");
+    let out = String::from_utf8(applied["app.py"].clone()).unwrap();
+    assert_eq!(
+        out, "def greet(name):   \r\n    print('hello,', name)\r\n    return name\r\n",
+        "the untouched line and the file's endings are unchanged"
+    );
+    let diff = unified_diff_all(&files, &fixed);
+    assert!(
+        diff.contains("-    print(‘hello’, name)") && diff.contains("+    print('hello,', name)"),
+        "{diff}"
+    );
+    assert!(
+        !diff.contains("-def greet"),
+        "the unchanged first line is not shown as changed: {diff}"
+    );
+    // a fix that is already exact, or ambiguous, or not in the file, is passed through untouched
+    for (old, new) in [("return name", "return None"), ("zzz", "y")] {
+        let f2 = Fix {
+            title: "t".into(),
+            file: "app.py".into(),
+            old_text: old.into(),
+            new_text: new.into(),
+            also: vec![],
+            explanation: String::new(),
+        };
+        let same = align_fix(&files, f2.clone());
+        assert_eq!((same.old_text, same.new_text), (f2.old_text, f2.new_text));
+    }
+    // a file that is not in the project is left for the later steps to refuse
+    let ghost = Fix {
+        title: "t".into(),
+        file: "nope.py".into(),
+        old_text: "a".into(),
+        new_text: "b".into(),
+        also: vec![],
+        explanation: String::new(),
+    };
+    assert_eq!(align_fix(&files, ghost.clone()).file, "nope.py");
+}

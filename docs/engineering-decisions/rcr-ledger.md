@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 135, PARTIAL 81, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 16. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 135, PARTIAL 82, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 15. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -215,7 +215,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | E-A9 | Skills and review checks as files | BUILD owner-authored checks; they are instructions to a model, so they are first-class tru | LATER | owner-authored checks |
 | E-A10 | Critic / second opinion | EXCLUDE remote critic; optional local-model critic stays behind the same label rules | EXCLUDED | no remote critic |
 | E-C1 | Patch format | IMPROVE: allow several hunks and several files in one fix, each exactly-once; ADAPT the Co | BUILT | several changes per file joined into one exact change (exact-once with overlap-aware counting, no shared text, bounded span); real line diff with separate hunks; apply_all refuses duplicate files; fix-format.md |
-| E-C2 | Fuzzy matching | IMPROVE narrowly: allow OpenCode-style normalised fallback only when it yields exactly one | OWED-L | exact matching only |
+| E-C2 | Fuzzy matching | IMPROVE narrowly: allow OpenCode-style normalised fallback only when it yields exactly one | PARTIAL | aligned matching: exact first, then look-alike characters and CRLF, then ends of lines, only when exactly one place; file's own text applied and shown; OpenCode edit.ts read; real-model effect NOT VERIFIED (fix-format.md) |
 | E-C3 | Two-phase apply (compute, then write) | IMPROVE: per-path lock and re-check hash after taking it (read-to-rename window is lock-fr | BUILT | logged, flushed, re-read, per-review lock (ff01-ff14) |
 | E-C4 | Snapshots, checkpoints, undo | BUILD: before apply, store the original bytes in the vault (encrypted, labelled) keyed by  | BUILT | originals stored, undo guarded (ff, sv24) |
 | E-C5 | How a patch is judged correct | IMPROVE: add a second oracle = the project's own tests/linter run in the sandbox before an | BUILT | reproducer plus the project's own tests (verify_fix_with_tests) |

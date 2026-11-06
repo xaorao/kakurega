@@ -223,6 +223,8 @@ pub fn run_job(
         let Some(fix) = crate::check::parse_fix(&bytes, &known) else {
             continue;
         };
+        // a change that differs from the file only in look-alike characters, line endings or the ends of lines is made to fit it
+        let fix = crate::align::align_fix(&index, fix);
         // several changes in one file become one exact change of that file; a set that cannot be made is not offered
         let Ok(fix) = crate::check::consolidate(&index, fix) else {
             continue;
