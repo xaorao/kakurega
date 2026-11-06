@@ -197,6 +197,8 @@ pub struct Service {
     fix_locks: fixfiles::JobLocks,
     /// Seconds added to the clock when leases are judged; only tests move it.
     lease_skew: std::sync::atomic::AtomicI64,
+    /// Kept conversations whose last summary failed, with how many turns they had then. See `COMPACTION_WAIT_TURNS`.
+    compaction_wait: Mutex<std::collections::HashMap<String, usize>>,
     pub test_mode: bool,
 }
 
@@ -616,6 +618,7 @@ impl Service {
             research: Mutex::new(Research::default()),
             fix_locks: fixfiles::JobLocks::default(),
             lease_skew: std::sync::atomic::AtomicI64::new(0),
+            compaction_wait: Mutex::new(std::collections::HashMap::new()),
             test_mode,
         });
         settle_all_fixes(&svc);
@@ -1566,6 +1569,10 @@ fn chat_clean(s: &str) -> bool {
     })
 }
 
+/// After a summary fails, none is asked for again until the conversation has this many more turns (three exchanges). A model
+/// that cannot or will not write a summary would otherwise be asked, and made to answer, on every single message.
+const COMPACTION_WAIT_TURNS: usize = 6;
+
 struct ChatRun {
     body: ChatBody,
     kept: Option<String>,
@@ -1587,6 +1594,8 @@ struct CompactPlan {
     kept: Vec<(String, String)>,
     /// How many turns, counted from the start, the new summary covers.
     covered: usize,
+    /// How many turns the conversation has now, to time the wait after a failure.
+    turns_now: usize,
 }
 
 /// Checks a chat request and resolves a kept conversation to its stored history.
@@ -1694,11 +1703,19 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
     } else {
         0
     };
-    let compact = (older > 0).then(|| CompactPlan {
+    let waiting = older > 0
+        && svc
+            .compaction_wait
+            .lock()
+            .expect("lock")
+            .get(&id)
+            .is_some_and(|at| turns.len() < at + COMPACTION_WAIT_TURNS);
+    let compact = (older > 0 && !waiting).then(|| CompactPlan {
         previous: summary.clone(),
         older: rest[..older].to_vec(),
         kept: rest[older..].to_vec(),
         covered: covered + older,
+        turns_now: turns.len(),
     });
     // What is sent if no new summary is written: the summary so far and the latest 18 turns after it.
     let history_dropped = rest.len().saturating_sub(18);
@@ -1721,7 +1738,7 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
         summary,
         compact,
         compacted_now: false,
-        compaction_failed: None,
+        compaction_failed: waiting.then_some("waiting"),
     })
 }
 
@@ -1772,6 +1789,7 @@ fn prepare_history(svc: &Service, run: &mut ChatRun) {
         .summarize(request)
         .map_err(|_| "unavailable")
         .and_then(|text| crate::compaction::accept(&text).map_err(|r| r.as_str()));
+    let wait_for = plan.turns_now;
     match written {
         Ok(text) if store_summary(svc, &id, plan.covered, &text) => {
             run.body.history = plan
@@ -1789,8 +1807,20 @@ fn prepare_history(svc: &Service, run: &mut ChatRun) {
                 &[("turns_covered", plan.covered.into())],
             );
         }
-        Ok(_) => run.compaction_failed = Some("not_saved"),
-        Err(why) => run.compaction_failed = Some(why),
+        Ok(_) => {
+            svc.compaction_wait
+                .lock()
+                .expect("lock")
+                .insert(id, wait_for);
+            run.compaction_failed = Some("not_saved");
+        }
+        Err(why) => {
+            svc.compaction_wait
+                .lock()
+                .expect("lock")
+                .insert(id, wait_for);
+            run.compaction_failed = Some(why);
+        }
     }
 }
 
@@ -2402,6 +2432,7 @@ async fn session_get(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) ->
 }
 
 async fn session_forget(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    svc.compaction_wait.lock().expect("lock").remove(&id);
     let removed = {
         let store = svc.store.lock().expect("lock");
         let c = store.connection();

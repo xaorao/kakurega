@@ -7392,3 +7392,65 @@ fn sv67_a_use_given_back_after_a_failed_call_never_takes_a_lease_above_what_was_
         401
     );
 }
+
+#[test]
+fn sv68_a_summary_that_failed_is_not_asked_for_again_on_every_message_but_is_tried_again_later() {
+    let runner = SummaryRunner::new(Err("the model is busy".into()));
+    let (_c, w, id, _data, _root) = kept_chat("compact-wait", runner.clone());
+    for i in 0..10 {
+        say(&w, &id, i);
+    }
+    assert_eq!(runner.calls(), 0);
+    // message 11 finds the conversation too long and the summary fails
+    let r = say(&w, &id, 10);
+    assert_eq!(r["usage"]["compaction_failed"], "unavailable", "{r}");
+    assert_eq!(runner.calls(), 1);
+    // the next two messages do not ask the model again; they still say the oldest messages were left out
+    for i in 11..13 {
+        let r = say(&w, &id, i);
+        assert_eq!(
+            runner.calls(),
+            1,
+            "message {i} asked for a summary during the wait"
+        );
+        assert_eq!(r["usage"]["compaction_failed"], "waiting", "{r}");
+        assert_eq!(r["usage"]["compacted_now"], false);
+    }
+    // once the conversation has grown by three more exchanges the summary is tried again, and a good one is kept
+    *runner.shared.summary.lock().unwrap() = Ok("Goal: plan a trip\n- budget is 500 pounds".into());
+    let r = say(&w, &id, 13);
+    assert_eq!(runner.calls(), 2, "{r}");
+    assert_eq!(r["usage"]["compacted_now"], true, "{r}");
+    assert_eq!(r["usage"]["compaction_failed"], Value::Null, "{r}");
+    // a success leaves no wait behind: the next failure waits again from its own turn
+    for i in 14..30 {
+        say(&w, &id, i);
+    }
+    assert!(
+        runner.calls() >= 3,
+        "later growth still triggers new summaries"
+    );
+}
+
+#[test]
+fn sv69_the_wait_after_a_failed_summary_belongs_to_that_conversation_only() {
+    let runner = SummaryRunner::new(Err("the model is busy".into()));
+    let (_c, w, a, _data, _root) = kept_chat("compact-wait-two", runner.clone());
+    let b = w.post("/api/sessions", json!({"title": ""})).1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for i in 0..11 {
+        say(&w, &a, i);
+    }
+    assert_eq!(runner.calls(), 1);
+    // a second conversation that outgrows its room is asked for its own summary at once
+    for i in 0..11 {
+        say(&w, &b, i);
+    }
+    assert_eq!(
+        runner.calls(),
+        2,
+        "the first conversation's wait must not stop the second"
+    );
+}
