@@ -203,7 +203,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | E-M23 | Explainability | IMPROVE small: show matched terms and rank | PARTIAL | matched words and rank returned and in the why line; no highlight in the web list, none for meaning-only matches (memory.md) |
 | E-M24 | Procedural memory / skills | BUILD later as owner-approved "playbooks" (a skill is executable influence, so same propos | LATER | owner-approved playbooks |
 | E-M25 | Telemetry | EXCLUDE (violates the privacy goal) | EXCLUDED | none |
-| E-M26 | Evaluation sets | BUILD our own small suites: recall@k with labels, as-of correctness, forget completeness ( | PARTIAL | LongMemEval recall harness (recall_bench.rs); no as-of or correction suites |
+| E-M26 | Evaluation sets | BUILD our own small suites: recall@k with labels, as-of correctness, forget completeness ( | PARTIAL | LongMemEval recall harness plus labelled as-of, correction and forget-completeness suites (eval.rs ev01-ev03, mutation-checked); no labelled meaning set (memory.md) |
 | E-A1 | Event-sourced state, checkpoint after every step, resume | keep | KEPT | job store resumes |
 | E-A2 | Context compaction | BUILD in the OpenHands shape (tombstone event, View) with Hermes pieces (verbatim user tex | BUILT | summaries with data labelling and a wait after failure (sv55, sv56, sv68) |
 | E-A3 | Large tool output handling | ADAPT idea: spill to a labelled artifact handle, never to /tmp (plaintext) | LATER | worker loop |
