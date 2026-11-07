@@ -113,7 +113,10 @@ enum Intent {
     GatewayProof,
     Keep,
     Branch,
-    ResumeLast,
+    /// Open the newest kept conversation of this project (else the newest of all); `true` opens a branch of it instead.
+    ResumeLast(bool),
+    /// Branch the named kept conversation and open the branch: the list is read first to know how many messages it has.
+    ResumeFork(String),
     Sessions,
     OpenChat(String),
     ForgetChat(String),
@@ -333,6 +336,22 @@ fn err_text(status: u16, body: &Value) -> String {
     format!("{} ({status})", clean(m))
 }
 
+/// What `kaku --resume` asked for: a chosen conversation (else the newest of this project), and whether to open a branch of it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Resume {
+    pub id: Option<String>,
+    pub fork: bool,
+}
+
+/// What a kept conversation's id is made of; the id becomes part of a request path.
+fn valid_chat_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 impl App {
     pub fn new() -> App {
         App {
@@ -469,12 +488,29 @@ impl App {
     }
 
     /// Opens the named kept conversation (`kaku --resume ID`), or the most recently updated one, once the screen is up.
-    pub fn resume_at_start(&mut self, id: Option<&str>) -> Vec<Req> {
+    pub fn resume_at_start(&mut self, id: Option<&str>, fork: bool) -> Vec<Req> {
         if let Some(id) = id {
-            return self.open_chat_by_id(id);
+            if !fork {
+                return self.open_chat_by_id(id);
+            }
+            let id = id.trim();
+            if !valid_chat_id(id) {
+                self.say(
+                    Kind::Error,
+                    "That is not a conversation id. /sessions lists the kept ones.",
+                );
+                return Vec::new();
+            }
+            return vec![self.req(
+                Intent::ResumeFork(id.to_string()),
+                false,
+                Method::Get,
+                "/api/sessions",
+                None,
+            )];
         }
         vec![self.req(
-            Intent::ResumeLast,
+            Intent::ResumeLast(fork),
             false,
             Method::Get,
             "/api/sessions",
@@ -482,15 +518,34 @@ impl App {
         )]
     }
 
+    /// Opens a kept conversation from the list, or a branch of it (a new kept conversation with all its messages; the original is untouched).
+    fn open_or_branch(&mut self, k: &Value, fork: bool) -> Vec<Req> {
+        let Some(id) = k["id"].as_str().map(clean) else {
+            return Vec::new();
+        };
+        if fork {
+            let at = k["turns"].as_u64().unwrap_or(0);
+            return vec![self.req(
+                Intent::Branch,
+                false,
+                Method::Post,
+                &format!("/api/sessions/{id}/fork"),
+                Some(json!({"at": at})),
+            )];
+        }
+        vec![self.req(
+            Intent::OpenChat(id.clone()),
+            false,
+            Method::Get,
+            &format!("/api/sessions/{id}"),
+            None,
+        )]
+    }
+
     /// Opens one kept conversation by id. The id becomes part of a request path, so only what an id is made of is accepted.
     fn open_chat_by_id(&mut self, id: &str) -> Vec<Req> {
         let id = id.trim();
-        if id.is_empty()
-            || id.len() > 64
-            || !id
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        {
+        if !valid_chat_id(id) {
             self.say(
                 Kind::Error,
                 "That is not a conversation id. /sessions lists the kept ones.",
@@ -4077,28 +4132,66 @@ impl App {
                 }
                 Vec::new()
             }
-            Intent::ResumeLast => {
-                let newest = ok
-                    .then(|| body["sessions"].as_array().and_then(|l| l.first()))
-                    .flatten()
-                    .and_then(|k| k["id"].as_str().map(clean));
-                match newest {
-                    Some(id) => vec![self.req(
-                        Intent::OpenChat(id.clone()),
-                        false,
-                        Method::Get,
-                        &format!("/api/sessions/{id}"),
-                        None,
-                    )],
+            Intent::ResumeLast(fork) => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let list = body["sessions"].as_array().cloned().unwrap_or_default();
+                // the newest by last change, not the first listed: the list puts pinned conversations first
+                let newest = |only: Option<&str>| {
+                    list.iter()
+                        .filter(|k| k["id"].as_str().is_some())
+                        .filter(|k| only.is_none_or(|p| k["project"].as_str() == Some(p)))
+                        .max_by_key(|k| k["updated"].as_i64().unwrap_or(0))
+                        .cloned()
+                };
+                let here = self.chat_project.clone();
+                let pick = match here.as_deref().and_then(|p| newest(Some(p))) {
+                    Some(k) => Some(k),
                     None => {
-                        if ok {
+                        let any = newest(None);
+                        if let (Some(k), Some(p)) = (&any, here.as_deref()) {
+                            let from = k["project"].as_str().map(clean);
                             self.say(
                                 Kind::Info,
-                                "There is no kept conversation to resume yet. /keep saves one.",
+                                format!(
+                                    "No kept conversation for project {} yet: opening the newest one{}.",
+                                    clean(p),
+                                    from.map_or(String::new(), |f| format!(", from project {f}"))
+                                ),
                             );
-                        } else {
-                            self.say(Kind::Error, err_text(status, &body));
                         }
+                        any
+                    }
+                };
+                match pick {
+                    Some(k) => self.open_or_branch(&k, fork),
+                    None => {
+                        self.say(
+                            Kind::Info,
+                            "There is no kept conversation to resume yet. /keep saves one.",
+                        );
+                        Vec::new()
+                    }
+                }
+            }
+            Intent::ResumeFork(id) => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let found = body["sessions"]
+                    .as_array()
+                    .and_then(|l| l.iter().find(|k| k["id"].as_str() == Some(id.as_str())))
+                    .cloned();
+                match found {
+                    Some(k) => self.open_or_branch(&k, true),
+                    None => {
+                        self.say(
+                            Kind::Error,
+                            "There is no such kept conversation. /sessions lists the kept ones.",
+                        );
                         Vec::new()
                     }
                 }

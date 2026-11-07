@@ -27,7 +27,7 @@ fn restore() {
     );
 }
 
-pub fn run(data_dir: &Path, resume: Option<Option<String>>) -> Result<(), String> {
+pub fn run(data_dir: &Path, resume: Option<crate::app::Resume>) -> Result<(), String> {
     if !stdout().is_terminal() || !std::io::stdin().is_terminal() {
         return Err("the full-screen workspace needs a terminal; use `kaku --help` for the scripting commands".into());
     }
@@ -50,7 +50,11 @@ pub fn run(data_dir: &Path, resume: Option<Option<String>>) -> Result<(), String
     result
 }
 
-fn event_loop(http: Http, data_dir: &Path, resume: Option<Option<String>>) -> Result<(), String> {
+fn event_loop(
+    http: Http,
+    data_dir: &Path,
+    resume: Option<crate::app::Resume>,
+) -> Result<(), String> {
     let mut term = Terminal::new(CrosstermBackend::new(stdout())).map_err(|e| e.to_string())?;
     let theme = Theme::from_env();
     let mut app = App::new();
@@ -97,8 +101,8 @@ fn event_loop(http: Http, data_dir: &Path, resume: Option<Option<String>>) -> Re
     for r in app.start() {
         let _ = req_tx.send(r);
     }
-    if let Some(id) = &resume {
-        for r in app.resume_at_start(id.as_deref()) {
+    if let Some(r) = &resume {
+        for r in app.resume_at_start(r.id.as_deref(), r.fork) {
             let _ = req_tx.send(r);
         }
     }

@@ -402,7 +402,14 @@ if kept:
     older_id = kept[0]["id"]
     rc = run_resume(["--resume", older_id], "resumecanary words", "launching with --resume ID opens the one chosen, not the newest", absent="newercanary words")
     check("and the workspace exits cleanly", rc == 0, f"exit={rc}")
-    run_resume(["--resume"], "newercanary words", "launching with --resume alone still opens the newest", absent="resumecanary words")
+    # the newer conversation has no project; the older one belongs to this folder's project, so `--resume` alone prefers it
+    run_resume(["--resume"], "resumecanary words", "launching with --resume alone opens the newest conversation of this folder's project, not a newer one of no project", absent="newercanary words")
+    # --fork opens a branch: a third conversation appears holding the same messages, and the original is untouched
+    run_resume(["--resume", older_id, "--fork"], "resumecanary words", "launching with --resume ID --fork opens a branch of that conversation", absent="newercanary words")
+    after = json.loads(subprocess.run([kaku, "sessions", "--json", "--data-dir", str(data)], capture_output=True, text=True).stdout)["sessions"]
+    original = [x for x in after if x["id"] == older_id]
+    branches = [x for x in after if x["id"] not in {older_id, both[0]["id"], both[1]["id"]}]
+    check("the branch is a new kept conversation with the same messages and the original keeps its own", len(after) == 3 and len(original) == 1 and original[0]["messages"] == kept[0]["messages"] and len(branches) == 1 and branches[0]["messages"] == kept[0]["messages"], json.dumps(after)[:400])
 rc = run_resume(["--resume", "../admin/secrets"], "not a conversation id", "an id that is not an id is refused on the screen and nothing is requested", absent="resumecanary words")
 rc = run_resume(["--resume", "feedfacefeedfacefeedface"], "no such", "an unknown id says so and opens nothing", absent="resumecanary words")
 # a hard kill of the workspace (terminal closed, SIGKILL) must not leave the service it started running

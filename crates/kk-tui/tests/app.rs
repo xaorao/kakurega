@@ -3261,7 +3261,7 @@ fn tu49_branch_copies_a_kept_conversation_at_a_chosen_message_and_opens_the_copy
 #[test]
 fn tu50_resume_at_start_opens_the_newest_kept_conversation_and_says_so_when_there_is_none() {
     let mut a = booted();
-    let r = a.resume_at_start(None);
+    let r = a.resume_at_start(None, false);
     assert_eq!(r.len(), 1);
     assert_eq!(r[0].path, "/api/sessions");
     // the service lists newest first: the first one is opened
@@ -3276,7 +3276,7 @@ fn tu50_resume_at_start_opens_the_newest_kept_conversation_and_says_so_when_ther
     );
     // none kept: a plain sentence, nothing opened
     let mut b = booted();
-    let r = b.resume_at_start(None);
+    let r = b.resume_at_start(None, false);
     let out = b.handle(ok(&r[0], 200, json!({"sessions": []})));
     assert!(
         out.is_empty() && text(&b).contains("no kept conversation to resume"),
@@ -3285,7 +3285,7 @@ fn tu50_resume_at_start_opens_the_newest_kept_conversation_and_says_so_when_ther
     );
     // the service unreachable or refusing: its reason, nothing opened
     let mut c = booted();
-    let r = c.resume_at_start(None);
+    let r = c.resume_at_start(None, false);
     let out = c.handle(ok(
         &r[0],
         500,
@@ -3298,7 +3298,7 @@ fn tu50_resume_at_start_opens_the_newest_kept_conversation_and_says_so_when_ther
     );
     // a malformed entry never opens anything
     let mut d = booted();
-    let r = d.resume_at_start(None);
+    let r = d.resume_at_start(None, false);
     assert!(d
         .handle(ok(&r[0], 200, json!({"sessions": [{"title": "no id"}]})))
         .is_empty());
@@ -4700,7 +4700,7 @@ fn tu77_a_chosen_conversation_opens_by_id_from_the_command_line_and_from_the_pro
 ) {
     // `kaku --resume ID`: no list is fetched, that conversation is requested
     let mut a = booted();
-    let r = a.resume_at_start(Some("chat-old"));
+    let r = a.resume_at_start(Some("chat-old"), false);
     assert_eq!(r.len(), 1);
     assert_eq!(
         (r[0].path.as_str(), r[0].method),
@@ -4738,7 +4738,7 @@ fn tu77_a_chosen_conversation_opens_by_id_from_the_command_line_and_from_the_pro
         "%2e%2e",
     ] {
         let mut d = booted();
-        let out = d.resume_at_start(Some(bad));
+        let out = d.resume_at_start(Some(bad), false);
         assert!(
             out.is_empty() && text(&d).contains("not a conversation id"),
             "{bad:?}: {}",
@@ -4754,7 +4754,7 @@ fn tu77_a_chosen_conversation_opens_by_id_from_the_command_line_and_from_the_pro
     );
     // an id that is well formed but unknown: the service's reason is shown, nothing else opens
     let mut f = booted();
-    let r = f.resume_at_start(Some("nothing-here"));
+    let r = f.resume_at_start(Some("nothing-here"), false);
     let out = f.handle(ok(
         &r[0],
         404,
@@ -4764,5 +4764,97 @@ fn tu77_a_chosen_conversation_opens_by_id_from_the_command_line_and_from_the_pro
         out.is_empty() && text(&f).contains("no such conversation"),
         "{}",
         text(&f)
+    );
+}
+
+#[test]
+fn tu78_resume_opens_the_newest_of_this_project_not_the_pinned_first_and_fork_opens_a_branch_instead(
+) {
+    let list = json!({"sessions": [
+        {"id": "chat-pinned-old", "title": "", "updated": 5, "turns": 2, "project": "payments-service", "pinned": true},
+        {"id": "chat-other", "title": "", "updated": 90, "turns": 3, "project": "billing"},
+        {"id": "chat-here-new", "title": "", "updated": 70, "turns": 4, "project": "payments-service"},
+        {"id": "chat-here-old", "title": "", "updated": 10, "turns": 1, "project": "payments-service"},
+    ]});
+    // in project payments-service: the newest of that project, though a pinned one is listed first and another project's is newer
+    let mut a = booted();
+    a.chat_project = Some("payments-service".into());
+    let r = a.resume_at_start(None, false);
+    let open = a.handle(ok(&r[0], 200, list.clone()));
+    assert_eq!(open[0].path, "/api/sessions/chat-here-new", "{}", text(&a));
+    // in a project with none kept: the newest of all, and the screen says whose it is
+    let mut b = booted();
+    b.chat_project = Some("kakurega".into());
+    let r = b.resume_at_start(None, false);
+    let open = b.handle(ok(&r[0], 200, list.clone()));
+    assert_eq!(open[0].path, "/api/sessions/chat-other");
+    assert!(
+        text(&b).contains("No kept conversation for project kakurega yet")
+            && text(&b).contains("from project billing"),
+        "{}",
+        text(&b)
+    );
+    // outside any project: the newest of all, with nothing said about projects
+    let mut c = booted();
+    c.chat_project = None;
+    let r = c.resume_at_start(None, false);
+    let open = c.handle(ok(&r[0], 200, list.clone()));
+    assert_eq!(open[0].path, "/api/sessions/chat-other");
+    assert!(
+        !text(&c).contains("No kept conversation for project"),
+        "{}",
+        text(&c)
+    );
+    // --fork: the newest of the project is branched with all its messages, and the branch is what opens
+    let mut d = booted();
+    d.chat_project = Some("payments-service".into());
+    let r = d.resume_at_start(None, true);
+    let fork = d.handle(ok(&r[0], 200, list.clone()));
+    assert_eq!(
+        (fork[0].path.as_str(), fork[0].method),
+        ("/api/sessions/chat-here-new/fork", Method::Post),
+        "{}",
+        text(&d)
+    );
+    assert_eq!(fork[0].body.as_ref().unwrap()["at"], 4);
+    let open = d.handle(ok(&fork[0], 201, json!({"id": "chat-branch-1"})));
+    assert_eq!(
+        open[0].path, "/api/sessions/chat-branch-1",
+        "the branch opens, the original is left alone"
+    );
+    // --resume ID --fork: that conversation, branched
+    let mut e = booted();
+    let r = e.resume_at_start(Some("chat-here-old"), true);
+    assert_eq!(r[0].path, "/api/sessions");
+    let fork = e.handle(ok(&r[0], 200, list.clone()));
+    assert_eq!(fork[0].path, "/api/sessions/chat-here-old/fork");
+    assert_eq!(fork[0].body.as_ref().unwrap()["at"], 1);
+    // an id that is not listed, or not an id, branches nothing
+    let mut f = booted();
+    let r = f.resume_at_start(Some("chat-nowhere"), true);
+    assert!(
+        f.handle(ok(&r[0], 200, list.clone())).is_empty()
+            && text(&f).contains("no such kept conversation"),
+        "{}",
+        text(&f)
+    );
+    let mut g = booted();
+    assert!(
+        g.resume_at_start(Some("../admin"), true).is_empty()
+            && text(&g).contains("not a conversation id")
+    );
+    // a refusal while branching shows the service's reason and opens nothing
+    let mut h = booted();
+    let r = h.resume_at_start(None, true);
+    let fork = h.handle(ok(&r[0], 200, list));
+    let out = h.handle(ok(
+        &fork[0],
+        409,
+        json!({"error": {"code": "TOO_MANY", "message": "forget some kept conversations first"}}),
+    ));
+    assert!(
+        out.is_empty() && text(&h).contains("forget some kept conversations first"),
+        "{}",
+        text(&h)
     );
 }

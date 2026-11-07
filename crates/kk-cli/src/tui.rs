@@ -52,12 +52,13 @@ fn ensure_service(dir: &std::path::Path, args: &[String], guard: &mut Guard) -> 
         };
         let mut cmd = Command::new(exe);
         cmd.arg("serve").arg("--data-dir").arg(&dir);
-        let resume_id = resume_request(args).flatten();
+        let resume_id = resume_request(args).and_then(|r| r.id);
         for a in args {
             if a != "--data-dir"
                 && a != "--resume"
                 && Some(a) != resume_id.as_ref()
                 && a != "--linear"
+                && a != "--fork"
                 && Some(a.as_str()) != crate::flag(args, "--data-dir").as_deref()
             {
                 cmd.arg(a);
@@ -100,9 +101,12 @@ fn ensure_service(dir: &std::path::Path, args: &[String], guard: &mut Guard) -> 
 }
 
 /// `--resume` opens the newest kept conversation; `--resume ID` opens that one. The id is the word right after the flag, if it is not another flag.
-pub fn resume_request(args: &[String]) -> Option<Option<String>> {
+pub fn resume_request(args: &[String]) -> Option<kk_tui::app::Resume> {
     let i = args.iter().position(|a| a == "--resume")?;
-    Some(args.get(i + 1).filter(|a| !a.starts_with('-')).cloned())
+    Some(kk_tui::app::Resume {
+        id: args.get(i + 1).filter(|a| !a.starts_with('-')).cloned(),
+        fork: args.iter().any(|a| a == "--fork"),
+    })
 }
 
 fn run_client(dir: &std::path::Path, args: &[String]) -> u8 {
@@ -128,27 +132,52 @@ fn run_client(dir: &std::path::Path, args: &[String]) -> u8 {
 #[cfg(test)]
 mod resume_args {
     use super::resume_request;
+    use kk_tui::app::Resume;
 
     fn a(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
     }
 
+    fn r(id: Option<&str>, fork: bool) -> Option<Resume> {
+        Some(Resume {
+            id: id.map(str::to_string),
+            fork,
+        })
+    }
+
     #[test]
     fn rs01_resume_alone_means_the_newest_and_resume_with_a_word_means_that_conversation() {
         assert_eq!(resume_request(&a(&["tui"])), None);
-        assert_eq!(resume_request(&a(&["tui", "--resume"])), Some(None));
-        assert_eq!(resume_request(&a(&["--resume", "--linear"])), Some(None));
+        assert_eq!(resume_request(&a(&["tui", "--resume"])), r(None, false));
+        assert_eq!(
+            resume_request(&a(&["--resume", "--linear"])),
+            r(None, false)
+        );
         assert_eq!(
             resume_request(&a(&["tui", "--resume", "--data-dir", "/x"])),
-            Some(None)
+            r(None, false)
         );
         assert_eq!(
             resume_request(&a(&["tui", "--resume", "abc123"])),
-            Some(Some("abc123".into()))
+            r(Some("abc123"), false)
         );
         assert_eq!(
             resume_request(&a(&["--data-dir", "/x", "--resume", "abc123", "--linear"])),
-            Some(Some("abc123".into()))
+            r(Some("abc123"), false)
         );
+    }
+
+    #[test]
+    fn rs02_fork_asks_for_a_branch_and_means_nothing_without_resume() {
+        assert_eq!(resume_request(&a(&["--resume", "--fork"])), r(None, true));
+        assert_eq!(
+            resume_request(&a(&["--fork", "--resume", "abc123"])),
+            r(Some("abc123"), true)
+        );
+        assert_eq!(
+            resume_request(&a(&["--resume", "abc123", "--fork"])),
+            r(Some("abc123"), true)
+        );
+        assert_eq!(resume_request(&a(&["tui", "--fork"])), None);
     }
 }
