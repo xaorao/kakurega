@@ -518,7 +518,7 @@ impl Service {
     }
 
     /// Keeps what is about to be sent to the model (the whole of it, up to a bound) for the owner to look at.
-    fn remember_sent(&self, messages: &[kk_types::chat::ChatMessage]) {
+    fn remember_sent(&self, messages: &[kk_types::chat::ChatMessage], excluded: &[Value]) {
         const MAX_CHARS: usize = 400_000;
         let mut used = 0usize;
         let mut kept: Vec<Value> = Vec::new();
@@ -534,6 +534,7 @@ impl Service {
         *self.last_sent.lock().expect("lock") = Some(json!({
             "messages": kept,
             "cut": cut,
+            "excluded_notes": excluded,
             "at": now(),
             "route": {"class": route["class"], "simulated": route["simulated"], "host": route["host"], "stays_here": route["stays_here"], "id": route["id"], "name": route["model"]},
         }));
@@ -2732,6 +2733,8 @@ struct ChatContext {
     notes_withheld: usize,
     /// Recalled notes that did not fit the room kept for notes.
     notes_left_out: usize,
+    /// Notes that matched the question and were not sent, each with the reason (`looks_like_instruction`, `did_not_fit`, `kept_on_this_computer`).
+    excluded_notes: Vec<Value>,
     /// Whether the owner's standing instructions went to the model with this question.
     instructions_used: bool,
     web_used: usize,
@@ -2756,7 +2759,7 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
     let note_room = window.map_or(u64::MAX, |w| {
         w.saturating_sub(crate::budget::reply_reserve(w)) / 3
     });
-    let (notes, used, untrusted_used, withheld, notes_list, notes_left_out) = {
+    let (notes, used, untrusted_used, withheld, notes_list, notes_left_out, excluded_notes) = {
         let mem = svc.memory.lock().expect("lock");
         let mut clearance = mem
             .owner_clearance()
@@ -2777,6 +2780,12 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
             .recall_scoped(&b.message, &clearance, now(), 5, scope)
             .unwrap_or_default();
         let withheld = hits.iter().filter(|h| h.instruction_like()).count();
+        let short = |h: &kk_memory::Recalled, reason: &str| json!({"id": h.memory.id, "text": h.memory.text.chars().take(80).collect::<String>(), "reason": reason});
+        let mut excluded: Vec<Value> = hits
+            .iter()
+            .filter(|h| h.instruction_like())
+            .map(|h| short(h, "looks_like_instruction"))
+            .collect();
         let candidates: Vec<_> = hits.into_iter().filter(|h| !h.instruction_like()).collect();
         let mut text = String::new();
         let mut spent = 0u64;
@@ -2795,12 +2804,30 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
             let cost = kk_route::tokens::estimate_text(&line);
             if spent.saturating_add(cost) > note_room {
                 left_out += 1;
+                excluded.push(short(&h, "did_not_fit"));
                 continue;
             }
             spent += cost;
             text.push_str(&line);
             hits.push(h);
         }
+        // notes the model's address keeps it from seeing: found with the owner's full clearance, and not among those sent
+        if let Ok(full) = mem.owner_clearance() {
+            if full.level > clearance.level {
+                for h in mem
+                    .recall_scoped(&b.message, &full, now(), 5, scope)
+                    .unwrap_or_default()
+                {
+                    if h.memory.label.level > clearance.level
+                        && !h.instruction_like()
+                        && !hits.iter().any(|x| x.memory.id == h.memory.id)
+                    {
+                        excluded.push(short(&h, "kept_on_this_computer"));
+                    }
+                }
+            }
+        }
+        excluded.truncate(20);
         let list: Vec<Value> = hits
             .iter()
             .map(|h| {
@@ -2825,6 +2852,7 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
             withheld,
             list,
             left_out,
+            excluded,
         )
     };
     let pages: Vec<(String, String)> = {
@@ -2930,6 +2958,7 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
         untrusted_notes: untrusted_used,
         notes_withheld: withheld,
         notes_left_out,
+        excluded_notes,
         web_used: fitted.used,
         files_used: files_fitted.used,
         files_trimmed: files_fitted.trimmed,
@@ -2995,7 +3024,7 @@ async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
         let mut run = run;
         prepare_history(&svc2, &mut run);
         let ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
-        svc2.remember_sent(&ctx.messages);
+        svc2.remember_sent(&ctx.messages, &ctx.excluded_notes);
         let reply = svc2.runner.chat(ctx.messages.clone());
         (run, ctx, reply)
     })
@@ -3032,7 +3061,7 @@ async fn chat_stream(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Resp
         let mut run = run;
         prepare_history(&svc2, &mut run);
         let ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
-        svc2.remember_sent(&ctx.messages);
+        svc2.remember_sent(&ctx.messages, &ctx.excluded_notes);
         let mut gone = false;
         let result = svc2.runner.chat_stream(ctx.messages.clone(), &mut |piece| {
             if tx.send(line(json!({"delta": piece}))).is_err() {

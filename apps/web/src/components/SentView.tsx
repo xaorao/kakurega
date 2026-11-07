@@ -36,6 +36,16 @@ export function SentView(props: { typed: string }) {
                   </div>
                 )}
               </For>
+              <Show when={(d().excluded_notes ?? []).length > 0}>
+                <div>
+                  <strong>{t("sent.excluded")}</strong>
+                  <ul class="plain">
+                    <For each={d().excluded_notes}>
+                      {(n) => <li><span>{n.text}</span> <span class="muted">({t(`sent.why.${n.reason === "looks_like_instruction" || n.reason === "did_not_fit" || n.reason === "kept_on_this_computer" ? n.reason : "other"}` as never)})</span></li>}
+                    </For>
+                  </ul>
+                </div>
+              </Show>
               <Show when={d().cut}><p class="muted">{t("sent.cut")}</p></Show>
             </div>
           )}
