@@ -242,6 +242,8 @@ export const api = {
   forgetReview: (job: string) => request<ReviewSource & { forgotten: boolean }>("POST", `/api/memories/sources/${encodeURIComponent(job)}/forget`, {}),
   mergeMemories: (keep: string, merge: string[]) => request<{ merged: number; kept: string }>("POST", "/api/memories/merge", { keep, merge }),
   unmergeMemory: (id: string) => request<{ restored: boolean }>("POST", `/api/memories/${id}/unmerge`, {}),
+  heldMemories: () => request<{ held: { id: string; text: string; kind: string; project?: string | null; created_at: number }[] }>("GET", "/api/memories/held"),
+  releaseHold: (id: string) => request<{ released: boolean }>("POST", `/api/memories/${id}/release-hold`, {}),
   mergedMemories: () => request<{ merged: { id: string; text: string; merged_into: string; project?: string | null; level: string }[] }>("GET", "/api/memories/merged"),
   keptChats: (archived = false) => request<{ sessions: KeptChat[] }>("GET", archived ? "/api/sessions?archived=1" : "/api/sessions"),
   pinChat: (id: string, pinned: boolean) => request<{ ok: boolean }>("POST", `/api/sessions/${id}/pin`, { pinned }),

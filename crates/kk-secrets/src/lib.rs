@@ -2722,6 +2722,11 @@ pub fn scan(text: &str) -> Vec<Hit> {
 }
 
 /// The first reason the text looks like it holds a secret, in the short plain form the product shows.
+/// Which generation of the detector this is. Bump it whenever a rule is added, removed or changed, so stores that kept text under
+/// an older detector are checked again with this one (kk-memory does that at open). A test in `tests/corpus.rs` fails when the
+/// detector's answers over its corpus change and this number was not bumped.
+pub const DETECTOR_VERSION: u32 = 1;
+
 pub fn looks_secret(text: &str) -> Option<&'static str> {
     scan(text).first().map(|h| h.rule)
 }

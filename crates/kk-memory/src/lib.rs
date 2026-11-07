@@ -119,6 +119,9 @@ pub enum Status {
     Superseded,
     /// Hidden because the owner merged it into another note; it can be brought back.
     Merged,
+    /// Held back: a newer secret detector matched this note after it was saved. Not offered to any model, review or list until the
+    /// owner decides: forget it, or say it is not a secret.
+    Held,
 }
 
 /// What forgetting a review removes (or would remove).
@@ -241,6 +244,12 @@ CREATE TABLE IF NOT EXISTS memory_use (
     id TEXT PRIMARY KEY,
     last_at INTEGER NOT NULL,
     uses INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memory_hold (
+    id TEXT PRIMARY KEY,
+    rule TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    cleared_version INTEGER
 );
 CREATE TABLE IF NOT EXISTS memory_events (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -536,6 +545,7 @@ fn row_to_memory(r: &kk_vault::rusqlite::Row<'_>) -> kk_vault::rusqlite::Result<
             status: match status.as_str() {
                 "active" => Status::Active,
                 "merged" => Status::Merged,
+                "held" => Status::Held,
                 _ => Status::Superseded,
             },
             superseded_by: r.get("superseded_by")?,
@@ -544,6 +554,127 @@ fn row_to_memory(r: &kk_vault::rusqlite::Row<'_>) -> kk_vault::rusqlite::Result<
 }
 
 impl Memories {
+    /// When the secret detector is a newer generation than the one that last looked at this store, every note is checked again with
+    /// it, and a note it now matches is held back (status `held`): no recall, list, review or model sees it until the owner decides.
+    /// A note the owner already cleared under this generation is not held again. Returns how many notes were newly held.
+    fn rescan_for_secrets(vault: &Vault) -> Result<usize, MemoryError> {
+        let c = vault.connection();
+        let now_version = kk_secrets::DETECTOR_VERSION.to_string();
+        let have: Option<String> = c
+            .query_row(
+                "SELECT value FROM memory_meta WHERE key = 'detector_version'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if have.as_deref() == Some(now_version.as_str()) {
+            return Ok(0);
+        }
+        // a store rescanned by a newer detector than this program has is left alone
+        if let Some(h) = have.as_deref().and_then(|h| h.parse::<u32>().ok()) {
+            if h > kk_secrets::DETECTOR_VERSION {
+                return Ok(0);
+            }
+        }
+        let rows: Vec<(String, String)> = {
+            let mut st = c.prepare(
+                "SELECT id, text FROM memories WHERE status IN ('active', 'merged') AND text <> ''",
+            )?;
+            let found = st
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+                .flatten()
+                .collect::<Vec<_>>();
+            found
+        };
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let mut held = 0usize;
+        c.execute_batch("SAVEPOINT secret_rescan")?;
+        let r = (|| -> Result<(), MemoryError> {
+            for (id, text) in &rows {
+                let Some(rule) = secret::looks_secret(text) else {
+                    continue;
+                };
+                let cleared: Option<i64> = c
+                    .query_row(
+                        "SELECT cleared_version FROM memory_hold WHERE id = ?1",
+                        params![id],
+                        |r| r.get::<_, Option<i64>>(0),
+                    )
+                    .optional()?
+                    .flatten();
+                if cleared == Some(i64::from(kk_secrets::DETECTOR_VERSION)) {
+                    continue;
+                }
+                c.execute(
+                    "UPDATE memories SET status = 'held' WHERE id = ?1",
+                    params![id],
+                )?;
+                c.execute(
+                    "INSERT OR REPLACE INTO memory_hold(id, rule, at, cleared_version) VALUES (?1, ?2, ?3, NULL)",
+                    params![id, rule, at],
+                )?;
+                c.execute(
+                    "INSERT INTO memory_events(at, kind, memory_id, note) VALUES (?1, 'held', ?2, ?3)",
+                    params![at, id, rule],
+                )?;
+                held += 1;
+            }
+            c.execute(
+                "INSERT OR REPLACE INTO memory_meta(key, value) VALUES ('detector_version', ?1)",
+                params![now_version],
+            )?;
+            Ok(())
+        })();
+        match r {
+            Ok(()) => c.execute_batch("RELEASE secret_rescan")?,
+            Err(e) => {
+                c.execute_batch("ROLLBACK TO secret_rescan; RELEASE secret_rescan")?;
+                return Err(e);
+            }
+        }
+        Ok(held)
+    }
+
+    /// Notes held back by a newer secret detector, with the kind of secret it saw, newest first. Only notes the caller may read.
+    pub fn held(&self, clearance: &Label) -> Result<Vec<(Memory, String)>, MemoryError> {
+        let mut st = self.conn().prepare(
+            "SELECT m.*, h.rule AS hold_rule FROM memories m JOIN memory_hold h ON h.id = m.id
+             WHERE m.status = 'held' ORDER BY h.at DESC, m.rowid DESC",
+        )?;
+        let rows = st.query_map([], |r| {
+            Ok((row_to_memory(r)?, r.get::<_, String>("hold_rule")?))
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            let (row, rule) = r?;
+            if row.m.label.confidentiality_within(clearance) {
+                out.push((row.m, rule));
+            }
+        }
+        Ok(out)
+    }
+
+    /// The owner says a held note is not a secret: it is offered again, and this detector generation will not hold it a second time.
+    pub fn release_hold(&self, now: i64, id: &str, clearance: &Label) -> Result<(), MemoryError> {
+        let held = self.held(clearance)?;
+        if !held.iter().any(|(m, _)| m.id == id) {
+            return Err(MemoryError::NotFound);
+        }
+        self.conn().execute(
+            "UPDATE memories SET status = 'active' WHERE id = ?1 AND status = 'held'",
+            params![id],
+        )?;
+        self.conn().execute(
+            "UPDATE memory_hold SET cleared_version = ?2 WHERE id = ?1",
+            params![id, i64::from(kk_secrets::DETECTOR_VERSION)],
+        )?;
+        self.event(now, "hold_released", id, "owner said it is not a secret")?;
+        Ok(())
+    }
+
     /// An index made before notes in Chinese, Japanese and Korean were indexed as pairs is rebuilt once, from the notes, with the
     /// triggers that keep it current. A new store has no notes and the rebuild costs nothing.
     fn ensure_index_version(vault: &Vault) -> Result<(), MemoryError> {
@@ -602,6 +733,7 @@ impl Memories {
         vault.connection().execute_batch(SCHEMA)?;
         vault.connection().execute_batch(FTS_TRIGGERS)?;
         Self::ensure_index_version(&vault)?;
+        Self::rescan_for_secrets(&vault)?;
         let has_project: bool = vault
             .connection()
             .prepare("PRAGMA table_info(memories)")?
@@ -943,6 +1075,8 @@ impl Memories {
             )?;
             self.conn()
                 .execute("DELETE FROM memory_use WHERE id = ?1", params![mid])?;
+            self.conn()
+                .execute("DELETE FROM memory_hold WHERE id = ?1", params![mid])?;
             self.conn()
                 .execute("DELETE FROM memories WHERE id = ?1", params![mid])?;
             self.event(now, "forget", mid, "deleted")?;
@@ -1410,6 +1544,20 @@ impl Memories {
             )?;
         }
         Ok(())
+    }
+
+    /// For tests: puts text into a stored note as an older detector would have let it in, and makes the store say that only that
+    /// older detector has looked at it, so the next open checks it again.
+    #[doc(hidden)]
+    pub fn plant_secret_for_test(&self, id: &str, text: &str) {
+        let _ = self.conn().execute(
+            "UPDATE memories SET text = ?1 WHERE id = ?2",
+            params![text, id],
+        );
+        let _ = self.conn().execute(
+            "UPDATE memory_meta SET value = '0' WHERE key = 'detector_version'",
+            [],
+        );
     }
 
     /// How many entries the full-text index itself holds for a match expression, whether or not a note still stands behind them.

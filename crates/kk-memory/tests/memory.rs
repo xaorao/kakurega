@@ -3539,3 +3539,160 @@ fn me74_a_notes_store_made_by_a_newer_version_is_refused_and_left_untouched() {
         .unwrap();
     assert_eq!(ver, "99", "nothing was rebuilt or rewritten");
 }
+
+/// Puts text into a stored note the way an older detector would have let it in, and makes the store look as if only that older
+/// detector had ever seen it.
+fn plant_secret_and_age_the_detector(d: &std::path::Path, id: &str, text: &str, seen_by: &str) {
+    let v = Vault::open(&d.join("m.db"), &key(7)).unwrap();
+    kk_memory::register_index_function(v.connection()).unwrap();
+    v.connection()
+        .execute("UPDATE memories SET text = ?1 WHERE id = ?2", [text, id])
+        .unwrap();
+    v.connection()
+        .execute(
+            "UPDATE memory_meta SET value = ?1 WHERE key = 'detector_version'",
+            [seen_by],
+        )
+        .unwrap();
+}
+
+fn token() -> String {
+    format!(
+        "my github token is {}_{}",
+        "ghp", "R7kQ2mZx9LpV4nB8cT1yH6wD3sF5jA0gUe2K"
+    )
+}
+
+#[test]
+fn me75_a_note_a_newer_detector_now_matches_is_held_back_from_everything_until_the_owner_decides() {
+    let d = dir();
+    let (bad, good);
+    {
+        let m = mem(&d);
+        bad = id(m
+            .remember(1, nm("deploy notes for the payments service", internal()))
+            .unwrap());
+        good = id(m
+            .remember(2, nm("deploy window is friday", internal()))
+            .unwrap());
+    }
+    plant_secret_and_age_the_detector(&d, &bad, &token(), "0");
+    let m = Memories::open(Vault::open(&d.join("m.db"), &key(7)).unwrap(), [9; 32]).unwrap();
+    assert_eq!(
+        ids_for(&m, "github token deploy", 99),
+        std::slice::from_ref(&good),
+        "the held note is in no recall"
+    );
+    assert_eq!(
+        m.list(&internal(), 99, 10).unwrap().len(),
+        1,
+        "nor in the list"
+    );
+    let held = m.held(&internal()).unwrap();
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].0.id, bad);
+    assert_eq!(held[0].0.status, Status::Held);
+    assert!(!held[0].1.is_empty(), "the kind of secret is named");
+    // a note above the caller's clearance is not listed to them
+    assert!(m
+        .held(&Label::new(Level::Public))
+        .unwrap()
+        .iter()
+        .all(|(m, _)| m.label.level <= Level::Public));
+    drop(m);
+    // opening again changes nothing
+    let m = Memories::open(Vault::open(&d.join("m.db"), &key(7)).unwrap(), [9; 32]).unwrap();
+    assert_eq!(m.held(&internal()).unwrap().len(), 1);
+    // the owner can forget it for good
+    m.forget(10, &bad, "a secret").unwrap();
+    assert!(m.held(&internal()).unwrap().is_empty());
+    assert_eq!(ids_for(&m, "deploy", 99), [good]);
+}
+
+#[test]
+fn me76_a_held_note_the_owner_says_is_not_a_secret_comes_back_and_is_not_held_again_by_the_same_detector(
+) {
+    let d = dir();
+    let bad;
+    {
+        let m = mem(&d);
+        bad = id(m.remember(1, nm("release checklist", internal())).unwrap());
+    }
+    plant_secret_and_age_the_detector(&d, &bad, &token(), "0");
+    let m = Memories::open(Vault::open(&d.join("m.db"), &key(7)).unwrap(), [9; 32]).unwrap();
+    assert_eq!(m.held(&internal()).unwrap().len(), 1);
+    assert!(
+        m.release_hold(5, "no-such-note", &internal()).is_err(),
+        "only a held note can be released"
+    );
+    m.release_hold(5, &bad, &internal()).unwrap();
+    assert!(m.held(&internal()).unwrap().is_empty());
+    assert_eq!(
+        ids_for(&m, "github token", 99),
+        std::slice::from_ref(&bad),
+        "it is offered again"
+    );
+    assert!(
+        m.release_hold(6, &bad, &internal()).is_err(),
+        "and cannot be released twice"
+    );
+    drop(m);
+    // the same detector generation looks again (the store is made to say it has not): the owner's answer stands
+    plant_secret_and_age_the_detector(&d, &bad, &token(), "0");
+    let m = Memories::open(Vault::open(&d.join("m.db"), &key(7)).unwrap(), [9; 32]).unwrap();
+    assert!(
+        m.held(&internal()).unwrap().is_empty(),
+        "not held a second time"
+    );
+    assert_eq!(ids_for(&m, "github token", 99).len(), 1);
+}
+
+#[test]
+fn me77_a_store_already_checked_by_a_newer_detector_is_not_rescanned_by_an_older_program() {
+    let d = dir();
+    let bad;
+    {
+        let m = mem(&d);
+        bad = id(m.remember(1, nm("release checklist", internal())).unwrap());
+    }
+    plant_secret_and_age_the_detector(&d, &bad, &token(), "999");
+    let m = Memories::open(Vault::open(&d.join("m.db"), &key(7)).unwrap(), [9; 32]).unwrap();
+    assert!(m.held(&internal()).unwrap().is_empty(), "left alone");
+    assert_eq!(ids_for(&m, "github token", 99).len(), 1);
+}
+
+#[test]
+fn me78_a_new_store_records_the_detector_and_holds_nothing_and_notes_without_secrets_are_never_held(
+) {
+    let d = dir();
+    {
+        let m = mem(&d);
+        id(m.remember(1, nm("plain note about invoices", internal()))
+            .unwrap());
+        assert!(m.held(&internal()).unwrap().is_empty());
+    }
+    let v = Vault::open(&d.join("m.db"), &key(7)).unwrap();
+    let ver: String = v
+        .connection()
+        .query_row(
+            "SELECT value FROM memory_meta WHERE key = 'detector_version'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(ver, kk_secrets::DETECTOR_VERSION.to_string());
+    drop(v);
+    // an older generation rescans: a plain note stays active
+    {
+        let v = Vault::open(&d.join("m.db"), &key(7)).unwrap();
+        v.connection()
+            .execute(
+                "UPDATE memory_meta SET value = '0' WHERE key = 'detector_version'",
+                [],
+            )
+            .unwrap();
+    }
+    let m = Memories::open(Vault::open(&d.join("m.db"), &key(7)).unwrap(), [9; 32]).unwrap();
+    assert!(m.held(&internal()).unwrap().is_empty());
+    assert_eq!(ids_for(&m, "invoices", 99).len(), 1);
+}

@@ -189,6 +189,64 @@ function Similar(props: { onChange: (msg?: string) => void }) {
   );
 }
 
+function Held(props: { onChange: (msg?: string) => void }) {
+  const [list, { refetch }] = createResource(() => api.heldMemories().then((r) => r.held).catch(() => []));
+  const [problem, setProblem] = createSignal("");
+  const [confirming, setConfirming] = createSignal<string | null>(null);
+  const done = async (msg: string) => {
+    props.onChange(msg);
+    setConfirming(null);
+    await refetch();
+  };
+  const release = async (id: string) => {
+    setProblem("");
+    try {
+      await api.releaseHold(id);
+      await done(t("mem.held.released"));
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("mem.error"));
+    }
+  };
+  const forget = async (id: string) => {
+    setProblem("");
+    try {
+      await api.forgetMemory(id, "held as a possible secret");
+      await done(t("mem.forgotten"));
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("mem.error"));
+    }
+  };
+  return (
+    <Show when={(list() ?? []).length > 0}>
+      <section class="card stack" role="region" aria-labelledby="h-held">
+        <h2 id="h-held">{t("mem.held.title", { n: (list() ?? []).length })}</h2>
+        <p class="muted">{t("mem.held.lead")}</p>
+        <Show when={problem()}><p role="alert" class="bad">{problem()}</p></Show>
+        <ul class="plain stack">
+          <For each={list() ?? []}>
+            {(m) => (
+              <li class="card stack">
+                <p><span class="chip warn">{t("mem.held.kind", { kind: m.kind })}</span></p>
+                <p>{m.text}</p>
+                <div class="actions">
+                  <Show when={confirming() === m.id} fallback={<>
+                    <button type="button" onClick={() => void release(m.id)}>{t("mem.held.notSecret")}</button>
+                    <button type="button" onClick={() => setConfirming(m.id)}>{t("mem.forget")}</button>
+                  </>}>
+                    <span class="bad">{t("mem.forget.confirm")}</span>{" "}
+                    <button class="danger" onClick={() => void forget(m.id)}>{t("mem.forget.yes")}</button>
+                    <button type="button" onClick={() => setConfirming(null)}>{t("mem.cancel")}</button>
+                  </Show>
+                </div>
+              </li>
+            )}
+          </For>
+        </ul>
+      </section>
+    </Show>
+  );
+}
+
 function Merged(props: { onChange: (msg?: string) => void }) {
   const [open, setOpen] = createSignal(false);
   const [list, { refetch }] = createResource(open, (on) => (on ? api.mergedMemories().then((r) => r.merged) : Promise.resolve([])));
@@ -359,6 +417,7 @@ export function Memory() {
     <section class="stack wide" aria-labelledby="h-mem">
       <h1 id="h-mem">{t("mem.title")}</h1>
       <p class="lead">{t("mem.lead")}</p>
+      <Held onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <form class="card stack" onSubmit={add}>
         <h2>{t("mem.add.heading")}</h2>
         <label for="mem-text">{t("mem.add.text")}</label>

@@ -11113,3 +11113,115 @@ fn sv111_pattern_rule_results_are_a_second_opinion_per_file_and_never_change_wha
         plain["findings"][0]["status"]
     );
 }
+
+#[test]
+fn sv112_a_note_a_newer_detector_matches_is_held_out_of_answers_and_lists_until_the_owner_decides()
+{
+    let (root, _repo) = repo_copy("held");
+    let data = root.join("data");
+    let start_svc = || {
+        let svc = Service::new(
+            &data,
+            vec![root.clone()],
+            Arc::new(CannedRunner { confirm: true }),
+            true,
+        )
+        .unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        (svc, c, w)
+    };
+    let (svc, c, w) = start_svc();
+    let id = w
+        .post(
+            "/api/memories",
+            json!({"text": "Acme pays invoices on the fifteenth"}),
+        )
+        .1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let other = w
+        .post(
+            "/api/memories",
+            json!({"text": "Beta pays invoices on the first"}),
+        )
+        .1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    svc.memory_plant_secret_for_test(
+        &id,
+        &format!(
+            "Acme pays invoices on the fifteenth, token {}_{}",
+            "ghp", "R7kQ2mZx9LpV4nB8cT1yH6wD3sF5jA0gUe2K"
+        ),
+    );
+    drop(c);
+    drop(svc);
+    let (svc, c, mut w) = start_svc();
+    let (_, list) = w.get("/api/memories");
+    assert_eq!(list["held"], 1);
+    let ids: Vec<&str> = list["memories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|m| m["id"].as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        [other.as_str()],
+        "the held note is not in the list: {list}"
+    );
+    let (_, found) = w.get("/api/memories?q=Acme");
+    assert!(
+        found["memories"].as_array().unwrap().is_empty(),
+        "nor in a search: {found}"
+    );
+    let (st, r) = w.post(
+        "/api/chat",
+        json!({"message": "when does Acme pay invoices"}),
+    );
+    assert_eq!(st, 200);
+    let given: Vec<&str> = r["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|n| n["id"].as_str())
+        .collect();
+    assert_eq!(given, [other.as_str()], "nor given to the model: {r}");
+    assert!(
+        !r["reply"].as_str().unwrap().contains("token ghp"),
+        "the secret text never reached the model"
+    );
+    let (st, held) = w.get("/api/memories/held");
+    assert_eq!(st, 200);
+    assert_eq!(held["held"][0]["id"], id.as_str());
+    assert!(!held["held"][0]["kind"].as_str().unwrap().is_empty());
+    assert_eq!(Web::new(c.addr).get("/api/memories/held").0, 401);
+    assert_eq!(
+        Web::new(c.addr)
+            .post(&format!("/api/memories/{id}/release-hold"), json!({}))
+            .0,
+        401
+    );
+    assert_eq!(
+        w.post("/api/memories/no-such/release-hold", json!({})).0,
+        404
+    );
+    // forgetting it works like any note
+    let (st, _) = w.post(&format!("/api/memories/{id}/forget"), json!({}));
+    assert_eq!(st, 200);
+    assert!(w.get("/api/memories/held").1["held"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let _ = &mut w;
+    drop(c);
+    drop(svc);
+}

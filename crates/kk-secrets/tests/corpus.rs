@@ -215,3 +215,35 @@ fn the_extension_carries_the_same_format_table_as_this_crate() {
     let have = std::fs::read_to_string(&path).unwrap_or_default();
     assert_eq!(have, kk_secrets::formats_js(), "regenerate with: cargo run -p kk-secrets --example export_formats > apps/extension/formats.js");
 }
+
+/// FNV-1a, written out so the number does not depend on a library's version.
+fn fnv(parts: &[String]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for p in parts {
+        for b in p.bytes().chain(std::iter::once(0xff)) {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x100000001b3);
+        }
+    }
+    h
+}
+
+/// The detector's answers over its own corpus, as one number. Stores that kept text under an older detector are checked again when
+/// `DETECTOR_VERSION` changes; this test makes sure the version is bumped when the answers do.
+#[test]
+fn dv01_the_detector_version_is_bumped_whenever_its_answers_over_the_corpus_change() {
+    let mut parts: Vec<String> = Vec::new();
+    for (name, text) in positives() {
+        parts.push(format!("{name}={:?}", looks_secret(&text)));
+    }
+    for (name, text) in negatives() {
+        parts.push(format!("{name}={:?}", looks_secret(&text)));
+    }
+    let got = fnv(&parts);
+    const EXPECTED: (u32, u64) = (1, 5040826748400983632);
+    assert_eq!(
+        (kk_secrets::DETECTOR_VERSION, got),
+        EXPECTED,
+        "the detector's answers changed: bump DETECTOR_VERSION in crates/kk-secrets/src/lib.rs and put (new version, {got}) here"
+    );
+}

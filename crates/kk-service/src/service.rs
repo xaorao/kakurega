@@ -403,6 +403,15 @@ fn init_store(v: &Vault) -> Result<(), String> {
 }
 
 impl Service {
+    /// For tests: see `Memories::plant_secret_for_test`.
+    #[doc(hidden)]
+    pub fn memory_plant_secret_for_test(&self, id: &str, text: &str) {
+        self.memory
+            .lock()
+            .expect("lock")
+            .plant_secret_for_test(id, text);
+    }
+
     /// How many notes have a use record: a test reads it to see that answers count the notes they used.
     #[doc(hidden)]
     pub fn memory_use_rows(&self) -> i64 {
@@ -1193,8 +1202,43 @@ async fn memories_list(axum::Extension(svc): Svc, Query(q): Query<MemoryQuery>) 
         }
     });
     match res {
-        Ok(items) => Json(json!({"memories": items.iter().map(memory_json).collect::<Vec<_>>()}))
-            .into_response(),
+        Ok(items) => {
+            let held = mem
+                .owner_clearance()
+                .and_then(|c| mem.held(&c))
+                .map(|h| h.len())
+                .unwrap_or(0);
+            Json(json!({"memories": items.iter().map(memory_json).collect::<Vec<_>>(), "held": held})).into_response()
+        }
+        Err(e) => memory_error(e),
+    }
+}
+
+/// Notes a newer secret detector matched after they were saved. They are in no recall, list, review or model prompt; the owner
+/// sees them here and decides: forget, or say it is not a secret.
+async fn memories_held(axum::Extension(svc): Svc) -> Response {
+    let mem = svc.memory.lock().expect("lock");
+    match mem.owner_clearance().and_then(|c| mem.held(&c)) {
+        Ok(items) => Json(json!({
+            "held": items.iter().map(|(m, rule)| json!({"id": m.id, "text": m.text, "kind": rule, "project": m.project, "created_at": m.created_at})).collect::<Vec<_>>(),
+            "note": "These notes are kept out of every answer and review until you decide. Forget a note for good, or say it is not a secret and it is offered again.",
+        }))
+        .into_response(),
+        Err(e) => memory_error(e),
+    }
+}
+
+async fn memory_release_hold(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    let mem = svc.memory.lock().expect("lock");
+    match mem
+        .owner_clearance()
+        .and_then(|c| mem.release_hold(now(), &id, &c))
+    {
+        Ok(()) => {
+            drop(mem);
+            svc.log_event("memory.hold_released", &id, &[]);
+            Json(json!({"released": true})).into_response()
+        }
         Err(e) => memory_error(e),
     }
 }
@@ -7081,6 +7125,8 @@ impl Extension for Routes {
             .route("/api/log/export", get(log_export))
             .route("/api/memories", get(memories_list).post(memory_add))
             .route("/api/memories/similar", get(memories_similar))
+            .route("/api/memories/held", get(memories_held))
+            .route("/api/memories/{id}/release-hold", post(memory_release_hold))
             .route("/api/memories/conflicts", get(memories_conflicts))
             .route("/api/memories/conflicts/keep", post(memories_conflict_keep))
             .route("/api/memories/conflicts/both", post(memories_conflict_both))

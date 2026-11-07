@@ -767,4 +767,9 @@ export const en = {
   "appr.expired": "This release has expired. Nothing can be approved or sent from it. Run the review again to make a new one.",
   "appr.soon": "Only {time} left to approve this release.",
   "appr.validFor": "This release can be approved for another {time}.",
+  "mem.held.title": "{n} note(s) held back",
+  "mem.held.lead": "A newer check found what looks like a secret in these notes after they were saved. They are kept out of every answer and every review until you decide. Say it is not a secret and it is offered again, or forget it for good.",
+  "mem.held.kind": "looks like: {kind}",
+  "mem.held.notSecret": "This is not a secret",
+  "mem.held.released": "Offered again.",
 } as const;

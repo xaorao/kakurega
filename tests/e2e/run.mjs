@@ -382,6 +382,37 @@ try {
   await page.getByRole("link", { name: "Memory" }).click();
   await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
   check("the memory screen starts empty", await page.getByText("Nothing remembered yet.").isVisible());
+  {
+    // notes a newer secret check held back: listed apart with the kind of secret, and the owner decides (the service side is tested in sv112)
+    let held = [{ id: "mem-held-1", text: "Deploy notes, token abc (held for the test)", kind: "github token", project: null, created_at: 1700000000 }];
+    const calls = [];
+    await page.route("**/api/memories/held", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ held }) }));
+    await page.route("**/api/memories/mem-held-1/release-hold", (r) => { calls.push("release"); held = []; r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ released: true }) }); });
+    await page.route("**/api/memories/mem-held-1/forget", (r) => { calls.push("forget"); held = []; r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ forgotten: true }) }); });
+    await page.reload();
+    const heldBox = page.getByRole("region", { name: "1 note(s) held back" });
+    await heldBox.waitFor();
+    check("notes a newer check held back are listed apart, with the kind of secret and what the owner can do", (await heldBox.innerText()).includes("looks like: github token") && (await heldBox.getByRole("button", { name: "This is not a secret" }).count()) === 1 && (await heldBox.innerText()).includes("kept out of every answer"));
+    await axeCheck(page, "memory with a held note");
+    await heldBox.screenshot({ path: join(shots, "08c-held-note.png") });
+    await heldBox.getByRole("button", { name: "This is not a secret" }).click();
+    await heldBox.waitFor({ state: "detached" });
+    check("saying it is not a secret offers it again and the section goes away", calls.join() === "release");
+    held = [{ id: "mem-held-1", text: "Deploy notes, token abc (held for the test)", kind: "github token", project: null, created_at: 1700000000 }];
+    await page.reload();
+    const again = page.getByRole("region", { name: "1 note(s) held back" });
+    await again.waitFor();
+    await again.getByRole("button", { name: "Forget" }).click();
+    check("forgetting asks first and sends nothing until it is confirmed", calls.join() === "release" && (await again.getByText("Forget this for good?").count()) === 1);
+    await again.getByRole("button", { name: "Yes, forget it" }).click().catch(async () => { await again.locator("button.danger").click(); });
+    await again.waitFor({ state: "detached" });
+    check("a confirmed forget is sent once", calls.join() === "release,forget");
+    await page.unroute("**/api/memories/held");
+    await page.unroute("**/api/memories/mem-held-1/release-hold");
+    await page.unroute("**/api/memories/mem-held-1/forget");
+    await page.reload();
+    await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
+  }
   await page.getByLabel("What should be remembered").fill("Acme prefers invoices in euros");
   await page.getByRole("button", { name: "Remember" }).click();
   await page.getByText("Remembered.").waitFor();
