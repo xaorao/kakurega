@@ -331,6 +331,88 @@ pub fn token_file_problems(path: &Path) -> Vec<String> {
     out
 }
 
+/// What `read_token` says when neither the environment nor a file was named; the stored token is looked for only in that case, so a token
+/// file that is named and wrong is an error and not a quiet switch to something else.
+const NO_TOKEN_SOURCE: &str = "set TELEGRAM_BOT_TOKEN, pass --token-file FILE, or store the token with `kaku telegram set-token`";
+
+/// The token from the environment or a file, and failing both, the one kept in the encrypted store.
+fn token_or_stored(file: Option<&Path>, admin: &crate::approve::Admin) -> Result<String, String> {
+    match read_token(file) {
+        Err(e) if e == NO_TOKEN_SOURCE => match admin.get("/admin/secrets/telegram_bot_token") {
+            Ok((200, v)) => v["value"]
+                .as_str()
+                .map(str::to_string)
+                .filter(|t| !t.is_empty())
+                .ok_or(e),
+            _ => Err(e),
+        },
+        other => other,
+    }
+}
+
+/// `kaku telegram set-token`: the token is read from standard input (so it is neither on the command line nor echoed to the screen) and kept
+/// in the encrypted store. `clear-token` removes it.
+fn token_command(which: &str, admin: &crate::approve::Admin) -> u8 {
+    if which == "clear-token" {
+        return match admin.post("/admin/secrets/telegram_bot_token/clear", json!({})) {
+            Ok((200, v)) => {
+                println!(
+                    "{}",
+                    if v["cleared"] == true {
+                        "The stored token was removed."
+                    } else {
+                        "No token was stored."
+                    }
+                );
+                0
+            }
+            Ok((c, _)) => {
+                eprintln!("the service answered {c}");
+                1
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                1
+            }
+        };
+    }
+    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        eprintln!("Pipe the token in so it is not shown on the screen: for example `pbpaste | kaku telegram set-token` after copying it from BotFather.");
+        return 2;
+    }
+    let mut line = String::new();
+    {
+        use std::io::Read;
+        let mut buf = String::new();
+        let _ = std::io::stdin().take(512).read_to_string(&mut buf);
+        if let Some(first) = buf.lines().next() {
+            line = first.trim().to_string();
+        }
+    }
+    if line.is_empty() {
+        eprintln!("no token was given on standard input");
+        return 2;
+    }
+    match admin.post("/admin/secrets/telegram_bot_token", json!({"value": line})) {
+        Ok((200, _)) => {
+            println!("The token is stored in the encrypted store. Run `kaku telegram` to start the bridge; no token file or environment variable is needed.");
+            0
+        }
+        Ok((400, _)) => {
+            eprintln!("that does not look like a bot token (digits, a colon, then letters, digits, - and _)");
+            2
+        }
+        Ok((c, _)) => {
+            eprintln!("the service answered {c}");
+            1
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
+    }
+}
+
 pub fn read_token(file: Option<&Path>) -> Result<String, String> {
     if let Ok(t) = std::env::var("TELEGRAM_BOT_TOKEN") {
         if !t.is_empty() {
@@ -340,7 +422,7 @@ pub fn read_token(file: Option<&Path>) -> Result<String, String> {
     let path = file
         .map(Path::to_path_buf)
         .or_else(|| std::env::var_os("KAKU_TELEGRAM_ENV").map(PathBuf::from))
-        .ok_or("set TELEGRAM_BOT_TOKEN or pass --token-file FILE")?;
+        .ok_or(NO_TOKEN_SOURCE)?;
     if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err("the token file is a symbolic link; use the real file".to_string());
     }
@@ -609,6 +691,12 @@ pub fn run(args: &[String]) -> u8 {
             return 1;
         }
     };
+    if matches!(
+        args.first().map(String::as_str),
+        Some("set-token" | "clear-token")
+    ) {
+        return token_command(args[0].as_str(), &admin);
+    }
     let mut admin = HttpAdmin(admin);
     if args.first().map(String::as_str) == Some("pair") {
         let code: String = {
@@ -638,10 +726,11 @@ pub fn run(args: &[String]) -> u8 {
             }
         }
         // when the token is at hand, name the bot so the owner opens the right chat
-        let link = read_token(
+        let link = token_or_stored(
             crate::flag(args, "--token-file")
                 .map(PathBuf::from)
                 .as_deref(),
+            &admin.0,
         )
         .ok()
         .and_then(|token| {
@@ -685,10 +774,11 @@ pub fn run(args: &[String]) -> u8 {
     if args.first().map(String::as_str) == Some("doctor") {
         return doctor(args, &dir);
     }
-    let token = match read_token(
+    let token = match token_or_stored(
         crate::flag(args, "--token-file")
             .map(PathBuf::from)
             .as_deref(),
+        &admin.0,
     ) {
         Ok(t) => t,
         Err(e) => {

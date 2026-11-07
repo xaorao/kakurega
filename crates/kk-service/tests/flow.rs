@@ -11662,3 +11662,172 @@ fn sv119_with_the_approver_required_a_release_cannot_be_approved_until_a_key_is_
     );
     assert_eq!(needs["error"]["code"], "PROOF_REQUIRED", "{needs}");
 }
+
+#[test]
+fn sv120_the_bot_token_is_kept_in_the_store_and_only_the_administration_token_can_reach_it() {
+    let (c, w, _repo, _root, _svc) = boot("secrets", true);
+    let token = c.security.admin_token().to_string();
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    let good = "123456789:AAEhBOweik6ad9r_QXMENQjcrGbqCr4K-R";
+    let (code, v) = admin(
+        &base,
+        &token,
+        "GET",
+        "/admin/secrets/telegram_bot_token",
+        None,
+    );
+    assert_eq!(
+        (code, v["error"]["code"].as_str()),
+        (404, Some("NO_SECRET"))
+    );
+    for (value, why) in [
+        ("", "empty"),
+        ("abc", "no colon"),
+        ("12345:short", "short"),
+        ("12345:AAEhBOweik6ad9r_QXMENQjcrGbqCr4K-R", "id too short"),
+        (
+            "1234567890123:AAEhBOweik6ad9r_QXMENQjcrGbqCr4K-R",
+            "id too long",
+        ),
+        ("123456789:has space in the middle of the token!!", "space"),
+        (
+            "abcdefghi:AAEhBOweik6ad9r_QXMENQjcrGbqCr4K-R",
+            "id not digits",
+        ),
+        (
+            "123456789:AAEhBOweik6ad9r_QXMENQjcrGbqCr4K-R\nextra",
+            "newline",
+        ),
+    ] {
+        let (code, v) = admin(
+            &base,
+            &token,
+            "POST",
+            "/admin/secrets/telegram_bot_token",
+            Some(json!({"value": value})),
+        );
+        assert_eq!(
+            (code, v["error"]["code"].as_str()),
+            (400, Some("BAD_SECRET")),
+            "{why}: {v}"
+        );
+    }
+    let (code, v) = admin(
+        &base,
+        &token,
+        "POST",
+        "/admin/secrets/telegram_bot_token",
+        Some(json!({"value": good, "extra": 1})),
+    );
+    assert_eq!(code, 422, "unknown fields are refused: {v}");
+    let (code, v) = admin(
+        &base,
+        &token,
+        "POST",
+        "/admin/secrets/other_name",
+        Some(json!({"value": good})),
+    );
+    assert_eq!(
+        (code, v["error"]["code"].as_str()),
+        (404, Some("NO_SECRET_NAME"))
+    );
+    let (code, v) = admin(
+        &base,
+        &token,
+        "POST",
+        "/admin/secrets/telegram_bot_token",
+        Some(json!({"value": good})),
+    );
+    assert_eq!(code, 200, "{v}");
+    assert!(
+        !v.to_string().contains("AAEh"),
+        "the answer to a store never repeats the value"
+    );
+    let (code, v) = admin(
+        &base,
+        &token,
+        "GET",
+        "/admin/secrets/telegram_bot_token",
+        None,
+    );
+    assert_eq!((code, v["value"].as_str()), (200, Some(good)));
+    // not reachable without the administration token, and not by a paired page
+    let (code, _) = admin(
+        &base,
+        "wrong-token",
+        "GET",
+        "/admin/secrets/telegram_bot_token",
+        None,
+    );
+    assert_eq!(code, 401);
+    let (code, _) = w.get("/admin/secrets/telegram_bot_token");
+    assert!(
+        code == 401 || code == 403 || code == 404,
+        "a page session is not enough: {code}"
+    );
+    // the value is in no listing, log, diagnostic or privacy fact the owner can export
+    for path in [
+        "/admin/log",
+        "/admin/diagnostics",
+        "/api/privacy",
+        "/admin/overview",
+    ] {
+        let (_, v) = admin(&base, &token, "GET", path, None);
+        assert!(
+            !v.to_string().contains("AAEhBOweik6ad9r"),
+            "{path} shows the token"
+        );
+    }
+    let (_, log) = admin(&base, &token, "GET", "/admin/log", None);
+    assert!(
+        log.to_string().contains("secret.stored") && !log.to_string().contains("AAEh"),
+        "the log says that a secret was stored, never which value"
+    );
+    // replacing and clearing
+    let (code, _) = admin(
+        &base,
+        &token,
+        "POST",
+        "/admin/secrets/telegram_bot_token",
+        Some(json!({"value": "987654321:BBEhBOweik6ad9r_QXMENQjcrGbqCr4K-R"})),
+    );
+    assert_eq!(code, 200);
+    assert!(admin(
+        &base,
+        &token,
+        "GET",
+        "/admin/secrets/telegram_bot_token",
+        None
+    )
+    .1["value"]
+        .as_str()
+        .unwrap()
+        .starts_with("987654321"));
+    let (_, v) = admin(
+        &base,
+        &token,
+        "POST",
+        "/admin/secrets/telegram_bot_token/clear",
+        Some(json!({})),
+    );
+    assert_eq!(v["cleared"], true);
+    assert_eq!(
+        admin(
+            &base,
+            &token,
+            "GET",
+            "/admin/secrets/telegram_bot_token",
+            None
+        )
+        .0,
+        404
+    );
+    let (_, v) = admin(
+        &base,
+        &token,
+        "POST",
+        "/admin/secrets/telegram_bot_token/clear",
+        Some(json!({})),
+    );
+    assert_eq!(v["cleared"], false, "clearing what is not there says so");
+}

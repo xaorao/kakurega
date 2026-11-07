@@ -24,6 +24,7 @@ TOKEN = "123456789:FAKE-token-for-tests-AAAA"
 BAD = "111111111:revoked-token-for-tests-BBBB"
 CONFLICT = "222222222:second-poller-for-tests-CCCC"
 CONFLICT2 = "333333333:no-webhook-for-tests-DDDD"
+STORED = "444444444:stored-in-the-vault-for-tests-EEEE"
 
 results = []
 
@@ -52,6 +53,7 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        self.path = self.path.replace(STORED, TOKEN)
         for tok, hook in ((CONFLICT, "https://example.test/hook/SECRETPART"), (CONFLICT2, "")):
             if self.path.startswith(f"/bot{tok}/getWebhookInfo"):
                 self.reply({"ok": True, "result": {"url": hook}})
@@ -83,6 +85,7 @@ class H(BaseHTTPRequestHandler):
         self.reply({"ok": True, "result": ups})
 
     def do_POST(self):
+        self.path = self.path.replace(STORED, TOKEN)
         n = int(self.headers.get("content-length", 0))
         body = json.loads(self.rfile.read(n) or b"{}")
         if self.path == f"/bot{TOKEN}/setMyCommands":
@@ -276,6 +279,39 @@ try:
     clr.terminate()
     cl_out, _ = clr.communicate(timeout=10)
     check("--clear-webhook removes the webhook once, keeps queued messages, and says so", len(deletes) == 1 and deletes[0].get("drop_pending_updates") is False and "webhook for this bot was removed" in cl_out, f"{deletes} {cl_out[:200]}")
+    # the token kept in the encrypted store instead of a file or the environment
+    env_plain = {k: v for k, v in env.items() if k != "TELEGRAM_BOT_TOKEN"}
+    r = subprocess.run([kaku, "telegram", "--data-dir", str(data), "--api-base", api], capture_output=True, text=True, env=env_plain, timeout=30)
+    check("with no token anywhere the bridge says how to give it one, and does not start", r.returncode == 1 and "set-token" in r.stderr, f"{r.returncode} {r.stderr[:200]}")
+    r = subprocess.run([kaku, "telegram", "set-token", "--data-dir", str(data)], input="not a token\n", capture_output=True, text=True, env=env_plain, timeout=30)
+    check("a value that is not shaped like a token is refused (2) and says why", r.returncode == 2 and "does not look like a bot token" in r.stderr, f"{r.returncode} {r.stderr[:200]}")
+    import pty
+    master, slave = pty.openpty()
+    pr = subprocess.run([kaku, "telegram", "set-token", "--data-dir", str(data)], stdin=slave, capture_output=True, text=True, env=env_plain, timeout=30)
+    os.close(master)
+    os.close(slave)
+    check("from a terminal, set-token refuses to read the token (it would be shown on the screen) and says to pipe it", pr.returncode == 2 and "Pipe the token in" in pr.stderr, f"{pr.returncode} {pr.stderr[:200]}")
+    r = subprocess.run([kaku, "telegram", "set-token", "--data-dir", str(data)], input="", capture_output=True, text=True, env=env_plain, timeout=30)
+    check("an empty standard input is a usage error (2)", r.returncode == 2, f"{r.returncode} {r.stderr[:200]}")
+    r = subprocess.run([kaku, "telegram", "set-token", "--data-dir", str(data)], input=STORED + "\n", capture_output=True, text=True, env=env_plain, timeout=30)
+    check("set-token stores the token from standard input and never prints it", r.returncode == 0 and STORED not in r.stdout + r.stderr and STORED.split(":")[1] not in r.stdout + r.stderr, f"{r.returncode} {r.stdout[:200]} {r.stderr[:200]}")
+    found = [str(f) for f in data.rglob("*") if f.is_file() and STORED.split(":")[1].encode() in f.read_bytes()]
+    check("the token is in no readable file under the data folder (the store is encrypted)", not found, str(found))
+    menus_before = len(menus)
+    stored_bridge = subprocess.Popen([kaku, "telegram", "--data-dir", str(data), "--api-base", api], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env_plain)
+    bridges.append(stored_bridge)
+    time.sleep(5)
+    alive = stored_bridge.poll() is None
+    stored_bridge.terminate()
+    sout, serr = stored_bridge.communicate(timeout=10)
+    check("a bridge with no environment variable and no file starts with the stored token and reaches Telegram", alive and len(menus) > menus_before and "running" in sout, f"alive={alive} menus {menus_before}->{len(menus)} {sout[:100]} {serr[:100]}")
+    check("it prints the token nowhere", STORED.split(":")[1] not in sout + serr)
+    r = subprocess.run([kaku, "telegram", "--data-dir", str(data), "--api-base", api, "--token-file", str(work / "no-such.env")], capture_output=True, text=True, env=env_plain, timeout=30)
+    check("a token file that is named and missing is an error, not a quiet switch to the stored token", r.returncode == 1 and "cannot read the token file" in r.stderr, f"{r.returncode} {r.stderr[:200]}")
+    r = subprocess.run([kaku, "telegram", "clear-token", "--data-dir", str(data)], capture_output=True, text=True, env=env_plain, timeout=30)
+    check("clear-token removes it", r.returncode == 0 and "removed" in r.stdout, f"{r.stdout} {r.stderr}")
+    r = subprocess.run([kaku, "telegram", "--data-dir", str(data), "--api-base", api], capture_output=True, text=True, env=env_plain, timeout=30)
+    check("after clearing, the bridge no longer starts without a token", r.returncode == 1, f"{r.returncode}")
     closing[0] = True
     fake.shutdown()
     fake.server_close()

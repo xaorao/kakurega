@@ -123,7 +123,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | C-41 | Health/status | BUILD: bridge writes `telegram-status.json` (0600) every 30 s: running, last poll ok, last | BUILT | status file alive/stale/never, no text or token (tg23) |
 | C-42 | Doctor / audit | BUILD: `kaku telegram doctor`: token file is regular, not a symlink, mode 0600; `getMe` ok | BUILT | `kaku telegram doctor` |
 | C-43 | Token handling | IMPROVE: wrap every Telegram call in one function returning an error type that never conta | BUILT | token never in error text (tg04) |
-| C-44 | Secret storage | IMPROVE: use the existing vault for the bot token if the vault is the single secret store  | PARTIAL | token file must be a regular owner-only file (tg22); not in the vault |
+| C-44 | Secret storage | IMPROVE: use the existing vault for the bot token if the vault is the single secret store  | BUILT | bot token kept in the encrypted store via set-token/clear-token; sv120, telegram_fake.py 51 checks, mutation-checked (telegram-bridge.md) |
 | C-45 | Test harness | BUILD: a Rust fake Bot API (axum or tiny_http, dev-dependency) with inject/drain/fail-next | BUILT | fake Bot API in the bridge tests (tg01-tg26) |
 | C-46 | Slack, Discord, Matrix, Signal, SMS, WhatsApp adapters | BUILD later behind one `Transport` trait **inside the bridge**, not a second kernel. Prior | LATER | other chat adapters |
 | C-47 | Linked personal account (MTProto) | EXCLUDE: it reads the user's private chats; the opposite of the product | EXCLUDED | EXCLUDE: it reads the user's private chats; the opposite of the product |

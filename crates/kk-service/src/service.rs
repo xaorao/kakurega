@@ -342,6 +342,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE INDEX IF NOT EXISTS usage_ledger_at ON usage_ledger(at);
              CREATE TABLE IF NOT EXISTS pii_allow(entry TEXT PRIMARY KEY, added_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS owner_instructions(scope TEXT PRIMARY KEY, text TEXT NOT NULL, updated_at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS secrets(name TEXT PRIMARY KEY, value BLOB NOT NULL, stored_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);",
         )
         .map_err(|e| e.to_string())?;
@@ -6978,6 +6979,121 @@ async fn admin_approver_revoke(
     Json(json!({"revoked": n > 0})).into_response()
 }
 
+/// The few secrets the program keeps for the owner, by name, each with the shape its value must have. They live in the encrypted store, not in
+/// a file; only the administration token (held by programs the owner started) can store, read or remove them, and no page or agent route can.
+const SECRET_NAMES: &[&str] = &["telegram_bot_token"];
+
+fn secret_shape_ok(name: &str, value: &str) -> bool {
+    match name {
+        "telegram_bot_token" => {
+            let Some((id, rest)) = value.split_once(':') else {
+                return false;
+            };
+            (6..=12).contains(&id.len())
+                && id.bytes().all(|b| b.is_ascii_digit())
+                && (30..=60).contains(&rest.len())
+                && rest
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        }
+        _ => false,
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SecretBody {
+    value: String,
+}
+
+async fn admin_secret_put(
+    axum::Extension(svc): Svc,
+    UrlPath(name): UrlPath<String>,
+    Json(b): Json<SecretBody>,
+) -> Response {
+    if !SECRET_NAMES.contains(&name.as_str()) {
+        return error(
+            StatusCode::NOT_FOUND,
+            "NO_SECRET_NAME",
+            "there is no secret with that name",
+        );
+    }
+    if !secret_shape_ok(&name, &b.value) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_SECRET",
+            "that value does not look like the secret it is meant to be",
+        );
+    }
+    let stored = {
+        let store = svc.store.lock().expect("lock");
+        store
+            .connection()
+            .execute(
+                "INSERT INTO secrets(name, value, stored_at) VALUES (?1, ?2, ?3) ON CONFLICT(name) DO UPDATE SET value = excluded.value, stored_at = excluded.stored_at",
+                (&name, b.value.as_bytes(), now()),
+            )
+            .is_ok()
+    };
+    if !stored {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "STORE",
+            "could not store the secret",
+        );
+    }
+    svc.log_event("secret.stored", &name, &[]);
+    Json(json!({"stored": true})).into_response()
+}
+
+async fn admin_secret_get(axum::Extension(svc): Svc, UrlPath(name): UrlPath<String>) -> Response {
+    if !SECRET_NAMES.contains(&name.as_str()) {
+        return error(
+            StatusCode::NOT_FOUND,
+            "NO_SECRET_NAME",
+            "there is no secret with that name",
+        );
+    }
+    let value: Option<Vec<u8>> = {
+        let store = svc.store.lock().expect("lock");
+        store
+            .connection()
+            .query_row("SELECT value FROM secrets WHERE name = ?1", [&name], |r| {
+                r.get(0)
+            })
+            .ok()
+    };
+    match value.and_then(|v| String::from_utf8(v).ok()) {
+        Some(v) => ([("cache-control", "no-store")], Json(json!({"value": v}))).into_response(),
+        None => error(
+            StatusCode::NOT_FOUND,
+            "NO_SECRET",
+            "that secret has not been stored",
+        ),
+    }
+}
+
+async fn admin_secret_clear(axum::Extension(svc): Svc, UrlPath(name): UrlPath<String>) -> Response {
+    if !SECRET_NAMES.contains(&name.as_str()) {
+        return error(
+            StatusCode::NOT_FOUND,
+            "NO_SECRET_NAME",
+            "there is no secret with that name",
+        );
+    }
+    let n = {
+        let store = svc.store.lock().expect("lock");
+        store
+            .connection()
+            .execute("DELETE FROM secrets WHERE name = ?1", [&name])
+            .unwrap_or(0)
+    };
+    if n > 0 {
+        svc.log_event("secret.cleared", &name, &[]);
+    }
+    Json(json!({"cleared": n > 0})).into_response()
+}
+
 async fn admin_approve(
     axum::Extension(svc): Svc,
     UrlPath(aid): UrlPath<String>,
@@ -7330,6 +7446,11 @@ impl Extension for Routes {
                 get(admin_approver_list).post(admin_approver_enroll),
             )
             .route("/admin/approvers/revoke", post(admin_approver_revoke))
+            .route(
+                "/admin/secrets/{name}",
+                get(admin_secret_get).post(admin_secret_put),
+            )
+            .route("/admin/secrets/{name}/clear", post(admin_secret_clear))
             .route("/api/privacy", get(privacy_facts))
             .route("/admin/agent-access", get(lease_list_route))
             .route("/admin/agent-calls", post(agent_call))
