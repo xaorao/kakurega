@@ -83,6 +83,20 @@ try:
     rc, _, err = k("follow")
     check("follow with no name is a usage error (2)", rc == 2 and "usage: kaku follow" in err, err)
 
+    rc, out, err = k("ask", "When do sessions expire?", "--folder", str(work / "root/payments-service"), "--json")
+    ans = json.loads(out)
+    check("ask against the real service: the checker marks the real quote verified and the invented one not found, so it exits 3; withheld files and the hostile README are reported", rc == 3 and ans["checkable"] is True and [c["verdict"] for c in ans["citations"]] == ["verified", "not_found"] and ans["files_withheld"] >= 1 and ans["injection_suspected"] is True, f"{rc} {out[:400]} {err}")
+    rc, out, _ = k("ask", "When do sessions expire?", "--folder", str(work / "root/payments-service"))
+    check("in words the invented quote says not to rely on it and the real one is verified with its line", rc == 3 and "(verified, line 1)" in out and "NOT FOUND in that file: do not rely on it" in out, out[:300])
+    rc, _, err = k("ask", "q", "--folder", "/no/such/folder")
+    check("ask of a folder that does not exist is a usage error (2)", rc == 2, err)
+    rc, _, err = k("ask", "q")
+    check("ask without a folder is a usage error (2)", rc == 2 and "usage: kaku ask" in err, err)
+    rc, _, err = k("ask", "x" * 2001, "--folder", str(work / "root/payments-service"))
+    check("a question over 2000 characters is a usage error (2)", rc == 2, err)
+    rc, _, err = k("ask", "q", "--folder", str(work))
+    check("ask of a folder outside the allowed roots is refused by the service (6)", rc == 6, f"{rc} {err}")
+
     # kept conversations: start one, continue it, list it
     rc, out, err = k("chat", "remember this thread", "--keep", "--json")
     kept = json.loads(out)
@@ -144,6 +158,7 @@ try:
     import threading
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     mode = ["nothing"]
+    ask_mode = ["good"]
 
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -166,6 +181,11 @@ try:
                 self.send(200, {"csrf": "x"})
             elif self.path == "/api/jobs":
                 self.send(202, {"id": "job-1"})
+            elif self.path == "/api/ask":
+                good = {"checkable": True, "answer": "Sessions expire at once.", "citations": [{"file": "a.py", "quote": "del s", "verdict": "verified", "line": 3}], "files_used": ["a.py"], "files_withheld": [], "files_skipped": []}
+                bad = dict(good, citations=[{"file": "a.py", "quote": "made up", "verdict": "not_found", "line": 0}, {"file": "b.py", "quote": "x", "verdict": "unknown_file", "line": 0}])
+                loose = {"checkable": False, "answer": "must not be shown", "unchecked_text": "free text\u001b[2J here", "citations": [], "files_used": [], "files_withheld": [], "files_skipped": []}
+                self.send(200, {"good": good, "bad": bad, "loose": loose}[ask_mode[0]])
             elif self.path == "/api/chat":
                 self.send(200, {"reply": "fine\u001b[2Jgone\u0007", "route": {"class": "device_only", "simulated": True}, "notes_used": 0})
             else:
@@ -203,6 +223,22 @@ try:
     mode[0] = "running"
     p = kf("review", str(work / "root/payments-service"), "--for", "x", "--timeout", "10", timeout=60)
     check("a review that does not finish in the time given ends with exit 5 and says it is still running", p.returncode == 5 and "still running" in p.stderr, f"{p.returncode} {p.stderr}")
+    ask_mode[0] = "good"
+    p = kf("ask", "q", "--folder", str(work / "root/payments-service"))
+    check("a checkable answer whose quotes were all found is exit 0 with its citation marked verified", p.returncode == 0 and "Sessions expire at once." in p.stdout and "(verified, line 3)" in p.stdout, f"{p.returncode} {p.stdout!r}")
+    ask_mode[0] = "bad"
+    p = kf("ask", "q", "--folder", str(work / "root/payments-service"), "--json")
+    parsed = json.loads(p.stdout)
+    check("a quote that was not found, or names a file the model was not shown, makes it exit 3 and is reported as such", p.returncode == 3 and [c["verdict"] for c in parsed["citations"]] == ["not_found", "unknown_file"] and parsed["checkable"] is True, f"{p.returncode} {p.stdout[:300]}")
+    ask_mode[0] = "loose"
+    p = kf("ask", "q", "--folder", str(work / "root/payments-service"), "--json")
+    loose_json = json.loads(p.stdout)
+    check("an answer that is not checkable exits 3, shows no answer, and carries the unchecked text apart", p.returncode == 3 and loose_json["checkable"] is False and loose_json["answer"] is None and "free text" in loose_json["unchecked_text"], f"{p.returncode} {p.stdout[:300]}")
+    p = kf("ask", "q", "--folder", str(work / "root/payments-service"))
+    check("in words the unchecked text is introduced as untrusted and stripped of control characters", "trust none of it" in p.stdout and "\x1b" not in p.stdout and "must not be shown" not in p.stdout, repr(p.stdout))
+    ask_mode[0] = "bad"
+    p = kf("ask", "q", "--folder", str(work / "root/payments-service"))
+    check("in words each failed quote says not to rely on it", "NOT FOUND in that file: do not rely on it" in p.stdout and "NOT A FILE the model was shown: do not rely on it" in p.stdout, p.stdout)
     p = kf("chat", "hello")
     check("a reply with control characters is cleaned before it reaches the terminal", p.returncode == 0 and not re.search(r"[\x00-\x08\x0b-\x1f\x7f]", p.stdout) and "fine" in p.stdout and "gone" in p.stdout, repr(p.stdout))
     fake.shutdown()

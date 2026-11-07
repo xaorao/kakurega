@@ -394,6 +394,98 @@ pub fn review(args: &[String]) -> u8 {
     })
 }
 
+/// `kaku ask QUESTION --folder DIR [--json]`: a question about the documents in a folder, answered only from them. Every quote the model
+/// gives is checked against the file it names. Exit 0 when the answer is checkable and every quote was found; 3 when it is not checkable or
+/// any quote was not found or named a file the model was not shown (a script must not rely on it); the other codes are as for the rest.
+pub fn ask(args: &[String]) -> u8 {
+    let json_mode = args.iter().any(|a| a == "--json");
+    let folder = crate::flag(args, "--folder");
+    let question = args.iter().skip(1).find(|a| {
+        !a.starts_with("--")
+            && Some((*a).as_str()) != folder.as_deref()
+            && Some((*a).as_str()) != crate::flag(args, "--data-dir").as_deref()
+    });
+    let (Some(question), Some(folder)) = (question, folder) else {
+        return fail(
+            json_mode,
+            USAGE,
+            "usage: kaku ask QUESTION --folder DIR [--json]",
+        );
+    };
+    if question.trim().is_empty() || question.len() > 2000 {
+        return fail(json_mode, USAGE, "the question is 1 to 2000 characters");
+    }
+    let Ok(dir) = std::path::Path::new(&folder).canonicalize() else {
+        return fail(json_mode, USAGE, "that folder does not exist");
+    };
+    let question = question.clone();
+    crate::tui::with_service(&serve_args(args), |data| {
+        let http = match connect(data, json_mode) {
+            Ok(h) => h,
+            Err(c) => return c,
+        };
+        match call(
+            &http,
+            Method::Post,
+            "/api/ask",
+            Some(json!({"folder": dir.to_string_lossy(), "question": question})),
+        ) {
+            Ok((200, v)) => {
+                let checkable = v["checkable"] == true;
+                let cites = v["citations"].as_array().cloned().unwrap_or_default();
+                let all_found = cites.iter().all(|c| c["verdict"] == "verified");
+                if json_mode {
+                    println!(
+                        "{}",
+                        json!({
+                            "checkable": checkable,
+                            "answer": if checkable { v["answer"].clone() } else { Value::Null },
+                            "unchecked_text": if checkable { Value::Null } else { v["unchecked_text"].clone() },
+                            "citations": cites.iter().map(|c| json!({"file": c["file"], "quote": c["quote"], "verdict": c["verdict"], "line": c["line"]})).collect::<Vec<_>>(),
+                            "files_read": v["files_used"].as_array().map_or(0, |a| a.len()),
+                            "files_withheld": v["files_withheld"].as_array().map_or(0, |a| a.len()),
+                            "files_too_large": v["files_skipped"].as_array().map_or(0, |a| a.len()),
+                            "injection_suspected": v["injection_suspects"].as_array().is_some_and(|a| !a.is_empty()),
+                        })
+                    );
+                } else if checkable {
+                    println!("{}", clean(v["answer"].as_str().unwrap_or("")));
+                    for c in &cites {
+                        let mark = match c["verdict"].as_str() {
+                            Some("verified") => format!("verified, line {}", c["line"]),
+                            Some("not_found") => {
+                                "NOT FOUND in that file: do not rely on it".to_string()
+                            }
+                            Some("unknown_file") => {
+                                "NOT A FILE the model was shown: do not rely on it".to_string()
+                            }
+                            _ => "could not be checked".to_string(),
+                        };
+                        println!(
+                            "{}: \"{}\" ({mark})",
+                            clean(c["file"].as_str().unwrap_or("?")),
+                            clean(c["quote"].as_str().unwrap_or(""))
+                        );
+                    }
+                } else {
+                    println!("The model did not give a checkable answer. Unchecked text follows; trust none of it:");
+                    println!("{}", clean(v["unchecked_text"].as_str().unwrap_or("")));
+                }
+                if checkable && all_found {
+                    OK
+                } else {
+                    NOTHING
+                }
+            }
+            Ok((s, v)) => {
+                let (m, c) = refusal(s, &v);
+                fail(json_mode, c, &m)
+            }
+            Err(e) => fail(json_mode, UNAVAILABLE, &e),
+        }
+    })
+}
+
 /// One message to the private assistant, printed with its answer. The message is the argument, or standard input when the argument is
 /// `-` or there is none and input is piped. Nothing is kept: no conversation is saved by this command.
 pub fn chat(args: &[String]) -> u8 {
