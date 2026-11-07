@@ -3856,3 +3856,49 @@ fn me80_notes_that_stop_applying_soon_are_listed_soonest_first_and_nothing_else_
         .iter()
         .all(|x| x.memory.text != "secret deadline"));
 }
+
+#[test]
+fn me81_every_recalled_note_has_one_origin_from_a_closed_set() {
+    let m = mem(&dir());
+    id(
+        m.remember(1, nm("Acme pays invoices on the fifteenth", internal()))
+            .unwrap(),
+    );
+    let mut imported = nm("Imported rule about Beta shipping", internal());
+    imported.label = imported.label.untrusted();
+    id(m.remember(2, imported).unwrap());
+    let p = m
+        .propose(
+            3,
+            "job-7",
+            "Gamma needs a signed order form",
+            "seen in review",
+            &internal(),
+        )
+        .unwrap()
+        .unwrap();
+    m.accept_proposal(4, &p, "job-7", None).unwrap();
+    let q = m
+        .propose(
+            3,
+            "chat-9",
+            "Delta prefers email over phone",
+            "said in chat",
+            &internal(),
+        )
+        .unwrap()
+        .unwrap();
+    m.accept_proposal(4, &q, "chat-9", None).unwrap();
+    let all = m.list(&internal(), 10, 20).unwrap();
+    let origin_of = |needle: &str| {
+        all.iter()
+            .find(|r| r.memory.text.contains(needle))
+            .unwrap()
+            .origin()
+    };
+    assert_eq!(origin_of("Acme"), "owner");
+    assert_eq!(origin_of("Beta"), "imported");
+    assert_eq!(origin_of("Gamma"), "review");
+    assert_eq!(origin_of("Delta"), "conversation");
+    assert!(all.iter().all(|r| kk_memory::ORIGINS.contains(&r.origin())));
+}

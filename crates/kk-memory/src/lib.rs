@@ -2328,7 +2328,21 @@ pub struct Recalled {
     pub rank: usize,
 }
 
+/// Where a note came from, as a closed set an owner and a program can both rely on.
+pub const ORIGINS: [&str; 4] = ["owner", "imported", "conversation", "review"];
+
 impl Recalled {
+    /// `owner`: written by the owner. `imported`: added from a file or another assistant (kept as untrusted text).
+    /// `conversation`: suggested from a kept chat and accepted. `review`: suggested by a code review and accepted.
+    pub fn origin(&self) -> &'static str {
+        match &self.memory.source {
+            Source::User if self.untrusted => "imported",
+            Source::User => "owner",
+            Source::Review(id) if id.starts_with("chat-") => "conversation",
+            Source::Review(_) => "review",
+        }
+    }
+
     pub fn instruction_like(&self) -> bool {
         instruction_like(&self.memory.text)
     }

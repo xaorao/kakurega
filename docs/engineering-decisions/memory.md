@@ -136,3 +136,8 @@ A private chat can be about a project. The request carries an optional `project`
 - Built: `Memories::expiring` and `GET /api/memories/expiring?days=N` (default 14, clamped to 1..365; session required) list active notes whose end date falls after now and within the window, soonest first, at most 100; no end date, already over, above the owner's clearance and forgotten notes never appear.
 - Evidence: kk-memory me80 (order, the exact edge both sides, absent kinds, clearance, limit) and kk-service sv115 (default and given windows, clamps, junk value, no session). 8 mutants: 6 caught; 2 survive as equivalents (a negative window is already empty because the end must be after now and not after now minus something; a forgotten note is deleted from the table, so the status test cannot differ).
 - Not built: a screen or terminal command showing the list, and `observed_at` kept apart from `created_at`. E-M5 stays PARTIAL.
+
+## Origin of a note (ledger E-M14)
+- Built: every recalled or listed note has one `origin` from the closed set `owner`, `imported`, `conversation`, `review` (`kk_memory::ORIGINS`), derived from how the note entered (written by the owner; added from a file or another assistant and kept untrusted; accepted from a chat suggestion; accepted from a review suggestion). The service returns it beside `source` and `untrusted`. No stored column was added, so old stores need no migration.
+- Evidence: kk-memory me81 (all four, closed set) with 4 mutants caught; sv115 checks it in the service JSON.
+- Not built: marking memory text that was injected into a review so `suggest_memory` can refuse to echo it, and showing the origin in the web list. E-M14 stays PARTIAL.

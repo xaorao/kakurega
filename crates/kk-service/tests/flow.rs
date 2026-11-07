@@ -11387,6 +11387,7 @@ fn sv115_the_expiring_list_shows_notes_ending_within_the_days_asked_and_clamps_t
         .map(|m| m["text"].as_str().unwrap())
         .collect();
     assert_eq!(texts, ["Promo price holds for three days"], "{v}");
+    assert_eq!(v["memories"][0]["origin"], "owner", "{v}");
     let (_, v) = w.get("/api/memories/expiring?days=30");
     let texts: Vec<&str> = v["memories"]
         .as_array()
