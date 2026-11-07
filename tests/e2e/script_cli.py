@@ -73,6 +73,29 @@ try:
     rc, out, _ = k("chat", "-", stdin="a message piped in\n")
     check("chat reads the message from standard input", rc == 0 and "received 18 characters" in out, out)
 
+    # kept conversations: start one, continue it, list it
+    rc, out, err = k("chat", "remember this thread", "--keep", "--json")
+    kept = json.loads(out)
+    sid = kept["session"]
+    check("--keep starts a kept conversation and reports its id", rc == 0 and re.fullmatch(r"chat-[0-9a-f]+", sid or "") is not None, f"{rc} {out[:200]} {err}")
+    rc, out, _ = k("sessions", "--json")
+    listed = json.loads(out)["sessions"]
+    mine = [x for x in listed if x["id"] == sid]
+    check("sessions lists the kept conversation with its two messages", rc == 0 and len(mine) == 1 and mine[0]["messages"] == 2, out[:300])
+    rc, out, err = k("chat", "and one more", "--session", sid, "--json")
+    check("--session continues it and says which conversation", rc == 0 and json.loads(out)["session"] == sid, f"{rc} {out[:200]} {err}")
+    rc, out, _ = k("sessions", "--json")
+    check("the continued conversation now holds four messages", [x["messages"] for x in json.loads(out)["sessions"] if x["id"] == sid] == [4], out[:300])
+    rc, out, _ = k("sessions")
+    check("sessions in words is one line per conversation", rc == 0 and re.search(rf"^{sid}  4  ", out, re.M) is not None, out)
+    for bad in ["../../etc", "chat-1/2", "a" * 41, "chat 1"]:
+        rc, _, err = k("chat", "x", "--session", bad)
+        check(f"the conversation name {bad[:12]!r} (slash, dots, spaces or too long) is a usage error (2)", rc == 2, err)
+    rc, _, err = k("chat", "x", "--session", sid, "--keep")
+    check("--session together with --keep is a usage error (2)", rc == 2 and "use one of them" in err, err)
+    rc, out, _ = k("chat", "x", "--session", "chat-0000000000", "--json")
+    check("an unknown conversation is refused (6) with a JSON error and nothing is created", rc == 6 and json.loads(out)["event"] == "error" and all(x["id"] != "chat-0000000000" for x in json.loads(k("sessions", "--json")[1])["sessions"]), out[:200])
+
     # wrong use and refusals
     rc, out, err = k("review", "/no/such/folder", "--for", "x")
     check("a folder that does not exist is a usage error (2)", rc == 2 and "does not exist" in err, f"{rc} {err}")

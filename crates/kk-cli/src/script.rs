@@ -146,6 +146,53 @@ pub fn jobs(args: &[String]) -> u8 {
     })
 }
 
+fn session_id_ok(id: &str) -> bool {
+    id.len() <= 40
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && !id.is_empty()
+}
+
+/// The conversations kept in the encrypted store: id, title, when it last changed and how many messages it holds.
+pub fn sessions(args: &[String]) -> u8 {
+    let json_mode = args.iter().any(|a| a == "--json");
+    crate::tui::with_service(&serve_args(args), |dir| {
+        let http = match connect(dir, json_mode) {
+            Ok(h) => h,
+            Err(c) => return c,
+        };
+        match call(&http, Method::Get, "/api/sessions", None) {
+            Ok((200, v)) => {
+                let list = v["sessions"].as_array().cloned().unwrap_or_default();
+                if json_mode {
+                    println!(
+                        "{}",
+                        json!({"sessions": list.iter().map(|x| json!({"id": x["id"], "title": x["title"], "updated": x["updated"], "messages": x["turns"], "project": x["project"]})).collect::<Vec<_>>()})
+                    );
+                } else if list.is_empty() {
+                    println!("no kept conversations");
+                } else {
+                    for x in &list {
+                        println!(
+                            "{}  {}  {}",
+                            clean(x["id"].as_str().unwrap_or("?")),
+                            x["turns"],
+                            clean(x["title"].as_str().unwrap_or(""))
+                        );
+                    }
+                }
+                OK
+            }
+            Ok((s, v)) => {
+                let (m, c) = refusal(s, &v);
+                fail(json_mode, c, &m)
+            }
+            Err(e) => fail(json_mode, UNAVAILABLE, &e),
+        }
+    })
+}
+
 pub fn findings(args: &[String]) -> u8 {
     let json_mode = args.iter().any(|a| a == "--json");
     let Some(job) = args.iter().skip(1).find(|a| {
@@ -311,9 +358,28 @@ pub fn review(args: &[String]) -> u8 {
 /// `-` or there is none and input is piped. Nothing is kept: no conversation is saved by this command.
 pub fn chat(args: &[String]) -> u8 {
     let json_mode = args.iter().any(|a| a == "--json");
+    let keep = args.iter().any(|a| a == "--keep");
+    let session = crate::flag(args, "--session");
+    if let Some(id) = &session {
+        if !session_id_ok(id) {
+            return fail(
+                json_mode,
+                USAGE,
+                "a conversation is named like chat-1a2b3c4d5e; `kaku sessions` lists them",
+            );
+        }
+        if keep {
+            return fail(
+                json_mode,
+                USAGE,
+                "--keep starts a new kept conversation; --session continues one: use one of them",
+            );
+        }
+    }
     let arg = args.iter().skip(1).find(|a| {
         (!a.starts_with("--") || a.as_str() == "-")
             && Some((*a).as_str()) != crate::flag(args, "--data-dir").as_deref()
+            && Some((*a).as_str()) != session.as_deref()
     });
     let message = match arg.map(String::as_str) {
         Some("-") | None if !std::io::stdin().is_terminal() => {
@@ -322,13 +388,11 @@ pub fn chat(args: &[String]) -> u8 {
             buf.trim().to_string()
         }
         Some(m) if m != "-" => m.to_string(),
-        _ => {
-            return fail(
-                json_mode,
-                USAGE,
-                "usage: kaku chat MESSAGE [--json]   (or pipe the message in)",
-            )
-        }
+        _ => return fail(
+            json_mode,
+            USAGE,
+            "usage: kaku chat MESSAGE [--session ID | --keep] [--json]   (or pipe the message in)",
+        ),
     };
     if message.is_empty() {
         return fail(json_mode, USAGE, "the message is empty");
@@ -338,21 +402,45 @@ pub fn chat(args: &[String]) -> u8 {
             Ok(h) => h,
             Err(c) => return c,
         };
-        match call(
-            &http,
-            Method::Post,
-            "/api/chat",
-            Some(json!({"message": message})),
-        ) {
+        let mut session = session.clone();
+        if keep {
+            match call(
+                &http,
+                Method::Post,
+                "/api/sessions",
+                Some(json!({"title": ""})),
+            ) {
+                Ok((201, v)) => session = v["id"].as_str().map(str::to_string),
+                Ok((s, v)) => {
+                    let (m, c) = refusal(s, &v);
+                    return fail(json_mode, c, &m);
+                }
+                Err(e) => return fail(json_mode, UNAVAILABLE, &e),
+            }
+        }
+        let mut body = json!({"message": message});
+        if let Some(id) = &session {
+            body["session"] = json!(id);
+        }
+        match call(&http, Method::Post, "/api/chat", Some(body)) {
             Ok((200, v)) => {
                 let reply = v["reply"].as_str().unwrap_or("");
                 if json_mode {
                     println!(
                         "{}",
-                        json!({"reply": reply, "route": {"class": v["route"]["class"], "simulated": v["route"]["simulated"]}, "notes_used": v["notes_used"]})
+                        json!({"reply": reply, "session": session, "route": {"class": v["route"]["class"], "simulated": v["route"]["simulated"]}, "notes_used": v["notes_used"]})
                     );
                 } else {
                     println!("{}", clean(reply));
+                    if keep {
+                        if let Some(id) = &session {
+                            eprintln!(
+                                "kept as {}; continue it with --session {}",
+                                clean(id),
+                                clean(id)
+                            );
+                        }
+                    }
                 }
                 OK
             }

@@ -30,7 +30,8 @@ Usage:
              [--transport lima|local] [--vm NAME] [--worker-bin PATH] [--launcher PATH]
   kaku review DIR --for RECIPIENT [--json] [--timeout SECONDS]   start a review and follow it; ends at awaiting_approval (exit 0), 3 nothing to release, 4 failed
   kaku jobs [--json] | kaku findings JOB [--json]                 list reviews, read what one found
-  kaku chat MESSAGE|- [--json]      one message to the private assistant (nothing is kept); these commands cannot approve anything
+  kaku chat MESSAGE|- [--json] [--keep | --session ID]   one message to the private assistant; nothing is kept unless --keep starts a kept conversation or --session continues one
+  kaku sessions [--json]            list the kept conversations; these commands cannot approve anything
   kaku pair                         print a new one-time pairing link for the browser
   kaku approve [APPROVAL-ID]        review the exact release in this terminal and approve it
   kaku mcp [--read-only] [--allow TOOL,TOOL] [--leased]   speak MCP on stdin and stdout for an agent client (cannot approve; --read-only hides the tools that start a review or ask for an approval; --allow gives the agent exactly the tools named; --calls-per-minute N and --starts-per-hour N lower the call limits, which are 60 and 4)
@@ -76,6 +77,7 @@ fn main() -> ExitCode {
         Some("review") => script::review(&args),
         Some("findings") => script::findings(&args),
         Some("chat") => script::chat(&args),
+        Some("sessions") => script::sessions(&args[1..]),
         Some("update") => update::run(&args[1..]),
         None if std::io::IsTerminal::is_terminal(&std::io::stdout())
             && std::io::IsTerminal::is_terminal(&std::io::stdin()) =>
