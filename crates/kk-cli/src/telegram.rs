@@ -409,8 +409,9 @@ enum Polled {
     Updates(Vec<Value>),
     /// 401: the token is no longer accepted.
     Rejected,
-    /// 409: another bridge is polling this bot, or a webhook is set.
-    Conflict,
+    /// 409: another bridge is polling this bot, or a webhook is set. `Some(true)` when Telegram says a webhook is set,
+    /// `Some(false)` when it says none is (so another poller is the cause), `None` when that could not be asked.
+    Conflict(Option<bool>),
     Refused(u16),
     Unreachable(String),
 }
@@ -428,6 +429,7 @@ fn poll_loop(api: String, token: String, tx: std::sync::mpsc::Sender<Polled>) {
         .into();
     let mut offset: i64 = 0;
     let mut backoff = Backoff::default();
+    let mut last_conflict_check: Option<Instant> = None;
     loop {
         let url = format!("{api}/bot{token}/getUpdates?timeout={LONG_POLL_SECS}&offset={offset}&allowed_updates=%5B%22message%22%5D");
         let msg = match agent.get(&url).call() {
@@ -447,19 +449,53 @@ fn poll_loop(api: String, token: String, tx: std::sync::mpsc::Sender<Polled>) {
                 continue;
             }
             Ok(r) if r.status().as_u16() == 401 => Polled::Rejected,
-            Ok(r) if r.status().as_u16() == 409 => Polled::Conflict,
+            Ok(r) if r.status().as_u16() == 409 => {
+                // asked at most once every five minutes, and only to word the message: nothing is changed
+                let due =
+                    last_conflict_check.is_none_or(|t| t.elapsed() >= Duration::from_secs(300));
+                if due {
+                    last_conflict_check = Some(Instant::now());
+                }
+                Polled::Conflict(if due {
+                    webhook_is_set(&agent, &api, &token)
+                } else {
+                    None
+                })
+            }
             Ok(r) => Polled::Refused(r.status().as_u16()),
             Err(e) => Polled::Unreachable(scrub(&e.to_string(), &token)),
         };
         let (pause, stop) = match &msg {
             Polled::Rejected => (Duration::ZERO, true),
-            Polled::Conflict => (Duration::from_secs(10), false),
+            Polled::Conflict(_) => (Duration::from_secs(10), false),
             _ => (backoff.failed(jitter()), false),
         };
         if tx.send(msg).is_err() || stop {
             return;
         }
         std::thread::sleep(pause);
+    }
+}
+
+/// Whether Telegram says a webhook is set for the bot; None if it could not be read.
+fn webhook_is_set(agent: &ureq::Agent, api: &str, token: &str) -> Option<bool> {
+    let mut r = agent
+        .get(&format!("{api}/bot{token}/getWebhookInfo"))
+        .call()
+        .ok()?;
+    if r.status().as_u16() != 200 {
+        return None;
+    }
+    let v: Value = r.body_mut().read_json().ok()?;
+    Some(!v["result"]["url"].as_str().unwrap_or("").is_empty())
+}
+
+/// What the owner is told about a 409, worded by what Telegram says caused it. The webhook address is never printed: it can carry a secret.
+fn conflict_text(webhook: Option<bool>) -> &'static str {
+    match webhook {
+        Some(true) => "Telegram reports a conflict (409): a webhook is set for this bot, and Telegram does not allow polling while one is. Run `kaku telegram --clear-webhook` to remove it (anything else that receives this bot's messages by webhook will stop), or stop using polling. This bridge keeps trying.",
+        Some(false) => "Telegram reports a conflict (409): no webhook is set, so another program is polling this bot. Stop the other bridge; this one keeps trying.",
+        None => "Telegram reports a conflict (409): another bridge is polling this bot, or a webhook is set for it. Stop the other bridge or run `kaku telegram --clear-webhook`; this one keeps trying.",
     }
 }
 
@@ -608,12 +644,31 @@ pub fn run(args: &[String]) -> u8 {
             scrub(&e.to_string(), &token)
         );
     }
+    if args.iter().any(|a| a == "--clear-webhook") {
+        match agent
+            .post(&format!("{api}/bot{token}/deleteWebhook"))
+            .send_json(json!({"drop_pending_updates": false}))
+        {
+            Ok(r) if r.status().as_u16() == 200 => {
+                println!("The webhook for this bot was removed (queued messages were kept).")
+            }
+            Ok(r) => eprintln!(
+                "Telegram did not remove the webhook (answered {}).",
+                r.status().as_u16()
+            ),
+            Err(e) => eprintln!(
+                "could not remove the webhook: {}",
+                scrub(&e.to_string(), &token)
+            ),
+        }
+    }
     println!("Telegram bridge running. It sends counts and ids only, never file contents. Ctrl-C stops it.");
     let (poll_tx, polled) = std::sync::mpsc::channel::<Polled>();
     {
         let (api, token) = (api.clone(), token.clone());
         std::thread::spawn(move || poll_loop(api, token, poll_tx));
     }
+    let mut conflict_told = false;
     let mut outbox = Outbox::default();
     let mut tracked: BTreeMap<String, i64> = BTreeMap::new();
     let mut last_poll = Instant::now() - Duration::from_secs(10);
@@ -649,6 +704,7 @@ pub fn run(args: &[String]) -> u8 {
                 if status.last_error == "Telegram is not reachable" {
                     status.last_error.clear();
                 }
+                conflict_told = false;
                 for u in list {
                     let (outs, bound) = bridge.handle_update(&mut admin, &u);
                     if let Some(chat) = bound {
@@ -664,8 +720,11 @@ pub fn run(args: &[String]) -> u8 {
                 eprintln!("Telegram rejected the bot token (401). Check TELEGRAM_BOT_TOKEN; the bridge is stopping.");
                 return 1;
             }
-            Ok(Polled::Conflict) => {
-                eprintln!("Telegram reports a conflict (409): another bridge is polling this bot, or a webhook is set for it. Stop the other bridge or remove the webhook; this one keeps trying.");
+            Ok(Polled::Conflict(webhook)) => {
+                if !conflict_told {
+                    conflict_told = true;
+                    eprintln!("{}", conflict_text(webhook));
+                }
             }
             Ok(Polled::Refused(code)) => {
                 eprintln!("telegram answered {code}");

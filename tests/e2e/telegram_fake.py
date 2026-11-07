@@ -23,6 +23,7 @@ data = work / "data"
 TOKEN = "123456789:FAKE-token-for-tests-AAAA"
 BAD = "111111111:revoked-token-for-tests-BBBB"
 CONFLICT = "222222222:second-poller-for-tests-CCCC"
+CONFLICT2 = "333333333:no-webhook-for-tests-DDDD"
 
 results = []
 
@@ -51,7 +52,11 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        for tok, code in ((BAD, 401), (CONFLICT, 409)):
+        for tok, hook in ((CONFLICT, "https://example.test/hook/SECRETPART"), (CONFLICT2, "")):
+            if self.path.startswith(f"/bot{tok}/getWebhookInfo"):
+                self.reply({"ok": True, "result": {"url": hook}})
+                return
+        for tok, code in ((BAD, 401), (CONFLICT, 409), (CONFLICT2, 409)):
             if self.path.startswith(f"/bot{tok}/getUpdates"):
                 body = json.dumps({"ok": False, "description": "test"}).encode()
                 self.send_response(code)
@@ -90,6 +95,10 @@ class H(BaseHTTPRequestHandler):
                 body["_message_id"] = msg_ids[0]
                 sent.append(body)
             self.reply({"ok": True, "result": {"message_id": msg_ids[0]}})
+        elif self.path == f"/bot{TOKEN}/deleteWebhook":
+            with lock:
+                deletes.append(body)
+            self.reply({"ok": True, "result": True})
         elif self.path == f"/bot{TOKEN}/editMessageText":
             with lock:
                 edits.append(body)
@@ -102,6 +111,7 @@ menus = []
 polls = []
 closing = [False]
 edits = []
+deletes = []
 msg_ids = [100]
 fake = ThreadingHTTPServer(("127.0.0.1", 0), H)
 threading.Thread(target=fake.serve_forever, daemon=True).start()
@@ -239,6 +249,20 @@ try:
     conflict.terminate()
     cout, cerr = conflict.communicate(timeout=10)
     check("a conflict (409) is explained once, not over and over, and does not stop the bridge", alive and "conflict (409)" in cerr and cerr.count("conflict (409)") <= 1, f"alive={alive} said {cerr.count(chr(99) + 'onflict (409)')} times {cerr[:120]}")
+    check("with a webhook set, the 409 message says so, names the way out and never prints the webhook address", "a webhook is set" in cerr and "--clear-webhook" in cerr and "SECRETPART" not in cerr and "example.test" not in cerr, cerr[:300])
+    check("the bridge did not remove a webhook on its own", deletes == [], str(deletes))
+    nohook = subprocess.Popen([kaku, "telegram", "--data-dir", str(data), "--api-base", api], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(env, TELEGRAM_BOT_TOKEN=CONFLICT2))
+    bridges.append(nohook)
+    time.sleep(4)
+    nohook.terminate()
+    _, nerr = nohook.communicate(timeout=10)
+    check("with no webhook set, the 409 message says another program is polling", "no webhook is set" in nerr and "another program is polling" in nerr and "--clear-webhook" not in nerr, nerr[:300])
+    clr = subprocess.Popen([kaku, "telegram", "--clear-webhook", "--data-dir", str(data), "--api-base", api], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(env, TELEGRAM_BOT_TOKEN=TOKEN))
+    bridges.append(clr)
+    time.sleep(4)
+    clr.terminate()
+    cl_out, _ = clr.communicate(timeout=10)
+    check("--clear-webhook removes the webhook once, keeps queued messages, and says so", len(deletes) == 1 and deletes[0].get("drop_pending_updates") is False and "webhook for this bot was removed" in cl_out, f"{deletes} {cl_out[:200]}")
     closing[0] = True
     fake.shutdown()
     fake.server_close()
