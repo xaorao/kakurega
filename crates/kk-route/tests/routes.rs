@@ -603,6 +603,104 @@ mod context {
     }
 
     #[test]
+    fn cx10_the_many_ways_a_service_says_the_conversation_is_too_large_are_recognised_and_ordinary_errors_are_not(
+    ) {
+        use kk_route::looks_like_context_overflow as big;
+        for yes in [
+            "This model's maximum context length is 8192 tokens",
+            "context_length_exceeded",
+            "Prompt is too long: 250000 tokens > 200000 maximum",
+            "Input is too long for requested model.",
+            "Please reduce the length of the messages or completion.",
+            "The input token count (40000) exceeds the maximum number of tokens allowed (32768)",
+            "request body is too large",
+            "Request size exceeds the limit",
+            "Content-Length of 9000000 bytes exceeds the limit",
+            "the prompt length is over the limit for this model's limit of tokens",
+            "MAXIMUM CONTEXT reached",
+        ] {
+            assert!(big(yes), "{yes}");
+        }
+        for no in [
+            "model 'x' not found",
+            "invalid JSON in request",
+            "unknown field `tools`",
+            "the request was cancelled",
+            "your API key is invalid",
+            "rate limit reached for requests",
+            "reduce the volume of calls",
+            "token expired",
+            "please reduce the length of the pause",
+            "the prompt token limit for this model is 4096",
+            "request size is 12 bytes",
+            "",
+        ] {
+            assert!(!big(no), "{no}");
+        }
+    }
+
+    #[test]
+    fn cx11_each_refusal_status_is_its_own_error_with_fixed_words_that_never_repeat_the_services_text(
+    ) {
+        let secret = "SECRETQUOTE the contract says acme pays 10";
+        let body = format!(r#"{{"error":"{secret}"}}"#);
+        for (status, want) in [
+            (
+                "401 Unauthorized",
+                "did not accept the credentials it was given (status 401)",
+            ),
+            (
+                "403 Forbidden",
+                "did not accept the credentials it was given (status 403)",
+            ),
+            ("402 Payment Required", "no credit left"),
+            ("404 Not Found", "no such model or address"),
+            ("413 Payload Too Large", "longer than this model accepts"),
+        ] {
+            let (url, _) = serve(status, "application/json", &body);
+            let route = OllamaRoute::new(&url, "m").unwrap();
+            let e = route.complete(&req()).unwrap_err();
+            assert!(e.to_string().contains(want), "{status}: {e}");
+            assert!(
+                !e.to_string().contains("SECRETQUOTE"),
+                "{status}: the text is not repeated: {e}"
+            );
+            assert!(
+                !kk_route::retry::is_transient(&e),
+                "{status}: never retried"
+            );
+        }
+        // a 400 that says "maximum context length" without numbers is a too-large conversation; any other 400 stays a bad response
+        let (url, _) = serve(
+            "400 Bad Request",
+            "application/json",
+            r#"{"error":{"message":"This model's maximum context length is 8192 tokens"}}"#,
+        );
+        let e = OllamaRoute::new(&url, "m")
+            .unwrap()
+            .complete(&req())
+            .unwrap_err();
+        assert!(matches!(e, RouteError::ContextExceeded), "{e}");
+        let (url, _) = serve(
+            "400 Bad Request",
+            "application/json",
+            r#"{"error":"unknown option"}"#,
+        );
+        let e = OllamaRoute::new(&url, "m")
+            .unwrap()
+            .complete(&req())
+            .unwrap_err();
+        assert!(matches!(e, RouteError::BadResponse(_)), "{e}");
+        // the busy statuses are still only worth a retry
+        let (url, _) = serve("503 Service Unavailable", "application/json", "{}");
+        let e = OllamaRoute::new(&url, "m")
+            .unwrap()
+            .complete(&req())
+            .unwrap_err();
+        assert!(kk_route::retry::is_transient(&e), "{e}");
+    }
+
+    #[test]
     fn cx03_a_conversation_larger_than_the_window_is_its_own_error_with_both_numbers() {
         let (url, _) = serve("400 Bad Request", "application/json", OVERFLOW);
         let route = OllamaRoute::new(&url, "m").unwrap();
@@ -660,7 +758,6 @@ mod context {
                 r#"{"error":"model runner crashed at /Users/someone/secret"}"#,
             ),
             ("400 Bad Request", r#"{"error":"invalid options"}"#),
-            ("404 Not Found", "model not found"),
             (
                 "400 Bad Request",
                 "request (abc tokens) exceeds the available context size (x tokens)",
@@ -845,11 +942,14 @@ mod retries {
             ("404 Not Found", "{\"error\":\"model not found\"}"),
             ("500 Internal Server Error", "{\"error\":\"boom\"}"),
             ("401 Unauthorized", "{}"),
+            ("402 Payment Required", "{}"),
+            ("413 Payload Too Large", "{}"),
         ] {
             let (url, count) = serve(vec![reply(status, body)]);
             let r = OllamaRoute::new(&url, "m").unwrap().with_retry(fast());
             let e = r.complete(&req()).unwrap_err();
-            assert!(matches!(e, RouteError::BadResponse(_)), "{status}: {e}");
+            assert!(!kk_route::retry::is_transient(&e), "{status}: {e}");
+            assert!(!matches!(e, RouteError::Busy(_)), "{status}: {e}");
             assert_eq!(count.load(Ordering::SeqCst), 1, "{status}");
         }
         let (url, count) = serve(vec![reply("400 Bad Request", "{\"error\":\"request (9999 tokens) exceeds the available context size (4096 tokens)\"}")]);

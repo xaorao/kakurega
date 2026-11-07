@@ -45,3 +45,5 @@ Attaching files in the web workspace (`apps/web/src/attach.ts`, `screens/Chat.ts
 Slash commands in the web chat (`apps/web/src/slash.ts`): the popover's states and keys follow OpenCode (MIT, Anomaly) `packages/app/src/composer/suggestions/machine.ts` (read in full); the code is written here.
 
 Code colours (`apps/web/src/highlight.ts`): the idea of colouring code in answers by sending text pieces with a kind follows OpenCode (MIT, Anomaly) `markdown.worker.ts`, which uses `@pierre/highlights` (Apache-2.0); neither is used here, the scanner is written here.
+
+Model error classes (`crates/kk-route/src/lib.rs`): the phrase lists that recognise "the conversation is too large" in the many ways model services say it, and the separate handling of 401, 402, 404 and 413 refusals, are adapted from goose (Apache-2.0, Block) `crates/goose-providers/src/http_status.rs`; the lists and code are rebuilt here, and the service's own text is never repeated.

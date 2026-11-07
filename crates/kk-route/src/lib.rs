@@ -69,6 +69,15 @@ pub enum RouteError {
         requested: u64,
         window: u64,
     },
+    /// The model service said the conversation is too large for it, without saying by how much (413, or an error text such as
+    /// "maximum context length is ...").
+    ContextExceeded,
+    /// 401 or 403: the model service did not accept the credentials it was given. Never retried.
+    Unauthorized(u16),
+    /// 402: the account behind the model service has no credit left. Never retried.
+    OutOfCredit,
+    /// 404: no such model or address at the model service.
+    NotFound,
 }
 
 impl fmt::Display for RouteError {
@@ -88,6 +97,19 @@ impl fmt::Display for RouteError {
             RouteError::ContextTooLong { requested, window } => write!(
                 f,
                 "the conversation needs {requested} tokens but the model's window holds {window}"
+            ),
+            RouteError::ContextExceeded => f.write_str(
+                "the conversation is longer than this model accepts: start a new chat or shorten it",
+            ),
+            RouteError::Unauthorized(code) => write!(
+                f,
+                "the model service did not accept the credentials it was given (status {code})"
+            ),
+            RouteError::OutOfCredit => {
+                f.write_str("the model service says the account has no credit left (status 402)")
+            }
+            RouteError::NotFound => f.write_str(
+                "the model service has no such model or address (status 404): check the model name",
             ),
         }
     }
@@ -130,10 +152,92 @@ fn refusal(status: impl fmt::Display, body: &mut ureq::Body) -> RouteError {
                 .map(str::to_string)
         })
         .unwrap_or(text);
-    match overflow_message(&message) {
-        Some((requested, window)) => RouteError::ContextTooLong { requested, window },
-        None => RouteError::BadResponse(format!("status {status}")),
+    let code: Option<u16> = status
+        .to_string()
+        .split_whitespace()
+        .next()
+        .and_then(|c| c.parse().ok());
+    // only fixed words and the status number are kept: what the service wrote is not repeated, it may quote the conversation
+    match (overflow_message(&message), code) {
+        (Some((requested, window)), _) => RouteError::ContextTooLong { requested, window },
+        (None, Some(413)) => RouteError::ContextExceeded,
+        (None, Some(401 | 403)) => RouteError::Unauthorized(code.unwrap_or(401)),
+        (None, Some(402)) => RouteError::OutOfCredit,
+        (None, Some(404)) => RouteError::NotFound,
+        (None, Some(400)) if looks_like_context_overflow(&message) => RouteError::ContextExceeded,
+        (None, _) => RouteError::BadResponse(format!("status {status}")),
     }
+}
+
+/// Whether an error text from a model service says the conversation was too large for the model, in the many ways services say
+/// so ("maximum context length", "prompt is too long", "input token count exceeds the limit", "request body too large").
+/// Adapted from goose `http_status.rs` (Apache-2.0); the phrase lists are rebuilt here.
+#[doc(hidden)]
+pub fn looks_like_context_overflow(text: &str) -> bool {
+    let t = text.to_lowercase();
+    let any = |phrases: &[&str]| phrases.iter().any(|p| t.contains(p));
+    if any(&[
+        "context length",
+        "context_length_exceeded",
+        "context window",
+        "context_window_exceeded",
+        "context limit",
+        "maximum context",
+        "max context",
+        "maximum prompt length",
+        "max prompt length",
+        "input is too long",
+        "input too long",
+        "prompt is too long",
+        "prompt too long",
+    ]) {
+        return true;
+    }
+    if t.contains("reduce the length") && any(&["message", "messages", "input", "prompt"]) {
+        return true;
+    }
+    let overflow = any(&["exceed", "too long", "too large", "over the limit"]);
+    let tokens = any(&[
+        "input token",
+        "input length",
+        "prompt token",
+        "prompt length",
+        "message token",
+        "messages token",
+        "request token",
+        "total token",
+    ]);
+    let limit = any(&[
+        "model limit",
+        "model's limit",
+        "maximum allowed",
+        "max allowed",
+        "maximum number of tokens",
+        "token limit",
+        "tokens limit",
+    ]);
+    if tokens && limit && overflow {
+        return true;
+    }
+    let words: Vec<&str> = t.split(|c: char| !c.is_ascii_alphanumeric()).collect();
+    let bytes_or_request =
+        words.contains(&"request") || words.contains(&"byte") || words.contains(&"bytes");
+    let size = any(&[
+        "request size",
+        "requestsize",
+        "request body size",
+        "request payload size",
+        "payload size",
+        "body size",
+    ]) || any(&[
+        "request body is too large",
+        "request body too large",
+        "request payload is too large",
+        "request payload too large",
+        "payload is too large",
+        "payload too large",
+    ]) || (any(&["content length", "content-length"]) && bytes_or_request);
+    size && overflow
 }
 
 /// Reads "request (N tokens) exceeds the available context size (W tokens)" and returns (N, W).
