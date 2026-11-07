@@ -4549,3 +4549,74 @@ fn tu73_tab_finishes_a_project_name_after_project_and_a_recipient_after_for() {
         "not after the word for: left to folder completion"
     );
 }
+
+#[test]
+fn tu74_rewind_makes_a_copy_that_stops_before_one_of_your_messages_and_puts_it_back_in_the_box() {
+    let mut a = booted();
+    assert!(
+        enter(&mut a, "/rewind 1").is_empty()
+            && text(&a).contains("Only a kept conversation can be rewound")
+    );
+    a.session = Some("chat-1".into());
+    a.chat_history = vec![
+        ("user".into(), "first question".into()),
+        ("assistant".into(), "first answer".into()),
+        ("user".into(), "second question".into()),
+        ("assistant".into(), "second answer".into()),
+    ];
+    for bad in [
+        "/rewind",
+        "/rewind 0",
+        "/rewind x",
+        "/rewind -1",
+        "/rewind 1 2",
+    ] {
+        assert!(enter(&mut a, bad).is_empty(), "{bad}");
+    }
+    assert!(
+        enter(&mut a, "/rewind 2").is_empty() && text(&a).contains("Message 2 is not one of yours")
+    );
+    assert!(enter(&mut a, "/rewind 9").is_empty() && text(&a).contains("has 4 message(s)"));
+    assert!(
+        a.rewound.is_none(),
+        "a refused rewind leaves nothing waiting"
+    );
+    let r = enter(&mut a, "/rewind 3");
+    assert_eq!(
+        (r.len(), r[0].path.as_str()),
+        (1, "/api/sessions/chat-1/fork")
+    );
+    assert_eq!(
+        r[0].body.as_ref().unwrap(),
+        &json!({"at": 2}),
+        "the copy keeps the two messages before the third"
+    );
+    let open = a.handle(ok(&r[0], 201, json!({"id": "chat-2"})));
+    assert_eq!(open[0].path, "/api/sessions/chat-2");
+    a.handle(ok(&open[0], 200, json!({"turns": [{"role": "user", "content": "first question"}, {"role": "assistant", "content": "first answer"}]})));
+    assert_eq!(a.session.as_deref(), Some("chat-2"));
+    assert_eq!(
+        a.input, "second question",
+        "the message is back in the box to change"
+    );
+    assert_eq!(a.chat_history.len(), 2);
+    assert!(text(&a).contains("The original conversation is unchanged"));
+    // a failed copy leaves nothing waiting, so a later open does not fill the box
+    a.input.clear();
+    a.cursor = 0;
+    a.chat_history = vec![("user".into(), "again".into())];
+    let r = enter(&mut a, "/rewind 1");
+    a.handle(ok(
+        &r[0],
+        500,
+        json!({"error": {"code": "STORE", "message": "could not write"}}),
+    ));
+    assert!(a.rewound.is_none());
+    let r = enter(&mut a, "/branch");
+    let open = a.handle(ok(&r[0], 201, json!({"id": "chat-3"})));
+    a.handle(ok(&open[0], 200, json!({"turns": []})));
+    assert_eq!(
+        a.input, "",
+        "an ordinary branch does not put a message in the box"
+    );
+}

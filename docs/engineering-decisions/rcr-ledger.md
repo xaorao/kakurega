@@ -381,7 +381,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | A-A02 | Session picker | see the section in matrix A | BUILT | /sessions picker (picker.rs) |
 | A-A03 | Resume at launch | see the section in matrix A | PARTIAL | kaku --resume opens the newest kept conversation at launch, tested in a real terminal; no chosen-ID resume or picker; reference sources not re-read (terminal-transcript.md) |
 | A-A04 | Fork or branch a session | see the section in matrix A | PARTIAL | /branch [N] copies a kept conversation and opens the copy; no version switcher or message picker; terminal references not re-read (terminal-transcript.md) |
-| A-A05 | Rewind to an earlier prompt, with file revert | see the section in matrix A | LATER | rewind with file revert; fixes have undo |
+| A-A05 | Rewind to an earlier prompt, with file revert | see the section in matrix A | PARTIAL | fix undo (/undofix) and conversation /rewind N (tu74); no Esc-Esc browser of earlier prompts (terminal-transcript.md) |
 | A-A06 | Message queue while busy | see the section in matrix A | BUILT | queued messages while an answer arrives (7d5a796) |
 | A-A07 | Steer and interrupt, busy-input modes | see the section in matrix A | BUILT | Esc twice stops an arriving answer (88ce0cc) |
 | A-A08 | Interrupt hygiene: never leave the conversation invalid | see the section in matrix A | BUILT | a stopped reply leaves a valid conversation |

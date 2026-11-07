@@ -258,6 +258,8 @@ pub struct App {
     pub notes_seen: Vec<(String, String)>,
     /// Project names the last /memory listing showed, for Tab after /project.
     pub projects_seen: Vec<String>,
+    /// The message /rewind took back, to be put in the box once the copy has opened.
+    pub rewound: Option<String>,
     /// Set by Tab after /review: the folder to list, the line it was asked for, what comes before the last name, the part typed.
     path_request: Option<(String, String, String, String)>,
     /// Set when a review finished or stopped; the screen loop takes it and rings the bell once.
@@ -371,6 +373,7 @@ impl App {
             quiet: false,
             notes_seen: Vec::new(),
             projects_seen: Vec::new(),
+            rewound: None,
             path_request: None,
             attention: None,
             focused: None,
@@ -1741,6 +1744,44 @@ impl App {
                     Method::Post,
                     &format!("/api/sessions/{id}/fork"),
                     Some(json!({"at": at})),
+                )]
+            }
+            Command::Rewind(n) => {
+                let Some(id) = self.session.clone() else {
+                    self.say(
+                        Kind::Info,
+                        "Only a kept conversation can be rewound. /keep saves this one first.",
+                    );
+                    return Vec::new();
+                };
+                match self.chat_history.get(n - 1) {
+                    Some((role, content)) if role == "user" => {
+                        self.rewound = Some(content.clone());
+                    }
+                    Some(_) => {
+                        self.say(
+                            Kind::Error,
+                            format!("Message {n} is not one of yours; choose the number of a message you wrote."),
+                        );
+                        return Vec::new();
+                    }
+                    None => {
+                        self.say(
+                            Kind::Error,
+                            format!(
+                                "This conversation has {} message(s); choose a number up to that.",
+                                self.chat_history.len()
+                            ),
+                        );
+                        return Vec::new();
+                    }
+                }
+                vec![self.req(
+                    Intent::Branch,
+                    false,
+                    Method::Post,
+                    &format!("/api/sessions/{id}/fork"),
+                    Some(json!({"at": n - 1})),
                 )]
             }
             Command::Sessions => {
@@ -3987,6 +4028,7 @@ impl App {
             }
             Intent::Branch => {
                 let Some(new_id) = ok.then(|| body["id"].as_str().map(clean)).flatten() else {
+                    self.rewound = None;
                     self.say(Kind::Error, err_text(status, &body));
                     return Vec::new();
                 };
@@ -4053,10 +4095,19 @@ impl App {
                     self.push(kind, title, text_lines(&content));
                 }
                 self.session = Some(id);
-                self.say(
-                    Kind::Ok,
-                    "Opened the kept conversation. New messages are saved to it.",
-                );
+                if let Some(text) = self.rewound.take() {
+                    self.input = text;
+                    self.cursor = self.input.chars().count();
+                    self.say(
+                        Kind::Ok,
+                        "Rewound to a copy that stops before that message, with it back in the box. The original conversation is unchanged.",
+                    );
+                } else {
+                    self.say(
+                        Kind::Ok,
+                        "Opened the kept conversation. New messages are saved to it.",
+                    );
+                }
                 Vec::new()
             }
             Intent::ForgetChat(id) => {

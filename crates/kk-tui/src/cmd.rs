@@ -75,6 +75,8 @@ pub enum Command {
     Usage(u32),
     /// Branch the open kept conversation, keeping its first N messages (all when none is given).
     Branch(Option<usize>),
+    /// Go back to before message N of the open kept conversation: a copy that stops just before it, with that message back in the box.
+    Rewind(usize),
     RenameChat {
         id: String,
         title: String,
@@ -156,6 +158,7 @@ pub const NAMES: &[&str] = &[
     "newchat",
     "project",
     "similar",
+    "rewind",
     "quiet",
     "quit",
 ];
@@ -199,6 +202,7 @@ pub fn describe(name: &str) -> &'static str {
         "clear" => "start a fresh conversation",
         "keep" => "save this conversation in the encrypted store",
         "stash" => "put the line you are typing aside (Ctrl-S does the same)",
+        "rewind" => "go back to before one of your messages, with it back in the box to change",
         "quiet" => "show only the end of a review, not each step; run again for every step",
         "pop" => "bring back the most recently stashed line",
         "clearhistory" => "forget the saved command history",
@@ -255,6 +259,7 @@ pub fn usage(name: &str) -> &'static str {
         "memory" => "/memory [WORDS]",
         "remember" => "/remember [in PROJECT:] TEXT",
         "project" => "/project [NAME | none]",
+        "rewind" => "/rewind N   (N is the number of one of your messages)",
         "similar" => "/similar",
         "ask" => "/ask FOLDER : QUESTION",
         "aside" => "/aside QUESTION",
@@ -508,6 +513,10 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 }
             }
         }
+        "rewind" => match rest.parse::<usize>() {
+            Ok(n) if (1..=100_000).contains(&n) => Ok(Command::Rewind(n)),
+            _ => Err(format!("usage: {}", usage("rewind"))),
+        },
         "branch" => {
             if rest.is_empty() {
                 Ok(Command::Branch(None))
