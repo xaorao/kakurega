@@ -250,6 +250,8 @@ pub struct App {
     pub editor_request: Option<String>,
     /// Text the owner agreed to put on the system clipboard; the screen loop writes the clipboard sequence for it.
     pub clipboard_request: Option<String>,
+    /// Whether long cards are shown whole (Ctrl-O). Off by default: a card of more than 24 lines shows its first 10 and says how many more.
+    pub expand_all: bool,
     /// Set by Tab after /review: the folder to list, the line it was asked for, what comes before the last name, the part typed.
     path_request: Option<(String, String, String, String)>,
     /// Set when a review finished or stopped; the screen loop takes it and rings the bell once.
@@ -359,6 +361,7 @@ impl App {
             approver: None,
             editor_request: None,
             clipboard_request: None,
+            expand_all: false,
             path_request: None,
             attention: None,
             focused: None,
@@ -1234,6 +1237,10 @@ impl App {
                 self.stash_input();
             }
             KeyCode::Char('r') if ctrl => self.pop_stash(),
+            KeyCode::Char('o') if ctrl => {
+                self.expand_all = !self.expand_all;
+                self.scroll_back = 0;
+            }
             KeyCode::Char('g') if ctrl => {
                 self.editor_request = Some(self.expand_pasted(&self.input));
             }
@@ -1332,6 +1339,7 @@ impl App {
                         "/verify FILE                   check a capsule offline".into(),
                         "/stash  /pop                   put the line you are typing aside; bring it back (Ctrl-S, Ctrl-R)".into(),
                         "Ctrl-G                         write the message in your editor ($VISUAL or $EDITOR)".into(),
+                        "Ctrl-O                         show long results whole, or fold them again".into(),
                         "/keep                          save this conversation in the encrypted store (otherwise it is never saved)".into(),
                         "/sessions                      pick a kept conversation or a review (type to filter, Ctrl-D twice forgets a chat)".into(),
                         "/newchat  /clear               leave this conversation and start a fresh one".into(),

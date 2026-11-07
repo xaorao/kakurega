@@ -31,6 +31,15 @@ thread_local! {
     static WRAPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+thread_local! {
+    static EXPAND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A card with more lines than this is folded unless the owner asked to see everything.
+pub const FOLD_OVER: usize = 24;
+/// How many lines a folded card still shows.
+pub const FOLD_SHOW: usize = 10;
+
 /// How many times `wrap` ran on this thread: a test counts it to prove a frame does work only for what is on the screen.
 pub fn wrap_calls() -> usize {
     WRAPS.with(|c| c.get())
@@ -144,7 +153,10 @@ fn card_lines(c: &Card, width: usize, th: &Theme) -> Vec<Line<'static>> {
     // the change inside a proposed fix: the markers + and - already tell added from removed without any colour, so colour and weight
     // only help the eye, and a plain terminal loses nothing
     let in_fix = c.title.as_deref().is_some_and(|t| t.starts_with("Fix "));
-    for raw in &c.lines {
+    // a long result is folded to its first lines and says how many it hides; answers from the assistant are never folded
+    let fold = !EXPAND.with(|e| e.get()) && c.lines.len() > FOLD_OVER;
+    let shown = if fold { FOLD_SHOW } else { c.lines.len() };
+    for raw in c.lines.iter().take(shown) {
         let body_style = if in_fix {
             if raw.starts_with("+++") || raw.starts_with("---") {
                 Style::default().add_modifier(Modifier::BOLD)
@@ -172,6 +184,18 @@ fn card_lines(c: &Card, width: usize, th: &Theme) -> Vec<Line<'static>> {
             ]));
             first = false;
         }
+    }
+    if fold {
+        out.push(Line::from(vec![
+            Span::styled("  ".to_string(), style),
+            Span::styled(
+                format!(
+                    "… {} more line(s). Ctrl-O shows everything and folds it again.",
+                    c.lines.len() - shown
+                ),
+                Style::default().add_modifier(Modifier::DIM),
+            ),
+        ]));
     }
     if c.title.is_some() || c.lines.len() > 1 {
         out.push(Line::raw(""));
@@ -214,6 +238,7 @@ pub fn window_lines(
 }
 
 pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
+    EXPAND.with(|e| e.set(app.expand_all));
     let area = f.area();
     let input_lines = app.input.split('\n').count().clamp(1, 6) as u16;
     let rows = Layout::vertical([

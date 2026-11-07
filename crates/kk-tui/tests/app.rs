@@ -4174,3 +4174,57 @@ fn tu67_the_change_in_a_proposed_fix_is_coloured_and_still_distinguishable_witho
     let (x, y) = find(&rows, "+not a diff");
     assert_eq!(t.backend().buffer()[(x, y)].fg, Color::Reset);
 }
+
+#[test]
+fn tu68_a_long_result_is_folded_to_its_first_lines_and_ctrl_o_shows_all_and_folds_again() {
+    let mut app = booted();
+    let long: Vec<String> = (1..=40).map(|i| format!("finding line {i}")).collect();
+    app.cards.push(Card {
+        kind: Kind::Info,
+        title: Some("Findings".into()),
+        lines: long.clone(),
+    });
+    app.cards.push(Card {
+        kind: Kind::Info,
+        title: Some("Assistant".into()),
+        lines: long.clone(),
+    });
+    let short: Vec<String> = (1..=24).map(|i| format!("short line {i}")).collect();
+    app.cards.push(Card {
+        kind: Kind::Info,
+        title: Some("Release".into()),
+        lines: short,
+    });
+    let all = |app: &App| render(app, 80, 200, true).0.join("\n");
+    let screen = all(&app);
+    assert!(
+        screen.contains("finding line 10")
+            && !screen.contains("finding line 11\n")
+            && screen.contains("… 30 more line(s). Ctrl-O shows everything"),
+        "{screen}"
+    );
+    assert!(
+        screen.matches("finding line 40").count() == 1,
+        "the assistant's answer is never folded, the findings card is"
+    );
+    assert!(
+        screen.contains("short line 24") && !screen.contains("more line(s)\n  short"),
+        "24 lines is not over the limit"
+    );
+    app.handle(ctrl('o'));
+    assert!(app.expand_all);
+    let screen = all(&app);
+    assert!(
+        screen.matches("finding line 40").count() == 2 && !screen.contains("more line(s)"),
+        "everything is shown"
+    );
+    app.handle(ctrl('o'));
+    assert!(!app.expand_all);
+    assert!(all(&app).contains("… 30 more line(s)"));
+    // the key is listed in /help, and it resets the scroll to the newest line so the screen does not jump into the middle of a card
+    let r = enter(&mut app, "/help");
+    assert!(r.is_empty() && text(&app).contains("Ctrl-O"));
+    app.scroll_back = 50;
+    app.handle(ctrl('o'));
+    assert_eq!(app.scroll_back, 0);
+}
