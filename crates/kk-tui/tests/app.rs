@@ -4228,3 +4228,99 @@ fn tu68_a_long_result_is_folded_to_its_first_lines_and_ctrl_o_shows_all_and_fold
     app.handle(ctrl('o'));
     assert_eq!(app.scroll_back, 0);
 }
+
+#[test]
+fn tu69_tab_finishes_a_review_id_after_the_commands_that_take_one_and_lists_the_choices() {
+    let jobs = |app: &mut App, ids: &[(&str, &str, &str)]| {
+        for (id, state, who) in ids {
+            app.jobs.push(kk_tui::app::JobRow {
+                id: id.to_string(),
+                recipient: who.to_string(),
+                state: state.to_string(),
+            });
+        }
+    };
+    let tab = |app: &mut App, line: &str| {
+        app.input = line.to_string();
+        app.cursor = line.chars().count();
+        app.handle(key(KeyCode::Tab));
+        app.input.clone()
+    };
+    // one review: any start of its id, or nothing yet, completes it
+    let mut a = booted();
+    jobs(&mut a, &[("job-12", "ready", "acme-audit")]);
+    assert_eq!(tab(&mut a, "/open jo"), "/open job-12 ");
+    assert_eq!(tab(&mut a, "/findings "), "/findings job-12 ");
+    assert_eq!(
+        tab(&mut a, "/approve JOB-1"),
+        "/approve job-12 ",
+        "case does not matter"
+    );
+    assert_eq!(
+        tab(&mut a, "/applyfix 2 j"),
+        "/applyfix 2 job-12 ",
+        "the number comes first for applyfix"
+    );
+    assert_eq!(
+        tab(&mut a, "/applyfix j"),
+        "/applyfix j",
+        "a number is not a review id"
+    );
+    assert_eq!(
+        tab(&mut a, "/open zz"),
+        "/open zz",
+        "no match changes nothing"
+    );
+    assert_eq!(
+        tab(&mut a, "/open 12"),
+        "/open 12",
+        "the start of an id, not any part of it"
+    );
+    assert_eq!(
+        tab(&mut a, "/ask jo"),
+        "/ask jo",
+        "other commands are left alone"
+    );
+    // several: what they share is filled in and they are listed with who each is for
+    let mut b = booted();
+    jobs(
+        &mut b,
+        &[
+            ("job-12", "ready", "acme-audit"),
+            ("job-13", "running", "beta"),
+            ("job-2", "failed", "x"),
+        ],
+    );
+    assert_eq!(tab(&mut b, "/open jo"), "/open job-");
+    assert!(
+        text(&b).contains("job-12  ready  for acme-audit")
+            && text(&b).contains("job-13  running  for beta")
+            && text(&b).contains("job-2  failed  for x"),
+        "{}",
+        text(&b)
+    );
+    assert_eq!(tab(&mut b, "/open job-1"), "/open job-1");
+    assert_eq!(tab(&mut b, "/open job-13"), "/open job-13 ");
+    // the review id is never sent anywhere by completing
+    assert!(b
+        .drain_background()
+        .iter()
+        .all(|r| !r.path.starts_with("/api/jobs")));
+    // many reviews are listed in a bounded way
+    let mut c = booted();
+    let many: Vec<(String, &str, &str)> = (100..140)
+        .map(|i| (format!("job-{i}"), "ready", "r"))
+        .collect();
+    for (id, s, w) in &many {
+        c.jobs.push(kk_tui::app::JobRow {
+            id: id.clone(),
+            recipient: w.to_string(),
+            state: s.to_string(),
+        });
+    }
+    tab(&mut c, "/open job-1");
+    assert!(
+        text(&c).matches("job-1").count() <= 14,
+        "a long list is cut"
+    );
+}

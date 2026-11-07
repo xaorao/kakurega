@@ -471,6 +471,80 @@ impl App {
         out
     }
 
+    /// Tab after a command that takes a review id (`/open`, `/findings`, `/fixes`, `/applyfix N`, `/undofix N`, `/release`, `/approve`,
+    /// `/deliver`, `/forgetreview`): the id being typed is finished from the reviews listed. One match completes it, several fill in what
+    /// they share and are listed with who each is for, none changes nothing. Returns the new line, if it changes, and a list to show.
+    fn job_completion(&self) -> Option<(Option<String>, Option<Vec<String>>)> {
+        const TAKES_JOB: &[&str] = &[
+            "open",
+            "findings",
+            "fixes",
+            "applyfix",
+            "undofix",
+            "release",
+            "approve",
+            "deliver",
+            "forgetreview",
+        ];
+        let rest = self.input.strip_prefix('/')?;
+        let (name, args) = rest.split_once(' ')?;
+        if !TAKES_JOB.contains(&name) {
+            return None;
+        }
+        // the id is the last word, and only if the line does not end in a space (nothing started yet is a complete start: all are offered)
+        let (before, partial) = match args.rfind(' ') {
+            Some(i) => (&args[..=i], &args[i + 1..]),
+            None => ("", args),
+        };
+        // `/applyfix N` and `/undofix N` take the number first and the review second
+        if matches!(name, "applyfix" | "undofix") && before.is_empty() {
+            return None;
+        }
+        let want = partial.to_ascii_lowercase();
+        let mut hits: Vec<&JobRow> = self
+            .jobs
+            .iter()
+            .filter(|j| j.id.to_ascii_lowercase().starts_with(&want))
+            .collect();
+        hits.sort_by(|a, b| a.id.cmp(&b.id));
+        match hits.as_slice() {
+            [] => Some((None, None)),
+            [one] => Some((Some(format!("/{name} {before}{} ", one.id)), None)),
+            many => {
+                let first = &many[0].id;
+                let mut common = first.chars().count();
+                for m in many {
+                    common = common.min(
+                        first
+                            .chars()
+                            .zip(m.id.chars())
+                            .take_while(|(a, b)| a.eq_ignore_ascii_case(b))
+                            .count(),
+                    );
+                }
+                let done = (common > partial.chars().count()).then(|| {
+                    format!(
+                        "/{name} {before}{}",
+                        first.chars().take(common).collect::<String>()
+                    )
+                });
+                let list = many
+                    .iter()
+                    .take(12)
+                    .map(|j| {
+                        format!(
+                            "{}  {}  for {}",
+                            j.id,
+                            j.state.replace('_', " "),
+                            j.recipient
+                        )
+                    })
+                    .collect();
+                Some((done, Some(list)))
+            }
+        }
+    }
+
     /// What to ask the service when Tab is pressed while the folder after /review is being typed: the folder to list, the line
     /// as it is, the text that stays in front of the last name, and the part of the name typed so far. The listing is always
     /// the service's own view of its allowed folders, never this terminal's working directory.
@@ -1215,6 +1289,15 @@ impl App {
                 if let Some(c) = cmd::complete(&self.input) {
                     self.input = c;
                     self.cursor = self.input.chars().count();
+                } else if let Some(c) = self.job_completion() {
+                    // a review id after a command that takes one: finished from the reviews this screen already knows
+                    if let Some(done) = c.0 {
+                        self.input = done;
+                        self.cursor = self.input.chars().count();
+                    }
+                    if let Some(list) = c.1 {
+                        self.push(Kind::Info, Some("Reviews"), list);
+                    }
                 } else {
                     self.path_request = self.folder_request();
                 }
