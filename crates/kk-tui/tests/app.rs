@@ -1083,7 +1083,11 @@ fn tu24_a_streamed_answer_grows_in_one_card_is_replaced_by_the_final_text_and_ca
     );
     // the final object replaces the live text with the full reply and the footer
     a.handle(ok(&r[0], 200, json!({"done": true, "reply": "Invoices are paid monthly.", "route": {"simulated": true}, "notes_used": 1, "saved": false})));
-    assert_eq!(a.cards.len(), before + 1, "still one card");
+    assert_eq!(
+        a.cards.len(),
+        before + 2,
+        "the answer is still one card, and what it used follows as one plain card"
+    );
     assert!(text(&a).contains("test model · 1 note(s) used"));
     assert_eq!(
         a.chat_history.last().unwrap(),
@@ -4017,4 +4021,89 @@ fn tu65_a_release_past_its_deadline_cannot_be_approved_from_the_terminal_and_not
     typed(&mut ok_app, "abcdef012345");
     let r = ok_app.handle(key(KeyCode::Enter));
     assert!(r.iter().any(|q| q.path.contains("/approve")), "{r:?}");
+}
+
+#[test]
+fn tu66_an_answer_is_shown_as_formatted_text_while_the_export_and_plain_mode_keep_the_words_as_written(
+) {
+    let mut app = booted();
+    app.cards.push(Card {
+        kind: Kind::Info,
+        title: Some("Assistant".into()),
+        lines: [
+            "Here is **bold** and a link [docs](https://example.com/a):",
+            "- one",
+            "- two",
+            "",
+            "```py",
+            "x = 1",
+            "```",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
+    });
+    let (rows, t) = render(&app, 70, 24, true);
+    let screen = rows.join("\n");
+    assert!(
+        !screen.contains("**") && !screen.contains("```"),
+        "no markup characters on the screen:\n{screen}"
+    );
+    assert!(
+        screen.contains("Here is bold and a link docs (https://example.com/a):"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("• one") && screen.contains("• two"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("  py") && screen.contains("  x = 1"),
+        "{screen}"
+    );
+    // the word that was between the stars is bold on the screen
+    let buf = t.backend().buffer();
+    let row = rows
+        .iter()
+        .position(|r| r.contains("Here is bold"))
+        .unwrap() as u16;
+    let col = rows[row as usize].find("bold").unwrap() as u16;
+    assert!(buf[(col, row)]
+        .modifier
+        .contains(ratatui::style::Modifier::BOLD));
+    assert!(
+        !buf[(col - 3, row)]
+            .modifier
+            .contains(ratatui::style::Modifier::BOLD),
+        "the words before it are not"
+    );
+    // what is copied, exported and read in plain-line mode is the text as the model wrote it
+    let exported = app.transcript_text();
+    assert!(
+        exported.contains("**bold**") && exported.contains("```py"),
+        "{exported}"
+    );
+    let card = app.cards.last().unwrap();
+    assert!(kk_tui::linear::card_text(card).contains("**bold**"));
+    // other cards are not reformatted
+    let mut plain = booted();
+    plain.cards.push(Card {
+        kind: Kind::Info,
+        title: Some("Note".into()),
+        lines: vec!["keep **these** stars".into()],
+    });
+    assert!(render(&plain, 70, 24, true)
+        .0
+        .join("\n")
+        .contains("keep **these** stars"));
+    // no colour: the formatting survives as weight and reverse video, never colour alone
+    let (rows, t) = render(&app, 70, 24, false);
+    let r = rows
+        .iter()
+        .position(|r| r.contains("Here is bold"))
+        .unwrap() as u16;
+    let c = rows[r as usize].find("bold").unwrap() as u16;
+    assert!(t.backend().buffer()[(c, r)]
+        .modifier
+        .contains(ratatui::style::Modifier::BOLD));
 }

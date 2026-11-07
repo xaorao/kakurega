@@ -125,6 +125,22 @@ fn card_lines(c: &Card, width: usize, th: &Theme) -> Vec<Line<'static>> {
             first = false;
         }
     }
+    // an answer from the assistant is formatted text; everything else is shown as written
+    if matches!(c.title.as_deref(), Some("Assistant") | Some("Aside")) {
+        for body in crate::markdown::render(&c.lines.join("\n"), width.saturating_sub(2), th) {
+            let lead = if first {
+                format!("{sym} ")
+            } else {
+                "  ".to_string()
+            };
+            let mut spans = vec![Span::styled(lead, style)];
+            spans.extend(body.spans);
+            out.push(Line::from(spans));
+            first = false;
+        }
+        out.push(Line::raw(""));
+        return out;
+    }
     for raw in &c.lines {
         for l in wrap(raw, width.saturating_sub(2)) {
             let lead = if first {

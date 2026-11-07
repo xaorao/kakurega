@@ -3597,9 +3597,8 @@ impl App {
                         pages("web_sources_left_out")
                     ));
                 }
-                let mut lines = text_lines(&reply);
-                lines.push(String::new());
-                lines.extend(foot);
+                // the answer is a card of its own so it can be shown as formatted text; what the answer cost and used follows as a plain card
+                let lines = text_lines(&reply);
                 match live.and_then(|(i, _)| self.cards.get_mut(i)) {
                     Some(c) => {
                         c.lines = lines;
@@ -3607,6 +3606,7 @@ impl App {
                     }
                     None => self.push(Kind::Info, Some("Assistant"), lines),
                 }
+                self.push(Kind::Info, None, foot);
                 if self.queued.is_empty() {
                     Vec::new()
                 } else {

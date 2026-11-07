@@ -1,0 +1,877 @@
+[
+ {
+  "input": "plain words",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "plain words"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "two\nlines in one paragraph",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "two lines in one paragraph"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "first\n\nsecond paragraph",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "first"
+     }
+    ]
+   },
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "second paragraph"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "# Heading one\ntext after",
+  "blocks": [
+   {
+    "t": "h",
+    "v": [
+     {
+      "t": "text",
+      "v": "Heading one"
+     }
+    ]
+   },
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "text after"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "###### six\n####### seven is text",
+  "blocks": [
+   {
+    "t": "h",
+    "v": [
+     {
+      "t": "text",
+      "v": "six"
+     }
+    ]
+   },
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "####### seven is text"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "#nospace is text\n# \n#",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "#nospace is text"
+     }
+    ]
+   },
+   {
+    "t": "h",
+    "v": []
+   },
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "#"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "- a\n- b\n* c\n+ d",
+  "blocks": [
+   {
+    "t": "ul",
+    "v": [
+     [
+      {
+       "t": "text",
+       "v": "a"
+      }
+     ],
+     [
+      {
+       "t": "text",
+       "v": "b"
+      }
+     ],
+     [
+      {
+       "t": "text",
+       "v": "c"
+      }
+     ],
+     [
+      {
+       "t": "text",
+       "v": "d"
+      }
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "input": "1. one\n2) two\n3. three",
+  "blocks": [
+   {
+    "t": "ol",
+    "v": [
+     [
+      {
+       "t": "text",
+       "v": "one"
+      }
+     ],
+     [
+      {
+       "t": "text",
+       "v": "two"
+      }
+     ],
+     [
+      {
+       "t": "text",
+       "v": "three"
+      }
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "input": "- bullet\n1. then number\n- bullet again",
+  "blocks": [
+   {
+    "t": "ul",
+    "v": [
+     [
+      {
+       "t": "text",
+       "v": "bullet"
+      }
+     ]
+    ]
+   },
+   {
+    "t": "ol",
+    "v": [
+     [
+      {
+       "t": "text",
+       "v": "then number"
+      }
+     ]
+    ]
+   },
+   {
+    "t": "ul",
+    "v": [
+     [
+      {
+       "t": "text",
+       "v": "bullet again"
+      }
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "input": "10. ten\n999. big\n1000. too big",
+  "blocks": [
+   {
+    "t": "ol",
+    "v": [
+     [
+      {
+       "t": "text",
+       "v": "ten"
+      }
+     ],
+     [
+      {
+       "t": "text",
+       "v": "big"
+      }
+     ]
+    ]
+   },
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "1000. too big"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "> quoted line\n>no space\n> > nested",
+  "blocks": [
+   {
+    "t": "quote",
+    "v": [
+     {
+      "t": "text",
+      "v": "quoted line"
+     }
+    ]
+   },
+   {
+    "t": "quote",
+    "v": [
+     {
+      "t": "text",
+      "v": "no space"
+     }
+    ]
+   },
+   {
+    "t": "quote",
+    "v": [
+     {
+      "t": "text",
+      "v": "> nested"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "```python\nprint(1)\n  indented\n```\nafter",
+  "blocks": [
+   {
+    "t": "code",
+    "lang": "python",
+    "v": "print(1)\n  indented"
+   },
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "after"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "```\nno language\n```",
+  "blocks": [
+   {
+    "t": "code",
+    "lang": "",
+    "v": "no language"
+   }
+  ]
+ },
+ {
+  "input": "```js\nunterminated fence\nstill code",
+  "blocks": [
+   {
+    "t": "code",
+    "lang": "js",
+    "v": "unterminated fence\nstill code"
+   }
+  ]
+ },
+ {
+  "input": "```c++ \nspaced fence\n```",
+  "blocks": [
+   {
+    "t": "code",
+    "lang": "c++",
+    "v": "spaced fence"
+   }
+  ]
+ },
+ {
+  "input": "```weird lang!\nnot a fence\n```",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "```weird lang! not a fence"
+     }
+    ]
+   },
+   {
+    "t": "code",
+    "lang": "",
+    "v": ""
+   }
+  ]
+ },
+ {
+  "input": "a `code` and **bold** and *em* together",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "a "
+     },
+     {
+      "t": "code",
+      "v": "code"
+     },
+     {
+      "t": "text",
+      "v": " and "
+     },
+     {
+      "t": "bold",
+      "v": [
+       {
+        "t": "text",
+        "v": "bold"
+       }
+      ]
+     },
+     {
+      "t": "text",
+      "v": " and "
+     },
+     {
+      "t": "em",
+      "v": [
+       {
+        "t": "text",
+        "v": "em"
+       }
+      ]
+     },
+     {
+      "t": "text",
+      "v": " together"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "**not closed and `also not",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "**not closed and `also not"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "* not italic because space* here",
+  "blocks": [
+   {
+    "t": "ul",
+    "v": [
+     [
+      {
+       "t": "text",
+       "v": "not italic because space* here"
+      }
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "input": "*italic*text and **bold**text",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "em",
+      "v": [
+       {
+        "t": "text",
+        "v": "italic"
+       }
+      ]
+     },
+     {
+      "t": "text",
+      "v": "text and "
+     },
+     {
+      "t": "bold",
+      "v": [
+       {
+        "t": "text",
+        "v": "bold"
+       }
+      ]
+     },
+     {
+      "t": "text",
+      "v": "text"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "**bold with `code` inside**",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "bold",
+      "v": [
+       {
+        "t": "text",
+        "v": "bold with "
+       },
+       {
+        "t": "code",
+        "v": "code"
+       },
+       {
+        "t": "text",
+        "v": " inside"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "a * b * c",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "a * b * c"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "![alt text](https://x.test/a.png) after",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "[image: alt text] after"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "![](x) and ![alt]() end",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "[image: ] and [image: alt] end"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "see [docs](https://example.com/path?q=1#frag) now",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "see "
+     },
+     {
+      "t": "link",
+      "v": "docs",
+      "href": "https://example.com/path?q=1#frag"
+     },
+     {
+      "t": "text",
+      "v": " now"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "[bad](http://example.com) and [js](javascript:alert(1)) and [rel](/path)",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "bad (http://example.com) and js (javascript:alert(1)) and rel (/path)"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "[with space](https://example.com/a b) end",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "with space (https://example.com/a b) end"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "[user](https://user:pw@example.com/) end",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "user (https://user:pw@example.com/) end"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "[port](https://example.com:8443/x) end",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "link",
+      "v": "port",
+      "href": "https://example.com:8443/x"
+     },
+     {
+      "t": "text",
+      "v": " end"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "[](https://example.com) and [x]() and [y]",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "[](https://example.com) and [x]() and [y]"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "[a](https://example.com)[b](https://example.org)",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "link",
+      "v": "a",
+      "href": "https://example.com/"
+     },
+     {
+      "t": "link",
+      "v": "b",
+      "href": "https://example.org/"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "line one\r\nline two\r\n\r\nnew para",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "line one line two"
+     }
+    ]
+   },
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "new para"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "tab\tseparated\n-\ttab bullet",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "tab\tseparated"
+     }
+    ]
+   },
+   {
+    "t": "ul",
+    "v": [
+     [
+      {
+       "t": "text",
+       "v": "tab bullet"
+      }
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "input": "- item with **bold** and `code` and [l](https://example.com)",
+  "blocks": [
+   {
+    "t": "ul",
+    "v": [
+     [
+      {
+       "t": "text",
+       "v": "item with "
+      },
+      {
+       "t": "bold",
+       "v": [
+        {
+         "t": "text",
+         "v": "bold"
+        }
+       ]
+      },
+      {
+       "t": "text",
+       "v": " and "
+      },
+      {
+       "t": "code",
+       "v": "code"
+      },
+      {
+       "t": "text",
+       "v": " and "
+      },
+      {
+       "t": "link",
+       "v": "l",
+       "href": "https://example.com/"
+      }
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "input": "text\n- list right after text\ntext after list",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "text"
+     }
+    ]
+   },
+   {
+    "t": "ul",
+    "v": [
+     [
+      {
+       "t": "text",
+       "v": "list right after text"
+      }
+     ]
+    ]
+   },
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "text after list"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "| a | b |\n|---|---|\n| 1 | 2 |",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "| a | b | |---|---| | 1 | 2 |"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "",
+  "blocks": []
+ },
+ {
+  "input": "   \n\n  ",
+  "blocks": []
+ },
+ {
+  "input": "  indented paragraph\n   more",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "indented paragraph more"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "emoji 🙂 and ünïcode **bóld**",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "emoji 🙂 and ünïcode "
+     },
+     {
+      "t": "bold",
+      "v": [
+       {
+        "t": "text",
+        "v": "bóld"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "`` double backtick ``",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "text",
+      "v": "`"
+     },
+     {
+      "t": "code",
+      "v": " double backtick "
+     },
+     {
+      "t": "text",
+      "v": "`"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "input": "`unterminated\nnext`",
+  "blocks": [
+   {
+    "t": "p",
+    "v": [
+     {
+      "t": "code",
+      "v": "unterminated next"
+     }
+    ]
+   }
+  ]
+ }
+]
