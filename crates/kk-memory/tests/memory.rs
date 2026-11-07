@@ -3365,3 +3365,177 @@ fn me62_freshness_cannot_bring_in_a_note_that_no_ranking_found_or_one_above_the_
         "no use record outlives the note"
     );
 }
+
+#[test]
+fn me70_notes_in_hindi_are_found_by_their_words() {
+    let m = mem(&dir());
+    let a = id(m
+        .remember(1, nm("ग्राहक यूरो में चालान पसंद करता है", internal()))
+        .unwrap());
+    let b = id(m
+        .remember(2, nm("The garden needs staking", internal()))
+        .unwrap());
+    for q in ["चालान", "ग्राहक", "यूरो चालान", "पसंद"]
+    {
+        assert_eq!(ids_for(&m, q, 99), std::slice::from_ref(&a), "{q}");
+    }
+    assert_eq!(ids_for(&m, "garden", 99), [b]);
+}
+
+#[test]
+fn me71_notes_in_chinese_japanese_and_korean_are_found_by_words_inside_a_sentence_and_only_where_the_characters_are_adjacent(
+) {
+    let m = mem(&dir());
+    let zh = id(m
+        .remember(1, nm("客户喜欢用欧元开发票并且在十五号付款", internal()))
+        .unwrap());
+    let ja = id(m
+        .remember(2, nm("顧客はユーロで請求書を好みます", internal()))
+        .unwrap());
+    let ko = id(m
+        .remember(3, nm("고객은 유로로 청구서를 선호합니다", internal()))
+        .unwrap());
+    let en = id(m
+        .remember(4, nm("The garden needs staking", internal()))
+        .unwrap());
+    let mixed = id(m
+        .remember(5, nm("Acme 客户 prefers 发票 in euros", internal()))
+        .unwrap());
+    let only = |q: &str, want: &[&String]| {
+        let mut got = ids_for(&m, q, 99);
+        got.sort();
+        let mut w: Vec<String> = want.iter().map(|s| s.to_string()).collect();
+        w.sort();
+        assert_eq!(got, w, "{q}");
+    };
+    only("发票", &[&zh, &mixed]);
+    only("开发票", &[&zh]);
+    only("欧元", &[&zh]);
+    only("付款", &[&zh]);
+    only("請求書", &[&ja]);
+    only("ユーロ", &[&ja]);
+    only("청구서", &[&ko]);
+    only("客户", &[&zh, &mixed]);
+    only("garden", &[&en]);
+    only("Acme 发票", &[&mixed, &zh]);
+    // characters that are not next to each other in any note find nothing by words
+    assert!(m
+        .recall("票发", &internal(), 99, 5)
+        .unwrap()
+        .iter()
+        .all(|r| !r.why.contains("keywords")));
+    // forgetting removes the note from the index too
+    m.forget(10, &zh, "test").unwrap();
+    only("发票", &[&mixed]);
+    assert_eq!(
+        m.index_entries_for_test("\"发票\""),
+        1,
+        "the forgotten note left nothing behind in the index itself"
+    );
+}
+
+#[test]
+fn me72_an_index_made_before_pairs_were_indexed_is_rebuilt_once_and_keeps_every_note() {
+    let d = dir();
+    {
+        let m = mem(&d);
+        id(m.remember(1, nm("客户喜欢用欧元开发票", internal()))
+            .unwrap());
+        id(m.remember(2, nm("The garden needs staking", internal()))
+            .unwrap());
+    }
+    {
+        // put the index back as it was before: whole runs as one word, plain triggers, no version recorded
+        let v = Vault::open(&d.join("m.db"), &key(7)).unwrap();
+        let c = v.connection();
+        c.create_scalar_function(
+            "kk_fts",
+            1,
+            kk_vault::rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+            |ctx| ctx.get::<String>(0),
+        )
+        .unwrap();
+        c.execute_batch(
+            "DROP TRIGGER memories_ai; DROP TRIGGER memories_ad; DROP TRIGGER memories_au;
+             DELETE FROM memory_meta;
+             INSERT INTO memories_fts(memories_fts) VALUES('delete-all');
+             INSERT INTO memories_fts(rowid, text) SELECT rowid, text FROM memories;",
+        )
+        .unwrap();
+    }
+    let m = Memories::open(Vault::open(&d.join("m.db"), &key(7)).unwrap(), [9; 32]).unwrap();
+    assert_eq!(
+        ids_for(&m, "发票", 99).len(),
+        1,
+        "the old index could not find it; the rebuilt one does"
+    );
+    assert_eq!(ids_for(&m, "garden", 99).len(), 1);
+    drop(m);
+    // opening again does not rebuild or change anything
+    let m = Memories::open(Vault::open(&d.join("m.db"), &key(7)).unwrap(), [9; 32]).unwrap();
+    assert_eq!(ids_for(&m, "发票", 99).len(), 1);
+    // and notes written now are indexed the new way
+    id(m.remember(5, nm("税务发票提醒", internal())).unwrap());
+    assert_eq!(ids_for(&m, "发票", 99).len(), 2);
+}
+
+#[test]
+fn me73_a_note_deleted_outright_takes_its_index_entries_with_it() {
+    let d = dir();
+    let keep;
+    {
+        let m = mem(&d);
+        id(m.remember(1, nm("客户喜欢用欧元开发票", internal()))
+            .unwrap());
+        keep = id(m.remember(2, nm("另一个发票提醒", internal())).unwrap());
+        assert_eq!(m.index_entries_for_test("\"发票\""), 2);
+    }
+    {
+        let v = Vault::open(&d.join("m.db"), &key(7)).unwrap();
+        kk_memory::register_index_function(v.connection()).unwrap();
+        let n = v
+            .connection()
+            .execute("DELETE FROM memories WHERE text LIKE '客户%'", [])
+            .unwrap();
+        assert_eq!(n, 1);
+    }
+    let m = Memories::open(Vault::open(&d.join("m.db"), &key(7)).unwrap(), [9; 32]).unwrap();
+    assert_eq!(
+        m.index_entries_for_test("\"发票\""),
+        1,
+        "no stale entry for the deleted note"
+    );
+    assert_eq!(ids_for(&m, "发票", 99), [keep]);
+}
+
+#[test]
+fn me74_a_notes_store_made_by_a_newer_version_is_refused_and_left_untouched() {
+    let d = dir();
+    {
+        let m = mem(&d);
+        id(m.remember(1, nm("keep this note", internal())).unwrap());
+    }
+    {
+        let v = Vault::open(&d.join("m.db"), &key(7)).unwrap();
+        v.connection()
+            .execute(
+                "UPDATE memory_meta SET value = '99' WHERE key = 'fts_version'",
+                [],
+            )
+            .unwrap();
+    }
+    let e = Memories::open(Vault::open(&d.join("m.db"), &key(7)).unwrap(), [9; 32])
+        .err()
+        .expect("refused");
+    assert!(e.to_string().contains("newer version"), "{e}");
+    let v = Vault::open(&d.join("m.db"), &key(7)).unwrap();
+    let ver: String = v
+        .connection()
+        .query_row(
+            "SELECT value FROM memory_meta WHERE key = 'fts_version'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(ver, "99", "nothing was rebuilt or rewritten");
+}

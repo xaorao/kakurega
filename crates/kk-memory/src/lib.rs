@@ -1,3 +1,4 @@
+mod cjk;
 mod fuse;
 mod retention;
 mod secret;
@@ -160,6 +161,20 @@ const MEANING_ONLY_CAP: usize = 10;
 /// How much the meaning ranking counts in the merge with the keyword and similar-wording rankings. Same source as the cap.
 const MEANING_WEIGHT: f64 = 4.0;
 
+/// Makes the function the index triggers call available on a connection. `Memories::open` does this itself; a tool that writes
+/// to the notes table by hand on its own connection must do it first or the triggers fail.
+pub fn register_index_function(
+    conn: &kk_vault::rusqlite::Connection,
+) -> kk_vault::rusqlite::Result<()> {
+    conn.create_scalar_function(
+        "kk_fts",
+        1,
+        kk_vault::rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC
+            | kk_vault::rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+        |ctx| Ok(cjk::expand(&ctx.get::<String>(0).unwrap_or_default())),
+    )
+}
+
 pub struct Memories {
     vault: Vault,
     fp_key: [u8; 32],
@@ -193,16 +208,6 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 CREATE INDEX IF NOT EXISTS memories_fp ON memories(fingerprint);
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(text, content='memories', content_rowid='rowid', tokenize='unicode61');
-CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-    INSERT INTO memories_fts(rowid, text) VALUES (new.rowid, new.text);
-END;
-CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-END;
-CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-    INSERT INTO memories_fts(rowid, text) VALUES (new.rowid, new.text);
-END;
 CREATE TABLE IF NOT EXISTS tombstones (
     fingerprint BLOB PRIMARY KEY,
     reason TEXT NOT NULL,
@@ -245,6 +250,23 @@ CREATE TABLE IF NOT EXISTS memory_events (
     note TEXT NOT NULL
 );
 ";
+
+/// The triggers that keep the index current; notes go in through `kk_fts` so pairs of characters are indexed for scripts written without spaces.
+const FTS_TRIGGERS: &str = "
+CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+    INSERT INTO memories_fts(rowid, text) VALUES (new.rowid, kk_fts(new.text));
+END;
+CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, text) VALUES('delete', old.rowid, kk_fts(old.text));
+END;
+CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, text) VALUES('delete', old.rowid, kk_fts(old.text));
+    INSERT INTO memories_fts(rowid, text) VALUES (new.rowid, kk_fts(new.text));
+END;
+";
+
+/// Bumped whenever how notes are indexed changes; an older index is rebuilt once at open.
+const FTS_VERSION: &str = "2";
 
 fn level_to_int(l: Level) -> i64 {
     match l {
@@ -309,9 +331,10 @@ fn significant_terms(q: &str) -> Vec<String> {
 }
 
 fn fts_query(q: &str) -> Option<String> {
+    // a term in a script written without spaces is searched as the same pairs of characters the note was indexed as, in order
     let terms: Vec<String> = significant_terms(q)
         .into_iter()
-        .map(|t| format!("\"{}\"", t.replace('"', "")))
+        .map(|t| format!("\"{}\"", cjk::expand(&t).replace('"', "")))
         .collect();
     if terms.is_empty() {
         None
@@ -521,8 +544,64 @@ fn row_to_memory(r: &kk_vault::rusqlite::Row<'_>) -> kk_vault::rusqlite::Result<
 }
 
 impl Memories {
+    /// An index made before notes in Chinese, Japanese and Korean were indexed as pairs is rebuilt once, from the notes, with the
+    /// triggers that keep it current. A new store has no notes and the rebuild costs nothing.
+    fn ensure_index_version(vault: &Vault) -> Result<(), MemoryError> {
+        let c = vault.connection();
+        c.execute_batch(
+            "CREATE TABLE IF NOT EXISTS memory_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+        )?;
+        let have: Option<String> = c
+            .query_row(
+                "SELECT value FROM memory_meta WHERE key = 'fts_version'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if have.as_deref() == Some(FTS_VERSION) {
+            return Ok(());
+        }
+        // a store made by a newer version is left alone: an older program rebuilding its index would undo what the newer one did
+        if let (Some(found), Ok(mine)) = (
+            have.as_deref().and_then(|h| h.parse::<u32>().ok()),
+            FTS_VERSION.parse::<u32>(),
+        ) {
+            if found > mine {
+                return refuse("this notes store was made by a newer version of Kakurega; open it with that version or a newer one");
+            }
+        }
+        c.execute_batch("SAVEPOINT fts_rebuild")?;
+        let r = (|| -> Result<(), MemoryError> {
+            c.execute_batch(
+                "DROP TRIGGER IF EXISTS memories_ai; DROP TRIGGER IF EXISTS memories_ad; DROP TRIGGER IF EXISTS memories_au;",
+            )?;
+            c.execute_batch("INSERT INTO memories_fts(memories_fts) VALUES('delete-all');")?;
+            c.execute_batch(
+                "INSERT INTO memories_fts(rowid, text) SELECT rowid, kk_fts(text) FROM memories;",
+            )?;
+            c.execute_batch(FTS_TRIGGERS)?;
+            c.execute(
+                "INSERT OR REPLACE INTO memory_meta(key, value) VALUES ('fts_version', ?1)",
+                params![FTS_VERSION],
+            )?;
+            Ok(())
+        })();
+        match r {
+            Ok(()) => c.execute_batch("RELEASE fts_rebuild")?,
+            Err(e) => {
+                c.execute_batch("ROLLBACK TO fts_rebuild; RELEASE fts_rebuild")?;
+                return Err(e);
+            }
+        }
+        Ok(())
+    }
+
     pub fn open(vault: Vault, fingerprint_key: [u8; 32]) -> Result<Memories, MemoryError> {
+        // the index sees notes through this function, so it must exist on this connection before any trigger can fire
+        register_index_function(vault.connection())?;
         vault.connection().execute_batch(SCHEMA)?;
+        vault.connection().execute_batch(FTS_TRIGGERS)?;
+        Self::ensure_index_version(&vault)?;
         let has_project: bool = vault
             .connection()
             .prepare("PRAGMA table_info(memories)")?
@@ -1331,6 +1410,18 @@ impl Memories {
             )?;
         }
         Ok(())
+    }
+
+    /// How many entries the full-text index itself holds for a match expression, whether or not a note still stands behind them.
+    #[doc(hidden)]
+    pub fn index_entries_for_test(&self, matching: &str) -> i64 {
+        self.conn()
+            .query_row(
+                "SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH ?1",
+                params![matching],
+                |r| r.get(0),
+            )
+            .unwrap_or(-1)
     }
 
     #[doc(hidden)]

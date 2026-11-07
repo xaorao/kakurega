@@ -8,7 +8,7 @@ Depth is what I read myself along the capability's path: FULL (the whole path re
 
 | # | Capability | Reference read by me | Depth | Not read |
 |---|---|---|---|---|
-| 1 | Hybrid recall | Anamnesis `search/hybrid.rs` 1-560 | FULL | its tests and store layer |
+| 1 | Hybrid recall | Anamnesis `search/hybrid.rs` 1-560; store `lib.rs` (453), `cjk.rs` 1-200 of 358, migrations 0003, 0004, 0007, 0009, 0011 | FULL | `store/api.rs` (10,380 lines), `vec_ext.rs`, `cjk.rs` tests, `hybrid.rs` tests |
 | 2 | Safe web fetch | Hermes `tools/url_safety.py` 1-651 | FULL | `web_tools.py` beyond 1-120 |
 | 3 | Query-relevant memory for reviews | Ghast `desktop/memory.md` (public docs) FULL; Anamnesis `hybrid.rs` | PART | the closed app itself |
 | 4 | Coding checkpoints, guarded undo | OpenCode `snapshot.ts`, `session/revert.ts` FULL; Cline `checkpoint-restore.ts` 1-260 | PART | OpenCode `git.ts`, Cline hooks, OpenHands history |
@@ -33,7 +33,7 @@ Depth is what I read myself along the capability's path: FULL (the whole path re
 | 23 | Vector recall | Anamnesis `hybrid.rs` 1-560 | FULL | embedding providers, `vec0` store (not adopted) |
 | 24 | Web search from conversation | OpenCode `core/src/websearch.ts`, Cline `web-search.ts` FULL; SearXNG `webapp.py` 640-700 | FULL | LibreChat search |
 | 25 | Signed updates | Tauri `updater.rs` 494-1010, 1885-1975, `config.rs` parts; python-tuf `trusted_metadata_set.py` FULL | PART | rest of Tauri updater and python-tuf |
-| 26 | Near-duplicate notes | Anamnesis `semantic_dedupe.rs` (524) | FULL | `near_merge_preview.rs` |
+| 26 | Near-duplicate notes | Anamnesis `semantic_dedupe.rs` (524), `near_merge_preview.rs` (207) | FULL | the `semantic_dedupe` tests |
 | 27 | Project-scoped notes | Anamnesis `core/model.rs`, `query.rs` FULL; OpenCode `project.ts` 1-260 of 536 | PART | rest of `project.ts` |
 | 28 | External editor | OpenCode `editor.ts`, `context/editor.ts` (409), `prompt/content.ts` | FULL | `editor-zed.ts`, renderer suspend and resume |
 | 29 | Secret detector comparison | gitleaks `detect/detect.go` 330-670, `codec/*`, `generate.go`; detect-secrets `filters/*`, `plugins/keyword.py`, `high_entropy_strings.py` | FULL | gitleaks `detect.go` 1-330 and 670-900, `report/`, `sources/`; detect-secrets provider plugins |
