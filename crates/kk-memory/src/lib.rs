@@ -1507,10 +1507,26 @@ impl Memories {
             if f.ranks[2].is_some() {
                 parts.push("meaning");
             }
-            let how = format!("matched by {}", parts.join(" and by "));
+            let lower = r.m.text.to_lowercase();
+            let matched_terms: Vec<String> = significant_terms(query)
+                .into_iter()
+                .filter(|t| lower.contains(&t.to_lowercase()))
+                .take(6)
+                .collect();
+            let how = if matched_terms.is_empty() {
+                format!("matched by {}", parts.join(" and by "))
+            } else {
+                format!(
+                    "matched by {} on {}",
+                    parts.join(" and by "),
+                    matched_terms.join(", ")
+                )
+            };
             out.push(Recalled {
                 why: format!("{}; {how}", explain(&r.m)),
                 untrusted: r.untrusted,
+                matched_terms,
+                rank: out.len() + 1,
                 memory: r.m,
             });
             if out.len() >= limit {
@@ -1956,6 +1972,8 @@ impl Memories {
                 out.push(Recalled {
                     why: explain(&r.m),
                     untrusted: r.untrusted,
+                    matched_terms: Vec::new(),
+                    rank: out.len() + 1,
                     memory: r.m,
                 });
                 if out.len() >= limit.max(1) {
@@ -2265,6 +2283,10 @@ pub struct Recalled {
     pub memory: Memory,
     pub why: String,
     pub untrusted: bool,
+    /// Words of the question that appear in the note (at most 6), so the owner can see what it was matched on.
+    pub matched_terms: Vec<String>,
+    /// Position in this answer, starting at 1.
+    pub rank: usize,
 }
 
 impl Recalled {

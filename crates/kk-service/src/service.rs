@@ -1135,7 +1135,7 @@ async fn readiness_repair(axum::Extension(svc): Svc, Json(b): Json<RepairBody>) 
 fn memory_json(r: &kk_memory::Recalled) -> Value {
     let m = &r.memory;
     json!({
-        "id": m.id, "text": m.text, "why": r.why, "untrusted": r.untrusted, "instruction_like": r.instruction_like(),
+        "id": m.id, "text": m.text, "why": r.why, "matched_terms": r.matched_terms, "rank": r.rank, "untrusted": r.untrusted, "instruction_like": r.instruction_like(),
         "level": format!("{:?}", m.label.level).to_lowercase(),
         "compartments": m.label.compartments.iter().collect::<Vec<_>>(),
         "subject": m.subject, "project": m.project, "created_at": m.created_at,

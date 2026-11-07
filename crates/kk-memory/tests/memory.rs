@@ -3696,3 +3696,88 @@ fn me78_a_new_store_records_the_detector_and_holds_nothing_and_notes_without_sec
     assert!(m.held(&internal()).unwrap().is_empty());
     assert_eq!(ids_for(&m, "invoices", 99).len(), 1);
 }
+
+#[test]
+fn me79_a_recalled_note_says_which_words_of_the_question_it_matched_and_where_it_ranks() {
+    let d = dir();
+    let m = mem(&d);
+    id(m.remember(
+        1,
+        nm("invoices are paid on the 5th by wire transfer", internal()),
+    )
+    .unwrap());
+    id(
+        m.remember(2, nm("the staging server restarts every night", internal()))
+            .unwrap(),
+    );
+    id(m.remember(
+        3,
+        nm(
+            "wire fees for invoices are charged to the sender",
+            internal(),
+        ),
+    )
+    .unwrap());
+    let r = m
+        .recall("when are invoices paid by wire?", &internal(), 10, 5)
+        .unwrap();
+    assert!(r.len() >= 2);
+    for (i, x) in r.iter().enumerate() {
+        assert_eq!(x.rank, i + 1, "ranks count from 1 in the order returned");
+    }
+    let top = &r[0];
+    assert_eq!(
+        top.memory.text,
+        "invoices are paid on the 5th by wire transfer"
+    );
+    for t in ["invoices", "paid", "wire"] {
+        assert!(
+            top.matched_terms.iter().any(|x| x.eq_ignore_ascii_case(t)),
+            "{t} missing from {:?}",
+            top.matched_terms
+        );
+        assert!(top.why.contains(t), "{}", top.why);
+    }
+    assert!(
+        !top.matched_terms.iter().any(|t| t == "when" || t == "are"),
+        "stop words are not shown: {:?}",
+        top.matched_terms
+    );
+    // a term the note does not contain is never listed, and at most six are shown
+    let mixed = m.recall("invoices staging", &internal(), 10, 5).unwrap();
+    let inv = mixed
+        .iter()
+        .find(|x| x.memory.text.starts_with("invoices are paid"))
+        .unwrap();
+    assert!(
+        inv.matched_terms.iter().any(|t| t == "invoices")
+            && !inv.matched_terms.iter().any(|t| t == "staging"),
+        "{:?}",
+        inv.matched_terms
+    );
+    id(m.remember(
+        4,
+        nm(
+            "alpha bravo charlie delta echo foxtrot golf hotel india",
+            internal(),
+        ),
+    )
+    .unwrap());
+    let many = m
+        .recall(
+            "alpha bravo charlie delta echo foxtrot golf hotel",
+            &internal(),
+            10,
+            5,
+        )
+        .unwrap();
+    assert_eq!(
+        many[0].matched_terms.len(),
+        6,
+        "{:?}",
+        many[0].matched_terms
+    );
+    // a plain listing has no query, so no matched words, and still counts ranks
+    let l = m.list(&internal(), 10, 5).unwrap();
+    assert!(l.iter().all(|x| x.matched_terms.is_empty()) && l[0].rank == 1);
+}

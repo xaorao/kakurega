@@ -200,7 +200,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | E-M20 | Lineage purge | BUILD `forget_by_source(review_job)` and a "forgotten source" tombstone so a re-run of tha | BUILT | forget_source + footprint + tombstoned source; web, service, terminal; lineage forward and back (memory.md) |
 | E-M21 | Tombstone against resurrection | keep (ours is better: normalised and keyed) | KEPT | normalised and keyed |
 | E-M22 | Import / export / backup | IMPROVE: encrypted backup, carry label, validity, source and tombstones; imported text pas | BUILT | encrypted backup with recovery key, notes export and import (backup tests) |
-| E-M23 | Explainability | IMPROVE small: show matched terms and rank | PARTIAL | each note says why it is kept; matched terms and rank not shown |
+| E-M23 | Explainability | IMPROVE small: show matched terms and rank | PARTIAL | matched words and rank returned and in the why line; no highlight in the web list, none for meaning-only matches (memory.md) |
 | E-M24 | Procedural memory / skills | BUILD later as owner-approved "playbooks" (a skill is executable influence, so same propos | LATER | owner-approved playbooks |
 | E-M25 | Telemetry | EXCLUDE (violates the privacy goal) | EXCLUDED | none |
 | E-M26 | Evaluation sets | BUILD our own small suites: recall@k with labels, as-of correctness, forget completeness ( | PARTIAL | LongMemEval recall harness (recall_bench.rs); no as-of or correction suites |
