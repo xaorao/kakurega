@@ -14,3 +14,5 @@ What the clients we have read do at connection time, and how `kaku mcp` meets it
 Protocol versions answered in kind: 2025-06-18, 2025-03-26, 2024-11-05. A version we do not know is answered with the newest one we speak, as the specification says.
 
 Tested by `cargo test -p kk-cli --test mcp_clients`: every row's opening succeeds, `ping` answers, every tool has an object `inputSchema`, an `outputSchema`, a `readOnlyHint`, a name of at most 64 plain characters and a description; a call with no service behind it is an error result rather than a protocol error; no approving tool exists.
+
+Errors: when the service refuses a request, an agent sees the error code and, only for a short list of codes whose text is a fixed sentence about the request itself (`BAD_JOB`, `NO_JOB`, `NO_APPROVAL`, `TOO_MANY`, `NOT_APPROVED`, `NOT_QUEUED`, `NOT_DELIVERED`, `BAD_KEY`, `DENIED`), that sentence, and only if it is under 120 characters, one line and free of slashes, backslashes, `@` and backticks. Every other message is replaced by its code and a note that the owner sees the details. Tested by `fe01` in `crates/kk-cli/src/mcp.rs` (8 mutants caught).

@@ -151,7 +151,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | D-D16 | Input validation | IMPROVE: keep Kakurega's rules as validated newtypes (`ReviewId`, `RecipientName`, `Folder | BUILT | schemas forbid extra fields; check_args |
 | D-D17 | Structured output and `outputSchema` | IMPROVE now (section 5), then SDK typed outputs. | BUILT | outputSchema on every tool, replies checked against it (conforms) |
 | D-D18 | Annotations | KEEP; add a test that ties each annotation to behaviour. | BUILT | readOnlyHint and friends follow MUTATING (mcp_tools.golden.json) |
-| D-D19 | Tool execution errors | KEEP; whitelist the forwarded message set instead of passing `v["error"]["message"]` throu | PARTIAL | errors are tool errors with a message; forwarded text not whitelisted |
+| D-D19 | Tool execution errors | KEEP; whitelist the forwarded message set instead of passing `v["error"]["message"]` throu | BUILT | forwarded error text whitelisted by code and plain-sentence check; fe01, 8 mutants (mcp-clients.md) |
 | D-D20 | Catalog stability and rug-pull defence | IMPROVE: expose a catalog digest in `server/discover` `_meta` (`com.kakurega/catalogDigest | BUILT | catalog digest in initialize and tools/list _meta and `kaku mcp --print-catalog-digest`; listed digest for filtered lists (mc42) |
 | D-D21 | Tool profiles and allowlists | BUILD: `kaku mcp --profile observer` (overview, list, status, verify), `--profile reviewer | BUILT | --read-only, --allow and --leased (mc06, mc15-mc17, mc22-mc29) |
 | D-D22 | New tools: a path for every safe capability | BUILD in tiers. | LATER | tiers exist; more tools when worker loop arrives |
