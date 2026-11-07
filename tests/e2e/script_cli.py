@@ -91,6 +91,23 @@ try:
     for bad in ["../../etc", "chat-1/2", "a" * 41, "chat 1"]:
         rc, _, err = k("chat", "x", "--session", bad)
         check(f"the conversation name {bad[:12]!r} (slash, dots, spaces or too long) is a usage error (2)", rc == 2, err)
+    rc, out, _ = k("sessions", "export", sid)
+    check("export prints the conversation as Markdown with both sides", rc == 0 and out.startswith(f"# Conversation {sid}\n") and out.count("## You") == 2 and out.count("## Assistant") == 2 and "remember this thread" in out, out[:300])
+    target = work / "exported.md"
+    rc, _, err = k("sessions", "export", sid, "--out", str(target))
+    check("export --out writes a new file readable by the owner only", rc == 0 and target.read_text().startswith("# Conversation") and (target.stat().st_mode & 0o777) == 0o600, err)
+    rc, _, err = k("sessions", "export", sid, "--out", str(target))
+    check("export --out never overwrites an existing file (exit 6)", rc == 6 and "already exists" in err, f"{rc} {err}")
+    link = work / "link.md"
+    link.symlink_to(work / "elsewhere.md")
+    rc, _, err = k("sessions", "export", sid, "--out", str(link))
+    check("export --out through a symbolic link is refused and creates nothing at its target", rc != 0 and not (work / "elsewhere.md").exists(), f"{rc} {err}")
+    rc, _, err = k("sessions", "export", "../x")
+    check("export of a bad name is a usage error (2)", rc == 2, err)
+    rc, _, err = k("sessions", "export")
+    check("export with no name is a usage error (2)", rc == 2 and "usage: kaku sessions export" in err, err)
+    rc, out, err = k("sessions", "export", "chat-0000000000")
+    check("export of an unknown conversation is refused (6) and writes nothing", rc == 6 and out == "", f"{rc} {out} {err}")
     rc, _, err = k("chat", "x", "--session", sid, "--keep")
     check("--session together with --keep is a usage error (2)", rc == 2 and "use one of them" in err, err)
     rc, out, _ = k("chat", "x", "--session", "chat-0000000000", "--json")

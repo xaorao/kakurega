@@ -156,6 +156,9 @@ fn session_id_ok(id: &str) -> bool {
 
 /// The conversations kept in the encrypted store: id, title, when it last changed and how many messages it holds.
 pub fn sessions(args: &[String]) -> u8 {
+    if args.first().map(String::as_str) == Some("export") {
+        return session_export(&args[1..]);
+    }
     let json_mode = args.iter().any(|a| a == "--json");
     crate::tui::with_service(&serve_args(args), |dir| {
         let http = match connect(dir, json_mode) {
@@ -451,4 +454,111 @@ pub fn chat(args: &[String]) -> u8 {
             Err(e) => fail(json_mode, UNAVAILABLE, &e),
         }
     })
+}
+
+/// A kept conversation as Markdown: who spoke, then what was said. Every line from the service is cleaned of control characters.
+pub fn conversation_markdown(id: &str, turns: &[Value]) -> String {
+    let mut out = format!("# Conversation {id}\n");
+    for t in turns {
+        let who = match t["role"].as_str() {
+            Some("user") => "You",
+            Some("assistant") => "Assistant",
+            _ => continue,
+        };
+        out.push_str(&format!("\n## {who}\n\n"));
+        for line in t["content"].as_str().unwrap_or("").lines() {
+            out.push_str(&clean(line));
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// `kaku sessions export ID [--out FILE]`: the conversation as Markdown on standard output, or in a new file (never over an existing one;
+/// readable by the owner only).
+fn session_export(args: &[String]) -> u8 {
+    let out_path = crate::flag(args, "--out");
+    let Some(id) = args.iter().find(|a| {
+        !a.starts_with("--")
+            && Some((*a).as_str()) != crate::flag(args, "--data-dir").as_deref()
+            && Some((*a).as_str()) != out_path.as_deref()
+    }) else {
+        return fail(false, USAGE, "usage: kaku sessions export ID [--out FILE]");
+    };
+    if !session_id_ok(id) {
+        return fail(
+            false,
+            USAGE,
+            "a conversation is named like chat-1a2b3c4d5e; `kaku sessions` lists them",
+        );
+    }
+    let id = id.clone();
+    crate::tui::with_service(&serve_args(args), |dir| {
+        let http = match connect(dir, false) {
+            Ok(h) => h,
+            Err(c) => return c,
+        };
+        let turns = match call(&http, Method::Get, &format!("/api/sessions/{id}"), None) {
+            Ok((200, v)) => v["turns"].as_array().cloned().unwrap_or_default(),
+            Ok((s, v)) => {
+                let (m, c) = refusal(s, &v);
+                return fail(false, c, &m);
+            }
+            Err(e) => return fail(false, UNAVAILABLE, &e),
+        };
+        let text = conversation_markdown(&clean(&id), &turns);
+        match &out_path {
+            None => {
+                print!("{text}");
+                OK
+            }
+            Some(path) => {
+                use std::os::unix::fs::OpenOptionsExt;
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o600)
+                    .open(path)
+                {
+                    Ok(mut f) => match std::io::Write::write_all(&mut f, text.as_bytes()) {
+                        Ok(()) => {
+                            eprintln!("wrote {} bytes to {}", text.len(), clean(path));
+                            OK
+                        }
+                        Err(e) => fail(false, FAILED, &format!("could not write the file: {e}")),
+                    },
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => fail(
+                        false,
+                        REFUSED,
+                        "that file already exists; choose a new name",
+                    ),
+                    Err(e) => fail(false, FAILED, &format!("could not create the file: {e}")),
+                }
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ex01_a_conversation_becomes_markdown_with_control_characters_removed() {
+        let turns = vec![
+            json!({"role": "user", "content": "first\nsecond"}),
+            json!({"role": "assistant", "content": "ok \u{1b}[2J done"}),
+            json!({"role": "system", "content": "hidden"}),
+            json!({"role": "user"}),
+        ];
+        let md = conversation_markdown("chat-1", &turns);
+        assert!(
+            md.starts_with("# Conversation chat-1\n\n## You\n\nfirst\nsecond\n\n## Assistant\n\n")
+        );
+        assert!(
+            !md.contains("hidden") && !md.chars().any(|c| c.is_control() && c != '\n'),
+            "{md:?}"
+        );
+        assert_eq!(md.matches("## You").count(), 2);
+    }
 }
