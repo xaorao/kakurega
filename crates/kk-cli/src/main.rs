@@ -12,6 +12,7 @@ mod parse_child;
 #[cfg(test)]
 mod recall_bench;
 mod runner;
+mod script;
 mod serve;
 mod telegram;
 mod tui;
@@ -27,6 +28,9 @@ Usage:
                                     --linear (or KAKU_LINEAR=1) is plain lines in and out for screen readers and pipes
   kaku serve [--data-dir DIR] [--ui-dir DIR] [--root DIR]... [--model NAME] [--ollama URL] [--context TOKENS]
              [--transport lima|local] [--vm NAME] [--worker-bin PATH] [--launcher PATH]
+  kaku review DIR --for RECIPIENT [--json] [--timeout SECONDS]   start a review and follow it; ends at awaiting_approval (exit 0), 3 nothing to release, 4 failed
+  kaku jobs [--json] | kaku findings JOB [--json]                 list reviews, read what one found
+  kaku chat MESSAGE|- [--json]      one message to the private assistant (nothing is kept); these commands cannot approve anything
   kaku pair                         print a new one-time pairing link for the browser
   kaku approve [APPROVAL-ID]        review the exact release in this terminal and approve it
   kaku mcp [--read-only] [--allow TOOL,TOOL] [--leased]   speak MCP on stdin and stdout for an agent client (cannot approve; --read-only hides the tools that start a review or ask for an approval; --allow gives the agent exactly the tools named)
@@ -68,6 +72,10 @@ fn main() -> ExitCode {
         Some("approver") => approver::run(&args[1..]),
         Some("telegram") => telegram::run(&args[1..]),
         Some("tui") => tui::run(&args[1..]),
+        Some("jobs") => script::jobs(&args[1..]),
+        Some("review") => script::review(&args),
+        Some("findings") => script::findings(&args),
+        Some("chat") => script::chat(&args),
         Some("update") => update::run(&args[1..]),
         None if std::io::IsTerminal::is_terminal(&std::io::stdout())
             && std::io::IsTerminal::is_terminal(&std::io::stdin()) =>

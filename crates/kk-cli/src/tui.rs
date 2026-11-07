@@ -16,9 +16,30 @@ impl Drop for Guard {
     }
 }
 
+/// Runs `f` against a responsive local service, starting one for the duration if none answers, the way the terminal workspace does.
+/// Every argument that is not for this program's own flags is passed on to the service it starts.
+pub fn with_service(args: &[String], f: impl FnOnce(&std::path::Path) -> u8) -> u8 {
+    let dir = crate::data_dir(args);
+    let mut guard = Guard(None);
+    if let Err(code) = ensure_service(&dir, args, &mut guard) {
+        return code;
+    }
+    let code = f(&dir);
+    drop(guard);
+    code
+}
+
 pub fn run(args: &[String]) -> u8 {
     let dir = crate::data_dir(args);
     let mut guard = Guard(None);
+    if let Err(code) = ensure_service(&dir, args, &mut guard) {
+        return code;
+    }
+    run_client(&dir, args)
+}
+
+fn ensure_service(dir: &std::path::Path, args: &[String], guard: &mut Guard) -> Result<(), u8> {
+    let dir = dir.to_path_buf();
     if !responsive(&dir) {
         let _ = std::fs::create_dir_all(&dir);
         let log = std::fs::File::create(dir.join("serve.log")).ok();
@@ -26,7 +47,7 @@ pub fn run(args: &[String]) -> u8 {
             Ok(e) => e,
             Err(e) => {
                 eprintln!("cannot find the kaku executable: {e}");
-                return 1;
+                return Err(1);
             }
         };
         let mut cmd = Command::new(exe);
@@ -58,7 +79,7 @@ pub fn run(args: &[String]) -> u8 {
             Ok(c) => guard.0 = Some(c),
             Err(e) => {
                 eprintln!("could not start the service: {e}");
-                return 1;
+                return Err(1);
             }
         }
         let deadline = Instant::now() + Duration::from_secs(20);
@@ -70,9 +91,14 @@ pub fn run(args: &[String]) -> u8 {
                 "the service did not start; see {}",
                 dir.join("serve.log").display()
             );
-            return 1;
+            return Err(1);
         }
     }
+    Ok(())
+}
+
+fn run_client(dir: &std::path::Path, args: &[String]) -> u8 {
+    let dir = dir.to_path_buf();
     let resume = args.iter().any(|a| a == "--resume");
     let linear = args.iter().any(|a| a == "--linear")
         || std::env::var("KAKU_LINEAR")
