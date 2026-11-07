@@ -8,8 +8,8 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 136, PARTIAL 95, KEPT 24, EXCLUDED 39, LATER 77 (a later surface or something external), UNCHECKED 0.
-- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 1. PARTIAL rows each name what is missing.
+- Rows: 372. BUILT 136, PARTIAL 95, KEPT 24, EXCLUDED 40, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 0. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
 ### High-value rows
@@ -39,7 +39,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | B-W15 | Message actions | ADAPT fork-before-prompt and sibling switcher as logic ported to Solid (MIT). IMPROVE: bra | PARTIAL | message actions in the web chat: copy, edit and branch, answer again, version switcher; branches are new kept conversations, history never rewritten; no terminal or side-by-side compare (web-shell.md) |
 | B-W16 | Stop, cancel and leave-guard | BUILD: `POST /api/threads/:id/cancel` through the kernel; the guard only warns, it grants  | BUILT | Stop and Esc and Ctrl+G, draft returns, leave aborts and keeps the draft (cm04, e2e) |
 | B-W17 | Reasoning and thinking display | ADAPT the three-mode switch. Reasoning text is untrusted model output: collapsed by defaul | LATER | local models here expose no separate reasoning text |
-| B-W18 | Long transcript performance | ADAPT virtualiser and deferral after a profile on a synthetic 5,000-event run; do not adop | OWED-L | chats keep the latest 18 turns; no long-transcript virtualiser needed yet |
+| B-W18 | Long transcript performance | ADAPT virtualiser and deferral after a profile on a synthetic 5,000-event run; do not adop | EXCLUDED | profiled: Memory 5,000 notes 0.36 s, 20,000 notes 1.3 s; chat send 60 ms at the 400-turn kept limit, 384 ms at 1,000; no virtualiser (it would break find, selection, readers); revisit triggers recorded; gate runs the measurement (web-shell.md) |
 | B-W19 | Tool-call and step display | ADAPT `BasicTool` and the visualizer registry (both MIT). IMPROVE: each card is keyed by ` | LATER | tool-call display waits for the worker loop in the web |
 | B-W20 | Turn structure and grouping | ADAPT the shape; do not import Effect (`Data`, `Match`, `Schema`); use plain discriminated | LATER | turn grouping waits for tool calls |
 | B-W21 | Errors, retry and limit rows | ADAPT tool-error-card shape; error text must pass through the same redaction as other outp | PARTIAL | error states, context meter warning, stopped-reply notes; no retry row |
