@@ -106,6 +106,7 @@ fn serve(args: &[String]) -> Result<(), String> {
     drop(keys);
     let test_mode = crate::flag(args, "--scripted").is_some();
     let service = Service::new(&data, roots, runner, test_mode)?;
+    service.set_require_approver(args.iter().any(|a| a == "--require-approver"));
     let ui_dir = crate::flag(args, "--ui-dir")
         .map(PathBuf::from)
         .or_else(|| {

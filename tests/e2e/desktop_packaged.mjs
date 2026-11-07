@@ -40,10 +40,12 @@ async function launch(label, extraEnv = {}) {
     }
   }
   const stillRunning = exited === null;
+  const psOut = spawnSync("ps", ["-axo", "command"], { encoding: "utf8" }).stdout;
+  const companionLine = psOut.split("\n").find((l) => l.includes(`serve --data-dir ${data}`)) ?? "";
   p.kill("SIGKILL");
   spawnSync("pkill", ["-f", `kaku serve --data-dir ${data}`]);
   await new Promise((r) => setTimeout(r, 300));
-  return { served, exited, stillRunning, data };
+  return { served, exited, stillRunning, data, companionLine };
 }
 
 // The first launches of a bundle signed ad hoc sometimes never finish starting; a launch that is expected to work and hangs is made again
@@ -59,6 +61,7 @@ async function launchGood(label, extraEnv = {}) {
 
 const clean = await launchGood("clean");
 check("the packaged app starts from its asar and its companion serves the workspace", clean.served);
+check("the packaged app starts its companion with approvals closed to anything but an enrolled key", clean.companionLine.includes("--require-approver"), clean.companionLine);
 
 const asarPath = pkg.asarPath;
 const backup = join(work, "app.asar.orig");

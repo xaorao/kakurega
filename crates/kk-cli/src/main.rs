@@ -26,7 +26,7 @@ const USAGE: &str = "kaku: private code review with checkable results
 Usage:
   kaku [tui] [--resume] [--linear]  open the full-screen workspace (starts the service if needed); --resume opens the newest kept conversation;
                                     --linear (or KAKU_LINEAR=1) is plain lines in and out for screen readers and pipes
-  kaku serve [--data-dir DIR] [--ui-dir DIR] [--root DIR]... [--model NAME] [--ollama URL] [--context TOKENS]
+  kaku serve [--require-approver] [--data-dir DIR] [--ui-dir DIR] [--root DIR]... [--model NAME] [--ollama URL] [--context TOKENS]
              [--transport lima|local] [--vm NAME] [--worker-bin PATH] [--launcher PATH]
   kaku review DIR --for RECIPIENT [--json] [--timeout SECONDS]   start a review and follow it; ends at awaiting_approval (exit 0), 3 nothing to release, 4 failed
   kaku jobs [--json] | kaku findings JOB [--json] | kaku follow JOB [--timeout S]   list reviews, read what one found, watch one until it ends

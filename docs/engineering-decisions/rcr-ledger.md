@@ -271,7 +271,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | F-E11 | Auto-update with signature verification | BUILD an updater that verifies the signature and a pinned publisher; do not copy OpenCode' | PARTIAL | signed announcements with rollback and expiry (row 25); no installer step until signing exists |
 | F-E12 | Renderer crash/unresponsive recovery | ADAPT OpenCode `windows/recovery.ts` idea (relaunch, export logs, keep waiting) with logs  | BUILT | companion restart and window reload with limits (ds10-ds11, desktop_recovery 7/7) |
 | F-E13 | Native approval UX | KEEP; ADOPT Cline's two safe behaviours: auto-deny orphaned approvals when no UI is attach | KEPT | native approval |
-| F-E14 | Two paths in `approval.mjs` | Keep disclosed; consider making an enrolled key mandatory for packaged builds | PARTIAL | disclosed; enrolled key not yet mandatory in packaged builds |
+| F-E14 | Two paths in `approval.mjs` | Keep disclosed; consider making an enrolled key mandatory for packaged builds | BUILT | packaged app closes the unenrolled approval path (--require-approver); sv119, packaged suite, 4 mutants; refusal message in the shell owed (desktop-shell.md) |
 | F-E15 | Tauri alternative | Decision stays the owner's (II-04). Not re-argued here | LATER | owner's decision (II-04) |
 | F-X1 | Minimal permissions | KEEP | KEPT | extension permissions minimal |
 | F-X2 | Secret scan before sending | IMPROVE: run the shared S-table in the extension before POST too; both sides must agree | BUILT | same provider table in the extension (xs01-xs03) |

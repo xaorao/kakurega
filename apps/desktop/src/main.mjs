@@ -15,6 +15,9 @@ const kakuBin = process.env.KAKU_BIN;
 // When the data folder is chosen explicitly (a second profile, a test), the window's own files (cache, cookies) live inside it
 // instead of in the one place every copy of the app shares, so copies cannot damage each other's caches.
 if (process.env.KAKUREGA_DATA_DIR) app.setPath("userData", join(dataDir, "electron"));
+// `app.isPackaged` is false for a bundle whose program is still called Electron, which is how this one is built, so the test for "this is
+// the packaged app" is that its code is read from an archive
+const runsFromAsar = app.getAppPath().endsWith(".asar");
 let child = null;
 let window = null;
 // The companion listens on a new port every time it starts, so everything that talks to it reads the current one.
@@ -97,7 +100,7 @@ async function connect() {
 
 function launchCompanion() {
   shellSecret = newShellSecret(randomBytes);
-  child = spawn(kakuBin, ["serve", "--data-dir", dataDir, "--shell-secret-stdin", ...(process.env.KAKU_ARGS ? process.env.KAKU_ARGS.split(" ") : [])], { stdio: ["pipe", "ignore", "ignore"] });
+  child = spawn(kakuBin, ["serve", "--data-dir", dataDir, "--shell-secret-stdin", ...(runsFromAsar ? ["--require-approver"] : []), ...(process.env.KAKU_ARGS ? process.env.KAKU_ARGS.split(" ") : [])], { stdio: ["pipe", "ignore", "ignore"] });
   child.stdin.on("error", () => {});
   // the pipe stays open: when this process goes away, however it goes, the companion sees it close and leaves too
   child.stdin.write(shellSecret + "\n");

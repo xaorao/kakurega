@@ -217,6 +217,8 @@ pub struct Service {
     attester: Mutex<Arc<dyn Attester>>,
     repairs: Mutex<std::collections::HashMap<String, Value>>,
     streams: std::sync::atomic::AtomicUsize,
+    /// When set, a release can be approved only with a signature from an enrolled approval key; the unenrolled path is closed.
+    require_approver: std::sync::atomic::AtomicBool,
     last_attest: Mutex<Option<std::time::Instant>>,
     attest_cooldown: Mutex<std::time::Duration>,
     research: Mutex<Research>,
@@ -494,6 +496,18 @@ impl Service {
     }
 
     /// The search provider's address (a SearXNG-style JSON search endpoint), or none.
+    /// Closes the approval path that needs no enrolled key (a confirmation on this computer alone).
+    pub fn set_require_approver(&self, on: bool) {
+        self.require_approver
+            .store(on, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn approver_required_but_missing(&self) -> bool {
+        self.require_approver
+            .load(std::sync::atomic::Ordering::SeqCst)
+            && !self.approvers_enrolled()
+    }
+
     pub fn set_search_provider(&self, url: Option<String>) {
         *self.search_provider.lock().expect("lock") = url;
     }
@@ -710,6 +724,7 @@ impl Service {
             attester: Mutex::new(Arc::new(RealAttester)),
             repairs: Mutex::new(std::collections::HashMap::new()),
             streams: std::sync::atomic::AtomicUsize::new(0),
+            require_approver: std::sync::atomic::AtomicBool::new(false),
             last_attest: Mutex::new(None),
             attest_cooldown: Mutex::new(std::time::Duration::from_secs(3)),
             research: Mutex::new(Research::default()),
@@ -5035,7 +5050,7 @@ async fn privacy_facts(axum::Extension(svc): Svc) -> Response {
         "telegram": {"on": telegram_on},
         "agents": {"tools_open": tools_open, "calls_are_logged": true},
         "notes": {"count": notes, "encrypted_at_rest": true},
-        "approvals": {"signing_key_enrolled": svc.approvers_enrolled()},
+        "approvals": {"signing_key_enrolled": svc.approvers_enrolled(), "signing_key_required": svc.require_approver.load(std::sync::atomic::Ordering::SeqCst)},
         "updates": {"checks_in_background": false},
     }))
     .into_response()
@@ -6967,6 +6982,13 @@ async fn admin_approve(
     UrlPath(aid): UrlPath<String>,
     Json(b): Json<AckBody>,
 ) -> Response {
+    if svc.approver_required_but_missing() {
+        return error(
+            StatusCode::FORBIDDEN,
+            "NO_APPROVER",
+            "this installation only accepts approvals signed by an enrolled approval key; run `kaku approver enroll` first",
+        );
+    }
     let need_proof = svc.approvers_enrolled();
     let trusted = svc.approver_keys();
     let (resp, rec) = {

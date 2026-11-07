@@ -11575,3 +11575,75 @@ fn sv118_restricted_notes_reach_a_model_on_this_computer_and_no_other() {
         assert_eq!(r["notes_used"], if here { 2 } else { 1 }, "{endpoint}: {r}");
     }
 }
+
+#[test]
+fn sv119_with_the_approver_required_a_release_cannot_be_approved_until_a_key_is_enrolled() {
+    let (c, w, repo, _root, svc) = boot("reqappr", true);
+    svc.set_require_approver(true);
+    let (_, started) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "acme-audit"}),
+    );
+    let id = started["id"].as_str().unwrap().to_string();
+    wait_for(&w, &id, &["ready"]);
+    let (_, req) = w.post(&format!("/api/jobs/{id}/approval"), json!({}));
+    let aid = req["approval"].as_str().unwrap().to_string();
+    let token = c.security.admin_token().to_string();
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    let (_, shown) = admin(
+        &base,
+        &token,
+        "GET",
+        &format!("/admin/approvals/{aid}"),
+        None,
+    );
+    let digest = shown["digest"].as_str().unwrap().to_string();
+    let (code, refused) = admin(
+        &base,
+        &token,
+        "POST",
+        &format!("/admin/approvals/{aid}/approve"),
+        Some(json!({"ack": &digest[..12]})),
+    );
+    assert_eq!(code, 403, "{refused}");
+    assert_eq!(refused["error"]["code"], "NO_APPROVER");
+    assert!(refused["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("kaku approver enroll"));
+    let (_, st) = w.get(&format!("/api/jobs/{id}/approval"));
+    assert_eq!(
+        st["state"], "waiting",
+        "a refused approval changes nothing: {st}"
+    );
+    let (code, early) = w.post(&format!("/api/jobs/{id}/deliver"), json!({}));
+    assert_eq!(code, 409, "nothing is delivered: {early}");
+    // the facts the page shows say the key is required
+    let (_, cfg) = w.get("/api/privacy");
+    assert_eq!(cfg["approvals"]["signing_key_required"], true, "{cfg}");
+    // once a key is enrolled the "no key" refusal ends: the same request now asks for the signature instead
+    let approver = kk_evidence::keys::Signer::from_seed([33; 32]);
+    let (st, _) = admin(
+        &base,
+        &token,
+        "POST",
+        "/admin/approvers",
+        Some(
+            json!({"public_key": kk_evidence::b64::encode(&approver.public()), "label": "terminal"}),
+        ),
+    );
+    assert_eq!(st, 200);
+    let (code, needs) = admin(
+        &base,
+        &token,
+        "POST",
+        &format!("/admin/approvals/{aid}/approve"),
+        Some(json!({"ack": &digest[..12]})),
+    );
+    assert_ne!(needs["error"]["code"], "NO_APPROVER", "{needs}");
+    assert!(
+        code >= 400,
+        "an approval without the signature is still refused: {needs}"
+    );
+    assert_eq!(needs["error"]["code"], "PROOF_REQUIRED", "{needs}");
+}
