@@ -1,6 +1,6 @@
-// The first visit: three short steps, each skippable, then the first review. What is remembered is only that this was shown.
+// The first visit: four short steps, each skippable, then the first review. What is remembered is only that this was shown.
 
-export const STEPS = ["language", "theme", "setup"] as const;
+export const STEPS = ["language", "theme", "privacy", "setup"] as const;
 export type Step = (typeof STEPS)[number];
 
 const KEY = "kk-welcome";

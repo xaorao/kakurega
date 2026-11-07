@@ -1,13 +1,15 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "../api";
 import { LOCALES, locale, setLocale, t, type Locale } from "../i18n";
+import { modelKey } from "../privacy";
 import { chooseTheme, theme, type Theme } from "../theme";
 import { markWelcomeDone, nextStep, setupSummary, STEPS, type Step } from "../welcome";
 
-/** The first visit. Three steps, each of which can be skipped, and all of which can be skipped at once. Nothing here is required. */
+/** The first visit. Four steps, each of which can be skipped, and all of which can be skipped at once. Nothing here is required. */
 export function Welcome(props: { onDone: () => void }) {
   const [step, setStep] = createSignal<Step>("language");
   const [ready] = createResource(() => api.readiness().catch(() => null));
+  const [facts] = createResource(() => api.privacy().catch(() => null));
   let heading: HTMLHeadingElement | undefined;
   const finish = () => {
     markWelcomeDone(typeof localStorage === "undefined" ? undefined : localStorage);
@@ -45,6 +47,17 @@ export function Welcome(props: { onDone: () => void }) {
             )}
           </For>
         </fieldset>
+      </Show>
+      <Show when={step() === "privacy"}>
+        <Show when={facts()} fallback={<p role="status">{t("welcome.privacy.unknown")}</p>}>
+          {(f) => (
+            <>
+              <p role="status">{t(modelKey(f().model), { name: f().model.name ?? f().model.id, host: f().model.host ?? "" })}</p>
+              <p class="muted">{t("privacy.model.sent")}</p>
+              <p class="muted">{t("welcome.privacy.more")}</p>
+            </>
+          )}
+        </Show>
       </Show>
       <Show when={step() === "setup"}>
         <p role="status">

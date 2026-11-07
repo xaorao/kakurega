@@ -155,10 +155,10 @@ try {
   await page.goto(link);
   await page.getByRole("heading", { name: "Review a project" }).waitFor({ timeout: 15000 });
   check("pairing link signs the browser in and clears the code from the address bar", !page.url().includes("pair="));
-  // the first visit: three skippable steps, then the first review
+  // the first visit: four skippable steps, then the first review
   const welcome = page.getByRole("region", { name: "Which language do you want?" });
   await welcome.waitFor();
-  check("a first visit opens with a welcome that counts its steps and says each can be skipped", (await welcome.innerText()).includes("Step 1 of 3. Every step can be skipped."));
+  check("a first visit opens with a welcome that counts its steps and says each can be skipped", (await welcome.innerText()).includes("Step 1 of 4. Every step can be skipped."));
   await page.screenshot({ path: join(shots, "01a-welcome.png") });
   await welcome.getByRole("radio", { name: "हिन्दी" }).check();
   check("choosing a language in the welcome applies it at once", (await page.evaluate(() => document.documentElement.lang)) === "hi");
@@ -169,6 +169,11 @@ try {
   await page.getByRole("radio", { name: "Dark" }).check();
   check("choosing a theme applies it at once", (await page.evaluate(() => document.documentElement.getAttribute("data-theme"))) === "dark");
   await page.getByRole("button", { name: "Skip this step" }).click();
+  await page.getByRole("region", { name: "Where does your data go?" }).waitFor();
+  const dataStep = await page.getByRole("region", { name: "Where does your data go?" }).innerText();
+  check("the third step says where the model runs and what is sent to it, before anything is asked", dataStep.includes("Step 3 of 4") && dataStep.includes("Test mode: replies are scripted and nothing is sent to any model.") && dataStep.includes("What goes to the model:") && dataStep.includes("Where your data goes"), dataStep.slice(0, 300));
+  await axeCheck(page, "welcome data step");
+  await page.getByRole("button", { name: "Next" }).click();
   await page.getByRole("region", { name: "Is this computer ready?" }).waitFor();
   await page.getByText("Everything needed is in place.").waitFor();
   check("the last step says whether the machine is ready, and has no Skip this step (it is the end)", (await page.getByRole("button", { name: "Skip this step" }).count()) === 0);

@@ -21,7 +21,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 
 | Key | Capability | Matrix decision | Status | Evidence or reason |
 |---|---|---|---|---|
-| B-W01 | First-run flow | BUILD (own flow). ADAPT the idea of a data-handling step. No tour library | PARTIAL | pairing then the readiness screen with one-click repair is the first run (e2e); no data-handling step (see W02) |
+| B-W01 | First-run flow | BUILD (own flow). ADAPT the idea of a data-handling step. No tour library | BUILT | four-step first run with a data-handling step from the live privacy facts (welcome.test, browser 360 checks, 3 mutants; web-shell.md) |
 | B-W02 | Data-handling disclosure | IMPROVE. Do not ship a hand-written policy table; derive the panel from the kernel's route | BUILT | Where your data goes page, generated from live facts (privacy-page.md; sv77-sv81, pv01-pv03, e2e 231/231) |
 | B-W03 | Consent sentence before an irreversible action | ADAPT the pattern as a component used on release approval and on any route downgrade; copy | BUILT | forget asks twice and says it is permanent; release approval shows exact files and needs the typed digest (e2e) |
 | B-W04 | Pairing | EXCLUDE reuse; keep ours. QR/camera pairing for a phone is EXCLUDED until `hosted-mode.md` | KEPT | ours kept (pairing link and one-time code) |
@@ -284,7 +284,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 
 | Key | Capability | Matrix decision | Status | Evidence or reason |
 |---|---|---|---|---|
-| G-GH-01 | Five skippable first-run steps in about two minutes: language, invite  | IMPROVE: add language, name and theme steps, each skippable, plus the readiness screen of  | PARTIAL | first-visit welcome: language, theme, setup summary, each skippable, Escape skips, remembered; no name/invite/wallet by design; unaided-stranger test needs a person (web-shell.md) |
+| G-GH-01 | Five skippable first-run steps in about two minutes: language, invite  | IMPROVE: add language, name and theme steps, each skippable, plus the readiness screen of  | BUILT | equivalent first run (language, theme, where data goes, readiness); invite/wallet/name steps excluded, no such concepts (web-shell.md) |
 | G-GH-02 | Account is a wallet; "Create one for me" makes a seed phrase and an ac | EXCLUDE: a chain wallet as identity is a funds risk and not our model (project rule on see | EXCLUDED | a chain wallet as identity is a funds risk |
 | G-GH-03 | First chat is blocked by a "Top up 0G funds" dialog | KEEP (their weakness, our opening). Do not add any gate before the first local review | KEPT | no top-up gate before the first chat |
 | G-GH-04 | Sign-in by email code or Google, then onboarding; vault key issued by  | EXCLUDE a server-issued key (a backend that issues the key defeats local-first). Hosted mo | EXCLUDED | no server-issued key |

@@ -25,9 +25,10 @@ test("wl01 the welcome is shown until it is finished or skipped, and storage tha
 });
 
 test("wl02 the steps run in order and end after the last", () => {
-  assert.deepEqual([...STEPS], ["language", "theme", "setup"]);
+  assert.deepEqual([...STEPS], ["language", "theme", "privacy", "setup"]);
   assert.equal(nextStep("language"), "theme");
-  assert.equal(nextStep("theme"), "setup");
+  assert.equal(nextStep("theme"), "privacy");
+  assert.equal(nextStep("privacy"), "setup");
   assert.equal(nextStep("setup"), null);
   assert.equal(nextStep("nope"), null);
 });
