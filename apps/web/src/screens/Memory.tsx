@@ -413,9 +413,10 @@ export function Memory() {
   const [fOrigin, setFOrigin] = createSignal("");
   const [fProject, setFProject] = createSignal("");
   const [fUnused, setFUnused] = createSignal(false);
-  const filters = createMemo(() => ({ q: query(), level: fLevel(), origin: fOrigin(), project: fProject(), unused: fUnused() }));
-  const filtering = () => !!(fLevel() || fOrigin() || fProject() || fUnused());
-  const [items, { refetch: refetchItems }] = createResource(filters, (f) => api.memories(f.q.trim() || undefined, { level: f.level || undefined, origin: f.origin || undefined, project: f.project || undefined, unused: f.unused }).then((r) => r.memories));
+  const [fEnding, setFEnding] = createSignal(false);
+  const filters = createMemo(() => ({ q: query(), level: fLevel(), origin: fOrigin(), project: fProject(), unused: fUnused(), ending: fEnding() }));
+  const filtering = () => !!(fLevel() || fOrigin() || fProject() || fUnused() || fEnding());
+  const [items, { refetch: refetchItems }] = createResource(filters, (f) => api.memories(f.q.trim() || undefined, { level: f.level || undefined, origin: f.origin || undefined, project: f.project || undefined, unused: f.unused, ending: f.ending }).then((r) => r.memories));
   const [stats, { refetch: refetchStats }] = createResource(() => api.memoryStats().catch(() => null));
   const refetch = async () => {
     await Promise.all([refetchItems(), refetchStats()]);
@@ -496,7 +497,8 @@ export function Memory() {
             </select>
           </Show>
           <label class="choice"><input type="checkbox" checked={fUnused()} onChange={(e) => setFUnused(e.currentTarget.checked)} /> {t("mem.filter.unused")}</label>
-          <Show when={filtering()}><button type="button" onClick={() => { setFLevel(""); setFOrigin(""); setFProject(""); setFUnused(false); }}>{t("mem.filter.reset")}</button></Show>
+          <label class="choice"><input type="checkbox" checked={fEnding()} onChange={(e) => setFEnding(e.currentTarget.checked)} /> {t("mem.filter.ending")}</label>
+          <Show when={filtering()}><button type="button" onClick={() => { setFLevel(""); setFOrigin(""); setFProject(""); setFUnused(false); setFEnding(false); }}>{t("mem.filter.reset")}</button></Show>
         </div>
       </section>
       <Similar onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />

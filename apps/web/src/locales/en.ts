@@ -167,6 +167,7 @@ export const en = {
   "mem.filter.project": "Project",
   "mem.filter.any": "Any",
   "mem.filter.unused": "Never given to a model",
+  "mem.filter.ending": "Ending within 14 days",
   "mem.filter.reset": "Show all",
   "mem.origin.owner": "Written by you",
   "mem.origin.imported": "Imported",

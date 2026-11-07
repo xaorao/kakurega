@@ -495,6 +495,27 @@ try {
     await glance.getByLabel("Never given to a model").check();
     await page.waitForFunction((n) => document.querySelectorAll(".mem").length === n, shownNotes);
     await glance.getByLabel("Never given to a model").uncheck();
+    // a note that ends in three days shows up under "Ending within 14 days", and the glance counts it
+    const made = await page.evaluate(async () => {
+      const sess = await (await fetch("/api/session", { credentials: "same-origin" })).json();
+      const r = await fetch("/api/memories", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json", "x-kk-csrf": sess.csrf }, body: JSON.stringify({ text: "The launch discount ends on Friday", level: "internal", valid_to: Math.floor(Date.now() / 1000) + 3 * 86400 }) });
+      return { status: r.status, id: (await r.json()).id, csrf: sess.csrf };
+    });
+    check("a note that ends in three days could be added for the check", made.status === 201, String(made.status));
+    await page.reload();
+    await page.getByRole("region", { name: "Your notes at a glance" }).getByRole("status").waitFor();
+    const glance2 = page.getByRole("region", { name: "Your notes at a glance" });
+    check("the glance counts the note that ends soon", (await glance2.getByRole("status").innerText()).includes("1 ending within 14 days"), await glance2.getByRole("status").innerText());
+    await glance2.getByLabel("Ending within 14 days").check();
+    await page.waitForFunction(() => document.querySelectorAll(".mem").length === 1);
+    check("the Ending within 14 days filter keeps only the note that ends soon", (await page.locator(".mem").innerText()).includes("launch discount"));
+    await glance2.getByRole("button", { name: "Show all" }).click();
+    check("Show all also clears the ending filter", !(await glance2.getByLabel("Ending within 14 days").isChecked()));
+    await page.waitForFunction((n) => document.querySelectorAll(".mem").length === n + 1, shownNotes);
+    const gone = await page.evaluate(async (m) => { const r = await fetch(`/api/memories/${m.id}/forget`, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json", "x-kk-csrf": m.csrf }, body: "{}" }); await r.text(); return r.status; }, made);
+    check("the helper note was forgotten again so the rest of the journey is unchanged", gone === 200, String(gone));
+    await page.reload();
+    await page.waitForFunction((n) => document.querySelectorAll(".mem").length === n, shownNotes);
     await glance.getByLabel("Where it came from").selectOption("");
     await axeCheck(page, "memory with the notes at a glance");
   }

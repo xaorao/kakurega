@@ -12066,7 +12066,7 @@ fn sv123_the_notes_can_be_counted_and_filtered_by_level_origin_project_and_use()
     for body in [
         json!({"text": "Acme pays invoices on the 20th", "level": "internal"}),
         json!({"text": "Beta ships on mondays", "level": "confidential", "project": "payments-service"}),
-        json!({"text": "Gamma board vote in May", "level": "restricted"}),
+        json!({"text": "Gamma board vote in May", "level": "restricted", "valid_to": now + 60 * 86_400}),
         json!({"text": "Delta promo price ends soon", "level": "internal", "valid_to": now + 3 * 86_400}),
     ] {
         assert_eq!(w.post("/api/memories", body).0, 201);
@@ -12156,6 +12156,16 @@ fn sv123_the_notes_can_be_counted_and_filtered_by_level_origin_project_and_use()
     assert!(
         !unused.contains(&"Acme pays invoices on the 20th".to_string()),
         "the note that reached the model is not unused"
+    );
+    assert_eq!(
+        texts("?ending=1"),
+        ["Delta promo price ends soon"],
+        "only the note that ends within 14 days"
+    );
+    assert_eq!(
+        texts("?ending=1&level=restricted"),
+        Vec::<String>::new(),
+        "and it combines with the other filters"
     );
     assert_eq!(texts("?level=public"), Vec::<String>::new());
     // bad filters are refused with a reason and nothing is listed

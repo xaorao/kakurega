@@ -1219,6 +1219,8 @@ struct MemoryQuery {
     project: Option<String>,
     /// `1`: only notes that have never reached a model.
     unused: Option<u8>,
+    /// `1`: only notes that end within 14 days.
+    ending: Option<u8>,
 }
 
 impl MemoryQuery {
@@ -1227,6 +1229,7 @@ impl MemoryQuery {
             || self.origin.is_some()
             || self.project.is_some()
             || self.unused == Some(1)
+            || self.ending == Some(1)
     }
 }
 
@@ -1321,6 +1324,12 @@ async fn memories_list(axum::Extension(svc): Svc, Query(q): Query<MemoryQuery>) 
                             .is_none_or(|p| r.memory.project.as_deref() == Some(p))
                     })
                     .filter(|r| q.unused != Some(1) || !used.contains(&r.memory.id))
+                    .filter(|r| {
+                        q.ending != Some(1)
+                            || r.memory
+                                .valid_to
+                                .is_some_and(|t| t > now() && t <= now() + 14 * 86_400)
+                    })
                     .take(shown)
                     .collect()
             } else {

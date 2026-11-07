@@ -169,6 +169,7 @@ export const hi: Record<keyof typeof en, string> = {
   "mem.filter.project": "प्रोजेक्ट",
   "mem.filter.any": "कोई भी",
   "mem.filter.unused": "कभी किसी मॉडल को नहीं दिया गया",
+  "mem.filter.ending": "14 दिनों में समाप्त",
   "mem.filter.reset": "सब दिखाएँ",
   "mem.origin.owner": "आपने लिखा",
   "mem.origin.imported": "आयात किया गया",
