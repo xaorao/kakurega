@@ -76,3 +76,7 @@ See the notes in the engineering record: `verify_*` read only inside the agent's
 
 Every tool call an agent makes is written to the owner's signed event log as `mcp.call`: the tool's name and how it ended (`ok`, `error` or `refused`). The arguments and the answers are never recorded, and a tool name the agent made up is recorded as `unknown`. At most 120 calls a minute are written one by one; more are counted in an `mcp.calls_limited` entry, so an agent cannot fill the log. If the service cannot take the record, the call still answers. The owner sees these entries under Activity.
 
+
+## Call limits
+
+One connection may make 60 tool calls in any rolling minute and start 4 reviews in any rolling hour. A call over the limit is not run: the agent gets a tool error saying to try again in a number of seconds, and the refusal costs nothing against the limit. Lower either with `--calls-per-minute N` or `--starts-per-hour N` (1 to 1000). The limits count one connection's calls only; the owner's own use of the web page or terminal is not counted.

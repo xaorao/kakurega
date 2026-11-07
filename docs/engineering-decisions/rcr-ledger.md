@@ -165,7 +165,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | D-D30 | Sampling | EXCLUDE. | EXCLUDED | not offered |
 | D-D31 | Roots | EXCLUDE as authority. Folders stay governed by the owner's allowed roots (`allowed_dir`, V | EXCLUDED | folders stay with the owner's allow list |
 | D-D32 | Authorization and transports | BUILD: (a) a scoped agent token enforced by the existing companion guard, not a second aut | PARTIAL | stdio only; owner leases scope the acting tools (agent-leases.md); no token transport |
-| D-D33 | Rate and size limits | BUILD: per-token budget (for example 60 calls per minute, 4 `start_review` per hour, respo | PARTIAL | use and time limits per lease (sv63-sv67); no per-minute budget |
+| D-D33 | Rate and size limits | BUILD: per-token budget (for example 60 calls per minute, 4 `start_review` per hour, respo | PARTIAL | per-connection budget 60 calls/min and 4 starts/hour, lowerable by flags; bd01, mc90; no response-size cap or per-token budget across connections (docs/mcp.md) |
 | D-D34 | Extensions: skills over MCP, apps | BUILD later: one static skill `kakurega-safe-review` so agents learn the flow. EXCLUDE App | LATER | static skill for agents |
 | D-D35 | Audit and evidence for MCP calls | BUILD: every call becomes a signed-log event `mcp.call` with tool, token id, argument dige | BUILT | every tool call is a signed `mcp.call` log event with the tool and outcome only; floods are counted (sv75, sv76, mc30-mc33, live 47/47) |
 | D-D36 | Testing and conformance tools | ADAPT: add conformance run and Inspector CLI smoke to CI; keep the canary scan; add the sc | BUILT | official-SDK client interop, framing tests, live run (mc tests, mcp_live.py 43/43) |

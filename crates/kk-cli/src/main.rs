@@ -33,7 +33,7 @@ Usage:
   kaku chat MESSAGE|- [--json]      one message to the private assistant (nothing is kept); these commands cannot approve anything
   kaku pair                         print a new one-time pairing link for the browser
   kaku approve [APPROVAL-ID]        review the exact release in this terminal and approve it
-  kaku mcp [--read-only] [--allow TOOL,TOOL] [--leased]   speak MCP on stdin and stdout for an agent client (cannot approve; --read-only hides the tools that start a review or ask for an approval; --allow gives the agent exactly the tools named)
+  kaku mcp [--read-only] [--allow TOOL,TOOL] [--leased]   speak MCP on stdin and stdout for an agent client (cannot approve; --read-only hides the tools that start a review or ask for an approval; --allow gives the agent exactly the tools named; --calls-per-minute N and --starts-per-hour N lower the call limits, which are 60 and 4)
   kaku telegram pair | kaku telegram [--clear-webhook]   notifications and counts on your phone (never contents); --clear-webhook removes a webhook that blocks polling
   kaku approver enroll|list|revoke   key that signs approvals (required once enrolled)
   kaku mcp install --client claude-code|claude-desktop|cursor|generic --print [limits]   print the exact text that makes an MCP client start this server (full path, your limits, no token; it never edits the client)

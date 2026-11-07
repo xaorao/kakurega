@@ -378,3 +378,53 @@ fn mc06_read_only_mode_hides_and_refuses_every_tool_that_changes_anything() {
         "the environment switch does the same"
     );
 }
+
+#[test]
+fn mc90_a_connection_that_calls_too_fast_is_told_to_wait_and_the_flags_are_checked() {
+    let lines: Vec<String> = (1..=5).map(|i| call(i, "overview", json!({}))).collect();
+    let r = session_args(&["--calls-per-minute", "3"], &lines);
+    assert_eq!(r.len(), 5);
+    // calls are answered as they finish, so only the counts are fixed: three go through, two are told to wait
+    let limited: Vec<_> = r
+        .iter()
+        .filter(|v| {
+            v["result"]["content"][0]["text"]
+                .as_str()
+                .is_some_and(|t| t.contains("rate limit"))
+        })
+        .collect();
+    assert_eq!(limited.len(), 2, "{r:?}");
+    for v in limited {
+        assert_eq!(v["result"]["isError"], true, "{v}");
+        assert!(v["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("seconds"));
+        assert!(
+            v.get("error").is_none(),
+            "a limit is a tool error, not a protocol error"
+        );
+    }
+    // a limit applies to calls, not to the protocol's other requests
+    let mut more = vec![json!({"jsonrpc": "2.0", "id": 90, "method": "ping"}).to_string()];
+    more.extend(lines);
+    let r = session_args(&["--calls-per-minute", "1"], &more);
+    assert_eq!(r[0]["result"], json!({}));
+    // values must be numbers in range, otherwise the server does not start
+    for bad in [
+        ["--calls-per-minute", "0"],
+        ["--calls-per-minute", "abc"],
+        ["--starts-per-hour", "1001"],
+        ["--starts-per-hour", "-3"],
+    ] {
+        let status = Command::new(env!("CARGO_BIN_EXE_kaku"))
+            .args(["mcp"])
+            .args(bad)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(2), "{bad:?}");
+    }
+}

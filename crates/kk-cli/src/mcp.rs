@@ -226,6 +226,71 @@ pub struct Ctx {
     leased: bool,
     /// The last few verification reports this connection produced, so an agent can hand over a link instead of copying text.
     reports: std::sync::Mutex<std::collections::VecDeque<(String, &'static str, String)>>,
+    /// How fast this connection may call tools.
+    budget: std::sync::Mutex<Budget>,
+}
+
+/// Calls per rolling minute and reviews started per rolling hour that one connection may make. An agent in a loop, or one that
+/// was talked into one, runs out and is told when to try again; the owner's own work through the web page or terminal is not
+/// counted here.
+pub const CALLS_PER_MINUTE: usize = 60;
+pub const STARTS_PER_HOUR: usize = 4;
+
+#[derive(Debug)]
+pub struct Budget {
+    calls_per_minute: usize,
+    starts_per_hour: usize,
+    calls: std::collections::VecDeque<std::time::Instant>,
+    starts: std::collections::VecDeque<std::time::Instant>,
+}
+
+impl Budget {
+    pub fn new(calls_per_minute: usize, starts_per_hour: usize) -> Budget {
+        Budget {
+            calls_per_minute,
+            starts_per_hour,
+            calls: Default::default(),
+            starts: Default::default(),
+        }
+    }
+
+    /// Takes one call from the budget, or says after how many seconds there is room again. Refused calls cost nothing.
+    pub fn admit(&mut self, now: std::time::Instant, tool: &str) -> Result<(), u64> {
+        let minute = std::time::Duration::from_secs(60);
+        let hour = std::time::Duration::from_secs(3600);
+        while self
+            .calls
+            .front()
+            .is_some_and(|t| now.saturating_duration_since(*t) >= minute)
+        {
+            self.calls.pop_front();
+        }
+        while self
+            .starts
+            .front()
+            .is_some_and(|t| now.saturating_duration_since(*t) >= hour)
+        {
+            self.starts.pop_front();
+        }
+        let wait = |oldest: Option<&std::time::Instant>, span: std::time::Duration| {
+            oldest.map_or(1, |t| {
+                span.saturating_sub(now.saturating_duration_since(*t))
+                    .as_secs()
+                    + 1
+            })
+        };
+        if self.calls.len() >= self.calls_per_minute {
+            return Err(wait(self.calls.front(), minute));
+        }
+        if tool == "start_review" && self.starts.len() >= self.starts_per_hour {
+            return Err(wait(self.starts.front(), hour));
+        }
+        self.calls.push_back(now);
+        if tool == "start_review" {
+            self.starts.push_back(now);
+        }
+        Ok(())
+    }
 }
 
 impl Ctx {
@@ -243,7 +308,14 @@ impl Ctx {
             allow: None,
             leased: false,
             reports: Default::default(),
+            budget: std::sync::Mutex::new(Budget::new(CALLS_PER_MINUTE, STARTS_PER_HOUR)),
         }
+    }
+
+    /// Replaces the default limits (used by tests and by an owner who wants them tighter).
+    pub fn with_budget(self, calls_per_minute: usize, starts_per_hour: usize) -> Ctx {
+        *self.budget.lock().expect("lock") = Budget::new(calls_per_minute, starts_per_hour);
+        self
     }
 
     /// Makes the tools that act depend on the owner's leases.
@@ -735,6 +807,15 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
                 report(admin, "unknown", "refused", None);
                 return err(-32602, "unknown tool");
             }
+            let admitted = ctx
+                .budget
+                .lock()
+                .expect("lock")
+                .admit(std::time::Instant::now(), name);
+            if let Err(wait) = admitted {
+                report(admin, name, "refused", traceparent(&p));
+                return ok(fail(&format!("rate limit: this connection has used its calls for now; try again in {wait} seconds")));
+            }
             let args = p
                 .get("arguments")
                 .cloned()
@@ -982,7 +1063,10 @@ fn unknown_option(args: &[String]) -> Option<String> {
     let mut i = 0;
     while i < args.len() {
         let a = args[i].as_str();
-        if a == "--data-dir" || a == "--allow" {
+        if matches!(
+            a,
+            "--data-dir" | "--allow" | "--calls-per-minute" | "--starts-per-hour"
+        ) {
             let value = args.get(i + 1).map(String::as_str).unwrap_or("");
             if value.is_empty() || value.starts_with("--") {
                 return Some(format!("{a} needs a value"));
@@ -1042,7 +1126,7 @@ pub fn run(args: &[String]) -> u8 {
     }
     if let Some(why) = unknown_option(args) {
         eprintln!(
-            "{why}\nusage: kaku mcp [--read-only] [--allow TOOL,TOOL] [--leased] [--data-dir DIR]"
+            "{why}\nusage: kaku mcp [--read-only] [--allow TOOL,TOOL] [--leased] [--calls-per-minute N] [--starts-per-hour N] [--data-dir DIR]"
         );
         return 2;
     }
@@ -1060,6 +1144,26 @@ pub fn run(args: &[String]) -> u8 {
                 eprintln!("{why}");
                 return 2;
             }
+        }
+    }
+    let limit = |flag: &str, default: usize| -> Result<usize, String> {
+        match crate::flag(&args, flag) {
+            None => Ok(default),
+            Some(v) => v
+                .parse::<usize>()
+                .ok()
+                .filter(|n| (1..=1000).contains(n))
+                .ok_or(format!("{flag} takes a number from 1 to 1000")),
+        }
+    };
+    match (
+        limit("--calls-per-minute", CALLS_PER_MINUTE),
+        limit("--starts-per-hour", STARTS_PER_HOUR),
+    ) {
+        (Ok(c), Ok(h)) => ctx = ctx.with_budget(c, h),
+        (Err(why), _) | (_, Err(why)) => {
+            eprintln!("{why}");
+            return 2;
         }
     }
     let ctx = std::sync::Arc::new(ctx);
@@ -1446,5 +1550,61 @@ mod forwarded_error_tests {
             "no reason given"
         );
         assert_eq!(forwardable(&json!({})), "no reason given");
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn bd01_calls_per_minute_and_reviews_per_hour_are_limited_and_come_back_with_time() {
+        let t0 = Instant::now();
+        let mut b = Budget::new(3, 2);
+        for i in 0..3 {
+            assert!(b.admit(t0 + Duration::from_secs(i), "overview").is_ok());
+        }
+        let wait = b
+            .admit(t0 + Duration::from_secs(10), "overview")
+            .unwrap_err();
+        assert!(
+            (49..=51).contains(&wait),
+            "told when the oldest call leaves the minute: {wait}"
+        );
+        // a refused call costs nothing: after the oldest call is a minute old there is room for exactly one
+        assert!(b.admit(t0 + Duration::from_secs(60), "overview").is_ok());
+        assert!(b.admit(t0 + Duration::from_secs(60), "overview").is_err());
+        // starting a review has its own, tighter limit within the same calls
+        let mut b = Budget::new(100, 2);
+        assert!(b.admit(t0, "start_review").is_ok());
+        assert!(b.admit(t0 + Duration::from_secs(1), "start_review").is_ok());
+        let wait = b
+            .admit(t0 + Duration::from_secs(2), "start_review")
+            .unwrap_err();
+        assert!((3597..=3600).contains(&wait), "{wait}");
+        assert!(
+            b.admit(t0 + Duration::from_secs(2), "review_status")
+                .is_ok(),
+            "other tools are not held by the start limit"
+        );
+        assert!(
+            b.admit(t0 + Duration::from_secs(300), "start_review")
+                .is_err(),
+            "a start is still counted five minutes later"
+        );
+        assert!(b
+            .admit(t0 + Duration::from_secs(3600), "start_review")
+            .is_ok());
+        // a refused start does not use up a call either
+        let mut b = Budget::new(2, 1);
+        assert!(b.admit(t0, "start_review").is_ok());
+        assert!(b.admit(t0, "start_review").is_err());
+        assert!(
+            b.admit(t0, "overview").is_ok(),
+            "the refused start left a call free"
+        );
+        // a clock that goes backwards never panics
+        assert!(Budget::new(1, 1).admit(t0, "overview").is_ok());
     }
 }
