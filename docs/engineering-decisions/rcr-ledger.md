@@ -136,7 +136,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | D-D01 | Lifecycle and version negotiation | ADAPT via SDK. Restrict `supported_protocol_versions` to 2025-06-18 and later. | BUILT | the client's protocol version is echoed when supported (mcp.rs; mc tests) |
 | D-D02 | Capability declaration | ADAPT via SDK (`ServerCapabilities::builder()`). Declare only what exists. | BUILT | tools only; listChanged false (mcp.rs) |
 | D-D03 | Server `instructions` | KEEP static. EXCLUDE any dynamic content, ever. | BUILT | static text (mcp.rs) |
-| D-D04 | Server identity, titles, icons | ADAPT via SDK; add a small PNG `data:` icon. | PARTIAL | name, title and version; no icon |
+| D-D04 | Server identity, titles, icons | ADAPT via SDK; add a small PNG `data:` icon. | BUILT | serverInfo name, title, version and an inline 64x64 PNG icon; ic01 and the client replay, 3 mutants (docs/mcp-clients.md) |
 | D-D05 | Error model | IMPROVE; SDK does it. | BUILT | typed JSON-RPC errors; unknown tool, bad params, too large (mc tests) |
 | D-D06 | Message size and framing | IMPROVE: SDK with a 1 MiB cap; wrap the transport to emit `-32600` for the dropped id (ext | BUILT | bounded line reader with a size error (mc tests) |
 | D-D07 | Concurrency, ordering, timeouts | ADAPT via SDK; set explicit connect and read timeouts (for example 10 s and 30 s) on the ` | BUILT | running-call registry, duplicate ids refused, drain at end of input (mc18-mc21) |

@@ -113,6 +113,21 @@ fn mk01_every_known_client_opening_succeeds_and_the_answers_have_the_shapes_clie
                 c.name
             );
         }
+        // the icon is a small inline PNG, so a client that shows icons needs no request and one that does not know the field ignores it
+        let icon = &init["serverInfo"]["icons"][0];
+        let src = icon["src"].as_str().unwrap_or("");
+        assert!(
+            src.starts_with("data:image/png;base64,") && src.len() < 2048,
+            "{}: {}",
+            c.name,
+            src.len()
+        );
+        assert_eq!(
+            (icon["mimeType"].as_str(), icon["sizes"][0].as_str()),
+            (Some("image/png"), Some("64x64")),
+            "{}",
+            c.name
+        );
         assert!(
             init["serverInfo"]["name"].is_string() && init["capabilities"]["tools"].is_object(),
             "{}",

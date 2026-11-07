@@ -59,6 +59,9 @@ pub fn catalog_digest(list: &Value) -> String {
 /// The longest a `review_events` call may wait for something new. Clients commonly give up on a tool call after about thirty seconds.
 pub const MAX_WAIT_SECONDS: u64 = 25;
 
+/// A 64 by 64 PNG shown by clients that display a server's icon: a dark square, a green ring and a pale dot. 314 bytes, drawn for this program.
+const SERVER_ICON_PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABAUlEQVR42u3byw3CMBBF0VdGRBFURWEUyCIdkF0EkRAWmZ+ZG8lb4ncMIbbH0su1LJdnh6bj1SX4R4jWAF3D7wgAAAAAAAAAENOu99tQ+yuA0dBZGKoaPApC1YN7Q2im8B4Iig4e+VkhAJ4djUCQZ/ion1ZJgMiHawpA1v+29X01U3iP+wMwW3jrfpgAZM3kwgGqjL5lfzTr6Fv1KQ1gXR9vrTyA1df/GPwsxNl+KXL0v4W3RACgGsBo+F8QAAAAAB6CAGQAtHoRav8qzGSI6TALIiyJsSgKABsjbI2xOcr2OAUSlMhQJEWZHIWSlMpSLA0AAAAAAACnRzk7zCnyyYNvqwm+xlmBr7AAAAAASUVORK5CYII=";
+
 pub fn tools() -> Value {
     let error_out = json!({"type": "object", "properties": {"error": {"type": "string"}}, "required": ["error"]});
     let _ = error_out;
@@ -752,7 +755,7 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
                 Some(_) => return err(-32602, "protocolVersion must be text"),
             };
             ok(
-                json!({"protocolVersion": requested, "_meta": {"com.kakurega/catalogDigest": catalog_digest(&tools())}, "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false, "subscribe": false}, "prompts": {"listChanged": false}}, "serverInfo": {"name": "kakurega", "title": "Kakurega", "version": env!("CARGO_PKG_VERSION")}, "instructions": "Counts and statuses only. Source text, memory text and findings are never returned. Approvals happen in a window or terminal the owner controls."}),
+                json!({"protocolVersion": requested, "_meta": {"com.kakurega/catalogDigest": catalog_digest(&tools())}, "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false, "subscribe": false}, "prompts": {"listChanged": false}}, "serverInfo": {"name": "kakurega", "title": "Kakurega", "version": env!("CARGO_PKG_VERSION"), "icons": [{"src": format!("data:image/png;base64,{SERVER_ICON_PNG}"), "mimeType": "image/png", "sizes": ["64x64"]}]}, "instructions": "Counts and statuses only. Source text, memory text and findings are never returned. Approvals happen in a window or terminal the owner controls."}),
             )
         }
         "ping" => ok(json!({})),
@@ -1625,5 +1628,73 @@ mod budget_tests {
         );
         // a clock that goes backwards never panics
         assert!(Budget::new(1, 1).admit(t0, "overview").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::*;
+
+    #[test]
+    fn ic01_the_server_icon_is_a_real_64_by_64_png_with_a_valid_checksum_on_every_chunk() {
+        let png = {
+            // plain base64 decoding of the constant, without a dependency
+            const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            let mut out = Vec::new();
+            let mut acc = 0u32;
+            let mut bits = 0;
+            for c in SERVER_ICON_PNG.bytes().filter(|c| *c != b'=') {
+                acc = (acc << 6) | A.iter().position(|x| *x == c).expect("base64") as u32;
+                bits += 6;
+                if bits >= 8 {
+                    bits -= 8;
+                    out.push((acc >> bits) as u8);
+                    acc &= (1 << bits) - 1;
+                }
+            }
+            out
+        };
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+        assert!(png.len() < 1024, "{}", png.len());
+        // IHDR says 64 by 64, 8-bit RGBA; every chunk's length fits and its CRC is right
+        assert_eq!(&png[12..16], b"IHDR");
+        assert_eq!(
+            (
+                u32::from_be_bytes(png[16..20].try_into().unwrap()),
+                u32::from_be_bytes(png[20..24].try_into().unwrap())
+            ),
+            (64, 64)
+        );
+        assert_eq!((png[24], png[25]), (8, 6));
+        let crc = |data: &[u8]| {
+            let mut c = 0xffff_ffffu32;
+            for b in data {
+                c ^= u32::from(*b);
+                for _ in 0..8 {
+                    c = if c & 1 == 1 {
+                        0xedb8_8320 ^ (c >> 1)
+                    } else {
+                        c >> 1
+                    };
+                }
+            }
+            !c
+        };
+        let mut at = 8;
+        let mut kinds = Vec::new();
+        while at < png.len() {
+            let len = u32::from_be_bytes(png[at..at + 4].try_into().unwrap()) as usize;
+            let body = &png[at + 4..at + 8 + len];
+            let sum = u32::from_be_bytes(png[at + 8 + len..at + 12 + len].try_into().unwrap());
+            assert_eq!(
+                crc(body),
+                sum,
+                "chunk {:?}",
+                String::from_utf8_lossy(&body[..4])
+            );
+            kinds.push(String::from_utf8_lossy(&body[..4]).to_string());
+            at += 12 + len;
+        }
+        assert_eq!(kinds, ["IHDR", "IDAT", "IEND"]);
     }
 }
