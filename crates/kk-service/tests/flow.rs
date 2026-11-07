@@ -11598,6 +11598,10 @@ fn sv119_with_the_approver_required_a_release_cannot_be_approved_until_a_key_is_
         None,
     );
     let digest = shown["digest"].as_str().unwrap().to_string();
+    assert_eq!(
+        shown["approver_missing"], true,
+        "the shell is told before it asks the owner: {shown}"
+    );
     let (code, refused) = admin(
         &base,
         &token,
@@ -11641,6 +11645,17 @@ fn sv119_with_the_approver_required_a_release_cannot_be_approved_until_a_key_is_
         Some(json!({"ack": &digest[..12]})),
     );
     assert_ne!(needs["error"]["code"], "NO_APPROVER", "{needs}");
+    let (_, shown2) = admin(
+        &base,
+        &token,
+        "GET",
+        &format!("/admin/approvals/{aid}"),
+        None,
+    );
+    assert_eq!(
+        shown2["approver_missing"], false,
+        "once a key is enrolled nothing is missing: {shown2}"
+    );
     assert!(
         code >= 400,
         "an approval without the signature is still refused: {needs}"

@@ -6756,6 +6756,7 @@ async fn admin_show(axum::Extension(svc): Svc, UrlPath(aid): UrlPath<String>) ->
             d["statement"] = svc.statement_json(&aid);
             d["statement_canonical"] = svc.statement_canonical(&aid);
             d["requires_proof"] = json!(svc.approvers_enrolled());
+            d["approver_missing"] = json!(svc.approver_required_but_missing());
             d["disclosure"] = svc.disclosure_json(&job, &s).0;
             d["job"] = json!(job);
             d["digest"] = json!(digest);

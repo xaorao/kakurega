@@ -52,6 +52,21 @@ test("ds04 approval needs the human yes AND the operating system proof; either m
   }
 });
 
+test("ds04b with approvals closed to anything but an enrolled key and none enrolled, the owner is told instead of asked", async () => {
+  const calls = [];
+  let asked = 0;
+  const poll = createApprover({ client: fakeClient([{ ...sample, approver_missing: true }], calls), confirm: async () => (asked++, true), authenticate: async () => true });
+  const out = await poll();
+  assert.deepEqual(out.map((o) => o.outcome), ["needs_enrolled_key"]);
+  assert.equal(asked, 0, "no confirmation is asked for something that cannot succeed");
+  assert.equal(calls.length, 0, "nothing is posted: the approval stays waiting");
+  assert.deepEqual(await poll(), [], "and it is reported once, not every second");
+  // when nothing is missing the flag is false, and the ordinary journey runs
+  const calls2 = [];
+  const poll2 = createApprover({ client: fakeClient([{ ...sample, id: "ap2", approver_missing: false }], calls2), confirm: async () => true, authenticate: async () => true });
+  assert.equal((await poll2())[0].outcome, "approved");
+});
+
 test("ds05 an approval is shown once, and a hostile id is never used in a path", async () => {
   const calls = [];
   let asked = 0;

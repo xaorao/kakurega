@@ -185,7 +185,15 @@ async function start() {
   };
   Object.defineProperty(signer, "ownsDialog", { get: () => enclaveSigner() !== null });
   const pollOnce = createApprover({ client: { get: (p) => current.client.get(p), post: (p, b) => current.client.post(p, b) }, confirm, authenticate, sign: signer });
-  setInterval(() => pollOnce().catch(() => {}), 1000);
+  setInterval(
+    () =>
+      pollOnce()
+        .then((done) => {
+          if (done.some((d) => d.outcome === "needs_enrolled_key")) tell("A release is waiting, but approving needs a signing key", "Run `kaku approver enroll` once in a terminal, then approve the release there with `kaku approve`.");
+        })
+        .catch(() => {}),
+    1000,
+  );
 }
 
 // One window, one companion: a second launch only brings the first one forward.

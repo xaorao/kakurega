@@ -31,6 +31,11 @@ export function createApprover({ client, confirm, authenticate, sign = null, see
       const detail = await client.get(`/admin/approvals/${item.id}`);
       if (detail.status !== 200) continue;
       const a = detail.json;
+      if (a.approver_missing === true) {
+        // this installation only takes signed approvals and no key is enrolled: asking the owner would end in a refusal, so say so instead
+        done.push({ id: item.id, outcome: "needs_enrolled_key" });
+        continue;
+      }
       const yes = a.requires_proof && sign?.ownsDialog ? true : await confirm(describe(a), a);
       if (!yes) {
         await client.post(`/admin/approvals/${item.id}/deny`);
