@@ -95,3 +95,8 @@
 - Built: after `/open`, `/findings`, `/fixes`, `/applyfix N`, `/undofix N`, `/release`, `/approve`, `/deliver` and `/forgetreview`, Tab finishes the review id being typed from the reviews the screen already lists (no request is made): one match completes it and adds the space, several fill in what they share and are listed with their state and who each is for (at most 12), no match changes nothing; the start of an id only, any case; the number after `/applyfix` is never taken for an id. Folder completion after `/review` (A18) and command-name completion were already built.
 - Evidence: kk-tui tu69 (single, several, none, other commands untouched, the number order, case, no request sent, a long list cut), 4 mutants caught after one case was added, plus one checked by hand on the line that bounds the list.
 - Not built: completing a note id for `/correct` and `/forget`, project names for `/project`, recipient names, completion inside the web page's composer (it has its own slash list). A16 stays PARTIAL.
+
+## Quiet mode for reviews (ledger A-A30, verbosity)
+- Built: `/quiet` toggles whether the steps of a running review (import, protect, review, patterns, ...) are printed. In quiet mode only how it ended is shown, with the next step; failures and their reason are never hidden. `/quiet` again shows every step. The setting lasts for the session.
+- Evidence: kk-tui tu70 (steps hidden, the end told, a failure told, toggled back), 2 mutants caught.
+- Not built: a persistent setting, a middle level, folding one chosen card, card memory limits. A30 stays PARTIAL.

@@ -4324,3 +4324,45 @@ fn tu69_tab_finishes_a_review_id_after_the_commands_that_take_one_and_lists_the_
         "a long list is cut"
     );
 }
+
+#[test]
+fn tu70_quiet_hides_the_steps_of_a_review_but_not_how_it_ended_and_toggles_back() {
+    let mut app = booted();
+    let r = enter(&mut app, "/quiet");
+    assert!(r.is_empty() && app.quiet && text(&app).contains("only how it ended"));
+    let r = enter(&mut app, "/review payments for acme-audit");
+    app.handle(ok(&r[0], 202, json!({"id": "job-4"})));
+    let t = app.handle(Event::Tick);
+    let ev = |n: usize, state: &str| {
+        let all = [
+            json!({"stage": "queued", "detail": ""}),
+            json!({"stage": "import", "detail": "reading"}),
+            json!({"stage": "review", "detail": "agent working"}),
+            json!({"stage": "finished", "detail": ""}),
+        ];
+        json!({"state": state, "recipient": "acme-audit", "note": "", "events": all[..n].to_vec()})
+    };
+    app.handle(ok(&t[0], 200, ev(2, "running")));
+    let t = app.handle(Event::Tick);
+    app.handle(ok(&t[0], 200, ev(3, "running")));
+    let t = app.handle(Event::Tick);
+    app.handle(ok(&t[0], 200, ev(4, "ready")));
+    let all = text(&app);
+    assert!(
+        !all.contains("job-4  import") && !all.contains("job-4  review"),
+        "steps are hidden: {all}"
+    );
+    assert!(
+        all.contains("job-4 finished: ready") && all.contains("/approve"),
+        "the end is still told"
+    );
+    // an error is never hidden
+    let r = enter(&mut app, "/review payments for acme-audit");
+    app.handle(ok(&r[0], 202, json!({"id": "job-5"})));
+    let t = app.handle(Event::Tick);
+    app.handle(ok(&t[0], 200, json!({"state": "failed", "recipient": "x", "note": "the model stopped", "events": [{"stage": "queued", "detail": ""}]})));
+    assert!(text(&app).contains("It stopped: the model stopped"));
+    // toggling back shows the steps again
+    enter(&mut app, "/quiet");
+    assert!(!app.quiet && text(&app).contains("Every step of a review is shown"));
+}

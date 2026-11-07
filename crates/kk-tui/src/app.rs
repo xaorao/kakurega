@@ -252,6 +252,8 @@ pub struct App {
     pub clipboard_request: Option<String>,
     /// Whether long cards are shown whole (Ctrl-O). Off by default: a card of more than 24 lines shows its first 10 and says how many more.
     pub expand_all: bool,
+    /// When set, the steps of a running review are not printed; its end still is.
+    pub quiet: bool,
     /// Set by Tab after /review: the folder to list, the line it was asked for, what comes before the last name, the part typed.
     path_request: Option<(String, String, String, String)>,
     /// Set when a review finished or stopped; the screen loop takes it and rings the bell once.
@@ -362,6 +364,7 @@ impl App {
             editor_request: None,
             clipboard_request: None,
             expand_all: false,
+            quiet: false,
             path_request: None,
             attention: None,
             focused: None,
@@ -1574,6 +1577,18 @@ impl App {
                 self.pop_stash();
                 Vec::new()
             }
+            Command::Quiet => {
+                self.quiet = !self.quiet;
+                self.say(
+                    Kind::Info,
+                    if self.quiet {
+                        "Quiet: a review shows only how it ended. /quiet again shows every step."
+                    } else {
+                        "Every step of a review is shown. /quiet shows only how it ended."
+                    },
+                );
+                Vec::new()
+            }
             Command::Keep => {
                 if self.session.is_some() {
                     self.say(Kind::Info, "This conversation is already kept.");
@@ -2510,7 +2525,7 @@ impl App {
                 if seen.is_some() {
                     for e in events.iter().skip(from) {
                         let stage = clean(e["stage"].as_str().unwrap_or(""));
-                        if stage == "queued" || stage == "finished" {
+                        if stage == "queued" || stage == "finished" || self.quiet {
                             continue;
                         }
                         self.say(

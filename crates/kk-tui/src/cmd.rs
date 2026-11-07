@@ -92,6 +92,7 @@ pub enum Command {
     Clear,
     Keep,
     Stash(bool),
+    Quiet,
     ClearHistory,
     Proof(Option<String>),
     Gateway,
@@ -155,6 +156,7 @@ pub const NAMES: &[&str] = &[
     "newchat",
     "project",
     "similar",
+    "quiet",
     "quit",
 ];
 
@@ -197,6 +199,7 @@ pub fn describe(name: &str) -> &'static str {
         "clear" => "start a fresh conversation",
         "keep" => "save this conversation in the encrypted store",
         "stash" => "put the line you are typing aside (Ctrl-S does the same)",
+        "quiet" => "show only the end of a review, not each step; run again for every step",
         "pop" => "bring back the most recently stashed line",
         "clearhistory" => "forget the saved command history",
         "proof" => "hardware proof of a NEAR confidential model",
@@ -315,6 +318,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "clear" => Ok(Command::Clear),
         "keep" => Ok(Command::Keep),
         "stash" => Ok(Command::Stash(true)),
+        "quiet" => Ok(Command::Quiet),
         "pop" => Ok(Command::Stash(false)),
         "clearhistory" => Ok(Command::ClearHistory),
         "gateway" => Ok(Command::Gateway),
