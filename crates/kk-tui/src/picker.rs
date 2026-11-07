@@ -46,6 +46,8 @@ pub struct Picker {
     pub only_project: bool,
     /// Said once when the list widened by itself.
     pub scope_note: Option<String>,
+    /// The last messages of the conversation the owner expanded with the Right arrow: its id and the lines shown under its row.
+    pub preview: Option<(String, Vec<String>)>,
 }
 
 /// Days since 1970-01-01 to a calendar date (proleptic Gregorian), after Howard Hinnant's published algorithm.
@@ -88,6 +90,7 @@ impl Picker {
             project: None,
             only_project: false,
             scope_note: None,
+            preview: None,
         }
     }
 
@@ -154,6 +157,7 @@ impl Picker {
             self.scope_note = None;
             self.selected = 0;
             self.armed = None;
+            self.preview = None;
         }
     }
 
@@ -173,6 +177,7 @@ impl Picker {
         }
         self.selected = (self.selected as i64 + delta).clamp(0, n - 1) as usize;
         self.armed = None;
+        self.preview = None;
     }
 
     pub fn type_char(&mut self, c: char) {
@@ -180,11 +185,13 @@ impl Picker {
             self.filter.push(c);
             self.selected = 0;
             self.armed = None;
+            self.preview = None;
         }
     }
 
     pub fn backspace(&mut self) {
         self.filter.pop();
+        self.preview = None;
         self.selected = 0;
         self.armed = None;
     }

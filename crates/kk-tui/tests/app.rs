@@ -4950,3 +4950,126 @@ fn tu79_the_picker_starts_on_this_projects_conversations_and_tab_widens_it_to_al
     );
     assert_eq!(picker_rows(&d), ["c-1"]);
 }
+
+#[test]
+fn tu80_right_arrow_previews_the_last_messages_of_the_chosen_conversation_and_moving_or_left_closes_it(
+) {
+    let list = json!({"sessions": [
+        {"id": "c-1", "title": "payments retry", "updated": 50, "turns": 6, "project": null},
+        {"id": "c-2", "title": "billing export", "updated": 40, "turns": 2, "project": null},
+    ]});
+    let mut a = booted();
+    a.chat_project = None;
+    a.jobs.push(kk_tui::app::JobRow {
+        id: "job-1".into(),
+        recipient: "acme".into(),
+        state: "ready".into(),
+    });
+    open_picker_with(&mut a, list.clone());
+    let r = a.handle(key(KeyCode::Right));
+    assert_eq!(
+        (r[0].method, r[0].path.as_str()),
+        (Method::Get, "/api/sessions/c-1")
+    );
+    let turns: Vec<Value> = (1..=6).map(|n| json!({"role": if n % 2 == 1 { "user" } else { "assistant" }, "content": format!("message number {n}\twith\u{1b}[31m a control")})).collect();
+    a.handle(ok(&r[0], 200, json!({"id": "c-1", "turns": turns})));
+    let (lines, _) = render(&a, 110, 24, false);
+    let screen = lines.join("\n");
+    assert!(
+        screen.contains("assistant: message number 6") && screen.contains("you: message number 3"),
+        "{screen}"
+    );
+    assert!(
+        !screen.contains("message number 2") && !screen.contains("\u{1b}"),
+        "only the last four, with controls stripped: {screen}"
+    );
+    // moving closes it; a second Right on the same row opens it again, and Right again closes it
+    a.handle(key(KeyCode::Down));
+    assert!(!render(&a, 110, 24, false)
+        .0
+        .join("\n")
+        .contains("message number 6"));
+    a.handle(key(KeyCode::Up));
+    let r = a.handle(key(KeyCode::Right));
+    a.handle(ok(&r[0], 200, json!({"id": "c-1", "turns": []})));
+    assert!(render(&a, 110, 24, false)
+        .0
+        .join("\n")
+        .contains("(no messages)"));
+    assert!(a.handle(key(KeyCode::Right)).is_empty());
+    assert!(
+        !render(&a, 110, 24, false)
+            .0
+            .join("\n")
+            .contains("(no messages)"),
+        "Right on an open preview closes it"
+    );
+    // Left closes
+    let r = a.handle(key(KeyCode::Right));
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"id": "c-1", "turns": [{"role": "user", "content": "hello there"}]}),
+    ));
+    assert!(render(&a, 110, 24, false)
+        .0
+        .join("\n")
+        .contains("you: hello there"));
+    a.handle(key(KeyCode::Left));
+    assert!(!render(&a, 110, 24, false)
+        .0
+        .join("\n")
+        .contains("hello there"));
+    // an answer that arrives after the owner moved to another row is dropped
+    let r = a.handle(key(KeyCode::Right));
+    a.handle(key(KeyCode::Down));
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"id": "c-1", "turns": [{"role": "user", "content": "late answer"}]}),
+    ));
+    assert!(!render(&a, 110, 24, false)
+        .0
+        .join("\n")
+        .contains("late answer"));
+    // a failure is shown in the list and the picker stays open
+    let r = a.handle(key(KeyCode::Right));
+    a.handle(ok(
+        &r[0],
+        500,
+        json!({"error": {"code": "STORE", "message": "could not read the conversation"}}),
+    ));
+    assert!(
+        matches!(a.mode, Mode::Picker(_))
+            && render(&a, 110, 24, false)
+                .0
+                .join("\n")
+                .contains("could not read the conversation")
+    );
+    // a long message is cut with an ellipsis
+    let mut b = booted();
+    b.chat_project = None;
+    open_picker_with(&mut b, list);
+    let r = b.handle(key(KeyCode::Right));
+    b.handle(ok(
+        &r[0],
+        200,
+        json!({"id": "c-1", "turns": [{"role": "user", "content": "w".repeat(300)}]}),
+    ));
+    let screen = render(&b, 150, 24, false).0.join("\n");
+    assert!(
+        screen.contains(&format!("you: {}…", "w".repeat(100)))
+            && !screen.contains(&"w".repeat(101)),
+        "{screen}"
+    );
+    // reviews have no preview
+    let mut c = booted();
+    c.chat_project = None;
+    c.jobs.push(kk_tui::app::JobRow {
+        id: "job-1".into(),
+        recipient: "acme".into(),
+        state: "ready".into(),
+    });
+    open_picker_with(&mut c, json!({"sessions": []}));
+    assert!(c.handle(key(KeyCode::Right)).is_empty());
+}

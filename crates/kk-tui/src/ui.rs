@@ -374,7 +374,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
 
     let footer = match &app.mode {
         Mode::Confirm(c) => c.prompt.clone(),
-        Mode::Picker(_) => "Up/Down choose · Enter opens · type to filter · Ctrl-D twice forgets a chat · Esc closes".to_string(),
+        Mode::Picker(_) => "Up/Down choose · Right previews · Enter opens · type to filter · Ctrl-D twice forgets a chat · Esc closes".to_string(),
         Mode::Approval(_) => {
             "Type the digest prefix · Enter approves · Esc or Ctrl-C refuses".to_string()
         }
@@ -534,9 +534,26 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
                 Style::default()
             };
             rows.push((Line::from(Span::styled(text, style)), n == p.selected));
+            if let Some((pid, lines)) = &p.preview {
+                if *pid == it.id {
+                    for l in lines {
+                        rows.push((
+                            Line::from(Span::styled(
+                                format!("      {l}"),
+                                Style::default().add_modifier(Modifier::DIM),
+                            )),
+                            false,
+                        ));
+                    }
+                }
+            }
         }
         let height = parts[1].height as usize;
-        let skip = selected_row.saturating_sub(height.saturating_sub(1));
+        // the lines of an expanded preview sit under the chosen row and stay in view with it
+        let extra = p.preview.as_ref().map_or(0, |(_, l)| l.len());
+        let skip = (selected_row + extra)
+            .saturating_sub(height.saturating_sub(1))
+            .min(selected_row);
         let shown: Vec<Line> = if rows.is_empty() {
             let msg = if p.loading {
                 "Loading…"

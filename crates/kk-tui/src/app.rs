@@ -117,6 +117,8 @@ enum Intent {
     ResumeLast(bool),
     /// Branch the named kept conversation and open the branch: the list is read first to know how many messages it has.
     ResumeFork(String),
+    /// The last messages of a kept conversation, shown under its row in the picker.
+    PickerPreview(String),
     Sessions,
     OpenChat(String),
     ForgetChat(String),
@@ -1018,6 +1020,27 @@ impl App {
             KeyCode::PageUp => p.move_by(-8),
             KeyCode::Backspace => p.backspace(),
             KeyCode::Tab => p.toggle_scope(),
+            KeyCode::Left => p.preview = None,
+            KeyCode::Right => {
+                let Some(it) = p.current().cloned() else {
+                    return Vec::new();
+                };
+                if it.kind != ItemKind::Chat {
+                    return Vec::new();
+                }
+                if p.preview.as_ref().is_some_and(|(id, _)| *id == it.id) {
+                    p.preview = None;
+                    return Vec::new();
+                }
+                p.preview = None;
+                return vec![self.req(
+                    Intent::PickerPreview(it.id.clone()),
+                    false,
+                    Method::Get,
+                    &format!("/api/sessions/{}", it.id),
+                    None,
+                )];
+            }
             KeyCode::Char('d') if ctrl => match p.delete_press() {
                 Delete::Armed(_) => {
                     p.error =
@@ -4178,6 +4201,50 @@ impl App {
                         Vec::new()
                     }
                 }
+            }
+            Intent::PickerPreview(id) => {
+                if let Mode::Picker(p) = &mut self.mode {
+                    // an answer that arrives after the owner moved on belongs to a row that is no longer chosen
+                    if p.current().is_some_and(|it| it.id == id) {
+                        if ok {
+                            let turns = body["turns"].as_array().cloned().unwrap_or_default();
+                            let mut lines: Vec<String> = turns
+                                .iter()
+                                .filter_map(|t| {
+                                    let who = match t["role"].as_str()? {
+                                        "user" => "you",
+                                        "assistant" => "assistant",
+                                        _ => return None,
+                                    };
+                                    let text = clean(t["content"].as_str().unwrap_or(""));
+                                    let text: String =
+                                        text.split_whitespace().collect::<Vec<_>>().join(" ");
+                                    let cut: String = text.chars().take(100).collect();
+                                    Some(format!(
+                                        "{who}: {cut}{}",
+                                        if text.chars().count() > 100 {
+                                            "…"
+                                        } else {
+                                            ""
+                                        }
+                                    ))
+                                })
+                                .collect();
+                            let skip = lines.len().saturating_sub(4);
+                            lines.drain(..skip);
+                            if lines.is_empty() {
+                                lines.push("(no messages)".into());
+                            }
+                            p.preview = Some((id, lines));
+                        } else {
+                            p.error = Some(format!(
+                                "Could not read that conversation. {}",
+                                err_text(status, &body)
+                            ));
+                        }
+                    }
+                }
+                Vec::new()
             }
             Intent::ResumeFork(id) => {
                 if !ok {
