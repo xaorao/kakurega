@@ -256,6 +256,8 @@ pub struct App {
     pub quiet: bool,
     /// The notes the last /memory listing showed (id and the start of the text), so Tab can finish a note id.
     pub notes_seen: Vec<(String, String)>,
+    /// Project names the last /memory listing showed, for Tab after /project.
+    pub projects_seen: Vec<String>,
     /// Set by Tab after /review: the folder to list, the line it was asked for, what comes before the last name, the part typed.
     path_request: Option<(String, String, String, String)>,
     /// Set when a review finished or stopped; the screen loop takes it and rings the bell once.
@@ -368,6 +370,7 @@ impl App {
             expand_all: false,
             quiet: false,
             notes_seen: Vec::new(),
+            projects_seen: Vec::new(),
             path_request: None,
             attention: None,
             focused: None,
@@ -547,6 +550,65 @@ impl App {
                     })
                     .collect();
                 Some((done, Some(list)))
+            }
+        }
+    }
+
+    /// Tab after `/project` (a project name the last /memory listing showed, or `none`) and after `for` in `/review FOLDER for WHO` (a
+    /// recipient an earlier review in this window already used). The line is left alone when nothing matches.
+    fn name_completion(&self) -> Option<(Option<String>, Option<Vec<String>>)> {
+        let rest = self.input.strip_prefix('/')?;
+        let (name, args) = rest.split_once(' ')?;
+        let (head, partial, candidates): (String, &str, Vec<String>) = match name {
+            "project" if !args.contains(' ') => {
+                let mut c = self.projects_seen.clone();
+                c.push("none".into());
+                (format!("/{name} "), args, c)
+            }
+            "review" => {
+                let at = args.rfind(' ').map_or(0, |i| i + 1);
+                let (before, partial) = args.split_at(at);
+                if !before.trim_end().ends_with(" for") && before.trim() != "for" {
+                    return None;
+                }
+                let mut c: Vec<String> = self
+                    .jobs
+                    .iter()
+                    .map(|j| j.recipient.clone())
+                    .filter(|r| !r.is_empty())
+                    .collect();
+                c.sort();
+                c.dedup();
+                (format!("/{name} {before}"), partial, c)
+            }
+            _ => return None,
+        };
+        let want = partial.to_ascii_lowercase();
+        let hits: Vec<&String> = candidates
+            .iter()
+            .filter(|c| c.to_ascii_lowercase().starts_with(&want))
+            .collect();
+        match hits.as_slice() {
+            [] => Some((None, None)),
+            [one] => Some((Some(format!("{head}{one}")), None)),
+            many => {
+                let first = many[0];
+                let mut common = first.chars().count();
+                for m in many {
+                    common = common.min(
+                        first
+                            .chars()
+                            .zip(m.chars())
+                            .take_while(|(a, b)| a.eq_ignore_ascii_case(b))
+                            .count(),
+                    );
+                }
+                let done = (common > partial.chars().count())
+                    .then(|| format!("{head}{}", first.chars().take(common).collect::<String>()));
+                Some((
+                    done,
+                    Some(many.iter().take(12).map(|s| s.to_string()).collect()),
+                ))
             }
         }
     }
@@ -1337,14 +1399,18 @@ impl App {
                 if let Some(c) = cmd::complete(&self.input) {
                     self.input = c;
                     self.cursor = self.input.chars().count();
-                } else if let Some(c) = self.job_completion().or_else(|| self.note_completion()) {
+                } else if let Some(c) = self
+                    .job_completion()
+                    .or_else(|| self.note_completion())
+                    .or_else(|| self.name_completion())
+                {
                     // a review id after a command that takes one: finished from the reviews this screen already knows
                     if let Some(done) = c.0 {
                         self.input = done;
                         self.cursor = self.input.chars().count();
                     }
                     if let Some(list) = c.1 {
-                        self.push(Kind::Info, Some("Reviews"), list);
+                        self.push(Kind::Info, Some("Matches"), list);
                     }
                 } else {
                     self.path_request = self.folder_request();
@@ -2884,6 +2950,15 @@ impl App {
                         ))
                     })
                     .collect();
+                let mut projects: Vec<String> = list
+                    .iter()
+                    .filter_map(|m| m["project"].as_str().map(clean))
+                    .filter(|p| !p.is_empty())
+                    .collect();
+                projects.sort();
+                projects.dedup();
+                projects.truncate(100);
+                self.projects_seen = projects;
                 if list.is_empty() {
                     self.say(
                         Kind::Info,

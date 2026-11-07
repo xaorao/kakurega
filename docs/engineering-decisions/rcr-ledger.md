@@ -392,7 +392,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | A-A13 | Remembered permissions and rule languages | see the section in matrix A | EXCLUDED | no remembered permissions for anything that releases data |
 | A-A14 | Approval requests under concurrency | see the section in matrix A | BUILT | approval view closes when decided elsewhere (0d4afbc) |
 | A-A15 | Slash command registry | see the section in matrix A | BUILT | slash command registry (cmd.rs) |
-| A-A16 | Completion popup and argument completion | see the section in matrix A | PARTIAL | command names, folders after /review, review ids after job commands, note ids after /correct and /forget complete with Tab; no project names or recipients (terminal-transcript.md) |
+| A-A16 | Completion popup and argument completion | see the section in matrix A | BUILT | Tab completes command names, folders, review ids, note ids, project names and recipients (tu69, tu72, tu73, mutation-checked); web composer has its own list (terminal-transcript.md) |
 | A-A17 | @-mentions and file references | see the section in matrix A | EXCLUDED | no @ references for now: the service must resolve files (matrix A fixed constraint) |
 | A-A18 | Path and directory completion | see the section in matrix A | PARTIAL | Tab after /review completes folders from /api/fs (service view, prefix, safe names, encoded, stale-proof); pty-verified; OpenCode directory-completion not read, other commands not covered (terminal-transcript.md) |
 | A-A19 | Multi-line composer and editing quality | see the section in matrix A | BUILT | multi-line composer (7d5a796) |

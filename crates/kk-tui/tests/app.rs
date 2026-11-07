@@ -4458,3 +4458,94 @@ fn tu72_tab_finishes_a_note_id_after_correct_and_forget_from_the_last_memory_lis
     let done = tab(&mut a, "/forget mem-");
     assert!(!done.chars().any(|c| c.is_control()), "{done:?}");
 }
+
+#[test]
+fn tu73_tab_finishes_a_project_name_after_project_and_a_recipient_after_for() {
+    let mut a = booted();
+    let tab = |app: &mut App, line: &str| {
+        app.input = line.to_string();
+        app.cursor = line.chars().count();
+        app.handle(key(KeyCode::Tab));
+        app.input.clone()
+    };
+    assert_eq!(
+        tab(&mut a, "/project no"),
+        "/project none",
+        "none is always a choice"
+    );
+    a.input.clear();
+    a.cursor = 0;
+    let r = enter(&mut a, "/memory");
+    a.handle(ok(&r[0], 200, json!({"memories": [
+        {"id": "m1", "level": "internal", "text": "a", "why": "w", "project": "payments-service"},
+        {"id": "m2", "level": "internal", "text": "b", "why": "w", "project": "payments-ledger"},
+        {"id": "m3", "level": "internal", "text": "c", "why": "w", "project": "web"},
+        {"id": "m4", "level": "internal", "text": "d", "why": "w", "project": "bad\u{1b}[2Jname"}]})));
+    assert_eq!(tab(&mut a, "/project w"), "/project web");
+    assert_eq!(tab(&mut a, "/project pay"), "/project payments-");
+    assert!(text(&a).contains("payments-service") && text(&a).contains("payments-ledger"));
+    assert_eq!(tab(&mut a, "/project zzz"), "/project zzz");
+    let hostile = tab(&mut a, "/project bad");
+    assert!(!hostile.chars().any(|c| c.is_control()), "{hostile:?}");
+    assert_eq!(
+        tab(&mut a, "/project web extra"),
+        "/project web extra",
+        "only the first word is a project"
+    );
+    // recipients come from the reviews already listed
+    a.jobs.push(kk_tui::app::JobRow {
+        id: "job-1".into(),
+        recipient: "acme-audit".into(),
+        state: "ready".into(),
+    });
+    a.jobs.push(kk_tui::app::JobRow {
+        id: "job-2".into(),
+        recipient: "acme-audit".into(),
+        state: "ready".into(),
+    });
+    a.jobs.push(kk_tui::app::JobRow {
+        id: "job-3".into(),
+        recipient: "beta-legal".into(),
+        state: "ready".into(),
+    });
+    a.jobs.push(kk_tui::app::JobRow {
+        id: "job-4".into(),
+        recipient: String::new(),
+        state: "running".into(),
+    });
+    assert_eq!(
+        tab(&mut a, "/review payments for ac"),
+        "/review payments for acme-audit",
+        "a recipient used twice is offered once"
+    );
+    assert_eq!(
+        tab(&mut a, "/review payments ac"),
+        "/review payments ac",
+        "without the word for, a recipient is never offered"
+    );
+    assert_eq!(
+        tab(&mut a, "/project eb"),
+        "/project eb",
+        "the start of a name, not any part of it"
+    );
+    assert_eq!(
+        tab(&mut a, "/review payments for b"),
+        "/review payments for beta-legal"
+    );
+    assert_eq!(
+        tab(&mut a, "/review payments for "),
+        "/review payments for ",
+        "two recipients and nothing typed: listed, nothing filled in"
+    );
+    assert!(text(&a).contains("acme-audit") && text(&a).contains("beta-legal"));
+    assert_eq!(
+        a.cards.last().unwrap().lines,
+        vec!["acme-audit".to_string(), "beta-legal".to_string()],
+        "no empty recipient, each once"
+    );
+    assert_eq!(
+        tab(&mut a, "/review payments fo"),
+        "/review payments fo",
+        "not after the word for: left to folder completion"
+    );
+}
