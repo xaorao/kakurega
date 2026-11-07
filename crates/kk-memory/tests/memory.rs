@@ -3902,3 +3902,73 @@ fn me81_every_recalled_note_has_one_origin_from_a_closed_set() {
     assert_eq!(origin_of("Delta"), "conversation");
     assert!(all.iter().all(|r| kk_memory::ORIGINS.contains(&r.origin())));
 }
+
+#[test]
+fn me82_notes_in_a_compartment_the_caller_lacks_cannot_crowd_visible_notes_out_of_the_candidates() {
+    let m = mem(&dir());
+    let hidden = Label::new(Level::Internal).with_compartment("finance");
+    for i in 0..600 {
+        id(m.remember(
+            i,
+            nm(
+                &format!("quarterly budget budget budget forecast number {i}"),
+                hidden.clone(),
+            ),
+        )
+        .unwrap());
+    }
+    id(
+        m.remember(700, nm("the budget meeting is on friday", internal()))
+            .unwrap(),
+    );
+    let r = m.recall("budget", &internal(), 800, 5).unwrap();
+    assert!(
+        r.iter()
+            .any(|x| x.memory.text == "the budget meeting is on friday"),
+        "the visible note is found: {r:?}"
+    );
+    assert!(
+        r.iter().all(|x| !x.memory.text.contains("quarterly")),
+        "no hidden note appears"
+    );
+    // with the compartment the hidden ones are visible again
+    let with = Label::new(Level::Internal).with_compartment("finance");
+    assert!(m
+        .recall("budget", &with, 800, 5)
+        .unwrap()
+        .iter()
+        .any(|x| x.memory.text.contains("quarterly")));
+    // a clearance holding only another compartment sees neither the hidden notes nor is confused by them
+    let other = Label::new(Level::Internal).with_compartment("legal");
+    let r = m.recall("budget", &other, 800, 5).unwrap();
+    assert!(
+        r.iter().all(|x| !x.memory.text.contains("quarterly"))
+            && r.iter().any(|x| x.memory.text.contains("friday"))
+    );
+}
+
+#[test]
+fn me83_hidden_notes_cannot_crowd_visible_ones_out_of_the_meaning_ranking_either() {
+    let m = mem_with(Concepts::new("c1"));
+    id(
+        m.remember(1, nm("Acme pays invoices on the fifteenth", internal()))
+            .unwrap(),
+    );
+    let hidden = Label::new(Level::Internal).with_compartment("finance");
+    for i in 0..1100 {
+        id(m.remember(
+            10 + i,
+            nm(&format!("Beta payment run number {i}"), hidden.clone()),
+        )
+        .unwrap());
+    }
+    // "bill" shares no word with the visible note: only the meaning ranking can find it
+    let r = m.recall("bill", &internal(), 5000, 5).unwrap();
+    assert!(
+        r.iter()
+            .any(|x| x.memory.text.contains("Acme pays invoices")),
+        "{:?}",
+        r.iter().map(|x| &x.memory.text).collect::<Vec<_>>()
+    );
+    assert!(r.iter().all(|x| !x.memory.text.contains("Beta")));
+}

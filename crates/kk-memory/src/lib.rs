@@ -175,7 +175,33 @@ pub fn register_index_function(
         kk_vault::rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC
             | kk_vault::rusqlite::functions::FunctionFlags::SQLITE_UTF8,
         |ctx| Ok(cjk::expand(&ctx.get::<String>(0).unwrap_or_default())),
+    )?;
+    // true when every compartment a note carries is among the ones allowed; the same rule as `Label::confidentiality_within`,
+    // applied while candidates are chosen so notes the caller may not see never take a place in the pool
+    conn.create_scalar_function(
+        "kk_comp_ok",
+        2,
+        kk_vault::rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC
+            | kk_vault::rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let note = ctx.get::<String>(0).unwrap_or_default();
+            let allowed = ctx.get::<String>(1).unwrap_or_default();
+            let ok = note
+                .split('\u{1f}')
+                .filter(|c| !c.is_empty())
+                .all(|c| allowed.split('\u{1f}').any(|a| a == c));
+            Ok(ok)
+        },
     )
+}
+
+fn allowed_compartments(clearance: &Label) -> String {
+    clearance
+        .compartments
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\u{1f}")
 }
 
 pub struct Memories {
@@ -1439,6 +1465,7 @@ impl Memories {
         let limit = limit.clamp(1, 50);
         let pool = fuse::pool_for_limit(limit).max(512);
         let level = level_to_int(clearance.level);
+        let allowed = allowed_compartments(clearance);
         let mut keyword: Vec<String> = Vec::new();
         let mut by_id: std::collections::HashMap<String, Row> = std::collections::HashMap::new();
         if let Some(q) = fts_query(query) {
@@ -1447,10 +1474,11 @@ impl Memories {
                  WHERE memories_fts MATCH ?1 AND m.status = 'active'
                    AND (m.valid_from IS NULL OR m.valid_from <= ?2) AND (m.valid_to IS NULL OR m.valid_to > ?2)
                    AND m.level <= ?4 AND (?5 = 1 OR m.project IS NULL OR m.project = ?6)
+                   AND kk_comp_ok(m.compartments, ?7)
                  ORDER BY bm25(memories_fts) LIMIT ?3",
             )?;
             let rows = st.query_map(
-                params![q, as_of, pool as i64, level, all, proj],
+                params![q, as_of, pool as i64, level, all, proj, allowed],
                 row_to_memory,
             )?;
             for r in rows {
@@ -1465,10 +1493,11 @@ impl Memories {
                  WHERE m.status = 'active'
                    AND (m.valid_from IS NULL OR m.valid_from <= ?1) AND (m.valid_to IS NULL OR m.valid_to > ?1)
                    AND m.level <= ?2 AND (?3 = 1 OR m.project IS NULL OR m.project = ?4)
+                   AND kk_comp_ok(m.compartments, ?5)
                  ORDER BY m.created_at DESC, m.id LIMIT 2000",
             )?;
             let rows: Vec<Row> = st
-                .query_map(params![as_of, level, all, proj], row_to_memory)?
+                .query_map(params![as_of, level, all, proj, allowed], row_to_memory)?
                 .collect::<Result<_, _>>()?;
             let texts: Vec<(String, &str)> = rows
                 .iter()
@@ -1483,7 +1512,7 @@ impl Memories {
             }
             ranked
         };
-        let by_meaning = self.rank_by_meaning(query, as_of, level, pool, scope, &mut by_id);
+        let by_meaning = self.rank_by_meaning(query, as_of, clearance, pool, scope, &mut by_id);
         let mut fused = fuse::fuse_weighted(
             &[keyword, similar, by_meaning],
             &[1.0, 1.0, self.meaning_weight],
@@ -1638,11 +1667,13 @@ impl Memories {
         &self,
         query: &str,
         as_of: i64,
-        level: i64,
+        clearance: &Label,
         pool: usize,
         scope: Scope,
         by_id: &mut std::collections::HashMap<String, Row>,
     ) -> Vec<String> {
+        let level = level_to_int(clearance.level);
+        let allowed = allowed_compartments(clearance);
         let (all, proj) = scope.params();
         const MAKE_PER_RECALL: usize = 24;
         let Some(e) = &self.embedder else {
@@ -1654,9 +1685,10 @@ impl Memories {
              WHERE m.status = 'active' AND m.text <> ''
                AND (m.valid_from IS NULL OR m.valid_from <= ?1) AND (m.valid_to IS NULL OR m.valid_to > ?1)
                AND m.level <= ?2 AND (?3 = 1 OR m.project IS NULL OR m.project = ?4)
+               AND kk_comp_ok(m.compartments, ?5)
              ORDER BY m.created_at DESC, m.id LIMIT 1000",
         ) else { return Vec::new() };
-        let Ok(rows) = st.query_map(params![as_of, level, all, proj], |r| {
+        let Ok(rows) = st.query_map(params![as_of, level, all, proj, allowed], |r| {
             let row = row_to_memory(r)?;
             let vm: Option<String> = r.get("vmodel")?;
             let vv: Option<Vec<u8>> = r.get("vvec")?;
