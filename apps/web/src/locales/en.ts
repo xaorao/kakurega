@@ -775,4 +775,10 @@ export const en = {
   "mem.forgotten.copies": "Still on this computer and not removed by this: {names}.",
   "mem.forgotten.more": "And {n} more.",
   "mem.forgotten.notReached": "Forgetting never reaches backups you made, capsules you delivered, copies you made elsewhere, or conversations you kept.",
+  "chat.export": "Export this conversation",
+  "chat.export.name": "File name (saved in this program's exports folder)",
+  "chat.export.go": "Write the file",
+  "chat.export.done": "Written to {path}. It is a plain file on this computer; nothing was sent anywhere.",
+  "chat.export.bad": "A name is 1 to 60 letters, digits, dots, dashes or underscores, not starting with a dot, and ending in .md or .txt if it has an extension.",
+  "chat.export.large": "This conversation is too large to export in one file (500 KB). Clear it, or export part of it from the terminal.",
 } as const;

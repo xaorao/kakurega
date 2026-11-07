@@ -1140,6 +1140,17 @@ try {
   await page.getByLabel("Your message").press("Enter");
   await page.locator(".msg.assistant").nth(answersNow).getByRole("button", { name: "Copy", exact: true }).waitFor();
   check("a message that only starts with a slash is sent like any other", (await page.getByText("/etc/passwd is a file").count()) >= 1);
+  // the conversation can be written to a file the owner names, inside the program's exports folder
+  await page.getByText("Export this conversation").click();
+  await page.getByLabel("File name (saved in this program's exports folder)").fill("bad name!");
+  await page.getByRole("button", { name: "Write the file" }).click();
+  await page.getByText("A name is 1 to 60 letters").waitFor();
+  check("a name the service would refuse is refused by the page first, with the rule", true);
+  await page.getByLabel("File name (saved in this program's exports folder)").fill("e2e-conversation");
+  await page.getByRole("button", { name: "Write the file" }).click();
+  await page.getByText(/Written to .*e2e-conversation\.md/).waitFor();
+  const exported = readFileSync(join(work, "data/exports/e2e-conversation.md"), "utf8");
+  check("the conversation is written to a plain file in the exports folder, as You and Assistant", exported.startsWith("You: ") && exported.includes("\n\nAssistant: ") && !exported.includes("Copy"), exported.slice(0, 80));
   // a file over the size limit is refused by the page, with its reason, before anything is sent
   await page.locator('input[type="file"]').setInputFiles([{ name: "huge.txt", mimeType: "text/plain", buffer: Buffer.alloc(8 * 1024 * 1024 + 1, 97) }]);
   await page.getByText("huge.txt is larger than 8 MB and was not sent.").waitFor();

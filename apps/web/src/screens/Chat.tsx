@@ -1,6 +1,7 @@
 import { againPoint, editPoint, type BranchPoint } from "../branching";
 import { carriesFiles, fileNotes, fingerprint, pastedFiles, room, sizeText, MAX_BYTES } from "../attach";
 import { findMatches, stepTo, type Match } from "../find";
+import { tooLarge, transcriptText, validExportName } from "../transcript";
 import { afterInput, closedAtStart, matches as slashMatches, onKey as slashKey, parseLine, slashQuery, validJob, type PopoverState, type SlashCommand } from "../slash";
 import { batch, createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { api, ApiError, streamChat, type AttachmentRead, type AttachmentSummary, type ChatHit, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
@@ -58,6 +59,21 @@ export function Chat() {
   const [reading, setReading] = createSignal("");
   const [shown, setShown] = createSignal<Record<string, AttachmentRead | "loading">>({});
   const [dragging, setDragging] = createSignal(false);
+  // writing this conversation to a file in the exports folder, by a name the owner chooses
+  const [exportName, setExportName] = createSignal("conversation");
+  const [exportNote, setExportNote] = createSignal("");
+  const exportNow = async () => {
+    setExportNote("");
+    const text = transcriptText(turns());
+    if (!validExportName(exportName())) return setExportNote(t("chat.export.bad"));
+    if (tooLarge(text)) return setExportNote(t("chat.export.large"));
+    try {
+      const r = await api.exportTranscript(exportName(), text);
+      setExportNote(t("chat.export.done", { path: r.path }));
+    } catch (e) {
+      setExportNote(e instanceof ApiError ? e.message : t("chat.error"));
+    }
+  };
   // slash commands: a list opens while the box holds only a slash and letters, and a typed command line runs instead of being sent
   const [slash, setSlash] = createSignal<PopoverState>(closedAtStart);
   const [slashNote, setSlashNote] = createSignal("");
@@ -1149,6 +1165,15 @@ export function Chat() {
           <Show when={recovered()}><span role="status" class="muted">{t("chat.recovered")}</span></Show>
         </div>
         <p class="muted">{t("chat.pick.hint")}</p>
+        <Show when={turns().length > 0}>
+          <details class="stack">
+            <summary>{t("chat.export")}</summary>
+            <label for="export-name">{t("chat.export.name")}</label>
+            <input id="export-name" value={exportName()} maxlength="60" onInput={(e) => setExportName(e.currentTarget.value)} />
+            <div class="actions"><button type="button" onClick={exportNow}>{t("chat.export.go")}</button></div>
+            <Show when={exportNote()}><p role="status" class="muted">{exportNote()}</p></Show>
+          </details>
+        </Show>
         <Show when={picking()}>
           <HistoryPicker
             entries={sentHistory()}
