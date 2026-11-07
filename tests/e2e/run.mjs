@@ -418,6 +418,28 @@ try {
   await page.getByText("Remembered.").waitFor();
   await page.getByText("Why: you asked to remember it: you added it in the Memory screen").first().waitFor();
   check("a remembered item is listed with the reason it is kept", (await page.getByText("Why: you asked to remember it: you added it in the Memory screen").count()) === 1);
+  {
+    // how often a note reached the model is shown beside it: none, one, several
+    const shows = async (uses) => {
+      await page.route("**/api/memories", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        const real = await route.fetch();
+        const body = await real.json();
+        body.memories.forEach((m) => { m.uses = uses; m.last_used = uses ? 1 : null; });
+        await route.fulfill({ response: real, json: body });
+      });
+      await page.reload();
+      await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
+      await page.locator(".mem").first().waitFor();
+      const text = await page.locator(".mem").first().innerText();
+      await page.unroute("**/api/memories");
+      return text;
+    };
+    const none = await shows(0), one = await shows(1), many = await shows(3);
+    check("a note shows how many answers it was used in: nothing for none, singular for one, a count for several", !none.includes("Used in") && one.includes("Used in 1 answer") && !one.includes("1 answers") && many.includes("Used in 3 answers"));
+    await page.reload();
+    await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
+  }
   await page.getByLabel("What should be remembered").fill("the password is hunter2hunter2");
   await page.getByRole("button", { name: "Remember" }).click();
   await page.getByRole("alert").filter({ hasText: "secrets are never stored" }).waitFor();
@@ -1671,8 +1693,9 @@ try {
   const importResult = await page.locator("#mem-import").innerText();
   check("importing saves the plain note and the instruction-like one (flagged), and refuses the secret", /5 saved \(1 of them read like instructions/.test(importResult) && /1 refused/.test(importResult), importResult.replace(/\n/g, " | ").slice(-200));
   await page.getByLabel("Search memories").fill("standup");
-  await page.locator(".mem").first().waitFor();
-  const imported = await page.locator(".mem").first().innerText();
+  // wait for the search result itself, not for whichever list was on screen first
+  await page.locator(".mem", { hasText: /standup/i }).first().waitFor();
+  const imported = await page.locator(".mem", { hasText: /standup/i }).first().innerText();
   check("the imported note is listed as untrusted with where it came from", /untrusted/i.test(imported) && imported.includes("imported from other-assistant"), imported.replace(/\n/g, " | ").slice(0, 160));
   check("importing used only the local service", requestOrigins.size === requestsBeforeImport);
   await axeCheck(page, "memory import card");

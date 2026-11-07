@@ -75,7 +75,7 @@ export interface Config {
 }
 export interface ReadinessCheck { id: string; label: string; ok: boolean; required?: boolean; detail: string; fix: string; repairable?: boolean; repair?: { state: "running" | "done" | "failed"; detail: string } }
 export interface Readiness { ready: boolean; checks: ReadinessCheck[] }
-export interface MemoryItem { id: string; text: string; why: string; untrusted: boolean; level: string; compartments: string[]; created_at: number; valid_to: number | null; source: string; project?: string | null }
+export interface MemoryItem { id: string; text: string; why: string; untrusted: boolean; level: string; compartments: string[]; created_at: number; valid_to: number | null; source: string; project?: string | null; uses?: number; last_used?: number | null }
 export interface MemoryVersion { id: string; text: string; reason: string; created_at: number; current: boolean }
 export interface Suggestion { id: string; text: string; why: string; level: string; untrusted: boolean }
 export interface LogEntry { seq: number; at: number; kind: string; subject: string; data: Record<string, string | number> }

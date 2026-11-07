@@ -160,6 +160,8 @@ export const en = {
   "mem.added": "Remembered.",
   "mem.known": "Already remembered.",
   "mem.why": "Why: {why}",
+  "mem.used.one": "Used in 1 answer",
+  "mem.used.many": "Used in {n} answers",
   "mem.source": "From {source}",
   "mem.untrusted": "from untrusted content",
   "mem.correct": "Correct",

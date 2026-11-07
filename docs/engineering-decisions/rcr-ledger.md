@@ -69,7 +69,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | B-W45 | Sharing and multi-user | EXCLUDE public links, accounts, roles and people pickers (cloud and multi-tenant). The cap | EXCLUDED | no public links, accounts or roles |
 | B-W46 | Original text versus what the model saw | ADAPT the concept and the isolation rule. IMPROVE: use the kernel's own redaction record ( | PARTIAL | notes used, summary and pages shown per answer (sv43, sv55); no raw-versus-sent view |
 | B-W47 | Per-answer provenance panel | IMPROVE: a "What went into this answer" popover listing the notes (with why-retrieved), fi | BUILT | Notes used for this answer with why and source (sv43, e2e) |
-| B-W48 | Memory UI | IMPROVE small: scope (workspace vs global), pin tier, "used in answers" count; keep the co | PARTIAL | project scope shown; merge and undo (me32-me40); no pin tier or used-in-answers count |
+| B-W48 | Memory UI | IMPROVE small: scope (workspace vs global), pin tier, "used in answers" count; keep the co | PARTIAL | project scope, merge and undo, and now a used-in-answers count (me84, sv116, browser); no pin tier (memory.md) |
 | B-W49 | Plan, todo and goal display | ADAPT later with the worker loop (`worker-loop.md`); a Build/Start button is a request to  | LATER | plan display waits for the worker loop |
 | B-W50 | Undo of an applied change | BUILD through the effect ledger (`effect-ledger.md`): undo is a new, logged reverse effect | BUILT | apply and undo of a fix with guards (ff01-ff14) |
 | B-W51 | Telemetry and third-party egress | EXCLUDE all telemetry, including opt-in. Make this a regression test, not a policy sentenc | BUILT | no telemetry; e2e checks that the page contacts only the local service |

@@ -1208,7 +1208,19 @@ async fn memories_list(axum::Extension(svc): Svc, Query(q): Query<MemoryQuery>) 
                 .and_then(|c| mem.held(&c))
                 .map(|h| h.len())
                 .unwrap_or(0);
-            Json(json!({"memories": items.iter().map(memory_json).collect::<Vec<_>>(), "held": held})).into_response()
+            let ids: Vec<String> = items.iter().map(|r| r.memory.id.clone()).collect();
+            let usage = mem.usage(&ids);
+            let list: Vec<Value> = items
+                .iter()
+                .map(|r| {
+                    let mut j = memory_json(r);
+                    let (uses, last) = usage.get(&r.memory.id).copied().unwrap_or((0, 0));
+                    j["uses"] = json!(uses);
+                    j["last_used"] = if uses > 0 { json!(last) } else { Value::Null };
+                    j
+                })
+                .collect();
+            Json(json!({"memories": list, "held": held})).into_response()
         }
         Err(e) => memory_error(e),
     }

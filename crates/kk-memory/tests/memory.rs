@@ -3972,3 +3972,24 @@ fn me83_hidden_notes_cannot_crowd_visible_ones_out_of_the_meaning_ranking_either
     );
     assert!(r.iter().all(|x| !x.memory.text.contains("Beta")));
 }
+
+#[test]
+fn me84_usage_counts_only_notes_that_reached_the_model_and_ignores_unknown_ids() {
+    let m = mem(&dir());
+    let a = id(m
+        .remember(1, nm("Acme pays invoices on the fifteenth", internal()))
+        .unwrap());
+    let b = id(m
+        .remember(2, nm("Beta ships on mondays", internal()))
+        .unwrap());
+    assert!(m.usage(&[a.clone(), b.clone()]).is_empty());
+    m.record_use(100, std::slice::from_ref(&a)).unwrap();
+    m.record_use(200, &[a.clone(), "no-such-note".into()])
+        .unwrap();
+    let u = m.usage(&[a.clone(), b.clone(), "no-such-note".into()]);
+    assert_eq!(u.get(&a), Some(&(2, 200)));
+    assert!(!u.contains_key(&b) && !u.contains_key("no-such-note"));
+    // forgetting a note removes its usage
+    m.forget(300, &a, "wrong").unwrap();
+    assert!(m.usage(&[a]).is_empty());
+}

@@ -11412,3 +11412,57 @@ fn sv115_the_expiring_list_shows_notes_ending_within_the_days_asked_and_clamps_t
     let anon = Web::new(_c.addr);
     assert_eq!(anon.get("/api/memories/expiring").0, 401);
 }
+
+#[test]
+fn sv116_the_note_list_says_how_often_each_note_reached_the_model() {
+    let (root, _repo) = repo_copy("usage");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    w.post(
+        "/api/memories",
+        json!({"text": "Acme pays invoices on the 20th"}),
+    );
+    w.post("/api/memories", json!({"text": "Beta ships on mondays"}));
+    let find = |v: &Value, needle: &str| {
+        v["memories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["text"].as_str().unwrap().contains(needle))
+            .unwrap()
+            .clone()
+    };
+    let (_, v) = w.get("/api/memories");
+    assert_eq!(find(&v, "Acme")["uses"], 0);
+    assert!(find(&v, "Acme")["last_used"].is_null());
+    for _ in 0..2 {
+        assert_eq!(
+            w.post(
+                "/api/chat",
+                json!({"message": "When does Acme pay invoices?"})
+            )
+            .0,
+            200
+        );
+    }
+    let (_, v) = w.get("/api/memories");
+    assert_eq!(find(&v, "Acme")["uses"], 2, "{v}");
+    assert!(find(&v, "Acme")["last_used"].as_i64().unwrap() > 0);
+    assert_eq!(
+        find(&v, "Beta")["uses"],
+        0,
+        "a note that did not reach the model is not counted"
+    );
+}

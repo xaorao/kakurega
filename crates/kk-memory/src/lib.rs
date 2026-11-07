@@ -1617,6 +1617,21 @@ impl Memories {
         Ok(())
     }
 
+    /// How many times each of these notes reached the model and when it last did (unix seconds); a note never used has no entry.
+    pub fn usage(&self, ids: &[String]) -> std::collections::HashMap<String, (u32, i64)> {
+        let mut out = std::collections::HashMap::new();
+        for id in ids.iter().take(500) {
+            if let Ok((uses, last)) = self.conn().query_row(
+                "SELECT uses, last_at FROM memory_use WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            ) {
+                out.insert(id.clone(), (uses.clamp(0, u32::MAX as i64) as u32, last));
+            }
+        }
+        out
+    }
+
     /// For tests: puts text into a stored note as an older detector would have let it in, and makes the store say that only that
     /// older detector has looked at it, so the next open checks it again.
     #[doc(hidden)]
