@@ -8,6 +8,7 @@ import { api, ApiError, streamChat, type AttachmentRead, type AttachmentSummary,
 import { t } from "../i18n";
 import { Markdown } from "../components/Markdown";
 import { HistoryPicker } from "../components/HistoryPicker";
+import { SentView } from "../components/SentView";
 import { draftKey, exchangeWasSaved, opensHistoryPicker, forgetDraft, forgetSent, historyKey, historyStep, idleHistory, loadDraft, rememberSent, retagSent, saveDraft, sentHistory, stopsReply } from "../composer";
 import { meterLine, noteNotes, pageNotes, savedLine, summaryNotes } from "../meter";
 import { baseline, loadSeen, markSeen, saveSeen, unreadIds, type Seen } from "../unread";
@@ -295,6 +296,7 @@ export function Chat() {
       setNotesInfo(err instanceof ApiError ? err.message : t("chat.notesError"));
     }
   };
+  const [answeredAt, setAnsweredAt] = createSignal(-1);
   const show = (next: string | null, nextTurns: Shown[], summary = "") => {
     if (busy()) abort?.abort();
     view++;
@@ -303,6 +305,7 @@ export function Chat() {
     batch(() => {
       setSession(next);
       setTurns(nextTurns);
+      setAnsweredAt(-1);
       setSummaryText(summary);
       setBranches([]);
       setForkAt(null);
@@ -698,6 +701,8 @@ export function Chat() {
       for (const p of noteNotes(r)) foot.push(t(p.key, { n: p.n }));
       if (r.usage?.summary_text) setSummaryText(r.usage.summary_text);
       setTurns([...turns(), { role: "assistant", content: r.reply, foot, notes: r.notes }]);
+      // the view of what was sent belongs to this answer only: the service keeps the latest call and nothing older
+      setAnsweredAt(turns().length - 1);
       // the files went with this message; the next one starts without them
       if (attached.length > 0) setFiles((cur) => cur.filter((f) => !attached.some((a) => a.id === f.id)));
       if (session()) await refetch();
@@ -1013,6 +1018,9 @@ export function Chat() {
                   <button type="button" class="linklike" onClick={() => void branchAt(againPoint(turns(), i()), true)}>{t("chat.again")}</button>
                 </Show>
               </div>
+              <Show when={m.role === "assistant" && i() === answeredAt() && !busy() && i() > 0 && turns()[i() - 1]?.role === "user"}>
+                <SentView typed={turns()[i() - 1]!.content} />
+              </Show>
               <Show when={(m.notes ?? []).length > 0}>
                 <details class="notes-used">
                   <summary>{t("chat.whichNotes", { n: m.notes!.length })}</summary>

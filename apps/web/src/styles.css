@@ -334,3 +334,6 @@ button.linklike:hover { color: var(--ink); }
 .tok-com { color: var(--graphite); font-style: italic; }
 .tok-fn { font-weight: 600; }
 .tok-key { color: var(--cipher-text); }
+
+/* what was sent to the model: the text exactly, shorter than the general pre so a long prompt does not push the page down */
+.sent-text { max-height: 18rem; margin: 0.25rem 0 0.75rem; font-size: 0.9em; }

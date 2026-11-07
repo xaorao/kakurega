@@ -11831,3 +11831,111 @@ fn sv120_the_bot_token_is_kept_in_the_store_and_only_the_administration_token_ca
     );
     assert_eq!(v["cleared"], false, "clearing what is not there says so");
 }
+
+#[test]
+fn sv121_the_owner_can_read_exactly_what_the_last_chat_call_handed_to_the_model_and_forgetting_removes_it(
+) {
+    let (root, _repo) = repo_copy("sentview");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let anon = Web::new(c.addr);
+    assert_eq!(anon.get("/api/chat/sent").0, 401, "not without a session");
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (code, v) = w.get("/api/chat/sent");
+    assert_eq!(
+        (code, v["error"]["code"].as_str()),
+        (404, Some("NOTHING_SENT"))
+    );
+    let (_, note) = w.post(
+        "/api/memories",
+        json!({"text": "Acme pays invoices on the 20th", "level": "confidential"}),
+    );
+    let note_id = note["id"].as_str().unwrap().to_string();
+    let (st, r) = w.post(
+        "/api/chat",
+        json!({"message": "When does Acme pay invoices?"}),
+    );
+    assert_eq!(st, 200, "{r}");
+    let (code, sent) = w.get("/api/chat/sent");
+    assert_eq!(code, 200, "{sent}");
+    let all: String = sent["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| {
+            format!(
+                "{}: {}\n",
+                m["role"].as_str().unwrap(),
+                m["content"].as_str().unwrap()
+            )
+        })
+        .collect();
+    assert!(
+        all.contains("system: You are Kakurega's private assistant")
+            && all.contains("Acme pays invoices on the 20th")
+            && all
+                .trim_end()
+                .ends_with("user: When does Acme pay invoices?"),
+        "{all}"
+    );
+    assert_eq!(sent["cut"], false);
+    assert!(sent["route"]["class"].is_string() && sent["at"].as_i64().unwrap() > 0);
+    // only the latest call is kept, and what it holds is exactly what the model got (the scripted model echoes its prompt)
+    let echoed = r["reply"].as_str().unwrap().trim().to_string();
+    assert_eq!(
+        echoed,
+        all.trim().to_string(),
+        "the view is the prompt the model received"
+    );
+    let (_, r2) = w.post(
+        "/api/chat",
+        json!({"message": "something unrelated about weather"}),
+    );
+    let (_, sent2) = w.get("/api/chat/sent");
+    assert!(
+        !sent2.to_string().contains("Acme pays") && sent2.to_string().contains("weather"),
+        "{r2}"
+    );
+    // a note that reaches the model and is then forgotten is gone from the view
+    w.post(
+        "/api/chat",
+        json!({"message": "When does Acme pay invoices?"}),
+    );
+    assert!(w.get("/api/chat/sent").1.to_string().contains("Acme pays"));
+    let (code, _) = w.post(&format!("/api/memories/{note_id}/forget"), json!({}));
+    assert_eq!(code, 200);
+    assert_eq!(
+        w.get("/api/chat/sent").0,
+        404,
+        "forgetting a note drops the kept prompt"
+    );
+    // history clear and forgetting a kept conversation drop it too
+    w.post("/api/chat", json!({"message": "again for the history"}));
+    assert_eq!(w.get("/api/chat/sent").0, 200);
+    w.post("/api/history/clear", json!({}));
+    assert_eq!(w.get("/api/chat/sent").0, 404);
+    let (_, kept) = w.post("/api/sessions", json!({"title": ""}));
+    let sid = kept["id"].as_str().unwrap().to_string();
+    w.post(
+        "/api/chat",
+        json!({"message": "in a kept conversation", "session": sid}),
+    );
+    assert_eq!(w.get("/api/chat/sent").0, 200);
+    w.post(&format!("/api/sessions/{sid}/forget"), json!({}));
+    assert_eq!(
+        w.get("/api/chat/sent").0,
+        404,
+        "forgetting a conversation drops it too"
+    );
+}

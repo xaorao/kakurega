@@ -921,6 +921,18 @@ try {
   check("the footer shows how much of the model's window the conversation used, as an estimate for the test model", /about \d+ of 16384 tokens of context used \(\d+%\)/.test(reply), reply.replace(/\n/g, " | ").slice(0, 400));
   await page.locator(".msg.assistant").getByText("Notes used for this answer (1)").click();
   check("the answer says which note was used and why", (await page.locator(".msg.assistant .notes-used").innerText()).includes("in-process dictionary") && (await page.locator(".msg.assistant .notes-used").innerText()).includes("matched"));
+  {
+    // what the model was actually given, next to what was typed
+    const sentDetails = page.locator(".msg.assistant .sent-view");
+    check("the latest answer offers to show what was sent to the model, closed until asked", (await sentDetails.count()) === 1 && !(await sentDetails.evaluate((d) => d.open)));
+    await sentDetails.locator("summary").click();
+    await sentDetails.locator(".sent-text").first().waitFor();
+    const sentText = await sentDetails.innerText();
+    check("it shows the instructions, the note that was used and the message, and says the words went as typed", sentText.includes("Instructions from this program") && sentText.includes("in-process dictionary") && sentText.includes("Where are login sessions kept?") && sentText.includes("(one line more)") && sentText.includes("sent exactly as you typed them") && sentText.includes("private assistant"), sentText.slice(0, 500));
+    check("it says which model got it, from the address and not from a label", sentText.includes("Test mode: replies are scripted") || sentText.includes("runs on this computer"), sentText.slice(0, 200));
+    await axeCheck(page, "chat with what was sent");
+    await sentDetails.locator("summary").click();
+  }
   await axeCheck(page, "chat screen");
   await page.screenshot({ path: join(shots, "13-chat.png") });
   await page.getByRole("button", { name: "Clear" }).click();
@@ -1494,6 +1506,7 @@ try {
     await page.locator("ul.plain li.actions", { has: page.locator(".chip[data-unread]") }).first().getByRole("button", { name: "Open", exact: true }).click();
     await page.waitForFunction((n) => document.querySelectorAll("ul.plain li.actions .chip[data-unread]").length === n, rowsNow - 2);
     check("opening one clears its mark and marks nothing else, the one that was open stays clear", (await chips()) === rowsNow - 2, `${await chips()} of ${rowsNow}`);
+    check("an older conversation that was opened offers no view of what was sent: the service keeps only the latest call, which is not about it", (await page.locator(".msg.assistant").count()) >= 1 && (await page.locator(".sent-view").count()) === 0, String(await page.locator(".sent-view").count()));
     await page.reload();
     await page.getByRole("button", { name: "Open" }).first().waitFor();
     check("after a reload what was seen stays seen", (await chips()) === rowsNow - 2, String(await chips()));

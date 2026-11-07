@@ -219,6 +219,9 @@ pub struct Service {
     streams: std::sync::atomic::AtomicUsize,
     /// When set, a release can be approved only with a signature from an enrolled approval key; the unenrolled path is closed.
     require_approver: std::sync::atomic::AtomicBool,
+    /// Exactly what the last chat call handed to the model, so the owner can read it. Held in memory only: not saved, not logged, gone when the
+    /// service stops or the conversation history is cleared.
+    last_sent: Mutex<Option<Value>>,
     last_attest: Mutex<Option<std::time::Instant>>,
     attest_cooldown: Mutex<std::time::Duration>,
     research: Mutex<Research>,
@@ -509,6 +512,33 @@ impl Service {
             && !self.approvers_enrolled()
     }
 
+    /// Drops the kept copy of the last prompt: whatever the owner forgets must not linger in it.
+    fn clear_sent(&self) {
+        *self.last_sent.lock().expect("lock") = None;
+    }
+
+    /// Keeps what is about to be sent to the model (the whole of it, up to a bound) for the owner to look at.
+    fn remember_sent(&self, messages: &[kk_types::chat::ChatMessage]) {
+        const MAX_CHARS: usize = 400_000;
+        let mut used = 0usize;
+        let mut kept: Vec<Value> = Vec::new();
+        let mut cut = false;
+        for m in messages {
+            let left = MAX_CHARS.saturating_sub(used);
+            let text: String = m.content.chars().take(left).collect();
+            cut |= text.chars().count() < m.content.chars().count();
+            used += text.chars().count();
+            kept.push(json!({"role": m.role, "content": text}));
+        }
+        let route = self.route_for_owner();
+        *self.last_sent.lock().expect("lock") = Some(json!({
+            "messages": kept,
+            "cut": cut,
+            "at": now(),
+            "route": {"class": route["class"], "simulated": route["simulated"], "host": route["host"], "stays_here": route["stays_here"], "id": route["id"], "name": route["model"]},
+        }));
+    }
+
     pub fn set_search_provider(&self, url: Option<String>) {
         *self.search_provider.lock().expect("lock") = url;
     }
@@ -726,6 +756,7 @@ impl Service {
             repairs: Mutex::new(std::collections::HashMap::new()),
             streams: std::sync::atomic::AtomicUsize::new(0),
             require_approver: std::sync::atomic::AtomicBool::new(false),
+            last_sent: Mutex::new(None),
             last_attest: Mutex::new(None),
             attest_cooldown: Mutex::new(std::time::Duration::from_secs(3)),
             research: Mutex::new(Research::default()),
@@ -1797,6 +1828,7 @@ async fn memory_forget(
         &b.reason.unwrap_or_else(|| "you asked to forget it".into()),
     ) {
         Ok(()) => {
+            svc.clear_sent();
             svc.log_event(
                 "memory.forgotten",
                 &id,
@@ -2161,6 +2193,7 @@ async fn memory_source_forget(
         .forget_source(now(), &job, &reason)
     {
         Ok(p) => {
+            svc.clear_sent();
             svc.log_event(
                 "memory.source_forgotten",
                 &job,
@@ -2962,6 +2995,7 @@ async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
         let mut run = run;
         prepare_history(&svc2, &mut run);
         let ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
+        svc2.remember_sent(&ctx.messages);
         let reply = svc2.runner.chat(ctx.messages.clone());
         (run, ctx, reply)
     })
@@ -2998,6 +3032,7 @@ async fn chat_stream(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Resp
         let mut run = run;
         prepare_history(&svc2, &mut run);
         let ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
+        svc2.remember_sent(&ctx.messages);
         let mut gone = false;
         let result = svc2.runner.chat_stream(ctx.messages.clone(), &mut |piece| {
             if tx.send(line(json!({"delta": piece}))).is_err() {
@@ -3109,6 +3144,7 @@ async fn history_clear(axum::Extension(svc): Svc) -> Response {
         let store = svc.store.lock().expect("lock");
         let _ = store.connection().execute("DELETE FROM prompt_history", []);
     }
+    svc.clear_sent();
     svc.log_event("history.cleared", "history", &[]);
     Json(json!({"cleared": true})).into_response()
 }
@@ -4055,6 +4091,7 @@ async fn session_forget(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>)
     }
     // suggestions read from this conversation and not yet decided are cleared with it; notes the owner accepted are theirs
     let _ = svc.memory.lock().expect("lock").dismiss_pending(now(), &id);
+    svc.clear_sent();
     svc.log_event("session.forgotten", &id, &[]);
     Json(json!({"forgotten": true})).into_response()
 }
@@ -7006,6 +7043,18 @@ struct SecretBody {
     value: String,
 }
 
+/// What the last chat call handed to the model, word for word, so the owner can compare it with what was typed. Only the latest call is kept.
+async fn chat_sent(axum::Extension(svc): Svc) -> Response {
+    match svc.last_sent.lock().expect("lock").clone() {
+        Some(v) => ([("cache-control", "no-store")], Json(v)).into_response(),
+        None => error(
+            StatusCode::NOT_FOUND,
+            "NOTHING_SENT",
+            "nothing has been sent to the model since the service started",
+        ),
+    }
+}
+
 async fn admin_secret_put(
     axum::Extension(svc): Svc,
     UrlPath(name): UrlPath<String>,
@@ -7337,6 +7386,7 @@ impl Extension for Routes {
             .route("/api/readiness/repair", post(readiness_repair))
             .route("/api/chat", post(chat))
             .route("/api/chat/stream", post(chat_stream))
+            .route("/api/chat/sent", get(chat_sent))
             .route("/api/ask", post(ask))
             .route("/api/ask/excerpt", post(ask_excerpt))
             .route("/api/history", get(history_list).post(history_add))
