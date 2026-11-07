@@ -46,7 +46,18 @@ async function launch(label, extraEnv = {}) {
   return { served, exited, stillRunning, data };
 }
 
-const clean = await launch("clean");
+// The first launches of a bundle signed ad hoc sometimes never finish starting; a launch that is expected to work and hangs is made again
+// (a tampered bundle is expected to refuse to run, so those launches are never repeated).
+async function launchGood(label, extraEnv = {}) {
+  let r;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    r = await launch(label, extraEnv);
+    if (r.served || !r.stillRunning) break;
+  }
+  return r;
+}
+
+const clean = await launchGood("clean");
 check("the packaged app starts from its asar and its companion serves the workspace", clean.served);
 
 const asarPath = pkg.asarPath;
@@ -74,14 +85,14 @@ const loose = join(pkg.app, "Contents/Resources/app");
 mkdirSync(loose, { recursive: true });
 writeFileSync(join(loose, "package.json"), JSON.stringify({ name: "evil", main: "main.js" }));
 writeFileSync(join(loose, "main.js"), `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran'); require('electron').app.quit();`);
-const withLoose = await launch("loose");
+const withLoose = await launchGood("loose");
 check("a loose app folder planted beside the asar is ignored and never runs", !existsSync(marker) && withLoose.served, `marker=${existsSync(marker)} served=${withLoose.served}`);
 rmSync(loose, { recursive: true, force: true });
 
-const nodeEnv = await launch("nodeenv", { ELECTRON_RUN_AS_NODE: "1", NODE_OPTIONS: "--inspect=9238" });
+const nodeEnv = await launchGood("nodeenv", { ELECTRON_RUN_AS_NODE: "1", NODE_OPTIONS: "--inspect=9238" });
 check("with ELECTRON_RUN_AS_NODE and NODE_OPTIONS set the packaged binary still starts as the app, not as Node", nodeEnv.served);
 
-const restored = await launch("restored");
+const restored = await launchGood("restored");
 check("after restoring the original asar the app starts again (the failures above were caused by the tampering)", restored.served);
 const bad = results.filter((r) => !r).length;
 console.log(bad === 0 ? `\nall ${results.length} packaged-app checks passed` : `\n${bad} FAILED`);

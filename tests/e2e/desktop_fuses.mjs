@@ -26,6 +26,8 @@ const base = asNode(stock);
 check("control: the stock Electron can be turned into a plain Node interpreter by an environment variable", base === "false", base);
 
 const wire = await harden(hard, { cookieEncryption: false });
+// the packaging script signs the whole bundle after the fuses are set; a bundle whose main program was re-signed alone does not start
+spawnSync("codesign", ["--force", "--deep", "--sign", "-", join(work, "Electron.app")], { stdio: "ignore" });
 check("fuses flipped: RunAsNode off, NODE_OPTIONS off, --inspect off, file-protocol privileges off (cookie encryption is left off in this unattended test: it makes macOS ask for the keychain password)", wire && Object.keys(wire).length > 0, JSON.stringify(wire));
 
 const h = asNode(hard);
@@ -52,17 +54,28 @@ check("hardened: NODE_OPTIONS=--inspect opens no debugger port", hardEnv === fal
 const data = join(work, "data");
 mkdirSync(join(work, "root"), { recursive: true });
 mkdirSync(data, { recursive: true });
-const app = spawn(hard, [join(repo, "apps/desktop")], { stdio: "ignore", env: { ...process.env, KAKU_BIN: join(repo, "target/debug/kaku"), KAKUREGA_DATA_DIR: data, KAKU_ARGS: `--root ${join(work, "root")} --scripted ${join(repo, "tests/e2e/script.json")} --ui-dir ${join(repo, "apps/web/dist")}` } });
+// The first launches of a bundle that was just signed ad hoc sometimes never finish starting (measured: two hangs, then a start in one
+// second, with an identical copy that was only re-signed). A launch that has not produced its companion in 15 seconds is stopped and made again.
 let served = false;
-for (let i = 0; i < 80 && !served; i++) {
-  await new Promise((r) => setTimeout(r, 500));
-  if (existsSync(join(data, "admin.json"))) {
-    try { const a = JSON.parse(readFileSync(join(data, "admin.json"), "utf8")); const r = await fetch(`http://127.0.0.1:${a.port}/`); served = r.status === 403 && (await r.text()).includes("SHELL_ONLY"); } catch {}
+let attempts = 0;
+for (; attempts < 6 && !served; attempts++) {
+  rmSync(data, { recursive: true, force: true });
+  mkdirSync(data, { recursive: true });
+  spawn(hard, [join(repo, "apps/desktop")], { stdio: "ignore", env: { ...process.env, KAKU_BIN: join(repo, "target/debug/kaku"), KAKUREGA_DATA_DIR: data, KAKU_ARGS: `--root ${join(work, "root")} --scripted ${join(repo, "tests/e2e/script.json")} --ui-dir ${join(repo, "apps/web/dist")}` } });
+  for (let i = 0; i < 30 && !served; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    if (existsSync(join(data, "admin.json"))) {
+      try { const a = JSON.parse(readFileSync(join(data, "admin.json"), "utf8")); const r = await fetch(`http://127.0.0.1:${a.port}/`); served = r.status === 403 && (await r.text()).includes("SHELL_ONLY"); } catch {}
+    }
+  }
+  if (!served) {
+    spawnSync("pkill", ["-9", "-f", "electron-hardened"]);
+    spawnSync("pkill", ["-f", "target/debug/kaku serve --data-dir " + data]);
   }
 }
 spawnSync("pkill", ["-9", "-f", "electron-hardened"]);
 spawnSync("pkill", ["-f", "target/debug/kaku serve --data-dir " + data]);
-check("hardened: the app still starts and its companion serves the workspace", served);
+check("hardened: the app still starts and its companion serves the workspace", served, `after ${attempts} launch(es)`);
 const bad = results.filter((r) => !r).length;
 console.log(bad === 0 ? `\nall ${results.length} fuse checks passed` : `\n${bad} FAILED`);
 process.exit(bad ? 1 : 0);

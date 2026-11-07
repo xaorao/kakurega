@@ -381,10 +381,10 @@ fn mc06_read_only_mode_hides_and_refuses_every_tool_that_changes_anything() {
 
 #[test]
 fn mc90_a_connection_that_calls_too_fast_is_told_to_wait_and_the_flags_are_checked() {
-    let lines: Vec<String> = (1..=5).map(|i| call(i, "overview", json!({}))).collect();
-    let r = session_args(&["--calls-per-minute", "3"], &lines);
-    assert_eq!(r.len(), 5);
-    // calls are answered as they finish, so only the counts are fixed: three go through, two are told to wait
+    let lines: Vec<String> = (1..=4).map(|i| call(i, "overview", json!({}))).collect();
+    let r = session_args(&["--calls-per-minute", "2"], &lines);
+    assert_eq!(r.len(), 4);
+    // calls are answered as they finish, so only the counts are fixed: two go through, two are told to wait; four calls stay under the cap on requests in progress
     let limited: Vec<_> = r
         .iter()
         .filter(|v| {

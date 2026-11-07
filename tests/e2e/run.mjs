@@ -98,6 +98,7 @@ let excusedConsole = 0;
 let leaseRefusals = 1;
 let instructionRefusals = 0; // the one deliberate 422 when an instruction holds a secret
 let attachmentRefusals = 0; // the one deliberate 422 when a password-protected file is attached
+let chatFailureRefusals = 0; // the one deliberate 422 when a chat send is made to fail
 let forgottenWordsRefusals = 0; // the one deliberate 422 when forgotten words are typed in again
 page.on("request", (r) => { try { requestOrigins.add(new URL(r.url()).origin); } catch { /* data: urls */ } });
 page.on("console", (m) => {
@@ -107,6 +108,10 @@ page.on("console", (m) => {
   if (m.location().url.endsWith("/api/route/attest") && /status of 422/.test(m.text())) return;
   if (m.location().url.endsWith("/api/instructions") && /status of 422/.test(m.text()) && instructionRefusals > 0) {
     instructionRefusals--;
+    return;
+  }
+  if (m.location().url.endsWith("/api/chat/stream") && /status of 422/.test(m.text()) && chatFailureRefusals > 0) {
+    chatFailureRefusals--;
     return;
   }
   if (m.location().url.endsWith("/api/memories") && /status of 422/.test(m.text()) && forgottenWordsRefusals > 0) {
@@ -1225,6 +1230,23 @@ try {
   await picker.waitFor();
   await page.keyboard.press("Enter");
   check("Enter puts the chosen message in the box and sends nothing", (await picker.count()) === 0 && (await messageBox.inputValue()) === "draftcanary unsent words" && (await page.locator(".msg").count()) === msgsBefore && (await page.evaluate(() => document.activeElement?.id === "chat-input")));
+  {
+    // a send that fails shows why in words, leaves no half answer, gives the message back, and sending it again works
+    const before = await page.locator(".msg.assistant").count();
+    chatFailureRefusals = 1;
+    await page.route("**/api/chat/stream", (route) => route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: { code: "NO_MODEL", message: "The model is not running." } }) }));
+    await page.getByLabel("Your message").fill("retry canary question");
+    await page.getByRole("button", { name: "Send" }).click();
+    await page.getByRole("alert").filter({ hasText: "The model is not running." }).waitFor();
+    const afterFail = await page.locator(".msg.assistant").count();
+    check("a failed send says why in words, adds no assistant bubble, and gives the message back", afterFail === before && (await page.getByLabel("Your message").inputValue()) === "retry canary question", `${before}->${afterFail} bubbles, box=${JSON.stringify(await page.getByLabel("Your message").inputValue())}`);
+    await page.unroute("**/api/chat/stream");
+    await page.getByRole("button", { name: "Send" }).click();
+    await page.locator(".msg.assistant").nth(before).waitFor();
+    await page.getByRole("button", { name: "Stop" }).waitFor({ state: "detached" }).catch(() => {});
+    check("sending the same message again after the failure works and clears the error", (await page.getByRole("alert").filter({ hasText: "The model is not running." }).count()) === 0 && (await page.locator(".msg.assistant").count()) === before + 1);
+    await page.getByLabel("Your message").fill("");
+  }
   await messageBox.fill("half text");
   await messageBox.press("Home");
   await messageBox.press("Shift+ArrowUp");
