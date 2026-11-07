@@ -4107,3 +4107,70 @@ fn tu66_an_answer_is_shown_as_formatted_text_while_the_export_and_plain_mode_kee
         .modifier
         .contains(ratatui::style::Modifier::BOLD));
 }
+
+#[test]
+fn tu67_the_change_in_a_proposed_fix_is_coloured_and_still_distinguishable_without_colour() {
+    use ratatui::style::{Color, Modifier};
+    let mut app = booted();
+    app.cards.push(Card {
+        kind: Kind::Ok,
+        title: Some("Fix 1".into()),
+        lines: [
+            "a.py: Make logout remove the token",
+            "",
+            "--- a/a.py",
+            "+++ b/a.py",
+            "@@ -1,2 +1,2 @@",
+            " keep",
+            "-old line",
+            "+new line",
+            "",
+            "The reproducer stops reproducing.",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
+    });
+    let find = |rows: &[String], needle: &str| -> (u16, u16) {
+        let y = rows
+            .iter()
+            .position(|r| r.contains(needle))
+            .unwrap_or_else(|| panic!("{needle} not on screen:\n{}", rows.join("\n")));
+        (rows[y].find(needle).unwrap() as u16, y as u16)
+    };
+    let (rows, t) = render(&app, 70, 24, true);
+    let b = t.backend().buffer();
+    let (x, y) = find(&rows, "+new line");
+    assert_eq!(b[(x, y)].fg, Color::Green);
+    let (x, y) = find(&rows, "-old line");
+    assert_eq!(b[(x, y)].fg, Color::Red);
+    let (x, y) = find(&rows, "@@ -1,2");
+    assert_eq!(b[(x, y)].fg, Color::Cyan);
+    let (x, y) = find(&rows, " keep");
+    assert_eq!(b[(x + 1, y)].fg, Color::Reset, "context lines are plain");
+    let (x, y) = find(&rows, "+++ b/a.py");
+    assert_eq!(
+        b[(x, y)].fg,
+        Color::Reset,
+        "a file header is not an added line"
+    );
+    let (x, y) = find(&rows, "--- a/a.py");
+    assert_eq!(b[(x, y)].fg, Color::Reset, "nor a removed one");
+    // no colour: the markers are still there and the weight differs
+    let (rows, t) = render(&app, 70, 24, false);
+    let b = t.backend().buffer();
+    let (ax, ay) = find(&rows, "+new line");
+    let (rx, ry) = find(&rows, "-old line");
+    assert!(b[(ax, ay)].modifier.contains(Modifier::BOLD) && b[(ax, ay)].fg == Color::Reset);
+    assert!(b[(rx, ry)].modifier.contains(Modifier::DIM));
+    // other cards that start a line with + or - are not coloured
+    let mut plain = booted();
+    plain.cards.push(Card {
+        kind: Kind::Info,
+        title: Some("Note".into()),
+        lines: vec!["+not a diff".into()],
+    });
+    let (rows, t) = render(&plain, 70, 24, true);
+    let (x, y) = find(&rows, "+not a diff");
+    assert_eq!(t.backend().buffer()[(x, y)].fg, Color::Reset);
+}

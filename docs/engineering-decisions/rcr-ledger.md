@@ -403,7 +403,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | A-A24 | Shell escape and inline command interpolation | see the section in matrix A | EXCLUDED | no shell escape: the terminal has no effects of its own |
 | A-A25 | Side question that does not enter the conversation | see the section in matrix A | PARTIAL | /aside: session-less chat, apart card, kept out of history/export/search; service unchanged (sv108); pty-verified; OpenCode/Codex sources read only to matrix depth (terminal-transcript.md) |
 | A-A26 | Goal, plan mode, todo panel | see the section in matrix A | LATER | plan and todo with the worker loop |
-| A-A27 | Diff viewing and edit flows | see the section in matrix A | PARTIAL | /fixes shows the diff; no changed-word marks |
+| A-A27 | Diff viewing and edit flows | see the section in matrix A | PARTIAL | fix diffs coloured in the terminal with markers and weight kept for no-colour; no line numbers, split view or word marks (terminal-transcript.md) |
 | A-A28 | Streaming rendering | see the section in matrix A | BUILT | streamed answers (71e541f) |
 | A-A29 | Markdown and syntax rendering of model text | see the section in matrix A | PARTIAL | answers shown formatted in the terminal: own reader ported from the web one and checked against it on 42 shared cases; links visible, images never fetched; no tables or code colours; Codex renderer read ~370 of 3,267 lines (terminal-transcript.md) |
 | A-A30 | Long output, collapsing, verbosity, virtual lists | see the section in matrix A | PARTIAL | step 1 built: window_lines wraps only what is shown (5000 cards under 80 wraps), redraw on change; collapsing cards and verbosity levels still owed (terminal-transcript.md) |

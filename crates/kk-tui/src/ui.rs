@@ -141,14 +141,35 @@ fn card_lines(c: &Card, width: usize, th: &Theme) -> Vec<Line<'static>> {
         out.push(Line::raw(""));
         return out;
     }
+    // the change inside a proposed fix: the markers + and - already tell added from removed without any colour, so colour and weight
+    // only help the eye, and a plain terminal loses nothing
+    let in_fix = c.title.as_deref().is_some_and(|t| t.starts_with("Fix "));
     for raw in &c.lines {
+        let body_style = if in_fix {
+            if raw.starts_with("+++") || raw.starts_with("---") {
+                Style::default().add_modifier(Modifier::BOLD)
+            } else if raw.starts_with('+') {
+                th.fg(Color::Green).add_modifier(Modifier::BOLD)
+            } else if raw.starts_with('-') {
+                th.fg(Color::Red).add_modifier(Modifier::DIM)
+            } else if raw.starts_with("@@") {
+                th.fg(Color::Cyan)
+            } else {
+                Style::default()
+            }
+        } else {
+            Style::default()
+        };
         for l in wrap(raw, width.saturating_sub(2)) {
             let lead = if first {
                 format!("{sym} ")
             } else {
                 "  ".to_string()
             };
-            out.push(Line::from(vec![Span::styled(lead, style), Span::raw(l)]));
+            out.push(Line::from(vec![
+                Span::styled(lead, style),
+                Span::styled(l, body_style),
+            ]));
             first = false;
         }
     }
