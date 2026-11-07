@@ -221,6 +221,28 @@ try {
   await disc.locator("summary").click();
   check("and says what was not checked", (await disc.innerText()).includes("combined excerpts"));
   await axeCheck(page, "release tab with the disclosure card");
+  check("the approval card says how long the release can still be approved", (await page.getByText(/This release can be approved for another \d+ h/).count()) === 1);
+  // a release past its deadline: said plainly, and nothing can be requested or delivered from it
+  const patch = async (route, fn) => { const r = await route.fetch(); const j = await r.json(); fn(j); await route.fulfill({ response: r, json: j }); };
+  await page.route("**/api/jobs/*/release", (route) => patch(route, (j) => { j.expires = j.server_time - 5; }));
+  await page.reload();
+  await page.getByRole("tab", { name: "Release" }).click();
+  await page.getByText("This release has expired.").waitFor();
+  check("an expired release says so and Request approval is disabled", (await page.getByRole("button", { name: "Request approval" }).isDisabled()) === true);
+  await axeCheck(page, "expired release");
+  await page.unroute("**/api/jobs/*/release");
+  await page.route("**/api/jobs/*/release", (route) => patch(route, (j) => { j.expires = j.server_time + 120; }));
+  await page.reload();
+  await page.getByRole("tab", { name: "Release" }).click();
+  await page.getByText(/Only \d+ min( \d+ s)? left to approve this release\./).waitFor();
+  check("a release with minutes left warns that little time is left", (await page.getByRole("button", { name: "Request approval" }).isDisabled()) === false);
+  await page.unroute("**/api/jobs/*/release");
+  // a page whose own clock is a day wrong still counts against the service's clock
+  await page.addInitScript(() => { const real = Date.now; Date.now = () => real() + 86400 * 1000 * 3; });
+  await page.reload();
+  await page.getByRole("tab", { name: "Release" }).click();
+  await page.getByText(/This release can be approved for another \d+ h/).waitFor();
+  check("a wrong clock on the page does not change what is said: the service's clock is used", true);
   check("review runs in the sandbox and opens on the release", true);
   // an open review is refreshed by the service's change notices, not polled every second
   {
@@ -309,6 +331,16 @@ try {
   const decidedAt = Date.now();
   const approve = spawnSync(kaku, ["approve", "--data-dir", data], { input: digest.slice(0, 12) + "\n", encoding: "utf8" });
   check("terminal shows the exact files and accepts the digest prefix", approve.status === 0 && /RELEASE FOR APPROVAL/.test(approve.stdout) && /Approved\./.test(approve.stdout), approve.stderr.slice(0, 200));
+  await page.getByRole("button", { name: "Sign and deliver the capsule" }).waitFor({ timeout: 15000 });
+  // approved, but past the deadline: delivery cannot be started from the page
+  await page.route("**/api/jobs/*/release", async (route) => { const r = await route.fetch(); const j = await r.json(); j.expires = j.server_time - 5; await route.fulfill({ response: r, json: j }); });
+  await page.reload();
+  await page.getByRole("tab", { name: "Release" }).click();
+  await page.getByText("This release has expired.").waitFor();
+  check("an approved release past its deadline cannot be delivered from the page", (await page.getByRole("button", { name: "Sign and deliver the capsule" }).isDisabled()) === true);
+  await page.unroute("**/api/jobs/*/release");
+  await page.reload();
+  await page.getByRole("tab", { name: "Release" }).click();
   await page.getByRole("button", { name: "Sign and deliver the capsule" }).waitFor({ timeout: 15000 });
   check("an approval given in the terminal shows in the page within about a second, by the change notice", Date.now() - decidedAt < 4500, `${Date.now() - decidedAt} ms including the terminal step`);
   await page.getByRole("button", { name: "Sign and deliver the capsule" }).click();

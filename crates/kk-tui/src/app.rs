@@ -919,6 +919,14 @@ impl App {
                             v.error = Some(format!("That is not the first {DIGEST_ACK_LEN} characters of the digest. Nothing was approved."));
                             return Vec::new();
                         }
+                        // a release past its deadline cannot be approved: the service refuses it, and this does not even ask
+                        if v.statement["expires"]
+                            .as_i64()
+                            .is_some_and(|e| now_secs() >= e)
+                        {
+                            v.error = Some("This release has expired. Nothing was approved. Refuse it with Esc and run the review again.".into());
+                            return Vec::new();
+                        }
                         let (aid, ack) = (v.aid.clone(), want);
                         let mut body = json!({"ack": ack});
                         if v.requires_proof {
@@ -3866,7 +3874,55 @@ impl Default for App {
     }
 }
 
+/// Seconds since 1970 on this computer, which is also the computer the service runs on.
+pub fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// "2 h 5 min", "4 min 12 s", "40 s": the two largest units that are not zero.
+pub fn span_text(secs: i64) -> String {
+    let s = secs.max(0);
+    if s < 60 {
+        return format!("{s} s");
+    }
+    let (h, m, r) = (s / 3600, (s % 3600) / 60, s % 60);
+    if h > 0 {
+        if m > 0 {
+            format!("{h} h {m} min")
+        } else {
+            format!("{h} h")
+        }
+    } else if r > 0 {
+        format!("{m} min {r} s")
+    } else {
+        format!("{m} min")
+    }
+}
+
+/// What to say about how long a release can still be approved. Nothing is said as valid unless the deadline is known.
+pub fn expiry_line(expires: Option<i64>, now: i64) -> Option<String> {
+    let expires = expires?;
+    let left = expires - now;
+    Some(if left <= 0 {
+        "This release has expired. Nothing can be approved or sent from it. Run the review again to make a new one.".to_string()
+    } else if left <= 600 {
+        format!("Only {} left to approve this release.", span_text(left))
+    } else {
+        format!(
+            "This release can be approved for another {}.",
+            span_text(left)
+        )
+    })
+}
+
 pub fn release_lines(d: &Value) -> Vec<String> {
+    release_lines_at(d, now_secs())
+}
+
+pub fn release_lines_at(d: &Value, now: i64) -> Vec<String> {
     let mut lines = Vec::new();
     if d["available"] == false {
         lines.push(format!(
@@ -3883,6 +3939,9 @@ pub fn release_lines(d: &Value) -> Vec<String> {
         "Digest:    {}",
         clean(d["digest"].as_str().unwrap_or("?"))
     ));
+    if let Some(l) = expiry_line(d["expires"].as_i64(), now) {
+        lines.push(l);
+    }
     lines.push(String::new());
     lines.push("Files that would be sent:".into());
     for f in d["files"].as_array().into_iter().flatten() {

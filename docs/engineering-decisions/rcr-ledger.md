@@ -8,7 +8,7 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 136, PARTIAL 95, KEPT 24, EXCLUDED 40, LATER 77 (a later surface or something external), UNCHECKED 0.
+- Rows: 372. BUILT 137, PARTIAL 94, KEPT 24, EXCLUDED 40, LATER 77 (a later surface or something external), UNCHECKED 0.
 - Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 0. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
@@ -57,7 +57,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | B-W33 | Settings and settings search | BUILD a settings area; ADAPT the catalog-driven search index (pure data, MIT). Every setti | PARTIAL | settings screen with catalog-driven search (11 settings, both languages); no editable privacy preferences by design (web-shell.md) |
 | B-W34 | Usage, cost and context meter | ADAPT gauge + breakdown (MIT). Data from kernel events for local routes (tokens, time) and | BUILT | context meter with the model's own count and window (mt01-mt06, sv49-sv52) |
 | B-W35 | Approval mode indicator | ADAPT the chip as read-only status of the kernel policy (e.g. "ask for every release"). EX | BUILT | header badge Releases ask you (signed when an approval key is enrolled), status only, from /api/config (web-shell.md) |
-| B-W36 | Permission and approval prompt | IMPROVE, not replace. Adopt the dock layout, a countdown showing expiry (`Release.expires` | PARTIAL | release approval page with exact files and digest; no expiry countdown |
+| B-W36 | Permission and approval prompt | IMPROVE, not replace. Adopt the dock layout, a countdown showing expiry (`Release.expires` | BUILT | approval card shows time left (service clock), warns at 10 min, expired disables request and deliver; kernel already enforced; terminal view and Enter fail closed (web-shell.md) |
 | B-W37 | Notifications | ADAPT in-app toast + tab-title count + optional Notification API. IMPROVE: notification te | BUILT | waiting count, desktop notices (n01-n14), e2e |
 | B-W38 | Empty, loading, error states | BUILD error boundary with copyable, content-free diagnostics; ADAPT skeleton for lists. EX | BUILT | error boundary, loading and unreachable states (e2e) |
 | B-W39 | Accessibility | ADAPT Kobalte Tabs, Dialog, Collapsible, Menu (MIT) instead of hand-rolled; ADAPT the anno | BUILT | axe checks on every screen in e2e; roving tabs; focus return |
@@ -319,7 +319,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | G-GH-33 | Local coding agents (Codex, Claude Code) join as teammates via ACP ses | ADAPT the session manager shape (MIT). Do NOT copy the approval trigger (section 4, row 3) | LATER | local coding agents as teammates |
 | G-GH-34 | Local command execution: workspace or full mode, working-directory che | ADAPT session lifecycle, tiers and orphan recovery (MIT); EXCLUDE the workspace policy | LATER | local command execution |
 | G-GH-35 | Policy for "workspace" mode: substring blocklist (`sudo`, `shutdown`,  | EXCLUDE. Not a boundary | EXCLUDED | substring blocklist is not a boundary |
-| G-GH-36 | Approval record for ACP and runs: id, tool name, truncated preview, ri | IMPROVE only: adopt expiry that fails closed and the "approval linked to run id and relink | PARTIAL | approvals expire; countdown and fail-closed display owed |
+| G-GH-36 | Approval record for ACP and runs: id, tool name, truncated preview, ri | IMPROVE only: adopt expiry that fails closed and the "approval linked to run id and relink | PARTIAL | countdown and fail-closed display built for web and terminal; per-run id relinking and desktop native window deadline not checked (web-shell.md) |
 | G-GH-37 | 26 bundled expert agents in five groups (product and engineering, busi | BUILD our own roster; prompts written by us (no copying). Start with roles that fit privat | LATER | expert roster |
 | G-GH-38 | Modes: Direct, Roundtable (independent answers, then lead resolves), A | BUILD; Roundtable across routes must respect the label of every participant's route | LATER | modes |
 | G-GH-39 | Lead owns the outcome; handoffs, dependencies, completion conditions,  | BUILD; a human checkpoint is a kernel approval, not a model message | LATER | lead and handoffs |

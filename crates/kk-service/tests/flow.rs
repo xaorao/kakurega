@@ -5413,6 +5413,20 @@ fn sv44_the_release_view_tells_the_owner_which_files_hold_personal_data_by_count
         "values never appear in the notice: {shown}"
     );
     // a notice does not stop the release from being offered, approved or delivered
+    let t = rel["server_time"].as_i64().unwrap();
+    assert!(
+        (t - std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64)
+            .abs()
+            < 5,
+        "the release carries the service's clock"
+    );
+    assert!(
+        rel["expires"].as_i64().unwrap() > t,
+        "and a deadline after it"
+    );
     assert_eq!(rel["available"], true);
     assert!(w.post(&format!("/api/jobs/{job}/approval"), json!({})).0 == 202);
 }

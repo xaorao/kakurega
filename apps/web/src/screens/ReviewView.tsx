@@ -1,5 +1,6 @@
 import { Code } from "../components/Code";
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { clockOffset, formatSpan, timeLeft } from "../expiry";
 import { DiffView } from "../components/DiffView";
 import { api, ApiError, type Config, type Fix, type Job } from "../api";
 import { rich, t, type Key } from "../i18n";
@@ -284,6 +285,14 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
   const [how, setHow] = createSignal("");
   const [error, setError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  // how long this release can still be approved: counted against the service's clock, once a second
+  const [pageNow, setPageNow] = createSignal(Math.floor(Date.now() / 1000));
+  const tick = setInterval(() => setPageNow(Math.floor(Date.now() / 1000)), 1000);
+  onCleanup(() => clearInterval(tick));
+  // the difference between the clocks is taken once, when the release arrives
+  const offset = createMemo(() => clockOffset(release()?.server_time, Math.floor(Date.now() / 1000)));
+  const left = createMemo(() => timeLeft(release()?.expires, pageNow() + offset()));
+  const expired = () => left().state === "expired";
 
   // Only a different review restarts the watching; a refreshed copy of the same review must not.
   const jobId = createMemo(() => props.job.id);
@@ -386,9 +395,20 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
             </Show>
             <div class="card stack" aria-live="polite">
               <h2>{t("appr.title")}</h2>
+              <Show when={!props.job.delivered && (approval().state === "none" || approval().state === "waiting" || approval().state === "approved")}>
+                <Show when={left().state === "expired"}>
+                  <p role="alert" class="bad">{t("appr.expired")}</p>
+                </Show>
+                <Show when={left().state === "soon"}>
+                  <p class="warn" role="status">{t("appr.soon", { time: formatSpan((left() as { secs: number }).secs) })}</p>
+                </Show>
+                <Show when={left().state === "valid"}>
+                  <p class="muted">{t("appr.validFor", { time: formatSpan((left() as { secs: number }).secs) })}</p>
+                </Show>
+              </Show>
               <Show when={approval().state === "none"}>
                 <p>{t("appr.intro")}</p>
-                <button class="primary" disabled={busy()} onClick={ask}>{t("appr.request")}</button>
+                <button class="primary" disabled={busy() || expired()} onClick={ask}>{t("appr.request")}</button>
               </Show>
               <Show when={approval().state === "waiting"}>
                 <p>{rich("appr.waiting")}</p>
@@ -397,7 +417,7 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
               </Show>
               <Show when={approval().state === "approved"}>
                 <p class="ok">{t("appr.approved")}</p>
-                <button class="primary" disabled={busy()} onClick={deliver}>{t("appr.deliver")}</button>
+                <button class="primary" disabled={busy() || expired()} onClick={deliver}>{t("appr.deliver")}</button>
               </Show>
               <Show when={approval().state === "denied" || approval().state === "revoked"}><p class="bad">{t("appr.refused")}</p></Show>
               <Show when={approval().state === "uncertain"}><p class="warn">{t("appr.uncertain")}</p></Show>

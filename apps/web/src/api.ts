@@ -174,6 +174,8 @@ export interface Release {
   digest?: string;
   recipient?: string;
   expires?: number;
+  /** The service's clock when this was answered, in Unix seconds, so a countdown does not depend on this page's clock. */
+  server_time?: number;
   files?: ReleaseFile[];
   removed?: { what: string; why: string }[];
   not_confirmed: { title: string; why: string }[];

@@ -764,4 +764,7 @@ export const en = {
   "welcome.skip": "Skip this step",
   "welcome.skipAll": "Skip the rest",
   "welcome.start": "Start my first review",
+  "appr.expired": "This release has expired. Nothing can be approved or sent from it. Run the review again to make a new one.",
+  "appr.soon": "Only {time} left to approve this release.",
+  "appr.validFor": "This release can be approved for another {time}.",
 } as const;

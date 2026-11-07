@@ -6240,7 +6240,7 @@ fn draft_json(s: &Snapshot, allow: &kk_secrets::pii::Allow) -> Value {
                 ));
             }
             json!({
-                "available": true, "digest": d.digest, "recipient": d.recipient, "policy_version": d.policy_version, "expires": d.expires,
+                "available": true, "digest": d.digest, "recipient": d.recipient, "policy_version": d.policy_version, "expires": d.expires, "server_time": now(),
                 "files": d.files.iter().map(|(n, b)| json!({"name": n, "bytes": b.len(), "sha256": kk_evidence::capsule::sha256_hex(b), "text": if n.ends_with(".txt") || n.ends_with(".py") || n.ends_with(".json") { Value::String(String::from_utf8_lossy(b).into_owned()) } else { Value::Null }})).collect::<Vec<_>>(),
                 "removed": d.removed.iter().map(|x| json!({"what": x.what, "why": x.why})).collect::<Vec<_>>(),
                 "not_confirmed": d.not_confirmed.iter().map(|(t, w)| json!({"title": t, "why": w})).collect::<Vec<_>>(),

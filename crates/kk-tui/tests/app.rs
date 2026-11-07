@@ -644,7 +644,7 @@ fn tu16_when_the_service_requires_a_signed_approval_the_terminal_signs_the_exact
 ) {
     use kk_evidence::approval::{verify, Statement};
     use kk_evidence::keys::Signer;
-    let statement = json!({"approval": "appr-9", "job": "job-4", "digest": "abcdef0123456789abcdef", "recipient": "acme-audit", "policy": "policy-1", "expires": 1_700_086_400, "nonce": "n-123"});
+    let statement = json!({"approval": "appr-9", "job": "job-4", "digest": "abcdef0123456789abcdef", "recipient": "acme-audit", "policy": "policy-1", "expires": 4_102_444_800_i64, "nonce": "n-123"});
     let open = |app: &mut App| {
         app.jobs.push(kk_tui::app::JobRow {
             id: "job-4".into(),
@@ -693,7 +693,7 @@ fn tu16_when_the_service_requires_a_signed_approval_the_terminal_signs_the_exact
         digest: "abcdef0123456789abcdef".into(),
         recipient: "acme-audit".into(),
         policy: "policy-1".into(),
-        expires: 1_700_086_400,
+        expires: 4_102_444_800_i64,
         nonce: "n-123".into(),
     };
     assert_eq!(
@@ -3923,4 +3923,98 @@ fn tu63_findings_show_pattern_matches_as_a_second_opinion_and_say_when_the_rules
         !text(&c).contains("Pattern rules"),
         "not asked for, so nothing is said"
     );
+}
+
+#[test]
+fn tu64_how_long_a_release_can_still_be_approved_is_said_in_words_and_never_as_valid_when_unknown()
+{
+    use kk_tui::app::{expiry_line, release_lines_at, span_text};
+    assert_eq!(span_text(0), "0 s");
+    assert_eq!(span_text(59), "59 s");
+    assert_eq!(span_text(61), "1 min 1 s");
+    assert_eq!(span_text(3600), "1 h");
+    assert_eq!(span_text(86399), "23 h 59 min");
+    assert_eq!(span_text(-4), "0 s");
+    assert_eq!(
+        expiry_line(None, 1000),
+        None,
+        "no deadline known, nothing is claimed"
+    );
+    assert!(expiry_line(Some(1000 + 3 * 3600), 1000)
+        .unwrap()
+        .contains("another 3 h"));
+    let soon = expiry_line(Some(1000 + 600), 1000).unwrap();
+    assert!(soon.starts_with("Only 10 min left"), "{soon}");
+    assert!(expiry_line(Some(1000 + 601), 1000)
+        .unwrap()
+        .contains("another 10 min 1 s"));
+    for past in [1000, 999, 0, -5] {
+        assert!(
+            expiry_line(Some(past), 1000)
+                .unwrap()
+                .contains("has expired"),
+            "{past}"
+        );
+    }
+    let mut body = release_body();
+    body["expires"] = json!(5000);
+    let lines = release_lines_at(&body, 1000).join("\n");
+    assert!(
+        lines.contains("can be approved for another 1 h 6 min"),
+        "{lines}"
+    );
+    body["expires"] = json!(900);
+    assert!(release_lines_at(&body, 1000)
+        .join("\n")
+        .contains("has expired"));
+    body.as_object_mut().unwrap().remove("expires");
+    let none = release_lines_at(&body, 1000).join("\n");
+    assert!(
+        !none.contains("approved for another") && !none.contains("expired"),
+        "{none}"
+    );
+}
+
+#[test]
+fn tu65_a_release_past_its_deadline_cannot_be_approved_from_the_terminal_and_nothing_is_sent() {
+    let mut app = booted();
+    app.jobs.push(kk_tui::app::JobRow {
+        id: "job-4".into(),
+        recipient: "x".into(),
+        state: "ready".into(),
+    });
+    open_approval(&mut app);
+    let Mode::Approval(v) = &mut app.mode else {
+        panic!()
+    };
+    v.statement = json!({"expires": 1});
+    typed(&mut app, "abcdef012345");
+    let r = app.handle(key(KeyCode::Enter));
+    assert!(
+        r.is_empty(),
+        "no approval request goes out after the deadline: {r:?}"
+    );
+    let Mode::Approval(v) = &app.mode else {
+        panic!("the view stays so it can be refused")
+    };
+    assert!(
+        v.error.as_deref().unwrap().contains("has expired"),
+        "{:?}",
+        v.error
+    );
+    // before the deadline the same keys approve
+    let mut ok_app = booted();
+    ok_app.jobs.push(kk_tui::app::JobRow {
+        id: "job-4".into(),
+        recipient: "x".into(),
+        state: "ready".into(),
+    });
+    open_approval(&mut ok_app);
+    let Mode::Approval(v) = &mut ok_app.mode else {
+        panic!()
+    };
+    v.statement = json!({"expires": kk_tui::app::now_secs() + 3600});
+    typed(&mut ok_app, "abcdef012345");
+    let r = ok_app.handle(key(KeyCode::Enter));
+    assert!(r.iter().any(|q| q.path.contains("/approve")), "{r:?}");
 }
