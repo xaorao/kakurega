@@ -209,7 +209,7 @@ export const api = {
   memories: (q?: string) => request<{ memories: MemoryItem[] }>("GET", `/api/memories${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   addMemory: (b: { text: string; level: string; reason?: string; project?: string }) => request<{ id: string; added: boolean }>("POST", "/api/memories", b),
   correctMemory: (id: string, b: { text: string; reason?: string; project?: string }) => request<{ id: string }>("POST", `/api/memories/${id}/correct`, b),
-  forgetMemory: (id: string, reason?: string) => request<{ forgotten: boolean }>("POST", `/api/memories/${id}/forget`, { reason }),
+  forgetMemory: (id: string, reason?: string) => request<{ forgotten: boolean; copies_known?: { reviews?: string[]; exports?: string[] } }>("POST", `/api/memories/${id}/forget`, { reason }),
   memoryHistory: (id: string) => request<{ versions: MemoryVersion[] }>("GET", `/api/memories/${id}/history`),
   fixes: (job: string) => request<{ fixes: Fix[] }>("GET", `/api/jobs/${job}/fixes`),
   applyFix: (job: string, n: number, file: string) => request<{ applied: boolean; file: string }>("POST", `/api/jobs/${job}/fixes/${n}/apply`, { file }),

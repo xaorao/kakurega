@@ -1,4 +1,5 @@
 import { createResource, createSignal, For, Show } from "solid-js";
+import { copyNames } from "../forgotten";
 import { api, ApiError, type MemoryItem } from "../api";
 import { t, type Key } from "../i18n";
 import { isNoteFile, notesFromFile } from "../notes-import";
@@ -19,6 +20,22 @@ function Item(props: { m: MemoryItem; onChange: (msg?: string) => void }) {
     try {
       await fn();
       props.onChange(msg);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : t("mem.error"));
+    }
+  };
+  const forgetNote = async () => {
+    setError("");
+    try {
+      const r = await api.forgetMemory(props.m.id);
+      const { shown, more } = copyNames(r);
+      const parts = [t("mem.forgotten")];
+      if (shown.length > 0) {
+        parts.push(t("mem.forgotten.copies", { names: shown.join(", ") }));
+        if (more > 0) parts.push(t("mem.forgotten.more", { n: more }));
+      }
+      parts.push(t("mem.forgotten.notReached"));
+      props.onChange(parts.join(" "));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : t("mem.error"));
     }
@@ -50,7 +67,7 @@ function Item(props: { m: MemoryItem; onChange: (msg?: string) => void }) {
           <Show when={!confirming()} fallback={
             <span class="confirm" role="group">
               <span class="bad">{t("mem.forget.confirm")}</span>{" "}
-              <button class="danger" onClick={() => run(() => api.forgetMemory(props.m.id), t("mem.forgotten"))}>{t("mem.forget.yes")}</button>
+              <button class="danger" onClick={() => forgetNote()}>{t("mem.forget.yes")}</button>
               <button onClick={() => setConfirming(false)}>{t("mem.cancel")}</button>
             </span>
           }>

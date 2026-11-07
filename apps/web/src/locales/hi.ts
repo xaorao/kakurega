@@ -774,4 +774,7 @@ export const hi: Record<keyof typeof en, string> = {
   "mem.held.kind": "लगता है: {kind}",
   "mem.held.notSecret": "यह गोपनीय नहीं है",
   "mem.held.released": "फिर से पेश किया गया।",
+  "mem.forgotten.copies": "अब भी इस कंप्यूटर पर हैं और इससे हटाई नहीं गईं: {names}।",
+  "mem.forgotten.more": "और {n} और।",
+  "mem.forgotten.notReached": "भुलाना आपके बनाए बैकअप, भेजे गए कैप्सूल, कहीं और की गई प्रतियों या रखी गई बातचीत तक कभी नहीं पहुँचता।",
 };

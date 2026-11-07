@@ -772,4 +772,7 @@ export const en = {
   "mem.held.kind": "looks like: {kind}",
   "mem.held.notSecret": "This is not a secret",
   "mem.held.released": "Offered again.",
+  "mem.forgotten.copies": "Still on this computer and not removed by this: {names}.",
+  "mem.forgotten.more": "And {n} more.",
+  "mem.forgotten.notReached": "Forgetting never reaches backups you made, capsules you delivered, copies you made elsewhere, or conversations you kept.",
 } as const;

@@ -638,6 +638,32 @@ impl Memories {
         Ok(held)
     }
 
+    /// The text of a note and its earlier versions, for finding copies of it elsewhere before it is forgotten. Only a note the caller
+    /// may read.
+    pub fn texts_of(&self, id: &str, clearance: &Label) -> Result<Vec<String>, MemoryError> {
+        let chain = self.lineage_of(&[id.to_string()], false)?;
+        let mut out = Vec::new();
+        for cid in &chain {
+            let row = self
+                .conn()
+                .query_row(
+                    "SELECT * FROM memories WHERE id = ?1",
+                    params![cid],
+                    row_to_memory,
+                )
+                .optional()?;
+            if let Some(r) = row {
+                if r.m.label.confidentiality_within(clearance)
+                    && !r.m.text.is_empty()
+                    && !out.contains(&r.m.text)
+                {
+                    out.push(r.m.text);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Notes held back by a newer secret detector, with the kind of secret it saw, newest first. Only notes the caller may read.
     pub fn held(&self, clearance: &Label) -> Result<Vec<(Memory, String)>, MemoryError> {
         let mut st = self.conn().prepare(

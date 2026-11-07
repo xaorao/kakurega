@@ -1671,19 +1671,94 @@ async fn memory_correct(
     }
 }
 
+/// What forgetting a note cannot reach, in plain words. Shown after every forget so the owner never believes the note is gone
+/// from places this program does not control.
+const FORGET_DOES_NOT_REACH: &[&str] = &[
+    "Backups you made with kaku backup: they still hold the text until you delete those files.",
+    "Capsules you delivered: the recipient has their own copy.",
+    "Anything you copied or pasted somewhere else, and answers that quoted or paraphrased the note.",
+    "Conversations you chose to keep: they hold what was said then. Forget those separately.",
+];
+
+impl Service {
+    /// Copies of these texts that this program knows about and that forgetting a note does not remove: reviews whose files hold the
+    /// text, and files in the exports folder that hold it. Names only, never content. Texts shorter than 12 characters are not searched
+    /// for: a short phrase would match unrelated files.
+    fn known_copies(&self, texts: &[String]) -> (Vec<String>, Vec<String>) {
+        let needles: Vec<&str> = texts
+            .iter()
+            .map(String::as_str)
+            .filter(|t| t.chars().count() >= 12)
+            .collect();
+        if needles.is_empty() {
+            return (vec![], vec![]);
+        }
+        let hit = |hay: &str| needles.iter().any(|n| hay.contains(n));
+        let mut reviews: Vec<String> = Vec::new();
+        {
+            let g = self.inner.lock().expect("lock");
+            for (id, snap) in g.snaps.iter().take(500) {
+                if snap
+                    .files
+                    .iter()
+                    .any(|f| f.text.as_deref().is_some_and(hit))
+                {
+                    reviews.push(id.clone());
+                }
+            }
+        }
+        let mut exports: Vec<String> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(self.data_dir.join("exports")) {
+            for e in rd.flatten().take(500) {
+                let Ok(meta) = e.metadata() else { continue };
+                if !meta.is_file() || meta.len() > 2 * 1024 * 1024 {
+                    continue;
+                }
+                if let Ok(text) = std::fs::read_to_string(e.path()) {
+                    if hit(&text) {
+                        exports.push(e.file_name().to_string_lossy().into_owned());
+                    }
+                }
+            }
+        }
+        reviews.sort();
+        exports.sort();
+        (reviews, exports)
+    }
+}
+
 async fn memory_forget(
     axum::Extension(svc): Svc,
     UrlPath(id): UrlPath<String>,
     Json(b): Json<ForgetBody>,
 ) -> Response {
+    // the copies are looked for before the text is deleted, because afterwards there is nothing to look for
+    let (reviews, exports) = {
+        let mem = svc.memory.lock().expect("lock");
+        let texts = mem
+            .owner_clearance()
+            .and_then(|c| mem.texts_of(&id, &c))
+            .unwrap_or_default();
+        drop(mem);
+        svc.known_copies(&texts)
+    };
     match svc.memory.lock().expect("lock").forget(
         now(),
         &id,
         &b.reason.unwrap_or_else(|| "you asked to forget it".into()),
     ) {
         Ok(()) => {
-            svc.log_event("memory.forgotten", &id, &[]);
-            Json(json!({"forgotten": true})).into_response()
+            svc.log_event(
+                "memory.forgotten",
+                &id,
+                &[("copies_known", (reviews.len() + exports.len()).into())],
+            );
+            Json(json!({
+                "forgotten": true,
+                "copies_known": {"reviews": reviews, "exports": exports},
+                "not_reached": FORGET_DOES_NOT_REACH,
+            }))
+            .into_response()
         }
         Err(e) => memory_error(e),
     }

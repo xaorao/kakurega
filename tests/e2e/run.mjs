@@ -441,6 +441,7 @@ try {
   await page.locator(".mem", { hasText: "rounded half up" }).getByRole("button", { name: "Forget", exact: true }).click();
   await page.getByRole("button", { name: "Yes, forget it" }).click();
   await page.locator(".mem", { hasText: "rounded half up" }).waitFor({ state: "detached" });
+  check("after a forget the page says what forgetting never reaches", (await page.getByText("Forgetting never reaches backups you made, capsules you delivered").count()) === 1);
   await page.getByLabel("Search memories").fill("zzzz");
   await page.getByText("No memory matches.").waitFor();
   await page.getByLabel("Search memories").fill("euros");

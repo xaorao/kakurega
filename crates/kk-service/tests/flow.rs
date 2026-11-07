@@ -11225,3 +11225,135 @@ fn sv112_a_note_a_newer_detector_matches_is_held_out_of_answers_and_lists_until_
     drop(c);
     drop(svc);
 }
+
+#[test]
+fn sv113_forgetting_a_note_says_which_known_copies_it_cannot_remove_and_always_what_it_never_reaches(
+) {
+    let (_c, w, _seen, root) = instructions_service("forgetcopies");
+    let long = w
+        .post(
+            "/api/memories",
+            json!({"text": "Acme pays invoices on the fifteenth of each month"}),
+        )
+        .1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let short = w.post("/api/memories", json!({"text": "euros"})).1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let alone = w
+        .post(
+            "/api/memories",
+            json!({"text": "Beta ships on mondays and thursdays only"}),
+        )
+        .1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // two exports hold the long note's text, one holds only the short word, one holds nothing of ours
+    assert_eq!(w.post("/api/exports/transcript", json!({"name": "call-one", "text": "You: remember Acme pays invoices on the fifteenth of each month\n"})).0, 200);
+    assert_eq!(w.post("/api/exports/transcript", json!({"name": "call-two", "text": "Assistant: ok, Acme pays invoices on the fifteenth of each month.\n"})).0, 200);
+    assert_eq!(
+        w.post(
+            "/api/exports/transcript",
+            json!({"name": "euros-only", "text": "We talked about euros today.\n"})
+        )
+        .0,
+        200
+    );
+    assert_eq!(
+        w.post(
+            "/api/exports/transcript",
+            json!({"name": "unrelated", "text": "nothing to see here\n"})
+        )
+        .0,
+        200
+    );
+    // a file too large to be read is not searched, so it is not claimed either way
+    let mut big = "x".repeat(3 * 1024 * 1024);
+    big.push_str("Acme pays invoices on the fifteenth of each month");
+    std::fs::write(root.join("data").join("exports").join("huge.md"), big).unwrap();
+    let (st, r) = w.post(&format!("/api/memories/{long}/forget"), json!({}));
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["forgotten"], true);
+    assert_eq!(
+        r["copies_known"]["exports"],
+        json!(["call-one.md", "call-two.md"]),
+        "{r}"
+    );
+    assert_eq!(r["copies_known"]["reviews"], json!([]));
+    let not_reached = r["not_reached"].as_array().unwrap();
+    assert!(
+        not_reached.len() >= 4
+            && not_reached
+                .iter()
+                .any(|x| x.as_str().unwrap().contains("Backups"))
+            && not_reached
+                .iter()
+                .any(|x| x.as_str().unwrap().contains("recipient"))
+    );
+    assert!(
+        !r.to_string().contains("fifteenth"),
+        "names only, never the text: {r}"
+    );
+    // a short note is not searched for (it would match unrelated files), but the standing list still comes back
+    let (_, r) = w.post(&format!("/api/memories/{short}/forget"), json!({}));
+    assert_eq!(r["copies_known"], json!({"reviews": [], "exports": []}));
+    assert_eq!(r["not_reached"].as_array().unwrap().len(), 4);
+    // a note with no copies says so
+    let (_, r) = w.post(&format!("/api/memories/{alone}/forget"), json!({}));
+    assert_eq!(r["copies_known"], json!({"reviews": [], "exports": []}));
+    // an unknown note is still a plain 404 and says nothing about copies
+    let (st, r) = w.post("/api/memories/no-such/forget", json!({}));
+    assert_eq!(st, 404);
+    assert!(r.get("copies_known").is_none());
+    // the log keeps only how many copies were known, never the text or the names
+    let log = w.get("/api/log").1.to_string();
+    assert!(
+        log.contains("memory.forgotten") && !log.contains("fifteenth") && !log.contains("call-one"),
+        "{log}"
+    );
+}
+
+#[test]
+fn sv114_a_review_whose_files_hold_the_notes_text_is_named_as_a_copy_that_forgetting_does_not_remove(
+) {
+    let (root, repo) = repo_copy("copiesrev");
+    let session = repo.join("payments/auth/session.py");
+    let mut text = std::fs::read_to_string(&session).unwrap();
+    text.push_str("\n# Acme pays invoices on the fifteenth of each month\n");
+    std::fs::write(&session, text).unwrap();
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (_, s) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "acme-audit"}),
+    );
+    let job = s["id"].as_str().unwrap().to_string();
+    wait_for(&w, &job, &["ready"]);
+    let note = w
+        .post(
+            "/api/memories",
+            json!({"text": "Acme pays invoices on the fifteenth of each month"}),
+        )
+        .1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (_, r) = w.post(&format!("/api/memories/{note}/forget"), json!({}));
+    assert_eq!(r["copies_known"]["reviews"], json!([job]), "{r}");
+}
