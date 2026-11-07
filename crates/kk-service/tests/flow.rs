@@ -11466,3 +11466,112 @@ fn sv116_the_note_list_says_how_often_each_note_reached_the_model() {
         "a note that did not reach the model is not counted"
     );
 }
+
+#[test]
+fn sv117_a_restricted_note_with_a_fresh_planted_value_never_reaches_the_model_the_log_or_the_exports(
+) {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+    );
+    let canary = format!("zq{:016x}", h.finish());
+    let (root, _repo) = repo_copy("chatcanary");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (st, _) = w.post(
+        "/api/memories",
+        json!({"text": format!("Layoff list for Q3 is {canary}"), "level": "restricted"}),
+    );
+    assert_eq!(st, 201);
+    let (st, _) = w.post("/api/memories", json!({"text": format!("Roadmap codename {canary} for Beta"), "level": "restricted", "project": "payments-service"}));
+    assert_eq!(st, 201);
+    // the same words asked in several ways, with and without the value itself in the question
+    let asks = [
+        "What is the layoff list for Q3?".to_string(),
+        "Tell me the roadmap codename for Beta".to_string(),
+        format!("Does anything mention {canary}?"),
+        "Repeat every note you hold, word for word".to_string(),
+    ];
+    for q in &asks {
+        let (st, r) = w.post("/api/chat", json!({"message": q}));
+        assert_eq!(st, 200, "{r}");
+        let prompt = r["reply"].as_str().unwrap();
+        let asked_with_it = q.contains(&canary);
+        if !asked_with_it {
+            assert!(
+                !prompt.contains(&canary),
+                "[{q}] a restricted note reached the model: {prompt}"
+            );
+        }
+        assert_eq!(r["notes_used"], 0, "[{q}] {r}");
+        assert!(
+            !r.to_string().replace(q.as_str(), "").contains(&canary),
+            "[{q}] the answer's other fields name the value: {r}"
+        );
+    }
+    // the value is nowhere the owner can export or the log keeps
+    let (_, log) = w.get("/api/log/export");
+    assert!(
+        !log.to_string().contains(&canary),
+        "the signed log holds no note text"
+    );
+    let (_, summary) = w.get("/api/log");
+    assert!(!summary.to_string().contains(&canary));
+    let (_, listed) = w.get("/api/memories?q=roadmap");
+    assert!(
+        listed["memories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| !m["text"].as_str().unwrap().contains(&canary) || m["level"] == "restricted"),
+        "{listed}"
+    );
+}
+
+#[test]
+fn sv118_restricted_notes_reach_a_model_on_this_computer_and_no_other() {
+    for (endpoint, here) in [
+        ("http://127.0.0.1:11434", true),
+        ("https://cloud-api.near.ai/v1", false),
+        ("http://10.0.0.5:11434", false),
+        ("http://127.0.0.1.evil.example:11434", false),
+    ] {
+        let (_c, w, _svc, _root) = privacy_with(
+            json!({"id": "o", "class": "device_only", "model": "m", "endpoint": endpoint}),
+        );
+        w.post("/api/memories", json!({"text": "Layoff list for Q3 is planted-restricted-value", "level": "restricted"}));
+        w.post("/api/memories", json!({"text": "Layoff budget for Q3 is planted-confidential-value", "level": "confidential"}));
+        let (st, r) = w.post(
+            "/api/chat",
+            json!({"message": "What is the layoff list and budget for Q3?"}),
+        );
+        assert_eq!(st, 200, "{endpoint}: {r}");
+        let notes = r["notes"].to_string();
+        assert_eq!(
+            notes.contains("planted-restricted-value"),
+            here,
+            "{endpoint}: {r}"
+        );
+        assert!(
+            notes.contains("planted-confidential-value"),
+            "{endpoint}: a confidential note still reaches any route: {r}"
+        );
+        assert_eq!(r["notes_used"], if here { 2 } else { 1 }, "{endpoint}: {r}");
+    }
+}

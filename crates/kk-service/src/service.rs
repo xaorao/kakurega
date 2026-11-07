@@ -2709,9 +2709,17 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
     });
     let (notes, used, untrusted_used, withheld, notes_list, notes_left_out) = {
         let mem = svc.memory.lock().expect("lock");
-        let clearance = mem
+        let mut clearance = mem
             .owner_clearance()
             .unwrap_or_else(|_| kk_types::label::Label::new(kk_types::label::Level::Internal));
+        // Restricted means it never leaves this computer: a model that runs anywhere else is not given such notes
+        if !svc.route_for_owner()["stays_here"]
+            .as_bool()
+            .unwrap_or(false)
+            && clearance.level > kk_types::label::Level::Confidential
+        {
+            clearance.level = kk_types::label::Level::Confidential;
+        }
         let scope = match b.project.as_deref() {
             Some(p) => kk_memory::Scope::Project(p),
             None => kk_memory::Scope::Global,
