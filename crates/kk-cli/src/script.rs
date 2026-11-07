@@ -249,6 +249,104 @@ pub fn findings(args: &[String]) -> u8 {
     })
 }
 
+/// Prints each step of a review once, and ends the way `kaku review` ends: 0 at `awaiting_approval`, 3 when nothing can be released, 4 when it
+/// failed, 5 when the time given runs out or the service cannot be reached, 6 when the service refuses.
+fn follow_job(http: &Http, id: &str, json_mode: bool, timeout: u64) -> u8 {
+    let started = Instant::now();
+    let mut shown = 0usize;
+    loop {
+        match call(http, Method::Get, &format!("/api/jobs/{id}"), None) {
+            Ok((200, v)) => {
+                let events = v["events"].as_array().cloned().unwrap_or_default();
+                for e in events.iter().skip(shown) {
+                    let (stage, detail) = (
+                        clean(e["stage"].as_str().unwrap_or("")),
+                        clean(e["detail"].as_str().unwrap_or("")),
+                    );
+                    say(
+                        json_mode,
+                        &json!({"event": "stage", "job": id, "stage": stage, "detail": detail}),
+                        || format!("{id}  {stage}  {detail}"),
+                    );
+                }
+                shown = events.len();
+                match v["state"].as_str().unwrap_or("running") {
+                    "running" => {}
+                    "ready" => {
+                        say(
+                            json_mode,
+                            &json!({"event": "awaiting_approval", "job": id, "next": "kaku approve", "note": "a script cannot approve; a person runs kaku approve and reads the exact files first"}),
+                            || {
+                                format!("{id} is ready. Nothing has been sent. Run `kaku approve` to read exactly what would be sent and decide.")
+                            },
+                        );
+                        return OK;
+                    }
+                    "nothing_to_release" => {
+                        say(
+                            json_mode,
+                            &json!({"event": "finished", "job": id, "state": "nothing_to_release"}),
+                            || {
+                                format!("{id} finished: the kernel confirmed no finding, so there is nothing that can be sent")
+                            },
+                        );
+                        return NOTHING;
+                    }
+                    other => {
+                        let note = clean(v["note"].as_str().unwrap_or(""));
+                        say(
+                            json_mode,
+                            &json!({"event": "finished", "job": id, "state": other, "note": note}),
+                            || format!("{id} stopped: {note}"),
+                        );
+                        return FAILED;
+                    }
+                }
+            }
+            Ok((s, v)) => {
+                let (m, c) = refusal(s, &v);
+                return fail(json_mode, c, &m);
+            }
+            Err(e) => return fail(json_mode, UNAVAILABLE, &e),
+        }
+        if started.elapsed() > Duration::from_secs(timeout) {
+            return fail(json_mode, UNAVAILABLE, &format!("{id} did not finish within {timeout} seconds; it is still running, check it with kaku jobs"));
+        }
+        std::thread::sleep(Duration::from_millis(700));
+    }
+}
+
+/// `kaku follow JOB`: watch a review that is already running (or finished) until it ends.
+pub fn follow(args: &[String]) -> u8 {
+    let json_mode = args.iter().any(|a| a == "--json");
+    let Some(job) = args.iter().skip(1).find(|a| {
+        !a.starts_with("--")
+            && Some((*a).as_str()) != crate::flag(args, "--data-dir").as_deref()
+            && Some((*a).as_str()) != crate::flag(args, "--timeout").as_deref()
+    }) else {
+        return fail(
+            json_mode,
+            USAGE,
+            "usage: kaku follow JOB [--json] [--timeout SECONDS]",
+        );
+    };
+    if !job.starts_with("job-") || job.len() > 24 || !job[4..].chars().all(|c| c.is_ascii_digit()) {
+        return fail(json_mode, USAGE, "a review is named like job-3");
+    }
+    let timeout = crate::flag(args, "--timeout")
+        .and_then(|t| t.parse::<u64>().ok())
+        .unwrap_or(3600)
+        .clamp(10, 86_400);
+    let job = job.clone();
+    crate::tui::with_service(&serve_args(args), |dir| {
+        let http = match connect(dir, json_mode) {
+            Ok(h) => h,
+            Err(c) => return c,
+        };
+        follow_job(&http, &job, json_mode, timeout)
+    })
+}
+
 pub fn review(args: &[String]) -> u8 {
     let json_mode = args.iter().any(|a| a == "--json");
     let dir_arg = args.iter().skip(1).find(|a| {
@@ -292,68 +390,7 @@ pub fn review(args: &[String]) -> u8 {
         say(json_mode, &json!({"event": "started", "job": id}), || {
             format!("review {id} started")
         });
-        let started = Instant::now();
-        let mut shown = 0usize;
-        loop {
-            match call(&http, Method::Get, &format!("/api/jobs/{id}"), None) {
-                Ok((200, v)) => {
-                    let events = v["events"].as_array().cloned().unwrap_or_default();
-                    for e in events.iter().skip(shown) {
-                        let (stage, detail) = (
-                            clean(e["stage"].as_str().unwrap_or("")),
-                            clean(e["detail"].as_str().unwrap_or("")),
-                        );
-                        say(
-                            json_mode,
-                            &json!({"event": "stage", "job": id, "stage": stage, "detail": detail}),
-                            || format!("{id}  {stage}  {detail}"),
-                        );
-                    }
-                    shown = events.len();
-                    match v["state"].as_str().unwrap_or("running") {
-                        "running" => {}
-                        "ready" => {
-                            say(
-                                json_mode,
-                                &json!({"event": "awaiting_approval", "job": id, "next": "kaku approve", "note": "a script cannot approve; a person runs kaku approve and reads the exact files first"}),
-                                || {
-                                    format!("{id} is ready. Nothing has been sent. Run `kaku approve` to read exactly what would be sent and decide.")
-                                },
-                            );
-                            return OK;
-                        }
-                        "nothing_to_release" => {
-                            say(
-                                json_mode,
-                                &json!({"event": "finished", "job": id, "state": "nothing_to_release"}),
-                                || {
-                                    format!("{id} finished: the kernel confirmed no finding, so there is nothing that can be sent")
-                                },
-                            );
-                            return NOTHING;
-                        }
-                        other => {
-                            let note = clean(v["note"].as_str().unwrap_or(""));
-                            say(
-                                json_mode,
-                                &json!({"event": "finished", "job": id, "state": other, "note": note}),
-                                || format!("{id} stopped: {note}"),
-                            );
-                            return FAILED;
-                        }
-                    }
-                }
-                Ok((s, v)) => {
-                    let (m, c) = refusal(s, &v);
-                    return fail(json_mode, c, &m);
-                }
-                Err(e) => return fail(json_mode, UNAVAILABLE, &e),
-            }
-            if started.elapsed() > Duration::from_secs(timeout) {
-                return fail(json_mode, UNAVAILABLE, &format!("{id} did not finish within {timeout} seconds; it is still running, check it with kaku jobs"));
-            }
-            std::thread::sleep(Duration::from_millis(700));
-        }
+        follow_job(&http, &id, json_mode, timeout)
     })
 }
 

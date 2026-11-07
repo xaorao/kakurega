@@ -29,7 +29,7 @@ Usage:
   kaku serve [--data-dir DIR] [--ui-dir DIR] [--root DIR]... [--model NAME] [--ollama URL] [--context TOKENS]
              [--transport lima|local] [--vm NAME] [--worker-bin PATH] [--launcher PATH]
   kaku review DIR --for RECIPIENT [--json] [--timeout SECONDS]   start a review and follow it; ends at awaiting_approval (exit 0), 3 nothing to release, 4 failed
-  kaku jobs [--json] | kaku findings JOB [--json]                 list reviews, read what one found
+  kaku jobs [--json] | kaku findings JOB [--json] | kaku follow JOB [--timeout S]   list reviews, read what one found, watch one until it ends
   kaku chat MESSAGE|- [--json] [--keep | --session ID]   one message to the private assistant; nothing is kept unless --keep starts a kept conversation or --session continues one
   kaku sessions [--json]            list the kept conversations; `kaku sessions export ID [--out FILE]` writes one as Markdown; these commands cannot approve anything
   kaku pair                         print a new one-time pairing link for the browser
@@ -76,6 +76,7 @@ fn main() -> ExitCode {
         Some("jobs") => script::jobs(&args[1..]),
         Some("review") => script::review(&args),
         Some("findings") => script::findings(&args),
+        Some("follow") => script::follow(&args),
         Some("chat") => script::chat(&args),
         Some("sessions") => script::sessions(&args[1..]),
         Some("update") => update::run(&args[1..]),

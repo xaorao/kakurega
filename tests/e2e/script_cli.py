@@ -73,6 +73,16 @@ try:
     rc, out, _ = k("chat", "-", stdin="a message piped in\n")
     check("chat reads the message from standard input", rc == 0 and "received 18 characters" in out, out)
 
+    rc, out, err = k("follow", job, "--json")
+    fol = [json.loads(l) for l in out.strip().splitlines()]
+    check("follow on a finished review prints its steps once and ends at awaiting_approval (0)", rc == 0 and [e["event"] for e in fol][-1] == "awaiting_approval" and sum(1 for e in fol if e["event"] == "stage") == sum(1 for e in events if e["event"] == "stage"), f"{rc} {out[:300]} {err}")
+    rc, _, err = k("follow", "job-999999")
+    check("follow of an unknown review is refused (6)", rc == 6, f"{rc} {err}")
+    rc, _, err = k("follow", "../x")
+    check("follow of a bad name is a usage error (2)", rc == 2, err)
+    rc, _, err = k("follow")
+    check("follow with no name is a usage error (2)", rc == 2 and "usage: kaku follow" in err, err)
+
     # kept conversations: start one, continue it, list it
     rc, out, err = k("chat", "remember this thread", "--keep", "--json")
     kept = json.loads(out)
@@ -178,9 +188,18 @@ try:
     p = kf("review", str(work / "root/payments-service"), "--for", "x", "--json")
     last = json.loads(p.stdout.strip().splitlines()[-1])
     check("a review with nothing that can be released ends with exit 3 and says so", p.returncode == 3 and last["state"] == "nothing_to_release", f"{p.returncode} {p.stdout}")
+    mode[0] = "nothing"
+    p = kf("follow", "job-1", "--json")
+    check("follow ends 3 when nothing can be released", p.returncode == 3 and json.loads(p.stdout.strip().splitlines()[-1])["state"] == "nothing_to_release", f"{p.returncode} {p.stdout}")
     mode[0] = "failed"
     p = kf("review", str(work / "root/payments-service"), "--for", "x")
     check("a review that failed ends with exit 4 and its reason, cleaned of control characters", p.returncode == 4 and "the agent stopped" in p.stdout and "\x1b" not in p.stdout, f"{p.returncode} {p.stdout!r}")
+    mode[0] = "failed"
+    p = kf("follow", "job-1")
+    check("follow ends 4 with the reason when the review failed", p.returncode == 4 and "the agent stopped" in p.stdout, f"{p.returncode} {p.stdout!r}")
+    mode[0] = "running"
+    p = kf("follow", "job-1", "--timeout", "10", timeout=60)
+    check("follow ends 5 and says it is still running when the time given runs out", p.returncode == 5 and "still running" in p.stderr, f"{p.returncode} {p.stderr}")
     mode[0] = "running"
     p = kf("review", str(work / "root/payments-service"), "--for", "x", "--timeout", "10", timeout=60)
     check("a review that does not finish in the time given ends with exit 5 and says it is still running", p.returncode == 5 and "still running" in p.stderr, f"{p.returncode} {p.stderr}")

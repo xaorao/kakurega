@@ -414,7 +414,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | A-A35 | Accessibility | see the section in matrix A | PARTIAL | kaku tui --linear: append-only plain lines, no control bytes, overlays as prompts; unit + pipe e2e; NOT run with VoiceOver (terminal-transcript.md) |
 | A-A36 | Error recovery and process lifecycle | see the section in matrix A | BUILT | terminal restored after errors and exit (tui_pty.py) |
 | A-A37 | Reconnect and event replay | see the section in matrix A | PARTIAL | watched reviews are polled every 0.7 s; no event replay (row 17 exclusion) |
-| A-A38 | Headless and programmatic modes | see the section in matrix A | PARTIAL | kaku review/jobs/findings/chat/sessions with --json, exit codes, kept conversations, Markdown export; no ask or follow (terminal-transcript.md) |
+| A-A38 | Headless and programmatic modes | see the section in matrix A | PARTIAL | kaku review/follow/jobs/findings/chat/sessions (+export) with --json and exit codes; only `ask` missing because no service route exists (terminal-transcript.md) |
 | A-A39 | Configuration and diagnostics | see the section in matrix A | PARTIAL | `kaku telegram doctor`; no general `kaku doctor` |
 | A-A40 | Status line, title, usage | see the section in matrix A | PARTIAL | status line shows how full the model's window is after each answer; no cost or speed (terminal-transcript.md) |
 | A-A41 | Clipboard | see the section in matrix A | PARTIAL | /copy puts the last reply or the whole conversation on the clipboard through OSC 52 after asking; no paste handling (terminal-transcript.md) |
