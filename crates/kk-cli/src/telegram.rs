@@ -331,6 +331,42 @@ pub fn token_file_problems(path: &Path) -> Vec<String> {
     out
 }
 
+/// A QR code for `data` as lines of text, two rows of modules to a line, with a two-module quiet zone. Light modules are drawn filled, so
+/// that a code printed on a dark terminal is dark-on-light the way a phone camera expects. None if the data does not fit a code.
+pub fn qr_lines(data: &str) -> Option<Vec<String>> {
+    use qrcode::{Color, EcLevel, QrCode};
+    let code = QrCode::with_error_correction_level(data.as_bytes(), EcLevel::M).ok()?;
+    let w = code.width();
+    let colors = code.to_colors();
+    const QUIET: usize = 2;
+    let side = w + 2 * QUIET;
+    let dark = |x: usize, y: usize| -> bool {
+        x >= QUIET
+            && y >= QUIET
+            && x < QUIET + w
+            && y < QUIET + w
+            && colors[(y - QUIET) * w + (x - QUIET)] == Color::Dark
+    };
+    let rows = side.div_ceil(2);
+    Some(
+        (0..rows)
+            .map(|r| {
+                (0..side)
+                    .map(|x| {
+                        // a filled half means a light module
+                        match (!dark(x, 2 * r), 2 * r + 1 >= side || !dark(x, 2 * r + 1)) {
+                            (true, true) => '█',
+                            (true, false) => '▀',
+                            (false, true) => '▄',
+                            (false, false) => ' ',
+                        }
+                    })
+                    .collect()
+            })
+            .collect(),
+    )
+}
+
 /// What `read_token` says when neither the environment nor a file was named; the stored token is looked for only in that case, so a token
 /// file that is named and wrong is an error and not a quiet switch to something else.
 const NO_TOKEN_SOURCE: &str = "set TELEGRAM_BOT_TOKEN, pass --token-file FILE, or store the token with `kaku telegram set-token`";
@@ -751,6 +787,15 @@ pub fn run(args: &[String]) -> u8 {
             None => "Send this to your bot in a private chat within 5 minutes".to_string(),
         };
         println!("{whom}:\n  /pair {code}\nThen run `kaku telegram` to start the bridge. Any earlier pairing was removed.");
+        // on a terminal, the link to the bot as a code a phone can scan
+        if let (Some(l), true) = (&link, std::io::IsTerminal::is_terminal(&std::io::stdout())) {
+            if let Some(lines) = qr_lines(l) {
+                println!(
+                    "\nOr scan this with your phone to open the bot:\n{}",
+                    lines.join("\n")
+                );
+            }
+        }
         return 0;
     }
     if args.first().map(String::as_str) == Some("status") {
@@ -1427,6 +1472,55 @@ mod tests {
             note: None,
             silent: false,
         }
+    }
+
+    #[test]
+    fn qr01_the_printed_blocks_read_back_as_exactly_the_modules_of_the_code_with_a_light_border() {
+        use qrcode::{Color, EcLevel, QrCode};
+        let url = "https://t.me/kakurega_bot";
+        let lines = qr_lines(url).unwrap();
+        let code = QrCode::with_error_correction_level(url.as_bytes(), EcLevel::M).unwrap();
+        let (w, colors) = (code.width(), code.to_colors());
+        let side = w + 4;
+        assert_eq!(
+            lines.len(),
+            side.div_ceil(2),
+            "two rows of modules to a line"
+        );
+        assert!(
+            lines.iter().all(|l| l.chars().count() == side),
+            "every line is one character per module"
+        );
+        // read the blocks back: a filled half is a light module
+        let module = |x: usize, y: usize| -> bool {
+            let line: Vec<char> = lines[y / 2].chars().collect();
+            let c = line[x];
+            let top_light = matches!(c, '█' | '▀');
+            let bottom_light = matches!(c, '█' | '▄');
+            !(if y.is_multiple_of(2) {
+                top_light
+            } else {
+                bottom_light
+            })
+        };
+        for y in 0..side {
+            for x in 0..side {
+                let want = x >= 2
+                    && y >= 2
+                    && x < 2 + w
+                    && y < 2 + w
+                    && colors[(y - 2) * w + (x - 2)] == Color::Dark;
+                if y == side - 1 && side % 2 == 1 {
+                    // the last half-line has no second row; it reads as light
+                    continue;
+                }
+                assert_eq!(module(x, y), want, "module ({x}, {y})");
+            }
+        }
+        // the quiet zone is light all round
+        assert!(lines[0].chars().all(|c| c == '█'));
+        // data that cannot fit a code gives none, rather than a broken one
+        assert!(qr_lines(&"x".repeat(5000)).is_none());
     }
 
     #[test]

@@ -86,7 +86,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | C-4 | Bind to stable principal | IMPROVE: store `chat_id` and `from.id`, require equality on every update, drop `from.is_bo | BUILT | one private chat bound; strangers get silence (tg01) |
 | C-5 | Multiple chats / devices | BUILD later (low priority): up to 3 bound chats, each with id, label and paired-at, listed | LATER | low priority |
 | C-6 | Revocation and unpair | IMPROVE: bridge re-reads `telegram.json` every poll cycle (or the service owns binding sta | BUILT | `kaku telegram unpair`; the bound chat is re-read (code in telegram.rs; no named test: NOT VERIFIED) |
-| C-7 | Pairing UX | IMPROVE: call `getMe` at start to learn the username, print and QR the deep link; handle ` | PARTIAL | kaku telegram pair prints the bot's t.me link from getMe, no link on any failure; no QR code; live bot NOT VERIFIED (telegram-bridge.md) |
+| C-7 | Pairing UX | IMPROVE: call `getMe` at start to learn the username, print and QR the deep link; handle ` | BUILT | pair names the bot, prints link and code, draws the link as a QR on a terminal (qr01, pty check, mutation-checked); phone scan NOT VERIFIED (telegram-bridge.md) |
 | C-8 | Unauthorised-sender reply policy | Keep. EXCLUDE hints and declines | BUILT | silence for strangers (tg01) |
 | C-9 | Owner vs member roles | EXCLUDE (no write powers exist to scope) | EXCLUDED | EXCLUDE (no write powers exist to scope) |
 | C-10 | Polling vs webhook | Keep polling for local mode (no public endpoint, which is the whole local-first point). AD | KEPT | polling, no public endpoint |

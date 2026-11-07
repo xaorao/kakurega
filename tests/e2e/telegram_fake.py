@@ -54,6 +54,9 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.path = self.path.replace(STORED, TOKEN)
+        if self.path.startswith(f"/bot{TOKEN}/getMe"):
+            self.reply({"ok": True, "result": {"username": "kakurega_test_bot"}})
+            return
         for tok, hook in ((CONFLICT, "https://example.test/hook/SECRETPART"), (CONFLICT2, "")):
             if self.path.startswith(f"/bot{tok}/getWebhookInfo"):
                 self.reply({"ok": True, "result": {"url": hook}})
@@ -149,6 +152,33 @@ try:
     base = f"http://127.0.0.1:{admin['port']}"
     adm = lambda path, body=None: json.loads(urllib.request.urlopen(urllib.request.Request(base + path, data=None if body is None else json.dumps(body).encode(), headers={"Authorization": "Bearer " + admin["token"], "content-type": "application/json"}), timeout=60).read())
     env = dict(os.environ, TELEGRAM_BOT_TOKEN=TOKEN)
+    # pairing names the bot; on a terminal it also draws the link as a QR code, in a pipe it does not
+    import pty
+    master, slave = pty.openpty()
+    pp = subprocess.Popen([kaku, "telegram", "pair", "--data-dir", str(data), "--api-base", api], stdout=slave, stderr=subprocess.PIPE, text=True, env=env)
+    os.close(slave)
+    chunks = b""
+    import select
+    end = time.time() + 30
+    # a terminal's output queue is small, so it is read while the program runs, as a terminal would
+    while time.time() < end:
+        if select.select([master], [], [], 0.2)[0]:
+            try:
+                got = os.read(master, 65536)
+            except OSError:
+                break
+            if not got:
+                break
+            chunks += got
+        elif pp.poll() is not None:
+            break
+    pp.wait(timeout=10)
+    os.close(master)
+    shown = chunks.decode("utf8", "replace")
+    qr_rows = [l for l in shown.splitlines() if len(l) > 20 and set(l.strip("\r")) <= set("█▀▄ ")]
+    check("on a terminal the pairing link is also drawn as a QR code of block characters", "https://t.me/kakurega_test_bot" in shown and "scan this" in shown and len(qr_rows) >= 12 and len({len(l) for l in qr_rows}) == 1, f"{len(qr_rows)} rows; {shown[:200]!r}")
+    piped = subprocess.run([kaku, "telegram", "pair", "--data-dir", str(data), "--api-base", api], capture_output=True, text=True, env=env, timeout=30)
+    check("into a pipe the pairing output has no QR code, only the link and the command", "https://t.me/kakurega_test_bot" in piped.stdout and not any(c in piped.stdout for c in "█▀▄"), piped.stdout[:200])
     pair = subprocess.run([kaku, "telegram", "pair", "--data-dir", str(data)], capture_output=True, text=True, env=env)
     code = pair.stdout.split("/pair ")[1].split()[0]
     check("`kaku telegram pair` prints a one-time code", len(code) == 12, "")
