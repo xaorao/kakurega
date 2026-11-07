@@ -1474,6 +1474,31 @@ try {
   await page.locator("ul.plain li.actions .chip", { hasText: "Pinned" }).waitFor({ state: "detached" });
   await page.getByLabel("Show archived conversations").uncheck();
   check("brought back and unpinned, it is an ordinary conversation again", (await keptRows.count()) === total && lastTitle.length > 0);
+  {
+    // conversations changed from somewhere else (another browser, `kaku chat --session`) are marked until they are opened; the one open here never is
+    const chips = () => page.locator("ul.plain li.actions .chip[data-unread]").count();
+    const rowsNow = await page.locator("ul.plain li.actions", { has: page.getByRole("button", { name: "Open", exact: true }) }).count();
+    check("conversations this browser made or opened are not marked as changed", (await chips()) === 0, String(await chips()));
+    let bump = 0;
+    await page.route(/\/api\/sessions(\?.*)?$/, async (route) => {
+      const real = await route.fetch();
+      const body = await real.json();
+      for (const k of body.sessions) k.updated += bump;
+      await route.fulfill({ response: real, json: body });
+    });
+    bump = 5000;
+    await page.getByLabel("Show archived conversations").check();
+    await page.getByLabel("Show archived conversations").uncheck();
+    await page.waitForFunction((n) => document.querySelectorAll("ul.plain li.actions .chip[data-unread]").length === n, rowsNow - 1);
+    check("every conversation that changed elsewhere is marked, except the one open here", (await chips()) === rowsNow - 1 && (await page.locator("ul.plain li.actions .chip[data-unread]").first().innerText()).includes("Changed since you looked"), `${await chips()} of ${rowsNow}`);
+    await page.locator("ul.plain li.actions", { has: page.locator(".chip[data-unread]") }).first().getByRole("button", { name: "Open", exact: true }).click();
+    await page.waitForFunction((n) => document.querySelectorAll("ul.plain li.actions .chip[data-unread]").length === n, rowsNow - 2);
+    check("opening one clears its mark and marks nothing else, the one that was open stays clear", (await chips()) === rowsNow - 2, `${await chips()} of ${rowsNow}`);
+    await page.reload();
+    await page.getByRole("button", { name: "Open" }).first().waitFor();
+    check("after a reload what was seen stays seen", (await chips()) === rowsNow - 2, String(await chips()));
+    await page.unroute(/\/api\/sessions(\?.*)?$/);
+  }
   // tidy up: forget every kept conversation so the steps after this see only their own
   for (let guard = 0; guard < 6; guard++) {
     const forgets = page.getByRole("button", { name: "Forget", exact: true });

@@ -246,6 +246,7 @@ export const hi: Record<keyof typeof en, string> = {
   "chat.clear": "साफ़ करें",
   "chat.pin": "ऊपर टाँकें",
   "chat.unpin": "टाँका हटाएँ",
+  "chat.unread": "आखिरी बार देखने के बाद बदला",
   "chat.pinned": "टँकी हुई",
   "chat.archive": "संग्रह में रखें",
   "chat.unarchive": "वापस लाएँ",

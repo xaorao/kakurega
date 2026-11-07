@@ -10,6 +10,7 @@ import { Markdown } from "../components/Markdown";
 import { HistoryPicker } from "../components/HistoryPicker";
 import { draftKey, exchangeWasSaved, opensHistoryPicker, forgetDraft, forgetSent, historyKey, historyStep, idleHistory, loadDraft, rememberSent, retagSent, saveDraft, sentHistory, stopsReply } from "../composer";
 import { meterLine, noteNotes, pageNotes, savedLine, summaryNotes } from "../meter";
+import { baseline, loadSeen, markSeen, saveSeen, unreadIds, type Seen } from "../unread";
 
 interface Shown extends ChatTurn {
   attached?: string[];
@@ -394,6 +395,28 @@ export function Chat() {
       return [];
     }
   });
+  // which kept conversations changed since this browser looked at them (the first visit starts from what is there, so nothing is new)
+  const store = () => (typeof localStorage === "undefined" ? undefined : localStorage);
+  const [seen, setSeen] = createSignal<Seen>(loadSeen(store()) ?? {});
+  let seenKnown = loadSeen(store()) !== null;
+  const remember = (next: Seen) => {
+    setSeen(next);
+    saveSeen(store(), next);
+  };
+  createEffect(() => {
+    const list = kept();
+    if (!list || list.length === 0) return;
+    if (!seenKnown) {
+      seenKnown = true;
+      remember(baseline(list));
+      return;
+    }
+    // the conversation open here is always up to date with this browser
+    const open = session();
+    const row = open ? list.find((k) => k.id === open) : undefined;
+    if (row && (seen()[row.id] ?? 0) < row.updated) remember(markSeen(seen(), row.id, row.updated));
+  });
+  const unread = createMemo(() => unreadIds(kept() ?? [], seen(), session() ?? null));
   const keep = async () => {
     setError("");
     try {
@@ -448,6 +471,8 @@ export function Chat() {
     setError("");
     try {
       const r = await api.keptChat(id);
+      const listed = (kept() ?? []).find((k) => k.id === id);
+      if (listed) remember(markSeen(seen(), id, listed.updated));
       setProject(r.project ?? "");
       show(id, r.turns.map(({ role, content }) => ({ role, content })), r.summary?.text ?? "");
       setBranches(r.branches ?? []);
@@ -783,7 +808,7 @@ export function Chat() {
                       <button type="button" onClick={() => setRenaming("")}>{t("mem.cancel")}</button>
                     </span>
                   }>
-                    <span>{k.pinned ? <span class="chip">{t("chat.pinned")}</span> : null} {k.archived ? <span class="chip">{t("chat.archived")}</span> : null} {k.title || t("chat.untitled")} · {t("chat.turns", { n: k.turns })}</span>
+                    <span>{unread().has(k.id) ? <span class="chip" data-unread="1">{t("chat.unread")}</span> : null} {k.pinned ? <span class="chip">{t("chat.pinned")}</span> : null} {k.archived ? <span class="chip">{t("chat.archived")}</span> : null} {k.title || t("chat.untitled")} · {t("chat.turns", { n: k.turns })}</span>
                     <button type="button" onClick={() => { setRenaming(k.id); setRenameText(k.title); }}>{t("chat.rename")}</button>
                   </Show>
                   <button type="button" onClick={() => openKept(k.id)}>{t("chat.open")}</button>

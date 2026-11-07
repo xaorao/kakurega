@@ -244,6 +244,7 @@ export const en = {
   "chat.clear": "Clear",
   "chat.pin": "Pin",
   "chat.unpin": "Unpin",
+  "chat.unread": "Changed since you looked",
   "chat.pinned": "Pinned",
   "chat.archive": "Archive",
   "chat.unarchive": "Bring back",
