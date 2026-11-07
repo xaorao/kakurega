@@ -285,6 +285,21 @@ fn local_agent(limit: Duration) -> ureq::Agent {
         .into()
 }
 
+/// The client for a streamed call: connecting, sending and waiting for the first reply are bound by the call limit; only the body
+/// may go on longer, and its silences are watched by the caller.
+fn stream_agent(limit: Duration) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(STREAM_TOTAL))
+        .timeout_connect(Some(limit))
+        .timeout_send_request(Some(limit))
+        .timeout_recv_response(Some(limit))
+        .proxy(None)
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .build()
+        .into()
+}
+
 pub struct OllamaRoute {
     id: String,
     base: String,
@@ -292,7 +307,17 @@ pub struct OllamaRoute {
     agent: ureq::Agent,
     context_tokens: u32,
     retry: retry::Retry,
+    /// How long a call may take before its first answer, and (for a call that is not streamed) in all.
+    limit: Duration,
+    /// How long a streamed answer may go quiet once it has started.
+    stall: Duration,
 }
+
+/// A streamed answer that has begun may take as long as it likes, but not stay silent longer than this.
+pub const DEFAULT_STALL: Duration = Duration::from_secs(120);
+
+/// The most a streamed call is allowed in all: a bound for a connection nobody is reading any more, not a cap on a living answer.
+const STREAM_TOTAL: Duration = Duration::from_secs(3600);
 
 impl OllamaRoute {
     pub fn new(base_url: &str, model: &str) -> Result<Self, RouteError> {
@@ -307,6 +332,8 @@ impl OllamaRoute {
             agent,
             context_tokens: DEFAULT_CONTEXT_TOKENS,
             retry: retry::Retry::default(),
+            limit: Duration::from_secs(300),
+            stall: DEFAULT_STALL,
         })
     }
 
@@ -319,15 +346,29 @@ impl OllamaRoute {
     /// Sets how long one call may take.
     pub fn with_timeout(mut self, limit: Duration) -> Self {
         self.agent = local_agent(limit);
+        self.limit = limit;
+        self
+    }
+
+    /// Sets how long a streamed answer may stay silent once it has started.
+    pub fn with_stall(mut self, stall: Duration) -> Self {
+        self.stall = stall;
         self
     }
 
     /// Posts a chat request, trying again while the model is starting up or busy. Returns once a response with a success status
     /// has arrived; nothing of the answer has been read, so a streamed reply is never started twice.
     fn post_chat(&self, body: &Value) -> Result<ureq::http::Response<ureq::Body>, RouteError> {
+        self.post_chat_with(&self.agent, body)
+    }
+
+    fn post_chat_with(
+        &self,
+        agent: &ureq::Agent,
+        body: &Value,
+    ) -> Result<ureq::http::Response<ureq::Body>, RouteError> {
         retry::run(&self.retry, &std::thread::sleep, || {
-            let mut resp = self
-                .agent
+            let mut resp = agent
                 .post(&format!("{}/api/chat", self.base))
                 .send_json(body)
                 .map_err(|e| match e {
@@ -484,28 +525,69 @@ impl OllamaRoute {
             "messages": messages,
             "options": self.options(request),
         });
-        let mut resp = self.post_chat(&body)?;
-        let mut reader = std::io::BufReader::new(resp.body_mut().as_reader());
+        // The call may take as long as a living answer needs. The first line is waited for as long as the call limit (a model that is
+        // loading holds the request open); after that the answer may not stay silent longer than `stall`. The lines are read on
+        // a thread of their own so that waiting can be given up without waiting for the connection.
+        let long = stream_agent(self.limit);
+        let mut resp = self.post_chat_with(&long, &body)?;
+        let (tx, rx) = std::sync::mpsc::sync_channel::<std::io::Result<String>>(8);
+        std::thread::spawn(move || {
+            let mut reader = std::io::BufReader::new(resp.body_mut().as_reader());
+            loop {
+                let mut line = String::new();
+                let n = match reader.by_ref().take(1 << 20).read_line(&mut line) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        let _ = tx.send(Err(e));
+                        return;
+                    }
+                };
+                if n == 0 {
+                    return;
+                }
+                if !line.ends_with('\n') && n >= (1 << 20) {
+                    let _ = tx.send(Err(std::io::Error::other("a streamed line was too long")));
+                    return;
+                }
+                if tx.send(Ok(line)).is_err() {
+                    return;
+                }
+            }
+        });
         let mut text = String::new();
         let (mut prompt_tokens, mut completion_tokens) = (0, 0);
-        let mut line = String::new();
+        let mut started = false;
         loop {
-            line.clear();
-            let n = reader
-                .by_ref()
-                .take(1 << 20)
-                .read_line(&mut line)
-                .map_err(|e| RouteError::BadResponse(e.to_string()))?;
-            if n == 0 {
-                return Err(RouteError::BadResponse(
-                    "the model stopped answering before it finished".into(),
-                ));
-            }
-            if !line.ends_with('\n') && n >= (1 << 20) {
-                return Err(RouteError::BadResponse(
-                    "a streamed line was too long".into(),
-                ));
-            }
+            let wait = if started { self.stall } else { self.limit };
+            let line = match rx.recv_timeout(wait) {
+                Ok(Ok(line)) => line,
+                Ok(Err(e)) => {
+                    return Err(if e.to_string().contains("too long") {
+                        RouteError::BadResponse("a streamed line was too long".into())
+                    } else {
+                        RouteError::BadResponse(e.to_string())
+                    })
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(RouteError::TimedOut(if started {
+                        format!(
+                            "the model went quiet for {} seconds in the middle of its answer",
+                            wait.as_secs()
+                        )
+                    } else {
+                        format!(
+                            "the model did not start answering within {} seconds",
+                            wait.as_secs()
+                        )
+                    }))
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(RouteError::BadResponse(
+                        "the model stopped answering before it finished".into(),
+                    ))
+                }
+            };
+            started = true;
             if line.trim().is_empty() {
                 continue;
             }
