@@ -12041,3 +12041,127 @@ fn sv122_the_sent_view_names_each_note_that_matched_and_was_not_sent_with_the_re
         "{sent3}"
     );
 }
+
+#[test]
+fn sv123_the_notes_can_be_counted_and_filtered_by_level_origin_project_and_use() {
+    let (root, _repo) = repo_copy("memstats");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    for body in [
+        json!({"text": "Acme pays invoices on the 20th", "level": "internal"}),
+        json!({"text": "Beta ships on mondays", "level": "confidential", "project": "payments-service"}),
+        json!({"text": "Gamma board vote in May", "level": "restricted"}),
+        json!({"text": "Delta promo price ends soon", "level": "internal", "valid_to": now + 3 * 86_400}),
+    ] {
+        assert_eq!(w.post("/api/memories", body).0, 201);
+    }
+    let (st, imp) = w.post("/api/memories/import-notes", json!({"source": "other-assistant", "notes": [{"name": "epsilon.md", "kind": "memory", "text": "Imported rule about Epsilon shipping"}]}));
+    assert_eq!(st, 200, "{imp}");
+    // one note reaches the model, so the others are "never used"
+    w.post(
+        "/api/chat",
+        json!({"message": "When does Acme pay invoices?"}),
+    );
+    let (code, s) = w.get("/api/memories/stats");
+    assert_eq!(code, 200, "{s}");
+    assert_eq!(s["total"], 5);
+    assert_eq!(
+        (
+            s["by_level"]["internal"].as_u64(),
+            s["by_level"]["confidential"].as_u64(),
+            s["by_level"]["restricted"].as_u64()
+        ),
+        (Some(3), Some(1), Some(1)),
+        "{s}"
+    );
+    assert_eq!(s["by_project"]["payments-service"], 1);
+    assert_eq!(
+        (
+            s["by_origin"]["owner"].as_u64(),
+            s["by_origin"]["imported"].as_u64()
+        ),
+        (Some(4), Some(1)),
+        "{s}"
+    );
+    assert_eq!(
+        (
+            s["untrusted"].as_u64(),
+            s["ending_within_14_days"].as_u64(),
+            s["never_used"].as_u64(),
+            s["complete"].as_bool()
+        ),
+        (Some(1), Some(1), Some(4), Some(true)),
+        "{s}"
+    );
+    for text in [
+        "Acme pays",
+        "Beta ships",
+        "Gamma board",
+        "Delta promo",
+        "Epsilon shipping",
+    ] {
+        assert!(
+            !s.to_string().contains(text),
+            "counts only, never note text: {text}"
+        );
+    }
+    let texts = |q: &str| -> Vec<String> {
+        let (code, v) = w.get(&format!("/api/memories{q}"));
+        assert_eq!(code, 200, "{q}: {v}");
+        let mut t: Vec<String> = v["memories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["text"].as_str().unwrap().to_string())
+            .collect();
+        t.sort();
+        t
+    };
+    assert_eq!(texts("?level=restricted"), ["Gamma board vote in May"]);
+    assert_eq!(texts("?level=confidential"), ["Beta ships on mondays"]);
+    assert_eq!(
+        texts("?project=payments-service"),
+        ["Beta ships on mondays"]
+    );
+    assert_eq!(
+        texts("?origin=imported"),
+        ["Imported rule about Epsilon shipping"]
+    );
+    assert_eq!(
+        texts("?origin=owner&level=internal"),
+        [
+            "Acme pays invoices on the 20th",
+            "Delta promo price ends soon"
+        ],
+        "filters combine"
+    );
+    let unused = texts("?unused=1");
+    assert_eq!(unused.len(), 4);
+    assert!(
+        !unused.contains(&"Acme pays invoices on the 20th".to_string()),
+        "the note that reached the model is not unused"
+    );
+    assert_eq!(texts("?level=public"), Vec::<String>::new());
+    // bad filters are refused with a reason and nothing is listed
+    for bad in ["?level=secret", "?origin=robot", "?project=a%2Fb"] {
+        let (code, v) = w.get(&format!("/api/memories{bad}"));
+        assert!(code == 400 || code == 422, "{bad}: {code} {v}");
+    }
+    assert_eq!(Web::new(c.addr).get("/api/memories/stats").0, 401);
+}

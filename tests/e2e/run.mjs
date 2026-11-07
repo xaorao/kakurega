@@ -469,6 +469,35 @@ try {
   await page.getByRole("button", { name: "Remember" }).click();
   await page.getByRole("alert").filter({ hasText: "folder name" }).waitFor();
   check("a project name with a slash is refused with a reason", (await page.locator(".mem", { hasText: "bad project" }).count()) === 0);
+  {
+    // the notes at a glance, and filters that narrow the list
+    const glance = page.getByRole("region", { name: "Your notes at a glance" });
+    await glance.getByRole("status").waitFor();
+    const shownNotes = await page.locator(".mem").count();
+    const line = await glance.getByRole("status").innerText();
+    check("the notes at a glance count what the list shows, from untrusted text, never used and ending soon", new RegExp(`^${shownNotes} note\\(s\\); \\d+ from untrusted text; \\d+ never given to a model; \\d+ ending within 14 days; \\d+ held back for a check\\.$`).test(line), `${shownNotes} vs ${line}`);
+    await glance.getByLabel("Project").selectOption("payments-service");
+    await page.locator(".mem", { hasText: "rounded half up" }).waitFor();
+    await page.waitForFunction(() => document.querySelectorAll(".mem").length === 1);
+    check("filtering by project keeps only that project's notes", (await page.locator(".mem").count()) === 1 && (await page.locator(".mem").innerText()).includes("rounded half up"));
+    await glance.getByRole("button", { name: "Show all" }).click();
+    await page.waitForFunction((n) => document.querySelectorAll(".mem").length === n, shownNotes);
+    await glance.getByLabel("Level").selectOption("restricted");
+    await page.getByText("No memory matches.").waitFor();
+    check("a filter that matches nothing says so, and Show all brings everything back", (await page.locator(".mem").count()) === 0);
+    await glance.getByRole("button", { name: "Show all" }).click();
+    await page.waitForFunction((n) => document.querySelectorAll(".mem").length === n, shownNotes);
+    await glance.getByLabel("Where it came from").selectOption("imported");
+    await page.getByText("No memory matches.").waitFor();
+    await glance.getByLabel("Where it came from").selectOption("owner");
+    await page.waitForFunction((n) => document.querySelectorAll(".mem").length === n, shownNotes);
+    check("every note listed so far was written by the owner", (await page.locator(".mem").count()) === shownNotes);
+    await glance.getByLabel("Never given to a model").check();
+    await page.waitForFunction((n) => document.querySelectorAll(".mem").length === n, shownNotes);
+    await glance.getByLabel("Never given to a model").uncheck();
+    await glance.getByLabel("Where it came from").selectOption("");
+    await axeCheck(page, "memory with the notes at a glance");
+  }
   await page.getByLabel("Only for this project (optional folder name)").fill("");
   await page.locator(".mem", { hasText: "rounded half up" }).getByRole("button", { name: "Forget", exact: true }).click();
   await page.getByRole("button", { name: "Yes, forget it" }).click();

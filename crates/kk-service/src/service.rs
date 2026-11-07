@@ -1211,6 +1211,23 @@ fn memory_error(e: kk_memory::MemoryError) -> Response {
 #[derive(Deserialize)]
 struct MemoryQuery {
     q: Option<String>,
+    /// Only notes of this privacy level (`public`, `internal`, `confidential`, `restricted`).
+    level: Option<String>,
+    /// Only notes of this origin (`owner`, `imported`, `conversation`, `review`).
+    origin: Option<String>,
+    /// Only notes kept for this project.
+    project: Option<String>,
+    /// `1`: only notes that have never reached a model.
+    unused: Option<u8>,
+}
+
+impl MemoryQuery {
+    fn filtering(&self) -> bool {
+        self.level.is_some()
+            || self.origin.is_some()
+            || self.project.is_some()
+            || self.unused == Some(1)
+    }
 }
 
 #[derive(Deserialize)]
@@ -1243,14 +1260,72 @@ fn level_from(s: Option<&str>) -> Option<kk_types::label::Level> {
 
 async fn memories_list(axum::Extension(svc): Svc, Query(q): Query<MemoryQuery>) -> Response {
     let mem = svc.memory.lock().expect("lock");
+    if let Some(l) = &q.level {
+        if level_from(Some(l)).is_none() {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "BAD_FILTER",
+                "the level is public, internal, confidential or restricted",
+            );
+        }
+    }
+    if q.origin
+        .as_deref()
+        .is_some_and(|o| !kk_memory::ORIGINS.contains(&o))
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_FILTER",
+            "the origin is owner, imported, conversation or review",
+        );
+    }
+    if q.project
+        .as_deref()
+        .is_some_and(|p| !kk_memory::valid_project(p))
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_FILTER",
+            "that is not a project name",
+        );
+    }
+    // a filter looks through more notes than are shown, so what it keeps is not an accident of which hundred came first
+    let (room, shown) = if q.filtering() {
+        (2000, 100)
+    } else {
+        (100, 100)
+    };
     let res = mem.owner_clearance().and_then(|c| {
         match q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             Some(text) => mem.recall_scoped(text, &c, now(), 50, kk_memory::Scope::All),
-            None => mem.list_scoped(&c, now(), 100, kk_memory::Scope::All),
+            None => mem.list_scoped(&c, now(), room, kk_memory::Scope::All),
         }
     });
     match res {
         Ok(items) => {
+            let items: Vec<_> = if q.filtering() {
+                let wanted_level = q.level.as_deref().and_then(|l| level_from(Some(l)));
+                let used: std::collections::HashSet<String> = if q.unused == Some(1) {
+                    let ids: Vec<String> = items.iter().map(|r| r.memory.id.clone()).collect();
+                    mem.usage(&ids).into_keys().collect()
+                } else {
+                    Default::default()
+                };
+                items
+                    .into_iter()
+                    .filter(|r| wanted_level.is_none_or(|l| r.memory.label.level == l))
+                    .filter(|r| q.origin.as_deref().is_none_or(|o| r.origin() == o))
+                    .filter(|r| {
+                        q.project
+                            .as_deref()
+                            .is_none_or(|p| r.memory.project.as_deref() == Some(p))
+                    })
+                    .filter(|r| q.unused != Some(1) || !used.contains(&r.memory.id))
+                    .take(shown)
+                    .collect()
+            } else {
+                items
+            };
             let held = mem
                 .owner_clearance()
                 .and_then(|c| mem.held(&c))
@@ -1272,6 +1347,54 @@ async fn memories_list(axum::Extension(svc): Svc, Query(q): Query<MemoryQuery>) 
         }
         Err(e) => memory_error(e),
     }
+}
+
+/// Counts of the owner's notes: how many, by level, origin and project, how many came from untrusted text, were never used, are held, and end
+/// within two weeks. Counts only; no note text.
+async fn memories_stats(axum::Extension(svc): Svc) -> Response {
+    let mem = svc.memory.lock().expect("lock");
+    let Ok(c) = mem.owner_clearance() else {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "STORE",
+            "could not read the notes",
+        );
+    };
+    let all = match mem.list_scoped(&c, now(), 5000, kk_memory::Scope::All) {
+        Ok(a) => a,
+        Err(e) => return memory_error(e),
+    };
+    let ids: Vec<String> = all.iter().map(|r| r.memory.id.clone()).collect();
+    let used = mem.usage(&ids);
+    let mut by_level: std::collections::BTreeMap<String, usize> = Default::default();
+    let mut by_origin: std::collections::BTreeMap<&str, usize> = Default::default();
+    let mut by_project: std::collections::BTreeMap<String, usize> = Default::default();
+    let soon = now() + 14 * 86_400;
+    let (mut untrusted, mut ending_soon) = (0usize, 0usize);
+    for r in &all {
+        *by_level
+            .entry(format!("{:?}", r.memory.label.level).to_lowercase())
+            .or_default() += 1;
+        *by_origin.entry(r.origin()).or_default() += 1;
+        if let Some(p) = &r.memory.project {
+            *by_project.entry(p.clone()).or_default() += 1;
+        }
+        untrusted += usize::from(r.untrusted);
+        ending_soon += usize::from(r.memory.valid_to.is_some_and(|t| t > now() && t <= soon));
+    }
+    let held = mem.held(&c).map(|h| h.len()).unwrap_or(0);
+    Json(json!({
+        "total": all.len(),
+        "complete": all.len() < 5000,
+        "by_level": by_level,
+        "by_origin": by_origin,
+        "by_project": by_project,
+        "untrusted": untrusted,
+        "never_used": all.len() - used.len(),
+        "ending_within_14_days": ending_soon,
+        "held": held,
+    }))
+    .into_response()
 }
 
 #[derive(Deserialize)]
@@ -7461,6 +7584,7 @@ impl Extension for Routes {
             .route("/api/memories/similar", get(memories_similar))
             .route("/api/memories/held", get(memories_held))
             .route("/api/memories/expiring", get(memories_expiring))
+            .route("/api/memories/stats", get(memories_stats))
             .route("/api/memories/{id}/release-hold", post(memory_release_hold))
             .route("/api/memories/conflicts", get(memories_conflicts))
             .route("/api/memories/conflicts/keep", post(memories_conflict_keep))

@@ -1,4 +1,4 @@
-import { createResource, createSignal, For, Show } from "solid-js";
+import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 import { copyNames } from "../forgotten";
 import { api, ApiError, type MemoryItem } from "../api";
 import { t, type Key } from "../i18n";
@@ -409,7 +409,17 @@ function ReviewSources(props: { onChange: (msg?: string) => void }) {
 
 export function Memory() {
   const [query, setQuery] = createSignal("");
-  const [items, { refetch }] = createResource(query, (q) => api.memories(q.trim() || undefined).then((r) => r.memories));
+  const [fLevel, setFLevel] = createSignal("");
+  const [fOrigin, setFOrigin] = createSignal("");
+  const [fProject, setFProject] = createSignal("");
+  const [fUnused, setFUnused] = createSignal(false);
+  const filters = createMemo(() => ({ q: query(), level: fLevel(), origin: fOrigin(), project: fProject(), unused: fUnused() }));
+  const filtering = () => !!(fLevel() || fOrigin() || fProject() || fUnused());
+  const [items, { refetch: refetchItems }] = createResource(filters, (f) => api.memories(f.q.trim() || undefined, { level: f.level || undefined, origin: f.origin || undefined, project: f.project || undefined, unused: f.unused }).then((r) => r.memories));
+  const [stats, { refetch: refetchStats }] = createResource(() => api.memoryStats().catch(() => null));
+  const refetch = async () => {
+    await Promise.all([refetchItems(), refetchStats()]);
+  };
   const [text, setText] = createSignal("");
   const [level, setLevel] = createSignal<string>("internal");
   const [reason, setReason] = createSignal("");
@@ -460,12 +470,41 @@ export function Memory() {
         <label class="sr" for="mem-search">{t("mem.search")}</label>
         <input id="mem-search" type="search" placeholder={t("mem.search")} value={query()} onInput={(e) => setQuery(e.currentTarget.value)} />
       </div>
+      <section class="card stack" aria-labelledby="h-mem-glance">
+        <h2 id="h-mem-glance">{t("mem.glance.heading")}</h2>
+        <Show when={stats()} fallback={<p class="muted">{t("mem.glance.unknown")}</p>}>
+          {(s) => (
+            <p role="status">{t("mem.glance.line", { total: s().total, untrusted: s().untrusted, unused: s().never_used, soon: s().ending_within_14_days, held: s().held })}</p>
+          )}
+        </Show>
+        <div class="actions">
+          <label for="mem-f-level">{t("mem.filter.level")}</label>
+          <select id="mem-f-level" value={fLevel()} onChange={(e) => setFLevel(e.currentTarget.value)}>
+            <option value="">{t("mem.filter.any")}</option>
+            <For each={LEVELS}>{(l) => <option value={l}>{t(`mem.level.${l}` as Key)}</option>}</For>
+          </select>
+          <label for="mem-f-origin">{t("mem.filter.origin")}</label>
+          <select id="mem-f-origin" value={fOrigin()} onChange={(e) => setFOrigin(e.currentTarget.value)}>
+            <option value="">{t("mem.filter.any")}</option>
+            <For each={["owner", "imported", "conversation", "review"]}>{(o) => <option value={o}>{t(`mem.origin.${o}` as Key)}</option>}</For>
+          </select>
+          <Show when={Object.keys(stats()?.by_project ?? {}).length > 0}>
+            <label for="mem-f-project">{t("mem.filter.project")}</label>
+            <select id="mem-f-project" value={fProject()} onChange={(e) => setFProject(e.currentTarget.value)}>
+              <option value="">{t("mem.filter.any")}</option>
+              <For each={Object.keys(stats()?.by_project ?? {}).sort()}>{(p) => <option value={p}>{p}</option>}</For>
+            </select>
+          </Show>
+          <label class="choice"><input type="checkbox" checked={fUnused()} onChange={(e) => setFUnused(e.currentTarget.checked)} /> {t("mem.filter.unused")}</label>
+          <Show when={filtering()}><button type="button" onClick={() => { setFLevel(""); setFOrigin(""); setFProject(""); setFUnused(false); }}>{t("mem.filter.reset")}</button></Show>
+        </div>
+      </section>
       <Similar onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <Disagreements onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <Merged onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <ReviewSources onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <ul class="plain stack">
-        <For each={items()} fallback={<li class="muted">{items.loading ? t("review.loading") : query().trim() ? t("mem.nomatch") : t("mem.none")}</li>}>
+        <For each={items()} fallback={<li class="muted">{items.loading ? t("review.loading") : query().trim() || filtering() ? t("mem.nomatch") : t("mem.none")}</li>}>
           {(m) => <Item m={m} onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />}
         </For>
       </ul>

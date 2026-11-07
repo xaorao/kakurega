@@ -76,6 +76,8 @@ export interface Config {
 export interface ReadinessCheck { id: string; label: string; ok: boolean; required?: boolean; detail: string; fix: string; repairable?: boolean; repair?: { state: "running" | "done" | "failed"; detail: string } }
 export interface Readiness { ready: boolean; checks: ReadinessCheck[] }
 export interface MemoryItem { id: string; text: string; why: string; untrusted: boolean; level: string; compartments: string[]; created_at: number; valid_to: number | null; source: string; project?: string | null; uses?: number; last_used?: number | null }
+export interface MemoryFilter { level?: string; origin?: string; project?: string; unused?: boolean }
+export interface MemoryStats { total: number; complete: boolean; by_level: Record<string, number>; by_origin: Record<string, number>; by_project: Record<string, number>; untrusted: number; never_used: number; ending_within_14_days: number; held: number }
 export interface MemoryVersion { id: string; text: string; reason: string; created_at: number; current: boolean }
 export interface Suggestion { id: string; text: string; why: string; level: string; untrusted: boolean }
 export interface LogEntry { seq: number; at: number; kind: string; subject: string; data: Record<string, string | number> }
@@ -207,7 +209,17 @@ export const api = {
   session: () => request<{ paired: boolean; csrf: string }>("GET", "/api/session"),
   logout: () => request<void>("POST", "/api/logout"),
   config: () => request<Config>("GET", "/api/config"),
-  memories: (q?: string) => request<{ memories: MemoryItem[] }>("GET", `/api/memories${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  memories: (q?: string, f?: MemoryFilter) => {
+    const p = new URLSearchParams();
+    if (q) p.set("q", q);
+    if (f?.level) p.set("level", f.level);
+    if (f?.origin) p.set("origin", f.origin);
+    if (f?.project) p.set("project", f.project);
+    if (f?.unused) p.set("unused", "1");
+    const qs = p.toString();
+    return request<{ memories: MemoryItem[] }>("GET", `/api/memories${qs ? `?${qs}` : ""}`);
+  },
+  memoryStats: () => request<MemoryStats>("GET", "/api/memories/stats"),
   addMemory: (b: { text: string; level: string; reason?: string; project?: string }) => request<{ id: string; added: boolean }>("POST", "/api/memories", b),
   correctMemory: (id: string, b: { text: string; reason?: string; project?: string }) => request<{ id: string }>("POST", `/api/memories/${id}/correct`, b),
   exportTranscript: (name: string, text: string) => request<{ path: string }>("POST", "/api/exports/transcript", { name, text }),
