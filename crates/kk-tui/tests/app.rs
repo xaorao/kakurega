@@ -4366,3 +4366,28 @@ fn tu70_quiet_hides_the_steps_of_a_review_but_not_how_it_ended_and_toggles_back(
     enter(&mut app, "/quiet");
     assert!(!app.quiet && text(&app).contains("Every step of a review is shown"));
 }
+
+#[test]
+fn tu71_a_proposed_fix_is_drawn_with_old_and_new_line_numbers_and_its_markers_first() {
+    let mut a = booted();
+    a.jobs.push(kk_tui::app::JobRow {
+        id: "job-4".into(),
+        recipient: "x".into(),
+        state: "ready".into(),
+    });
+    let r = enter(&mut a, "/fixes");
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"fixes": [{"index": 0, "title": "t", "file": "payments/auth/session.py", "explanation": "remove the entry", "status": "fixes_the_reproducer", "verified": true,
+            "diff": "--- a/payments/auth/session.py\n+++ b/payments/auth/session.py\n@@ -21,3 +21,2 @@\n keep\n-del _sessions[token]\n+_sessions.pop(token, None)\n", "applied": false}]}),
+    ));
+    let all = text(&a);
+    assert!(all.contains("  21  21 keep"), "{all}");
+    assert!(all.contains("- 22     del _sessions[token]"), "{all}");
+    assert!(all.contains("+     22 _sessions.pop(token, None)"), "{all}");
+    assert!(
+        all.contains("@@ -21,3 +21,2 @@") && all.contains("--- a/payments/auth/session.py"),
+        "headers are kept as they are"
+    );
+}

@@ -100,3 +100,8 @@
 - Built: `/quiet` toggles whether the steps of a running review (import, protect, review, patterns, ...) are printed. In quiet mode only how it ended is shown, with the next step; failures and their reason are never hidden. `/quiet` again shows every step. The setting lasts for the session.
 - Evidence: kk-tui tu70 (steps hidden, the end told, a failure told, toggled back), 2 mutants caught.
 - Not built: a persistent setting, a middle level, folding one chosen card, card memory limits. A30 stays PARTIAL.
+
+## Line numbers in a proposed fix (ledger A-A27, step 1)
+- Built: `/fixes` draws each change with the old and new line numbers (`kk-tui/src/diff.rs`). The `+`, `-` or space stays the first character, so added and removed lines read the same with no colour; file and hunk headers are shown as given; the lengths in each hunk header say where it ends, so a removed line that itself begins with `--` (an SQL comment, a Lua comment) is not taken for the next file's header; a header that cannot be read, or text outside a hunk, is passed through unchanged; very large numbers cannot overflow.
+- Evidence: unit tests df01-df05 and tu71 (the fix as drawn through the app); 9 mutants over two runs, all caught after df04 and df05 were added for the two survivors found by mutation.
+- Not built: the split view above 120 columns, syntax colour inside the diff, and the same widget in the approval overlay for modified text in a release. A27 stays PARTIAL.

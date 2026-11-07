@@ -1,6 +1,7 @@
 pub mod app;
 pub mod attention;
 pub mod cmd;
+pub mod diff;
 pub mod editor;
 pub mod http;
 pub mod linear;

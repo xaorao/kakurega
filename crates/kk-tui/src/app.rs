@@ -2977,9 +2977,13 @@ impl App {
                     )];
                     lines.extend(text_lines(&clean(f["explanation"].as_str().unwrap_or(""))));
                     lines.push(String::new());
-                    for l in f["diff"].as_str().unwrap_or("").lines().take(60) {
-                        lines.push(clean(l));
-                    }
+                    let diff: Vec<String> = f["diff"]
+                        .as_str()
+                        .unwrap_or("")
+                        .lines()
+                        .map(clean)
+                        .collect();
+                    lines.extend(crate::diff::number(&diff).into_iter().take(60));
                     lines.push(String::new());
                     lines.push(if state == "attention" {
                         format!(
