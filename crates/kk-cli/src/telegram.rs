@@ -365,6 +365,10 @@ impl Admin for HttpAdmin {
     }
 }
 
+fn outbox_path(dir: &Path) -> PathBuf {
+    dir.join("telegram-outbox.json")
+}
+
 fn bound_path(dir: &Path) -> PathBuf {
     dir.join("telegram.json")
 }
@@ -669,7 +673,7 @@ pub fn run(args: &[String]) -> u8 {
         std::thread::spawn(move || poll_loop(api, token, poll_tx));
     }
     let mut conflict_told = false;
-    let mut outbox = Outbox::default();
+    let mut outbox = Outbox::load(&outbox_path(&dir), bridge.bound_chat, unix_now() as i64);
     let mut tracked: BTreeMap<String, i64> = BTreeMap::new();
     let mut last_poll = Instant::now() - Duration::from_secs(10);
     let mut status = Status::default();
@@ -680,6 +684,7 @@ pub fn run(args: &[String]) -> u8 {
         if bridge.bound_chat.is_some() && !bound_path(&dir).exists() {
             bridge.bound_chat = None;
             outbox = Outbox::default();
+            let _ = std::fs::remove_file(outbox_path(&dir));
             eprintln!("the chat binding was removed: no further messages will be sent");
         }
         outbox.flush(Instant::now(), &mut |o| {
@@ -739,6 +744,7 @@ pub fn run(args: &[String]) -> u8 {
                 return 1;
             }
         }
+        outbox.save_if_changed(&outbox_path(&dir));
         if status_written.elapsed() >= Duration::from_secs(30) {
             status_written = Instant::now();
             status.updated = unix_now();
@@ -1034,7 +1040,9 @@ fn send_once(agent: &ureq::Agent, api: &str, token: &str, o: &Out) -> (SendOutco
 /// Messages that could not be delivered yet. Bounded, oldest dropped first, and a message is tried at most ten times.
 #[derive(Default)]
 pub struct Outbox {
-    items: std::collections::VecDeque<(Out, u32, Instant)>,
+    items: std::collections::VecDeque<(Out, u32, Instant, i64)>,
+    /// Set when the waiting messages changed since they were last written down.
+    dirty: bool,
     /// Telegram's flood penalty is for the whole bot: until this time nothing is sent, not just the message that was refused.
     gate_until: Option<Instant>,
     /// Messages that may go out now, refilled at one a second up to a burst of three, so a run of events reaches the chat as a
@@ -1058,7 +1066,9 @@ impl Outbox {
         if self.items.len() >= Self::MAX {
             self.items.pop_front();
         }
-        self.items.push_back((o, 0, Instant::now()));
+        self.items
+            .push_back((o, 0, Instant::now(), unix_now() as i64));
+        self.dirty = true;
     }
 
     #[cfg(test)]
@@ -1085,11 +1095,12 @@ impl Outbox {
             (self.tokens + since * Self::PER_SECOND).min(Self::BURST)
         };
         self.refilled = Some(now);
+        let before = self.items.len();
         let mut keep = std::collections::VecDeque::new();
         let mut paused = false;
-        while let Some((o, tries, due)) = self.items.pop_front() {
+        while let Some((o, tries, due, at)) = self.items.pop_front() {
             if paused || due > now || self.tokens < 1.0 {
-                keep.push_back((o, tries, due));
+                keep.push_back((o, tries, due, at));
                 continue;
             }
             self.tokens -= 1.0;
@@ -1100,24 +1111,184 @@ impl Outbox {
                     paused = true;
                     // nothing is tried while the gate is closed, so only one answer can set it per flush
                     self.gate_until = Some(now + wait);
-                    keep.push_back((o, tries, now + wait));
+                    keep.push_back((o, tries, now + wait, at));
                 }
                 SendOutcome::Retry => {
                     if tries + 1 < Self::MAX_TRIES {
                         let backoff = Duration::from_secs(1u64 << (tries + 1).min(6));
-                        keep.push_back((o, tries + 1, now + backoff));
+                        keep.push_back((o, tries + 1, now + backoff, at));
                     } else {
                         eprintln!("giving up on a message after {} tries", Self::MAX_TRIES);
                     }
                 }
             }
         }
+        if keep.len() != before {
+            self.dirty = true;
+        }
         self.items = keep;
+    }
+
+    /// Messages older than this when the bridge starts again are not sent: a notice that a review waits is worth nothing an hour
+    /// later, and the first look at the service after a start announces what is still pending anyway.
+    pub const REPLAY_WITHIN_SECS: i64 = 900;
+
+    /// Writes the waiting messages down (owner-only file, only text that was already going to the chat) when they changed.
+    pub fn save_if_changed(&mut self, path: &Path) {
+        if !self.dirty {
+            return;
+        }
+        self.dirty = false;
+        if self.items.is_empty() {
+            let _ = std::fs::remove_file(path);
+            return;
+        }
+        let list: Vec<Value> = self
+            .items
+            .iter()
+            .map(|(o, _, _, at)| json!({"chat": o.chat, "text": o.text, "silent": o.silent, "queued": at}))
+            .collect();
+        let _ = kk_vault::durable::write_atomic(
+            path,
+            json!({"outbox": list}).to_string().as_bytes(),
+            0o600,
+        );
+    }
+
+    /// The messages a previous run left waiting for the chat the bridge is now bound to, newest few seconds first dropped if too many.
+    /// Damaged files, other chats' messages and old messages are ignored. The file is removed once read.
+    pub fn load(path: &Path, bound_chat: Option<i64>, now_unix: i64) -> Outbox {
+        let mut ob = Outbox::default();
+        let read = std::fs::read_to_string(path).ok();
+        let _ = std::fs::remove_file(path);
+        let Some(chat) = bound_chat else { return ob };
+        let Some(v) = read.and_then(|t| serde_json::from_str::<Value>(&t).ok()) else {
+            return ob;
+        };
+        for item in v["outbox"].as_array().into_iter().flatten().take(Self::MAX) {
+            let (Some(c), Some(text), Some(queued)) = (
+                item["chat"].as_i64(),
+                item["text"].as_str(),
+                item["queued"].as_i64(),
+            ) else {
+                continue;
+            };
+            if c != chat
+                || text.is_empty()
+                || text.len() > 4096
+                || now_unix.saturating_sub(queued) > Self::REPLAY_WITHIN_SECS
+                || queued > now_unix + 60
+            {
+                continue;
+            }
+            ob.items.push_back((
+                Out {
+                    chat: c,
+                    text: text.to_string(),
+                    note: None,
+                    silent: item["silent"].as_bool().unwrap_or(false),
+                },
+                0,
+                Instant::now(),
+                queued,
+            ));
+        }
+        ob.dirty = !ob.items.is_empty();
+        ob
     }
 }
 
 #[cfg(test)]
 mod tests {
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("kk-outbox-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d.join("telegram-outbox.json")
+    }
+
+    fn out(chat: i64, text: &str) -> Out {
+        Out {
+            chat,
+            text: text.into(),
+            note: None,
+            silent: false,
+        }
+    }
+
+    #[test]
+    fn tg90_waiting_messages_survive_a_restart_only_for_the_same_chat_and_only_while_fresh() {
+        let path = tmp("a");
+        let mut b = Outbox::default();
+        b.push(out(7, "a review is ready"));
+        b.push(out(8, "meant for another chat"));
+        b.save_if_changed(&path);
+        let mode = std::os::unix::fs::PermissionsExt::mode(
+            &std::fs::metadata(&path).unwrap().permissions(),
+        ) & 0o777;
+        assert_eq!(mode, 0o600, "the file is for the owner only");
+        let now = unix_now() as i64;
+        let back = Outbox::load(&path, Some(7), now + 10);
+        assert_eq!(back.len(), 1, "only the bound chat's message comes back");
+        assert!(
+            !path.exists(),
+            "the file is taken when read, so a message is replayed once"
+        );
+        // too old: nothing
+        b.dirty = true;
+        b.save_if_changed(&path);
+        assert!(Outbox::load(&path, Some(7), now + Outbox::REPLAY_WITHIN_SECS + 5).is_empty());
+        // no binding: nothing, and nothing from a damaged or hostile file
+        b.dirty = true;
+        b.save_if_changed(&path);
+        assert!(Outbox::load(&path, None, now).is_empty());
+        for junk in [
+            "",
+            "not json",
+            "{}",
+            "{\"outbox\": 5}",
+            "{\"outbox\": [{\"chat\": 7}]}",
+            "{\"outbox\": [{\"chat\": 7, \"text\": \"\", \"queued\": 1}]}",
+        ] {
+            std::fs::write(&path, junk).unwrap();
+            assert!(Outbox::load(&path, Some(7), now).is_empty(), "{junk}");
+        }
+        // a message dated in the future is not trusted, and a huge file is cut
+        std::fs::write(
+            &path,
+            format!(
+                "{{\"outbox\": [{{\"chat\": 7, \"text\": \"x\", \"queued\": {}}}]}}",
+                now + 100_000
+            ),
+        )
+        .unwrap();
+        assert!(Outbox::load(&path, Some(7), now).is_empty());
+        let many: Vec<String> = (0..500)
+            .map(|_| format!("{{\"chat\": 7, \"text\": \"m\", \"queued\": {now}}}"))
+            .collect();
+        std::fs::write(&path, format!("{{\"outbox\": [{}]}}", many.join(","))).unwrap();
+        assert_eq!(Outbox::load(&path, Some(7), now).len(), Outbox::MAX);
+    }
+
+    #[test]
+    fn tg91_the_file_follows_the_queue_and_is_gone_when_the_queue_is_empty() {
+        let path = tmp("b");
+        let mut b = Outbox::default();
+        b.save_if_changed(&path);
+        assert!(!path.exists(), "nothing waiting, nothing written");
+        b.push(out(7, "one"));
+        b.save_if_changed(&path);
+        assert!(path.exists());
+        b.flush(Instant::now(), &mut |_| SendOutcome::Delivered);
+        b.save_if_changed(&path);
+        assert!(!path.exists(), "delivered, so the file is removed");
+        // a message that waits for a retry stays in the file
+        b.push(out(7, "two"));
+        b.flush(Instant::now(), &mut |_| SendOutcome::Retry);
+        b.save_if_changed(&path);
+        assert!(std::fs::read_to_string(&path).unwrap().contains("two"));
+    }
+
     #[test]
     fn tg68_the_bot_link_is_made_only_from_a_plain_username() {
         assert_eq!(
