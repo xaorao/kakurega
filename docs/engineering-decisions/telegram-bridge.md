@@ -80,3 +80,7 @@ Real Telegram delivery, group chats, webhooks, media, rate limits imposed by Tel
 - Built: when one look at the service yields more than five new notices, the first three go out as they are and the rest become one line, "N more things happened at once. Send /status for the counts, or open Kakurega to see them." The digest is silent only if everything folded into it was silent. Edits of earlier messages are never counted or folded.
 - Evidence: tg92 (unit): up to five untouched, order kept, the count, edits anywhere in the list, silence rule, empty list; 6 mutants caught (one checked by hand after the formatter moved its line). NOT VERIFIED: a real burst through the bridge to a live chat (telegram_fake.py has no burst case).
 - Not built: a per-chat rate limit apart from the whole-bot gate (a single bound chat makes them the same today). C-25 stays PARTIAL.
+
+## The proxy the environment names (ledger C-18)
+- Tested end to end with `tests/e2e/telegram_proxy.py` (in the gate): with `HTTPS_PROXY` set the bridge asks the proxy for a tunnel to `api.telegram.org:443` (the stand-in proxy sees the CONNECT line and refuses it); with `NO_PROXY` naming the host nothing goes to the proxy; the token appears in neither the tunnel request nor the bridge's output; the local service's traffic never goes through the proxy. One mutant (the polling client told to ignore proxies) caught.
+- Not exercised: a proxy that needs a login, SOCKS proxies, and a real Telegram behind a proxy. C-18 stays PARTIAL for those.

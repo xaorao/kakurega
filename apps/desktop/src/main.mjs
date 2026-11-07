@@ -12,6 +12,9 @@ import { createRestartPolicy, rendererCrashed } from "./recovery.mjs";
 
 const dataDir = process.env.KAKUREGA_DATA_DIR ?? join(homedir(), ".kakurega");
 const kakuBin = process.env.KAKU_BIN;
+// When the data folder is chosen explicitly (a second profile, a test), the window's own files (cache, cookies) live inside it
+// instead of in the one place every copy of the app shares, so copies cannot damage each other's caches.
+if (process.env.KAKUREGA_DATA_DIR) app.setPath("userData", join(dataDir, "electron"));
 let child = null;
 let window = null;
 // The companion listens on a new port every time it starts, so everything that talks to it reads the current one.
