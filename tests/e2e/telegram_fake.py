@@ -178,6 +178,19 @@ try:
     say(111, "/status")
     m = wait_sent(lambda m: "Reviews:" in m["text"])
     check("/status answers with counts", m is not None and "Setup:" in m["text"], (m or {}).get("text", "")[:100])
+    # Telegram delivering the same update twice (a lost confirmation) is answered once
+    with lock:
+        dup = next_id[0]
+        next_id[0] += 1
+        for _ in range(2):
+            queue.append({"update_id": dup, "message": {"chat": {"id": 111, "type": "private"}, "text": "/reviews"}})
+    wait_sent(lambda m: "No reviews yet" in m["text"])
+    time.sleep(3)
+    answers = [m for m in sent if "No reviews yet" in m["text"]]
+    check("the same update delivered twice is answered once", len(answers) == 1, str(len(answers)))
+    time.sleep(1)
+    rp = data / "telegram-receipts.json"
+    check("the handled updates are remembered in an owner-only file that holds ids and times, never text", rp.exists() and (rp.stat().st_mode & 0o777) == 0o600 and "reviews" not in rp.read_text() and str(dup) in rp.read_text(), rp.read_text()[:120] if rp.exists() else "missing")
     say(333, "/status")
     time.sleep(2)
     check("another chat is still ignored after pairing", not any(x["chat_id"] == 333 for x in sent))

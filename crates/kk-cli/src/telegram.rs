@@ -365,6 +365,84 @@ impl Admin for HttpAdmin {
     }
 }
 
+fn receipts_path(dir: &Path) -> PathBuf {
+    dir.join("telegram-receipts.json")
+}
+
+/// The ids of the updates already handled, so one that Telegram delivers a second time (after a restart that lost the confirmation, or a
+/// retry) is not answered twice. Bounded in number and in age, and kept in an owner-only file; a damaged file is the same as none.
+#[derive(Default)]
+pub struct Receipts {
+    seen: std::collections::VecDeque<(i64, i64)>,
+    dirty: bool,
+}
+
+impl Receipts {
+    pub const MAX: usize = 1000;
+    pub const TTL_SECS: i64 = 86_400;
+
+    /// True if this update was handled before (and says it has now been seen).
+    pub fn seen(&mut self, id: i64, now: i64) -> bool {
+        while self
+            .seen
+            .front()
+            .is_some_and(|(_, at)| now.saturating_sub(*at) > Self::TTL_SECS)
+        {
+            self.seen.pop_front();
+            self.dirty = true;
+        }
+        if self.seen.iter().any(|(i, _)| *i == id) {
+            return true;
+        }
+        if self.seen.len() >= Self::MAX {
+            self.seen.pop_front();
+        }
+        self.seen.push_back((id, now));
+        self.dirty = true;
+        false
+    }
+
+    pub fn save_if_changed(&mut self, path: &Path) {
+        if !self.dirty {
+            return;
+        }
+        self.dirty = false;
+        let list: Vec<Value> = self.seen.iter().map(|(i, at)| json!([i, at])).collect();
+        let _ = kk_vault::durable::write_atomic(
+            path,
+            json!({"receipts": list}).to_string().as_bytes(),
+            0o600,
+        );
+    }
+
+    pub fn load(path: &Path, now: i64) -> Receipts {
+        let mut r = Receipts::default();
+        let Some(v) = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        else {
+            return r;
+        };
+        for e in v["receipts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .take(Self::MAX)
+        {
+            let (Some(id), Some(at)) = (e[0].as_i64(), e[1].as_i64()) else {
+                continue;
+            };
+            if now.saturating_sub(at) <= Self::TTL_SECS
+                && at <= now + 60
+                && !r.seen.iter().any(|(i, _)| *i == id)
+            {
+                r.seen.push_back((id, at));
+            }
+        }
+        r
+    }
+}
+
 fn outbox_path(dir: &Path) -> PathBuf {
     dir.join("telegram-outbox.json")
 }
@@ -673,6 +751,7 @@ pub fn run(args: &[String]) -> u8 {
         std::thread::spawn(move || poll_loop(api, token, poll_tx));
     }
     let mut conflict_told = false;
+    let mut receipts = Receipts::load(&receipts_path(&dir), unix_now() as i64);
     let mut outbox = Outbox::load(&outbox_path(&dir), bridge.bound_chat, unix_now() as i64);
     let mut tracked: BTreeMap<String, i64> = BTreeMap::new();
     let mut last_poll = Instant::now() - Duration::from_secs(10);
@@ -711,6 +790,11 @@ pub fn run(args: &[String]) -> u8 {
                 }
                 conflict_told = false;
                 for u in list {
+                    if let Some(id) = u["update_id"].as_i64() {
+                        if receipts.seen(id, unix_now() as i64) {
+                            continue;
+                        }
+                    }
                     let (outs, bound) = bridge.handle_update(&mut admin, &u);
                     if let Some(chat) = bound {
                         save_bound(&dir, chat);
@@ -745,6 +829,7 @@ pub fn run(args: &[String]) -> u8 {
             }
         }
         outbox.save_if_changed(&outbox_path(&dir));
+        receipts.save_if_changed(&receipts_path(&dir));
         if status_written.elapsed() >= Duration::from_secs(30) {
             status_written = Instant::now();
             status.updated = unix_now();
@@ -1252,6 +1337,67 @@ mod tests {
             note: None,
             silent: false,
         }
+    }
+
+    #[test]
+    fn rc01_an_update_seen_before_is_skipped_until_it_is_a_day_old_and_the_set_is_bounded() {
+        let mut r = Receipts::default();
+        assert!(!r.seen(10, 1000), "the first time is new");
+        assert!(r.seen(10, 1001), "the second time is a repeat");
+        assert!(!r.seen(11, 1002));
+        assert!(
+            r.seen(10, 1000 + Receipts::TTL_SECS),
+            "still remembered at the limit"
+        );
+        assert!(
+            !r.seen(10, 1000 + Receipts::TTL_SECS + 5),
+            "forgotten after a day, so handled again"
+        );
+        // never more than MAX are kept: the oldest goes first
+        let mut r = Receipts::default();
+        for i in 0..(Receipts::MAX as i64 + 10) {
+            assert!(!r.seen(i, 5));
+        }
+        assert!(!r.seen(0, 6), "the oldest id was dropped to make room");
+        assert!(r.seen(Receipts::MAX as i64 + 9, 6), "the newest is kept");
+    }
+
+    #[test]
+    fn rc02_receipts_survive_a_restart_in_an_owner_only_file_and_a_bad_file_means_none() {
+        let path = tmp("r");
+        let mut r = Receipts::default();
+        let now = unix_now() as i64;
+        assert!(!r.seen(7, now));
+        assert!(!r.seen(8, now - Receipts::TTL_SECS - 100), "an old one");
+        r.save_if_changed(&path);
+        let mode = std::os::unix::fs::PermissionsExt::mode(
+            &std::fs::metadata(&path).unwrap().permissions(),
+        ) & 0o777;
+        assert_eq!(mode, 0o600);
+        let mut back = Receipts::load(&path, now);
+        assert!(back.seen(7, now), "a repeat after the restart is skipped");
+        assert!(
+            !back.seen(8, now),
+            "an entry already past its day is not brought back"
+        );
+        for junk in [
+            "",
+            "not json",
+            "{}",
+            "{\"receipts\": 5}",
+            "{\"receipts\": [[1]]}",
+            &format!("{{\"receipts\": [[9, {}]]}}", now + 100_000),
+        ] {
+            std::fs::write(&path, junk).unwrap();
+            let mut r = Receipts::load(&path, now);
+            assert!(!r.seen(1, now) && !r.seen(9, now), "{junk}");
+        }
+        // an unchanged set is not written again
+        let mut r = Receipts::default();
+        r.save_if_changed(&path);
+        std::fs::remove_file(&path).unwrap();
+        r.save_if_changed(&path);
+        assert!(!path.exists(), "nothing changed, so nothing was written");
     }
 
     #[test]
