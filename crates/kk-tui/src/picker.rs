@@ -17,6 +17,8 @@ pub struct Item {
     pub detail: String,
     pub when: i64,
     pub kind: ItemKind,
+    /// The project a kept conversation belongs to; reviews have none.
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +41,11 @@ pub struct Picker {
     pub error: Option<String>,
     pub armed: Option<String>,
     pub loading: bool,
+    /// The project of the folder the workspace was opened in. While `only_project` is on, conversations of other projects are hidden.
+    pub project: Option<String>,
+    pub only_project: bool,
+    /// Said once when the list widened by itself.
+    pub scope_note: Option<String>,
 }
 
 /// Days since 1970-01-01 to a calendar date (proleptic Gregorian), after Howard Hinnant's published algorithm.
@@ -78,6 +85,9 @@ impl Picker {
             error: None,
             armed: None,
             loading: true,
+            project: None,
+            only_project: false,
+            scope_note: None,
         }
     }
 
@@ -91,6 +101,9 @@ impl Picker {
         let mut idx: Vec<usize> = (0..self.items.len())
             .filter(|i| {
                 let it = &self.items[*i];
+                if !self.in_scope(it) {
+                    return false;
+                }
                 let hay = format!("{} {} {}", it.label, it.detail, it.id).to_lowercase();
                 words.iter().all(|w| hay.contains(w))
             })
@@ -102,6 +115,46 @@ impl Picker {
                 .then(self.items[*a].id.cmp(&self.items[*b].id))
         });
         idx
+    }
+
+    /// Whether an item shows under the current scope: reviews always do; a conversation does when all projects are shown or it is this project's.
+    fn in_scope(&self, it: &Item) -> bool {
+        match (&self.project, self.only_project, it.kind) {
+            (_, false, _) | (_, _, ItemKind::Review) | (None, _, _) => true,
+            (Some(p), true, ItemKind::Chat) => it.project.as_deref() == Some(p.as_str()),
+        }
+    }
+
+    /// Starts the list on this project's conversations when the folder has a project; Tab widens it to every project.
+    pub fn scope_to(&mut self, project: Option<String>) {
+        self.only_project = project.is_some();
+        self.project = project;
+    }
+
+    /// Called once the conversations are loaded: a project with none kept shows everything instead of an empty list.
+    pub fn settle_scope(&mut self) {
+        if self.only_project
+            && !self
+                .items
+                .iter()
+                .any(|it| it.kind == ItemKind::Chat && self.in_scope(it))
+        {
+            self.only_project = false;
+            self.scope_note = Some(format!(
+                "No kept conversation for project {} yet: showing every project.",
+                self.project.as_deref().unwrap_or("")
+            ));
+        }
+    }
+
+    /// Tab: this project's conversations, or every project's. Nothing to switch when the folder has no project.
+    pub fn toggle_scope(&mut self) {
+        if self.project.is_some() {
+            self.only_project = !self.only_project;
+            self.scope_note = None;
+            self.selected = 0;
+            self.armed = None;
+        }
     }
 
     fn clamp(&mut self) {
@@ -171,6 +224,7 @@ mod tests {
             detail: String::new(),
             when,
             kind,
+            project: None,
         }
     }
 

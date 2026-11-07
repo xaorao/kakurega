@@ -3801,6 +3801,7 @@ mod linear_mode {
                 detail: String::new(),
                 when: 100 - i as i64,
                 kind: ItemKind::Chat,
+                project: None,
             });
         }
         app.mode = Mode::Picker(p);
@@ -4857,4 +4858,95 @@ fn tu78_resume_opens_the_newest_of_this_project_not_the_pinned_first_and_fork_op
         "{}",
         text(&h)
     );
+}
+
+fn open_picker_with(app: &mut App, sessions: Value) -> Vec<String> {
+    let r = enter(app, "/sessions");
+    let sess = r
+        .iter()
+        .find(|q| q.path == "/api/sessions")
+        .expect("the list is requested");
+    app.handle(ok(sess, 200, sessions));
+    picker_rows(app)
+}
+
+#[test]
+fn tu79_the_picker_starts_on_this_projects_conversations_and_tab_widens_it_to_all_projects() {
+    let list = json!({"sessions": [
+        {"id": "c-here-1", "title": "payments retry", "updated": 50, "turns": 2, "project": "payments-service"},
+        {"id": "c-other", "title": "billing export", "updated": 90, "turns": 3, "project": "billing"},
+        {"id": "c-none", "title": "loose chat", "updated": 70, "turns": 1, "project": null},
+        {"id": "c-here-2", "title": "payments audit", "updated": 20, "turns": 4, "project": "payments-service"},
+    ]});
+    let mut a = booted();
+    a.chat_project = Some("payments-service".into());
+    a.jobs.push(kk_tui::app::JobRow {
+        id: "job-1".into(),
+        recipient: "acme".into(),
+        state: "ready".into(),
+    });
+    // opens on this project's conversations (newest first); a review is always listed
+    let rows = open_picker_with(&mut a, list.clone());
+    assert_eq!(
+        rows,
+        ["c-here-1", "c-here-2", "job-1"],
+        "only this project's chats, and the review"
+    );
+    let (lines, _) = render(&a, 110, 24, false);
+    let screen = lines.join("\n");
+    assert!(
+        screen.contains("[project payments-service · Tab: all projects]"),
+        "{screen}"
+    );
+    assert!(!screen.contains("billing export"), "{screen}");
+    // Tab shows every project, with the project named in the detail
+    a.handle(key(KeyCode::Tab));
+    assert_eq!(
+        picker_rows(&a),
+        ["c-other", "c-none", "c-here-1", "c-here-2", "job-1"]
+    );
+    let (lines, _) = render(&a, 110, 24, false);
+    let screen = lines.join("\n");
+    assert!(
+        screen.contains("[all projects · Tab: only payments-service]")
+            && screen.contains("billing export")
+            && screen.contains("project billing"),
+        "{screen}"
+    );
+    // Tab again narrows it back
+    a.handle(key(KeyCode::Tab));
+    assert_eq!(picker_rows(&a), ["c-here-1", "c-here-2", "job-1"]);
+    // typing a filter works inside the scope: "billing" finds nothing until Tab widens it
+    for c in "billing".chars() {
+        a.handle(key(KeyCode::Char(c)));
+    }
+    assert!(picker_rows(&a).is_empty());
+    a.handle(key(KeyCode::Tab));
+    assert_eq!(picker_rows(&a), ["c-other"]);
+    // a project with nothing kept shows everything and says why
+    let mut b = booted();
+    b.chat_project = Some("kakurega".into());
+    let rows = open_picker_with(&mut b, list.clone());
+    assert_eq!(rows.len(), 4, "{rows:?}");
+    let (lines, _) = render(&b, 110, 24, false);
+    assert!(lines
+        .join("\n")
+        .contains("No kept conversation for project kakurega yet: showing every project."));
+    // no project (a folder with none): everything, no scope shown, Tab does nothing
+    let mut c = booted();
+    c.chat_project = None;
+    let rows = open_picker_with(&mut c, list);
+    assert_eq!(rows.len(), 4);
+    c.handle(key(KeyCode::Tab));
+    assert_eq!(picker_rows(&c).len(), 4);
+    let (lines, _) = render(&c, 110, 24, false);
+    assert!(!lines.join("\n").contains("Tab: "), "{}", lines.join("\n"));
+    // deleting inside the scope still needs the second press and only touches the chosen conversation
+    let mut d = booted();
+    d.chat_project = Some("payments-service".into());
+    let _ = open_picker_with(
+        &mut d,
+        json!({"sessions": [{"id": "c-1", "title": "a", "updated": 5, "turns": 1, "project": "payments-service"}, {"id": "c-2", "title": "b", "updated": 4, "turns": 1, "project": "billing"}]}),
+    );
+    assert_eq!(picker_rows(&d), ["c-1"]);
 }

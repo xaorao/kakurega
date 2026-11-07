@@ -404,6 +404,51 @@ if kept:
     check("and the workspace exits cleanly", rc == 0, f"exit={rc}")
     # the newer conversation has no project; the older one belongs to this folder's project, so `--resume` alone prefers it
     run_resume(["--resume"], "resumecanary words", "launching with --resume alone opens the newest conversation of this folder's project, not a newer one of no project", absent="newercanary words")
+    # the picker starts on this folder's project and Tab widens it to every project
+    m, sl = pty.openpty()
+    fcntl.ioctl(sl, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 110, 0, 0))
+    pp = subprocess.Popen([str(kaku), "tui", "--data-dir", str(data), "--root", str(work / "root"), "--scripted", str(repo / "tests/e2e/script.json"), "--ui-dir", str(repo / "apps/web/dist")], stdin=sl, stdout=sl, stderr=sl, env=env3, close_fds=True)
+    os.close(sl)
+    scr = Screen(32, 110)
+    dc = codecs.getincrementaldecoder("utf8")(errors="replace")
+
+    def pump_picker(seconds, until_text=None):
+        end = time.time() + seconds
+        while time.time() < end and (until_text is None or until_text not in scr.text()):
+            r, _, _ = select.select([m], [], [], 0.2)
+            if r:
+                try:
+                    scr.feed(dc.decode(os.read(m, 65536)))
+                except OSError:
+                    break
+
+    pump_picker(30, "kakurega")
+    os.write(m, b"/sessions\r")
+    pump_picker(20, "Tab: all projects")
+    pump_picker(20, "resumecanary words")
+    scoped = scr.text()
+    check("the picker opens on this folder's project, named, with the way to widen it", "[project kakurega" in scoped and "Tab: all projects]" in scoped, scoped[-500:])
+    check("and lists this project's conversation but not the one of no project", "resumecanary words" in scoped and "newercanary words" not in scoped, scoped[-500:])
+    os.write(m, b"\t")
+    pump_picker(20, "Tab: only kakurega")
+    pump_picker(20, "newercanary words")
+    widened = scr.text()
+    check("Tab shows every project, conversations of no project included", "all projects" in widened and "newercanary words" in widened, widened[-500:])
+    os.write(m, b"\x1b")
+    pump_picker(2)
+    os.write(m, b"/quit\r")
+    end = time.time() + 20
+    while pp.poll() is None and time.time() < end:
+        r, _, _ = select.select([m], [], [], 0.2)
+        if r:
+            try:
+                os.read(m, 65536)
+            except OSError:
+                break
+    if pp.poll() is None:
+        pp.kill()
+        pp.wait()
+    os.close(m)
     # --fork opens a branch: a third conversation appears holding the same messages, and the original is untouched
     run_resume(["--resume", older_id, "--fork"], "resumecanary words", "launching with --resume ID --fork opens a branch of that conversation", absent="newercanary words")
     after = json.loads(subprocess.run([kaku, "sessions", "--json", "--data-dir", str(data)], capture_output=True, text=True).stdout)["sessions"]

@@ -1017,6 +1017,7 @@ impl App {
             KeyCode::PageDown => p.move_by(8),
             KeyCode::PageUp => p.move_by(-8),
             KeyCode::Backspace => p.backspace(),
+            KeyCode::Tab => p.toggle_scope(),
             KeyCode::Char('d') if ctrl => match p.delete_press() {
                 Delete::Armed(_) => {
                     p.error =
@@ -1918,6 +1919,7 @@ impl App {
             Command::Resume(id) => self.open_chat_by_id(&id),
             Command::Sessions => {
                 let mut p = crate::picker::Picker::new("Conversations and reviews");
+                p.scope_to(self.chat_project.clone());
                 for j in &self.jobs {
                     p.items.push(crate::picker::Item {
                         id: j.id.clone(),
@@ -1925,6 +1927,7 @@ impl App {
                         detail: j.state.clone(),
                         when: 0,
                         kind: crate::picker::ItemKind::Review,
+                        project: None,
                     });
                 }
                 self.mode = Mode::Picker(p);
@@ -4224,11 +4227,20 @@ impl App {
                                 } else {
                                     title
                                 },
-                                detail: format!("{} message(s)", k["turns"].as_u64().unwrap_or(0)),
+                                detail: format!(
+                                    "{} message(s){}",
+                                    k["turns"].as_u64().unwrap_or(0),
+                                    k["project"].as_str().map_or(String::new(), |p| format!(
+                                        " · project {}",
+                                        clean(p)
+                                    ))
+                                ),
                                 when: k["updated"].as_i64().unwrap_or(0),
                                 kind: crate::picker::ItemKind::Chat,
+                                project: k["project"].as_str().map(clean),
                             });
                         }
+                        p.settle_scope();
                     } else {
                         p.error = Some(format!(
                             "Could not load kept conversations. {}",

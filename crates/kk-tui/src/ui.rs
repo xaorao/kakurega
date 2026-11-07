@@ -478,13 +478,21 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
         } else {
             Span::raw(p.filter.clone())
         };
-        f.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("Filter: ", Style::default().add_modifier(Modifier::BOLD)),
-                filter,
-            ])),
-            parts[0],
-        );
+        let mut head = vec![
+            Span::styled("Filter: ", Style::default().add_modifier(Modifier::BOLD)),
+            filter,
+        ];
+        if let Some(project) = &p.project {
+            head.push(Span::styled(
+                if p.only_project {
+                    format!("   [project {project} · Tab: all projects]")
+                } else {
+                    format!("   [all projects · Tab: only {project}]")
+                },
+                th.fg(Color::Cyan),
+            ));
+        }
+        f.render_widget(Paragraph::new(Line::from(head)), parts[0]);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -554,6 +562,14 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
                 Paragraph::new(Span::styled(
                     e.clone(),
                     th.fg(Color::Red).add_modifier(Modifier::BOLD),
+                )),
+                parts[2],
+            );
+        } else if let Some(n) = &p.scope_note {
+            f.render_widget(
+                Paragraph::new(Span::styled(
+                    n.clone(),
+                    Style::default().add_modifier(Modifier::DIM),
                 )),
                 parts[2],
             );
