@@ -754,11 +754,49 @@ pub fn run(args: &[String]) -> u8 {
         }
         if last_poll.elapsed() >= Duration::from_secs(2) {
             last_poll = Instant::now();
-            for o in bridge.poll_notifications(&mut admin) {
+            for o in digest(bridge.poll_notifications(&mut admin)) {
                 outbox.push(o);
             }
         }
     }
+}
+
+/// More new notices than this in one look become the first few and one line saying how many more there are, so a burst of events
+/// (a batch of reviews finishing together, a returning service) is a few messages and not a flood. Edits of earlier messages are
+/// never counted or folded: they change a message already in the chat and make no new notification.
+pub const DIGEST_OVER: usize = 5;
+const DIGEST_KEEP: usize = 3;
+
+pub fn digest(outs: Vec<Out>) -> Vec<Out> {
+    let new = outs
+        .iter()
+        .filter(|o| !matches!(o.note, Some(Note::Edit(_))))
+        .count();
+    if new <= DIGEST_OVER {
+        return outs;
+    }
+    let (mut kept, mut folded, mut seen) = (Vec::new(), 0usize, 0usize);
+    let mut chat = 0;
+    let mut silent = true;
+    for o in outs {
+        if matches!(o.note, Some(Note::Edit(_))) {
+            kept.push(o);
+        } else if seen < DIGEST_KEEP {
+            seen += 1;
+            kept.push(o);
+        } else {
+            folded += 1;
+            chat = o.chat;
+            silent &= o.silent;
+        }
+    }
+    kept.push(Out {
+        chat,
+        text: format!("{folded} more things happened at once. Send /status for the counts, or open Kakurega to see them."),
+        note: None,
+        silent,
+    });
+    kept
 }
 
 /// What the running bridge knows about itself, written to `telegram-status.json` (mode 0600) every thirty seconds. It holds
@@ -1214,6 +1252,69 @@ mod tests {
             note: None,
             silent: false,
         }
+    }
+
+    #[test]
+    fn tg92_a_burst_of_new_notices_becomes_the_first_few_and_one_line_with_the_count() {
+        let n = |i: usize| Out {
+            chat: 7,
+            text: format!("review job-{i} is ready"),
+            note: Some(Note::Track(format!("job-{i}"))),
+            silent: false,
+        };
+        let edit = Out {
+            chat: 7,
+            text: "no longer waiting".into(),
+            note: Some(Note::Edit("job-0".into())),
+            silent: false,
+        };
+        // up to five new notices pass untouched
+        let five: Vec<Out> = (1..=5).map(n).collect();
+        assert_eq!(digest(five.clone()), five);
+        // six or more: three kept in order, the rest folded into one line that counts them
+        let nine: Vec<Out> = (1..=9).map(n).collect();
+        let d = digest(nine.clone());
+        assert_eq!(d.len(), 4);
+        assert_eq!(&d[..3], &nine[..3]);
+        assert!(
+            d[3].text.starts_with("6 more things happened at once")
+                && d[3].chat == 7
+                && d[3].note.is_none(),
+            "{:?}",
+            d[3]
+        );
+        // edits are neither counted nor folded, wherever they sit
+        let mut mixed: Vec<Out> = vec![edit.clone(), edit.clone()];
+        mixed.extend((1..=5).map(n));
+        assert_eq!(
+            digest(mixed.clone()),
+            mixed,
+            "five new notices and two edits is not a burst"
+        );
+        mixed.push(n(6));
+        mixed.insert(3, edit.clone());
+        let d = digest(mixed);
+        assert_eq!(
+            d.iter()
+                .filter(|o| matches!(o.note, Some(Note::Edit(_))))
+                .count(),
+            3,
+            "every edit survives"
+        );
+        assert!(
+            d.last().unwrap().text.starts_with("3 more things"),
+            "{:?}",
+            d.last()
+        );
+        // a digest is silent only if everything folded into it was
+        let mut quiet: Vec<Out> = (1..=8).map(n).collect();
+        for o in &mut quiet {
+            o.silent = true;
+        }
+        assert!(digest(quiet.clone()).last().unwrap().silent);
+        quiet[7].silent = false;
+        assert!(!digest(quiet).last().unwrap().silent);
+        assert!(digest(Vec::new()).is_empty());
     }
 
     #[test]

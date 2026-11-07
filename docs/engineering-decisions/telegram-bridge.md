@@ -75,3 +75,8 @@ Real Telegram delivery, group chats, webhooks, media, rate limits imposed by Tel
 - Edit tracking notes are not persisted: a replayed message is sent as a new message, never as an edit of an old one.
 - Evidence: tg90, tg91 (unit): mode 0600, same-chat filter, age limit, future dates, damaged files, the cap, file follows the queue; 8 mutants caught. NOT VERIFIED: a real restart with an undeliverable message end to end (not in telegram_fake.py), and real Telegram.
 - Not built: a durable delivery ledger with ids (Hermes keeps one), and a receipt set for incoming updates (C-16). C-21 stays PARTIAL.
+
+## A burst of notices becomes a digest (ledger C-25)
+- Built: when one look at the service yields more than five new notices, the first three go out as they are and the rest become one line, "N more things happened at once. Send /status for the counts, or open Kakurega to see them." The digest is silent only if everything folded into it was silent. Edits of earlier messages are never counted or folded.
+- Evidence: tg92 (unit): up to five untouched, order kept, the count, edits anywhere in the list, silence rule, empty list; 6 mutants caught (one checked by hand after the formatter moved its line). NOT VERIFIED: a real burst through the bridge to a live chat (telegram_fake.py has no burst case).
+- Not built: a per-chat rate limit apart from the whole-bot gate (a single bound chat makes them the same today). C-25 stays PARTIAL.
