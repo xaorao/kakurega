@@ -180,7 +180,7 @@
   {
     "name": "review_events",
     "title": "Review events",
-    "description": "What happened to the reviews, in order, after a position you remember: the review id, the stage name and the time of each event, never a detail. Ask again with `next` to follow along; `reset` means the service was restored from an older copy and you should start from 0.",
+    "description": "What happened to the reviews, in order, after a position you remember: the review id, the stage name and the time of each event, never a detail. Ask again with `next` to follow along; `reset` means the service was restored from an older copy and you should start from 0. With `wait_seconds` the call waits (up to 25 seconds) until there is something new, so you do not have to ask again and again.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -195,6 +195,12 @@
           "description": "How many events at most, 1 to 100.",
           "minimum": 1,
           "maximum": 100
+        },
+        "wait_seconds": {
+          "type": "integer",
+          "description": "Wait up to this many seconds for a new event before answering (0 to 25; 0 answers at once).",
+          "minimum": 0,
+          "maximum": 25
         }
       },
       "required": [],

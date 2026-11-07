@@ -80,3 +80,7 @@ Every tool call an agent makes is written to the owner's signed event log as `mc
 ## Call limits
 
 One connection may make 60 tool calls in any rolling minute and start 4 reviews in any rolling hour. A call over the limit is not run: the agent gets a tool error saying to try again in a number of seconds, and the refusal costs nothing against the limit. Lower either with `--calls-per-minute N` or `--starts-per-hour N` (1 to 1000). The limits count one connection's calls only; the owner's own use of the web page or terminal is not counted.
+
+## Following a review without asking again and again
+
+`review_events` takes an optional `wait_seconds` (0 to 25). With it, the call keeps looking and answers as soon as there is a new event, or after that many seconds with an empty list; without it, it answers at once. An agent can therefore loop on `review_events` with `after` set to the last `next` and `wait_seconds` of 20 and be told about each step as it happens, without a burst of calls. The wait is bounded at 25 seconds because clients commonly give up on a tool call after about thirty. A waiting call counts as one call against the limits above.

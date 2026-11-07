@@ -56,6 +56,9 @@ pub fn catalog_digest(list: &Value) -> String {
     kk_evidence::capsule::sha256_hex(list.to_string().as_bytes())
 }
 
+/// The longest a `review_events` call may wait for something new. Clients commonly give up on a tool call after about thirty seconds.
+pub const MAX_WAIT_SECONDS: u64 = 25;
+
 pub fn tools() -> Value {
     let error_out = json!({"type": "object", "properties": {"error": {"type": "string"}}, "required": ["error"]});
     let _ = error_out;
@@ -69,8 +72,8 @@ pub fn tools() -> Value {
             out_obj(json!({"id": {"type": "string"}}), &["id"])),
         tool("review_status", "Review status", "State and counts of one review.", obj(json!({"id": job_id_prop()}), &["id"]),
             out_obj(json!({"id": {"type": "string"}, "state": {"type": "string"}, "stage": {}, "files_reviewed": {}, "files_withheld": {}, "findings_reported": {}, "findings_confirmed": {}, "approval": {}, "delivered": {}}), &["id", "state"])),
-        tool("review_events", "Review events", "What happened to the reviews, in order, after a position you remember: the review id, the stage name and the time of each event, never a detail. Ask again with `next` to follow along; `reset` means the service was restored from an older copy and you should start from 0.",
-            obj(json!({"after": {"type": "integer", "description": "The position of the last event you saw; 0 to start.", "minimum": 0, "maximum": 9_007_199_254_740_991u64}, "limit": {"type": "integer", "description": "How many events at most, 1 to 100.", "minimum": 1, "maximum": 100}}), &[]),
+        tool("review_events", "Review events", "What happened to the reviews, in order, after a position you remember: the review id, the stage name and the time of each event, never a detail. Ask again with `next` to follow along; `reset` means the service was restored from an older copy and you should start from 0. With `wait_seconds` the call waits (up to 25 seconds) until there is something new, so you do not have to ask again and again.",
+            obj(json!({"after": {"type": "integer", "description": "The position of the last event you saw; 0 to start.", "minimum": 0, "maximum": 9_007_199_254_740_991u64}, "limit": {"type": "integer", "description": "How many events at most, 1 to 100.", "minimum": 1, "maximum": 100}, "wait_seconds": {"type": "integer", "description": "Wait up to this many seconds for a new event before answering (0 to 25; 0 answers at once).", "minimum": 0, "maximum": MAX_WAIT_SECONDS}}), &[]),
             out_obj(json!({"events": {"type": "array", "items": {"type": "object"}}, "next": {"type": "integer"}, "latest": {"type": "integer"}, "reset": {"type": "boolean"}}), &["events", "next", "latest", "reset"])),
         tool("request_approval", "Request approval", "Ask the owner to approve the release. This tool cannot approve: the owner approves in the desktop window, the terminal workspace or `kaku approve`, after seeing the exact files.", obj(json!({"id": job_id_prop()}), &["id"]),
             out_obj(json!({"approval": {"type": "string"}, "digest": {"type": "string"}, "how": {"type": "string"}}), &["approval"])),
@@ -637,11 +640,27 @@ fn call_inner(
             json!({"repo": s("repo"), "recipient": s("recipient")}),
         ),
         "review_status" => admin.get(&format!("/admin/jobs/{}", s("id").unwrap_or_default())),
-        "review_events" => admin.get(&format!(
-            "/admin/events?after={}&limit={}",
-            a.get("after").and_then(Value::as_u64).unwrap_or(0),
-            a.get("limit").and_then(Value::as_u64).unwrap_or(50)
-        )),
+        "review_events" => {
+            let path = format!(
+                "/admin/events?after={}&limit={}",
+                a.get("after").and_then(Value::as_u64).unwrap_or(0),
+                a.get("limit").and_then(Value::as_u64).unwrap_or(50)
+            );
+            let wait = a
+                .get("wait_seconds")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                .min(MAX_WAIT_SECONDS);
+            let started = std::time::Instant::now();
+            loop {
+                let r = admin.get(&path);
+                let news = matches!(&r, Ok((c, v)) if *c < 300 && (v["events"].as_array().is_some_and(|e| !e.is_empty()) || v["reset"] == true));
+                if news || r.is_err() || started.elapsed() >= std::time::Duration::from_secs(wait) {
+                    break r;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(400));
+            }
+        }
         "request_approval" => admin.post(
             &format!("/admin/jobs/{}/approval", s("id").unwrap_or_default()),
             json!({}),

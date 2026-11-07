@@ -2018,3 +2018,93 @@ fn mc47_review_events_forwards_a_position_and_a_limit_checks_them_and_works_in_r
         "defaults are filled in, and only the well-formed calls were forwarded"
     );
 }
+
+#[test]
+fn mc92_review_events_can_wait_for_something_new_and_answers_at_once_when_there_is() {
+    // something is there: one request, answered at once, however long it was told it may wait
+    let dir = fresh("mc92a");
+    let admin = FakeAdmin::start_with(
+        "tok-92a",
+        0,
+        r#"{"events":[{"seq":4,"review":"job-1","stage":"queued","at":5}],"next":4,"latest":9,"reset":false}"#,
+    );
+    admin.publish(&dir);
+    let mut s = live_with(&dir, &["--read-only"]);
+    let t = std::time::Instant::now();
+    s.send(&call(
+        1,
+        "review_events",
+        json!({"after": 0, "wait_seconds": 20}),
+    ));
+    let r = s.recv();
+    assert_eq!(r["result"]["isError"], false, "{r}");
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(5),
+        "{:?}",
+        t.elapsed()
+    );
+    assert!(s.close().is_empty());
+    assert_eq!(
+        admin.work_seen(),
+        ["GET /admin/events?after=0&limit=50 HTTP/1.1"],
+        "the wait is not forwarded and nothing is asked twice"
+    );
+    // nothing new: the call keeps asking until the time given, then answers with what it has (an empty list)
+    let dir = fresh("mc92b");
+    let admin = FakeAdmin::start_with(
+        "tok-92b",
+        0,
+        r#"{"events":[],"next":9,"latest":9,"reset":false}"#,
+    );
+    admin.publish(&dir);
+    let mut s = live_with(&dir, &["--read-only"]);
+    let t = std::time::Instant::now();
+    s.send(&call(
+        2,
+        "review_events",
+        json!({"after": 9, "wait_seconds": 2}),
+    ));
+    let r = s.recv();
+    let took = t.elapsed();
+    assert_eq!(r["result"]["isError"], false, "{r}");
+    assert_eq!(r["result"]["structuredContent"]["events"], json!([]));
+    assert!(
+        took >= std::time::Duration::from_millis(1800) && took < std::time::Duration::from_secs(6),
+        "{took:?}"
+    );
+    // no wait asked: one request and no delay
+    let t = std::time::Instant::now();
+    s.send(&call(3, "review_events", json!({"after": 9})));
+    assert_eq!(s.recv()["result"]["isError"], false);
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(1),
+        "{:?}",
+        t.elapsed()
+    );
+    // out-of-range or mistyped waits are refused here and never reach the service
+    for bad in [
+        json!({"wait_seconds": -1}),
+        json!({"wait_seconds": 26}),
+        json!({"wait_seconds": "5"}),
+        json!({"wait_seconds": 1.5}),
+    ] {
+        s.send(&call(9, "review_events", bad.clone()));
+        let r = s.recv();
+        assert!(
+            r["error"].is_object() || r["result"]["isError"] == true,
+            "{bad}: {r}"
+        );
+    }
+    assert!(s.close().is_empty());
+    let seen = admin.work_seen();
+    let asks = seen.len();
+    assert!(
+        (4..=8).contains(&asks),
+        "about one ask every 400 ms for two seconds, plus the no-wait call: {asks} {seen:?}"
+    );
+    assert!(
+        seen.iter()
+            .all(|l| l == "GET /admin/events?after=9&limit=50 HTTP/1.1"),
+        "{seen:?}"
+    );
+}
