@@ -208,6 +208,11 @@ pub enum Mode {
     Confirm(ConfirmView),
 }
 
+/// The most cards kept on the screen, how many go at once when it is exceeded, and the most lines one card keeps.
+pub const MAX_CARDS: usize = 2000;
+pub const DROP_CARDS: usize = 250;
+pub const MAX_CARD_LINES: usize = 20_000;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobRow {
     pub id: String,
@@ -406,13 +411,57 @@ impl App {
         }
     }
 
-    fn push(&mut self, kind: Kind, title: Option<&str>, lines: Vec<String>) {
+    fn push(&mut self, kind: Kind, title: Option<&str>, mut lines: Vec<String>) {
+        if lines.len() > MAX_CARD_LINES {
+            let cut = lines.len() - MAX_CARD_LINES;
+            lines.truncate(MAX_CARD_LINES);
+            lines.push(format!("… {cut} more line(s) were not kept on the screen."));
+        }
         self.cards.push(Card {
             kind,
             title: title.map(str::to_string),
             lines,
         });
+        if self.cards.len() > MAX_CARDS {
+            self.drop_oldest_cards();
+        }
         self.scroll_back = 0;
+    }
+
+    /// A long session must not grow without limit: the oldest cards leave the screen's memory, in one step of `DROP_CARDS` so the work
+    /// is not repeated for every card, and one marker card at the top says how many went. The conversation itself (what is sent, saved
+    /// and exported) is held elsewhere and is not touched.
+    fn drop_oldest_cards(&mut self) {
+        const MARK: &str = "Earlier output was removed from this screen to save memory";
+        let had_marker = self
+            .cards
+            .first()
+            .is_some_and(|c| c.lines.first().is_some_and(|l| l.starts_with(MARK)));
+        let mut gone = if had_marker {
+            self.cards
+                .first()
+                .and_then(|c| c.lines.first())
+                .and_then(|l| l.rsplit(" (").next())
+                .and_then(|t| t.split(' ').next())
+                .and_then(|n| n.parse::<usize>().ok())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let start = usize::from(had_marker);
+        let n = DROP_CARDS.min(self.cards.len().saturating_sub(start));
+        self.cards.drain(start..start + n);
+        gone += n;
+        let marker = Card {
+            kind: Kind::Info,
+            title: None,
+            lines: vec![format!("{MARK} ({gone} card(s)). The conversation itself is unchanged; /export writes all of it.")],
+        };
+        if had_marker {
+            self.cards[0] = marker;
+        } else {
+            self.cards.insert(0, marker);
+        }
     }
 
     fn say(&mut self, kind: Kind, line: impl AsRef<str>) {

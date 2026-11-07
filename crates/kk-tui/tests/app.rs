@@ -4620,3 +4620,77 @@ fn tu74_rewind_makes_a_copy_that_stops_before_one_of_your_messages_and_puts_it_b
         "an ordinary branch does not put a message in the box"
     );
 }
+
+#[test]
+fn tu75_a_long_session_keeps_a_bounded_number_of_cards_and_says_how_many_went() {
+    let mut a = booted();
+    let before = a.cards.len();
+    let n = 2600; // each command adds two cards: the line typed and the answer
+    for _ in 0..n {
+        a.input.clear();
+        a.cursor = 0;
+        enter(&mut a, "/quiet");
+    }
+    assert!(
+        a.cards.len() <= kk_tui::app::MAX_CARDS + 1,
+        "{}",
+        a.cards.len()
+    );
+    let first = a.cards[0].lines[0].clone();
+    assert!(
+        first.starts_with("Earlier output was removed from this screen to save memory"),
+        "{first}"
+    );
+    assert!(first.contains("The conversation itself is unchanged"));
+    let gone: usize = first
+        .split(" (")
+        .nth(1)
+        .unwrap()
+        .split(' ')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(
+        a.cards.len() - 1 + gone,
+        before + 2 * n,
+        "every card is either still here or counted as gone: {first}"
+    );
+    assert_eq!(
+        a.cards
+            .iter()
+            .filter(|c| c.lines[0].starts_with("Earlier output was removed"))
+            .count(),
+        1,
+        "one marker, not one per drop"
+    );
+    assert!(
+        a.cards.last().unwrap().lines[0].contains("Quiet")
+            || a.cards.last().unwrap().lines[0].contains("Every step"),
+        "the newest card is kept"
+    );
+}
+
+#[test]
+fn tu76_one_enormous_result_is_cut_to_a_bounded_number_of_lines_with_a_note() {
+    let mut a = booted();
+    let r = enter(&mut a, "/memory");
+    let many: Vec<_> = (0..30_000)
+        .map(|i| json!({"id": format!("m{i}"), "level": "internal", "text": "t", "why": "w"}))
+        .collect();
+    a.handle(ok(&r[0], 200, json!({"memories": many})));
+    let card = a.cards.last().unwrap();
+    assert!(
+        card.lines.len() <= kk_tui::app::MAX_CARD_LINES + 1,
+        "{}",
+        card.lines.len()
+    );
+    assert!(
+        card.lines
+            .last()
+            .unwrap()
+            .contains("more line(s) were not kept on the screen"),
+        "{:?}",
+        card.lines.last()
+    );
+}
