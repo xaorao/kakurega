@@ -3261,7 +3261,7 @@ fn tu49_branch_copies_a_kept_conversation_at_a_chosen_message_and_opens_the_copy
 #[test]
 fn tu50_resume_at_start_opens_the_newest_kept_conversation_and_says_so_when_there_is_none() {
     let mut a = booted();
-    let r = a.resume_at_start();
+    let r = a.resume_at_start(None);
     assert_eq!(r.len(), 1);
     assert_eq!(r[0].path, "/api/sessions");
     // the service lists newest first: the first one is opened
@@ -3276,7 +3276,7 @@ fn tu50_resume_at_start_opens_the_newest_kept_conversation_and_says_so_when_ther
     );
     // none kept: a plain sentence, nothing opened
     let mut b = booted();
-    let r = b.resume_at_start();
+    let r = b.resume_at_start(None);
     let out = b.handle(ok(&r[0], 200, json!({"sessions": []})));
     assert!(
         out.is_empty() && text(&b).contains("no kept conversation to resume"),
@@ -3285,7 +3285,7 @@ fn tu50_resume_at_start_opens_the_newest_kept_conversation_and_says_so_when_ther
     );
     // the service unreachable or refusing: its reason, nothing opened
     let mut c = booted();
-    let r = c.resume_at_start();
+    let r = c.resume_at_start(None);
     let out = c.handle(ok(
         &r[0],
         500,
@@ -3298,7 +3298,7 @@ fn tu50_resume_at_start_opens_the_newest_kept_conversation_and_says_so_when_ther
     );
     // a malformed entry never opens anything
     let mut d = booted();
-    let r = d.resume_at_start();
+    let r = d.resume_at_start(None);
     assert!(d
         .handle(ok(&r[0], 200, json!({"sessions": [{"title": "no id"}]})))
         .is_empty());
@@ -4692,5 +4692,77 @@ fn tu76_one_enormous_result_is_cut_to_a_bounded_number_of_lines_with_a_note() {
             .contains("more line(s) were not kept on the screen"),
         "{:?}",
         card.lines.last()
+    );
+}
+
+#[test]
+fn tu77_a_chosen_conversation_opens_by_id_from_the_command_line_and_from_the_prompt_and_a_bad_id_opens_nothing(
+) {
+    // `kaku --resume ID`: no list is fetched, that conversation is requested
+    let mut a = booted();
+    let r = a.resume_at_start(Some("chat-old"));
+    assert_eq!(r.len(), 1);
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/sessions/chat-old", Method::Get)
+    );
+    let shown = a.handle(ok(&r[0], 200, json!({"id": "chat-old", "turns": [{"role": "user", "content": "the older question"}, {"role": "assistant", "content": "the older answer"}]})));
+    assert!(
+        shown.is_empty()
+            && text(&a).contains("the older question")
+            && text(&a).contains("Opened the kept conversation"),
+        "{}",
+        text(&a)
+    );
+    // `/resume ID` in the prompt does the same without the picker
+    let mut b = booted();
+    let r = enter(&mut b, "/resume chat-7");
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0].path, "/api/sessions/chat-7");
+    assert!(
+        !matches!(b.mode, Mode::Picker(_)),
+        "an id given means no picker"
+    );
+    // `/resume` alone still opens the picker
+    let mut c = booted();
+    let r = enter(&mut c, "/resume");
+    assert!(matches!(c.mode, Mode::Picker(_)) && r[0].path == "/api/sessions");
+    // an id that is not an id never becomes part of a request path
+    for bad in [
+        "../admin/secrets",
+        "a/b",
+        "chat 1",
+        "",
+        "x".repeat(65).as_str(),
+        "id?x=1",
+        "%2e%2e",
+    ] {
+        let mut d = booted();
+        let out = d.resume_at_start(Some(bad));
+        assert!(
+            out.is_empty() && text(&d).contains("not a conversation id"),
+            "{bad:?}: {}",
+            text(&d)
+        );
+    }
+    let mut e = booted();
+    let out = enter(&mut e, "/resume ../../admin");
+    assert!(
+        out.is_empty() && text(&e).contains("not a conversation id"),
+        "{}",
+        text(&e)
+    );
+    // an id that is well formed but unknown: the service's reason is shown, nothing else opens
+    let mut f = booted();
+    let r = f.resume_at_start(Some("nothing-here"));
+    let out = f.handle(ok(
+        &r[0],
+        404,
+        json!({"error": {"code": "NOT_FOUND", "message": "no such conversation"}}),
+    ));
+    assert!(
+        out.is_empty() && text(&f).contains("no such conversation"),
+        "{}",
+        text(&f)
     );
 }

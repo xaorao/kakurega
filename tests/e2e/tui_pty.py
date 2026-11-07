@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Drives the real `kaku` binary in a real pseudo-terminal: boot, a full review, approval, delivery, quit, clean terminal."""
 import fcntl
+import json
 import os
 import pty
 import re
@@ -354,6 +355,56 @@ if p3.poll() is None:
     p3.wait()
 check("the resumed workspace exits cleanly", p3.returncode == 0, f"exit={p3.returncode}")
 os.close(m3)
+
+
+def run_resume(extra, want, label, absent=None):
+    """Launch the workspace with `--resume ...` and wait for `want` to show on screen; returns the final screen text."""
+    m, sl = pty.openpty()
+    fcntl.ioctl(sl, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 110, 0, 0))
+    pr = subprocess.Popen([str(kaku), "tui", *extra, "--data-dir", str(data), "--root", str(work / "root"), "--scripted", str(repo / "tests/e2e/script.json"), "--ui-dir", str(repo / "apps/web/dist")], stdin=sl, stdout=sl, stderr=sl, env=env3, close_fds=True)
+    os.close(sl)
+    scr = Screen(32, 110)
+    dc = codecs.getincrementaldecoder("utf8")(errors="replace")
+    until = time.time() + 40
+    while time.time() < until and want not in scr.text():
+        r, _, _ = select.select([m], [], [], 0.2)
+        if r:
+            try:
+                scr.feed(dc.decode(os.read(m, 65536)))
+            except OSError:
+                break
+    seen = scr.text()
+    os.write(m, b"/quit\r")
+    until = time.time() + 20
+    while pr.poll() is None and time.time() < until:
+        r, _, _ = select.select([m], [], [], 0.2)
+        if r:
+            try:
+                os.read(m, 65536)
+            except OSError:
+                break
+    if pr.poll() is None:
+        pr.kill()
+        pr.wait()
+    os.close(m)
+    check(label, want in seen and (absent is None or absent not in seen), seen[-600:])
+    return pr.returncode
+
+
+listing = subprocess.run([kaku, "sessions", "--json", "--data-dir", str(data)], capture_output=True, text=True)
+kept = json.loads(listing.stdout)["sessions"] if listing.returncode == 0 else []
+check("the kept conversation is listed so its id can be chosen", len(kept) >= 1, listing.stdout[:200] + listing.stderr[:200])
+if kept:
+    # a newer kept conversation, so "the newest" and "the one chosen" are different conversations
+    newer = subprocess.run([kaku, "chat", "newercanary words", "--keep", "--json", "--data-dir", str(data), "--scripted", str(repo / "tests/e2e/script.json")], capture_output=True, text=True)
+    both = json.loads(subprocess.run([kaku, "sessions", "--json", "--data-dir", str(data)], capture_output=True, text=True).stdout)["sessions"]
+    check("a second, newer conversation is kept", newer.returncode == 0 and len(both) == 2, newer.stdout[:200] + newer.stderr[:200])
+    older_id = kept[0]["id"]
+    rc = run_resume(["--resume", older_id], "resumecanary words", "launching with --resume ID opens the one chosen, not the newest", absent="newercanary words")
+    check("and the workspace exits cleanly", rc == 0, f"exit={rc}")
+    run_resume(["--resume"], "newercanary words", "launching with --resume alone still opens the newest", absent="resumecanary words")
+rc = run_resume(["--resume", "../admin/secrets"], "not a conversation id", "an id that is not an id is refused on the screen and nothing is requested", absent="resumecanary words")
+rc = run_resume(["--resume", "feedfacefeedfacefeedface"], "no such", "an unknown id says so and opens nothing", absent="resumecanary words")
 # a hard kill of the workspace (terminal closed, SIGKILL) must not leave the service it started running
 data2 = work / "data2"
 m2, s2 = pty.openpty()

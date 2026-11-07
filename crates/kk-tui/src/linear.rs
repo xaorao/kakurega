@@ -244,7 +244,7 @@ enum Msg {
     End,
 }
 
-pub fn run(data_dir: &Path, resume: bool) -> Result<(), String> {
+pub fn run(data_dir: &Path, resume: Option<Option<String>>) -> Result<(), String> {
     let http = Http::connect(data_dir)?;
     let mut app = App::new();
     app.chat_project = std::env::current_dir()
@@ -315,8 +315,8 @@ pub fn run(data_dir: &Path, resume: bool) -> Result<(), String> {
         }
     };
     send(app.start());
-    if resume {
-        send(app.resume_at_start());
+    if let Some(id) = &resume {
+        send(app.resume_at_start(id.as_deref()));
     }
     send(app.drain_background());
     loop {

@@ -379,7 +379,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 |---|---|---|---|---|
 | A-A01 | Persistent sessions: save, list, resume | see the section in matrix A | BUILT | encrypted kept conversations, list, open, forget (c81c227) |
 | A-A02 | Session picker | see the section in matrix A | BUILT | /sessions picker (picker.rs) |
-| A-A03 | Resume at launch | see the section in matrix A | PARTIAL | kaku --resume opens the newest kept conversation at launch, tested in a real terminal; no chosen-ID resume or picker; reference sources not re-read (terminal-transcript.md) |
+| A-A03 | Resume at launch | see the section in matrix A | PARTIAL | kaku --resume ID and /resume ID open a chosen conversation (tu77, rs01, pty with two conversations, mutation-checked); no launch picker; reference sources not re-read (terminal-transcript.md) |
 | A-A04 | Fork or branch a session | see the section in matrix A | PARTIAL | /branch [N] copies a kept conversation and opens the copy; no version switcher or message picker; terminal references not re-read (terminal-transcript.md) |
 | A-A05 | Rewind to an earlier prompt, with file revert | see the section in matrix A | PARTIAL | fix undo (/undofix) and conversation /rewind N (tu74); no Esc-Esc browser of earlier prompts (terminal-transcript.md) |
 | A-A06 | Message queue while busy | see the section in matrix A | BUILT | queued messages while an answer arrives (7d5a796) |

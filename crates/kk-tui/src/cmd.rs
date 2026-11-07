@@ -102,6 +102,8 @@ pub enum Command {
     Read(String),
     Web(bool),
     Sessions,
+    /// `/resume ID` opens that kept conversation without the picker.
+    Resume(String),
     NewChat,
     /// `/project` shows the project of this conversation, `/project NAME` sets it and `/project none` clears it.
     Project(Option<String>),
@@ -212,7 +214,7 @@ pub fn describe(name: &str) -> &'static str {
         "read" => "read web pages you approve, as untrusted sources",
         "web" => "list the pages in this conversation (/web clear forgets them)",
         "sessions" => "pick a kept conversation or a review",
-        "resume" => "same as /sessions",
+        "resume" => "open a kept conversation by its id (without an id, the same as /sessions)",
         "newchat" => "leave this conversation and start a new one",
         "project" => "show or set the project this conversation is about",
         "similar" => "list saved notes that say almost the same thing",
@@ -275,6 +277,7 @@ pub fn usage(name: &str) -> &'static str {
         "usage" => "/usage [DAYS]",
         "branch" => "/branch [N]",
         "rename" => "/rename ID NEW TITLE",
+        "resume" => "/resume [ID]",
         "conflicts" => "/conflicts",
         "choose" => "/choose KEEP_ID OVER_ID",
         "bothright" => "/bothright ID ID",
@@ -373,7 +376,9 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 Ok(Command::Proof((!rest.is_empty()).then(|| rest.to_string())))
             }
         }
-        "sessions" | "resume" => Ok(Command::Sessions),
+        "sessions" => Ok(Command::Sessions),
+        "resume" if rest.is_empty() => Ok(Command::Sessions),
+        "resume" => Ok(Command::Resume(rest.to_string())),
         "newchat" => Ok(Command::NewChat),
         "similar" => Ok(Command::Similar),
         "project" => {

@@ -52,9 +52,11 @@ fn ensure_service(dir: &std::path::Path, args: &[String], guard: &mut Guard) -> 
         };
         let mut cmd = Command::new(exe);
         cmd.arg("serve").arg("--data-dir").arg(&dir);
+        let resume_id = resume_request(args).flatten();
         for a in args {
             if a != "--data-dir"
                 && a != "--resume"
+                && Some(a) != resume_id.as_ref()
                 && a != "--linear"
                 && Some(a.as_str()) != crate::flag(args, "--data-dir").as_deref()
             {
@@ -97,9 +99,15 @@ fn ensure_service(dir: &std::path::Path, args: &[String], guard: &mut Guard) -> 
     Ok(())
 }
 
+/// `--resume` opens the newest kept conversation; `--resume ID` opens that one. The id is the word right after the flag, if it is not another flag.
+pub fn resume_request(args: &[String]) -> Option<Option<String>> {
+    let i = args.iter().position(|a| a == "--resume")?;
+    Some(args.get(i + 1).filter(|a| !a.starts_with('-')).cloned())
+}
+
 fn run_client(dir: &std::path::Path, args: &[String]) -> u8 {
     let dir = dir.to_path_buf();
-    let resume = args.iter().any(|a| a == "--resume");
+    let resume = resume_request(args);
     let linear = args.iter().any(|a| a == "--linear")
         || std::env::var("KAKU_LINEAR")
             .is_ok_and(|v| !matches!(v.trim(), "" | "0" | "off" | "false" | "no"));
@@ -114,5 +122,33 @@ fn run_client(dir: &std::path::Path, args: &[String]) -> u8 {
             eprintln!("{e}");
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod resume_args {
+    use super::resume_request;
+
+    fn a(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn rs01_resume_alone_means_the_newest_and_resume_with_a_word_means_that_conversation() {
+        assert_eq!(resume_request(&a(&["tui"])), None);
+        assert_eq!(resume_request(&a(&["tui", "--resume"])), Some(None));
+        assert_eq!(resume_request(&a(&["--resume", "--linear"])), Some(None));
+        assert_eq!(
+            resume_request(&a(&["tui", "--resume", "--data-dir", "/x"])),
+            Some(None)
+        );
+        assert_eq!(
+            resume_request(&a(&["tui", "--resume", "abc123"])),
+            Some(Some("abc123".into()))
+        );
+        assert_eq!(
+            resume_request(&a(&["--data-dir", "/x", "--resume", "abc123", "--linear"])),
+            Some(Some("abc123".into()))
+        );
     }
 }

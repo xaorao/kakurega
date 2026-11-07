@@ -468,13 +468,40 @@ impl App {
         self.push(kind, None, text_lines(line.as_ref()));
     }
 
-    /// Opens the most recently updated kept conversation once the screen is up (`kaku --resume`).
-    pub fn resume_at_start(&mut self) -> Vec<Req> {
+    /// Opens the named kept conversation (`kaku --resume ID`), or the most recently updated one, once the screen is up.
+    pub fn resume_at_start(&mut self, id: Option<&str>) -> Vec<Req> {
+        if let Some(id) = id {
+            return self.open_chat_by_id(id);
+        }
         vec![self.req(
             Intent::ResumeLast,
             false,
             Method::Get,
             "/api/sessions",
+            None,
+        )]
+    }
+
+    /// Opens one kept conversation by id. The id becomes part of a request path, so only what an id is made of is accepted.
+    fn open_chat_by_id(&mut self, id: &str) -> Vec<Req> {
+        let id = id.trim();
+        if id.is_empty()
+            || id.len() > 64
+            || !id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            self.say(
+                Kind::Error,
+                "That is not a conversation id. /sessions lists the kept ones.",
+            );
+            return Vec::new();
+        }
+        vec![self.req(
+            Intent::OpenChat(id.to_string()),
+            false,
+            Method::Get,
+            &format!("/api/sessions/{id}"),
             None,
         )]
     }
@@ -1833,6 +1860,7 @@ impl App {
                     Some(json!({"at": n - 1})),
                 )]
             }
+            Command::Resume(id) => self.open_chat_by_id(&id),
             Command::Sessions => {
                 let mut p = crate::picker::Picker::new("Conversations and reviews");
                 for j in &self.jobs {
