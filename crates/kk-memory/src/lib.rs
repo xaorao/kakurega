@@ -1984,6 +1984,45 @@ impl Memories {
         Ok(out)
     }
 
+    /// Notes that stop applying within `within` seconds after `as_of`, soonest first, so the owner can renew or let them go before
+    /// they quietly stop being recalled. Notes with no end date, notes already over and notes that are not active are never listed.
+    pub fn expiring(
+        &self,
+        clearance: &Label,
+        as_of: i64,
+        within: i64,
+        limit: usize,
+        scope: Scope,
+    ) -> Result<Vec<Recalled>, MemoryError> {
+        let (all, proj) = scope.params();
+        let until = as_of.saturating_add(within.max(0));
+        let mut st = self.conn().prepare(
+            "SELECT * FROM memories WHERE status = 'active'
+               AND (valid_from IS NULL OR valid_from <= ?1)
+               AND valid_to IS NOT NULL AND valid_to > ?1 AND valid_to <= ?2
+               AND (?3 = 1 OR project IS NULL OR project = ?4)
+             ORDER BY valid_to ASC, rowid ASC",
+        )?;
+        let rows = st.query_map(params![as_of, until, all, proj], row_to_memory)?;
+        let mut out = Vec::new();
+        for r in rows {
+            let r = r?;
+            if r.m.label.confidentiality_within(clearance) {
+                out.push(Recalled {
+                    why: explain(&r.m),
+                    untrusted: r.untrusted,
+                    matched_terms: Vec::new(),
+                    rank: out.len() + 1,
+                    memory: r.m,
+                });
+                if out.len() >= limit.clamp(1, 200) {
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Saved notes that say almost the same thing, for the owner to look at. Read-only: nothing is merged, forgotten or
     /// changed. The newest 200 notes the caller may see are compared. Each group is anchored on its newest note and holds
     /// only notes that match that anchor directly (the same overlap and the same claim as the suggestion check), so a chain

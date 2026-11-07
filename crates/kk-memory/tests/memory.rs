@@ -3781,3 +3781,78 @@ fn me79_a_recalled_note_says_which_words_of_the_question_it_matched_and_where_it
     let l = m.list(&internal(), 10, 5).unwrap();
     assert!(l.iter().all(|x| x.matched_terms.is_empty()) && l[0].rank == 1);
 }
+
+#[test]
+fn me80_notes_that_stop_applying_soon_are_listed_soonest_first_and_nothing_else_is() {
+    let m = mem(&dir());
+    let with_end = |text: &str, end: Option<i64>| NewMemory {
+        valid_to: end,
+        ..nm(text, internal())
+    };
+    let day = 86_400;
+    id(
+        m.remember(1, with_end("ends in two days", Some(100 + 2 * day)))
+            .unwrap(),
+    );
+    id(m.remember(2, with_end("ends tomorrow", Some(100 + day)))
+        .unwrap());
+    id(
+        m.remember(3, with_end("ends in a month", Some(100 + 30 * day)))
+            .unwrap(),
+    );
+    id(m.remember(4, with_end("never ends", None)).unwrap());
+    id(m.remember(5, with_end("already over", Some(50))).unwrap());
+    let gone = id(m
+        .remember(6, with_end("forgotten while pending", Some(100 + day)))
+        .unwrap());
+    m.forget(100, &gone, "no longer true").unwrap();
+    let r = m
+        .expiring(&internal(), 100, 7 * day, 10, Scope::Global)
+        .unwrap();
+    let texts: Vec<_> = r.iter().map(|x| x.memory.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        ["ends tomorrow", "ends in two days"],
+        "soonest first; the later, endless, over and forgotten ones are absent"
+    );
+    assert_eq!(r[0].rank, 1);
+    // the boundary: a note ending exactly at the edge is listed, one second past is not
+    assert_eq!(
+        m.expiring(&internal(), 100, 2 * day, 10, Scope::Global)
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        m.expiring(&internal(), 100, 2 * day - 1, 10, Scope::Global)
+            .unwrap()
+            .len(),
+        1
+    );
+    // a negative window lists nothing, the limit is honoured
+    assert!(m
+        .expiring(&internal(), 100, -5, 10, Scope::Global)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        m.expiring(&internal(), 100, 40 * day, 1, Scope::Global)
+            .unwrap()
+            .len(),
+        1
+    );
+    // a note above the caller's clearance is never listed
+    let public = Label::new(Level::Public);
+    id(m.remember(
+        7,
+        NewMemory {
+            valid_to: Some(100 + day),
+            ..nm("secret deadline", Label::new(Level::Confidential))
+        },
+    )
+    .unwrap());
+    assert!(m
+        .expiring(&public, 100, 7 * day, 10, Scope::Global)
+        .unwrap()
+        .iter()
+        .all(|x| x.memory.text != "secret deadline"));
+}

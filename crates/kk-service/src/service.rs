@@ -1214,6 +1214,27 @@ async fn memories_list(axum::Extension(svc): Svc, Query(q): Query<MemoryQuery>) 
     }
 }
 
+#[derive(Deserialize)]
+struct ExpiringQuery {
+    days: Option<i64>,
+}
+
+/// Notes that stop applying within the next `days` (default 14, 1 to 365), soonest first.
+async fn memories_expiring(axum::Extension(svc): Svc, Query(q): Query<ExpiringQuery>) -> Response {
+    let days = q.days.unwrap_or(14).clamp(1, 365);
+    let mem = svc.memory.lock().expect("lock");
+    match mem
+        .owner_clearance()
+        .and_then(|c| mem.expiring(&c, now(), days * 86_400, 100, kk_memory::Scope::All))
+    {
+        Ok(items) => Json(
+            json!({"days": days, "memories": items.iter().map(memory_json).collect::<Vec<_>>()}),
+        )
+        .into_response(),
+        Err(e) => memory_error(e),
+    }
+}
+
 /// Notes a newer secret detector matched after they were saved. They are in no recall, list, review or model prompt; the owner
 /// sees them here and decides: forget, or say it is not a secret.
 async fn memories_held(axum::Extension(svc): Svc) -> Response {
@@ -7201,6 +7222,7 @@ impl Extension for Routes {
             .route("/api/memories", get(memories_list).post(memory_add))
             .route("/api/memories/similar", get(memories_similar))
             .route("/api/memories/held", get(memories_held))
+            .route("/api/memories/expiring", get(memories_expiring))
             .route("/api/memories/{id}/release-hold", post(memory_release_hold))
             .route("/api/memories/conflicts", get(memories_conflicts))
             .route("/api/memories/conflicts/keep", post(memories_conflict_keep))

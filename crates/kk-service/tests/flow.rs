@@ -11357,3 +11357,57 @@ fn sv114_a_review_whose_files_hold_the_notes_text_is_named_as_a_copy_that_forget
     let (_, r) = w.post(&format!("/api/memories/{note}/forget"), json!({}));
     assert_eq!(r["copies_known"]["reviews"], json!([job]), "{r}");
 }
+
+#[test]
+fn sv115_the_expiring_list_shows_notes_ending_within_the_days_asked_and_clamps_the_window() {
+    let (_c, w, _seen, _root) = instructions_service("expiring");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let day = 86_400;
+    for (text, end) in [
+        ("Promo price holds for three days", Some(now + 3 * day)),
+        ("Promo price holds for twenty days", Some(now + 20 * day)),
+        ("Pricing has no end date", None),
+    ] {
+        let mut body = json!({"text": text});
+        if let Some(e) = end {
+            body["valid_to"] = json!(e);
+        }
+        assert_eq!(w.post("/api/memories", body).0, 201);
+    }
+    let (st, v) = w.get("/api/memories/expiring");
+    assert_eq!(st, 200);
+    assert_eq!(v["days"], 14);
+    let texts: Vec<&str> = v["memories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(texts, ["Promo price holds for three days"], "{v}");
+    let (_, v) = w.get("/api/memories/expiring?days=30");
+    let texts: Vec<&str> = v["memories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            "Promo price holds for three days",
+            "Promo price holds for twenty days"
+        ],
+        "soonest first: {v}"
+    );
+    // the window is clamped, and a junk value is a refusal rather than a crash
+    assert_eq!(w.get("/api/memories/expiring?days=0").1["days"], 1);
+    assert_eq!(w.get("/api/memories/expiring?days=99999").1["days"], 365);
+    assert_eq!(w.get("/api/memories/expiring?days=-4").1["days"], 1);
+    assert!(w.get("/api/memories/expiring?days=abc").0 >= 400);
+    // not reachable without a session
+    let anon = Web::new(_c.addr);
+    assert_eq!(anon.get("/api/memories/expiring").0, 401);
+}
