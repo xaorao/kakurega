@@ -4391,3 +4391,70 @@ fn tu71_a_proposed_fix_is_drawn_with_old_and_new_line_numbers_and_its_markers_fi
         "headers are kept as they are"
     );
 }
+
+#[test]
+fn tu72_tab_finishes_a_note_id_after_correct_and_forget_from_the_last_memory_listing() {
+    let mut a = booted();
+    let tab = |app: &mut App, line: &str| {
+        app.input = line.to_string();
+        app.cursor = line.chars().count();
+        app.handle(key(KeyCode::Tab));
+        app.input.clone()
+    };
+    assert_eq!(
+        tab(&mut a, "/forget mem"),
+        "/forget mem",
+        "nothing is known before /memory has been run"
+    );
+    a.input.clear();
+    a.cursor = 0;
+    let r = enter(&mut a, "/memory");
+    a.handle(ok(&r[0], 200, json!({"memories": [
+        {"id": "mem-aa11", "level": "internal", "text": "Acme pays invoices on the 20th", "why": "you said so"},
+        {"id": "mem-aa22", "level": "internal", "text": "Beta ships on mondays", "why": "you said so"},
+        {"id": "mem-bb33", "level": "internal", "text": "Gamma prefers email", "why": "you said so"}]})));
+    assert_eq!(tab(&mut a, "/forget mem-b"), "/forget mem-bb33 ");
+    assert_eq!(
+        tab(&mut a, "/correct MEM-BB"),
+        "/correct mem-bb33 ",
+        "case does not matter"
+    );
+    assert_eq!(
+        tab(&mut a, "/forget mem-a"),
+        "/forget mem-aa",
+        "what the candidates share is filled in"
+    );
+    assert!(
+        text(&a).contains("mem-aa11  Acme pays invoices on the 20th")
+            && text(&a).contains("mem-aa22  Beta ships on mondays"),
+        "{}",
+        text(&a)
+    );
+    assert_eq!(
+        tab(&mut a, "/forget aa11"),
+        "/forget aa11",
+        "the start of an id, not any part of it"
+    );
+    assert_eq!(
+        tab(&mut a, "/forget zzz"),
+        "/forget zzz",
+        "no match changes nothing"
+    );
+    // after the id the words are the new text and are never completed
+    assert_eq!(
+        tab(&mut a, "/correct mem-bb33 Gamma prefers m"),
+        "/correct mem-bb33 Gamma prefers m"
+    );
+    assert_eq!(
+        tab(&mut a, "/remember mem-b"),
+        "/remember mem-b",
+        "other commands are left alone"
+    );
+    // a hostile id in the listing cannot put control characters into the line
+    a.input.clear();
+    a.cursor = 0;
+    let r = enter(&mut a, "/memory");
+    a.handle(ok(&r[0], 200, json!({"memories": [{"id": "mem-\u{1b}[2Jx1", "level": "internal", "text": "t\u{7}ext", "why": "w"}]})));
+    let done = tab(&mut a, "/forget mem-");
+    assert!(!done.chars().any(|c| c.is_control()), "{done:?}");
+}

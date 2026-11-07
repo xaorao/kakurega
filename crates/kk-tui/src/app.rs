@@ -254,6 +254,8 @@ pub struct App {
     pub expand_all: bool,
     /// When set, the steps of a running review are not printed; its end still is.
     pub quiet: bool,
+    /// The notes the last /memory listing showed (id and the start of the text), so Tab can finish a note id.
+    pub notes_seen: Vec<(String, String)>,
     /// Set by Tab after /review: the folder to list, the line it was asked for, what comes before the last name, the part typed.
     path_request: Option<(String, String, String, String)>,
     /// Set when a review finished or stopped; the screen loop takes it and rings the bell once.
@@ -365,6 +367,7 @@ impl App {
             clipboard_request: None,
             expand_all: false,
             quiet: false,
+            notes_seen: Vec::new(),
             path_request: None,
             attention: None,
             focused: None,
@@ -542,6 +545,48 @@ impl App {
                             j.recipient
                         )
                     })
+                    .collect();
+                Some((done, Some(list)))
+            }
+        }
+    }
+
+    /// Tab after `/correct` or `/forget`: the note id being typed is finished from the notes the last /memory listing showed. The id is the
+    /// first word only; what follows `/correct ID` is the new text and is never completed.
+    fn note_completion(&self) -> Option<(Option<String>, Option<Vec<String>>)> {
+        let rest = self.input.strip_prefix('/')?;
+        let (name, partial) = rest.split_once(' ')?;
+        if !matches!(name, "correct" | "forget") || partial.contains(' ') {
+            return None;
+        }
+        let want = partial.to_ascii_lowercase();
+        let mut hits: Vec<&(String, String)> = self
+            .notes_seen
+            .iter()
+            .filter(|(id, _)| id.to_ascii_lowercase().starts_with(&want))
+            .collect();
+        hits.sort();
+        match hits.as_slice() {
+            [] => Some((None, None)),
+            [one] => Some((Some(format!("/{name} {} ", one.0)), None)),
+            many => {
+                let first = &many[0].0;
+                let mut common = first.chars().count();
+                for m in many {
+                    common = common.min(
+                        first
+                            .chars()
+                            .zip(m.0.chars())
+                            .take_while(|(a, b)| a.eq_ignore_ascii_case(b))
+                            .count(),
+                    );
+                }
+                let done = (common > partial.chars().count())
+                    .then(|| format!("/{name} {}", first.chars().take(common).collect::<String>()));
+                let list = many
+                    .iter()
+                    .take(12)
+                    .map(|(id, t)| format!("{id}  {t}"))
                     .collect();
                 Some((done, Some(list)))
             }
@@ -1292,7 +1337,7 @@ impl App {
                 if let Some(c) = cmd::complete(&self.input) {
                     self.input = c;
                     self.cursor = self.input.chars().count();
-                } else if let Some(c) = self.job_completion() {
+                } else if let Some(c) = self.job_completion().or_else(|| self.note_completion()) {
                     // a review id after a command that takes one: finished from the reviews this screen already knows
                     if let Some(done) = c.0 {
                         self.input = done;
@@ -2826,6 +2871,19 @@ impl App {
                     return Vec::new();
                 }
                 let list = body["memories"].as_array().cloned().unwrap_or_default();
+                self.notes_seen = list
+                    .iter()
+                    .take(200)
+                    .filter_map(|m| {
+                        Some((
+                            clean(m["id"].as_str()?),
+                            clean(m["text"].as_str().unwrap_or(""))
+                                .chars()
+                                .take(40)
+                                .collect(),
+                        ))
+                    })
+                    .collect();
                 if list.is_empty() {
                     self.say(
                         Kind::Info,
