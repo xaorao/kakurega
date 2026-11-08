@@ -347,7 +347,8 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS owner_instructions(scope TEXT PRIMARY KEY, text TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS secrets(name TEXT PRIMARY KEY, value BLOB NOT NULL, stored_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);
-             CREATE TABLE IF NOT EXISTS away(id INTEGER PRIMARY KEY CHECK (id = 1), at INTEGER NOT NULL);",
+             CREATE TABLE IF NOT EXISTS away(id INTEGER PRIMARY KEY CHECK (id = 1), at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS route_prices(route TEXT PRIMARY KEY, input_per_million REAL NOT NULL, output_per_million REAL NOT NULL, currency TEXT NOT NULL, updated_at INTEGER NOT NULL);",
         )
         .map_err(|e| e.to_string())?;
     // stores made before a conversation could name a project
@@ -2110,6 +2111,115 @@ struct UsageQuery {
 
 type UsageRow = (String, String, i64, i64, i64, i64, i64, i64, i64);
 
+/// The most prices the owner may keep, one for each model route.
+const MAX_PRICES: i64 = 50;
+/// The largest price accepted for a million tokens, in whatever currency the owner names: far above any real price, so a typo
+/// in the number of zeros cannot produce a cost nobody would believe.
+const MAX_PRICE: f64 = 1_000_000.0;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PriceBody {
+    route: String,
+    #[serde(default)]
+    input_per_million: Option<f64>,
+    #[serde(default)]
+    output_per_million: Option<f64>,
+    #[serde(default)]
+    currency: Option<String>,
+    #[serde(default)]
+    remove: bool,
+}
+
+fn prices_all(svc: &Service) -> Vec<(String, f64, f64, String)> {
+    let store = svc.store.lock().expect("lock");
+    let c = store.connection();
+    let Ok(mut st) = c.prepare("SELECT route, input_per_million, output_per_million, currency FROM route_prices ORDER BY route") else {
+        return Vec::new();
+    };
+    st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .map(|it| it.flatten().collect())
+        .unwrap_or_default()
+}
+
+/// The prices the owner entered, one for each route: for a million tokens read and a million written. This program does not
+/// know any provider's prices; these are only the owner's own numbers, used to estimate a cost on the usage page.
+async fn prices_get(axum::Extension(svc): Svc) -> Response {
+    Json(json!({
+        "prices": prices_all(&svc).iter().map(|(route, i, o, cur)| json!({"route": route, "input_per_million": i, "output_per_million": o, "currency": cur})).collect::<Vec<_>>(),
+        "max_prices": MAX_PRICES,
+        "max_price": MAX_PRICE,
+        "note": "These are numbers you entered. The usage page multiplies them by the tokens counted; nothing is looked up and nothing is sent anywhere.",
+    }))
+    .into_response()
+}
+
+/// Sets or removes the price of one route.
+async fn prices_set(axum::Extension(svc): Svc, Json(b): Json<PriceBody>) -> Response {
+    let refuse = |why: &str| error(StatusCode::UNPROCESSABLE_ENTITY, "BAD_PRICE", why);
+    let route_ok = !b.route.is_empty()
+        && b.route.chars().count() <= 80
+        && b.route
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '-' | '@'));
+    if !route_ok {
+        return refuse("a route is 1 to 80 letters, digits or . _ : / - @");
+    }
+    if b.remove {
+        if b.input_per_million.is_some() || b.output_per_million.is_some() || b.currency.is_some() {
+            return refuse("to remove a price, send only the route and remove");
+        }
+        let removed = {
+            let store = svc.store.lock().expect("lock");
+            store
+                .connection()
+                .execute("DELETE FROM route_prices WHERE route = ?1", [&b.route])
+                .unwrap_or(0)
+        };
+        if removed > 0 {
+            svc.log_event("usage.price_removed", "owner", &[]);
+        }
+        return Json(json!({"removed": removed > 0})).into_response();
+    }
+    let (Some(i), Some(o), Some(cur)) = (
+        b.input_per_million,
+        b.output_per_million,
+        b.currency.as_deref(),
+    ) else {
+        return refuse("give input_per_million, output_per_million and currency");
+    };
+    let price_ok = |p: f64| p.is_finite() && (0.0..=MAX_PRICE).contains(&p);
+    if !price_ok(i) || !price_ok(o) {
+        return refuse("a price is a number from 0 to 1,000,000 for a million tokens");
+    }
+    if cur.len() != 3 || !cur.chars().all(|c| c.is_ascii_uppercase()) {
+        return refuse("a currency is three capital letters, such as USD");
+    }
+    let store = svc.store.lock().expect("lock");
+    let c = store.connection();
+    let have: i64 = c
+        .query_row(
+            "SELECT count(*) FROM route_prices WHERE route <> ?1",
+            [&b.route],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if have >= MAX_PRICES {
+        return refuse("remove a price first: at most 50 are kept");
+    }
+    match c.execute(
+        "INSERT INTO route_prices(route, input_per_million, output_per_million, currency, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(route) DO UPDATE SET input_per_million = excluded.input_per_million, output_per_million = excluded.output_per_million, currency = excluded.currency, updated_at = excluded.updated_at",
+        kk_vault::rusqlite::params![b.route, i, o, cur, now()],
+    ) {
+        Ok(_) => {
+            drop(store);
+            svc.log_event("usage.price_set", "owner", &[]);
+            Json(json!({"saved": true})).into_response()
+        }
+        Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "STORE", "could not save that"),
+    }
+}
+
 /// What each route answered between two moments (the last 30 days by default): replies, tokens in and out, how many counts
 /// came from the model itself, and how long replies took. Tokens and time only: this program knows no prices.
 async fn usage_summary(
@@ -2132,6 +2242,8 @@ async fn usage_summary(
     if from < 0 || to < 0 || from >= to || to - from > USAGE_MAX_RANGE_SECS {
         return bad();
     }
+    // read before the store is locked below: the store's lock is not re-entrant
+    let prices = prices_all(&svc);
     let store = svc.store.lock().expect("lock");
     let c = store.connection();
     let Ok(mut st) = c.prepare(
@@ -2156,14 +2268,26 @@ async fn usage_summary(
         })
         .map(|it| it.flatten().collect())
         .unwrap_or_default();
+    let mut cost_totals: std::collections::BTreeMap<String, f64> = Default::default();
     let routes: Vec<Value> = rows
         .iter()
         .map(|(route, class, sim, turns, prompt, measured, reply, ms, max)| {
+            // a cost only for a real model that has a price the owner entered; a test model costs nothing
+            let cost = prices
+                .iter()
+                .find(|(r, ..)| r == route)
+                .filter(|_| *sim == 0)
+                .map(|(_, i, o, cur)| {
+                    let amount = (*prompt as f64 * i + *reply as f64 * o) / 1_000_000.0;
+                    *cost_totals.entry(cur.clone()).or_insert(0.0) += amount;
+                    json!({"amount": (amount * 10_000.0).round() / 10_000.0, "currency": cur, "tokens_estimated": measured < turns})
+                });
             json!({
                 "route": route, "class": class, "simulated": *sim != 0, "turns": turns,
                 "prompt_tokens": prompt, "measured_turns": measured, "reply_tokens": reply,
                 "avg_ms": if *turns > 0 { ms / turns } else { 0 }, "max_ms": max,
                 "reply_tokens_per_second": if *ms > 0 { (*reply as f64 * 1000.0 / *ms as f64 * 10.0).round() / 10.0 } else { 0.0 },
+                "cost": cost,
             })
         })
         .collect();
@@ -2171,8 +2295,9 @@ async fn usage_summary(
         "turns": rows.iter().map(|r| r.3).sum::<i64>(),
         "prompt_tokens": rows.iter().map(|r| r.4).sum::<i64>(),
         "reply_tokens": rows.iter().map(|r| r.6).sum::<i64>(),
+        "cost": cost_totals.iter().map(|(c, a)| json!({"currency": c, "amount": (a * 10_000.0).round() / 10_000.0})).collect::<Vec<_>>(),
     });
-    Json(json!({"from": from, "to": to, "routes": routes, "total": total, "note": "Token counts are the model's own where it gave them (measured_turns) and an estimate otherwise. No prices are known here, so no cost is shown."})).into_response()
+    Json(json!({"from": from, "to": to, "routes": routes, "total": total, "note": "Token counts are the model's own where it gave them (measured_turns) and an estimate otherwise. A cost is shown only for a model route you entered a price for (/api/usage/prices): this program knows no provider's prices."})).into_response()
 }
 
 const MAX_INSTRUCTION_CHARS: usize = 4000;
@@ -7676,6 +7801,7 @@ impl Extension for Routes {
             )
             .route("/api/pii-allow", get(pii_allow_get).post(pii_allow_set))
             .route("/api/usage", get(usage_summary))
+            .route("/api/usage/prices", get(prices_get).post(prices_set))
             .route("/api/exports/transcript", post(transcript_export))
             .route("/api/memories/sources", get(memory_sources))
             .route("/api/memories/sources/{job}", get(memory_source_footprint))

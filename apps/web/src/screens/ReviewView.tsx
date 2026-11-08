@@ -97,7 +97,7 @@ function Protected(props: { job: Job }) {
         <Show when={audit()} fallback={<p class="muted">{t("review.loading")}</p>}>
           {(a) => (
             <table>
-              <thead><tr><th>#</th><th>{t("prot.col.op")}</th><th>{t("prot.col.result")}</th></tr></thead>
+              <thead><tr><th scope="col">#</th><th scope="col">{t("prot.col.op")}</th><th scope="col">{t("prot.col.result")}</th></tr></thead>
               <tbody>
                 <For each={a()}>{(e) => <tr class={e.outcome === "ok" ? "" : "refused"}><td>{e.request}</td><td><code>{e.op}</code></td><td>{e.outcome === "ok" ? t("prot.allowed") : t("prot.refused", { why: e.outcome })}</td></tr>}</For>
               </tbody>
@@ -359,7 +359,7 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
               <h2>{t("rel.exact")}</h2>
               <p>{rich("rel.for", { recipient: r().recipient ?? "", digest: r().digest ?? "" })}</p>
               <table>
-                <thead><tr><th>{t("rel.col.file")}</th><th>{t("rel.col.size")}</th><th>SHA-256</th></tr></thead>
+                <thead><tr><th scope="col">{t("rel.col.file")}</th><th scope="col">{t("rel.col.size")}</th><th scope="col">SHA-256</th></tr></thead>
                 <tbody><For each={r().files}>{(f) => <tr><td><code>{f.name}</code></td><td>{t("rel.bytes", { n: f.bytes })}</td><td><code>{f.sha256.slice(0, 16)}</code></td></tr>}</For></tbody>
               </table>
               <For each={r().files!.filter((f) => f.name.startsWith("finding-"))}>{(f) => <details open><summary>{f.name}</summary><pre tabindex="0"><code>{f.text}</code></pre></details>}</For>

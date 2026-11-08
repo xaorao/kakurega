@@ -99,6 +99,7 @@ let leaseRefusals = 1;
 let instructionRefusals = 0; // the one deliberate 422 when an instruction holds a secret
 let attachmentRefusals = 0; // the one deliberate 422 when a password-protected file is attached
 let chatFailureRefusals = 0; // the one deliberate 422 when a chat send is made to fail
+let piiPricesBad = 0; // the one deliberate 422 when a negative price is typed
 let sessionRefusals = 0; // the one deliberate 422 when keeping a conversation is made to fail
 let piiAllowRefusals = 0; // the one deliberate 422 when a pattern that would match everything is added to the personal-data list
 let forgottenWordsRefusals = 0; // the one deliberate 422 when forgotten words are typed in again
@@ -118,6 +119,10 @@ page.on("console", (m) => {
   }
   if (m.location().url.endsWith("/api/sessions") && /status of 422/.test(m.text()) && sessionRefusals > 0) {
     sessionRefusals--;
+    return;
+  }
+  if (m.location().url.endsWith("/api/usage/prices") && /status of 422/.test(m.text()) && piiPricesBad > 0) {
+    piiPricesBad--;
     return;
   }
   if (m.location().url.endsWith("/api/pii-allow") && /status of 422/.test(m.text()) && piiAllowRefusals > 0) {
@@ -2096,6 +2101,44 @@ try {
     const list = await (await page.request.get(base + "/api/memories")).json();
     for (const m of list.memories.filter((x) => x.text.startsWith("grid note"))) await send(`/api/memories/${m.id}/forget`, {});
     await send("/api/instructions", { project: null, text: "" });
+  }
+  {
+    // prices the owner types, and the cost they give; the real arithmetic is checked in the service test, so a stand-in answer
+    // with a priced route is used here to see the table
+    await page.goto(base + "/#/activity");
+    await page.getByRole("heading", { name: "Model usage", exact: true }).waitFor();
+    const usageStub = { from: 0, to: 1, routes: [
+      { route: "models.example.com/m1", class: "device_only", simulated: false, turns: 3, prompt_tokens: 1200, measured_turns: 1, reply_tokens: 300, avg_ms: 900, max_ms: 1500, reply_tokens_per_second: 30, cost: { amount: 0.0123, currency: "USD", tokens_estimated: true } },
+      { route: "scripted-test-model", class: "device_only", simulated: true, turns: 2, prompt_tokens: 50, measured_turns: 2, reply_tokens: 20, avg_ms: 10, max_ms: 12, reply_tokens_per_second: 0, cost: null },
+    ], total: { turns: 5, prompt_tokens: 1250, reply_tokens: 320, cost: [{ currency: "USD", amount: 0.0123 }] }, note: "" };
+    await page.route(/\/api\/usage\?/, (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(usageStub) }));
+    await page.reload();
+    await page.getByRole("columnheader", { name: "Estimated cost" }).waitFor();
+    check("the column headers of the usage table are real column headers for a screen reader", (await page.getByRole("columnheader").count()) >= 6);
+    const rowsText = await page.locator("#usage tbody tr").allInnerTexts();
+    check("a priced route shows its estimated cost, starred where the tokens were estimated, and a test model shows a dash", rowsText[0].includes("USD 0.0123*") && rowsText[1].includes("–"), JSON.stringify(rowsText));
+    check("the total row adds the costs by currency", rowsText[2].includes("USD 0.0123"), JSON.stringify(rowsText));
+    await page.unroute(/\/api\/usage\?/);
+    // the editor: save a price, see it listed, refuse a bad one with the service's reason, remove it
+    await page.reload();
+    await page.getByText("Prices you entered").first().click();
+    await page.getByLabel("Model route (as named in the table)").fill("models.example.com/m1");
+    await page.getByLabel("Price for a million tokens read").fill("2.5");
+    await page.getByLabel("Price for a million tokens written").fill("10");
+    await page.getByLabel("Currency (three capital letters)").fill("usd");
+    await page.getByRole("button", { name: "Save the price" }).click();
+    await page.getByText("Saved.").waitFor();
+    const priceLine = await page.getByRole("list", { name: "Prices you entered" }).innerText();
+    check("a saved price is listed with its numbers and currency (a lower-case currency is made capital)", priceLine.includes("models.example.com/m1") && priceLine.includes("2.5 read, 10 written, USD for a million tokens"), priceLine);
+    piiPricesBad = 1;
+    await page.getByLabel("Price for a million tokens read").fill("-3");
+    await page.getByRole("button", { name: "Save the price" }).click();
+    const refused = await page.getByRole("alert").filter({ hasText: "price" }).first().innerText();
+    check("a negative price is refused with the service's reason and the list is unchanged", refused.includes("a number from 0 to 1,000,000") && (await page.getByRole("list", { name: "Prices you entered" }).locator("code").count()) === 1, refused);
+    await axeCheck(page, "usage with the price editor");
+    await page.getByRole("button", { name: /^Remove models.example.com\/m1/ }).click();
+    await page.getByText("Removed.").waitFor();
+    check("removing it empties the list", (await page.getByRole("list", { name: "Prices you entered" }).locator("code").count()) === 0);
   }
 } catch (e) {
   check("journey completed", false, String(e).slice(0, 400));

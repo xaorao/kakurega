@@ -5398,3 +5398,50 @@ fn tu84_a_conversation_can_be_put_away_from_the_picker_and_found_again_in_the_ar
         "the archived one of another project is found"
     );
 }
+
+#[test]
+fn tu85_the_terminal_usage_shows_a_cost_only_where_a_price_was_entered_and_marks_an_estimate() {
+    let mut app = booted();
+    let r = enter(&mut app, "/usage");
+    app.handle(ok(&r[0], 200, json!({"from": 0, "to": 1, "routes": [
+        {"route": "models.example.com/m1", "class": "device_only", "simulated": false, "turns": 3, "prompt_tokens": 1200, "measured_turns": 1, "reply_tokens": 300, "avg_ms": 900, "max_ms": 1500, "reply_tokens_per_second": 30.0, "cost": {"amount": 0.0123, "currency": "USD", "tokens_estimated": true}},
+        {"route": "ollama:qwen", "class": "device_only", "simulated": false, "turns": 2, "prompt_tokens": 50, "measured_turns": 2, "reply_tokens": 20, "avg_ms": 10, "max_ms": 12, "reply_tokens_per_second": 0.0, "cost": null},
+    ], "total": {"turns": 5, "prompt_tokens": 1250, "reply_tokens": 320, "cost": [{"currency": "USD", "amount": 0.0123}, {"currency": "EUR", "amount": 0.5}]}, "note": "n"})));
+    let t = text(&app);
+    assert!(
+        t.contains("models.example.com/m1") && t.contains("about USD 0.0123*"),
+        "{t}"
+    );
+    assert!(
+        t.contains("about USD 0.0123 and EUR 0.5000"),
+        "totals by currency: {t}"
+    );
+    assert!(
+        t.contains("Costs are your own prices times the tokens counted."),
+        "{t}"
+    );
+    let line = t
+        .lines()
+        .find(|l| l.starts_with("ollama:qwen"))
+        .expect("the unpriced route");
+    assert!(!line.contains("about"), "no price, no cost: {line}");
+    // no cost anywhere: nothing about a cost is claimed, and the way to get one is said
+    let mut b = booted();
+    let r = enter(&mut b, "/usage");
+    b.handle(ok(&r[0], 200, json!({"from": 0, "to": 1, "routes": [{"route": "r", "class": "device_only", "simulated": false, "turns": 1, "prompt_tokens": 10, "measured_turns": 1, "reply_tokens": 5, "avg_ms": 1, "max_ms": 1, "reply_tokens_per_second": 1.0, "cost": null}], "total": {"turns": 1, "prompt_tokens": 10, "reply_tokens": 5, "cost": []}, "note": "n"})));
+    let t = text(&b);
+    assert!(
+        !t.contains("about") && t.contains("A cost shows only for a route whose price you entered"),
+        "{t}"
+    );
+    // an older service that sends no cost field at all is read as no cost
+    let mut c = booted();
+    let r = enter(&mut c, "/usage");
+    c.handle(ok(&r[0], 200, json!({"from": 0, "to": 1, "routes": [{"route": "r", "class": "device_only", "simulated": false, "turns": 1, "prompt_tokens": 10, "measured_turns": 1, "reply_tokens": 5, "avg_ms": 1, "max_ms": 1, "reply_tokens_per_second": 1.0}], "total": {"turns": 1, "prompt_tokens": 10, "reply_tokens": 5}, "note": "n"})));
+    assert!(!text(&c).contains("about"), "{}", text(&c));
+    // control characters in a currency never reach the screen
+    let mut d = booted();
+    let r = enter(&mut d, "/usage");
+    d.handle(ok(&r[0], 200, json!({"from": 0, "to": 1, "routes": [{"route": "r", "class": "device_only", "simulated": false, "turns": 1, "prompt_tokens": 10, "measured_turns": 1, "reply_tokens": 5, "avg_ms": 1, "max_ms": 1, "reply_tokens_per_second": 1.0, "cost": {"amount": 1.0, "currency": "U\u{1b}[2JD", "tokens_estimated": false}}], "total": {"turns": 1, "prompt_tokens": 10, "reply_tokens": 5, "cost": []}, "note": "n"})));
+    assert!(!text(&d).contains('\u{1b}'), "{}", text(&d));
+}

@@ -3513,8 +3513,23 @@ impl App {
                     } else {
                         ""
                     };
+                    let cost = r["cost"]
+                        .as_object()
+                        .map(|c| {
+                            format!(
+                                ", about {} {:.4}{}",
+                                clean(c["currency"].as_str().unwrap_or("?")),
+                                c["amount"].as_f64().unwrap_or(0.0),
+                                if c["tokens_estimated"] == true {
+                                    "*"
+                                } else {
+                                    ""
+                                }
+                            )
+                        })
+                        .unwrap_or_default();
                     lines.push(format!(
-                        "{}{}  {} replies, {}{star} tokens read, {} written, {} ms a reply, {} tokens a second",
+                        "{}{}  {} replies, {}{star} tokens read, {} written, {} ms a reply, {} tokens a second{cost}",
                         clean(r["route"].as_str().unwrap_or("?")),
                         if r["simulated"] == true { " (test model)" } else { "" },
                         r["turns"].as_i64().unwrap_or(0),
@@ -3524,11 +3539,31 @@ impl App {
                         r["reply_tokens_per_second"].as_f64().unwrap_or(0.0)
                     ));
                 }
+                let costs: Vec<String> = body["total"]["cost"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .map(|c| {
+                                format!(
+                                    "{} {:.4}",
+                                    clean(c["currency"].as_str().unwrap_or("?")),
+                                    c["amount"].as_f64().unwrap_or(0.0)
+                                )
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 lines.push(format!(
-                    "Total  {} replies, {} tokens read, {} written. * part of this is an estimate; no prices are known, so no cost is shown.",
+                    "Total  {} replies, {} tokens read, {} written{}. * part of this is an estimate. {}",
                     body["total"]["turns"].as_i64().unwrap_or(0),
                     body["total"]["prompt_tokens"].as_i64().unwrap_or(0),
-                    body["total"]["reply_tokens"].as_i64().unwrap_or(0)
+                    body["total"]["reply_tokens"].as_i64().unwrap_or(0),
+                    if costs.is_empty() { String::new() } else { format!(", about {}", costs.join(" and ")) },
+                    if costs.is_empty() {
+                        "A cost shows only for a route whose price you entered (Activity page in the web workspace)."
+                    } else {
+                        "Costs are your own prices times the tokens counted."
+                    }
                 ));
                 self.push(Kind::Info, Some("Model usage"), lines);
                 Vec::new()

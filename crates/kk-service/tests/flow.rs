@@ -12744,3 +12744,185 @@ fn sv128_a_link_inside_an_allowed_folder_never_brings_in_a_file_from_outside_it(
     let _ = std::fs::remove_file(&outside);
     let _ = std::fs::remove_dir_all(&outside_dir);
 }
+
+#[test]
+fn sv129_the_owner_can_enter_a_price_for_a_route_and_the_usage_shows_a_cost_only_where_one_was_entered(
+) {
+    let (c, w, _svc, _root) = privacy_with(
+        json!({"id": "o", "class": "device_only", "model": "m", "endpoint": "https://api.example.com"}),
+    );
+    // no price yet: the usage has tokens and no cost
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "Hello there, how are you today?"}),
+    );
+    assert_eq!(s, 200, "{r}");
+    let (_, u) = w.get("/api/usage");
+    assert!(
+        u["routes"][0]["cost"].is_null() && u["total"]["cost"].as_array().unwrap().is_empty(),
+        "{u}"
+    );
+    // a price is a number the owner types: set, read back, and the cost follows it
+    let (s, v) = w.post("/api/usage/prices", json!({"route": "o", "input_per_million": 400000.5, "output_per_million": 900000.0, "currency": "USD"}));
+    assert_eq!(s, 200, "{v}");
+    let (_, p) = w.get("/api/usage/prices");
+    assert_eq!(
+        p["prices"],
+        json!([{"route": "o", "input_per_million": 400000.5, "output_per_million": 900000.0, "currency": "USD"}])
+    );
+    let (_, u) = w.get("/api/usage");
+    let row = &u["routes"][0];
+    let (inp, out) = (
+        row["prompt_tokens"].as_f64().unwrap(),
+        row["reply_tokens"].as_f64().unwrap(),
+    );
+    assert!(
+        inp > 0.0 && out > 0.0,
+        "the reply has tokens in both directions: {u}"
+    );
+    let expect = ((inp * 400000.5 + out * 900000.0) / 1e6 * 1e4).round() / 1e4;
+    assert!(
+        expect > 1.0,
+        "a cost large enough to see after rounding: {expect}"
+    );
+    assert_eq!(row["cost"]["amount"].as_f64().unwrap(), expect, "{u}");
+    assert_eq!(row["cost"]["currency"], "USD");
+    assert_eq!(
+        row["cost"]["tokens_estimated"], true,
+        "this runner gives no count of its own, so the tokens are an estimate: {u}"
+    );
+    assert_eq!(
+        u["total"]["cost"],
+        json!([{"currency": "USD", "amount": expect}])
+    );
+    // changing it changes the cost; two currencies are never added together
+    w.post(
+        "/api/usage/prices",
+        json!({"route": "o", "input_per_million": 0, "output_per_million": 0, "currency": "EUR"}),
+    );
+    let (_, u) = w.get("/api/usage");
+    assert_eq!(u["routes"][0]["cost"]["amount"], 0.0);
+    assert_eq!(
+        u["total"]["cost"],
+        json!([{"currency": "EUR", "amount": 0.0}])
+    );
+    // refusals, each with a reason, and nothing stored
+    for (body, why) in [
+        (
+            json!({"route": "o", "input_per_million": -1, "output_per_million": 1, "currency": "USD"}),
+            "negative",
+        ),
+        (
+            json!({"route": "o", "input_per_million": 1_000_001, "output_per_million": 1, "currency": "USD"}),
+            "above the largest",
+        ),
+        (
+            json!({"route": "o", "input_per_million": 1, "output_per_million": 1, "currency": "usd"}),
+            "lower case currency",
+        ),
+        (
+            json!({"route": "o", "input_per_million": 1, "output_per_million": 1, "currency": "US"}),
+            "short currency",
+        ),
+        (
+            json!({"route": "o", "input_per_million": 1, "output_per_million": 1, "currency": "USDX"}),
+            "long currency",
+        ),
+        (
+            json!({"route": "o", "input_per_million": 1, "currency": "USD"}),
+            "missing output",
+        ),
+        (
+            json!({"route": "", "input_per_million": 1, "output_per_million": 1, "currency": "USD"}),
+            "empty route",
+        ),
+        (
+            json!({"route": "a b", "input_per_million": 1, "output_per_million": 1, "currency": "USD"}),
+            "space in route",
+        ),
+        (
+            json!({"route": "<img src=x>", "input_per_million": 1, "output_per_million": 1, "currency": "USD"}),
+            "markup in route",
+        ),
+        (
+            json!({"route": "x".repeat(81), "input_per_million": 1, "output_per_million": 1, "currency": "USD"}),
+            "long route",
+        ),
+        (
+            json!({"route": "o", "remove": true, "currency": "USD"}),
+            "remove with values",
+        ),
+    ] {
+        let (s, v) = w.post("/api/usage/prices", body);
+        assert_eq!(s, 422, "{why}: {v}");
+        assert_eq!(v["error"]["code"], "BAD_PRICE", "{why}");
+    }
+    assert_eq!(w.post("/api/usage/prices", json!({"route": "o", "input_per_million": 1, "output_per_million": 1, "currency": "USD", "extra": 1})).0, 422);
+    assert_eq!(
+        w.get("/api/usage/prices").1["prices"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "refusals stored nothing"
+    );
+    // at most fifty
+    for n in 0..60 {
+        w.post("/api/usage/prices", json!({"route": format!("r{n}"), "input_per_million": 1, "output_per_million": 1, "currency": "USD"}));
+    }
+    assert_eq!(
+        w.get("/api/usage/prices").1["prices"]
+            .as_array()
+            .unwrap()
+            .len(),
+        50
+    );
+    // a test model route costs nothing even with a price
+    // removal: only that route, and removing what is not there says so
+    let (_, r1) = w.post("/api/usage/prices", json!({"route": "o", "remove": true}));
+    assert_eq!(r1["removed"], true);
+    let (_, r2) = w.post("/api/usage/prices", json!({"route": "o", "remove": true}));
+    assert_eq!(r2["removed"], false);
+    let (_, u) = w.get("/api/usage");
+    assert!(u["routes"][0]["cost"].is_null(), "{u}");
+    // nothing without a session
+    let anon = Web::new(c.addr);
+    assert_eq!(anon.get("/api/usage/prices").0, 401);
+    assert_eq!(
+        anon.post("/api/usage/prices", json!({"route": "o", "remove": true}))
+            .0,
+        401
+    );
+}
+
+#[test]
+fn sv130_a_route_that_is_a_test_model_has_no_cost_even_with_a_price() {
+    let (root, _repo) = repo_copy("price-simulated");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    w.post("/api/chat", json!({"message": "hello"}));
+    let (_, u) = w.get("/api/usage");
+    let route = u["routes"][0]["route"].as_str().unwrap().to_string();
+    assert_eq!(u["routes"][0]["simulated"], true);
+    w.post(
+        "/api/usage/prices",
+        json!({"route": route, "input_per_million": 9, "output_per_million": 9, "currency": "USD"}),
+    );
+    let (_, u) = w.get("/api/usage");
+    assert!(
+        u["routes"][0]["cost"].is_null() && u["total"]["cost"].as_array().unwrap().is_empty(),
+        "{u}"
+    );
+}

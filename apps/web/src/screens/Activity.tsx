@@ -1,5 +1,5 @@
 import { createResource, createSignal, For, Show } from "solid-js";
-import { api } from "../api";
+import { api, ApiError, type RoutePrice } from "../api";
 import { rich, t, type Key } from "../i18n";
 
 function label(kind: string): string {
@@ -11,7 +11,68 @@ function label(kind: string): string {
 const DAY = 86_400;
 const day = (secs: number) => new Date(secs * 1000).toISOString().slice(0, 10);
 
-/** What each model route answered over a range of days: replies, tokens in and out, and how fast. No prices: none are known here. */
+/** The prices the owner typed for a million tokens read and written, per model route. This program knows no provider's prices. */
+function Prices(props: { routes: string[]; onChange: () => void }) {
+  const [list, { refetch }] = createResource(() => api.prices().then((r) => r.prices).catch(() => [] as RoutePrice[]));
+  const [route, setRoute] = createSignal("");
+  const [inp, setInp] = createSignal("");
+  const [out, setOut] = createSignal("");
+  const [cur, setCur] = createSignal("USD");
+  const [msg, setMsg] = createSignal("");
+  const [err, setErr] = createSignal("");
+  const run = async (fn: () => Promise<unknown>, said: string) => {
+    setErr("");
+    setMsg("");
+    try {
+      await fn();
+      setMsg(said);
+      await refetch();
+      props.onChange();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : t("use.price.error"));
+    }
+  };
+  const save = (e: Event) => {
+    e.preventDefault();
+    const n = (v: string) => (v.trim() === "" ? NaN : Number(v));
+    void run(() => api.setPrice({ route: route().trim(), input_per_million: n(inp()), output_per_million: n(out()), currency: cur().trim().toUpperCase() }), t("use.price.saved"));
+  };
+  return (
+    <details class="stack" id="prices">
+      <summary>{t("use.price.title")}</summary>
+      <p class="muted">{t("use.price.lead")}</p>
+      <form class="stack" onSubmit={save}>
+        <label for="price-route">{t("use.price.route")}</label>
+        <input id="price-route" list="price-routes" value={route()} maxlength="80" onInput={(e) => setRoute(e.currentTarget.value)} />
+        <datalist id="price-routes"><For each={props.routes}>{(r) => <option value={r} />}</For></datalist>
+        <label for="price-in">{t("use.price.in")}</label>
+        <input id="price-in" inputmode="decimal" value={inp()} onInput={(e) => setInp(e.currentTarget.value)} />
+        <label for="price-out">{t("use.price.out")}</label>
+        <input id="price-out" inputmode="decimal" value={out()} onInput={(e) => setOut(e.currentTarget.value)} />
+        <label for="price-cur">{t("use.price.currency")}</label>
+        <input id="price-cur" value={cur()} maxlength="3" onInput={(e) => setCur(e.currentTarget.value)} />
+        <div class="actions"><button class="primary" type="submit" disabled={route().trim() === ""}>{t("use.price.save")}</button></div>
+      </form>
+      <Show when={msg()}><p role="status" class="ok">{msg()}</p></Show>
+      <Show when={err()}><p role="alert" class="bad">{err()}</p></Show>
+      <ul class="plain stack" aria-label={t("use.price.entered")}>
+        <For each={list()} fallback={<li class="muted">{t("use.price.none")}</li>}>
+          {(p) => (
+            <li class="actions">
+              <code>{p.route}</code>
+              <span>{t("use.price.line", { in: String(p.input_per_million), out: String(p.output_per_million), cur: p.currency })}</span>
+              <button type="button" onClick={() => void run(() => api.removePrice(p.route), t("use.price.removed"))}>{t("use.price.remove")} <span class="sr">{p.route}</span></button>
+            </li>
+          )}
+        </For>
+      </ul>
+    </details>
+  );
+}
+
+const money = (amount: number, currency: string) => `${currency} ${amount.toFixed(4)}`;
+
+/** What each model route answered over a range of days: replies, tokens in and out, how fast, and a cost where the owner typed a price. */
 function UsageCard() {
   const nowSecs = Math.floor(Date.now() / 1000);
   const [from, setFrom] = createSignal(day(nowSecs - 29 * DAY));
@@ -22,7 +83,7 @@ function UsageCard() {
     const b = Date.parse(to() + "T00:00:00Z") / 1000 + DAY; // the last day is included
     return Number.isFinite(a) && Number.isFinite(b) ? ([a, b] as const) : null;
   };
-  const [usage] = createResource(range, async (r) => {
+  const [usage, { refetch: refetchUsage }] = createResource(range, async (r) => {
     setProblem("");
     if (!r || r[0] >= r[1] || r[1] - r[0] > 366 * DAY) {
       setProblem(t("use.badRange"));
@@ -48,9 +109,10 @@ function UsageCard() {
       <Show when={problem()}><p role="alert" class="bad">{problem()}</p></Show>
       <Show when={usage()}>
         {(u) => (
+          <>
           <Show when={u().routes.length > 0} fallback={<p>{t("use.none")}</p>}>
             <table>
-              <thead><tr><th>{t("use.col.route")}</th><th>{t("use.col.replies")}</th><th>{t("use.col.in")}</th><th>{t("use.col.out")}</th><th>{t("use.col.speed")}</th></tr></thead>
+              <thead><tr><th scope="col">{t("use.col.route")}</th><th scope="col">{t("use.col.replies")}</th><th scope="col">{t("use.col.in")}</th><th scope="col">{t("use.col.out")}</th><th scope="col">{t("use.col.speed")}</th><Show when={u().routes.some((r) => r.cost)}><th scope="col">{t("use.col.cost")}</th></Show></tr></thead>
               <tbody>
                 <For each={u().routes}>
                   {(r) => (
@@ -60,14 +122,17 @@ function UsageCard() {
                       <td>{r.prompt_tokens}{r.measured_turns < r.turns ? "*" : ""}</td>
                       <td>{r.reply_tokens}</td>
                       <td>{t("use.speed", { ms: r.avg_ms, tps: r.reply_tokens_per_second })}</td>
+                      <Show when={u().routes.some((x) => x.cost)}><td>{r.cost ? `${money(r.cost.amount, r.cost.currency)}${r.cost.tokens_estimated ? "*" : ""}` : "–"}</td></Show>
                     </tr>
                   )}
                 </For>
-                <tr><th scope="row">{t("use.total")}</th><td>{u().total.turns}</td><td>{u().total.prompt_tokens}</td><td>{u().total.reply_tokens}</td><td></td></tr>
+                <tr><th scope="row">{t("use.total")}</th><td>{u().total.turns}</td><td>{u().total.prompt_tokens}</td><td>{u().total.reply_tokens}</td><td></td><Show when={u().routes.some((r) => r.cost)}><td>{u().total.cost.map((c) => money(c.amount, c.currency)).join(", ")}</td></Show></tr>
               </tbody>
             </table>
             <p class="muted">{t("use.note")}</p>
           </Show>
+          <Prices routes={u().routes.filter((r) => !r.simulated).map((r) => r.route)} onChange={() => void refetchUsage()} />
+          </>
         )}
       </Show>
     </section>
@@ -93,7 +158,7 @@ export function Activity() {
             </div>
             <div class="card">
               <table>
-                <thead><tr><th>{t("act.col.when")}</th><th>{t("act.col.event")}</th><th>{t("act.col.subject")}</th></tr></thead>
+                <thead><tr><th scope="col">{t("act.col.when")}</th><th scope="col">{t("act.col.event")}</th><th scope="col">{t("act.col.subject")}</th></tr></thead>
                 <tbody>
                   <For each={l().recent} fallback={<tr><td colSpan={3} class="muted">{t("act.none")}</td></tr>}>
                     {(e) => <tr><td>{new Date(e.at * 1000).toLocaleString()}</td><td>{label(e.kind)}</td><td><code>{e.subject}</code></td></tr>}

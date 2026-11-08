@@ -90,11 +90,12 @@ export interface Instructions {
   max_chars: number;
 }
 
+export interface RoutePrice { route: string; input_per_million: number; output_per_million: number; currency: string }
 export interface Usage {
   from: number;
   to: number;
-  routes: { route: string; class: string; simulated: boolean; turns: number; prompt_tokens: number; measured_turns: number; reply_tokens: number; avg_ms: number; max_ms: number; reply_tokens_per_second: number }[];
-  total: { turns: number; prompt_tokens: number; reply_tokens: number };
+  routes: { route: string; class: string; simulated: boolean; turns: number; prompt_tokens: number; measured_turns: number; reply_tokens: number; avg_ms: number; max_ms: number; reply_tokens_per_second: number; cost: { amount: number; currency: string; tokens_estimated: boolean } | null }[];
+  total: { turns: number; prompt_tokens: number; reply_tokens: number; cost: { currency: string; amount: number }[] };
   note: string;
 }
 
@@ -223,6 +224,9 @@ export const api = {
   piiAllow: () => request<{ entries: { entry: string; added_at: number }[]; max_entries: number; note: string }>("GET", "/api/pii-allow"),
   piiAllowAdd: (entry: string) => request<{ changed: boolean; entries: number }>("POST", "/api/pii-allow", { add: entry }),
   piiAllowRemove: (entry: string) => request<{ changed: boolean; entries: number }>("POST", "/api/pii-allow", { remove: entry }),
+  prices: () => request<{ prices: RoutePrice[]; max_prices: number; max_price: number }>("GET", "/api/usage/prices"),
+  setPrice: (p: RoutePrice) => request<{ saved: boolean }>("POST", "/api/usage/prices", p),
+  removePrice: (route: string) => request<{ removed: boolean }>("POST", "/api/usage/prices", { route, remove: true }),
   memoryStats: () => request<MemoryStats>("GET", "/api/memories/stats"),
   addMemory: (b: { text: string; level: string; reason?: string; project?: string }) => request<{ id: string; added: boolean }>("POST", "/api/memories", b),
   correctMemory: (id: string, b: { text: string; reason?: string; project?: string }) => request<{ id: string }>("POST", `/api/memories/${id}/correct`, b),
