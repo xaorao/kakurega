@@ -27,7 +27,8 @@ const USAGE: &str = "kaku: private code review with checkable results
 
 Usage:
   kaku [tui] [--resume] [--linear]  open the full-screen workspace (starts the service if needed); --resume opens the newest kept conversation, --resume ID opens that one (ids: kaku sessions), --resume alone opens the newest of this folder's project, --fork opens a branch instead;
-                                    --linear (or KAKU_LINEAR=1) is plain lines in and out for screen readers and pipes
+                                    --linear (or KAKU_LINEAR=1) is plain lines in and out for screen readers and pipes;
+                                    the theme setting (dark or light, in config.toml or KAKU_THEME) uses fixed colours measured for that background
   kaku serve [--require-approver] [--data-dir DIR] [--ui-dir DIR] [--root DIR]... [--model NAME] [--ollama URL] [--context TOKENS]
              [--transport lima|local] [--vm NAME] [--worker-bin PATH] [--launcher PATH]
   kaku review DIR --for RECIPIENT [--json] [--timeout SECONDS]   start a review and follow it; ends at awaiting_approval (exit 0), 3 nothing to release, 4 failed

@@ -41,6 +41,12 @@ pub const SETTINGS: &[Setting] = &[
         what: "colour in the terminal workspace; never turns it off (meaning never depends on colour)",
     },
     Setting {
+        name: "theme",
+        kind: Kind::Choice(&["auto", "dark", "light"]),
+        default: "auto",
+        what: "the colours of the terminal workspace: your terminal's own (auto), or fixed colours measured to be readable on a dark (dark) or a light (light) background; colour=never still turns colour off",
+    },
+    Setting {
         name: "quiet",
         kind: Kind::Bool,
         default: "false",
@@ -336,6 +342,16 @@ pub fn resolve(
                         file_or_default(s, from_file)
                     }
                 }
+                "theme" => match env("KAKU_THEME")
+                    .map(|v| v.to_string_lossy().to_string())
+                    .filter(|v| kk_tui::ui::Palette::parse(v).is_some())
+                {
+                    Some(v) => (
+                        Value::Text(v.trim().to_ascii_lowercase()),
+                        Source::Env("KAKU_THEME"),
+                    ),
+                    None => file_or_default(s, from_file),
+                },
                 "linear" => {
                     if args.iter().any(|a| a == "--linear") {
                         (Value::Bool(true), Source::Flag("--linear"))
@@ -396,6 +412,10 @@ pub fn tui_settings(eff: &[Effective], notice: Option<String>) -> kk_tui::settin
             _ => None,
         },
         color: !matches!(value_of(eff, "color"), Value::Text(t) if t == "never"),
+        theme: match value_of(eff, "theme") {
+            Value::Text(t) => kk_tui::ui::Palette::parse(t).unwrap_or(kk_tui::ui::Palette::Auto),
+            _ => kk_tui::ui::Palette::Auto,
+        },
         quiet: matches!(value_of(eff, "quiet"), Value::Bool(true)),
         notice,
     }
@@ -629,7 +649,7 @@ mod tests {
     #[test]
     fn cf01_the_settings_are_a_closed_set_that_only_changes_how_things_are_shown() {
         let names: Vec<&str> = SETTINGS.iter().map(|s| s.name).collect();
-        assert_eq!(names, vec!["notify", "color", "quiet", "linear"]);
+        assert_eq!(names, vec!["notify", "color", "theme", "quiet", "linear"]);
         // nothing that names approval, the model route, policy, what leaves the computer, updates, trust or secrets can be a setting
         for forbidden in [
             "approv",
@@ -686,6 +706,7 @@ mod tests {
             kk_tui::settings::Settings {
                 notify: None,
                 color: true,
+                theme: kk_tui::ui::Palette::Auto,
                 quiet: false,
                 notice: None
             }
@@ -795,7 +816,7 @@ mod tests {
                 ),
                 None => assert!(!p[0].message.contains("did you mean"), "{}", p[0].message),
             }
-            assert!(p[0].message.contains("notify, color, quiet, linear"));
+            assert!(p[0].message.contains("notify, color, theme, quiet, linear"));
         }
         // a table or dotted key for something that is not a setting
         assert_eq!(validate("[ui]\ncolor = \"never\"").unwrap_err()[0].at, "ui");
@@ -1130,5 +1151,62 @@ mod tests {
         assert_eq!(subcommand(&args(&["--linear"])), None);
         assert_eq!(subcommand(&args(&[])), None);
         assert_eq!(subcommand(&args(&["--data-dir"])), None);
+    }
+
+    #[test]
+    fn cf14_theme_is_a_closed_choice_that_the_option_chain_and_colour_never_resolve_correctly() {
+        let none = env_of(&[]);
+        let eff = resolve(None, &none, &args(&[]));
+        assert_eq!(
+            (&get(&eff, "theme").value, &get(&eff, "theme").source),
+            (&Value::Text("auto".into()), &Source::Default)
+        );
+        // the file
+        let file = validate("theme = \"light\"").unwrap();
+        let eff = resolve(Some(&file), &none, &args(&[]));
+        assert_eq!(
+            (&get(&eff, "theme").value, &get(&eff, "theme").source),
+            (&Value::Text("light".into()), &Source::File)
+        );
+        // the environment beats the file, in any casing
+        let eff = resolve(Some(&file), &env_of(&[("KAKU_THEME", "Dark")]), &args(&[]));
+        assert_eq!(
+            (&get(&eff, "theme").value, &get(&eff, "theme").source),
+            (&Value::Text("dark".into()), &Source::Env("KAKU_THEME"))
+        );
+        // a mistyped environment value is ignored, and what is shown is what is really in use and where it came from
+        for bad in ["ligth", "", "blue", "dark light", "contrast"] {
+            let eff = resolve(Some(&file), &env_of(&[("KAKU_THEME", bad)]), &args(&[]));
+            assert_eq!(
+                (&get(&eff, "theme").value, &get(&eff, "theme").source),
+                (&Value::Text("light".into()), &Source::File),
+                "{bad:?}"
+            );
+        }
+        // a wrong value in the file is a problem that stops the whole file, like every other setting
+        for bad in [
+            "theme = \"blue\"",
+            "theme = true",
+            "theme = 1",
+            "theme = \"Dark\"",
+            "theme = \"\"",
+        ] {
+            assert!(validate(bad).is_err(), "{bad}");
+        }
+        assert!(validate("theme = \"dark\"\ncolor = \"never\"").is_ok());
+        // what the terminal receives: the palette, and colour off still means colour off
+        let f = validate("theme = \"dark\"").unwrap();
+        let t = tui_settings(&resolve(Some(&f), &none, &args(&[])), None);
+        assert_eq!((t.theme, t.color), (kk_tui::ui::Palette::Dark, true));
+        let f = validate("theme = \"light\"\ncolor = \"never\"").unwrap();
+        let t = tui_settings(&resolve(Some(&f), &none, &args(&[])), None);
+        assert_eq!((t.theme, t.color), (kk_tui::ui::Palette::Light, false));
+        let t = tui_settings(
+            &resolve(Some(&f), &env_of(&[("NO_COLOR", "1")]), &args(&[])),
+            None,
+        );
+        assert!(!t.color);
+        // the template and the documentation list it
+        assert!(template().contains("# theme = \"auto\"   # one of: auto, dark, light"));
     }
 }

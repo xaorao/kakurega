@@ -1,0 +1,24 @@
+# Terminal themes (ledger A-A34)
+
+## Reading record
+- OpenCode fe04656 (MIT) `packages/tui/src/context/theme.tsx`, 428 of 428 lines FULL. NOT READ: `theme/*.ts` (document parsing, system palette generation, discovery), the 33 theme JSON assets, `dialog-theme-list.tsx`, the tests.
+- What it does (VERIFIED from that file): it owns the whole screen, including the background, so it must know the terminal. It asks the terminal for its 16-colour palette, derives light or dark from it (also from the terminal's colour-scheme notifications, `CSI ?997`), caches the palette, lets the owner lock the mode (`dark`, `light` or `system`) and the theme name, falls back to its default theme with a toast when a theme file fails, and reloads custom theme files from the config folder on a signal.
+- Matrix decision (A34, unchanged): do not ship many themes; the value is accessibility. One dark and one light palette that pass a contrast check, a way to choose.
+
+## Decisions
+1. **`theme` is one closed setting in `config.toml`**: `auto` (default), `dark`, `light`; environment `KAKU_THEME`; precedence environment, then file, then default (there is no command-line option; the other display settings do not all have one). A mistyped environment value is ignored, and `kaku config` shows the value really in use and where it came from. A wrong value in the file is a problem like any other: the whole file is then not applied and the screen says so.
+2. **`auto` is exactly what there was**: the terminal's own named colours and dimmed secondary text. It adapts to a light or dark terminal because the terminal's palette decides the shades. It cannot be measured, so it is not claimed to be readable; it is only claimed to be unchanged.
+3. **`dark` and `light` are fixed RGB colours** for five roles (accent, ok, warn, bad, inline code) and a muted grey for secondary text. Computed contrast (WCAG): at least 7:1 on pure black or white, at least 4.5:1 on the lightest dark and darkest light backgrounds a terminal commonly uses (`#303030`, `#e4e4e4`). No dimming is used in them, because dimming lowers contrast. This covers the "high-contrast option" of the matrix without a fourth choice: one colour cannot be 7:1 on both black and white (a colour that is 7:1 on black is about 2.6:1 on white), so a single high-contrast palette would be wrong for one half of users.
+4. **No colour still means no colour.** `color = "never"` and `NO_COLOR` beat any theme: not one coloured cell is drawn, and dimming stays so that meaning never depends on colour.
+5. **EXCLUDED, with reasons.** (a) Asking the terminal for its palette and mode (what OpenCode does): it needs raw terminal replies with timeouts, answers differ or are missing under tmux and over ssh, and a stray reply can land in the input line; `auto` already follows the terminal, and a person who wants fixed colours can name them. (b) Many themes and user-written theme files: a new file format to parse for no accessibility gain. (c) Painting a background colour: the terminal's own background is the owner's choice and the fixed palettes are measured against the usual ones.
+6. Beats the source on: contrast is measured and tested, not assumed; a mistyped value never silently changes what is shown without `kaku config` saying so; colour-off beats every theme.
+
+## Evidence
+- kk-tui tu97 (computed contrast of every role in both palettes, roles kept apart), tu98 (closed set of words), tu99 (what is drawn per palette: named colours in auto, only fixed colours in dark and light, nothing dimmed in them, no colour with colour off, same words everywhere), tu100 (a proposed fix's removed lines in each palette), markdown md08 (inline code and code blocks), kk-cli cf14 (default, file, environment, typo, closed file values, colour never) and ee01, and the real terminal (`tests/e2e/tui_pty.py`, 107 checks, 8 new: the bytes sent for each theme, `KAKU_THEME` beating the file, a typo ignored, colour never and `NO_COLOR` beating a theme).
+- 12 mutants: 11 caught at once; the one that survived (`fg_soft` dimming a fixed palette) led to tu100 and was then caught. One of the 12 (the palette not passed to the screen) is caught only by the real-terminal suite.
+- Found while testing: my first terminal checks failed because the terminal library merges foreground and background resets into one sequence and writes the terminal's own named colours as `38;5;n`; the checks now parse each sequence's parameters. The product was right.
+
+## Not verified, stated plainly
+- Computed contrast is not the same as looking right. I have not looked at either palette in a real light or dark terminal (HUMAN.md).
+- Terminals without truecolor support (some old ones, the Linux console) may approximate the fixed colours; not tested.
+- A colour-blind reading was not tested; the words and the ✓ ! ✗ marks carry the meaning, colour only helps.

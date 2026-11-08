@@ -6,23 +6,121 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 use unicode_width::UnicodeWidthChar;
 
+/// Which set of colours is used. `Auto` is the terminal's own named colours, which the terminal's palette decides and so cannot be
+/// measured; `Dark` and `Light` are fixed colours measured against the backgrounds they are for (see `contrast` in the tests).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Palette {
+    Auto,
+    Dark,
+    Light,
+}
+
+impl Palette {
+    pub fn parse(word: &str) -> Option<Palette> {
+        match word.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Palette::Auto),
+            "dark" => Some(Palette::Dark),
+            "light" => Some(Palette::Light),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Palette::Auto => "auto",
+            Palette::Dark => "dark",
+            Palette::Light => "light",
+        }
+    }
+}
+
+/// What a colour means. The words always carry the meaning too; colour only helps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    Accent,
+    Ok,
+    Warn,
+    Bad,
+    Code,
+}
+
+pub const ROLES: [Role; 5] = [Role::Accent, Role::Ok, Role::Warn, Role::Bad, Role::Code];
+
+impl Palette {
+    /// The colour for a role; `None` for `Auto` means the terminal's named colour is used.
+    pub fn rgb(self, role: Role) -> Option<(u8, u8, u8)> {
+        match (self, role) {
+            (Palette::Auto, _) => None,
+            (Palette::Dark, Role::Accent) => Some((0x5f, 0xd7, 0xff)),
+            (Palette::Dark, Role::Ok) => Some((0x5f, 0xd7, 0x5f)),
+            (Palette::Dark, Role::Warn) => Some((0xff, 0x87, 0xff)),
+            (Palette::Dark, Role::Bad) => Some((0xff, 0x87, 0x87)),
+            (Palette::Dark, Role::Code) => Some((0xff, 0xd7, 0x87)),
+            (Palette::Light, Role::Accent) => Some((0x00, 0x5f, 0x87)),
+            (Palette::Light, Role::Ok) => Some((0x00, 0x5f, 0x00)),
+            (Palette::Light, Role::Warn) => Some((0x87, 0x00, 0x87)),
+            (Palette::Light, Role::Bad) => Some((0xaf, 0x00, 0x00)),
+            (Palette::Light, Role::Code) => Some((0x50, 0x50, 0x00)),
+        }
+    }
+
+    /// Secondary text in the fixed palettes. `Auto` uses the DIM attribute instead, which the terminal decides.
+    pub fn muted_rgb(self) -> Option<(u8, u8, u8)> {
+        match self {
+            Palette::Auto => None,
+            Palette::Dark => Some((0xb2, 0xb2, 0xb2)),
+            Palette::Light => Some((0x58, 0x58, 0x58)),
+        }
+    }
+
+    fn named(role: Role) -> Color {
+        match role {
+            Role::Accent => Color::Cyan,
+            Role::Ok => Color::Green,
+            Role::Warn => Color::Magenta,
+            Role::Bad => Color::Red,
+            Role::Code => Color::Yellow,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Theme {
     pub color: bool,
+    pub palette: Palette,
 }
 
 impl Theme {
     pub fn from_env() -> Theme {
         Theme {
             color: std::env::var_os("NO_COLOR").is_none(),
+            palette: Palette::Auto,
         }
     }
 
-    fn fg(&self, c: Color) -> Style {
-        if self.color {
-            Style::default().fg(c)
-        } else {
-            Style::default()
+    pub fn fg(&self, role: Role) -> Style {
+        if !self.color {
+            return Style::default();
+        }
+        Style::default().fg(match self.palette.rgb(role) {
+            Some((r, g, b)) => Color::Rgb(r, g, b),
+            None => Palette::named(role),
+        })
+    }
+
+    /// A role's colour, softened: dimmed in `Auto`, and the plain role colour in a fixed palette (dimming would lower its contrast).
+    pub fn fg_soft(&self, role: Role) -> Style {
+        match (self.color, self.palette) {
+            (true, Palette::Auto) | (false, _) => self.fg(role).add_modifier(Modifier::DIM),
+            _ => self.fg(role),
+        }
+    }
+
+    /// Secondary text: dimmed in `Auto` and without colour, a measured grey in a fixed palette.
+    pub fn dim(&self) -> Style {
+        match (self.color, self.palette.muted_rgb()) {
+            (true, Some((r, g, b))) => Style::default().fg(Color::Rgb(r, g, b)),
+            _ => Style::default().add_modifier(Modifier::DIM),
         }
     }
 }
@@ -110,11 +208,11 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
 
 fn card_lines(c: &Card, width: usize, th: &Theme) -> Vec<Line<'static>> {
     let (sym, style) = match c.kind {
-        Kind::User => ("›", th.fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Kind::User => ("›", th.fg(Role::Accent).add_modifier(Modifier::BOLD)),
         Kind::Info => ("·", Style::default()),
-        Kind::Ok => ("✓", th.fg(Color::Green)),
-        Kind::Warn => ("!", th.fg(Color::Magenta).add_modifier(Modifier::BOLD)),
-        Kind::Error => ("✗", th.fg(Color::Red).add_modifier(Modifier::BOLD)),
+        Kind::Ok => ("✓", th.fg(Role::Ok)),
+        Kind::Warn => ("!", th.fg(Role::Warn).add_modifier(Modifier::BOLD)),
+        Kind::Error => ("✗", th.fg(Role::Bad).add_modifier(Modifier::BOLD)),
     };
     let mut out = Vec::new();
     let mut first = true;
@@ -161,11 +259,11 @@ fn card_lines(c: &Card, width: usize, th: &Theme) -> Vec<Line<'static>> {
             if raw.starts_with("+++") || raw.starts_with("---") {
                 Style::default().add_modifier(Modifier::BOLD)
             } else if raw.starts_with('+') {
-                th.fg(Color::Green).add_modifier(Modifier::BOLD)
+                th.fg(Role::Ok).add_modifier(Modifier::BOLD)
             } else if raw.starts_with('-') {
-                th.fg(Color::Red).add_modifier(Modifier::DIM)
+                th.fg_soft(Role::Bad)
             } else if raw.starts_with("@@") {
-                th.fg(Color::Cyan)
+                th.fg(Role::Accent)
             } else {
                 Style::default()
             }
@@ -193,7 +291,7 @@ fn card_lines(c: &Card, width: usize, th: &Theme) -> Vec<Line<'static>> {
                     "… {} more line(s). Ctrl-O shows everything and folds it again.",
                     c.lines.len() - shown
                 ),
-                Style::default().add_modifier(Modifier::DIM),
+                th.dim(),
             ),
         ]));
     }
@@ -353,10 +451,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
         .saturating_sub(h)
         .min(all.len().saturating_sub(h.min(all.len())));
     let shown: Vec<Line> = if app.input.is_empty() {
-        vec![Line::from(Span::styled(
-            hint,
-            Style::default().add_modifier(Modifier::DIM),
-        ))]
+        vec![Line::from(Span::styled(hint, th.dim()))]
     } else {
         all.iter()
             .skip(first)
@@ -388,13 +483,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
             "Tab complete · Up/Down history · PgUp/PgDn scroll · /help · Ctrl-C quits".to_string()
         }
     };
-    f.render_widget(
-        Paragraph::new(Span::styled(
-            footer,
-            Style::default().add_modifier(Modifier::DIM),
-        )),
-        rows[3],
-    );
+    f.render_widget(Paragraph::new(Span::styled(footer, th.dim())), rows[3]);
 
     if let Mode::Approval(v) = &app.mode {
         let pop = Rect {
@@ -407,7 +496,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
         let block = Block::default()
             .borders(Borders::ALL)
             .title(format!(" Approve release for {} · {} ", v.job, v.aid))
-            .border_style(th.fg(Color::Magenta).add_modifier(Modifier::BOLD));
+            .border_style(th.fg(Role::Warn).add_modifier(Modifier::BOLD));
         let inner = block.inner(pop);
         f.render_widget(block, pop);
         let parts = Layout::vertical([Constraint::Min(3), Constraint::Length(3)]).split(inner);
@@ -439,12 +528,12 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
         if let Some(e) = &v.error {
             prompt.push(Line::from(Span::styled(
                 format!("✗ {e}"),
-                th.fg(Color::Red).add_modifier(Modifier::BOLD),
+                th.fg(Role::Bad).add_modifier(Modifier::BOLD),
             )));
         } else {
             prompt.push(Line::from(Span::styled(
                 "PgUp/PgDn scroll the release. Esc refuses and records the refusal.",
-                Style::default().add_modifier(Modifier::DIM),
+                th.dim(),
             )));
         }
         f.render_widget(Paragraph::new(prompt), parts[1]);
@@ -461,7 +550,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
         let block = Block::default()
             .borders(Borders::ALL)
             .title(format!(" {} ", p.title))
-            .border_style(th.fg(Color::Cyan).add_modifier(Modifier::BOLD));
+            .border_style(th.fg(Role::Accent).add_modifier(Modifier::BOLD));
         let inner = block.inner(pop);
         f.render_widget(block, pop);
         let parts = Layout::vertical([
@@ -471,10 +560,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
         ])
         .split(inner);
         let filter = if p.filter.is_empty() {
-            Span::styled(
-                "type to filter",
-                Style::default().add_modifier(Modifier::DIM),
-            )
+            Span::styled("type to filter", th.dim())
         } else {
             Span::raw(p.filter.clone())
         };
@@ -485,7 +571,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
         if p.show_archived {
             head.push(Span::styled(
                 "   [archived · Ctrl-R: back to the list in use]",
-                th.fg(Color::Cyan),
+                th.fg(Role::Accent),
             ));
         } else if let Some(project) = &p.project {
             head.push(Span::styled(
@@ -494,7 +580,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
                 } else {
                     format!("   [all projects · Tab: only {project}]")
                 },
-                th.fg(Color::Cyan),
+                th.fg(Role::Accent),
             ));
         }
         f.render_widget(Paragraph::new(Line::from(head)), parts[0]);
@@ -517,7 +603,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
                 rows.push((
                     Line::from(Span::styled(
                         group.clone(),
-                        th.fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        th.fg(Role::Accent).add_modifier(Modifier::BOLD),
                     )),
                     false,
                 ));
@@ -533,7 +619,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
                 selected_row = rows.len();
             }
             let style = if armed {
-                th.fg(Color::Red).add_modifier(Modifier::BOLD)
+                th.fg(Role::Bad).add_modifier(Modifier::BOLD)
             } else if n == p.selected {
                 Style::default().add_modifier(Modifier::REVERSED)
             } else {
@@ -544,10 +630,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
                 if *pid == it.id {
                     for l in lines {
                         rows.push((
-                            Line::from(Span::styled(
-                                format!("      {l}"),
-                                Style::default().add_modifier(Modifier::DIM),
-                            )),
+                            Line::from(Span::styled(format!("      {l}"), th.dim())),
                             false,
                         ));
                     }
@@ -568,10 +651,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
             } else {
                 "No match."
             };
-            vec![Line::from(Span::styled(
-                msg,
-                Style::default().add_modifier(Modifier::DIM),
-            ))]
+            vec![Line::from(Span::styled(msg, th.dim()))]
         } else {
             rows.into_iter()
                 .skip(skip)
@@ -584,18 +664,12 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
             f.render_widget(
                 Paragraph::new(Span::styled(
                     e.clone(),
-                    th.fg(Color::Red).add_modifier(Modifier::BOLD),
+                    th.fg(Role::Bad).add_modifier(Modifier::BOLD),
                 )),
                 parts[2],
             );
         } else if let Some(n) = &p.scope_note {
-            f.render_widget(
-                Paragraph::new(Span::styled(
-                    n.clone(),
-                    Style::default().add_modifier(Modifier::DIM),
-                )),
-                parts[2],
-            );
+            f.render_widget(Paragraph::new(Span::styled(n.clone(), th.dim())), parts[2]);
         }
     }
 }

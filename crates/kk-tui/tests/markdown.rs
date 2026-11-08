@@ -15,7 +15,10 @@ fn plain(lines: &[ratatui::text::Line<'static>]) -> Vec<String> {
 }
 
 fn th() -> Theme {
-    Theme { color: true }
+    Theme {
+        color: true,
+        palette: kk_tui::ui::Palette::Auto,
+    }
 }
 
 /// The links' `host` field is the web reader's own bookkeeping; the terminal shows the whole address and keeps no host.
@@ -227,4 +230,44 @@ fn md07_blocks_are_separated_by_one_blank_line_and_nothing_else_is() {
             "  code"
         ]
     );
+}
+
+#[test]
+fn md08_inline_code_and_code_blocks_take_their_colours_from_the_palette_and_never_from_a_fixed_name(
+) {
+    use kk_tui::ui::Palette;
+    use ratatui::style::Color;
+    let src = "use `cargo test` here\n\n```rust\nlet x = 1;\n```\n";
+    let colours = |p: Palette, color: bool| {
+        render(src, 80, &Theme { color, palette: p })
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.style.fg))
+            .flatten()
+            .collect::<Vec<Color>>()
+    };
+    let auto = colours(Palette::Auto, true);
+    assert!(
+        auto.contains(&Color::Yellow) && auto.contains(&Color::Cyan),
+        "{auto:?}"
+    );
+    let dark = colours(Palette::Dark, true);
+    assert!(
+        dark.contains(&Color::Rgb(0xff, 0xd7, 0x87))
+            && dark.contains(&Color::Rgb(0x5f, 0xd7, 0xff)),
+        "{dark:?}"
+    );
+    let light = colours(Palette::Light, true);
+    assert!(
+        light.contains(&Color::Rgb(0x50, 0x50, 0x00)) && light.contains(&Color::Rgb(0, 0x5f, 0x87)),
+        "{light:?}"
+    );
+    for p in [Palette::Dark, Palette::Light] {
+        assert!(
+            colours(p, true).iter().all(|c| matches!(c, Color::Rgb(..))),
+            "{p:?}"
+        );
+    }
+    for p in [Palette::Auto, Palette::Dark, Palette::Light] {
+        assert!(colours(p, false).is_empty(), "{p:?}: colour off means none");
+    }
 }

@@ -10,8 +10,8 @@
 //! about 370 of 3,267 lines) for what a terminal reader decides; it is built on `pulldown-cmark` with table layout, theme-based
 //! colours and hyperlink escapes, none of which is used here.
 
-use crate::ui::Theme;
-use ratatui::style::{Color, Modifier, Style};
+use crate::ui::{Role, Theme};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use serde_json::{json, Value};
 use unicode_width::UnicodeWidthChar;
@@ -375,7 +375,7 @@ fn pieces(inl: &[Inline], base: Style, th: &Theme, out: &mut Vec<Piece>) {
             Inline::Code(t) => out.push(Piece {
                 text: t.clone(),
                 style: base.patch(if th.color {
-                    Style::default().fg(Color::Yellow)
+                    th.fg(Role::Code)
                 } else {
                     Style::default().add_modifier(Modifier::REVERSED)
                 }),
@@ -391,7 +391,7 @@ fn pieces(inl: &[Inline], base: Style, th: &Theme, out: &mut Vec<Piece>) {
                 if text != href {
                     out.push(Piece {
                         text: format!(" ({href})"),
-                        style: base.add_modifier(Modifier::DIM),
+                        style: base.patch(th.dim()),
                     });
                 }
             }
@@ -499,7 +499,7 @@ fn hidden_format(c: char) -> bool {
 
 pub fn render(text: &str, width: usize, th: &Theme) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = Vec::new();
-    let dim = Style::default().add_modifier(Modifier::DIM);
+    let dim = th.dim();
     // text reaches here already cleaned; a control character that arrives anyway is dropped, never drawn
     let clean: String = text
         .chars()
@@ -545,7 +545,7 @@ pub fn render(text: &str, width: usize, th: &Theme) -> Vec<Line<'static>> {
                     out.push(Line::from(Span::styled(format!("  {lang}"), dim)));
                 }
                 let code = if th.color {
-                    Style::default().fg(Color::Cyan)
+                    th.fg(Role::Accent)
                 } else {
                     Style::default()
                 };

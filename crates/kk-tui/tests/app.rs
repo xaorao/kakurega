@@ -485,7 +485,17 @@ fn tu10_a_blocked_disclosure_and_service_errors_are_shown_plainly() {
 
 fn render(app: &App, w: u16, h: u16, color: bool) -> (Vec<String>, Terminal<TestBackend>) {
     let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
-    t.draw(|f| draw(f, app, &Theme { color })).unwrap();
+    t.draw(|f| {
+        draw(
+            f,
+            app,
+            &Theme {
+                color,
+                palette: kk_tui::ui::Palette::Auto,
+            },
+        )
+    })
+    .unwrap();
     let buf = t.backend().buffer().clone();
     let rows = (0..h)
         .map(|y| {
@@ -3554,7 +3564,10 @@ fn many_cards(n: usize) -> Vec<kk_tui::app::Card> {
 fn tu55_the_window_of_a_long_conversation_is_the_same_as_cutting_it_from_the_whole_and_costs_only_what_is_shown(
 ) {
     use kk_tui::ui::{window_lines, wrap_calls};
-    let th = Theme { color: false };
+    let th = Theme {
+        color: false,
+        palette: kk_tui::ui::Palette::Auto,
+    };
     let cards = many_cards(300);
     for width in [20usize, 47, 100] {
         let full = window_lines(&cards, width, &th, 1_000_000, 0).0;
@@ -5642,6 +5655,7 @@ fn tu90_display_settings_set_the_starting_verbosity_and_say_a_notice_once_after_
     let base = || Settings {
         notify: None,
         color: true,
+        theme: kk_tui::ui::Palette::Auto,
         quiet: false,
         notice: None,
     };
@@ -5691,6 +5705,7 @@ fn tu91_the_plain_line_mode_prints_the_notice_as_a_warning_and_nothing_when_ther
         app.apply_settings(&Settings {
             notify: None,
             color: true,
+            theme: kk_tui::ui::Palette::Auto,
             quiet: false,
             notice: notice.map(String::from),
         });
@@ -5968,4 +5983,257 @@ fn tu96_held_lists_what_was_kept_back_without_hidden_characters_and_notsecret_re
         json!({"error": {"code": "NO_MEMORY", "message": "no such memory"}}),
     ));
     assert!(text(&a).contains("no such memory"));
+}
+
+fn luminance((r, g, b): (u8, u8, u8)) -> f64 {
+    let f = |c: u8| {
+        let c = c as f64 / 255.0;
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+}
+
+fn contrast(a: (u8, u8, u8), b: (u8, u8, u8)) -> f64 {
+    let (la, lb) = (luminance(a), luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+#[test]
+fn tu97_each_fixed_palette_is_readable_on_its_backgrounds_by_computed_contrast() {
+    use kk_tui::ui::{Palette, ROLES};
+    // pure background: at least 7:1 (WCAG AAA); the lightest dark and darkest light backgrounds a terminal commonly has: at least 4.5:1 (AA)
+    let sets = [
+        (Palette::Dark, (0, 0, 0), (0x30, 0x30, 0x30)),
+        (Palette::Light, (255, 255, 255), (0xe4, 0xe4, 0xe4)),
+    ];
+    for (p, pure, worst) in sets {
+        let mut colours: Vec<(String, (u8, u8, u8))> = ROLES
+            .iter()
+            .map(|r| {
+                (
+                    format!("{r:?}"),
+                    p.rgb(*r).expect("a fixed palette names every role"),
+                )
+            })
+            .collect();
+        colours.push((
+            "muted".into(),
+            p.muted_rgb().expect("a fixed palette has a muted colour"),
+        ));
+        for (name, c) in colours {
+            let a = contrast(c, pure);
+            let b = contrast(c, worst);
+            assert!(a >= 7.0, "{p:?} {name} {c:?} is {a:.2}:1 on {pure:?}");
+            assert!(b >= 4.5, "{p:?} {name} {c:?} is {b:.2}:1 on {worst:?}");
+        }
+    }
+    // the terminal's own palette cannot be measured, so it names no colours
+    assert!(
+        ROLES.iter().all(|r| Palette::Auto.rgb(*r).is_none())
+            && Palette::Auto.muted_rgb().is_none()
+    );
+    // the roles stay apart from each other, so a colour never stands for two meanings
+    for p in [Palette::Dark, Palette::Light] {
+        let all: Vec<_> = ROLES.iter().map(|r| p.rgb(*r).unwrap()).collect();
+        for i in 0..all.len() {
+            for j in i + 1..all.len() {
+                assert_ne!(all[i], all[j], "{p:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn tu98_palette_words_are_a_closed_set() {
+    use kk_tui::ui::Palette;
+    assert_eq!(Palette::parse("auto"), Some(Palette::Auto));
+    assert_eq!(Palette::parse(" Dark "), Some(Palette::Dark));
+    assert_eq!(Palette::parse("LIGHT"), Some(Palette::Light));
+    for bad in [
+        "",
+        "blue",
+        "dark light",
+        "darker",
+        "contrast",
+        "d",
+        "ligth",
+        "dark\u{0}",
+        "../x",
+    ] {
+        assert_eq!(Palette::parse(bad), None, "{bad:?}");
+    }
+    for p in [Palette::Auto, Palette::Dark, Palette::Light] {
+        assert_eq!(Palette::parse(p.name()), Some(p));
+    }
+}
+
+fn colours_in(
+    app: &App,
+    palette: kk_tui::ui::Palette,
+    color: bool,
+) -> (Vec<ratatui::style::Color>, bool) {
+    let mut t = Terminal::new(TestBackend::new(110, 30)).unwrap();
+    t.draw(|f| draw(f, app, &Theme { color, palette })).unwrap();
+    let buf = t.backend().buffer().clone();
+    let mut fgs = Vec::new();
+    let mut dim = false;
+    for c in buf.content() {
+        if c.fg != ratatui::style::Color::Reset {
+            fgs.push(c.fg);
+        }
+        if c.modifier.contains(ratatui::style::Modifier::DIM) {
+            dim = true;
+        }
+    }
+    (fgs, dim)
+}
+
+#[test]
+fn tu99_the_chosen_palette_is_what_is_drawn_and_no_colour_means_no_colour_whatever_the_palette() {
+    use kk_tui::ui::Palette;
+    use ratatui::style::Color;
+    let mut a = booted();
+    let r = enter(&mut a, "/similar");
+    a.handle(ok(
+        &r[0],
+        500,
+        json!({"error": {"code": "STORE", "message": "disk trouble"}}),
+    ));
+    // auto: the terminal's named colours, and dimmed secondary text, exactly as before
+    let (auto, auto_dim) = colours_in(&a, Palette::Auto, true);
+    assert!(
+        auto.contains(&Color::Red) && auto.contains(&Color::Cyan),
+        "{auto:?}"
+    );
+    assert!(
+        auto.iter().all(|c| !matches!(c, Color::Rgb(..))),
+        "auto never uses fixed colours"
+    );
+    assert!(auto_dim, "auto dims secondary text");
+    // dark and light: only the fixed colours of that palette, no named colours, and nothing dimmed
+    for (p, bad, accent) in [
+        (
+            Palette::Dark,
+            Color::Rgb(0xff, 0x87, 0x87),
+            Color::Rgb(0x5f, 0xd7, 0xff),
+        ),
+        (
+            Palette::Light,
+            Color::Rgb(0xaf, 0, 0),
+            Color::Rgb(0, 0x5f, 0x87),
+        ),
+    ] {
+        let (fgs, dim) = colours_in(&a, p, true);
+        assert!(
+            fgs.contains(&bad) && fgs.contains(&accent),
+            "{p:?}: {fgs:?}"
+        );
+        assert!(
+            fgs.iter().all(|c| matches!(c, Color::Rgb(..))),
+            "{p:?} drew a named colour: {fgs:?}"
+        );
+        assert!(!dim, "{p:?} dims text, which lowers its contrast");
+    }
+    // colour off beats any palette: not one coloured cell, and dimming stays so meaning does not depend on colour
+    for p in [Palette::Auto, Palette::Dark, Palette::Light] {
+        let (fgs, _) = colours_in(&a, p, false);
+        assert!(
+            fgs.is_empty(),
+            "{p:?} coloured text with colour off: {fgs:?}"
+        );
+    }
+    // the words are the same in every palette
+    let words = |p| {
+        let mut t = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        t.draw(|f| {
+            draw(
+                f,
+                &a,
+                &Theme {
+                    color: true,
+                    palette: p,
+                },
+            )
+        })
+        .unwrap();
+        t.backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol().to_string())
+            .collect::<String>()
+    };
+    assert_eq!(words(Palette::Auto), words(Palette::Dark));
+    assert_eq!(words(Palette::Auto), words(Palette::Light));
+}
+
+#[test]
+fn tu100_a_proposed_fix_in_a_fixed_palette_keeps_its_colours_readable_and_is_never_dimmed() {
+    use kk_tui::ui::Palette;
+    use ratatui::style::{Color, Modifier};
+    let mut app = booted();
+    app.cards.push(Card {
+        kind: Kind::Ok,
+        title: Some("Fix 1".into()),
+        lines: [
+            "a.py: Make logout remove the token",
+            "",
+            "--- a/a.py",
+            "+++ b/a.py",
+            "@@ -1,2 +1,2 @@",
+            " keep",
+            "-old line",
+            "+new line",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
+    });
+    let cell_for = |p: Palette, needle: &str| {
+        let mut t = Terminal::new(TestBackend::new(110, 40)).unwrap();
+        t.draw(|f| {
+            draw(
+                f,
+                &app,
+                &Theme {
+                    color: true,
+                    palette: p,
+                },
+            )
+        })
+        .unwrap();
+        let buf = t.backend().buffer().clone();
+        let row = (0..buf.area.height).find(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, *y)].symbol().to_string())
+                .collect::<String>()
+                .contains(needle)
+        });
+        let y = row.unwrap_or_else(|| panic!("{needle} not drawn"));
+        let x = (0..buf.area.width)
+            .find(|x| buf[(*x, y)].symbol() == needle.chars().next().unwrap().to_string())
+            .unwrap();
+        buf[(x, y)].clone()
+    };
+    let removed = cell_for(Palette::Auto, "-old line");
+    assert_eq!(removed.fg, Color::Red);
+    assert!(
+        removed.modifier.contains(Modifier::DIM),
+        "auto keeps the removed line softened"
+    );
+    for (p, bad) in [
+        (Palette::Dark, Color::Rgb(0xff, 0x87, 0x87)),
+        (Palette::Light, Color::Rgb(0xaf, 0, 0)),
+    ] {
+        let c = cell_for(p, "-old line");
+        assert_eq!(c.fg, bad, "{p:?}");
+        assert!(
+            !c.modifier.contains(Modifier::DIM),
+            "{p:?} must not dim the removed line"
+        );
+    }
 }

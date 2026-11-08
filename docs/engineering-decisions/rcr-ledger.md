@@ -410,7 +410,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | A-A31 | Transcript view, search, copy, export | see the section in matrix A | PARTIAL | terminal /transcript search, /copy (asks, OSC 52) and /export (service writes a new 0600 file in exports); no overlay or region selection (terminal-transcript.md) |
 | A-A32 | Scrollback model: alt screen versus inline, mouse | see the section in matrix A | BUILT | alt screen, scroll back, restore on exit (tui_pty.py 27/27) |
 | A-A33 | Keyboard model, keymap config, command palette | see the section in matrix A | LATER | keymap config |
-| A-A34 | Themes and colour | see the section in matrix A | PARTIAL | a theme exists; no theme choice |
+| A-A34 | Themes and colour | see the section in matrix A | BUILT | closed `theme` setting (auto, dark, light; KAKU_THEME) with colours measured by computed contrast (7:1 on pure backgrounds, 4.5:1 on common extremes), no dimming in fixed palettes, colour off beats any theme; palette probing, many themes and theme files excluded with reasons; NOT looked at in a real light/dark terminal (terminal-themes.md) |
 | A-A35 | Accessibility | see the section in matrix A | PARTIAL | kaku tui --linear: append-only plain lines, no control bytes, overlays as prompts; unit + pipe e2e; NOT run with VoiceOver (terminal-transcript.md) |
 | A-A36 | Error recovery and process lifecycle | see the section in matrix A | BUILT | terminal restored after errors and exit (tui_pty.py) |
 | A-A37 | Reconnect and event replay | see the section in matrix A | PARTIAL | watched reviews are polled every 0.7 s; no event replay (row 17 exclusion) |

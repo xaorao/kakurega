@@ -77,8 +77,14 @@ fn fz01_random_hostile_markdown_never_panics_at_any_width_and_never_puts_a_contr
 ) {
     // fixed, so a failure can be reproduced; change the number to look at another run
     let mut seed = 0x1234_5678_9abc_def1u64;
-    let th = Theme { color: true };
-    let th_plain = Theme { color: false };
+    let th = Theme {
+        color: true,
+        palette: kk_tui::ui::Palette::Auto,
+    };
+    let th_plain = Theme {
+        color: false,
+        palette: kk_tui::ui::Palette::Auto,
+    };
     let mut worst = 0usize;
     for round in 0..4000 {
         let n = 1 + (rng(&mut seed) % 40) as usize;

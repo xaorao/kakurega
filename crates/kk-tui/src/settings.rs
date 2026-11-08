@@ -9,6 +9,8 @@ pub struct Settings {
     pub notify: Option<String>,
     /// Whether colour is used.
     pub color: bool,
+    /// Which colours: the terminal's own (`auto`), or a fixed set measured for a dark or a light background.
+    pub theme: crate::ui::Palette,
     /// Whether to start with only the end of a review shown, as `/quiet` does.
     pub quiet: bool,
     /// Said once at the top of the workspace: for example that a configuration file was not applied, and why.
@@ -20,6 +22,10 @@ impl Settings {
         Settings {
             notify: std::env::var("KAKU_NOTIFY").ok(),
             color: std::env::var_os("NO_COLOR").is_none(),
+            theme: std::env::var("KAKU_THEME")
+                .ok()
+                .and_then(|v| crate::ui::Palette::parse(&v))
+                .unwrap_or(crate::ui::Palette::Auto),
             quiet: false,
             notice: None,
         }

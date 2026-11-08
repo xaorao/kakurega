@@ -67,6 +67,7 @@ fn event_loop(
     let mut term = Terminal::new(CrosstermBackend::new(stdout())).map_err(|e| e.to_string())?;
     let theme = Theme {
         color: settings.color,
+        palette: settings.theme,
     };
     let mut app = App::new();
     app.apply_settings(&settings);

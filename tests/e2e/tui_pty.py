@@ -809,6 +809,47 @@ _, _, bad_screen = settings_run("mistake", 'quite = true\ncolor = "never"\n')
 check("a settings file with a mistake is said on the screen, naming the setting and the nearest one", "config.toml was not applied" in bad_screen and "quite" in bad_screen and "quiet" in bad_screen, bad_screen[:300])
 bad_raw, _, _ = settings_run("mistake2", 'quite = true\ncolor = "never"\n')
 check("and none of it is applied: the correct color line did not turn colour off", colour.search(bad_raw) is not None)
+truecolor = _re7.compile(rb"\x1b\[(?:[0-9;]*;)?38;2;(\d+);(\d+);(\d+)(?:;[0-9]+)*m")
+sgr = _re7.compile(rb"\x1b\[([0-9;]*)m")
+def named_colours(raw):
+    """The terminal's own named foreground colours (30-37, 90-97, and 38;5;n for n under 16) in the SGR sequences, skipping the numbers inside 38;2;r;g;b."""
+    found = []
+    for m in sgr.finditer(raw):
+        params = [int(x) if x else 0 for x in m.group(1).split(b";")]
+        k = 0
+        while k < len(params):
+            v = params[k]
+            if v == 38 and k + 2 < len(params) and params[k + 1] == 5:
+                if params[k + 2] < 16:
+                    found.append(params[k + 2])
+                k += 3
+                continue
+            if v in (38, 48):
+                k += 5 if k + 1 < len(params) and params[k + 1] == 2 else 3
+                continue
+            if 30 <= v <= 37 or 90 <= v <= 97:
+                found.append(v)
+            k += 1
+    return found
+def seen_rgb(raw):
+    return {tuple(int(x) for x in m.groups()) for m in truecolor.finditer(raw)}
+auto_rgb = seen_rgb(default_raw)
+check("with no theme the terminal's own named colours are used and no fixed colour is sent", auto_rgb == set(), str(sorted(auto_rgb)[:3]))
+dark_raw, _, _ = settings_run("theme-dark", 'theme = "dark"\n')
+dark_rgb = seen_rgb(dark_raw)
+check("theme = \"dark\" sends only the dark palette's fixed colours", len(dark_rgb) > 0 and dark_rgb <= {(0x5f, 0xd7, 0xff), (0x5f, 0xd7, 0x5f), (0xff, 0x87, 0xff), (0xff, 0x87, 0x87), (0xff, 0xd7, 0x87), (0xb2, 0xb2, 0xb2)}, str(sorted(dark_rgb)))
+light_raw, _, _ = settings_run("theme-light", 'theme = "light"\n')
+light_rgb = seen_rgb(light_raw)
+check("theme = \"light\" sends only the light palette's fixed colours", len(light_rgb) > 0 and light_rgb <= {(0x00, 0x5f, 0x87), (0x00, 0x5f, 0x00), (0x87, 0x00, 0x87), (0xaf, 0x00, 0x00), (0x50, 0x50, 0x00), (0x58, 0x58, 0x58)}, str(sorted(light_rgb)))
+check("and no named colour is sent in a fixed palette, while the terminal's own palette sends named ones", named_colours(dark_raw) == [] and named_colours(light_raw) == [] and named_colours(default_raw) != [], str(named_colours(dark_raw)[:3]))
+env_raw, _, _ = settings_run("theme-env", 'theme = "dark"\n', {"KAKU_THEME": "light"})
+check("KAKU_THEME beats the file", seen_rgb(env_raw) <= {(0x00, 0x5f, 0x87), (0x00, 0x5f, 0x00), (0x87, 0x00, 0x87), (0xaf, 0x00, 0x00), (0x50, 0x50, 0x00), (0x58, 0x58, 0x58)} and len(seen_rgb(env_raw)) > 0, str(sorted(seen_rgb(env_raw))))
+typo_raw, _, _ = settings_run("theme-typo", 'theme = "dark"\n', {"KAKU_THEME": "ligth"})
+check("a mistyped KAKU_THEME is ignored and the file's theme is used", seen_rgb(typo_raw) <= {(0x5f, 0xd7, 0xff), (0x5f, 0xd7, 0x5f), (0xff, 0x87, 0xff), (0xff, 0x87, 0x87), (0xff, 0xd7, 0x87), (0xb2, 0xb2, 0xb2)} and len(seen_rgb(typo_raw)) > 0)
+nc_raw, _, _ = settings_run("theme-nocolor", 'theme = "dark"\ncolor = "never"\n')
+check("colour never wins over a theme: not one colour sequence", colour.search(nc_raw) is None, str(colour.findall(nc_raw)[:3]))
+nc_env_raw, _, _ = settings_run("theme-nocolor-env", 'theme = "light"\n', {"NO_COLOR": "1"})
+check("and NO_COLOR wins over a theme", colour.search(nc_env_raw) is None)
 bad = results.count(False)
 print(f"\n{len(results) - bad}/{len(results)} terminal checks passed" if bad == 0 else f"\n{bad} FAILED")
 sys.exit(1 if bad else 0)

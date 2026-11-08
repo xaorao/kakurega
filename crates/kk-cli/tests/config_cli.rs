@@ -87,7 +87,14 @@ fn ee01_show_lists_every_setting_with_its_value_and_where_the_value_came_from() 
         ),
         (true.into(), "the option --linear".into())
     );
-    assert_eq!(v["settings"].as_array().unwrap().len(), 4);
+    assert_eq!(v["settings"].as_array().unwrap().len(), 5);
+    assert_eq!(
+        (
+            row("theme")["value"].clone(),
+            row("theme")["source"].clone()
+        ),
+        ("auto".into(), "the default".into())
+    );
     // the plain text says the same in words
     let t = out(&kaku(&home, &["config", "--data-dir", &d], &[]));
     assert!(
