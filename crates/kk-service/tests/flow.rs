@@ -13422,3 +13422,75 @@ fn sv138_a_backup_carries_archived_notes_and_a_restore_puts_them_back_as_archive
     );
     let _ = live;
 }
+
+#[test]
+fn sv139_many_connections_racing_for_one_lease_get_exactly_its_uses_and_a_refund_gives_back_only_what_was_spent(
+) {
+    let (c, _w, base, _svc, _root) = lease_world("lease-race");
+    let tok = c.security.admin_token().to_string();
+    let (s, v) = admin(
+        &base,
+        &tok,
+        "POST",
+        "/admin/agent-access/grant",
+        Some(json!({"tool": "request_approval", "uses": 5, "minutes": 30})),
+    );
+    assert_eq!(s, 200, "{v}");
+    let race = |n: usize| -> (usize, usize) {
+        let results: Vec<Value> = std::thread::scope(|sc| {
+            let handles: Vec<_> = (0..n)
+                .map(|_| {
+                    let (base, tok) = (base.clone(), tok.clone());
+                    sc.spawn(move || {
+                        admin(
+                            &base,
+                            &tok,
+                            "POST",
+                            "/admin/agent-access/use",
+                            Some(json!({"tool": "request_approval"})),
+                        )
+                        .1
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        let allowed = results.iter().filter(|v| v["allowed"] == true).count();
+        let exhausted = results
+            .iter()
+            .filter(|v| v["allowed"] == false && v["reason"] == "exhausted")
+            .count();
+        (allowed, exhausted)
+    };
+    // 40 callers at once, 5 uses: exactly 5 get one, all the others are told it is used up
+    assert_eq!(race(40), (5, 35));
+    // a refund gives a use back, and no more than were spent
+    for _ in 0..3 {
+        admin(
+            &base,
+            &tok,
+            "POST",
+            "/admin/agent-access/refund",
+            Some(json!({"tool": "request_approval"})),
+        );
+    }
+    assert_eq!(race(20), (3, 17));
+    for _ in 0..10 {
+        admin(
+            &base,
+            &tok,
+            "POST",
+            "/admin/agent-access/refund",
+            Some(json!({"tool": "request_approval"})),
+        );
+    }
+    let (_, v) = admin(&base, &tok, "GET", "/admin/agent-access", None);
+    assert!(
+        v["leases"][0]["remaining"].as_i64().unwrap() <= 5,
+        "a refund never raises a lease above what was granted: {v}"
+    );
+    // the signed log counted every spend, and says nothing but the tool and the count
+    let (_, log) = admin(&base, &tok, "GET", "/admin/log", None);
+    let text = log.to_string();
+    assert_eq!(text.matches("agent.lease.used").count(), 8, "{text}");
+}
