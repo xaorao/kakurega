@@ -110,6 +110,7 @@ fn event_loop(
         let _ = req_tx.send(r);
     }
     let notify = std::env::var("KAKU_NOTIFY").ok();
+    let term_info = crate::attention::TermInfo::from_env();
     let mut shown_title: Option<Option<crate::attention::Attention>> = None;
     let mut dirty = true;
     loop {
@@ -122,8 +123,10 @@ fn event_loop(
                 let _ = out.flush();
             }
         }
-        if app.attention.take().is_some() {
-            if let Some(b) = crate::attention::bell(notify.as_deref(), app.focused) {
+        if let Some(what) = app.attention.take() {
+            if let Some(b) =
+                crate::attention::alert(notify.as_deref(), app.focused, &term_info, what)
+            {
                 use std::io::Write;
                 let mut out = stdout();
                 let _ = out.write_all(b.as_bytes());

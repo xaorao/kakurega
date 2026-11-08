@@ -569,6 +569,54 @@ try:
 finally:
     srv5.kill()
     srv5.wait()
+# a terminal that shows desktop notifications (iTerm2, WezTerm, Ghostty, Warp, kitty) gets one notification and no bell
+data6 = work / "data6"
+env6 = dict(env3, TERM_PROGRAM="iTerm.app")
+env6.pop("TMUX", None)
+m6, s6 = pty.openpty()
+fcntl.ioctl(s6, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 110, 0, 0))
+p6 = subprocess.Popen([str(kaku), "tui", "--data-dir", str(data6), "--root", str(work / "root"), "--scripted", str(repo / "tests/e2e/script.json"), "--ui-dir", str(repo / "apps/web/dist")], stdin=s6, stdout=s6, stderr=s6, env=env6, close_fds=True)
+os.close(s6)
+raw6 = b""
+
+
+def pump6(seconds, until=None):
+    global raw6
+    end = time.time() + seconds
+    while time.time() < end:
+        r, _, _ = select.select([m6], [], [], 0.2)
+        if r:
+            try:
+                raw6 += os.read(m6, 65536)
+            except OSError:
+                return
+        if until is not None and until in raw6:
+            return
+
+
+pump6(30, b"kakurega")
+os.write(m6, f"/review {work / 'root/payments-service'} for osc-audit\r".encode())
+pump6(180, b"finished: ready")
+pump6(1.5)
+import re as _re6
+note = b"\x1b]9;Kakurega: a review is ready\x07"
+bare = _re6.sub(rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", b"", raw6).count(b"\x07")
+check("in a terminal that shows notifications, a finished review sends one desktop notification with a fixed phrase", raw6.count(note) == 1, str(raw6.count(note)))
+check("and no separate bell", bare == 0, f"bells={bare}")
+check("and nothing in any escape sequence names the folder, the recipient or the job", all(b"payments-service" not in t and b"osc-audit" not in t and b"job-" not in t for t in _re6.findall(rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", raw6)))
+os.write(m6, b"/quit\r")
+end6 = time.time() + 20
+while p6.poll() is None and time.time() < end6:
+    r, _, _ = select.select([m6], [], [], 0.2)
+    if r:
+        try:
+            os.read(m6, 65536)
+        except OSError:
+            break
+if p6.poll() is None:
+    p6.kill()
+    p6.wait()
+os.close(m6)
 bad = results.count(False)
 print(f"\n{len(results) - bad}/{len(results)} terminal checks passed" if bad == 0 else f"\n{bad} FAILED")
 sys.exit(1 if bad else 0)
