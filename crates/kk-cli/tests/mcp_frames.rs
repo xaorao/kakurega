@@ -2108,3 +2108,158 @@ fn mc92_review_events_can_wait_for_something_new_and_answers_at_once_when_there_
         "{seen:?}"
     );
 }
+
+fn call_with_meta(id: u32, name: &str, args: Value, meta: Value) -> String {
+    json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": {"name": name, "arguments": args, "_meta": meta}}).to_string()
+}
+
+#[test]
+fn mc93_a_waiting_call_reports_progress_only_to_a_client_that_asked_with_a_token_and_only_while_it_waits(
+) {
+    let dir = fresh("mc93");
+    let admin = FakeAdmin::start_with(
+        "tok-93",
+        0,
+        r#"{"events":[],"next":9,"latest":9,"reset":false}"#,
+    );
+    admin.publish(&dir);
+    let mut s = live_with(&dir, &["--read-only"]);
+    // with a token and nothing to report for twelve seconds: progress at about five and ten seconds, then the answer
+    s.send(&call_with_meta(
+        1,
+        "review_events",
+        json!({"after": 9, "wait_seconds": 12}),
+        json!({"progressToken": "wait-1"}),
+    ));
+    let mut progress = Vec::new();
+    let result = loop {
+        let f = s.recv();
+        if f["method"] == "notifications/progress" {
+            progress.push(f);
+        } else {
+            break f;
+        }
+    };
+    assert_eq!(result["id"], 1, "{result}");
+    assert_eq!(result["result"]["isError"], false, "{result}");
+    assert!((2..=3).contains(&progress.len()), "{progress:?}");
+    let mut last = -1.0;
+    for p in &progress {
+        assert_eq!(p["jsonrpc"], "2.0");
+        assert!(p.get("id").is_none(), "a notification has no id: {p}");
+        assert_eq!(p["params"]["progressToken"], "wait-1");
+        let now = p["params"]["progress"].as_f64().unwrap();
+        assert!(now > last, "progress only grows: {progress:?}");
+        last = now;
+        assert_eq!(p["params"]["total"], 12);
+        let msg = p["params"]["message"].as_str().unwrap();
+        assert!(
+            msg.starts_with("Waiting for review events: ") && msg.ends_with(" of 12 seconds"),
+            "{msg}"
+        );
+        assert!(
+            !msg.contains("job") && !msg.contains('/'),
+            "fixed words and numbers only: {msg}"
+        );
+    }
+    // an integer token is echoed as an integer
+    s.send(&call_with_meta(
+        2,
+        "review_events",
+        json!({"after": 9, "wait_seconds": 6}),
+        json!({"progressToken": 7}),
+    ));
+    let mut ints = Vec::new();
+    let r = loop {
+        let f = s.recv();
+        if f["method"] == "notifications/progress" {
+            ints.push(f);
+        } else {
+            break f;
+        }
+    };
+    assert_eq!(r["id"], 2);
+    assert_eq!(ints.len(), 1, "{ints:?}");
+    assert_eq!(ints[0]["params"]["progressToken"], 7);
+    // no token, or a token that is not allowed: the same six-second wait, no progress frames (up to four calls run at once)
+    let cases = [
+        (3, json!({})),
+        (4, json!({"progressToken": true})),
+        (5, json!({"progressToken": {"a": 1}})),
+        (6, json!({"progressToken": 1.5})),
+        (7, json!({"progressToken": ""})),
+        (8, json!({"progressToken": "x".repeat(129)})),
+        (9, json!({"progressToken": null})),
+    ];
+    for batch in cases.chunks(4) {
+        for (id, meta) in batch {
+            s.send(&call_with_meta(
+                *id,
+                "review_events",
+                json!({"after": 9, "wait_seconds": 6}),
+                meta.clone(),
+            ));
+        }
+        let mut ids = Vec::new();
+        for _ in batch {
+            let f = s.recv();
+            assert!(f["method"].is_null(), "no progress for these tokens: {f}");
+            ids.push(f["id"].as_u64().unwrap());
+        }
+        ids.sort();
+        assert_eq!(
+            ids,
+            batch.iter().map(|(id, _)| *id as u64).collect::<Vec<_>>()
+        );
+    }
+    // a call that does not wait never reports progress, whatever it was given
+    s.send(&call_with_meta(
+        10,
+        "review_events",
+        json!({"after": 9}),
+        json!({"progressToken": "no-wait"}),
+    ));
+    let f = s.recv();
+    assert_eq!(f["id"], 10, "{f}");
+    // after a call has answered, nothing more arrives for it
+    assert!(
+        s.close().is_empty(),
+        "nothing is left over after the answers"
+    );
+}
+
+#[test]
+fn mc94_a_cancelled_call_sends_no_more_progress_and_no_answer() {
+    let dir = fresh("mc94");
+    let admin = FakeAdmin::start_with(
+        "tok-94",
+        0,
+        r#"{"events":[],"next":9,"latest":9,"reset":false}"#,
+    );
+    admin.publish(&dir);
+    let mut s = live_with(&dir, &["--read-only"]);
+    s.send(&call_with_meta(
+        1,
+        "review_events",
+        json!({"after": 9, "wait_seconds": 25}),
+        json!({"progressToken": "c"}),
+    ));
+    // wait for the first progress frame, then cancel
+    let first = s.recv();
+    assert_eq!(first["method"], "notifications/progress", "{first}");
+    s.send(
+        &json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 1}})
+            .to_string(),
+    );
+    // nothing more for that call: a ping asked afterwards is answered first and alone
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    s.send(&ping(json!(2)));
+    let next = s.recv();
+    assert_eq!(next["id"], 2, "{next}");
+    let rest = s.close();
+    assert!(
+        rest.iter()
+            .all(|f| f["method"] != "notifications/progress" && f["id"] != 1),
+        "{rest:?}"
+    );
+}

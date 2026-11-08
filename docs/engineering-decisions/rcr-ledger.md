@@ -141,7 +141,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | D-D06 | Message size and framing | IMPROVE: SDK with a 1 MiB cap; wrap the transport to emit `-32600` for the dropped id (ext | BUILT | bounded line reader with a size error (mc tests) |
 | D-D07 | Concurrency, ordering, timeouts | ADAPT via SDK; set explicit connect and read timeouts (for example 10 s and 30 s) on the ` | BUILT | running-call registry, duplicate ids refused, drain at end of input (mc18-mc21) |
 | D-D08 | Cancellation | ADAPT via SDK, plus wire the token into the admin HTTP call. | BUILT | cancel reaches only a running call (mc18-mc21) |
-| D-D09 | Progress | BUILD on top of SDK for `review_wait`, using the job's existing `events` (stage names). | PARTIAL | review_events long poll via wait_seconds (mc92); no MCP progress notifications (mcp.md) |
+| D-D09 | Progress | BUILD on top of SDK for `review_wait`, using the job's existing `events` (stage names). | BUILT | review_events long poll plus MCP progress notifications while it waits, per the 2025-06-18 spec (mc92, mc93, mc94; 10 mutants caught; mcp.md); other tools answer at once |
 | D-D10 | Pagination and cache hints | ADAPT via SDK. Mark every `resources/read` `private` with `ttlMs: 0`. | LATER | no resources yet |
 | D-D11 | Logging capability | EXCLUDE. Log to stderr only, structured, no payloads. | EXCLUDED | logs go to stderr only |
 | D-D12 | Completion | BUILD later, only for review ids. | LATER | only useful with prompts and resources |

@@ -655,11 +655,17 @@ fn call_inner(
                 .unwrap_or(0)
                 .min(MAX_WAIT_SECONDS);
             let started = std::time::Instant::now();
+            let mut last_progress = 0u64;
             loop {
                 let r = admin.get(&path);
                 let news = matches!(&r, Ok((c, v)) if *c < 300 && (v["events"].as_array().is_some_and(|e| !e.is_empty()) || v["reset"] == true));
                 if news || r.is_err() || started.elapsed() >= std::time::Duration::from_secs(wait) {
                     break r;
+                }
+                let waited = started.elapsed().as_secs();
+                if waited >= last_progress + PROGRESS_EVERY_SECONDS {
+                    last_progress = waited;
+                    tick_progress(waited, wait);
                 }
                 std::thread::sleep(std::time::Duration::from_millis(400));
             }
@@ -1026,10 +1032,55 @@ const SLOW_TOOLS: [&str; 6] = [
     "review_events",
     "request_approval",
 ];
+/// A waiting call reports progress no more often than this.
+const PROGRESS_EVERY_SECONDS: u64 = 5;
 /// At most this many service-backed calls run at once.
 const MAX_IN_FLIGHT: usize = 4;
 /// At the end of input, work in progress gets this long to answer before the process leaves.
 const DRAIN: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Where progress notifications for the call running on this thread go. Set only by the thread of a call whose request carried a
+/// progress token; nothing else on any thread can send one.
+struct Progress {
+    token: Value,
+    emit: Box<dyn Fn(&Value) -> bool>,
+}
+
+thread_local! {
+    static PROGRESS: std::cell::RefCell<Option<Progress>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The progress token a request carried in `params._meta.progressToken`: a string of at most 128 characters or an integer.
+/// Anything else is ignored, and the call simply runs without progress.
+pub(crate) fn progress_token(line: &str) -> Option<Value> {
+    let msg: Value = serde_json::from_str(line.trim_start_matches('\u{feff}')).ok()?;
+    let t = msg["params"].get("_meta")?.get("progressToken")?;
+    match t {
+        Value::String(s) if !s.is_empty() && s.chars().count() <= 128 => Some(t.clone()),
+        Value::Number(n) if n.is_i64() || n.is_u64() => Some(t.clone()),
+        _ => None,
+    }
+}
+
+/// While a call waits with nothing to report, tells the client how long it has waited. Called at most every five seconds, with a
+/// number of seconds that only grows, and only with fixed words: no review id, folder or recipient.
+fn tick_progress(waited: u64, total: u64) {
+    PROGRESS.with(|p| {
+        if let Some(p) = p.borrow().as_ref() {
+            let frame = json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/progress",
+                "params": {
+                    "progressToken": p.token,
+                    "progress": waited,
+                    "total": total,
+                    "message": format!("Waiting for review events: {waited} of {total} seconds")
+                }
+            });
+            (p.emit)(&frame);
+        }
+    });
+}
 
 struct Shared {
     out: std::sync::Mutex<std::io::Stdout>,
@@ -1250,9 +1301,29 @@ pub fn run(args: &[String]) -> u8 {
                 continue;
             }
             let (shared, ctx, args) = (shared.clone(), ctx.clone(), args.clone());
+            let token = progress_token(&line);
             std::thread::spawn(move || {
+                if let Some(token) = token {
+                    // a progress notification is sent only while the call is still running and not cancelled
+                    let (sh, k) = (shared.clone(), key.clone());
+                    PROGRESS.with(|p| {
+                        *p.borrow_mut() = Some(Progress {
+                            token,
+                            emit: Box::new(move |frame| {
+                                let live = sh
+                                    .in_flight
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .get(&k)
+                                    .is_some_and(|cancelled| !*cancelled);
+                                live && sh.send(frame)
+                            }),
+                        });
+                    });
+                }
                 let admin = || connect(&args);
                 let reply = handle(&admin, &ctx, &line);
+                PROGRESS.with(|p| *p.borrow_mut() = None);
                 // leave the map and learn whether the client cancelled, in one step
                 let was_cancelled = shared
                     .in_flight
