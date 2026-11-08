@@ -61,6 +61,8 @@ function Item(props: { m: MemoryItem; onChange: (msg?: string) => void }) {
         <p class="muted">
           <span class="chip">{t(`mem.level.${props.m.level}` as Key)}</span>{" "}
           <Show when={props.m.untrusted}><span class="chip warn">{t("mem.untrusted")}</span>{" "}</Show>
+          <Show when={props.m.instruction_like}><span class="chip warn">{t("mem.instructionLike")}</span>{" "}</Show>
+          <Show when={props.m.origin !== undefined}><span class="chip">{t(`mem.origin.${props.m.origin}` as Key)}</span>{" "}</Show>
           <Show when={props.m.project}><span class="chip">{t("mem.project", { name: props.m.project ?? "" })}</span>{" "}</Show>
           <Show when={(props.m.uses ?? 0) > 0}><span class="chip">{props.m.uses === 1 ? t("mem.used.one") : t("mem.used.many", { n: String(props.m.uses ?? 0) })}</span>{" "}</Show>
           {t("mem.why", { why: props.m.why })}

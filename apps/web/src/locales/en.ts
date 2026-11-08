@@ -178,6 +178,7 @@ export const en = {
   "mem.used.many": "Used in {n} answers",
   "mem.source": "From {source}",
   "mem.untrusted": "from untrusted content",
+  "mem.instructionLike": "reads like an instruction: never given to a model",
   "mem.correct": "Correct",
   "mem.save": "Save correction",
   "mem.cancel": "Cancel",

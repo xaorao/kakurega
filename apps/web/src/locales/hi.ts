@@ -179,6 +179,7 @@ export const hi: Record<keyof typeof en, string> = {
   "mem.used.one": "1 उत्तर में इस्तेमाल हुआ",
   "mem.used.many": "{n} उत्तरों में इस्तेमाल हुआ",
   "mem.source": "स्रोत: {source}",
+  "mem.instructionLike": "निर्देश जैसा पढ़ता है: किसी मॉडल को कभी नहीं दिया जाता",
   "mem.untrusted": "अविश्वसनीय सामग्री से",
   "mem.correct": "सुधारें",
   "mem.save": "सुधार सहेजें",
