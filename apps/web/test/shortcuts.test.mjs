@@ -70,3 +70,36 @@ test("kb06 the chat entries in the table agree with the code that really handles
   assert.equal(byId("stop").matches(ev("g")), false, "G alone is a letter");
   assert.equal(byId("stop").matches(ev("Escape", { isComposing: true })), false);
 });
+
+test("kb10 a single printable key can be switched off and the same command with a modifier keeps working", () => {
+  const body = { tagName: "BODY" };
+  const single = SHORTCUTS.filter((s) => s.single);
+  assert.deepEqual(single.map((s) => s.id), ["help"], "only the bare ? is a single-key shortcut");
+  // every single-key shortcut is a printable key with no modifier; nothing with a modifier is marked single
+  for (const s of SHORTCUTS) {
+    const bare = s.samples.every((x) => !x.ctrlKey && !x.metaKey && !x.altKey && x.key.length === 1);
+    if (s.single) assert.ok(bare, `${s.id} is marked single but its samples are not a bare printable key`);
+    if (s.scope === "app" && bare && !s.single) assert.fail(`${s.id} is a bare printable key and is not switchable`);
+  }
+  assert.equal(appShortcut(ev("?", { shiftKey: true }), body)?.id, "help", "on by default");
+  assert.equal(appShortcut(ev("?", { shiftKey: true }), body, true)?.id, "help");
+  assert.equal(appShortcut(ev("?", { shiftKey: true }), body, false), null, "switched off: ? does nothing");
+  assert.equal(appShortcut(ev("/", { ctrlKey: true }), body, false)?.id, "help-anywhere", "Ctrl+/ still opens the same list");
+  assert.equal(appShortcut(ev("k", { ctrlKey: true }), body, false)?.id, "search");
+  assert.equal(appShortcut(ev("P", { ctrlKey: true, shiftKey: true }), body, false)?.id, "palette");
+});
+
+test("kb11 a checkbox, radio or button is not a place where text is typed, but every text-like box still is", () => {
+  for (const type of ["checkbox", "radio", "button", "submit", "reset", "range", "color", "file", "image", "CHECKBOX"]) {
+    assert.equal(typingTarget({ tagName: "INPUT", type }), false, type);
+  }
+  for (const type of ["text", "search", "email", "password", "number", "url", "tel", "date", "", undefined]) {
+    assert.equal(typingTarget({ tagName: "INPUT", type }), true, String(type));
+  }
+  assert.equal(typingTarget({ tagName: "TEXTAREA", type: "checkbox" }), true, "the type of an input does not change a text area");
+  assert.equal(typingTarget({ tagName: "SELECT" }), true);
+  assert.equal(typingTarget({ tagName: "DIV", isContentEditable: true }), true);
+  const help = appShortcut(ev("?", { shiftKey: true }), { tagName: "INPUT", type: "checkbox" });
+  assert.equal(help?.id, "help", "? works while a checkbox has the focus");
+  assert.equal(appShortcut(ev("?", { shiftKey: true }), { tagName: "INPUT", type: "text" }), null, "and still not inside a text box");
+});

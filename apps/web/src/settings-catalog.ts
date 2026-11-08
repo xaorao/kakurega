@@ -2,7 +2,7 @@
 // cannot exist on one and be missing from the other. Labels and help are keys of the language files; the words a person might
 // type for a setting are written next to it.
 
-export type SettingKind = "theme" | "language" | "notify" | "link" | "info" | "shortcuts" | "piiallow";
+export type SettingKind = "theme" | "language" | "notify" | "link" | "info" | "shortcuts" | "piiallow" | "singlekeys";
 export type SettingSection = "appearance" | "notifications" | "privacy" | "keyboard" | "data";
 
 export interface Setting {
@@ -29,6 +29,7 @@ export const SETTINGS: readonly Setting[] = [
   { id: "agent-access", section: "privacy", kind: "link", label: "set.agent.label", help: "set.agent.help", keywords: ["mcp", "lease", "tools", "agent", "permission"], target: "#/agent" },
   { id: "pii-allow", section: "privacy", kind: "piiallow", label: "set.pii.label", help: "set.pii.help", keywords: ["personal data", "pii", "email", "phone", "allowlist", "allow list", "false positive", "notice", "release", "ignore"] },
   { id: "telemetry", section: "privacy", kind: "info", label: "set.telemetry.label", help: "set.telemetry.help", keywords: ["analytics", "tracking", "usage data", "phone home", "none"] },
+  { id: "single-keys", section: "keyboard", kind: "singlekeys", label: "set.single.label", help: "set.single.help", keywords: ["screen reader", "voice control", "dictation", "character key", "accessibility", "question mark", "turn off", "disable", "remap"] },
   { id: "shortcuts", section: "keyboard", kind: "shortcuts", label: "set.keys.label", help: "set.keys.help", keywords: ["keyboard", "keys", "hotkeys", "bindings", "palette"] },
   { id: "memory", section: "data", kind: "link", label: "set.memory.label", help: "set.memory.help", keywords: ["notes", "remember", "forget", "delete", "retention"], target: "#/memory" },
   { id: "usage", section: "data", kind: "link", label: "set.usage.label", help: "set.usage.help", keywords: ["tokens", "speed", "cost", "model usage", "activity"], target: "#/activity" },

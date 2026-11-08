@@ -19,6 +19,7 @@ import { Welcome } from "./components/Welcome";
 import { welcomeDone } from "./welcome";
 import { ShortcutHelp } from "./components/ShortcutHelp";
 import { appShortcut } from "./shortcuts";
+import { singleKeys } from "./single-keys";
 import { createLive } from "./live";
 import { clearDrafts } from "./composer";
 import { applyLocale, LOCALES, locale, rich, setLocale, t, type Locale } from "./i18n";
@@ -160,7 +161,7 @@ export function App() {
   });
   const onKey = (e: KeyboardEvent) => {
     if (e.isComposing || e.defaultPrevented) return;
-    const found = appShortcut(e, e.target as HTMLElement | null);
+    const found = appShortcut(e, e.target as HTMLElement | null, singleKeys());
     if (!found) return;
     e.preventDefault();
     if (found.id === "palette") {

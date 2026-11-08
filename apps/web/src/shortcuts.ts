@@ -22,6 +22,8 @@ export interface Shortcut {
   label: string;
   /** True when the shortcut still works while the cursor is in a text box. */
   editable: boolean;
+  /** True when the shortcut is a single printable key with no modifier: it can be switched off (WCAG 2.1.4, Character Key Shortcuts). */
+  single?: boolean;
   matches(e: KeyEventLike): boolean;
   /** Events that match, used by the tests and nowhere else. */
   samples: readonly KeyEventLike[];
@@ -59,6 +61,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     other: "?",
     label: "kb.help",
     editable: false,
+    single: true,
     matches: (e) => e.key === "?" && !e.ctrlKey && !e.metaKey && !e.altKey,
     samples: [{ key: "?", ctrlKey: false, metaKey: false, altKey: false, shiftKey: true }],
   },
@@ -129,17 +132,23 @@ export const SHORTCUTS: readonly Shortcut[] = [
 ];
 
 /** Whether the focus is somewhere text is typed, where a bare key is a letter and not a command. */
-export function typingTarget(t: { tagName?: string; isContentEditable?: boolean } | null | undefined): boolean {
+export function typingTarget(t: { tagName?: string; isContentEditable?: boolean; type?: string } | null | undefined): boolean {
   if (!t) return false;
   const tag = (t.tagName ?? "").toUpperCase();
+  // a checkbox, radio button, button or slider takes no typed text, so a bare key there is still a command
+  if (tag === "INPUT" && NO_TEXT_INPUT.has((t.type ?? "").toLowerCase())) return false;
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t.isContentEditable === true;
 }
 
+const NO_TEXT_INPUT = new Set(["checkbox", "radio", "button", "submit", "reset", "range", "color", "file", "image"]);
+
 /** The page-wide shortcut this key press is, if any. A key that is only a letter in a text box is never one. */
-export function appShortcut(e: KeyEventLike, target: Parameters<typeof typingTarget>[0]): Shortcut | null {
+export function appShortcut(e: KeyEventLike, target: Parameters<typeof typingTarget>[0], singleKeys = true): Shortcut | null {
   const typing = typingTarget(target);
   for (const s of SHORTCUTS) {
     if (s.scope !== "app" || !s.matches(e)) continue;
+    // switched off by the person: a single printable key does nothing, the same shortcut with a modifier still works
+    if (s.single && !singleKeys) return null;
     if (typing && !s.editable) return null;
     return s;
   }

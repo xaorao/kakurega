@@ -4,6 +4,7 @@ import { LOCALES, locale, setLocale, t, type Key, type Locale } from "../i18n";
 import { notifier, notifyState, turnNotifyOn } from "../notifier";
 import { SECTIONS, SETTINGS, searchSettings, type Setting } from "../settings-catalog";
 import { chooseTheme, theme, type Theme } from "../theme";
+import { chooseSingleKeys, singleKeys } from "../single-keys";
 
 /** The values the owner said are not personal data. They change only the release notice, which counts what they leave out. */
 function PiiAllow() {
@@ -80,6 +81,12 @@ function Control(props: { s: Setting }) {
         </Show>
       )}
       {props.s.kind === "piiallow" && <PiiAllow />}
+      {props.s.kind === "singlekeys" && (
+        <label class="row">
+          <input id={`set-${props.s.id}`} type="checkbox" checked={singleKeys()} onChange={(e) => chooseSingleKeys(e.currentTarget.checked)} />
+          <span>{t("set.single.on")}</span>
+        </label>
+      )}
       {props.s.kind === "link" && <a class="button" href={props.s.target}>{t("set.open")}</a>}
       {props.s.kind === "shortcuts" && <button type="button" onClick={() => window.dispatchEvent(new Event("kk-show-shortcuts"))}>{t("set.keys.open")}</button>}
     </>

@@ -1752,7 +1752,7 @@ try {
   // settings: one place for every setting, searchable by name, meaning or a word people use
   await page.getByRole("link", { name: "Settings" }).click();
   await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
-  check("the settings screen lists every setting in its section", (await page.locator("li[id^='setting-']").count()) === 12);
+  check("the settings screen lists every setting in its section", (await page.locator("li[id^='setting-']").count()) === 13);
   await axeCheck(page, "settings screen");
   await page.screenshot({ path: join(shots, "14d-settings.png"), fullPage: true });
   await page.getByLabel("Search settings").fill("notify");
@@ -1802,6 +1802,43 @@ try {
   check("the keyboard setting opens the same list of shortcuts", (await kb2.locator("dt").count()) === 9);
   await page.keyboard.press("Escape");
   await kb2.waitFor({ state: "detached" });
+  {
+    // single-key shortcuts can be switched off (WCAG 2.1.4): ? then does nothing, Ctrl+/ still opens the list, and the choice is kept
+    const sw = page.locator("#set-single-keys");
+    check("single-key shortcuts are on by default", await sw.isChecked());
+    await page.locator("body").click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press("?");
+    await page.getByRole("dialog", { name: "Keyboard shortcuts" }).waitFor();
+    check("while on, ? opens the list of keys (so the next check is not vacuous)", true);
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog", { name: "Keyboard shortcuts" }).waitFor({ state: "detached" });
+    await sw.uncheck();
+    await page.locator("body").click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press("?");
+    await page.waitForTimeout(400);
+    check("switched off, ? does not open the list of keys", (await page.getByRole("dialog", { name: "Keyboard shortcuts" }).count()) === 0);
+    await page.keyboard.press("Control+/");
+    await page.getByRole("dialog", { name: "Keyboard shortcuts" }).waitFor();
+    check("and Ctrl+/ still opens the same list", true);
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog", { name: "Keyboard shortcuts" }).waitFor({ state: "detached" });
+    await page.reload();
+    await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+    check("the choice is kept after a reload", !(await page.locator("#set-single-keys").isChecked()));
+    await page.locator("#set-single-keys").check();
+    await page.locator("body").click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press("?");
+    await page.getByRole("dialog", { name: "Keyboard shortcuts" }).waitFor();
+    check("switched back on, ? opens the list again", true);
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog", { name: "Keyboard shortcuts" }).waitFor({ state: "detached" });
+    await page.locator("#set-single-keys").focus();
+    await page.keyboard.press("?");
+    await page.getByRole("dialog", { name: "Keyboard shortcuts" }).waitFor();
+    check("? also works while a checkbox has the focus, because a checkbox takes no typed text", true);
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog", { name: "Keyboard shortcuts" }).waitFor({ state: "detached" });
+  }
   await page.locator("#setting-where-data-goes").getByRole("link", { name: "Open" }).click();
   await page.getByRole("heading", { name: "Where your data goes", exact: true }).waitFor();
   check("a privacy setting opens the page that explains it", true);
