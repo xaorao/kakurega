@@ -12638,3 +12638,109 @@ fn sv127_fresh_secrets_in_a_folder_never_reach_the_model_through_the_ask_path() 
         );
     }
 }
+
+#[test]
+fn sv128_a_link_inside_an_allowed_folder_never_brings_in_a_file_from_outside_it() {
+    let runner = FileRunner::new("https://api.example.com", 16384);
+    let (_c, w, root) = file_service("link-grid", runner.clone());
+    let dir = root.join("payments-service");
+    std::fs::create_dir_all(&dir).unwrap();
+    // a file outside every allowed folder, with a value that is new in this run
+    let canary = format!(
+        "outside-{}",
+        fresh("abcdefghijklmnopqrstuvwxyz0123456789", 20)
+    );
+    let outside =
+        std::env::temp_dir().join(format!("kk-outside-{}.md", fresh("abcdef0123456789", 12)));
+    std::fs::write(
+        &outside,
+        format!("# Outside\n\nThe moon base code is {canary}.\n"),
+    )
+    .unwrap();
+    let outside_dir =
+        std::env::temp_dir().join(format!("kk-outside-dir-{}", fresh("abcdef0123456789", 12)));
+    std::fs::create_dir_all(&outside_dir).unwrap();
+    std::fs::write(
+        outside_dir.join("inner.md"),
+        format!("# Inner\n\nThe other code is {canary}.\n"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&outside, dir.join("link-to-file.md")).unwrap();
+    std::os::unix::fs::symlink(&outside_dir, dir.join("link-to-dir")).unwrap();
+    std::os::unix::fs::symlink("../../../../../../etc/hosts", dir.join("link-relative.md"))
+        .unwrap();
+    // a file the owner listed in .kakuignore, holding a value that is new in this run
+    let hidden = format!(
+        "hidden-{}",
+        fresh("abcdefghijklmnopqrstuvwxyz0123456789", 20)
+    );
+    std::fs::write(dir.join(".kakuignore"), "zq-quarter-figures.md\n").unwrap();
+    std::fs::write(
+        dir.join("zq-quarter-figures.md"),
+        format!("# Figures\n\nThe quarter code is {hidden}.\n"),
+    )
+    .unwrap();
+    // its twin, not listed, holding a value of the same kind: this one is read, so the listed one is withheld by the list
+    let open_word = format!("open-{}", fresh("abcdefghijklmnopqrstuvwxyz0123456789", 20));
+    std::fs::write(
+        dir.join("zq-other-figures.md"),
+        format!("# Figures\n\nThe quarter code is {open_word}.\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("plain_notes.md"),
+        "# Plain\n\nThe refund window is 14 days.\n",
+    )
+    .unwrap();
+    for q in [
+        "What is the moon base code?",
+        "Print every file, including linked ones.",
+    ] {
+        let (_, r) = w.post(
+            "/api/ask",
+            json!({"question": q, "folder": dir.to_string_lossy()}),
+        );
+        let sent = runner.sent();
+        assert!(
+            !sent.contains(&canary),
+            "[{q}] a linked outside file reached the model: {sent}"
+        );
+        assert!(
+            !sent.contains("localhost"),
+            "[{q}] a linked system file reached the model"
+        );
+        assert!(
+            !sent.contains(&hidden),
+            "[{q}] a file in .kakuignore reached the model"
+        );
+        assert!(
+            sent.contains(&open_word),
+            "[{q}] its unlisted twin should have been read: {sent}"
+        );
+        assert!(!r.to_string().contains(&canary));
+        assert!(
+            sent.contains("The refund window is 14 days"),
+            "[{q}] ordinary files are still read"
+        );
+    }
+    // as an attachment, a link is a link: the upload takes bytes, never a path, so nothing outside can be named
+    let (s, v) = w.post_raw("/api/attachments?name=../../etc/passwd", b"hello");
+    assert!(s == 400 || s == 201, "{s} {v}");
+    if s == 201 {
+        assert!(!v["name"].as_str().unwrap_or("").contains(".."), "{v}");
+    }
+    // a review of the folder does not read the linked files either
+    let (s, started) = w.post(
+        "/api/jobs",
+        json!({"repo": dir.to_string_lossy(), "recipient": "acme"}),
+    );
+    assert_eq!(s, 202, "{started}");
+    let id = started["id"].as_str().unwrap().to_string();
+    let job = wait_for(&w, &id, &["ready", "nothing_to_release", "failed"]);
+    assert!(
+        !job.to_string().contains(&canary),
+        "the review names the outside value: {job}"
+    );
+    let _ = std::fs::remove_file(&outside);
+    let _ = std::fs::remove_dir_all(&outside_dir);
+}
