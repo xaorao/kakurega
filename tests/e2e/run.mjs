@@ -2043,6 +2043,60 @@ try {
     await page.reload();
     await page.waitForFunction(() => !document.body.innerText.includes("vendor portal"));
   }
+  {
+    // hostile text in every free-text field the owner or a file can fill: shown as text everywhere, never as an element, a
+    // script, an image request or a link that runs
+    const evil = {
+      img: '<img src="/evil-pixel.png" onerror="window.__pwn=(window.__pwn||0)+1">',
+      script: '<script>window.__pwn=(window.__pwn||0)+1</script>',
+      anchor: '<a href="javascript:window.__pwn=1">click</a>',
+      svg: '<svg onload="window.__pwn=(window.__pwn||0)+1"></svg>',
+      attr: '"><img src=x onerror=window.__pwn=1>',
+    };
+    // planted through the context's own request API, so a refusal is data here and not a console error of the page
+    const sessRes = await (await page.request.get(base + "/api/session")).json();
+    const hdr = { "x-kk-csrf": sessRes.csrf, "content-type": "application/json", origin: base };
+    const send = async (path, body) => {
+      const r = await page.request.post(base + path, { headers: hdr, data: body });
+      let j = null;
+      try { j = await r.json(); } catch { /* not JSON */ }
+      return { status: r.status(), body: j };
+    };
+    const state = {};
+    state.note = await send("/api/memories", { text: `grid note ${evil.img} ${evil.script} ${evil.anchor}`, level: "internal" });
+    const kept = await send("/api/sessions", {});
+    state.kept = kept.status;
+    if (kept.body?.id) state.rename = (await send(`/api/sessions/${kept.body.id}/rename`, { title: `grid title ${evil.img}` })).status;
+    state.attach = (await page.request.post(base + `/api/attachments?name=${encodeURIComponent(`grid-${evil.img}.txt`)}`, { headers: { "x-kk-csrf": sessRes.csrf, origin: base }, data: `file text ${evil.svg} ${evil.attr}` })).status();
+    state.instruction = (await send("/api/instructions", { project: null, text: `Be brief ${evil.img}` })).status;
+    state.recipient = (await send("/api/jobs", { repo: "/tmp/not-allowed", recipient: evil.img })).status;
+    state.pii = (await send("/api/pii-allow", { add: `${evil.img}@example.com` })).status;
+    check("hostile text is accepted or refused by the service, never an error of its own", Object.values(state).every((v) => typeof v === "number" ? v < 500 : (v?.status ?? 0) < 500), JSON.stringify(state));
+    check("the note and the instruction with hostile text were accepted, so the screens below really hold it", state.note.status === 201 && state.instruction === 200, JSON.stringify(state));
+    const screens = ["#/", "#/memory", "#/instructions", "#/settings", "#/activity", "#/privacy"];
+    let planted = 0;
+    for (const hash of screens) {
+      await page.goto(base + "/" + hash);
+      await page.waitForTimeout(700);
+      const found = await page.evaluate(() => ({
+        pwn: window.__pwn ?? 0,
+        imgs: document.querySelectorAll('img[src*="evil-pixel"], img[onerror], svg[onload], a[href^="javascript:"]').length + [...document.querySelectorAll("script")].filter((x) => x.textContent.includes("window.__pwn")).length,
+        text: document.body.innerText.includes("evil-pixel") || document.body.innerText.includes("window.__pwn"),
+      }));
+      if (found.text) planted++;
+      check(`on ${hash} hostile text does nothing: no script ran, no element was made from it`, found.pwn === 0 && found.imgs === 0, JSON.stringify(found));
+    }
+    check("and the hostile text was shown as plain words somewhere (so the test could see it)", planted >= 1);
+    // a conversation with the title and an opened attachment chip, in the chat screen
+    await page.goto(base + "/#/");
+    await page.waitForTimeout(500);
+    const chat = await page.evaluate(() => ({ pwn: window.__pwn ?? 0, imgs: document.querySelectorAll("img[onerror], img[src*='evil-pixel']").length }));
+    check("the chat screen with a hostile conversation title runs nothing", chat.pwn === 0 && chat.imgs === 0, JSON.stringify(chat));
+    // clean up what was planted so nothing later depends on it
+    const list = await (await page.request.get(base + "/api/memories")).json();
+    for (const m of list.memories.filter((x) => x.text.startsWith("grid note"))) await send(`/api/memories/${m.id}/forget`, {});
+    await send("/api/instructions", { project: null, text: "" });
+  }
 } catch (e) {
   check("journey completed", false, String(e).slice(0, 400));
   await page.screenshot({ path: join(shots, "failure.png"), fullPage: true }).catch(() => {});
