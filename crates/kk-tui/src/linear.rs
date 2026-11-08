@@ -335,6 +335,19 @@ pub fn run(data_dir: &Path, resume: Option<crate::app::Resume>) -> Result<(), St
             let _ = out.flush();
         }
         if app.quit || ended {
+            // say the list of stopped reviews was seen, and give the answer a moment
+            let last = app.leaving();
+            let id = last.id;
+            if req_tx.send(last).is_ok() {
+                let until = std::time::Instant::now() + Duration::from_millis(1500);
+                while let Some(left) = until.checked_duration_since(std::time::Instant::now()) {
+                    match rx.recv_timeout(left) {
+                        Ok(Msg::Ev(Event::Resp(r))) if r.id == id => break,
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
+                }
+            }
             let _ = writeln!(out, "Goodbye.");
             return Ok(());
         }

@@ -386,7 +386,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | A-A07 | Steer and interrupt, busy-input modes | see the section in matrix A | BUILT | Esc twice stops an arriving answer (88ce0cc) |
 | A-A08 | Interrupt hygiene: never leave the conversation invalid | see the section in matrix A | BUILT | a stopped reply leaves a valid conversation |
 | A-A09 | Multiple concurrent jobs and agents: roster, dock, detail, tail | see the section in matrix A | PARTIAL | /status lists reviews; no dock or roster |
-| A-A10 | Background work that finishes while you are elsewhere | see the section in matrix A | PARTIAL | live progress of a watched review; no catch-up on return |
+| A-A10 | Background work that finishes while you are elsewhere | see the section in matrix A | PARTIAL | 'Stopped while you were away' card at launch from a service-side seen mark (sv124, tu81, pty 66, mutation-checked); no web/Telegram card; 200-char note bound, 20 cap and running-skip not exercised (terminal-transcript.md) |
 | A-A11 | Notifications and terminal status | see the section in matrix A | PARTIAL | bell + generic window title on review finished/stopped, KAKU_NOTIFY=off, focus reporting; pty-verified; no OSC 9/777, no service-error notice (terminal-transcript.md) |
 | A-A12 | Permission prompt design | see the section in matrix A | BUILT | approval view with exact bytes and typed digest (11c1446) |
 | A-A13 | Remembered permissions and rule languages | see the section in matrix A | EXCLUDED | no remembered permissions for anything that releases data |

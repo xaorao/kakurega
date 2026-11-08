@@ -136,6 +136,19 @@ fn event_loop(
             dirty = false;
         }
         if app.quit {
+            // say the list was seen, and give the answer a moment, so what stops from now on is what the next launch reports
+            let last = app.leaving();
+            let id = last.id;
+            if req_tx.send(last).is_ok() {
+                let until = std::time::Instant::now() + Duration::from_millis(1500);
+                while let Some(left) = until.checked_duration_since(std::time::Instant::now()) {
+                    match ev_rx.recv_timeout(left) {
+                        Ok(Event::Resp(r)) if r.id == id => break,
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
+                }
+            }
             return Ok(());
         }
         if event::poll(Duration::from_millis(60)).map_err(|e| e.to_string())? {

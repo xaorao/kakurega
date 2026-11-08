@@ -119,6 +119,10 @@ enum Intent {
     ResumeFork(String),
     /// The last messages of a kept conversation, shown under its row in the picker.
     PickerPreview(String),
+    /// Which reviews stopped since the owner last looked; asked once when the workspace opens.
+    Away,
+    /// Tell the service the list was seen (at launch, after showing it, and when leaving).
+    AwaySeen,
     Sessions,
     OpenChat(String),
     ForgetChat(String),
@@ -284,6 +288,7 @@ pub struct App {
     popup_dismissed: Option<String>,
     history_to_save: Vec<String>,
     history_loaded: bool,
+    away_pending: bool,
     /// Set by Esc while an answer is streaming; the network thread then closes the connection.
     pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     live: Option<(usize, String)>,
@@ -389,6 +394,7 @@ impl App {
             popup_dismissed: None,
             history_to_save: Vec::new(),
             history_loaded: false,
+            away_pending: true,
             cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             live: None,
             chat_waiting: false,
@@ -604,6 +610,9 @@ impl App {
                 None,
             ));
         }
+        if std::mem::take(&mut self.away_pending) {
+            out.push(self.req(Intent::Away, false, Method::Get, "/api/away", None));
+        }
         for line in std::mem::take(&mut self.history_to_save) {
             out.push(self.req(
                 Intent::HistorySave,
@@ -614,6 +623,18 @@ impl App {
             ));
         }
         out
+    }
+
+    /// The request that marks the list of stopped reviews as seen; the event loop sends it when the owner leaves, so what stopped
+    /// afterwards is what the next launch reports.
+    pub fn leaving(&mut self) -> Req {
+        self.req(
+            Intent::AwaySeen,
+            false,
+            Method::Post,
+            "/api/away/seen",
+            Some(json!({})),
+        )
     }
 
     /// Tab after a command that takes a review id (`/open`, `/findings`, `/fixes`, `/applyfix N`, `/undofix N`, `/release`, `/approve`,
@@ -4201,6 +4222,45 @@ impl App {
                         Vec::new()
                     }
                 }
+            }
+            Intent::AwaySeen => Vec::new(),
+            Intent::Away => {
+                if !ok {
+                    return Vec::new();
+                }
+                let finished = body["finished"].as_array().cloned().unwrap_or_default();
+                if !finished.is_empty() {
+                    let mut lines: Vec<String> = finished
+                        .iter()
+                        .map(|j| {
+                            let outcome = match j["state"].as_str().unwrap_or("") {
+                                "ready" => "finished, ready for your approval".to_string(),
+                                "nothing_to_release" => "finished, nothing to release".to_string(),
+                                "failed" => format!(
+                                    "stopped: {}",
+                                    clean(j["note"].as_str().unwrap_or("it did not finish"))
+                                ),
+                                other => clean(other),
+                            };
+                            format!(
+                                "{:<8} {:<20} {}",
+                                clean(j["id"].as_str().unwrap_or("?")),
+                                clean(j["recipient"].as_str().unwrap_or("?")),
+                                outcome
+                            )
+                        })
+                        .collect();
+                    lines.push("/open ID shows one.".into());
+                    self.push(Kind::Info, Some("Stopped while you were away"), lines);
+                }
+                // told once: the next launch reports only what stops from now on
+                vec![self.req(
+                    Intent::AwaySeen,
+                    false,
+                    Method::Post,
+                    "/api/away/seen",
+                    Some(json!({})),
+                )]
             }
             Intent::PickerPreview(id) => {
                 if let Mode::Picker(p) = &mut self.mode {

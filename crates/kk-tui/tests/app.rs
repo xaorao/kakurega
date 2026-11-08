@@ -1354,9 +1354,9 @@ fn tu30_typed_lines_are_saved_in_the_background_and_loaded_once_without_secrets_
     let mut a = booted();
     let first = a.drain_background();
     assert_eq!(
-        (first.len(), first[0].path.as_str()),
-        (1, "/api/history"),
-        "the saved history is requested once"
+        first.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
+        ["/api/history", "/api/away"],
+        "the saved history and the list of reviews that stopped meanwhile are each requested once"
     );
     assert!(a.drain_background().is_empty());
     enter(&mut a, "/reviews");
@@ -1524,7 +1524,7 @@ fn tu33_a_half_typed_line_can_be_put_aside_and_brought_back_without_losing_what_
     assert!(a
         .drain_background()
         .iter()
-        .all(|r| r.path == "/api/history"));
+        .all(|r| r.path == "/api/history" || r.path == "/api/away"));
 }
 
 #[test]
@@ -5072,4 +5072,73 @@ fn tu80_right_arrow_previews_the_last_messages_of_the_chosen_conversation_and_mo
     });
     open_picker_with(&mut c, json!({"sessions": []}));
     assert!(c.handle(key(KeyCode::Right)).is_empty());
+}
+
+#[test]
+fn tu81_what_stopped_while_the_owner_was_away_is_shown_once_at_launch_and_marked_seen_and_again_on_leaving(
+) {
+    let mut a = booted();
+    let bg = a.drain_background();
+    let away = bg
+        .iter()
+        .find(|r| r.path == "/api/away")
+        .expect("asked at launch");
+    assert_eq!(away.method, Method::Get);
+    // asked only once
+    assert!(a.drain_background().iter().all(|r| r.path != "/api/away"));
+    let next = a.handle(ok(away, 200, json!({"since": 100, "finished": [
+        {"id": "job-4", "recipient": "acme-audit", "state": "ready", "note": "", "at": 150},
+        {"id": "job-3", "recipient": "beta", "state": "failed", "note": "the model could not be reached\u{1b}[31m", "at": 140},
+        {"id": "job-2", "recipient": "gamma", "state": "nothing_to_release", "note": "", "at": 120},
+    ]})));
+    let t = text(&a);
+    assert!(t.contains("Stopped while you were away"), "{t}");
+    assert!(
+        t.contains("job-4") && t.contains("acme-audit") && t.contains("ready for your approval"),
+        "{t}"
+    );
+    assert!(
+        t.contains("job-3")
+            && t.contains("stopped: the model could not be reached")
+            && !t.contains("\u{1b}"),
+        "{t}"
+    );
+    assert!(
+        t.contains("job-2") && t.contains("nothing to release") && t.contains("/open ID shows one"),
+        "{t}"
+    );
+    // told once: the list is marked seen straight away
+    assert_eq!(
+        (next[0].method, next[0].path.as_str()),
+        (Method::Post, "/api/away/seen")
+    );
+    // nothing stopped: no card, but still marked seen (the first launch sets the mark)
+    let mut b = booted();
+    let away = b
+        .drain_background()
+        .into_iter()
+        .find(|r| r.path == "/api/away")
+        .unwrap();
+    let next = b.handle(ok(&away, 200, json!({"since": null, "finished": []})));
+    assert!(!text(&b).contains("Stopped while you were away"));
+    assert_eq!(next[0].path, "/api/away/seen");
+    // the service cannot be asked: no card, no error shown, no mark set
+    let mut c = booted();
+    let away = c
+        .drain_background()
+        .into_iter()
+        .find(|r| r.path == "/api/away")
+        .unwrap();
+    let next = c.handle(ok(
+        &away,
+        500,
+        json!({"error": {"code": "STORE", "message": "x"}}),
+    ));
+    assert!(next.is_empty() && !text(&c).contains("Stopped while you were away"));
+    // leaving marks the list seen
+    let last = a.leaving();
+    assert_eq!(
+        (last.method, last.path.as_str()),
+        (Method::Post, "/api/away/seen")
+    );
 }

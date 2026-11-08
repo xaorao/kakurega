@@ -346,7 +346,8 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS pii_allow(entry TEXT PRIMARY KEY, added_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS owner_instructions(scope TEXT PRIMARY KEY, text TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS secrets(name TEXT PRIMARY KEY, value BLOB NOT NULL, stored_at INTEGER NOT NULL);
-             CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);",
+             CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS away(id INTEGER PRIMARY KEY CHECK (id = 1), at INTEGER NOT NULL);",
         )
         .map_err(|e| e.to_string())?;
     // stores made before a conversation could name a project
@@ -5888,6 +5889,54 @@ async fn inbox(axum::Extension(svc): Svc) -> Json<Value> {
     Json(json!({"items": items, "count": items.len()}))
 }
 
+/// What the owner has not been told yet: the reviews that stopped since the owner last said they had seen the list (`POST /api/away/seen`).
+/// The first time there is no earlier mark, so nothing is listed. Only ids, who each was for and how it ended; no document text.
+async fn away_list(axum::Extension(svc): Svc) -> Response {
+    let since: Option<i64> = {
+        let store = svc.store.lock().expect("lock");
+        store
+            .connection()
+            .query_row("SELECT at FROM away WHERE id = 1", [], |r| r.get(0))
+            .ok()
+    };
+    let mut finished: Vec<(i64, Value)> = Vec::new();
+    if let Some(since) = since {
+        let g = svc.inner.lock().expect("lock");
+        for j in g.jobs.values() {
+            let (state, note) = match &j.state {
+                JobState::Running => continue,
+                JobState::Ready => ("ready", String::new()),
+                JobState::NothingToRelease(n) => ("nothing_to_release", n.clone()),
+                JobState::Failed(m) => ("failed", m.clone()),
+            };
+            let at = j.events.iter().map(|e| e.at).max().unwrap_or(j.created);
+            if at > since {
+                finished.push((at, json!({"id": j.id, "recipient": j.recipient, "state": state, "note": note.chars().take(200).collect::<String>(), "at": at})));
+            }
+        }
+    }
+    finished.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+    finished.truncate(20);
+    Json(json!({"since": since, "finished": finished.into_iter().map(|(_, v)| v).collect::<Vec<_>>()})).into_response()
+}
+
+/// The owner has seen the list: later calls to `GET /api/away` list only what stopped after this moment.
+async fn away_seen(axum::Extension(svc): Svc) -> Response {
+    let at = now();
+    let store = svc.store.lock().expect("lock");
+    match store.connection().execute(
+        "INSERT INTO away(id, at) VALUES (1, ?1) ON CONFLICT(id) DO UPDATE SET at = excluded.at",
+        [at],
+    ) {
+        Ok(_) => Json(json!({"since": at})).into_response(),
+        Err(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "STORE",
+            "could not save that",
+        ),
+    }
+}
+
 async fn list(axum::Extension(svc): Svc) -> Json<Value> {
     let g = svc.inner.lock().expect("lock");
     Json(
@@ -7552,6 +7601,8 @@ impl Extension for Routes {
             .route("/api/ask/excerpt", post(ask_excerpt))
             .route("/api/history", get(history_list).post(history_add))
             .route("/api/history/clear", post(history_clear))
+            .route("/api/away", get(away_list))
+            .route("/api/away/seen", post(away_seen))
             .route("/api/sessions", get(sessions_list).post(session_new))
             .route("/api/sessions/search", get(sessions_search))
             .route("/api/sessions/{id}", get(session_get))

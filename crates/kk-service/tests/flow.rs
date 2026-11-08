@@ -12175,3 +12175,86 @@ fn sv123_the_notes_can_be_counted_and_filtered_by_level_origin_project_and_use()
     }
     assert_eq!(Web::new(c.addr).get("/api/memories/stats").0, 401);
 }
+
+#[test]
+fn sv124_the_owner_is_told_which_reviews_stopped_since_they_last_looked_and_only_those() {
+    let (c, w, repo, _root, _svc) = boot("away", true);
+    // the first time there is no earlier mark: nothing is listed, whatever exists
+    let (_, first) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "acme"}),
+    );
+    let one = first["id"].as_str().unwrap().to_string();
+    wait_for(&w, &one, &["ready", "nothing_to_release"]);
+    let (code, a) = w.get("/api/away");
+    assert_eq!(code, 200, "{a}");
+    assert!(
+        a["since"].is_null() && a["finished"].as_array().unwrap().is_empty(),
+        "{a}"
+    );
+    // seen: the mark is set, and the next listing is empty
+    let (code, seen) = w.post("/api/away/seen", json!({}));
+    assert_eq!(code, 200, "{seen}");
+    let mark = seen["since"].as_i64().unwrap();
+    let (_, a) = w.get("/api/away");
+    assert_eq!(a["since"], mark);
+    assert!(
+        a["finished"].as_array().unwrap().is_empty(),
+        "a review that stopped before the mark is not news: {a}"
+    );
+    // a review that stops after the mark is listed once, with who it was for, how it ended and no document text
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let (_, second) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "beta-audit"}),
+    );
+    let two = second["id"].as_str().unwrap().to_string();
+    let done = wait_for(&w, &two, &["ready", "nothing_to_release"]);
+    let (_, a) = w.get("/api/away");
+    let list = a["finished"].as_array().unwrap();
+    assert_eq!(list.len(), 1, "{a}");
+    assert_eq!(
+        (
+            list[0]["id"].as_str(),
+            list[0]["recipient"].as_str(),
+            list[0]["state"].as_str()
+        ),
+        (
+            Some(two.as_str()),
+            Some("beta-audit"),
+            done["state"].as_str()
+        )
+    );
+    assert!(list[0]["at"].as_i64().unwrap() > mark);
+    assert!(
+        !a.to_string().contains("payments-service"),
+        "ids, recipient and outcome only: {a}"
+    );
+    // two that stopped after the mark are listed newest first
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let (_, third) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "gamma-audit"}),
+    );
+    let three = third["id"].as_str().unwrap().to_string();
+    wait_for(&w, &three, &["ready", "nothing_to_release"]);
+    let (_, a) = w.get("/api/away");
+    let ids: Vec<&str> = a["finished"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|j| j["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, [three.as_str(), two.as_str()], "newest first: {a}");
+    // seen again: empty again
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    w.post("/api/away/seen", json!({}));
+    assert!(w.get("/api/away").1["finished"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    // without a session neither is reachable
+    let anon = Web::new(c.addr);
+    assert_eq!(anon.get("/api/away").0, 401);
+    assert_eq!(anon.post("/api/away/seen", json!({})).0, 401);
+}

@@ -500,6 +500,75 @@ for _ in range(240):
     time.sleep(0.25)
 os.close(m2)
 check("after the workspace is killed outright, the service it started exits by itself", gone, f"after {time.time() - killed_at:.1f} s")
+# reviews that stop while the workspace is closed are reported at the next launch, once
+data5 = work / "data5"
+srv5 = subprocess.Popen([str(kaku), "serve", "--data-dir", str(data5), "--root", str(work / "root"), "--scripted", str(repo / "tests/e2e/script.json"), "--ui-dir", str(repo / "apps/web/dist")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+try:
+    for _ in range(150):
+        if (data5 / "admin.json").exists():
+            break
+        time.sleep(0.1)
+
+
+    def open_close(label, want=None, absent=None, kill=False):
+        """Open the workspace on the running service, wait for `want` (if any) to show, then leave with /quit."""
+        mm, sl = pty.openpty()
+        fcntl.ioctl(sl, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 110, 0, 0))
+        pr = subprocess.Popen([str(kaku), "tui", "--data-dir", str(data5), "--root", str(work / "root"), "--scripted", str(repo / "tests/e2e/script.json"), "--ui-dir", str(repo / "apps/web/dist")], stdin=sl, stdout=sl, stderr=sl, env=env3, close_fds=True)
+        os.close(sl)
+        scr5 = Screen(32, 110)
+        dc5 = codecs.getincrementaldecoder("utf8")(errors="replace")
+
+        def pump5(seconds, until_text=None):
+            end = time.time() + seconds
+            while time.time() < end and (until_text is None or until_text not in scr5.text()):
+                r, _, _ = select.select([mm], [], [], 0.2)
+                if r:
+                    try:
+                        scr5.feed(dc5.decode(os.read(mm, 65536)))
+                    except OSError:
+                        break
+
+        pump5(30, "kakurega")
+        pump5(15 if want is None else 30, want)
+        pump5(1.5)
+        seen5 = scr5.text()
+        if kill:
+            # the terminal is closed outright: nothing is flushed on the way out
+            pr.kill()
+            pr.wait()
+        else:
+            os.write(mm, b"/quit\r")
+        end = time.time() + 20
+        while pr.poll() is None and time.time() < end:
+            r, _, _ = select.select([mm], [], [], 0.2)
+            if r:
+                try:
+                    os.read(mm, 65536)
+                except OSError:
+                    break
+        if pr.poll() is None:
+            pr.kill()
+            pr.wait()
+        os.close(mm)
+        if want is not None:
+            check(label, want in seen5 and (absent is None or absent not in seen5), seen5[-700:])
+        else:
+            check(label, absent is None or absent not in seen5, seen5[-700:])
+        return pr.returncode, seen5
+
+
+    rc, _ = open_close("the first launch reports nothing (there is no earlier mark)", absent="Stopped while you were away")
+    check("and the workspace exits cleanly", rc == 0, f"exit={rc}")
+    time.sleep(1.2)
+    done = subprocess.run([str(kaku), "review", str(work / "root/payments-service"), "--for", "away-audit", "--data-dir", str(data5), "--json"], capture_output=True, text=True, timeout=300)
+    check("a review finishes while no workspace is open", done.returncode in (0, 3), done.stdout[:200] + done.stderr[:200])
+    _, card = open_close("the next launch reports it (and is then killed, with no chance to say it left)", want="Stopped while you were away", kill=True)
+    check("the card names the review, who it was for and how it ended", "job-1" in card.split("Stopped while you were away")[-1] and "away-audit" in card.split("Stopped while you were away")[-1] and ("ready for your approval" in card or "nothing to release" in card), card[-700:])
+    open_close("and the launch after that does not report it again, because it was marked seen when shown", absent="Stopped while you were away")
+finally:
+    srv5.kill()
+    srv5.wait()
 bad = results.count(False)
 print(f"\n{len(results) - bad}/{len(results)} terminal checks passed" if bad == 0 else f"\n{bad} FAILED")
 sys.exit(1 if bad else 0)
