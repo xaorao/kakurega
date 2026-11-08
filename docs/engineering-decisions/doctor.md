@@ -1,0 +1,42 @@
+# `kaku doctor` (ledger A-A39)
+
+## Gap (VERIFIED by running and reading)
+`kaku diagnostics` needs a running service (it connects with `admin.json`), so it fails exactly when a person needs help: the service did not start, or died. `kaku tui` starts the service itself, so the useful question is "why did it not start, or why does it not work". Nothing answered it without a running service.
+
+## References
+- Hermes `hermes_cli/doctor.py` (200 lines) and `doctor_report.py` (97 lines), commit 29a61cb7, MIT: read in full. Ordered checks, each returning a `Finding` (fixable issues, manual issues, fixes applied), a numbered summary, `--fix`, an opt-in `--live` pass, exit code 1 on any issue. `doctor_connectivity.py` (446 lines): headings and the runner read: probes run in a thread pool of 8 with a timeout each, so one hung endpoint cannot stall the run; an IPv6 stall is named with its remedy. `doctor_state.py`, `doctor_platform.py`, `doctor_config.py`, `doctor_tools.py`, `doctor_live.py`: function lists only. NOT READ in full.
+- Cline and Goose `doctor` / `configure` (named in matrix A39): NOT READ.
+- Ours already has: the service's readiness checks (`/api/readiness`, `kaku diagnostics`), `kaku telegram doctor`.
+
+## What startup depends on (VERIFIED in `serve.rs`)
+`HOME`; the data directory and its `scratch` folder; the keys and the vaults; the sandbox transport (macOS default: `limactl` and a VM, with the worker and launcher inside it; Linux default: `bwrap` and a `kk-worker` beside the executable); the model endpoint (Ollama) for chat and reviews. `admin.json` (port and token, mode 0600) is written on start and removed only on a clean exit, so a crash or Ctrl-C leaves a stale one.
+
+## Decisions
+- BUILD `kaku doctor [--json] [--fix] [--skip ID[,ID]]` and the same flags `serve` takes for what it probes (`--data-dir --transport --vm --worker-bin --launcher --model --ollama`), so it checks what `serve` would use. It works with nothing running. Read-only unless `--fix`.
+- Rows are `ok`, `warn`, `fail` or `skip`, written as words, never by colour or symbol alone; plain lines, so a screen reader or a pipe reads it as it is. `--json` gives the same rows. Exit 0 when nothing failed (warnings allowed), 1 when something did. (Hermes: one exit code for any issue, no JSON, status by colour and glyph.)
+- Severity follows the product's own readiness page: what chat or reviews cannot work without (sandbox, worker, model) is `fail`; the data folder's loose permissions, a stale `admin.json`, a missing web build, a version difference are `warn`; a data folder that cannot be written, a damaged or world-readable `admin.json`, a full disk are `fail`.
+- Probes that can hang (the model endpoint, `limactl`, `df`) run at the same time with a hard time limit each, so the run is bounded.
+- If a service answers, its own readiness checks are shown as they are (they know their configuration) and the direct sandbox probes are skipped; if none answers, the direct probes run.
+- `--fix` is a closed set of local actions, each printed: create the data folder (owner only), make it owner only, make `admin.json` owner only, remove an `admin.json` that is damaged or whose service does not answer. It never touches keys, vaults, notes, configuration, processes or anything outside the data folder, and it refuses all of them on a folder that does not look like ours (none of the store files there) with the reason. A symbolic link is never followed to change its target's mode.
+- It never prints the admin token, a key, or the content of any file. Paths are shown (this is the owner's own screen; `kaku diagnostics` stays the one to attach to a bug report).
+
+## Beats the source on
+Machine-readable output; status as words; a bounded run; exit codes that separate failure from warning; a `--fix` that is a closed set and refuses on a folder that is not ours (Hermes's `--fix` repairs broadly); working without a running service while still showing the service's own checks when there is one.
+
+## Built
+- `kaku doctor [--json] [--fix] [--skip ID,ID]` and `--data-dir --transport --vm --worker-bin --launcher --model --ollama` (crates/kk-cli/src/doctor.rs). Sections: this computer, data folder (exists, owner only, key owner only, writable, free space), service (from `admin.json`), setup, web build. If a service answers, its own setup checks are shown; if not, the same probes the app runs are run directly by building the very `ReviewRunner` that `serve` builds (both now read their settings through one function, `serve::setup_from_flags`), with a 20-second limit so a stuck virtual machine cannot hold the command. `df` and the other commands run with a time limit and are stopped, not abandoned.
+- A running service is recognised first, by the unauthenticated `/api/health` answering `kakurega-companion`; only then is the admin token sent, once, in the `Authorization` header, to `/admin/diagnostics`. A port that answers as something else, or not at all, never sees the token.
+- `--fix` is the five actions in `FIXES` and nothing else; it is printed before it is run, and each action done is listed. It refuses to change a folder with none of Kakurega's own files in it, never follows a symbolic link, and never removes the `admin.json` of a service that answers.
+
+## Found by using it, and fixed (VERIFIED)
+- **A product defect:** a data folder that `kaku serve`, the service itself, `kaku restore` or the terminal workspace's auto-start made was created with the default permissions (755), so other users on the computer could list it. The key and `admin.json` were already owner only, and the stores are encrypted, but the folder was open. All four now go through `ensure_private_dir`: a missing folder is made 0700; an existing folder is never changed by a program start (changing what someone already has is the doctor's job, with their say-so). Tests: pd01-pd03, sv134, restore, dd08, dd09, each with a mutant that undoes it.
+- **A parsing bug of my own,** found by a test: `df` wraps a long device name onto its own line and then has no device column, so "available" is the third field, not the fourth.
+- **Real result on this machine:** the doctor reports this computer's own `~/.kakurega` as mode 755 and its `admin.json` as left over from a service that is gone (a crash or Ctrl-C does not remove it). Recorded in HUMAN.md; not changed.
+
+## Evidence
+- Unit (dc01-dc21): the `df` layouts, the thresholds at their boundaries, the home folder, every state of the data folder and key and `admin.json` (missing, loose, group-readable at 640 and 750, a link, damaged seven ways, stale, foreign, live, version mismatch, a live service refusing diagnostics), that the token appears in no row and is sent only after recognition, the setup mappings, the skip ids, the report order, control and direction characters, the time limit that really stops the command (checked with a process search), and that the fix list names only the five documented actions. Wire level: the real HTTP probe against a fake server (the first question carries no token; the second sends it only as a header, never in the address). Binary level (dd01-dd09): exit codes 0 and 1 and 2, `--json`, a fresh machine, a stale file plus loose permissions fixed with nothing else touched, a folder that is not ours left alone, a foreign server that records what it is sent and never sees the token, and the real `kaku serve` and `kaku tui` making a new folder owner only.
+- Real use: a real `kaku serve` was run, doctored (running, version, its own setup checks, `bwrap not found` correct for the local transport on a Mac), killed with `kill -9`, doctored again (stale), and fixed.
+- 27 mutants of the doctor and the folder helper, all caught (16 in the first batch, 5 retargeted or caught only after I strengthened a test, 6 for the helper and its call sites): one was first missed because my test proved the command returned in time but not that it was stopped, one needed a group-readable key at 640, and three creation sites were only caught once each had its own test.
+
+## Not covered
+- The configuration file with a closed set of keys that the matrix also asked for (A-A39 stays PARTIAL for that), `--live` network probes, Windows, the desktop app's own diagnostics, and a service started with options the doctor was not given (it then shows that service's own checks, which is correct, but the direct probes use the flags passed to the doctor).

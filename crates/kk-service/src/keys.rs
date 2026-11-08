@@ -30,6 +30,18 @@ fn unhex(s: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
+/// Makes the folder if it is missing, owner only. A folder that already exists is left exactly as it is: changing what someone
+/// already has is `kaku doctor --fix`'s job, and only with their say-so. Parents that have to be made on the way keep the
+/// default; only the folder itself holds the stores, so only it is restricted.
+pub fn ensure_private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    if dir.exists() {
+        return Ok(());
+    }
+    fs::create_dir_all(dir)?;
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+}
+
 pub fn vault_key(data_dir: &Path) -> std::io::Result<[u8; 32]> {
     use kk_vault::durable;
     let path = data_dir.join("vault.key");
@@ -127,4 +139,63 @@ pub fn load_keys(data_dir: &Path) -> Result<Keys, String> {
         commitment_key,
         log_seed,
     })
+}
+
+#[cfg(test)]
+mod private_dir_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn mode(p: &Path) -> u32 {
+        fs::metadata(p).unwrap().permissions().mode() & 0o777
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("kk-private-dir-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        d
+    }
+
+    #[test]
+    fn pd01_a_missing_folder_is_made_owner_only_and_only_the_folder_itself_is_restricted() {
+        let base = scratch("new");
+        let leaf = base.join("a").join("data");
+        ensure_private_dir(&leaf).unwrap();
+        assert_eq!(mode(&leaf), 0o700);
+        assert_ne!(
+            mode(&base.join("a")) & 0o077,
+            0o777,
+            "a parent made on the way is not our folder"
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn pd02_a_folder_that_already_exists_is_left_exactly_as_it_is_whatever_its_mode() {
+        for m in [0o755, 0o750, 0o700, 0o775] {
+            let d = scratch(&format!("exists{m:o}"));
+            fs::create_dir_all(&d).unwrap();
+            fs::set_permissions(&d, fs::Permissions::from_mode(m)).unwrap();
+            ensure_private_dir(&d).unwrap();
+            assert_eq!(mode(&d), m, "{m:o}");
+            let _ = fs::remove_dir_all(&d);
+        }
+    }
+
+    #[test]
+    fn pd03_a_file_in_the_way_is_an_error_not_a_silent_success() {
+        let base = scratch("file");
+        fs::create_dir_all(&base).unwrap();
+        let file = base.join("data");
+        fs::write(&file, "x").unwrap();
+        // the path exists (as a file), so nothing is made; the stores will then fail loudly on their own
+        assert!(ensure_private_dir(&file).is_ok());
+        assert!(file.is_file());
+        let under = file.join("sub");
+        assert!(
+            ensure_private_dir(&under).is_err(),
+            "a folder cannot be made inside a file"
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
 }

@@ -627,7 +627,7 @@ impl Service {
         runner: Arc<dyn JobRunner>,
         test_mode: bool,
     ) -> Result<Arc<Service>, String> {
-        std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+        crate::keys::ensure_private_dir(data_dir).map_err(|e| e.to_string())?;
         let keys = load_keys(data_dir)?;
         let ledger_vault = open_vault(data_dir, "ledger.db")?;
         let ledger = Ledger::open_owner(ledger_vault, SystemClock, &data_dir.join("ledger.lock"))

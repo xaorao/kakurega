@@ -415,7 +415,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | A-A36 | Error recovery and process lifecycle | see the section in matrix A | BUILT | terminal restored after errors and exit (tui_pty.py) |
 | A-A37 | Reconnect and event replay | see the section in matrix A | PARTIAL | watched reviews are polled every 0.7 s; no event replay (row 17 exclusion) |
 | A-A38 | Headless and programmatic modes | see the section in matrix A | BUILT | kaku review/follow/jobs/findings/ask/chat/sessions (+export) with --json and distinct exit codes; none can approve (script_cli.py 61 checks, mutation-checked; terminal-transcript.md) |
-| A-A39 | Configuration and diagnostics | see the section in matrix A | PARTIAL | `kaku telegram doctor`; no general `kaku doctor` |
+| A-A39 | Configuration and diagnostics | see the section in matrix A | PARTIAL | kaku doctor built (works with nothing running, bounded probes, --json, closed-set --fix, token never sent to an unrecognised port); found and fixed: a new data folder was created 755 (doctor.md); the closed-key config file is not built |
 | A-A40 | Status line, title, usage | see the section in matrix A | PARTIAL | status line shows how full the model's window is after each answer; no cost or speed (terminal-transcript.md) |
 | A-A41 | Clipboard | see the section in matrix A | PARTIAL | /copy puts the last reply or the whole conversation on the clipboard through OSC 52 after asking; no paste handling (terminal-transcript.md) |
 | A-A42 | How the references test a terminal UI | see the section in matrix A | BUILT | real-terminal harness with canary and 27 checks (tui_pty.py) |

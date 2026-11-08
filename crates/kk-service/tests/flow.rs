@@ -3415,6 +3415,14 @@ fn sv27_a_backup_taken_while_running_restores_the_data_into_an_empty_folder_and_
     let fresh = root.join("restored");
     let r = kk_service::backup::restore(&made.file, &made.recovery_key, &fresh).unwrap();
     assert_eq!(r.databases, made.databases);
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let folder = std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            folder, 0o700,
+            "a folder a restore makes is owner only: {folder:o}"
+        );
+    }
     assert_eq!(
         std::fs::read_to_string(fresh.join("vault.key"))
             .unwrap()
@@ -13133,4 +13141,46 @@ fn sv133_short_notes_are_not_searched_and_look_alike_letters_are_not_claimed_and
         "{r}"
     );
     assert_eq!(r["copies_known"]["conversations_more"], 3, "{r}");
+}
+
+#[test]
+fn sv134_a_new_data_folder_is_made_owner_only_with_an_owner_only_key_and_an_existing_one_is_left_as_it_is(
+) {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    let base = std::env::temp_dir().join(format!("kk-sv134-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let fresh = base.join("fresh");
+    let svc = Service::new(
+        &fresh,
+        vec![],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    drop(svc);
+    assert_eq!(
+        mode(&fresh),
+        0o700,
+        "a folder the service makes is owner only"
+    );
+    assert_eq!(
+        mode(&fresh.join("vault.key")) & 0o077,
+        0,
+        "and so is the key inside it"
+    );
+    // a folder that was already there, with whatever mode its owner gave it, is not changed behind their back
+    let existing = base.join("existing");
+    std::fs::create_dir_all(&existing).unwrap();
+    std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let svc = Service::new(
+        &existing,
+        vec![],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    drop(svc);
+    assert_eq!(mode(&existing), 0o755);
+    let _ = std::fs::remove_dir_all(&base);
 }

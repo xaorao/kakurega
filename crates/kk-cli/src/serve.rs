@@ -29,17 +29,16 @@ pub fn run(args: &[String]) -> u8 {
     }
 }
 
-fn serve(args: &[String]) -> Result<(), String> {
-    let data = crate::data_dir(args);
-    std::fs::create_dir_all(&data).map_err(|e| e.to_string())?;
-    let home = PathBuf::from(std::env::var("HOME").map_err(|_| "HOME is not set")?);
-    let mut roots: Vec<PathBuf> = crate::flags(args, "--root")
-        .into_iter()
-        .map(PathBuf::from)
-        .collect();
-    if roots.is_empty() {
-        roots.push(home.clone());
-    }
+/// The model endpoint, the sandbox and the worker the service will use, read from the flags in one place so `kaku doctor` checks
+/// what `kaku serve` would run. `quiet` leaves out the warning about an unreachable virtual machine (the doctor reports it itself).
+pub struct Setup {
+    pub model: String,
+    pub ollama: String,
+    pub transport: Transport,
+    pub worker_binary: PathBuf,
+}
+
+pub fn setup_from_flags(args: &[String], quiet: bool) -> Result<Setup, String> {
     let model = crate::flag(args, "--model").unwrap_or_else(|| "qwen2.5:1.5b".into());
     let ollama = crate::flag(args, "--ollama").unwrap_or_else(|| "http://127.0.0.1:11434".into());
     let default_transport = if cfg!(target_os = "linux") {
@@ -63,7 +62,9 @@ fn serve(args: &[String]) -> Result<(), String> {
         "lima" => {
             let vm = crate::flag(args, "--vm").unwrap_or_else(|| "kak".into());
             let vh = vm_home(&vm).unwrap_or_else(|e| {
-                eprintln!("warning: {e}; the setup check in the app will say what to fix");
+                if !quiet {
+                    eprintln!("warning: {e}; the setup check in the app will say what to fix");
+                }
                 "/vm-not-available".to_string()
             });
             (
@@ -82,6 +83,35 @@ fn serve(args: &[String]) -> Result<(), String> {
         }
         other => return Err(format!("unknown transport `{other}` (use lima or local)")),
     };
+    Ok(Setup {
+        model,
+        ollama,
+        transport,
+        worker_binary,
+    })
+}
+
+fn serve(args: &[String]) -> Result<(), String> {
+    let data = crate::data_dir(args);
+    kk_service::keys::ensure_private_dir(&data).map_err(|e| e.to_string())?;
+    let home = PathBuf::from(std::env::var("HOME").map_err(|_| "HOME is not set")?);
+    let mut roots: Vec<PathBuf> = crate::flags(args, "--root")
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+    if roots.is_empty() {
+        roots.push(home.clone());
+    }
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_default();
+    let Setup {
+        model,
+        ollama,
+        transport,
+        worker_binary,
+    } = setup_from_flags(args, false)?;
     let scratch = data.join("scratch");
     std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
     let keys = kk_service::keys::load_keys(&data)?;

@@ -110,7 +110,7 @@ pub fn restore(file: &[u8], recovery_key_text: &str, data_dir: &Path) -> Result<
     }
     let key_hex = key_hex.ok_or("the backup holds no vault key")?;
     let raw = parse_key(key_hex.trim()).ok_or("the vault key in the backup is damaged")?;
-    fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    crate::keys::ensure_private_dir(data_dir).map_err(|e| e.to_string())?;
     let staging: PathBuf = data_dir.join(format!(".restore-{}", std::process::id()));
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging).map_err(|e| e.to_string())?;

@@ -41,7 +41,7 @@ pub fn run(args: &[String]) -> u8 {
 fn ensure_service(dir: &std::path::Path, args: &[String], guard: &mut Guard) -> Result<(), u8> {
     let dir = dir.to_path_buf();
     if !responsive(&dir) {
-        let _ = std::fs::create_dir_all(&dir);
+        let _ = kk_service::keys::ensure_private_dir(&dir);
         let log = std::fs::File::create(dir.join("serve.log")).ok();
         let exe = match std::env::current_exe() {
             Ok(e) => e,
