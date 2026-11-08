@@ -374,7 +374,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
 
     let footer = match &app.mode {
         Mode::Confirm(c) => c.prompt.clone(),
-        Mode::Picker(_) => "Up/Down choose · Right previews · Enter opens · type to filter · Ctrl-D twice forgets a chat · Esc closes".to_string(),
+        Mode::Picker(_) => "Up/Down choose · Right previews · Enter opens · Ctrl-A puts away · Ctrl-R archived · Ctrl-D twice forgets · Esc closes".to_string(),
         Mode::Approval(_) => {
             "Type the digest prefix · Enter approves · Esc or Ctrl-C refuses".to_string()
         }
@@ -482,7 +482,12 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
             Span::styled("Filter: ", Style::default().add_modifier(Modifier::BOLD)),
             filter,
         ];
-        if let Some(project) = &p.project {
+        if p.show_archived {
+            head.push(Span::styled(
+                "   [archived · Ctrl-R: back to the list in use]",
+                th.fg(Color::Cyan),
+            ));
+        } else if let Some(project) = &p.project {
             head.push(Span::styled(
                 if p.only_project {
                     format!("   [project {project} · Tab: all projects]")

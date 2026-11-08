@@ -21,6 +21,8 @@ pub struct Item {
     pub kind: ItemKind,
     /// The project a kept conversation belongs to; reviews have none.
     pub project: Option<String>,
+    /// A kept conversation the owner put away: out of the list, still stored, back with the archived view.
+    pub archived: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +52,8 @@ pub struct Picker {
     pub scope_note: Option<String>,
     /// The last messages of the conversation the owner expanded with the Right arrow: its id and the lines shown under its row.
     pub preview: Option<(String, Vec<String>)>,
+    /// Whether the list shows the conversations the owner put away instead of the ones in use.
+    pub show_archived: bool,
 }
 
 /// Days since 1970-01-01 to a calendar date (proleptic Gregorian), after Howard Hinnant's published algorithm.
@@ -93,6 +97,7 @@ impl Picker {
             only_project: false,
             scope_note: None,
             preview: None,
+            show_archived: false,
         }
     }
 
@@ -124,6 +129,16 @@ impl Picker {
 
     /// Whether an item shows under the current scope: reviews always do; a conversation does when all projects are shown or it is this project's.
     fn in_scope(&self, it: &Item) -> bool {
+        // the archived view lists only archived conversations; the other view lists none of them, and reviews belong to the other view
+        match it.kind {
+            ItemKind::Chat if it.archived != self.show_archived => return false,
+            ItemKind::Review if self.show_archived => return false,
+            _ => {}
+        }
+        // what was put away is looked for across every project
+        if self.show_archived {
+            return true;
+        }
         match (&self.project, self.only_project, it.kind) {
             (_, false, _) | (_, _, ItemKind::Review | ItemKind::Message) | (None, _, _) => true,
             (Some(p), true, ItemKind::Chat) => it.project.as_deref() == Some(p.as_str()),
@@ -150,6 +165,26 @@ impl Picker {
                 self.project.as_deref().unwrap_or("")
             ));
         }
+    }
+
+    /// Switches between the conversations in use and the ones put away.
+    pub fn toggle_archived_view(&mut self) {
+        self.show_archived = !self.show_archived;
+        self.selected = 0;
+        self.armed = None;
+        self.preview = None;
+        self.scope_note = None;
+    }
+
+    /// Marks a conversation archived or not after the service said yes, so it moves to the other view.
+    pub fn set_archived(&mut self, id: &str, archived: bool) {
+        for it in &mut self.items {
+            if it.id == id && it.kind == ItemKind::Chat {
+                it.archived = archived;
+            }
+        }
+        self.clamp();
+        self.preview = None;
     }
 
     /// Tab: this project's conversations, or every project's. Nothing to switch when the folder has no project.
@@ -234,6 +269,7 @@ mod tests {
             when,
             kind,
             project: None,
+            archived: false,
         }
     }
 

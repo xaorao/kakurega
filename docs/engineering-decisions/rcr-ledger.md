@@ -306,7 +306,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | G-GH-20 | Interactive previews and artifacts rendered in a sandbox page (CSP `co | ADAPT the idea: render model-made HTML in a sandboxed frame with no network, no storage | EXCLUDED | no model-written HTML is run |
 | G-GH-21 | App-context capture with an optional global shortcut | BUILD as an explicit one-shot capture with preview and label, not a background recorder | LATER | explicit one-shot capture |
 | G-GH-22 | Voice input (local Whisper) and local TTS | BUILD local only; remote speech route only for Public-label audio | EXCLUDED | voice not built; remote speech excluded |
-| G-GH-23 | Chat search (Cmd+K), fork, archive, rename, Recent list | BUILD search over history in the vault, results filtered by label | PARTIAL | search and rename built (web, terminal); fork and archive not built |
+| G-GH-23 | Chat search (Cmd+K), fork, archive, rename, Recent list | BUILD search over history in the vault, results filtered by label | BUILT | search, rename, fork and archive in web and terminal (archive in terminal: tu84, pty 78); Recent list is the picker (terminal-transcript.md) |
 | G-GH-24 | Reply buttons, table copy and export, code copy, keyboard access | BUILD; export of a result is a release (goes through the one approval path) | PARTIAL | code copy; no table copy or export of a result |
 | G-GH-25 | Vision and images | BUILD later; images get a label at entry (screenshots hold secrets) | LATER | images get a label at entry |
 | G-GH-26 | Video generation | EXCLUDE (no private route) | EXCLUDED | no private route |
@@ -379,7 +379,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 |---|---|---|---|---|
 | A-A01 | Persistent sessions: save, list, resume | see the section in matrix A | BUILT | encrypted kept conversations, list, open, forget (c81c227) |
 | A-A02 | Session picker | see the section in matrix A | BUILT | /sessions picker (picker.rs) |
-| A-A03 | Resume at launch | see the section in matrix A | PARTIAL | --resume [ID] [--fork], project-scoped /sessions picker, Right-arrow transcript preview (tu77-tu80, pty 60, mutation-checked); OpenCode session-target.ts FULL, Codex resume_picker.rs PART; no sort, archive view, density, paging (terminal-transcript.md) |
+| A-A03 | Resume at launch | see the section in matrix A | PARTIAL | --resume [ID] [--fork]; project-scoped /sessions picker with Right preview and Ctrl-A/Ctrl-R archive views (tu77-tu80, tu84, pty 78, mutation-checked); OpenCode session-target.ts FULL, Codex resume_picker.rs PART; no sort, density, paging (terminal-transcript.md) |
 | A-A04 | Fork or branch a session | see the section in matrix A | PARTIAL | /branch [N] copies a kept conversation and opens the copy; no version switcher or message picker; terminal references not re-read (terminal-transcript.md) |
 | A-A05 | Rewind to an earlier prompt, with file revert | see the section in matrix A | PARTIAL | /rewind [N] and Esc twice choose an earlier message from a list; /undofix for fixes (tu74, tu83, pty 75, mutation-checked); Claude Code behaviour from docs only (closed); no whole-file revert or side-by-side (terminal-transcript.md) |
 | A-A06 | Message queue while busy | see the section in matrix A | BUILT | queued messages while an answer arrives (7d5a796) |

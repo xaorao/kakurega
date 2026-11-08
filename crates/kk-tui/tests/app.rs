@@ -934,7 +934,10 @@ fn tu21_the_picker_lists_chats_and_reviews_filters_opens_and_forgets_with_a_seco
         state: "ready".into(),
     });
     let r = enter(&mut a, "/sessions");
-    assert_eq!(r[0].path, "/api/sessions");
+    assert_eq!(
+        r[0].path, "/api/sessions?archived=1",
+        "the list asks for the archived ones too, and shows them in their own view"
+    );
     assert!(matches!(a.mode, Mode::Picker(_)));
     a.handle(ok(&r[0], 200, json!({"sessions": [
         {"id": "chat-1", "title": "Invoice questions", "created": 100, "updated": 100, "turns": 4},
@@ -3802,6 +3805,7 @@ mod linear_mode {
                 when: 100 - i as i64,
                 kind: ItemKind::Chat,
                 project: None,
+                archived: false,
             });
         }
         app.mode = Mode::Picker(p);
@@ -4721,7 +4725,7 @@ fn tu77_a_chosen_conversation_opens_by_id_from_the_command_line_and_from_the_pro
     // `/resume` alone still opens the picker
     let mut c = booted();
     let r = enter(&mut c, "/resume");
-    assert!(matches!(c.mode, Mode::Picker(_)) && r[0].path == "/api/sessions");
+    assert!(matches!(c.mode, Mode::Picker(_)) && r[0].path == "/api/sessions?archived=1");
     // an id that is not an id never becomes part of a request path
     for bad in [
         "../admin/secrets",
@@ -4858,7 +4862,7 @@ fn open_picker_with(app: &mut App, sessions: Value) -> Vec<String> {
     let r = enter(app, "/sessions");
     let sess = r
         .iter()
-        .find(|q| q.path == "/api/sessions")
+        .find(|q| q.path.starts_with("/api/sessions"))
         .expect("the list is requested");
     app.handle(ok(sess, 200, sessions));
     picker_rows(app)
@@ -5305,5 +5309,92 @@ fn tu83_rewind_alone_and_escape_twice_list_the_owners_messages_and_choosing_one_
     assert!(
         !e.cancel.load(std::sync::atomic::Ordering::SeqCst),
         "one Esc arms, it does not stop the answer"
+    );
+}
+
+#[test]
+fn tu84_a_conversation_can_be_put_away_from_the_picker_and_found_again_in_the_archived_view() {
+    let list = json!({"sessions": [
+        {"id": "c-use", "title": "in use", "updated": 50, "turns": 2, "project": "payments-service", "archived": false},
+        {"id": "c-away", "title": "put away", "updated": 40, "turns": 3, "project": "billing", "archived": true},
+        {"id": "c-use2", "title": "also in use", "updated": 30, "turns": 1, "project": null, "archived": false},
+    ]});
+    let mut a = booted();
+    a.chat_project = None;
+    a.jobs.push(kk_tui::app::JobRow {
+        id: "job-1".into(),
+        recipient: "acme".into(),
+        state: "ready".into(),
+    });
+    // the list in use does not show the archived one
+    assert_eq!(
+        open_picker_with(&mut a, list.clone()),
+        ["c-use", "c-use2", "job-1"]
+    );
+    // Ctrl-R shows only what was put away, from every project, and names the view
+    a.handle(ctrl('r'));
+    assert_eq!(picker_rows(&a), ["c-away"]);
+    let screen = render(&a, 110, 24, false).0.join("\n");
+    assert!(
+        screen.contains("[archived · Ctrl-R: back to the list in use]")
+            && screen.contains("put away"),
+        "{screen}"
+    );
+    // Ctrl-A there brings it back: the request says so, and after the service agrees it moves to the list in use
+    let r = a.handle(ctrl('a'));
+    assert_eq!(
+        (r[0].method, r[0].path.as_str()),
+        (Method::Post, "/api/sessions/c-away/archive")
+    );
+    assert_eq!(r[0].body.as_ref().unwrap(), &json!({"archived": false}));
+    a.handle(ok(&r[0], 200, json!({"ok": true})));
+    assert!(picker_rows(&a).is_empty(), "it left the archived view");
+    a.handle(ctrl('r'));
+    assert_eq!(
+        picker_rows(&a),
+        ["c-use", "c-away", "c-use2", "job-1"],
+        "and it is in the list in use now, in its place by date"
+    );
+    // Ctrl-A on a conversation in use puts it away
+    a.handle(key(KeyCode::Down));
+    let r = a.handle(ctrl('a'));
+    assert_eq!(r[0].path, "/api/sessions/c-away/archive");
+    assert_eq!(r[0].body.as_ref().unwrap(), &json!({"archived": true}));
+    // a refusal is shown in the list, nothing moves, the picker stays open
+    a.handle(ok(
+        &r[0],
+        404,
+        json!({"error": {"code": "NO_SESSION", "message": "there is no such kept conversation"}}),
+    ));
+    assert!(matches!(a.mode, Mode::Picker(_)));
+    assert!(picker_rows(&a).contains(&"c-away".to_string()));
+    assert!(render(&a, 110, 24, false)
+        .0
+        .join("\n")
+        .contains("there is no such kept conversation"));
+    // a review cannot be put away
+    a.handle(key(KeyCode::Down));
+    a.handle(key(KeyCode::Down));
+    assert_eq!(a.handle(ctrl('a')).len(), 0);
+    assert!(render(&a, 110, 24, false)
+        .0
+        .join("\n")
+        .contains("Only kept conversations can be put away."));
+    // reviews are not listed in the archived view
+    a.handle(ctrl('r'));
+    assert!(!picker_rows(&a).contains(&"job-1".to_string()));
+    // with a project scope on, the archived view still looks across every project
+    let mut b = booted();
+    b.chat_project = Some("payments-service".into());
+    assert_eq!(
+        open_picker_with(&mut b, list),
+        ["c-use"],
+        "scoped to the project"
+    );
+    b.handle(ctrl('r'));
+    assert_eq!(
+        picker_rows(&b),
+        ["c-away"],
+        "the archived one of another project is found"
     );
 }

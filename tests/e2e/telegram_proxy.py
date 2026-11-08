@@ -40,7 +40,14 @@ def proxy():
             return
         try:
             c.settimeout(3)
-            head = c.recv(4096).decode("latin1", "replace")
+            # one recv can return only the start of the request line: read until the line is complete
+            raw = b""
+            while b"\r\n" not in raw and len(raw) < 8192:
+                part = c.recv(4096)
+                if not part:
+                    break
+                raw += part
+            head = raw.decode("latin1", "replace")
             connects.append(head.split("\r\n")[0])
             c.sendall(b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\n\r\n")
         except Exception:

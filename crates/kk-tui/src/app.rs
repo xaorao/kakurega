@@ -126,6 +126,8 @@ enum Intent {
     Sessions,
     OpenChat(String),
     ForgetChat(String),
+    /// Put a kept conversation away, or bring it back; the flag is what it becomes.
+    ArchiveChat(String, bool),
     Readiness,
     Jobs,
     /// Folder names asked for to finish the folder being typed after /review: the line as it was and the part typed so far.
@@ -560,6 +562,7 @@ impl App {
                 when: i as i64,
                 kind: crate::picker::ItemKind::Message,
                 project: None,
+                archived: false,
             });
         }
         if p.items.is_empty() {
@@ -1129,6 +1132,25 @@ impl App {
             KeyCode::PageUp => p.move_by(-8),
             KeyCode::Backspace => p.backspace(),
             KeyCode::Tab => p.toggle_scope(),
+            KeyCode::Char('r') if ctrl => p.toggle_archived_view(),
+            KeyCode::Char('a') if ctrl => {
+                let Some(it) = p.current().cloned() else {
+                    return Vec::new();
+                };
+                if it.kind != ItemKind::Chat {
+                    p.error = Some("Only kept conversations can be put away.".into());
+                    return Vec::new();
+                }
+                p.error = None;
+                let to = !it.archived;
+                return vec![self.req(
+                    Intent::ArchiveChat(it.id.clone(), to),
+                    false,
+                    Method::Post,
+                    &format!("/api/sessions/{}/archive", it.id),
+                    Some(json!({"archived": to})),
+                )];
+            }
             KeyCode::Left => p.preview = None,
             KeyCode::Right => {
                 let Some(it) = p.current().cloned() else {
@@ -2044,10 +2066,17 @@ impl App {
                         when: 0,
                         kind: crate::picker::ItemKind::Review,
                         project: None,
+                        archived: false,
                     });
                 }
                 self.mode = Mode::Picker(p);
-                vec![self.req(Intent::Sessions, false, Method::Get, "/api/sessions", None)]
+                vec![self.req(
+                    Intent::Sessions,
+                    false,
+                    Method::Get,
+                    "/api/sessions?archived=1",
+                    None,
+                )]
             }
             Command::Status => vec![self.req(
                 Intent::Readiness,
@@ -4444,6 +4473,7 @@ impl App {
                                 when: k["updated"].as_i64().unwrap_or(0),
                                 kind: crate::picker::ItemKind::Chat,
                                 project: k["project"].as_str().map(clean),
+                                archived: k["archived"].as_bool().unwrap_or(false),
                             });
                         }
                         p.settle_scope();
@@ -4495,6 +4525,17 @@ impl App {
                         Kind::Ok,
                         "Opened the kept conversation. New messages are saved to it.",
                     );
+                }
+                Vec::new()
+            }
+            Intent::ArchiveChat(id, to) => {
+                if let Mode::Picker(p) = &mut self.mode {
+                    if ok {
+                        p.set_archived(&id, to);
+                        p.error = None;
+                    } else {
+                        p.error = Some(err_text(status, &body));
+                    }
                 }
                 Vec::new()
             }

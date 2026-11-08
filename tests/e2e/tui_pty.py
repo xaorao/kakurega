@@ -442,6 +442,27 @@ if kept:
     pump_picker(20, "newercanary words")
     widened = scr.text()
     check("Tab shows every project, conversations of no project included", "all projects" in widened and "newercanary words" in widened, widened[-500:])
+    # Ctrl-A puts the chosen (newest) conversation away; Ctrl-R shows the archived view; Ctrl-A there brings it back
+    def listed_titles():
+        out = subprocess.run([kaku, "sessions", "--json", "--data-dir", str(data)], capture_output=True, text=True).stdout
+        return [x["title"] for x in json.loads(out)["sessions"]]
+
+    pump_picker(1)
+    os.write(m, b"\x01")
+    end = time.time() + 20
+    while time.time() < end and "newercanary words" in listed_titles():
+        time.sleep(0.3)
+    check("Ctrl-A puts the chosen conversation away: the service no longer lists it", "newercanary words" not in listed_titles() and "resumecanary words" in listed_titles(), str(listed_titles()))
+    os.write(m, b"\x12")
+    pump_picker(15, "archived · Ctrl-R")
+    pump_picker(15, "newercanary words")
+    archived_view = scr.text()
+    check("Ctrl-R shows the archived view with the conversation put away", "[archived" in archived_view and "newercanary words" in archived_view, archived_view[-500:])
+    os.write(m, b"\x01")
+    end = time.time() + 20
+    while time.time() < end and "newercanary words" not in listed_titles():
+        time.sleep(0.3)
+    check("Ctrl-A there brings it back to the list in use", "newercanary words" in listed_titles(), str(listed_titles()))
     os.write(m, b"\x1b")
     pump_picker(2)
     os.write(m, b"/quit\r")
