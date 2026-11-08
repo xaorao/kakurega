@@ -4116,13 +4116,16 @@ async fn attachment_get(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>)
     {
         Some(s) => {
             let mut v = attachment_summary(&s.id, &s.parsed, s.bytes);
+            let texts: Vec<&str> = s.parsed.passages.iter().map(|p| p.text.as_str()).collect();
+            let viewed = crate::attachments::view_file(&texts);
             v["read"] = json!(s
                 .parsed
                 .passages
                 .iter()
-                .map(|p| json!({
+                .zip(viewed)
+                .map(|(p, lines)| json!({
                     "anchor": p.anchor,
-                    "lines": crate::attachments::view(&p.text)
+                    "lines": lines
                         .into_iter()
                         .map(|l| json!({"text": l.text, "flagged": l.flagged}))
                         .collect::<Vec<_>>(),

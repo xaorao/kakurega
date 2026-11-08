@@ -104,6 +104,53 @@ pub fn has_secret(text: &str) -> bool {
     !kk_secrets::scan(text).is_empty() || kk_secrets::looks_secret(text).is_some()
 }
 
+/// The lines of a file that belong to a private-key block, passage by passage: from a `-----BEGIN ... PRIVATE KEY...-----` line
+/// through the matching `-----END ...-----` line, or to the end of the file when no end is found. A block can start in one
+/// passage and end in another (a passage is up to 40 lines), and the lines between the two markers show nothing of what they
+/// are on their own, so this is decided over the whole file in order and not one line or one passage at a time.
+pub fn private_key_lines(passages: &[&str]) -> Vec<Vec<bool>> {
+    let mut inside = false;
+    passages
+        .iter()
+        .map(|text| {
+            text.split('\n')
+                .map(|line| {
+                    let t = line.trim();
+                    if !inside && t.starts_with("-----BEGIN ") && t.contains("PRIVATE KEY") {
+                        inside = !t.starts_with("-----END ");
+                        return true;
+                    }
+                    if inside {
+                        if t.starts_with("-----END ") {
+                            inside = false;
+                        }
+                        return true;
+                    }
+                    false
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// A passage without the lines `drop` marks, and how many separate runs were removed (a run is one block of lines).
+fn without_marked(text: &str, drop: &[bool]) -> (Option<String>, usize) {
+    let mut kept = Vec::new();
+    let mut runs = 0usize;
+    let mut previous = false;
+    for (line, d) in text.split('\n').zip(drop) {
+        if *d {
+            if !previous {
+                runs += 1;
+            }
+        } else {
+            kept.push(line);
+        }
+        previous = *d;
+    }
+    ((!kept.is_empty()).then(|| kept.join("\n")), runs)
+}
+
 /// What one file contributes to a question, and what was kept out of it.
 pub struct Block {
     /// `[file: name (kind)]`
@@ -182,7 +229,22 @@ pub struct ViewLine {
     pub flagged: Option<&'static str>,
 }
 
+#[cfg(test)]
 pub fn view(text: &str) -> Vec<ViewLine> {
+    view_in(text, &vec![false; text.split('\n').count()])
+}
+
+/// The same for every passage of a file, so that the lines of a private key that began in an earlier passage show as left out.
+pub fn view_file(passages: &[&str]) -> Vec<Vec<ViewLine>> {
+    let keys = private_key_lines(passages);
+    passages
+        .iter()
+        .zip(&keys)
+        .map(|(text, k)| view_in(text, k))
+        .collect()
+}
+
+fn view_in(text: &str, key_lines: &[bool]) -> Vec<ViewLine> {
     let by_instruction = mask(text, instruction_like);
     let by_secret = mask(text, has_secret);
     text.split('\n')
@@ -191,7 +253,7 @@ pub fn view(text: &str) -> Vec<ViewLine> {
             text: l.to_string(),
             flagged: if by_instruction.lines[i] {
                 Some("instruction_like")
-            } else if by_secret.lines[i] {
+            } else if by_secret.lines[i] || key_lines.get(i).copied().unwrap_or(false) {
                 Some("secret")
             } else {
                 None
@@ -208,15 +270,26 @@ pub fn block(p: &Parsed, runs_here: bool) -> Block {
     let mut body = String::new();
     let (mut instr, mut secrets) = (0usize, 0usize);
     let mut left: Vec<&str> = Vec::new();
-    for passage in &p.passages {
-        let (kept, i) = without(&passage.text, instruction_like);
+    let texts: Vec<&str> = p.passages.iter().map(|p| p.text.as_str()).collect();
+    let keys = private_key_lines(&texts);
+    for (n, passage) in p.passages.iter().enumerate() {
+        // a private key's lines show nothing alone, so for a model elsewhere the whole block goes, wherever the passages cut it
+        let (text, key_runs) = if runs_here {
+            (Some(passage.text.clone()), 0)
+        } else {
+            without_marked(&passage.text, &keys[n])
+        };
+        let (kept, i) = match &text {
+            Some(t) => without(t, instruction_like),
+            None => (None, 0),
+        };
         let (kept, sec) = match kept {
             Some(t) if !runs_here => without(&t, has_secret),
             other => (other, 0),
         };
         instr += i;
-        secrets += sec;
-        if i + sec > 0 {
+        secrets += sec + key_runs;
+        if i + sec + key_runs > 0 {
             left.push(&passage.anchor);
         }
         if let Some(t) = kept.filter(|t| !t.trim().is_empty()) {
@@ -486,5 +559,118 @@ mod tests {
             .iter()
             .all(|l| l.flagged == Some("instruction_like")));
         assert!(view("Plain.\nLines.").iter().all(|l| l.flagged.is_none()));
+    }
+
+    /// A marker line built from pieces, so this file holds no literal that looks like a key.
+    fn mark(kind: &str, label: &str) -> String {
+        format!("-----{kind} {label}-----")
+    }
+
+    #[test]
+    fn at_pk01_a_private_key_block_is_found_from_its_first_line_to_its_last_even_across_passages() {
+        let rsa = |k: &str| mark(k, "RSA PRIVATE KEY");
+        // within one passage
+        let one = [format!(
+            "before\n{}\nAAAA\nBBBB\n{}\nafter",
+            rsa("BEGIN"),
+            rsa("END")
+        )];
+        let refs: Vec<&str> = one.iter().map(String::as_str).collect();
+        assert_eq!(
+            private_key_lines(&refs),
+            [vec![false, true, true, true, true, false]]
+        );
+        // begun in one passage, ended in the next: the middle lines show nothing alone
+        let ssh = |k: &str| mark(k, "OPENSSH PRIVATE KEY");
+        let two = [
+            format!("x\n{}\nAAAA", ssh("BEGIN")),
+            format!("BBBB\nCCCC\n{}\nafter", ssh("END")),
+        ];
+        let refs: Vec<&str> = two.iter().map(String::as_str).collect();
+        assert_eq!(
+            private_key_lines(&refs),
+            [vec![false, true, true], vec![true, true, true, false]]
+        );
+        // a begin with no end runs to the end of the file, never to somewhere in the middle
+        let open_ended = [
+            format!("{}\nAAAA", mark("BEGIN", "PRIVATE KEY")),
+            "BBBB\nplain".to_string(),
+        ];
+        let refs: Vec<&str> = open_ended.iter().map(String::as_str).collect();
+        assert_eq!(
+            private_key_lines(&refs),
+            [vec![true, true], vec![true, true]]
+        );
+        // an end with no begin, a public key and a certificate are not private keys
+        let others = [format!(
+            "{}\n{}\nAAAA\n{}\n{}\nBBBB\n{}",
+            rsa("END"),
+            mark("BEGIN", "PUBLIC KEY"),
+            mark("END", "PUBLIC KEY"),
+            mark("BEGIN", "CERTIFICATE"),
+            mark("END", "CERTIFICATE")
+        )];
+        let refs: Vec<&str> = others.iter().map(String::as_str).collect();
+        assert!(private_key_lines(&refs)[0].iter().all(|x| !*x));
+        // two blocks in a row, with a plain line between, and indentation or trailing spaces on the markers
+        let twice = [format!(
+            "  {}  \nAAAA\n {}\nplain\n{}\nBBBB\n{}",
+            mark("BEGIN", "EC PRIVATE KEY"),
+            mark("END", "EC PRIVATE KEY"),
+            mark("BEGIN", "PGP PRIVATE KEY BLOCK"),
+            mark("END", "PGP PRIVATE KEY BLOCK")
+        )];
+        let refs: Vec<&str> = twice.iter().map(String::as_str).collect();
+        assert_eq!(
+            private_key_lines(&refs),
+            [vec![true, true, true, false, true, true, true]]
+        );
+    }
+
+    #[test]
+    fn at_pk02_for_a_model_elsewhere_the_whole_block_goes_and_the_text_around_it_stays_and_here_nothing_changes(
+    ) {
+        let long_tail = "plain line\n".repeat(3);
+        let first = format!(
+            "Pricing is flat.\n{}\nAAAAkeybodyAAAA",
+            mark("BEGIN", "RSA PRIVATE KEY")
+        );
+        let second = format!(
+            "BBBBkeybodyBBBB\n{}\n{long_tail}End of note.",
+            mark("END", "RSA PRIVATE KEY")
+        );
+        let p = parsed(&[&first, &second]);
+        let away = block(&p, false);
+        assert!(
+            !away.body.contains("keybody") && !away.body.contains("PRIVATE KEY"),
+            "{}",
+            away.body
+        );
+        assert!(
+            away.body.contains("Pricing is flat.") && away.body.contains("End of note."),
+            "{}",
+            away.body
+        );
+        assert_eq!(
+            away.withheld_secrets, 2,
+            "one run in each passage it touches"
+        );
+        let here = block(&p, true);
+        assert!(here.body.contains("AAAAkeybodyAAAA") && here.body.contains("BBBBkeybodyBBBB"));
+        assert_eq!(here.withheld_secrets, 0);
+        // what the owner is shown matches what the model is given
+        let texts: Vec<&str> = p.passages.iter().map(|p| p.text.as_str()).collect();
+        let shown = view_file(&texts);
+        let flagged: Vec<(usize, usize)> = shown
+            .iter()
+            .enumerate()
+            .flat_map(|(i, v)| {
+                v.iter()
+                    .enumerate()
+                    .filter(|(_, l)| l.flagged == Some("secret"))
+                    .map(move |(j, _)| (i, j))
+            })
+            .collect();
+        assert_eq!(flagged, [(0, 1), (0, 2), (1, 0), (1, 1)]);
     }
 }
