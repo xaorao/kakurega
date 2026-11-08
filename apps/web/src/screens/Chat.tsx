@@ -1,7 +1,7 @@
 import { againPoint, editPoint, type BranchPoint } from "../branching";
 import { carriesFiles, fileNotes, fingerprint, pastedFiles, room, sizeText, MAX_BYTES } from "../attach";
 import { findMatches, stepTo, type Match } from "../find";
-import { tooLarge, transcriptText, validExportName } from "../transcript";
+import { exportFileName, tooLarge, transcriptIn, validExportName, type ExportFormat } from "../transcript";
 import { afterInput, closedAtStart, matches as slashMatches, onKey as slashKey, parseLine, slashQuery, validJob, type PopoverState, type SlashCommand } from "../slash";
 import { batch, createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { api, ApiError, streamChat, type AttachmentRead, type AttachmentSummary, type ChatHit, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
@@ -71,13 +71,15 @@ export function Chat() {
   // writing this conversation to a file in the exports folder, by a name the owner chooses
   const [exportName, setExportName] = createSignal("conversation");
   const [exportNote, setExportNote] = createSignal("");
+  const [exportFormat, setExportFormat] = createSignal<ExportFormat>("lines");
   const exportNow = async () => {
     setExportNote("");
-    const text = transcriptText(turns());
-    if (!validExportName(exportName())) return setExportNote(t("chat.export.bad"));
+    const text = transcriptIn(exportFormat(), turns());
+    const fileName = exportFileName(exportName(), exportFormat());
+    if (!validExportName(exportName()) || !validExportName(fileName)) return setExportNote(t("chat.export.bad"));
     if (tooLarge(text)) return setExportNote(t("chat.export.large"));
     try {
-      const r = await api.exportTranscript(exportName(), text);
+      const r = await api.exportTranscript(fileName, text);
       setExportNote(t("chat.export.done", { path: r.path }));
     } catch (e) {
       setExportNote(e instanceof ApiError ? e.message : t("chat.error"));
@@ -1215,6 +1217,12 @@ export function Chat() {
             <summary>{t("chat.export")}</summary>
             <label for="export-name">{t("chat.export.name")}</label>
             <input id="export-name" value={exportName()} maxlength="60" onInput={(e) => setExportName(e.currentTarget.value)} />
+            <label for="export-format">{t("chat.export.format")}</label>
+            <select id="export-format" value={exportFormat()} onChange={(e) => setExportFormat(e.currentTarget.value as ExportFormat)}>
+              <option value="lines">{t("chat.export.format.lines")}</option>
+              <option value="markdown">{t("chat.export.format.markdown")}</option>
+              <option value="json">{t("chat.export.format.json")}</option>
+            </select>
             <div class="actions"><button type="button" onClick={exportNow}>{t("chat.export.go")}</button></div>
             <Show when={exportNote()}><p role="status" class="muted">{exportNote()}</p></Show>
           </details>

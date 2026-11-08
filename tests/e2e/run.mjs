@@ -1285,6 +1285,15 @@ try {
   await page.getByText(/Written to .*e2e-conversation\.md/).waitFor();
   const exported = readFileSync(join(work, "data/exports/e2e-conversation.md"), "utf8");
   check("the conversation is written to a plain file in the exports folder, as You and Assistant", exported.startsWith("You: ") && exported.includes("\n\nAssistant: ") && !exported.includes("Copy"), exported.slice(0, 80));
+  // the same conversation as JSON a program can read (the Markdown shape is covered by the web unit tests; each export adds a row to the activity list)
+  await page.getByLabel("Format").selectOption("json");
+  await page.getByLabel("File name (saved in this program's exports folder)").fill("e2e-conversation-json.md");
+  await page.getByRole("button", { name: "Write the file" }).click();
+  await page.getByText(/Written to .*e2e-conversation-json\.json/).waitFor();
+  const asJson = JSON.parse(readFileSync(join(work, "data/exports/e2e-conversation-json.json"), "utf8"));
+  check("the JSON export parses, is versioned, and holds the same turns as the plain export", asJson.kakurega_transcript === 1 && Array.isArray(asJson.turns) && asJson.turns.length >= 2 && asJson.turns[0].role === "user" && exported.startsWith(`You: ${asJson.turns[0].content}`), JSON.stringify(asJson).slice(0, 120));
+  check("a .md name typed with the JSON format becomes a .json file, and no .md file was made for it", !existsSync(join(work, "data/exports/e2e-conversation-json.md")));
+  await page.getByLabel("Format").selectOption("lines");
   // a file over the size limit is refused by the page, with its reason, before anything is sent
   await page.locator('input[type="file"]').setInputFiles([{ name: "huge.txt", mimeType: "text/plain", buffer: Buffer.alloc(8 * 1024 * 1024 + 1, 97) }]);
   await page.getByText("huge.txt is larger than 8 MB and was not sent.").waitFor();

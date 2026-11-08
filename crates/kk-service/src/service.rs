@@ -1996,7 +1996,7 @@ struct TranscriptExport {
 /// plain file name; an existing file is never replaced; text that looks like a secret or hides characters is refused.
 async fn transcript_export(axum::Extension(svc): Svc, Json(b): Json<TranscriptExport>) -> Response {
     let bad_name = || {
-        error(StatusCode::BAD_REQUEST, "BAD_NAME", "a name is 1 to 60 letters, digits, dots, dashes or underscores, not starting with a dot, ending in .md or .txt (or neither)")
+        error(StatusCode::BAD_REQUEST, "BAD_NAME", "a name is 1 to 60 letters, digits, dots, dashes or underscores, not starting with a dot, ending in .md, .txt or .json (or none, which means .md)")
     };
     let plain = !b.name.is_empty()
         && b.name.chars().count() <= 60
@@ -2008,7 +2008,9 @@ async fn transcript_export(axum::Extension(svc): Svc, Json(b): Json<TranscriptEx
         return bad_name();
     }
     let file_name = match b.name.rsplit_once('.') {
-        Some((stem, ext)) if matches!(ext, "md" | "txt") && !stem.is_empty() => b.name.clone(),
+        Some((stem, ext)) if matches!(ext, "md" | "txt" | "json") && !stem.is_empty() => {
+            b.name.clone()
+        }
         Some(_) => return bad_name(),
         None => format!("{}.md", b.name),
     };
@@ -2024,6 +2026,14 @@ async fn transcript_export(axum::Extension(svc): Svc, Json(b): Json<TranscriptEx
             StatusCode::UNPROCESSABLE_ENTITY,
             "EMPTY",
             "there is nothing to write",
+        );
+    }
+    // a file named .json is JSON: text that does not parse would be a broken file with a name that promises otherwise
+    if file_name.ends_with(".json") && serde_json::from_str::<Value>(&b.text).is_err() {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "NOT_JSON",
+            "a file ending in .json must hold valid JSON",
         );
     }
     if kk_types::injection::hidden_chars(&b.text)

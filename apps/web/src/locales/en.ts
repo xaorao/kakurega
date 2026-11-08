@@ -830,8 +830,12 @@ export const en = {
   "mem.forgotten.notReached": "Forgetting never reaches backups you made, capsules you delivered, copies you made elsewhere, or conversations you kept.",
   "chat.export": "Export this conversation",
   "chat.export.name": "File name (saved in this program's exports folder)",
+  "chat.export.format": "Format",
+  "chat.export.format.lines": "Plain lines: You: and Assistant: (.md)",
+  "chat.export.format.markdown": "Markdown with a heading for each speaker (.md)",
+  "chat.export.format.json": "JSON, for programs (.json)",
   "chat.export.go": "Write the file",
   "chat.export.done": "Written to {path}. It is a plain file on this computer; nothing was sent anywhere.",
-  "chat.export.bad": "A name is 1 to 60 letters, digits, dots, dashes or underscores, not starting with a dot, and ending in .md or .txt if it has an extension.",
+  "chat.export.bad": "A name is 1 to 60 letters, digits, dots, dashes or underscores, not starting with a dot, and ending in .md, .txt or .json if it has an extension.",
   "chat.export.large": "This conversation is too large to export in one file (500 KB). Clear it, or export part of it from the terminal.",
 } as const;

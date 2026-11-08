@@ -9104,7 +9104,7 @@ fn sv91_a_transcript_is_exported_to_a_file_the_owner_names_inside_the_exports_fo
             "{n}"
         );
     }
-    // .txt is allowed, other extensions are not
+    // .txt is allowed (and .json, in sv125), other extensions are not
     assert_eq!(
         w.post(
             "/api/exports/transcript",
@@ -9116,7 +9116,7 @@ fn sv91_a_transcript_is_exported_to_a_file_the_owner_names_inside_the_exports_fo
     assert_eq!(
         w.post(
             "/api/exports/transcript",
-            json!({"name": "plain.json", "text": "hi"})
+            json!({"name": "plain.html", "text": "hi"})
         )
         .0,
         400
@@ -12257,4 +12257,76 @@ fn sv124_the_owner_is_told_which_reviews_stopped_since_they_last_looked_and_only
     let anon = Web::new(c.addr);
     assert_eq!(anon.get("/api/away").0, 401);
     assert_eq!(anon.post("/api/away/seen", json!({})).0, 401);
+}
+
+#[test]
+fn sv125_a_transcript_can_be_exported_as_json_and_a_json_file_must_hold_json() {
+    let (_c, w, _seen, root) = instructions_service("exportjson");
+    let doc = r#"{"kakurega_transcript":1,"turns":[{"role":"user","content":"hello"},{"role":"assistant","content":"hi there"}]}"#;
+    let (s, v) = w.post(
+        "/api/exports/transcript",
+        json!({"name": "call.json", "text": doc}),
+    );
+    assert_eq!(s, 200, "{v}");
+    let file = std::path::PathBuf::from(v["path"].as_str().unwrap());
+    assert!(file.starts_with(root.join("data").join("exports")));
+    assert_eq!(file.file_name().unwrap(), "call.json");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), doc);
+    // text that is not JSON is refused under that name, and nothing is written
+    let (s, v) = w.post(
+        "/api/exports/transcript",
+        json!({"name": "broken.json", "text": "You: hello"}),
+    );
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "NOT_JSON");
+    assert!(!root
+        .join("data")
+        .join("exports")
+        .join("broken.json")
+        .exists());
+    // the same text is fine as markdown or text, and JSON text is fine under .md
+    assert_eq!(
+        w.post(
+            "/api/exports/transcript",
+            json!({"name": "plain.txt", "text": "You: hello"})
+        )
+        .0,
+        200
+    );
+    assert_eq!(
+        w.post(
+            "/api/exports/transcript",
+            json!({"name": "json-in-md", "text": doc})
+        )
+        .0,
+        200
+    );
+    // other names and extensions are still refused, and a secret is still refused inside JSON
+    for bad in [
+        "call.JSON",
+        "call.json.exe",
+        "call.jsonl",
+        ".json",
+        "a/b.json",
+        "c.json ",
+    ] {
+        let (s, _) = w.post("/api/exports/transcript", json!({"name": bad, "text": doc}));
+        assert_eq!(s, 400, "{bad}");
+    }
+    let leak = r#"{"turns":[{"role":"user","content":"the key is AKIAIOSFODNN7EXAMPLE9X and sk_live_abcdefghijklmnop1234"}]}"#;
+    let (s, v) = w.post(
+        "/api/exports/transcript",
+        json!({"name": "leak.json", "text": leak}),
+    );
+    assert_eq!(s, 422, "{v}");
+    assert!(!root.join("data").join("exports").join("leak.json").exists());
+    // a second export under the same JSON name is refused
+    assert_eq!(
+        w.post(
+            "/api/exports/transcript",
+            json!({"name": "call.json", "text": doc})
+        )
+        .0,
+        409
+    );
 }
