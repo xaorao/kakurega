@@ -1892,21 +1892,89 @@ const FORGET_DOES_NOT_REACH: &[&str] = &[
     "Backups you made with kaku backup: they still hold the text until you delete those files.",
     "Capsules you delivered: the recipient has their own copy.",
     "Anything you copied or pasted somewhere else, and answers that quoted or paraphrased the note.",
-    "Conversations you chose to keep: they hold what was said then. Forget those separately.",
+    "Conversations you kept are searched for the note's exact words only: one that says the same thing in other words is not found.",
 ];
+
+/// The most conversation turns read when looking for copies of a forgotten note; past this the answer says the search was not complete.
+const MAX_SCANNED_TURNS: usize = 50_000;
+/// The most conversations named in one answer; the rest are counted.
+const MAX_NAMED_CONVERSATIONS: usize = 20;
+
+/// Lowercased with every run of whitespace made one space, so a copy that differs only in capitals or spacing is still a copy. The
+/// same looseness as the tombstone that stops a forgotten note being saved again.
+fn squash(s: &str) -> String {
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// Which conversations hold any of the (already squashed) needles, reading at most `limit` texts. The second value is false when
+/// there were more texts than the limit and the rest were not read.
+fn conversations_holding(
+    texts: impl Iterator<Item = (String, String)>,
+    needles: &[String],
+    limit: usize,
+) -> (std::collections::BTreeSet<String>, bool) {
+    let mut held = std::collections::BTreeSet::new();
+    let mut complete = true;
+    for (n, (conversation, text)) in texts.enumerate() {
+        if n >= limit {
+            complete = false;
+            break;
+        }
+        if held.contains(&conversation) {
+            continue;
+        }
+        let hay = squash(&text);
+        if needles.iter().any(|needle| hay.contains(needle.as_str())) {
+            held.insert(conversation);
+        }
+    }
+    (held, complete)
+}
+
+/// What forgetting a note leaves behind that this program knows about. Names and counts only, never text.
+struct KnownCopies {
+    reviews: Vec<String>,
+    exports: Vec<String>,
+    /// (conversation id, why): "text" when its words hold the note, "source" when the note was accepted from it. Newest first.
+    conversations: Vec<(String, &'static str)>,
+    conversations_more: usize,
+    prompt_history: usize,
+    search_complete: bool,
+}
 
 impl Service {
     /// Copies of these texts that this program knows about and that forgetting a note does not remove: reviews whose files hold the
     /// text, and files in the exports folder that hold it. Names only, never content. Texts shorter than 12 characters are not searched
     /// for: a short phrase would match unrelated files.
-    fn known_copies(&self, texts: &[String]) -> (Vec<String>, Vec<String>) {
+    fn known_copies(&self, texts: &[String], source_refs: &[String]) -> KnownCopies {
+        self.known_copies_within(texts, source_refs, MAX_SCANNED_TURNS)
+    }
+
+    /// `known_copies` with the number of conversation turns it may read given, so the stop at the limit can be tested with a few turns.
+    fn known_copies_within(
+        &self,
+        texts: &[String],
+        source_refs: &[String],
+        turn_limit: usize,
+    ) -> KnownCopies {
         let needles: Vec<&str> = texts
             .iter()
             .map(String::as_str)
             .filter(|t| t.chars().count() >= 12)
             .collect();
-        if needles.is_empty() {
-            return (vec![], vec![]);
+        let mut out = KnownCopies {
+            reviews: vec![],
+            exports: vec![],
+            conversations: vec![],
+            conversations_more: 0,
+            prompt_history: 0,
+            search_complete: true,
+        };
+        if needles.is_empty() && source_refs.is_empty() {
+            return out;
         }
         let hit = |hay: &str| needles.iter().any(|n| hay.contains(n));
         let mut reviews: Vec<String> = Vec::new();
@@ -1938,7 +2006,88 @@ impl Service {
         }
         reviews.sort();
         exports.sort();
-        (reviews, exports)
+        out.reviews = reviews;
+        out.exports = exports;
+        self.conversation_copies(&needles, source_refs, &mut out, turn_limit);
+        out
+    }
+
+    /// Kept conversations (their turns and their compaction summaries) and the typed-prompt history, looked at BEFORE the note is
+    /// deleted. The store lock is taken here alone, never while another lock is held.
+    fn conversation_copies(
+        &self,
+        needles: &[&str],
+        source_refs: &[String],
+        out: &mut KnownCopies,
+        turn_limit: usize,
+    ) {
+        let squashed: Vec<String> = needles
+            .iter()
+            .map(|n| squash(n))
+            .filter(|n| n.chars().count() >= 12)
+            .collect();
+        let store = self.store.lock().expect("lock");
+        let c = store.connection();
+        let order: Vec<String> = c
+            .prepare("SELECT id FROM sessions ORDER BY updated DESC, id")
+            .and_then(|mut st| {
+                st.query_map([], |r| r.get(0))
+                    .map(|it| it.flatten().collect())
+            })
+            .unwrap_or_default();
+        let mut held = std::collections::BTreeSet::new();
+        if !squashed.is_empty() {
+            let turns: Vec<(String, String)> = c
+                .prepare("SELECT session, content FROM session_turns ORDER BY at DESC, seq DESC LIMIT ?1")
+                .and_then(|mut st| {
+                    st.query_map([(turn_limit + 1) as i64], |r| Ok((r.get(0)?, r.get(1)?)))
+                        .map(|it| it.flatten().collect())
+                })
+                .unwrap_or_default();
+            let (from_turns, complete) =
+                conversations_holding(turns.into_iter(), &squashed, turn_limit);
+            held.extend(from_turns);
+            out.search_complete = complete;
+            let summaries: Vec<(String, String)> = c
+                .prepare("SELECT session, text FROM session_summaries")
+                .and_then(|mut st| {
+                    st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                        .map(|it| it.flatten().collect())
+                })
+                .unwrap_or_default();
+            held.extend(conversations_holding(summaries.into_iter(), &squashed, usize::MAX).0);
+            let history: Vec<String> = c
+                .prepare("SELECT text FROM prompt_history")
+                .and_then(|mut st| {
+                    st.query_map([], |r| r.get(0))
+                        .map(|it| it.flatten().collect())
+                })
+                .unwrap_or_default();
+            out.prompt_history = history
+                .iter()
+                .filter(|h| {
+                    let hay = squash(h);
+                    squashed.iter().any(|n| hay.contains(n.as_str()))
+                })
+                .count();
+        }
+        let mut all: Vec<(String, &'static str)> = order
+            .into_iter()
+            .filter_map(|id| {
+                if held.contains(&id) {
+                    Some((id, "text"))
+                } else if source_refs.contains(&id) {
+                    Some((id, "source"))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if all.len() > MAX_NAMED_CONVERSATIONS {
+            out.conversations_more = all.len() - MAX_NAMED_CONVERSATIONS;
+            all.truncate(MAX_NAMED_CONVERSATIONS);
+        }
+        out.conversations = all;
     }
 }
 
@@ -1948,14 +2097,19 @@ async fn memory_forget(
     Json(b): Json<ForgetBody>,
 ) -> Response {
     // the copies are looked for before the text is deleted, because afterwards there is nothing to look for
-    let (reviews, exports) = {
+    let copies = {
         let mem = svc.memory.lock().expect("lock");
-        let texts = mem
-            .owner_clearance()
-            .and_then(|c| mem.texts_of(&id, &c))
-            .unwrap_or_default();
+        let clearance = mem.owner_clearance();
+        let texts = match &clearance {
+            Ok(c) => mem.texts_of(&id, c).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+        let refs = match &clearance {
+            Ok(c) => mem.source_refs_of(&id, c).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
         drop(mem);
-        svc.known_copies(&texts)
+        svc.known_copies(&texts, &refs)
     };
     match svc.memory.lock().expect("lock").forget(
         now(),
@@ -1967,11 +2121,31 @@ async fn memory_forget(
             svc.log_event(
                 "memory.forgotten",
                 &id,
-                &[("copies_known", (reviews.len() + exports.len()).into())],
+                &[(
+                    "copies_known",
+                    (copies.reviews.len()
+                        + copies.exports.len()
+                        + copies.conversations.len()
+                        + copies.conversations_more
+                        + usize::from(copies.prompt_history > 0))
+                    .into(),
+                )],
             );
+            let conversations: Vec<Value> = copies
+                .conversations
+                .iter()
+                .map(|(cid, why)| json!({"id": cid, "why": why}))
+                .collect();
             Json(json!({
                 "forgotten": true,
-                "copies_known": {"reviews": reviews, "exports": exports},
+                "copies_known": {
+                    "reviews": copies.reviews,
+                    "exports": copies.exports,
+                    "conversations": conversations,
+                    "conversations_more": copies.conversations_more,
+                    "prompt_history": copies.prompt_history,
+                    "search_complete": copies.search_complete,
+                },
                 "not_reached": FORGET_DOES_NOT_REACH,
             }))
             .into_response()
@@ -7888,6 +8062,143 @@ impl Extension for Routes {
 #[cfg(test)]
 mod store_tests {
     use super::*;
+
+    struct NoJobs;
+    impl JobRunner for NoJobs {
+        fn run(
+            &self,
+            _repo: &Path,
+            _recipient: &str,
+            _job_name: &str,
+            _now: i64,
+            _extra: Vec<kk_review::import::ImportedFile>,
+            _progress: &dyn Fn(&str, &str),
+        ) -> JobReport {
+            unreachable!("these tests never start a review")
+        }
+        fn route_info(&self) -> Value {
+            json!({})
+        }
+    }
+
+    fn service_with(tag: &str, sql: &[(&str, &[&str])]) -> Arc<Service> {
+        let dir = std::env::temp_dir().join(format!("kk-copies-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let svc = Service::new(&dir, vec![], Arc::new(NoJobs), true).unwrap();
+        {
+            let store = svc.store.lock().unwrap();
+            for (statement, args) in sql {
+                let c = store.connection();
+                match args {
+                    [a] => c.execute(statement, [a]),
+                    [a, b] => c.execute(statement, [a, b]),
+                    [a, b, d] => c.execute(statement, [a, b, d]),
+                    _ => panic!("one to three arguments"),
+                }
+                .unwrap();
+            }
+        }
+        svc
+    }
+
+    const NEW_SESSION: &str =
+        "INSERT INTO sessions(id, title, created, updated) VALUES (?1, 'x', 1, 1)";
+    const NEW_TURN: &str =
+        "INSERT INTO session_turns(session, seq, role, content, at) VALUES (?1, ?2, 'user', ?3, 1)";
+    const NEW_SUMMARY: &str =
+        "INSERT INTO session_summaries(session, upto, text, at) VALUES (?1, 4, ?2, 1)";
+
+    #[test]
+    fn cy03_a_summary_alone_makes_its_conversation_a_known_copy() {
+        // no turn of s-sum mentions it: only the summary written from its older turns does
+        let svc = service_with(
+            "summary",
+            &[
+                (NEW_SESSION, &["s-sum"]),
+                (NEW_TURN, &["s-sum", "1", "hello there"]),
+                (
+                    NEW_SUMMARY,
+                    &["s-sum", "- The  VAULT code is blue-heron-4471"],
+                ),
+                (NEW_SESSION, &["s-other"]),
+                (NEW_TURN, &["s-other", "1", "nothing relevant"]),
+                (NEW_SUMMARY, &["s-other", "- the budget is small"]),
+            ],
+        );
+        let copies = svc.known_copies(&["the vault code is blue-heron-4471".to_string()], &[]);
+        assert_eq!(copies.conversations, vec![("s-sum".to_string(), "text")]);
+        assert!(copies.search_complete);
+    }
+
+    #[test]
+    fn cy04_the_search_stops_at_its_bound_and_the_answer_says_it_did_not_finish() {
+        // newest turns are read first: the matching turn is the oldest of three
+        let mut sql: Vec<(&str, &[&str])> = vec![(NEW_SESSION, &["s-old"])];
+        let rows: [(&str, &str); 3] = [
+            ("1", "the vault code is blue-heron-4471"),
+            ("2", "filler"),
+            ("3", "more filler"),
+        ];
+        let args: Vec<[&str; 3]> = rows.iter().map(|(n, t)| ["s-old", *n, *t]).collect();
+        for a in &args {
+            sql.push((NEW_TURN, a));
+        }
+        let svc = service_with("bound", &sql);
+        let needle = ["the vault code is blue-heron-4471".to_string()];
+        // the bound is lower than the number of turns: the old one is never read, and that is said
+        let cut = svc.known_copies_within(&needle, &[], 2);
+        assert!(cut.conversations.is_empty(), "{:?}", cut.conversations);
+        assert!(
+            !cut.search_complete,
+            "a stopped search must not look complete"
+        );
+        // a bound that covers every turn finds it and says the search was complete
+        let full = svc.known_copies_within(&needle, &[], 3);
+        assert_eq!(full.conversations, vec![("s-old".to_string(), "text")]);
+        assert!(full.search_complete);
+        // the same text with the real bound
+        assert!(svc.known_copies(&needle, &[]).search_complete);
+    }
+
+    #[test]
+    fn cy01_squash_ignores_capitals_and_spacing_but_not_letters() {
+        assert_eq!(
+            squash("  The   VAULT\n code\tis 42 "),
+            "the vault code is 42"
+        );
+        assert_eq!(squash(""), "");
+        assert_ne!(squash("vault"), squash("v\u{430}ult"));
+    }
+
+    #[test]
+    fn cy02_the_scan_finds_a_conversation_once_stops_at_its_bound_and_says_so() {
+        let needles = vec![squash("the vault code is blue-heron")];
+        let rows = |n: usize| {
+            (0..n)
+                .map(|i| {
+                    (
+                        format!("c{}", i % 3),
+                        if i == 4 {
+                            "The  VAULT code is Blue-Heron".to_string()
+                        } else {
+                            "something else".to_string()
+                        },
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let (held, complete) = conversations_holding(rows(10).into_iter(), &needles, 100);
+        assert_eq!(held.into_iter().collect::<Vec<_>>(), vec!["c1".to_string()]);
+        assert!(complete);
+        let (held, complete) = conversations_holding(rows(10).into_iter(), &needles, 4);
+        assert!(held.is_empty());
+        assert!(!complete, "a stopped scan must not look complete");
+        let (_, complete) = conversations_holding(rows(4).into_iter(), &needles, 4);
+        assert!(complete);
+        assert!(conversations_holding(rows(10).into_iter(), &[], 100)
+            .0
+            .is_empty());
+    }
 
     #[test]
     fn a_store_made_before_conversations_named_a_project_gains_the_column_and_keeps_its_rows() {

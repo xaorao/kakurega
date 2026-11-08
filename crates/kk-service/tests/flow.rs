@@ -11300,11 +11300,12 @@ fn sv113_forgetting_a_note_says_which_known_copies_it_cannot_remove_and_always_w
     );
     // a short note is not searched for (it would match unrelated files), but the standing list still comes back
     let (_, r) = w.post(&format!("/api/memories/{short}/forget"), json!({}));
-    assert_eq!(r["copies_known"], json!({"reviews": [], "exports": []}));
+    let none = json!({"reviews": [], "exports": [], "conversations": [], "conversations_more": 0, "prompt_history": 0, "search_complete": true});
+    assert_eq!(r["copies_known"], none);
     assert_eq!(r["not_reached"].as_array().unwrap().len(), 4);
     // a note with no copies says so
     let (_, r) = w.post(&format!("/api/memories/{alone}/forget"), json!({}));
-    assert_eq!(r["copies_known"], json!({"reviews": [], "exports": []}));
+    assert_eq!(r["copies_known"], none);
     // an unknown note is still a plain 404 and says nothing about copies
     let (st, r) = w.post("/api/memories/no-such/forget", json!({}));
     assert_eq!(st, 404);
@@ -12925,4 +12926,211 @@ fn sv130_a_route_that_is_a_test_model_has_no_cost_even_with_a_price() {
         u["routes"][0]["cost"].is_null() && u["total"]["cost"].as_array().unwrap().is_empty(),
         "{u}"
     );
+}
+
+#[test]
+fn sv131_forgetting_a_note_names_the_conversations_that_hold_its_words_or_produced_it_and_the_typed_history(
+) {
+    let answer = json!([
+        {"text": "Acme settles every invoice on the fifth of the month.", "why": "message 1"},
+    ])
+    .to_string();
+    let runner = SummaryRunner::new(Ok(answer));
+    let (_c, w, from, _data, _root) = kept_chat("forgetconv", runner.clone());
+    say(&w, &from, 0);
+    say(&w, &from, 1);
+    // the note is a suggestion read from conversation `from`, accepted by the owner: its source is that conversation
+    let (_, made) = w.post(&format!("/api/sessions/{from}/suggest-notes"), json!({}));
+    assert_eq!(made["added"], 1, "{made}");
+    let sid = w.get(&format!("/api/sessions/{from}/suggested-notes")).1["suggestions"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (_, accepted) = w.post(
+        &format!("/api/sessions/{from}/suggested-notes/{sid}/accept"),
+        json!({}),
+    );
+    let note = accepted["id"].as_str().unwrap().to_string();
+    let words = "Acme settles every invoice on the fifth of the month.";
+    // another conversation holds the words typed in other capitals and with doubled spaces
+    let holder = w.post("/api/sessions", json!({"title": ""})).1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (st, _) = w.post(
+        "/api/chat",
+        json!({"message": "reminder:  ACME   settles every invoice\non the FIFTH of the month.", "session": holder}),
+    );
+    assert_eq!(st, 200);
+    // a third conversation talks about something else, and a fourth has only a part of the words
+    let other = w.post("/api/sessions", json!({"title": ""})).1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    say(&w, &other, 7);
+    let part = w.post("/api/sessions", json!({"title": ""})).1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    w.post(
+        "/api/chat",
+        json!({"message": "Acme settles every invoice", "session": part}),
+    );
+    // the typed-prompt history holds the words too, and an unrelated line
+    assert_eq!(w.post("/api/history", json!({"text": words})).0, 200);
+    assert_eq!(
+        w.post("/api/history", json!({"text": "show me the files"}))
+            .0,
+        200
+    );
+    let (st, r) = w.post(&format!("/api/memories/{note}/forget"), json!({}));
+    assert_eq!(st, 200, "{r}");
+    let copies = &r["copies_known"];
+    let named: Vec<(String, String)> = copies["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["id"].as_str().unwrap().to_string(),
+                c["why"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert!(
+        named.contains(&(holder.clone(), "text".to_string())),
+        "the conversation holding the words is named: {r}"
+    );
+    assert!(
+        named.contains(&(from.clone(), "source".to_string())),
+        "the conversation the note came from is named even though its words are not in it: {r}"
+    );
+    assert!(
+        !named.iter().any(|(id, _)| id == &other || id == &part),
+        "an unrelated conversation and one with only a part of the words are not claimed: {r}"
+    );
+    assert_eq!(named.len(), 2, "{r}");
+    assert_eq!(copies["prompt_history"], 1, "{r}");
+    assert_eq!(copies["search_complete"], true);
+    assert_eq!(copies["conversations_more"], 0);
+    // names only: no title and no text anywhere in the answer, and the log keeps counts
+    let shown = r.to_string();
+    assert!(
+        !shown.contains("settles") && !shown.contains("Acme") && !shown.contains("title"),
+        "{shown}"
+    );
+    let log = w.get("/api/log").1;
+    assert!(
+        !log.to_string().contains("settles"),
+        "no note text in the log: {log}"
+    );
+    let forgotten = log["recent"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "memory.forgotten")
+        .unwrap_or_else(|| panic!("no forget event: {log}"));
+    assert_eq!(
+        forgotten["data"],
+        json!({"copies_known": 3}),
+        "the event keeps one count (two conversations and the history), no names: {forgotten}"
+    );
+    // forgetting the note removed nothing else: both conversations and the history are still there
+    for id in [&from, &holder] {
+        assert_eq!(w.get(&format!("/api/sessions/{id}")).0, 200, "{id}");
+    }
+    assert_eq!(
+        w.get("/api/history").1["lines"].as_array().unwrap().len(),
+        2
+    );
+    // and the owner can remove each named copy with the existing, explicit actions
+    assert_eq!(
+        w.post(&format!("/api/sessions/{holder}/forget"), json!({}))
+            .0,
+        200
+    );
+    assert_eq!(w.post("/api/history/clear", json!({})).0, 200);
+    assert_eq!(w.get(&format!("/api/sessions/{holder}")).0, 404);
+}
+
+#[test]
+fn sv132_a_compaction_summary_that_holds_the_words_makes_its_conversation_a_known_copy() {
+    let runner = SummaryRunner::new(Ok(
+        "Goal: plan a trip\n- the budget is five hundred pounds".into()
+    ));
+    let (_c, w, id, _data, _root) = kept_chat("forgetsummary", runner.clone());
+    for i in 0..11 {
+        say(&w, &id, i);
+    }
+    assert_eq!(runner.calls(), 1, "a summary was written");
+    let (_, note) = w.post(
+        "/api/memories",
+        json!({"text": "The budget is  FIVE hundred pounds"}),
+    );
+    let (st, r) = w.post(
+        &format!("/api/memories/{}/forget", note["id"].as_str().unwrap()),
+        json!({}),
+    );
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(
+        r["copies_known"]["conversations"],
+        json!([{"id": id, "why": "text"}]),
+        "only the summary holds the words (the turns say 'question number N'): {r}"
+    );
+}
+
+#[test]
+fn sv133_short_notes_are_not_searched_and_look_alike_letters_are_not_claimed_and_the_list_is_bounded(
+) {
+    let (_c, w, _seen, _root) = instructions_service("forgetbound");
+    let session = |text: &str| {
+        let id = w.post("/api/sessions", json!({"title": ""})).1["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            w.post("/api/chat", json!({"message": text, "session": id}))
+                .0,
+            200
+        );
+        id
+    };
+    // a short note would match everything
+    session("we use euros here");
+    let short = w.post("/api/memories", json!({"text": "euros"})).1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (_, r) = w.post(&format!("/api/memories/{short}/forget"), json!({}));
+    assert_eq!(r["copies_known"]["conversations"], json!([]), "{r}");
+    assert_eq!(r["copies_known"]["prompt_history"], 0);
+    // look-alike letters (Cyrillic 'а' and 'е') are different words: not claimed, and the answer says "exact words" elsewhere
+    session("The vаult cоde is blue-heron-4471 for the east door");
+    let note = w
+        .post(
+            "/api/memories",
+            json!({"text": "The vault code is blue-heron-4471 for the east door"}),
+        )
+        .1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (_, r) = w.post(&format!("/api/memories/{note}/forget"), json!({}));
+    assert_eq!(r["copies_known"]["conversations"], json!([]), "{r}");
+    // more conversations than are named: the first twenty (newest first) and the rest counted
+    let words = "The renewal date for the Hartley contract is the ninth of March";
+    for _ in 0..23 {
+        session(words);
+    }
+    let note = w.post("/api/memories", json!({"text": words})).1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (_, r) = w.post(&format!("/api/memories/{note}/forget"), json!({}));
+    assert_eq!(
+        r["copies_known"]["conversations"].as_array().unwrap().len(),
+        20,
+        "{r}"
+    );
+    assert_eq!(r["copies_known"]["conversations_more"], 3, "{r}");
 }

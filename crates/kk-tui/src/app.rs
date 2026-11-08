@@ -159,6 +159,8 @@ enum Intent {
     Ask,
     Correct,
     Forget,
+    /// The kept conversations that still hold a forgotten note (id, why), looked up by title in the owner's own list.
+    ForgetCopies(Vec<(String, String)>, usize),
     /// The counts of what forgetting a review would remove, asked for before anything is confirmed.
     ReviewFootprint(String),
     ForgetReview,
@@ -3763,14 +3765,127 @@ impl App {
                 Vec::new()
             }
             Intent::Forget => {
-                self.say(
-                    if ok { Kind::Ok } else { Kind::Error },
-                    if ok {
-                        "Forgotten. The text is deleted and will not be saved again.".to_string()
-                    } else {
-                        err_text(status, &body)
-                    },
-                );
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let known = &body["copies_known"];
+                let names = |k: &str| -> Vec<String> {
+                    known[k]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|v| v.as_str())
+                        .take(6)
+                        .map(clean)
+                        .collect()
+                };
+                let mut lines =
+                    vec!["Forgotten. The text is deleted and will not be saved again.".to_string()];
+                let (reviews, exports) = (names("reviews"), names("exports"));
+                if !reviews.is_empty() {
+                    lines.push(format!(
+                        "Still on this computer, in reviews: {}.",
+                        reviews.join(", ")
+                    ));
+                }
+                if !exports.is_empty() {
+                    lines.push(format!(
+                        "Still on this computer, in exports: {}.",
+                        exports.join(", ")
+                    ));
+                }
+                let history = known["prompt_history"].as_u64().unwrap_or(0);
+                if history > 0 {
+                    lines.push(format!(
+                        "Lines of your typed history that hold it: {history}. /clearhistory removes the whole history."
+                    ));
+                }
+                if known["search_complete"] == false {
+                    lines.push(
+                        "The search of your conversations stopped early: there may be more copies."
+                            .to_string(),
+                    );
+                }
+                for line in body["not_reached"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|v| v.as_str())
+                {
+                    lines.push(format!("Not removed by this: {}", clean(line)));
+                }
+                self.cards.push(Card {
+                    kind: Kind::Ok,
+                    title: None,
+                    lines,
+                });
+                let conversations: Vec<(String, String)> = known["conversations"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|c| {
+                        Some((
+                            c["id"].as_str()?.to_string(),
+                            c["why"].as_str()?.to_string(),
+                        ))
+                    })
+                    .collect();
+                if conversations.is_empty() {
+                    return Vec::new();
+                }
+                let more = known["conversations_more"].as_u64().unwrap_or(0) as usize;
+                vec![self.req(
+                    Intent::ForgetCopies(conversations, more),
+                    false,
+                    Method::Get,
+                    "/api/sessions?archived=1",
+                    None,
+                )]
+            }
+            Intent::ForgetCopies(found, more) => {
+                let titles: std::collections::BTreeMap<String, String> = if ok {
+                    body["sessions"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|k| {
+                            Some((
+                                k["id"].as_str()?.to_string(),
+                                clean(k["title"].as_str().unwrap_or("")),
+                            ))
+                        })
+                        .collect()
+                } else {
+                    Default::default()
+                };
+                let mut lines = vec![
+                    "These kept conversations still hold it. Forgetting a note does not delete a conversation.".to_string(),
+                ];
+                for (id, why) in &found {
+                    let title = titles
+                        .get(id)
+                        .filter(|t| !t.is_empty())
+                        .cloned()
+                        .unwrap_or_else(|| "Untitled conversation".into());
+                    lines.push(format!(
+                        "- {title}: {}",
+                        if why == "source" {
+                            "the note was accepted from it"
+                        } else {
+                            "its words hold the note"
+                        }
+                    ));
+                }
+                if more > 0 {
+                    lines.push(format!("and {more} more"));
+                }
+                lines.push("To delete one: /resume, choose it and press Delete twice.".to_string());
+                self.cards.push(Card {
+                    kind: Kind::Warn,
+                    title: Some("Copies left in conversations".into()),
+                    lines,
+                });
                 Vec::new()
             }
             Intent::Ask => {

@@ -5500,3 +5500,138 @@ fn tu87_clean_turns_control_direction_and_invisible_characters_into_the_replacem
     }
     assert_eq!(clean("a\nb\tc é 日本語 😀"), "a\nb\tc é 日本語 😀");
 }
+
+fn forget_note(app: &mut kk_tui::app::App) -> kk_tui::app::Req {
+    enter(app, "/forget m-12");
+    let mut r = app.handle(key(KeyCode::Char('y')));
+    r.remove(0)
+}
+
+#[test]
+fn tu88_forgetting_a_note_in_the_terminal_names_what_is_left_and_how_to_remove_it() {
+    let mut app = booted();
+    let req = forget_note(&mut app);
+    let follow = app.handle(ok(&req, 200, json!({
+        "forgotten": true,
+        "copies_known": {
+            "reviews": ["job-3"], "exports": ["call-one.md"],
+            "conversations": [{"id": "s-1", "why": "text"}, {"id": "s-2", "why": "source"}, {"id": "s-9", "why": "text"}],
+            "conversations_more": 4, "prompt_history": 2, "search_complete": false
+        },
+        "not_reached": ["Backups you made with kaku backup: they still hold the text.", "Capsules you delivered: the recipient has their own copy."]
+    })));
+    let t = text(&app);
+    assert!(
+        t.contains("Forgotten. The text is deleted and will not be saved again."),
+        "{t}"
+    );
+    assert!(
+        t.contains("in reviews: job-3") && t.contains("in exports: call-one.md"),
+        "{t}"
+    );
+    assert!(
+        t.contains("Lines of your typed history that hold it: 2") && t.contains("/clearhistory"),
+        "{t}"
+    );
+    assert!(
+        t.contains("stopped early"),
+        "an incomplete search is said: {t}"
+    );
+    assert!(
+        t.contains("Not removed by this: Backups you made")
+            && t.contains("Not removed by this: Capsules"),
+        "{t}"
+    );
+    // the conversations are looked up by title in the owner's own list
+    assert_eq!(follow.len(), 1, "one follow-up request");
+    assert_eq!(follow[0].path, "/api/sessions?archived=1");
+    assert!(!follow[0].admin);
+    app.handle(ok(
+        &follow[0],
+        200,
+        json!({"sessions": [
+            {"id": "s-1", "title": "Invoices with Acme", "turns": 4, "updated": 1},
+            {"id": "s-2", "title": "", "turns": 2, "updated": 2},
+            {"id": "s-other", "title": "Unrelated", "turns": 1, "updated": 3}
+        ]}),
+    ));
+    let t = text(&app);
+    assert!(
+        t.contains("Invoices with Acme: its words hold the note"),
+        "{t}"
+    );
+    assert!(
+        t.contains("Untitled conversation: the note was accepted from it"),
+        "{t}"
+    );
+    assert!(
+        t.contains("- Untitled conversation: its words hold the note"),
+        "a conversation missing from the list still shows: {t}"
+    );
+    assert!(
+        t.contains("and 4 more") && t.contains("/resume, choose it and press Delete twice"),
+        "{t}"
+    );
+    assert!(
+        !t.contains("Unrelated"),
+        "only the named conversations: {t}"
+    );
+}
+
+#[test]
+fn tu89_a_forget_with_nothing_left_stays_short_an_old_service_is_read_as_nothing_and_hostile_names_are_cleaned(
+) {
+    // nothing known: no follow-up request, no copies lines
+    let mut app = booted();
+    let req = forget_note(&mut app);
+    let follow = app.handle(ok(&req, 200, json!({"forgotten": true, "copies_known": {"reviews": [], "exports": [], "conversations": [], "conversations_more": 0, "prompt_history": 0, "search_complete": true}, "not_reached": []})));
+    assert!(follow.is_empty());
+    let t = text(&app);
+    assert!(
+        t.contains("The text is deleted")
+            && !t.contains("Still on this computer")
+            && !t.contains("typed history that hold it"),
+        "{t}"
+    );
+    // a service that sends no copies at all (older): the same short message, no crash
+    let mut old = booted();
+    let req = forget_note(&mut old);
+    assert!(old
+        .handle(ok(&req, 200, json!({"forgotten": true})))
+        .is_empty());
+    assert!(
+        text(&old).contains("Forgotten. The text is deleted and will not be saved again."),
+        "{}",
+        text(&old)
+    );
+    // a failure is an error, not a success card
+    let mut bad = booted();
+    let req = forget_note(&mut bad);
+    bad.handle(ok(
+        &req,
+        404,
+        json!({"error": {"code": "NOT_FOUND", "message": "there is no such note"}}),
+    ));
+    assert!(
+        text(&bad).contains("there is no such note") && !text(&bad).contains("The text is deleted"),
+        "{}",
+        text(&bad)
+    );
+    // control characters and bidi marks in names and titles never reach the screen
+    let mut h = booted();
+    let req = forget_note(&mut h);
+    let follow = h.handle(ok(&req, 200, json!({"forgotten": true, "copies_known": {"reviews": ["job\u{1b}[2J"], "exports": ["a\u{202e}b.md"], "conversations": [{"id": "s-1", "why": "text"}], "conversations_more": 0, "prompt_history": 0, "search_complete": true}, "not_reached": ["x\u{7}y"]})));
+    h.handle(ok(&follow[0], 200, json!({"sessions": [{"id": "s-1", "title": "T\u{1b}[31mitle\u{202e}", "turns": 1, "updated": 1}]})));
+    let t = text(&h);
+    for bad in ['\u{1b}', '\u{202e}', '\u{7}'] {
+        assert!(
+            !t.contains(bad),
+            "U+{:04X} reached the screen: {t}",
+            bad as u32
+        );
+    }
+    assert!(
+        t.contains("itle") && t.contains("its words hold the note"),
+        "the title is still shown, cleaned: {t}"
+    );
+}

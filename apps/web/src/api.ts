@@ -1,3 +1,4 @@
+import type { ForgetResult } from "./forgotten";
 let csrf = "";
 
 export class ApiError extends Error {
@@ -231,7 +232,8 @@ export const api = {
   addMemory: (b: { text: string; level: string; reason?: string; project?: string }) => request<{ id: string; added: boolean }>("POST", "/api/memories", b),
   correctMemory: (id: string, b: { text: string; reason?: string; project?: string }) => request<{ id: string }>("POST", `/api/memories/${id}/correct`, b),
   exportTranscript: (name: string, text: string) => request<{ path: string }>("POST", "/api/exports/transcript", { name, text }),
-  forgetMemory: (id: string, reason?: string) => request<{ forgotten: boolean; copies_known?: { reviews?: string[]; exports?: string[] } }>("POST", `/api/memories/${id}/forget`, { reason }),
+  forgetMemory: (id: string, reason?: string) => request<ForgetResult & { forgotten: boolean }>("POST", `/api/memories/${id}/forget`, { reason }),
+  clearTypedHistory: () => request<{ cleared?: boolean }>("POST", "/api/history/clear", {}),
   memoryHistory: (id: string) => request<{ versions: MemoryVersion[] }>("GET", `/api/memories/${id}/history`),
   fixes: (job: string) => request<{ fixes: Fix[] }>("GET", `/api/jobs/${job}/fixes`),
   applyFix: (job: string, n: number, file: string) => request<{ applied: boolean; file: string }>("POST", `/api/jobs/${job}/fixes/${n}/apply`, { file }),

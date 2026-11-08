@@ -148,6 +148,18 @@ page.on("console", (m) => {
   problems.push("console: " + m.text());
 });
 page.on("pageerror", (e) => problems.push("pageerror: " + e.message));
+// requests that have started and not yet ended, so a step can wait until the ones it cares about are over instead of a fixed time
+const inFlight = new Set();
+page.on("request", (r) => inFlight.add(r));
+page.on("requestfinished", (r) => inFlight.delete(r));
+page.on("requestfailed", (r) => inFlight.delete(r));
+async function quiet(pattern, ms = 15000) {
+  const until = Date.now() + ms;
+  while ([...inFlight].some((r) => pattern.test(r.url()))) {
+    if (Date.now() > until) throw new Error("requests still in flight: " + [...inFlight].map((r) => r.url()).join(", "));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
 page.on("requestfailed", async (r) => {
   // Classified as a harness artifact (QA guide 12.4): Chromium reports ERR_ABORTED for a streamed (chunked) response whose
   // body was fully read, in some runs and not others. Only that case is excused: a 200 response was received and the page
@@ -433,7 +445,7 @@ try {
     const calls = [];
     await page.route("**/api/memories/held", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ held }) }));
     await page.route("**/api/memories/mem-held-1/release-hold", (r) => { calls.push("release"); held = []; r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ released: true }) }); });
-    await page.route("**/api/memories/mem-held-1/forget", (r) => { calls.push("forget"); held = []; r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ forgotten: true }) }); });
+    await page.route("**/api/memories/mem-held-1/forget", (r) => { calls.push("forget"); held = []; r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ forgotten: true, copies_known: { reviews: [], exports: [], conversations: [{ id: "chat-held-copy", why: "text" }], conversations_more: 0, prompt_history: 0, search_complete: true } }) }); });
     await page.reload();
     const heldBox = page.getByRole("region", { name: "1 note(s) held back" });
     await heldBox.waitFor();
@@ -452,6 +464,14 @@ try {
     await again.getByRole("button", { name: "Yes, forget it" }).click().catch(async () => { await again.locator("button.danger").click(); });
     await again.waitFor({ state: "detached" });
     check("a confirmed forget is sent once", calls.join() === "release,forget");
+    {
+      // the held-secrets card is a second door to forgetting: the copies it leaves are named there too
+      const heldCopies = page.getByRole("region", { name: "Copies left in your conversations" });
+      await heldCopies.waitFor();
+      check("forgetting a held note from its own card also names the conversation that still holds it", (await heldCopies.getByText("its words hold the note").count()) === 1 && (await heldCopies.getByRole("button", { name: /^Delete the conversation/ }).count()) === 1);
+      await heldCopies.getByRole("button", { name: "Close" }).click();
+      await heldCopies.waitFor({ state: "detached" });
+    }
     await page.unroute("**/api/memories/held");
     await page.unroute("**/api/memories/mem-held-1/release-hold");
     await page.unroute("**/api/memories/mem-held-1/forget");
@@ -1110,10 +1130,24 @@ try {
   await page.getByText("2 notes say almost the same").waitFor();
   check("bringing the copy back makes the group appear again", (await page.getByText("2 notes say almost the same").count()) === 1);
   const group = page.locator("details", { hasText: "Notes that say almost the same thing" }).locator(".mem").first();
+  // the real service forgets the note; its answer is passed through with one conversation added, to see the card from this door
+  await page.route("**/api/memories/*/forget", async (route) => {
+    const real = await route.fetch();
+    const body = await real.json();
+    body.copies_known = { ...(body.copies_known ?? {}), conversations: [{ id: "chat-similar-copy", why: "source" }], conversations_more: 0, prompt_history: 0, search_complete: true };
+    await route.fulfill({ response: real, json: body });
+  });
   await group.getByRole("button", { name: "Forget", exact: true }).click();
   await group.getByRole("button", { name: "Yes, forget it" }).click();
   await page.getByText("No notes say almost the same thing.").waitFor();
   check("forgetting one copy ends the group", await page.getByText("No notes say almost the same thing.").isVisible());
+  {
+    const similarCopies = page.getByRole("region", { name: "Copies left in your conversations" });
+    await similarCopies.waitFor();
+    check("forgetting a note from the similar-notes list also names the conversation it came from", (await similarCopies.getByText("the note was accepted from it").count()) === 1);
+    await similarCopies.getByRole("button", { name: "Close" }).click();
+    await page.unroute("**/api/memories/*/forget");
+  }
   await page.getByText("Notes that say almost the same thing").click();
   // two notes that say different things: listed, the owner keeps one (the other becomes its earlier version) or says both are right
   for (const t of ["Vendor payments run every Tuesday evening", "Vendor payments run every Thursday evening", "The Berlin office has forty desks", "The Pune office has sixty desks"]) {
@@ -1774,6 +1808,62 @@ try {
   const rows = await page.locator("tbody tr").allInnerTexts();
   check("the activity list shows approvals, delivery and memory changes in plain words", ["Release approved", "Delivery finished", "Memory forgotten", "Review finished", "Suggestion accepted"].every((w) => rows.join("\n").includes(w)));
   check("the activity page never shows memory text or file contents", !rows.join("\n").includes("in-process dictionary") && !rows.join("\n").includes("euros"));
+  // leave the Activity page only once the usage card and its price list have loaded, so nothing of theirs is in flight
+  await page.locator("#usage").getByRole("cell", { name: /test model/i }).first().waitFor();
+  await quiet(/\/api\/usage/);
+  await page.getByRole("link", { name: "Memory" }).click();
+  await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
+  {
+    // a note whose words are also in a kept conversation and in the saved typed history: forgetting it must say so, and each copy
+    // is removed only when the owner presses its own button
+    const words = "The vault code is blue-heron-4471 for the east door";
+    const setup = await page.evaluate(async (w) => {
+      const sess = await (await fetch("/api/session", { credentials: "same-origin" })).json();
+      const post = async (path, body) => { const r = await fetch(path, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json", "x-kk-csrf": sess.csrf }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json().catch(() => ({})) }; };
+      const note = await post("/api/memories", { text: w, level: "internal" });
+      const chat = await post("/api/sessions", { title: "Door codes" });
+      const said = await post("/api/chat", { message: "remember:  " + w.toUpperCase(), session: chat.body.id });
+      const other = await post("/api/sessions", { title: "Holiday plans" });
+      await post("/api/chat", { message: "where shall we go in May", session: other.body.id });
+      const hist = await post("/api/history", { text: w });
+      return { note: note.body.id, chat: chat.body.id, other: other.body.id, statuses: [note.status, chat.status, said.status, other.status, hist.status], csrf: sess.csrf };
+    }, words);
+    check("the helper note, conversations and history line were made", setup.statuses.every((x) => x === 200 || x === 201), JSON.stringify(setup.statuses));
+    await page.reload();
+    await page.getByLabel("Search memories").fill("vault code");
+    await page.locator(".mem", { hasText: "blue-heron-4471" }).waitFor();
+    await page.locator(".mem", { hasText: "blue-heron-4471" }).getByRole("button", { name: "Forget", exact: true }).click();
+    await page.getByRole("button", { name: "Yes, forget it" }).click();
+    const card = page.getByRole("region", { name: "Copies left in your conversations" });
+    await card.waitFor();
+    check("forgetting a note names the conversation that still holds its words, by its title", (await card.getByText("Door codes").count()) === 1 && (await card.getByText("its words hold the note").count()) === 1);
+    check("a conversation that does not hold it is not named", (await card.getByText("Holiday plans").count()) === 0);
+    check("the typed history that holds it is named with its own button", (await card.getByText("Lines of the terminal's saved history that hold it: 1.").count()) === 1 && (await card.getByRole("button", { name: "Clear the terminal's saved history" }).count()) === 1);
+    check("forgetting did not delete the conversation by itself", (await page.evaluate(async (id) => { const r = await fetch(`/api/sessions/${id}`, { credentials: "same-origin" }); await r.text(); return r.status; }, setup.chat)) === 200);
+    await axeCheck(page, "memory with the copies card");
+    await card.screenshot({ path: join(shots, "memory-copies-card-dark.png") });
+    const before = await page.getByLabel("Theme").inputValue();
+    await page.getByLabel("Theme").selectOption("light");
+    check("the theme really is light for the light-theme checks", (await page.evaluate(() => document.documentElement.getAttribute("data-theme"))) === "light");
+    await axeCheck(page, "memory with the copies card in the light theme");
+    await card.screenshot({ path: join(shots, "memory-copies-card-light.png") });
+    await page.getByLabel("Theme").selectOption(before);
+    await card.getByRole("button", { name: "Delete the conversation Door codes" }).click();
+    await card.getByText("Door codes").waitFor({ state: "detached" });
+    check("pressing Delete removes that conversation and only that one", (await page.evaluate(async (ids) => { const list = (await (await fetch("/api/sessions", { credentials: "same-origin" })).json()).sessions.map((x) => x.id); return [list.includes(ids[0]), list.includes(ids[1])]; }, [setup.chat, setup.other])).join() === "false,true");
+    await card.getByRole("button", { name: "Clear the terminal's saved history" }).click();
+    await card.getByRole("button", { name: "Clear the terminal's saved history" }).waitFor({ state: "detached" });
+    check("pressing Clear removes the saved typed history", (await page.evaluate(async () => (await (await fetch("/api/history", { credentials: "same-origin" })).json()).lines.length)) === 0);
+    await card.getByRole("button", { name: "Close" }).click();
+    check("Close dismisses the card", (await page.getByRole("region", { name: "Copies left in your conversations" }).count()) === 0);
+    const cleaned = await page.evaluate(async (m) => { const r = await fetch(`/api/sessions/${m.id}/forget`, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json", "x-kk-csrf": m.csrf }, body: "{}" }); await r.text(); return r.status; }, { id: setup.other, csrf: setup.csrf });
+    check("the helper conversation was removed again so the rest of the journey is unchanged", cleaned === 200, String(cleaned));
+    await page.getByLabel("Search memories").fill("");
+  }
+  await page.getByRole("link", { name: "Activity" }).click();
+  await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();
+  await page.locator("#usage").getByRole("cell", { name: /test model/i }).first().waitFor();
+  await quiet(/\/api\/usage/);
   // model usage: per route, over a range of days, tokens and speed, no words
   const usageCard = page.locator("#usage");
   await usageCard.getByRole("cell", { name: /test model/i }).first().waitFor();
@@ -2144,6 +2234,7 @@ try {
     // with a priced route is used here to see the table
     await page.goto(base + "/#/activity");
     await page.getByRole("heading", { name: "Model usage", exact: true }).waitFor();
+    await quiet(/\/api\/usage/);
     const usageStub = { from: 0, to: 1, routes: [
       { route: "models.example.com/m1", class: "device_only", simulated: false, turns: 3, prompt_tokens: 1200, measured_turns: 1, reply_tokens: 300, avg_ms: 900, max_ms: 1500, reply_tokens_per_second: 30, cost: { amount: 0.0123, currency: "USD", tokens_estimated: true } },
       { route: "scripted-test-model", class: "device_only", simulated: true, turns: 2, prompt_tokens: 50, measured_turns: 2, reply_tokens: 20, avg_ms: 10, max_ms: 12, reply_tokens_per_second: 0, cost: null },

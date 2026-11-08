@@ -1,5 +1,5 @@
 import { createMemo, createResource, createSignal, For, Show } from "solid-js";
-import { copyNames } from "../forgotten";
+import { copyNames, leftBehind, type LeftBehind } from "../forgotten";
 import { api, ApiError, type MemoryItem } from "../api";
 import { t, type Key } from "../i18n";
 import { isNoteFile, notesFromFile } from "../notes-import";
@@ -8,7 +8,7 @@ import { markTerms } from "../terms";
 
 const LEVELS = ["public", "internal", "confidential", "restricted"] as const;
 
-function Item(props: { m: MemoryItem; onChange: (msg?: string) => void }) {
+function Item(props: { m: MemoryItem; onChange: (msg?: string) => void; onLeft?: (l: LeftBehind | null) => void }) {
   const [editing, setEditing] = createSignal(false);
   const [draft, setDraft] = createSignal(props.m.text);
   const [draftProject, setDraftProject] = createSignal(props.m.project ?? "");
@@ -36,6 +36,7 @@ function Item(props: { m: MemoryItem; onChange: (msg?: string) => void }) {
         if (more > 0) parts.push(t("mem.forgotten.more", { n: more }));
       }
       parts.push(t("mem.forgotten.notReached"));
+      props.onLeft?.(leftBehind(r));
       props.onChange(parts.join(" "));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : t("mem.error"));
@@ -159,7 +160,7 @@ function ImportNotes(props: { onDone: () => void }) {
   );
 }
 
-function Similar(props: { onChange: (msg?: string) => void }) {
+function Similar(props: { onChange: (msg?: string) => void; onLeft?: (l: LeftBehind | null) => void }) {
   const [open, setOpen] = createSignal(false);
   const [found, { refetch }] = createResource(open, (on) => (on ? api.similarMemories() : Promise.resolve(null)));
   const [problem, setProblem] = createSignal("");
@@ -192,7 +193,7 @@ function Similar(props: { onChange: (msg?: string) => void }) {
                         <For each={g}>
                           {(m) => (
                             <>
-                              <Item m={m} onChange={(msg) => { props.onChange(msg); void refetch(); }} />
+                              <Item m={m} onChange={(msg) => { props.onChange(msg); void refetch(); }} onLeft={props.onLeft} />
                               <li class="actions">
                                 <button type="button" aria-label={t("mem.merge.keepFor", { text: m.text.slice(0, 40) })} onClick={() => void merge(m.id, g.filter((o) => o.id !== m.id).map((o) => o.id).slice(0, 8))}>{t("mem.merge.keep")}</button>
                               </li>
@@ -212,7 +213,67 @@ function Similar(props: { onChange: (msg?: string) => void }) {
   );
 }
 
-function Held(props: { onChange: (msg?: string) => void }) {
+/** The conversations and typed history that still hold a note the owner just forgot, each removable on its own and only on request. */
+function LeftBehindCard(props: { left: LeftBehind; onDone: () => void }) {
+  const [titles] = createResource(() => api.keptChats(true).then((r) => new Map(r.sessions.map((s) => [s.id, s.title]))).catch(() => new Map<string, string>()));
+  const [gone, setGone] = createSignal<string[]>([]);
+  const [historyCleared, setHistoryCleared] = createSignal(false);
+  const [status, setStatus] = createSignal("");
+  const [problem, setProblem] = createSignal("");
+  const remaining = () => props.left.conversations.filter((c) => !gone().includes(c.id));
+  const deleteChat = async (id: string) => {
+    setProblem("");
+    try {
+      await api.forgetChat(id);
+      setGone([...gone(), id]);
+      setStatus(t("mem.left.deleted"));
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("mem.error"));
+    }
+  };
+  const clearHistory = async () => {
+    setProblem("");
+    try {
+      await api.clearTypedHistory();
+      setHistoryCleared(true);
+      setStatus(t("mem.left.historyCleared"));
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("mem.error"));
+    }
+  };
+  return (
+    <section class="card stack" role="region" aria-labelledby="h-left">
+      <h2 id="h-left">{t("mem.left.heading")}</h2>
+      <p class="muted">{t("mem.left.lead")}</p>
+      <Show when={props.left.incomplete}><p class="warn">{t("mem.left.incomplete")}</p></Show>
+      <Show when={problem()}><p role="alert" class="bad">{problem()}</p></Show>
+      <p role="status" class="sr">{status()}</p>
+      <ul class="plain stack">
+        <For each={remaining()}>
+          {(c) => (
+            <li class="card stack">
+              <p><strong>{titles()?.get(c.id) || t("mem.left.untitled")}</strong></p>
+              <p class="muted">{c.why === "source" ? t("mem.left.source") : t("mem.left.text")}</p>
+              <div class="actions">
+                <button type="button" class="danger" aria-label={t("mem.left.deleteLabel", { title: titles()?.get(c.id) || t("mem.left.untitled") })} onClick={() => void deleteChat(c.id)}>{t("mem.left.delete")}</button>
+              </div>
+            </li>
+          )}
+        </For>
+      </ul>
+      <Show when={props.left.more > 0}><p class="muted">{t("mem.forgotten.more", { n: props.left.more })}</p></Show>
+      <Show when={props.left.history > 0 && !historyCleared()}>
+        <div class="card stack">
+          <p>{t("mem.left.history", { n: props.left.history })}</p>
+          <div class="actions"><button type="button" class="danger" onClick={() => void clearHistory()}>{t("mem.left.clearHistory")}</button></div>
+        </div>
+      </Show>
+      <div class="actions"><button type="button" onClick={props.onDone}>{t("mem.left.close")}</button></div>
+    </section>
+  );
+}
+
+function Held(props: { onChange: (msg?: string) => void; onLeft?: (l: LeftBehind | null) => void }) {
   const [list, { refetch }] = createResource(() => api.heldMemories().then((r) => r.held).catch(() => []));
   const [problem, setProblem] = createSignal("");
   const [confirming, setConfirming] = createSignal<string | null>(null);
@@ -233,7 +294,8 @@ function Held(props: { onChange: (msg?: string) => void }) {
   const forget = async (id: string) => {
     setProblem("");
     try {
-      await api.forgetMemory(id, "held as a possible secret");
+      const r = await api.forgetMemory(id, "held as a possible secret");
+      props.onLeft?.(leftBehind(r));
       await done(t("mem.forgotten"));
     } catch (e) {
       setProblem(e instanceof ApiError ? e.message : t("mem.error"));
@@ -431,6 +493,7 @@ export function Memory() {
   const [reason, setReason] = createSignal("");
   const [project, setProject] = createSignal("");
   const [note, setNote] = createSignal("");
+  const [left, setLeft] = createSignal<LeftBehind | null>(null);
   const [error, setError] = createSignal("");
   const add = async (e: Event) => {
     e.preventDefault();
@@ -451,7 +514,8 @@ export function Memory() {
     <section class="stack wide" aria-labelledby="h-mem">
       <h1 id="h-mem">{t("mem.title")}</h1>
       <p class="lead">{t("mem.lead")}</p>
-      <Held onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
+      <Show when={left()}>{(l) => <LeftBehindCard left={l()} onDone={() => setLeft(null)} />}</Show>
+      <Held onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />
       <form class="card stack" onSubmit={add}>
         <h2>{t("mem.add.heading")}</h2>
         <label for="mem-text">{t("mem.add.text")}</label>
@@ -506,13 +570,13 @@ export function Memory() {
           <Show when={filtering()}><button type="button" onClick={() => { setFLevel(""); setFOrigin(""); setFProject(""); setFUnused(false); setFEnding(false); }}>{t("mem.filter.reset")}</button></Show>
         </div>
       </section>
-      <Similar onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
+      <Similar onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />
       <Disagreements onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <Merged onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <ReviewSources onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <ul class="plain stack">
         <For each={items()} fallback={<li class="muted">{items.loading ? t("review.loading") : query().trim() || filtering() ? t("mem.nomatch") : t("mem.none")}</li>}>
-          {(m) => <Item m={m} onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />}
+          {(m) => <Item m={m} onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />}
         </For>
       </ul>
     </section>

@@ -690,6 +690,34 @@ impl Memories {
         Ok(out)
     }
 
+    /// The conversations and reviews a note and its earlier versions were accepted from (`Source::Review(ref)`), for finding where
+    /// a paraphrased note came from before it is forgotten. Only versions the caller may read; a note the owner typed has none.
+    pub fn source_refs_of(&self, id: &str, clearance: &Label) -> Result<Vec<String>, MemoryError> {
+        let chain = self.lineage_of(&[id.to_string()], false)?;
+        let mut out: Vec<String> = Vec::new();
+        for cid in &chain {
+            let row = self
+                .conn()
+                .query_row(
+                    "SELECT * FROM memories WHERE id = ?1",
+                    params![cid],
+                    row_to_memory,
+                )
+                .optional()?;
+            if let Some(r) = row {
+                if let Source::Review(reference) = &r.m.source {
+                    if r.m.label.confidentiality_within(clearance)
+                        && !reference.is_empty()
+                        && !out.contains(reference)
+                    {
+                        out.push(reference.clone());
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Notes held back by a newer secret detector, with the kind of secret it saw, newest first. Only notes the caller may read.
     pub fn held(&self, clearance: &Label) -> Result<Vec<(Memory, String)>, MemoryError> {
         let mut st = self.conn().prepare(

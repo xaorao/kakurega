@@ -3993,3 +3993,58 @@ fn me84_usage_counts_only_notes_that_reached_the_model_and_ignores_unknown_ids()
     m.forget(300, &a, "wrong").unwrap();
     assert!(m.usage(&[a]).is_empty());
 }
+
+#[test]
+fn me85_a_note_accepted_from_a_conversation_reports_where_it_came_from_through_its_whole_history() {
+    let m = mem(&dir());
+    let lbl = internal();
+    // accepted from a conversation: the source is that conversation
+    let p = m
+        .propose(1, "conv-1", "Acme settles on the fifth", "message 2", &lbl)
+        .unwrap()
+        .unwrap();
+    let from_conv = id(m.accept_proposal(2, &p, "conv-1", None).unwrap());
+    assert_eq!(
+        m.source_refs_of(&from_conv, &internal()).unwrap(),
+        vec!["conv-1".to_string()]
+    );
+    // typed by the owner: no source
+    let typed = id(m
+        .remember(3, nm("Beta ships on mondays and thursdays", internal()))
+        .unwrap());
+    assert!(m.source_refs_of(&typed, &internal()).unwrap().is_empty());
+    // a correction keeps the chain: the earlier version's source is still reported, and so is a second conversation's
+    let p2 = m
+        .propose(4, "conv-2", "Gamma pays on the tenth", "message 4", &lbl)
+        .unwrap()
+        .unwrap();
+    let other = id(m.accept_proposal(5, &p2, "conv-2", None).unwrap());
+    let corrected = m
+        .correct(6, &other, nm("Gamma pays on the twelfth", internal()))
+        .unwrap();
+    let refs = m.source_refs_of(&corrected, &internal()).unwrap();
+    assert_eq!(refs, vec!["conv-2".to_string()], "{refs:?}");
+    // a version the caller may not read reports nothing
+    let restricted = Label::new(Level::Restricted).with_compartment("hr");
+    let p3 = m
+        .propose(
+            7,
+            "conv-3",
+            "Layoff list is final",
+            "message 6",
+            &restricted,
+        )
+        .unwrap()
+        .unwrap();
+    let secret = id(m.accept_proposal(8, &p3, "conv-3", None).unwrap());
+    assert!(
+        m.source_refs_of(&secret, &internal()).unwrap().is_empty(),
+        "an unreadable note does not leak where it came from"
+    );
+    assert_eq!(
+        m.source_refs_of(&secret, &restricted).unwrap(),
+        vec!["conv-3".to_string()]
+    );
+    // an unknown id is nothing, not an error that names it
+    assert!(m.source_refs_of("no-such", &internal()).unwrap().is_empty());
+}
