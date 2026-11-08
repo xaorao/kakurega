@@ -96,6 +96,7 @@ let excusedRequests = 0;
 let excusedConsole = 0;
 // The one lease the script asks for with zero uses, to see the service's refusal shown in words: the browser logs its 400.
 let leaseRefusals = 1;
+let sealedRefusals = 1;
 let instructionRefusals = 0; // the one deliberate 422 when an instruction holds a secret
 let attachmentRefusals = 0; // the one deliberate 422 when a password-protected file is attached
 let chatFailureRefusals = 0; // the one deliberate 422 when a chat send is made to fail
@@ -135,6 +136,10 @@ page.on("console", (m) => {
   }
   if (m.location().url.includes("/api/attachments?name=locked.pdf") && /status of 422/.test(m.text()) && attachmentRefusals > 0) {
     attachmentRefusals--;
+    return;
+  }
+  if (m.location().url.endsWith("/api/memories/import-sealed") && /status of 400/.test(m.text()) && sealedRefusals > 0) {
+    sealedRefusals--;
     return;
   }
   if (m.location().url.endsWith("/api/agent-access/grant") && /status of 400/.test(m.text()) && leaseRefusals > 0) {
@@ -1879,6 +1884,74 @@ try {
     await page.locator(".mem", { hasText: "Quiet-test fact" }).getByRole("button", { name: "Forget", exact: true }).click();
     await page.getByRole("button", { name: "Yes, forget it" }).click();
     await page.waitForFunction(() => ![...document.querySelectorAll(".mem")].some((e) => e.textContent.includes("Quiet-test fact")));
+    await page.reload();
+    await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
+  }
+  {
+    // backing up and restoring notes through the real screen: a readable file, a protected file with a one-time key, and restore
+    const apiGet = (path) => page.evaluate(async (u) => { const r = await fetch(u); return { status: r.status, body: await r.json() }; }, path);
+    await page.getByLabel("Only for this project (optional folder name)").fill("");
+    for (const text of ["Backup-test fact about the Oslo canteen", "Backup-test fact about the Bergen ferry"]) {
+      await page.getByLabel("What should be remembered").fill(text);
+      await page.getByRole("button", { name: "Remember" }).click();
+      await page.locator(".mem", { hasText: text }).waitFor();
+    }
+    const box = page.locator("details", { has: page.locator("summary", { hasText: "Back up and restore your notes" }) });
+    await box.locator("summary").click();
+    const readFile = async (dl) => { const stream = await dl.createReadStream(); const chunks = []; for await (const c of stream) chunks.push(c); return Buffer.concat(chunks); };
+    // a readable file
+    const [d1] = await Promise.all([page.waitForEvent("download"), box.getByRole("button", { name: "Download a readable file" }).click()]);
+    const plain = await readFile(d1);
+    const plainDoc = JSON.parse(plain.toString("utf-8"));
+    check("the readable download is the notes backup, named as such, and holds the notes", d1.suggestedFilename() === "kakurega-memory-backup.json" && plainDoc.kakurega_memory_backup === 1 && plain.toString("utf-8").includes("Oslo canteen") && plain.toString("utf-8").includes("Bergen ferry"));
+    await box.getByText(/^Downloaded \d+ notes in a readable file/).waitFor();
+    check("the readable download warns that anyone with the file can read every note", (await box.innerText()).includes("Anyone who has this file can read every note"));
+    // a protected file and its one-time key
+    const [d2] = await Promise.all([page.waitForEvent("download"), box.getByRole("button", { name: "Download a protected file" }).click()]);
+    const sealed = await readFile(d2);
+    check("the protected download is a sealed file that shows none of the notes", d2.suggestedFilename() === "kakurega-memory-backup.kkmem" && sealed.subarray(0, 8).toString() === "KKBACKUP" && !sealed.toString("latin1").includes("Oslo") && !sealed.toString("latin1").includes("kakurega_memory_backup"));
+    const keyBox = page.getByRole("region", { name: "Your recovery key" });
+    await keyBox.waitFor();
+    const recoveryKey = (await page.locator("#mem-backup-key").innerText()).trim();
+    check("the recovery key is shown once in its written form, with the warning to keep it apart from the file", /^KKRK-[A-Z0-9-]+$/i.test(recoveryKey) && (await keyBox.innerText()).includes("Write it down somewhere other than the file"), recoveryKey);
+    await axeCheck(page, "memory with the backup section and the recovery key shown");
+    await box.screenshot({ path: join(shots, "08f-notes-backup.png") });
+    await keyBox.getByRole("button", { name: "I have saved the key" }).click();
+    await keyBox.waitFor({ state: "detached" });
+    check("once the key is dismissed it is gone from the page", !(await page.content()).includes(recoveryKey));
+    // restore: a file that is not a backup, then the protected file with a wrong key, then the right key
+    const picker = box.locator("#mem-backup-file");
+    await picker.setInputFiles({ name: "hello.txt", mimeType: "text/plain", buffer: Buffer.from("just some words") });
+    await box.getByRole("alert").filter({ hasText: "not a Kakurega notes backup" }).waitFor();
+    check("a file that is not a notes backup is turned away in plain words and nothing can be restored from it", (await box.getByRole("button", { name: "Restore the notes" }).count()) === 0);
+    await picker.setInputFiles({ name: "kakurega-memory-backup.kkmem", mimeType: "application/octet-stream", buffer: sealed });
+    await box.getByText("This is a protected file. Enter its recovery key.").waitFor();
+    check("a protected file asks for its key and cannot be restored without one", await box.getByRole("button", { name: "Restore the notes" }).isDisabled());
+    await box.getByLabel("Recovery key").fill("KKRK-AAAAA-AAAAA-AAAAA");
+    await box.getByRole("button", { name: "Restore the notes" }).click();
+    await box.getByRole("alert").filter({ hasText: "could not be opened with that key" }).waitFor();
+    check("a wrong key is refused without saying whether the key or the file was at fault", (await box.getByRole("alert").innerText()).includes("could not be opened with that key"));
+    await box.getByLabel("Recovery key").fill(recoveryKey);
+    await box.getByRole("button", { name: "Restore the notes" }).click();
+    const total = plainDoc.memories.length + (plainDoc.archived?.length ?? 0);
+    await box.getByText(new RegExp(`^Restored: 0 added, ${total} already there, 0 refused\\.`)).waitFor();
+    check("the right key restores, and notes that are already there are counted, not added twice", total >= 2 && (await page.locator(".mem", { hasText: "Backup-test fact" }).count()) === 2);
+    // a readable file with one new note in it: it is added through the same checks as any note
+    const edited = { ...plainDoc, memories: [...plainDoc.memories, { text: "Backup-test fact about the Tromso quay", level: "internal" }, { text: "the password is hunter2hunter2", level: "internal" }] };
+    await picker.setInputFiles({ name: "kakurega-memory-backup.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(edited)) });
+    await box.getByRole("button", { name: "Restore the notes" }).click();
+    await box.getByText(new RegExp(`^Restored: 1 added, ${total} already there, 1 refused\\.`)).waitFor();
+    await page.locator(".mem", { hasText: "Tromso quay" }).waitFor();
+    check("a readable file restores through the usual checks: the new note is added and a secret in it is refused", (await page.locator(".mem", { hasText: "hunter2" }).count()) === 0);
+    // leave nothing behind
+    for (const text of ["Oslo canteen", "Bergen ferry", "Tromso quay"]) {
+      await page.getByLabel("Search memories").fill("Backup-test");
+      const item = page.locator(".mem", { hasText: text });
+      await item.waitFor();
+      await item.getByRole("button", { name: "Forget", exact: true }).click();
+      await page.getByRole("button", { name: "Yes, forget it" }).click();
+      await page.waitForFunction((t) => ![...document.querySelectorAll(".mem")].some((e) => e.textContent.includes(t)), text);
+    }
     await page.reload();
     await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
   }

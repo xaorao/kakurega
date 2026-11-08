@@ -402,6 +402,21 @@ impl Web {
 }
 
 impl Web {
+    /// Posts a body and reports only how it ended: the status, or the reason the connection ended. A server that refuses a huge
+    /// body may close the connection before it is all sent, which is a refusal and not a failure of the test.
+    fn try_post(&self, path: &str, body: Value) -> Result<u16, String> {
+        self.agent
+            .post(&format!("{}{}", self.base, path))
+            .header("Cookie", &self.cookie)
+            .header("Origin", &self.base)
+            .header("X-KK-CSRF", &self.csrf)
+            .send_json(body)
+            .map(|r| r.status().as_u16())
+            .map_err(|e| e.to_string())
+    }
+}
+
+impl Web {
     /// Sends raw bytes, the way a file is attached.
     fn post_raw(&self, path: &str, bytes: &[u8]) -> (u16, Value) {
         let mut r = self
@@ -13493,4 +13508,282 @@ fn sv139_many_connections_racing_for_one_lease_get_exactly_its_uses_and_a_refund
     let (_, log) = admin(&base, &tok, "GET", "/admin/log", None);
     let text = log.to_string();
     assert_eq!(text.matches("agent.lease.used").count(), 8, "{text}");
+}
+
+#[test]
+fn sv140_a_sealed_notes_backup_cannot_be_read_without_its_key_and_restores_every_note_into_another_service(
+) {
+    let (c, w, _repo, _root, _svc) = boot("sealed-out", true);
+    let a = add_note(&w, "Sealed fact about the Vienna warehouse rota");
+    add_note(&w, "Second sealed fact about the Prague tax filing");
+    let (s, v) = w.post(
+        "/api/memories",
+        json!({"text": "Project sealed fact about build caches", "project": "payments-service"}),
+    );
+    assert_eq!(s, 201, "{v}");
+    let away = add_note(&w, "Archived sealed fact about the old Lisbon lease");
+    w.post(&format!("/api/memories/{away}/archive"), json!({}));
+    let _ = a;
+    let (s, out) = w.post("/api/memories/export-sealed", json!({}));
+    assert_eq!(s, 200, "{out}");
+    assert_eq!(out["notes"], 4);
+    assert_eq!(out["filename"], "kakurega-memory-backup.kkmem");
+    let key = out["recovery_key"].as_str().unwrap().to_string();
+    let file = out["file"].as_str().unwrap().to_string();
+    let raw = kk_evidence::b64::decode(&file).unwrap();
+    assert!(raw.starts_with(b"KKBACKUP"), "the file is a sealed backup");
+    for word in [
+        "Vienna",
+        "Prague",
+        "build caches",
+        "Lisbon",
+        "payments-service",
+        "kakurega_memory_backup",
+    ] {
+        assert!(
+            !raw.windows(word.len()).any(|x| x == word.as_bytes()),
+            "the sealed file shows '{word}'"
+        );
+    }
+    assert!(!file.contains("Vienna"));
+    // a new export is a new key and a new file, so no key is ever used twice
+    let (_, again) = w.post("/api/memories/export-sealed", json!({}));
+    assert_ne!(again["recovery_key"], out["recovery_key"]);
+    assert_ne!(again["file"], out["file"]);
+    // restoring needs the key: without a session nothing happens either
+    assert_eq!(
+        Web::new(c.addr)
+            .post("/api/memories/export-sealed", json!({}))
+            .0,
+        401
+    );
+    assert_eq!(
+        Web::new(c.addr)
+            .post(
+                "/api/memories/import-sealed",
+                json!({"file": file, "key": key})
+            )
+            .0,
+        401
+    );
+    // another service gets every note back, the archived one archived and the project one in its project
+    let (_c2, w2, _repo2, _root2, _svc2) = boot("sealed-in", true);
+    let (s, r) = w2.post(
+        "/api/memories/import-sealed",
+        json!({"file": file, "key": key}),
+    );
+    assert_eq!(
+        (s, r["added"].as_u64(), r["refused"].as_u64()),
+        (200, Some(4), Some(0)),
+        "{r}"
+    );
+    assert_eq!(note_ids(&w2).len(), 3);
+    assert_eq!(
+        w2.get("/api/memories/archived").1["archived"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        w2.get("/api/memories?q=build%20caches").1["memories"][0]["project"] == "payments-service"
+    );
+    // the same file twice adds nothing new
+    let (_, r) = w2.post(
+        "/api/memories/import-sealed",
+        json!({"file": file, "key": key}),
+    );
+    assert_eq!(r["added"].as_u64(), Some(0), "{r}");
+    // the log says that it happened and how many, and holds neither the key nor a word of a note
+    let log = w.get("/api/log").1.to_string();
+    assert!(log.contains("memory.exported_sealed"));
+    assert!(
+        !log.contains(&key) && !log.contains("Vienna") && !log.contains("Lisbon"),
+        "{log}"
+    );
+    let log2 = w2.get("/api/log").1.to_string();
+    assert!(log2.contains("memory.imported_sealed") && !log2.contains(&key));
+}
+
+#[test]
+fn sv141_a_sealed_backup_that_is_wrong_in_any_way_is_refused_with_the_same_words_and_adds_nothing()
+{
+    let (_c, w, _repo, _root, _svc) = boot("sealed-bad", true);
+    add_note(&w, "A fact kept for the hostile restore cases");
+    let (_, out) = w.post("/api/memories/export-sealed", json!({}));
+    let key = out["recovery_key"].as_str().unwrap().to_string();
+    let file = out["file"].as_str().unwrap().to_string();
+    let (_c2, w2, _repo2, _root2, _svc2) = boot("sealed-bad-target", true);
+    let refused = |body: Value, what: &str| {
+        let (s, v) = w2.post("/api/memories/import-sealed", body);
+        assert_eq!(s, 400, "{what}: {v}");
+        assert_eq!(v["error"]["code"], "BAD_BACKUP", "{what}");
+        assert_eq!(
+            v["error"]["message"], "this file could not be opened with that key",
+            "{what}"
+        );
+        assert_eq!(note_ids(&w2).len(), 0, "{what}: nothing was added");
+    };
+    let other_key = kk_backup::key_to_text(&kk_backup::new_key());
+    refused(json!({"file": file, "key": other_key}), "a different key");
+    refused(
+        json!({"file": file, "key": "not a key"}),
+        "text that is not a key",
+    );
+    refused(json!({"file": file, "key": ""}), "an empty key");
+    refused(json!({"file": "", "key": key}), "an empty file");
+    refused(
+        json!({"file": "%%%%", "key": key}),
+        "text that is not base64",
+    );
+    let raw = kk_evidence::b64::decode(&file).unwrap();
+    let mut flipped = raw.clone();
+    let mid = flipped.len() / 2;
+    flipped[mid] ^= 1;
+    refused(
+        json!({"file": kk_evidence::b64::encode(&flipped), "key": key}),
+        "one flipped bit",
+    );
+    refused(
+        json!({"file": kk_evidence::b64::encode(&raw[..raw.len() - 1]), "key": key}),
+        "a truncated file",
+    );
+    refused(
+        json!({"file": kk_evidence::b64::encode(&raw[..10]), "key": key}),
+        "a stub",
+    );
+    // a file that is sealed correctly but is not a notes backup
+    let k = kk_backup::new_key();
+    let seal = |entries: &[(String, Vec<u8>)]| {
+        kk_evidence::b64::encode(&kk_backup::seal(entries, &k, 1).unwrap())
+    };
+    let keytext = kk_backup::key_to_text(&k);
+    let good_doc = br#"{"kakurega_memory_backup":1,"memories":[{"text":"x"}]}"#.to_vec();
+    refused(
+        json!({"file": seal(&[("other.json".into(), good_doc.clone())]), "key": keytext}),
+        "the wrong entry name",
+    );
+    refused(
+        json!({"file": seal(&[("notes.json".into(), good_doc.clone()), ("more.json".into(), vec![])]), "key": keytext}),
+        "two entries",
+    );
+    refused(
+        json!({"file": seal(&[("notes.json".into(), b"not json".to_vec())]), "key": keytext}),
+        "contents that are not json",
+    );
+    // opened correctly but a version this program does not know: refused in the existing words, which reveal nothing without the key
+    let (st, v) = w2.post(
+        "/api/memories/import-sealed",
+        json!({"file": seal(&[("notes.json".into(), br#"{"kakurega_memory_backup":2,"memories":[]}"#.to_vec())]), "key": keytext}),
+    );
+    assert_eq!(
+        (st, v["error"]["code"].as_str()),
+        (400, Some("BAD_BACKUP")),
+        "{v}"
+    );
+    assert_eq!(note_ids(&w2).len(), 0);
+    // the same file with the right key is fine, so the refusals above were about the file and the key
+    let (s, r) = w2.post(
+        "/api/memories/import-sealed",
+        json!({"file": file, "key": key}),
+    );
+    assert_eq!((s, r["added"].as_u64()), (200, Some(1)), "{r}");
+    // unknown fields and missing fields are refused as malformed
+    assert!(
+        w2.post(
+            "/api/memories/import-sealed",
+            json!({"file": file, "key": key, "extra": 1})
+        )
+        .0 >= 400
+    );
+    assert!(
+        w2.post("/api/memories/import-sealed", json!({"file": file}))
+            .0
+            >= 400
+    );
+}
+
+#[test]
+fn sv142_a_notes_backup_larger_than_the_usual_request_limit_can_still_be_restored_plain_or_sealed()
+{
+    let (_c, w, _repo, _root, _svc) = boot("big-out", true);
+    // 300 notes near the 4 KiB limit: a backup of well over a megabyte
+    let filler = |i: usize| {
+        let mut t = format!("Big backup note number {i} about quarterly planning. ");
+        while t.len() < 3900 {
+            t.push_str(&format!("Detail {} for item {i}. ", t.len()));
+        }
+        t
+    };
+    for i in 0..300 {
+        let (s, v) = w.post("/api/memories", json!({"text": filler(i)}));
+        assert_eq!(s, 201, "{i}: {v}");
+    }
+    let (s, plain) = w.get_bytes("/api/memories/export");
+    assert_eq!(s, 200);
+    assert!(
+        plain.len() > (1 << 20) + 100_000,
+        "the backup is larger than the usual limit: {}",
+        plain.len()
+    );
+    let doc: Value = serde_json::from_slice(&plain).unwrap();
+    let (_, sealed) = w.post("/api/memories/export-sealed", json!({}));
+    assert_eq!(sealed["notes"], 300);
+    let (_c2, w2, _r2, _x2, _s2) = boot("big-in-sealed", true);
+    let (s, r) = w2.post(
+        "/api/memories/import-sealed",
+        json!({"file": sealed["file"], "key": sealed["recovery_key"]}),
+    );
+    assert_eq!((s, r["added"].as_u64()), (200, Some(300)), "{s} {r}");
+    let (_c3, w3, _r3, _x3, _s3) = boot("big-in-plain", true);
+    let (s, r) = w3.post("/api/memories/import", doc);
+    assert_eq!((s, r["added"].as_u64()), (200, Some(300)), "{s} {r}");
+}
+
+#[test]
+fn sv143_a_restore_request_over_the_size_limits_is_turned_away_before_anything_is_decoded() {
+    let (_c, w, _repo, _root, _svc) = boot("restore-size", true);
+    let limit = 32usize << 20;
+    // just over the largest sealed file but under the request limit: the handler refuses it in the usual words
+    let (s, v) = w.post(
+        "/api/memories/import-sealed",
+        json!({"file": "A".repeat(limit + 10), "key": "KKRK-AAAAA"}),
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (400, Some("BAD_BACKUP")),
+        "{s} {v}"
+    );
+    // far over the request limit: refused by the server itself, as a 413 or by closing the connection, never accepted
+    for (path, body) in [
+        (
+            "/api/memories/import-sealed",
+            json!({"file": "A".repeat(limit + 100_000), "key": "KKRK-AAAAA"}),
+        ),
+        (
+            "/api/memories/import",
+            json!({"kakurega_memory_backup": 1, "memories": [], "pad": "A".repeat(limit + 100_000)}),
+        ),
+    ] {
+        let r = w.try_post(path, body);
+        assert!(matches!(r, Ok(413) | Err(_)), "{path}: {r:?}");
+    }
+    // the service is still there
+    assert_eq!(w.get("/api/memories").0, 200);
+    // an over-long key is refused without being parsed
+    let (s, v) = w.post(
+        "/api/memories/import-sealed",
+        json!({"file": "AAAA", "key": "K".repeat(201)}),
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (400, Some("BAD_BACKUP")),
+        "{v}"
+    );
+    // the usual limit still applies to the rest of the API
+    let r = w.try_post("/api/memories", json!({"text": "x".repeat(2 << 20)}));
+    assert!(
+        matches!(r, Ok(413) | Err(_)),
+        "a route that did not ask for more keeps the one-megabyte limit: {r:?}"
+    );
 }

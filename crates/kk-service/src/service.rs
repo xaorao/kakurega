@@ -1713,7 +1713,8 @@ async fn memory_merged(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) 
     }
 }
 
-async fn memories_export(axum::Extension(svc): Svc) -> Response {
+/// Every current and archived note, as the readable backup document, and how many notes it holds.
+fn export_document(svc: &Service) -> Result<(Value, usize), kk_memory::MemoryError> {
     let mem = svc.memory.lock().expect("lock");
     let res = mem.owner_clearance().and_then(|c| {
         Ok((
@@ -1721,22 +1722,24 @@ async fn memories_export(axum::Extension(svc): Svc) -> Response {
             mem.archived_notes(&c)?,
         ))
     });
-    let (items, archived) = match res {
-        Ok(i) => i,
-        Err(e) => return memory_error(e),
-    };
+    let (items, archived) = res?;
     drop(mem);
-    svc.log_event(
-        "memory.exported",
-        "memory",
-        &[("count", (items.len() + archived.len()).into())],
-    );
+    let count = items.len() + archived.len();
     let body = json!({"kakurega_memory_backup": 1, "exported_at": now(), "memories": items.iter().map(|r| {
         let m = &r.memory;
         json!({"text": m.text, "level": format!("{:?}", m.label.level).to_lowercase(), "valid_to": m.valid_to, "project": m.project})
     }).collect::<Vec<_>>(), "archived": archived.iter().map(|m| {
         json!({"text": m.text, "level": format!("{:?}", m.label.level).to_lowercase(), "valid_to": m.valid_to, "project": m.project})
     }).collect::<Vec<_>>()});
+    Ok((body, count))
+}
+
+async fn memories_export(axum::Extension(svc): Svc) -> Response {
+    let (body, count) = match export_document(&svc) {
+        Ok(x) => x,
+        Err(e) => return memory_error(e),
+    };
+    svc.log_event("memory.exported", "memory", &[("count", count.into())]);
     (
         [
             ("content-type", "application/json"),
@@ -1749,6 +1752,99 @@ async fn memories_export(axum::Extension(svc): Svc) -> Response {
         body.to_string(),
     )
         .into_response()
+}
+
+/// The same backup, sealed under a fresh recovery key that is shown once and never kept. The file can sit in a shared folder or a
+/// cloud drive: without the key it is unreadable.
+async fn memories_export_sealed(axum::Extension(svc): Svc) -> Response {
+    let (body, count) = match export_document(&svc) {
+        Ok(x) => x,
+        Err(e) => return memory_error(e),
+    };
+    let key = kk_backup::new_key();
+    let file = match kk_backup::seal(
+        &[(
+            SEALED_NOTES_ENTRY.to_string(),
+            body.to_string().into_bytes(),
+        )],
+        &key,
+        u64::try_from(now()).unwrap_or(0),
+    ) {
+        Ok(f) => f,
+        Err(_) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "SEAL_FAILED",
+                "the backup could not be sealed",
+            )
+        }
+    };
+    svc.log_event(
+        "memory.exported_sealed",
+        "memory",
+        &[("count", count.into())],
+    );
+    (
+        [("cache-control", "no-store")],
+        Json(json!({
+            "file": kk_evidence::b64::encode(&file),
+            "recovery_key": kk_backup::key_to_text(&key),
+            "notes": count,
+            "filename": "kakurega-memory-backup.kkmem",
+            "note": "Keep the recovery key somewhere other than the file. Without it the file cannot be opened, and nobody, including this program, can recover it.",
+        })),
+    )
+        .into_response()
+}
+
+/// The one entry a sealed notes backup holds.
+const SEALED_NOTES_ENTRY: &str = "notes.json";
+/// The largest sealed notes file a restore request may carry (base64 text length); the request limit below is what enforces it. A backup of the most notes a restore accepts (5000, each up
+/// to 4 KiB) is about 22 MB readable and 30 MB as base64, so the usual one-megabyte request limit would turn away a backup the
+/// app itself made.
+const MAX_SEALED_B64: usize = 32 << 20;
+/// What a restore request may weigh: the biggest sealed file and a little for the rest.
+const RESTORE_BODY_MAX: usize = MAX_SEALED_B64 + 4096;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SealedImport {
+    file: String,
+    key: String,
+}
+
+/// Restores notes from a sealed backup. A wrong key and a damaged file get the same answer, so the answer tells nothing about
+/// which.
+async fn memories_import_sealed(
+    axum::Extension(svc): Svc,
+    Json(b): Json<SealedImport>,
+) -> Response {
+    let bad = || {
+        error(
+            StatusCode::BAD_REQUEST,
+            "BAD_BACKUP",
+            "this file could not be opened with that key",
+        )
+    };
+    let Ok(bytes) = kk_evidence::b64::decode(b.file.trim()) else {
+        return bad();
+    };
+    let Ok(key) = kk_backup::key_from_text(&b.key) else {
+        return bad();
+    };
+    let Ok((entries, _)) = kk_backup::open(&bytes, &key) else {
+        return bad();
+    };
+    let [(name, doc)] = entries.as_slice() else {
+        return bad();
+    };
+    if name != SEALED_NOTES_ENTRY {
+        return bad();
+    }
+    let Ok(body) = serde_json::from_slice::<ImportBody>(doc) else {
+        return bad();
+    };
+    import_items(&svc, body, "memory.imported_sealed")
 }
 
 #[derive(Deserialize)]
@@ -1771,6 +1867,10 @@ struct ImportBody {
 }
 
 async fn memories_import(axum::Extension(svc): Svc, Json(b): Json<ImportBody>) -> Response {
+    import_items(&svc, b, "memory.imported")
+}
+
+fn import_items(svc: &Service, b: ImportBody, event: &str) -> Response {
     if b.kakurega_memory_backup != 1 || b.memories.len() + b.archived.len() > 5000 {
         return error(
             StatusCode::BAD_REQUEST,
@@ -1814,7 +1914,7 @@ async fn memories_import(axum::Extension(svc): Svc, Json(b): Json<ImportBody>) -
         }
     }
     svc.log_event(
-        "memory.imported",
+        event,
         "memory",
         &[("added", added.into()), ("refused", refused.into())],
     );
@@ -8097,7 +8197,16 @@ impl Extension for Routes {
             .route("/api/memories/{id}/keep", post(memory_keep))
             .route("/api/memories/{id}/merged", get(memory_merged))
             .route("/api/memories/export", get(memories_export))
-            .route("/api/memories/import", post(memories_import))
+            .route("/api/memories/export-sealed", post(memories_export_sealed))
+            .route(
+                "/api/memories/import-sealed",
+                post(memories_import_sealed)
+                    .layer(axum::extract::DefaultBodyLimit::max(RESTORE_BODY_MAX)),
+            )
+            .route(
+                "/api/memories/import",
+                post(memories_import).layer(axum::extract::DefaultBodyLimit::max(RESTORE_BODY_MAX)),
+            )
             .route("/api/memories/import-notes", post(memories_import_notes))
             .route("/api/memories/{id}/correct", post(memory_correct))
             .route(

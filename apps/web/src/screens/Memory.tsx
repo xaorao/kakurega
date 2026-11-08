@@ -99,6 +99,125 @@ function Item(props: { m: MemoryItem; pinned?: boolean; onChange: (msg?: string)
 const MAX_NOTE_CHARS = 20000;
 const MAX_NOTES = 500;
 
+/** Bytes as URL-safe base64 without padding, the form the service speaks, in pieces so a large file does not overflow the stack. */
+function toBase64Url(bytes: Uint8Array): string {
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) out += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(out).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** The bytes of URL-safe base64 text without padding, as the service writes it. */
+function fromBase64Url(text: string): Uint8Array<ArrayBuffer> {
+  const standard = text.replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(standard + "=".repeat((4 - (standard.length % 4)) % 4));
+  const bytes = new Uint8Array(new ArrayBuffer(raw.length));
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes;
+}
+
+function download(name: string, type: string, data: BlobPart) {
+  const url = URL.createObjectURL(new Blob([data], { type }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** The largest backup file restored here: about 24 MB as base64 text is well under what the service accepts (32 MiB). */
+const MAX_BACKUP_BYTES = 22 * 1024 * 1024;
+
+function NotesBackup(props: { onDone: () => void }) {
+  const [busy, setBusy] = createSignal(false);
+  const [message, setMessage] = createSignal("");
+  const [problem, setProblem] = createSignal("");
+  const [key, setKey] = createSignal("");
+  const [copied, setCopied] = createSignal(false);
+  const [picked, setPicked] = createSignal<{ sealed: boolean; b64: string; doc: unknown } | null>(null);
+  const [typedKey, setTypedKey] = createSignal("");
+  const fail = (e: unknown) => setProblem(e instanceof ApiError ? e.message : t("mem.error"));
+  const readable = async () => {
+    setBusy(true); setProblem(""); setMessage("");
+    try {
+      const doc = (await api.exportNotesPlain()) as { memories: unknown[]; archived?: unknown[] };
+      download("kakurega-memory-backup.json", "application/json", JSON.stringify(doc));
+      setMessage(t("mem.backup.readableDone", { n: String((doc.memories?.length ?? 0) + (doc.archived?.length ?? 0)) }));
+    } catch (e) { fail(e); } finally { setBusy(false); }
+  };
+  const protectedFile = async () => {
+    setBusy(true); setProblem(""); setMessage(""); setKey(""); setCopied(false);
+    try {
+      const r = await api.exportNotesSealed();
+      download(r.filename, "application/octet-stream", fromBase64Url(r.file));
+      setKey(r.recovery_key);
+      setMessage(t("mem.backup.protectedDone", { n: String(r.notes) }));
+    } catch (e) { fail(e); } finally { setBusy(false); }
+  };
+  const copyKey = async () => {
+    try { await navigator.clipboard.writeText(key()); setCopied(true); } catch { /* the key stays on screen to be copied by hand */ }
+  };
+  const choose = async (file: File | undefined) => {
+    setPicked(null); setProblem(""); setMessage(""); setTypedKey("");
+    if (!file) return;
+    if (file.size > MAX_BACKUP_BYTES) { setProblem(t("mem.backup.tooBig")); return; }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const magic = new TextDecoder().decode(bytes.subarray(0, 8));
+    if (magic === "KKBACKUP") { setPicked({ sealed: true, b64: toBase64Url(bytes), doc: null }); return; }
+    try {
+      const doc = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+      if (doc && typeof doc === "object" && (doc as { kakurega_memory_backup?: unknown }).kakurega_memory_backup === 1) { setPicked({ sealed: false, b64: "", doc }); return; }
+    } catch { /* falls through to the message below */ }
+    setProblem(t("mem.backup.unreadable"));
+  };
+  const restore = async () => {
+    const p = picked();
+    if (!p) return;
+    setBusy(true); setProblem(""); setMessage("");
+    try {
+      const r = p.sealed ? await api.restoreNotesSealed(p.b64, typedKey().trim()) : await api.restoreNotes(p.doc);
+      setMessage(t("mem.backup.restored", { added: String(r.added), known: String(r.already_known), refused: String(r.refused) }));
+      setPicked(null); setTypedKey("");
+      props.onDone();
+    } catch (e) { fail(e); } finally { setBusy(false); }
+  };
+  return (
+    <details class="card stack" id="mem-backup">
+      <summary>{t("mem.backup.title")}</summary>
+      <p class="muted">{t("mem.backup.lead")}</p>
+      <div class="actions">
+        <button type="button" disabled={busy()} onClick={() => void readable()}>{t("mem.backup.readable")}</button>
+        <button type="button" disabled={busy()} onClick={() => void protectedFile()}>{t("mem.backup.protected")}</button>
+      </div>
+      <Show when={key()}>
+        <section class="card stack" role="region" aria-label={t("mem.backup.keyTitle")}>
+          <h3>{t("mem.backup.keyTitle")}</h3>
+          <p class="bad">{t("mem.backup.keyWarn")}</p>
+          <p><code class="mono" id="mem-backup-key">{key()}</code></p>
+          <div class="actions">
+            <button type="button" onClick={() => void copyKey()}>{copied() ? t("mem.backup.keyCopied") : t("mem.backup.keyCopy")}</button>
+            <button type="button" class="primary" onClick={() => { setKey(""); setCopied(false); }}>{t("mem.backup.keyDone")}</button>
+          </div>
+        </section>
+      </Show>
+      <h3>{t("mem.backup.restore")}</h3>
+      <label for="mem-backup-file">{t("mem.backup.file")}</label>
+      <input id="mem-backup-file" type="file" accept=".json,.kkmem,application/json" onChange={(e) => void choose(e.currentTarget.files?.[0])} />
+      <Show when={picked()?.sealed}>
+        <p>{t("mem.backup.needsKey")}</p>
+        <label for="mem-backup-typed">{t("mem.backup.keyLabel")}</label>
+        <input id="mem-backup-typed" autocomplete="off" spellcheck={false} value={typedKey()} onInput={(e) => setTypedKey(e.currentTarget.value)} />
+      </Show>
+      <Show when={picked()}>
+        <div class="actions"><button type="button" class="primary" disabled={busy() || (picked()?.sealed === true && typedKey().trim() === "")} onClick={() => void restore()}>{t("mem.backup.restoreButton")}</button></div>
+      </Show>
+      <Show when={message()}><p role="status">{message()}</p></Show>
+      <Show when={problem()}><p role="alert" class="bad">{problem()}</p></Show>
+    </details>
+  );
+}
+
 function ImportNotes(props: { onDone: () => void }) {
   const [source, setSource] = createSignal("other-assistant");
   const [picked, setPicked] = createSignal<{ name: string; text: string }[]>([]);
@@ -653,6 +772,7 @@ export function Memory() {
         </div>
       </form>
       <ImportNotes onDone={() => void refetch()} />
+      <NotesBackup onDone={() => void refetch()} />
       <Suggestions jobId="browser" heading="sug.browser.heading" lead="sug.browser.lead" onChange={() => void refetch()} />
       <div>
         <label class="sr" for="mem-search">{t("mem.search")}</label>
