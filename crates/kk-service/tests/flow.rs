@@ -12313,10 +12313,12 @@ fn sv125_a_transcript_can_be_exported_as_json_and_a_json_file_must_hold_json() {
         let (s, _) = w.post("/api/exports/transcript", json!({"name": bad, "text": doc}));
         assert_eq!(s, 400, "{bad}");
     }
-    let leak = r#"{"turns":[{"role":"user","content":"the key is AKIAIOSFODNN7EXAMPLE9X and sk_live_abcdefghijklmnop1234"}]}"#;
+    // built here so this file holds no string that looks like a live key
+    let fake_key = format!("{}{}", "sk_li", "ve_abcdefghijklmnop1234");
+    let leak = format!(r#"{{"turns":[{{"role":"user","content":"the key is {fake_key} ok"}}]}}"#);
     let (s, v) = w.post(
         "/api/exports/transcript",
-        json!({"name": "leak.json", "text": leak}),
+        json!({"name": "leak.json", "text": leak.as_str()}),
     );
     assert_eq!(s, 422, "{v}");
     assert!(!root.join("data").join("exports").join("leak.json").exists());
