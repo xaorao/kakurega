@@ -77,6 +77,7 @@ pub const IDS: &[&str] = &[
     "data_perms",
     "key_perms",
     "data_write",
+    "config",
     "disk",
     "service",
     "setup",
@@ -399,6 +400,57 @@ pub fn data_dir_rows(dir: &Path, fix: bool, fixed: &mut Vec<String>) -> Vec<Chec
         }
     }
     rows
+}
+
+/// `config.toml`: absent, applied, or not applied because of mistakes (each named). A file with a mistake is not applied at all, so
+/// this is a warning: the product works, but the owner's settings are not in force.
+pub fn config_row(dir: &Path) -> Check {
+    use crate::config::{clean, load, Loaded, FILE};
+    let sec = "Data folder";
+    match load(dir) {
+        Loaded::Absent => Check::new(
+            "config",
+            sec,
+            Status::Ok,
+            "Settings file",
+            &format!("no {FILE}; the defaults are in use"),
+        ),
+        Loaded::Valid(f) if f.values.is_empty() => Check::new(
+            "config",
+            sec,
+            Status::Ok,
+            "Settings file",
+            &format!("{FILE} is correct and sets nothing"),
+        ),
+        Loaded::Valid(f) => Check::new(
+            "config",
+            sec,
+            Status::Ok,
+            "Settings file",
+            &format!(
+                "{FILE} is correct and applied: {}",
+                f.values.keys().copied().collect::<Vec<_>>().join(", ")
+            ),
+        ),
+        Loaded::Invalid(problems) => {
+            let list = problems
+                .iter()
+                .map(|p| format!("{}: {}", clean(&p.at), clean(&p.message)))
+                .collect::<Vec<_>>()
+                .join("; ");
+            Check::new(
+                "config",
+                sec,
+                Status::Warn,
+                "Settings file",
+                &format!("{FILE} is NOT applied ({} problem(s)): {list}", problems.len()),
+            )
+            .with_fix(
+                &format!("Correct {FILE} (kaku config check lists each problem) or remove it; until then none of it is applied."),
+                false,
+            )
+        }
+    }
 }
 
 /// Free space on the disk the data folder is on, from the answer of `df -Pk` (None when it could not be read).
@@ -781,6 +833,9 @@ pub fn gather(args: &[String], skip: &[String], fix: bool, probe: &dyn Probe) ->
         if !skipped(&row.id) {
             checks.push(row);
         }
+    }
+    if !skipped("config") {
+        checks.push(config_row(&dir));
     }
     if !skipped("disk") {
         checks.push(disk_row(free_kib_for(&dir)));
@@ -1641,5 +1696,51 @@ mod tests {
         // (the canned server answers 200; a 401 is covered by the diagnostics call returning None on non-200 in the stub tests)
         let _ = Http.diagnostics(port, TOKEN);
         let _ = handle.join();
+    }
+
+    #[test]
+    fn dc22_the_settings_file_is_ok_when_absent_or_correct_and_a_warning_naming_every_problem_when_not(
+    ) {
+        let d = fresh("cfg-row");
+        let absent = config_row(&d);
+        assert_eq!(absent.status, Status::Ok);
+        assert!(absent.detail.contains("defaults"));
+        std::fs::write(d.join("config.toml"), "# nothing set\n").unwrap();
+        assert_eq!(config_row(&d).status, Status::Ok);
+        std::fs::write(d.join("config.toml"), "quiet = true\nnotify = \"bell\"\n").unwrap();
+        let ok = config_row(&d);
+        assert_eq!(ok.status, Status::Ok);
+        assert!(
+            ok.detail.contains("applied")
+                && ok.detail.contains("notify")
+                && ok.detail.contains("quiet"),
+            "{}",
+            ok.detail
+        );
+        std::fs::write(
+            d.join("config.toml"),
+            "quite = true\nnotify = \"loud\"\nlinear = 1\n",
+        )
+        .unwrap();
+        let bad = config_row(&d);
+        assert_eq!(
+            bad.status,
+            Status::Warn,
+            "the product works, the settings are not in force"
+        );
+        for part in [
+            "NOT applied",
+            "3 problem(s)",
+            "quite",
+            "did you mean `quiet`",
+            "notify",
+            "linear",
+        ] {
+            assert!(bad.detail.contains(part), "{part}: {}", bad.detail);
+        }
+        assert!(bad.fix.contains("kaku config check"));
+        assert!(!bad.fixable, "--fix never edits a person's settings");
+        assert!(IDS.contains(&"config"));
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

@@ -697,6 +697,83 @@ if p6.poll() is None:
     p6.kill()
     p6.wait()
 os.close(m6)
+# the display settings in config.toml, on the real full-screen workspace
+import re as _re7
+
+
+def settings_run(tag, config_text, env_extra=None, down_alert=False):
+    """Starts the workspace on its own data folder with the given config.toml, optionally stops its service and asks for /status,
+    and returns the raw bytes it wrote and the plain text of its screen."""
+    d7 = work / f"data7-{tag}"
+    d7.mkdir(parents=True)
+    if config_text is not None:
+        (d7 / "config.toml").write_text(config_text)
+    env7 = dict(env3, TERM_PROGRAM="iTerm.app", **(env_extra or {}))
+    env7.pop("TMUX", None)
+    m7, s7 = pty.openpty()
+    fcntl.ioctl(s7, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 110, 0, 0))
+    p7 = subprocess.Popen([str(kaku), "tui", "--data-dir", str(d7), "--root", str(work / "root"), "--scripted", str(repo / "tests/e2e/script.json"), "--ui-dir", str(repo / "apps/web/dist")], stdin=s7, stdout=s7, stderr=s7, env=env7, close_fds=True)
+    os.close(s7)
+    raw = b""
+    scr7 = Screen(32, 110)
+
+    def pump(seconds, until=None):
+        nonlocal raw
+        end = time.time() + seconds
+        while time.time() < end:
+            r, _, _ = select.select([m7], [], [], 0.2)
+            if r:
+                try:
+                    chunk = os.read(m7, 65536)
+                except OSError:
+                    return
+                raw += chunk
+                scr7.feed(chunk.decode("utf-8", "replace"))
+            if until is not None and until in raw:
+                return
+
+    pump(30, b"kakurega")
+    pump(1.0)
+    mark = len(raw)
+    if down_alert:
+        subprocess.run(["pkill", "-f", f"kaku serve --data-dir {d7}"], capture_output=True)
+        time.sleep(1.0)
+        os.write(m7, b"/status\r")
+        pump(20, b"the service is not answering")
+        pump(1.5)
+    screen_text = scr7.text()
+    os.write(m7, b"/quit\r")
+    end7 = time.time() + 20
+    while p7.poll() is None and time.time() < end7:
+        pump(0.3)
+    if p7.poll() is None:
+        p7.kill()
+        p7.wait()
+    os.close(m7)
+    return raw, raw[mark:], screen_text
+
+
+colour = _re7.compile(rb"\x1b\[(?:3[0-7]|9[0-7]|38;[0-9;]+|4[0-7]|10[0-7]|48;[0-9;]+)m")
+default_raw, _, _ = settings_run("default", None)
+check("with no settings file the workspace uses colour", colour.search(default_raw) is not None)
+never_raw, _, _ = settings_run("never", 'color = "never"\n')
+check("color = \"never\" in config.toml leaves no colour sequence on the screen", colour.search(never_raw) is None, str(colour.findall(never_raw)[:3]))
+no_color_env_raw, _, _ = settings_run("envnocolor", None, {"NO_COLOR": "1"})
+check("and NO_COLOR still does the same, as it always did", colour.search(no_color_env_raw) is None)
+down_note7 = b"\x1b]9;Kakurega: the service is not answering\x07"
+_, after_default, _ = settings_run("notify-auto", None, down_alert=True)
+check("by default a terminal that shows notifications gets the notification when the service stops", after_default.count(down_note7) == 1, str(after_default.count(down_note7)))
+_, after_bell, _ = settings_run("notify-bell", 'notify = "bell"\n', down_alert=True)
+bell_note, bell_bytes = after_bell.count(down_note7), after_bell.count(b"\x07")
+check("notify = \"bell\" in config.toml gives the bell instead, even there", bell_note == 0 and bell_bytes >= 1, f"note={bell_note} bell={bell_bytes}")
+_, after_off, _ = settings_run("notify-off", 'notify = "off"\n', down_alert=True)
+bells_off = _re7.sub(rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", b"", after_off).count(b"\x07")
+off_note = after_off.count(down_note7)
+check("notify = \"off\" gives neither the notification nor the bell", off_note == 0 and bells_off == 0, f"note={off_note} bell={bells_off}")
+_, _, bad_screen = settings_run("mistake", 'quite = true\ncolor = "never"\n')
+check("a settings file with a mistake is said on the screen, naming the setting and the nearest one", "config.toml was not applied" in bad_screen and "quite" in bad_screen and "quiet" in bad_screen, bad_screen[:300])
+bad_raw, _, _ = settings_run("mistake2", 'quite = true\ncolor = "never"\n')
+check("and none of it is applied: the correct color line did not turn colour off", colour.search(bad_raw) is not None)
 bad = results.count(False)
 print(f"\n{len(results) - bad}/{len(results)} terminal checks passed" if bad == 0 else f"\n{bad} FAILED")
 sys.exit(1 if bad else 0)

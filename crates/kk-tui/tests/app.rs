@@ -5635,3 +5635,74 @@ fn tu89_a_forget_with_nothing_left_stays_short_an_old_service_is_read_as_nothing
         "the title is still shown, cleaned: {t}"
     );
 }
+
+#[test]
+fn tu90_display_settings_set_the_starting_verbosity_and_say_a_notice_once_after_the_welcome() {
+    use kk_tui::settings::Settings;
+    let base = || Settings {
+        notify: None,
+        color: true,
+        quiet: false,
+        notice: None,
+    };
+    // defaults: nothing changes
+    let mut app = App::new();
+    app.apply_settings(&base());
+    assert!(!app.quiet);
+    assert_eq!(app.cards.len(), 1, "only the welcome");
+    // quiet starts on, and /quiet then turns it off, so it is the same switch
+    let mut app = App::new();
+    app.apply_settings(&Settings {
+        quiet: true,
+        ..base()
+    });
+    assert!(app.quiet);
+    enter(&mut app, "/quiet");
+    assert!(!app.quiet, "the command toggles what the setting started");
+    // a notice is a warning card right after the welcome, once
+    let mut app = App::new();
+    app.apply_settings(&Settings {
+        notice: Some(
+            "config.toml was not applied, so the defaults are in use: quite: unknown setting."
+                .into(),
+        ),
+        ..base()
+    });
+    assert_eq!(app.cards.len(), 2);
+    assert_eq!(app.cards[1].kind, kk_tui::app::Kind::Warn);
+    let t = text(&app);
+    assert!(t.contains("config.toml was not applied"), "{t}");
+    // a notice with control characters is cleaned by the card like every other line
+    let mut app = App::new();
+    app.apply_settings(&Settings {
+        notice: Some("bad\u{1b}[2J\u{202e}".into()),
+        ..base()
+    });
+    let t = text(&app);
+    assert!(!t.contains('\u{1b}') && !t.contains('\u{202e}'), "{t}");
+}
+
+#[test]
+fn tu91_the_plain_line_mode_prints_the_notice_as_a_warning_and_nothing_when_there_is_none() {
+    use kk_tui::linear::{news, Printed};
+    use kk_tui::settings::Settings;
+    let with = |notice: Option<&str>| {
+        let mut app = App::new();
+        app.apply_settings(&Settings {
+            notify: None,
+            color: true,
+            quiet: false,
+            notice: notice.map(String::from),
+        });
+        let mut seen = Printed::new(false);
+        news(&mut app, &mut seen)
+    };
+    let out = with(Some(
+        "config.toml was not applied, so the defaults are in use.",
+    ));
+    assert!(
+        out.contains("[Warning] config.toml was not applied"),
+        "{out}"
+    );
+    assert!(!with(None).contains("[Warning]"));
+}

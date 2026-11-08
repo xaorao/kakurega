@@ -245,8 +245,17 @@ enum Msg {
 }
 
 pub fn run(data_dir: &Path, resume: Option<crate::app::Resume>) -> Result<(), String> {
+    run_with(data_dir, resume, crate::settings::Settings::from_env())
+}
+
+pub fn run_with(
+    data_dir: &Path,
+    resume: Option<crate::app::Resume>,
+    settings: crate::settings::Settings,
+) -> Result<(), String> {
     let http = Http::connect(data_dir)?;
     let mut app = App::new();
+    app.apply_settings(&settings);
     app.chat_project = std::env::current_dir()
         .ok()
         .and_then(|d| crate::project::detect(&d));

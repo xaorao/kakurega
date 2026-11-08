@@ -112,13 +112,25 @@ pub fn resume_request(args: &[String]) -> Option<kk_tui::app::Resume> {
 fn run_client(dir: &std::path::Path, args: &[String]) -> u8 {
     let dir = dir.to_path_buf();
     let resume = resume_request(args);
-    let linear = args.iter().any(|a| a == "--linear")
-        || std::env::var("KAKU_LINEAR")
-            .is_ok_and(|v| !matches!(v.trim(), "" | "0" | "off" | "false" | "no"));
+    // the display settings: a command-line option, then the environment, then config.toml, then the defaults; a file with a mistake
+    // is not applied at all and the workspace says so at the top
+    let (file, notice) = match crate::config::load(&dir) {
+        crate::config::Loaded::Absent => (None, None),
+        crate::config::Loaded::Valid(f) => (Some(f), None),
+        crate::config::Loaded::Invalid(problems) => {
+            (None, Some(crate::config::notice_for(&problems)))
+        }
+    };
+    let effective = crate::config::resolve(file.as_ref(), &|k| std::env::var_os(k), args);
+    let linear = matches!(
+        crate::config::value_of(&effective, "linear"),
+        crate::config::Value::Bool(true)
+    );
+    let settings = crate::config::tui_settings(&effective, notice);
     let result = if linear {
-        kk_tui::linear::run(&dir, resume)
+        kk_tui::linear::run_with(&dir, resume, settings)
     } else {
-        kk_tui::run::run(&dir, resume)
+        kk_tui::run::run_with(&dir, resume, settings)
     };
     match result {
         Ok(()) => 0,

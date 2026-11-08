@@ -504,6 +504,15 @@ impl App {
         self.push(kind, None, text_lines(line.as_ref()));
     }
 
+    /// Applies the owner's display settings once, before anything is shown: the starting verbosity, and a notice (a configuration file
+    /// that was not applied, say) that is said right after the welcome.
+    pub fn apply_settings(&mut self, settings: &crate::settings::Settings) {
+        self.quiet = settings.quiet;
+        if let Some(notice) = &settings.notice {
+            self.say(Kind::Warn, notice);
+        }
+    }
+
     /// Opens the named kept conversation (`kaku --resume ID`), or the most recently updated one, once the screen is up.
     pub fn resume_at_start(&mut self, id: Option<&str>, fork: bool) -> Vec<Req> {
         if let Some(id) = id {

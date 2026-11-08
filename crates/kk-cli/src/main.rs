@@ -2,6 +2,7 @@ mod agent;
 mod approve;
 mod approver;
 mod backup;
+mod config;
 mod diagnostics;
 mod doctor;
 mod extension;
@@ -47,6 +48,7 @@ Usage:
   kaku restore FILE [--data-dir DIR] restore a backup into an empty folder (asks for the recovery key)
   kaku memory import DIR [--source NAME]   add notes from another assistant's markdown files as untrusted notes
   kaku update check|verify-file|keygen|sign   signed update announcements (nothing is downloaded or installed)
+  kaku config [show|path|check|init] [--json]   your display settings in config.toml (notify, color, quiet, linear): what is in force and where it came from, check the file, or write a commented template
   kaku doctor [--json] [--fix] [--skip ID,ID]   why Kakurega does not start or work, with nothing running: data folder, service, sandbox, model; --fix repairs only local permissions and stale files
   kaku diagnostics [--out FILE]     a readable report of versions, checks and counts to attach to a bug report (no names, paths or text)
   kaku log export [--out FILE]      save the signed event log
@@ -72,6 +74,7 @@ fn main() -> ExitCode {
         }
         Some("log") => log::run(&args[1..]),
         Some("diagnostics") => diagnostics::run(&args[1..]),
+        Some("config") => config::run(&args[1..]),
         Some("doctor") => doctor::run(&args[1..]),
         Some("agent") => agent::run(&args[1..]),
         Some("extension") => extension::run(&args[1..]),

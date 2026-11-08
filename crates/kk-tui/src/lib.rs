@@ -9,4 +9,5 @@ pub mod markdown;
 pub mod picker;
 pub mod project;
 pub mod run;
+pub mod settings;
 pub mod ui;

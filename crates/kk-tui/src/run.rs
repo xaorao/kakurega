@@ -28,6 +28,14 @@ fn restore() {
 }
 
 pub fn run(data_dir: &Path, resume: Option<crate::app::Resume>) -> Result<(), String> {
+    run_with(data_dir, resume, crate::settings::Settings::from_env())
+}
+
+pub fn run_with(
+    data_dir: &Path,
+    resume: Option<crate::app::Resume>,
+    settings: crate::settings::Settings,
+) -> Result<(), String> {
     if !stdout().is_terminal() || !std::io::stdin().is_terminal() {
         return Err("the full-screen workspace needs a terminal; use `kaku --help` for the scripting commands".into());
     }
@@ -45,7 +53,7 @@ pub fn run(data_dir: &Path, resume: Option<crate::app::Resume>) -> Result<(), St
         EnableFocusChange
     )
     .map_err(|e| e.to_string())?;
-    let result = event_loop(http, data_dir, resume);
+    let result = event_loop(http, data_dir, resume, settings);
     restore();
     result
 }
@@ -54,10 +62,14 @@ fn event_loop(
     http: Http,
     data_dir: &Path,
     resume: Option<crate::app::Resume>,
+    settings: crate::settings::Settings,
 ) -> Result<(), String> {
     let mut term = Terminal::new(CrosstermBackend::new(stdout())).map_err(|e| e.to_string())?;
-    let theme = Theme::from_env();
+    let theme = Theme {
+        color: settings.color,
+    };
     let mut app = App::new();
+    app.apply_settings(&settings);
     app.chat_project = std::env::current_dir()
         .ok()
         .and_then(|d| crate::project::detect(&d));
@@ -109,7 +121,7 @@ fn event_loop(
     for r in app.drain_background() {
         let _ = req_tx.send(r);
     }
-    let notify = std::env::var("KAKU_NOTIFY").ok();
+    let notify = settings.notify.clone();
     let term_info = crate::attention::TermInfo::from_env();
     let mut shown_title: Option<Option<crate::attention::Attention>> = None;
     let mut dirty = true;
