@@ -1,3 +1,5 @@
+import { deadlineLines, timeLeft } from "./expiry.mjs";
+
 export function describe(a) {
   const files = (a.files ?? []).map((f) => `  ${f.name}  ${f.bytes} bytes  sha256 ${String(f.sha256 ?? "").slice(0, 16)}`);
   const removed = (a.removed ?? []).map((r) => `  ${r.what} (${r.why})`);
@@ -7,6 +9,7 @@ export function describe(a) {
   return [
     `Recipient: ${a.recipient}`,
     `Digest: ${a.digest}`,
+    ...deadlineLines(a),
     "",
     "These exact files will be signed and handed over, nothing else:",
     ...files,
@@ -34,6 +37,12 @@ export function createApprover({ client, confirm, authenticate, sign = null, see
       if (a.approver_missing === true) {
         // this installation only takes signed approvals and no key is enrolled: asking the owner would end in a refusal, so say so instead
         done.push({ id: item.id, outcome: "needs_enrolled_key" });
+        continue;
+      }
+      if (timeLeft(a.expires, a.server_time).state === "expired") {
+        // nothing to decide: the service would refuse it, so no window is shown and the request leaves the waiting list
+        await client.post(`/admin/approvals/${item.id}/deny`);
+        done.push({ id: item.id, outcome: "expired" });
         continue;
       }
       const yes = a.requires_proof && sign?.ownsDialog ? true : await confirm(describe(a), a);

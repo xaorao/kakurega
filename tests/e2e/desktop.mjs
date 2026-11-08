@@ -91,6 +91,7 @@ try {
   const dlg = shown.find((x) => x.kind === "dialog");
   const tid = shown.find((x) => x.kind === "touchid");
   check("the native dialog listed the recipient, the exact files and what is withheld", !!dlg && /acme-audit/.test(dlg.detail) && /finding-1\.txt/.test(dlg.detail) && /Withheld/.test(dlg.detail), dlg?.detail?.slice(0, 80));
+  check("the native dialog says how long the release can still be approved, from the service's own clock", !!dlg && /This release can be approved for another \d+ h( \d+ min)?\./.test(dlg.detail) && !/expired|could not be read/.test(dlg.detail), dlg?.detail?.split("\n").slice(0, 4).join(" | "));
   check("the default button is Refuse and approval is a separate choice", dlg?.buttons?.[0] === "Refuse" && dlg?.buttons?.[1].includes("Touch ID"));
   check("the operating system proof was asked after the dialog and named the digest", !!tid && /Approve release [0-9a-f]{12} to acme-audit/.test(tid.reason), tid?.reason);
   await page.screenshot({ path: join(shots, "desktop-02-approved.png") });
