@@ -77,6 +77,8 @@ pub enum Command {
     Branch(Option<usize>),
     /// Go back to before message N of the open kept conversation: a copy that stops just before it, with that message back in the box.
     Rewind(usize),
+    /// `/rewind` alone: choose which of the owner's earlier messages to go back to.
+    RewindPick,
     RenameChat {
         id: String,
         title: String,
@@ -261,7 +263,7 @@ pub fn usage(name: &str) -> &'static str {
         "memory" => "/memory [WORDS]",
         "remember" => "/remember [in PROJECT:] TEXT",
         "project" => "/project [NAME | none]",
-        "rewind" => "/rewind N   (N is the number of one of your messages)",
+        "rewind" => "/rewind [N]   (N is the number of one of your messages; without it you choose from a list)",
         "similar" => "/similar",
         "ask" => "/ask FOLDER : QUESTION",
         "aside" => "/aside QUESTION",
@@ -518,6 +520,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 }
             }
         }
+        "rewind" if rest.is_empty() => Ok(Command::RewindPick),
         "rewind" => match rest.parse::<usize>() {
             Ok(n) if (1..=100_000).contains(&n) => Ok(Command::Rewind(n)),
             _ => Err(format!("usage: {}", usage("rewind"))),

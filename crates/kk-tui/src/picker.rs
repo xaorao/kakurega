@@ -8,6 +8,8 @@
 pub enum ItemKind {
     Chat,
     Review,
+    /// One of the owner's own messages in the open conversation, chosen to go back to it (`/rewind`).
+    Message,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,7 +125,7 @@ impl Picker {
     /// Whether an item shows under the current scope: reviews always do; a conversation does when all projects are shown or it is this project's.
     fn in_scope(&self, it: &Item) -> bool {
         match (&self.project, self.only_project, it.kind) {
-            (_, false, _) | (_, _, ItemKind::Review) | (None, _, _) => true,
+            (_, false, _) | (_, _, ItemKind::Review | ItemKind::Message) | (None, _, _) => true,
             (Some(p), true, ItemKind::Chat) => it.project.as_deref() == Some(p.as_str()),
         }
     }

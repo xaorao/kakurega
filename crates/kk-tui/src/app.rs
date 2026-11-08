@@ -529,6 +529,91 @@ impl App {
         )]
     }
 
+    /// Opens a list of the owner's own messages in the open conversation to go back to (`/rewind`, or Esc twice on an empty box).
+    fn rewind_picker(&mut self) -> Vec<Req> {
+        if self.session.is_none() {
+            self.say(
+                Kind::Info,
+                "Only a kept conversation can be rewound. /keep saves this one first.",
+            );
+            return Vec::new();
+        }
+        let mut p = crate::picker::Picker::new("Go back to before one of your messages");
+        p.loading = false;
+        for (i, (role, content)) in self.chat_history.iter().enumerate() {
+            if role != "user" {
+                continue;
+            }
+            let one_line: String = content.split_whitespace().collect::<Vec<_>>().join(" ");
+            let cut: String = one_line.chars().take(90).collect();
+            p.items.push(crate::picker::Item {
+                id: (i + 1).to_string(),
+                label: format!(
+                    "{cut}{}",
+                    if one_line.chars().count() > 90 {
+                        "…"
+                    } else {
+                        ""
+                    }
+                ),
+                detail: format!("message {}", i + 1),
+                when: i as i64,
+                kind: crate::picker::ItemKind::Message,
+                project: None,
+            });
+        }
+        if p.items.is_empty() {
+            self.say(
+                Kind::Info,
+                "You have not written a message in this conversation yet.",
+            );
+            return Vec::new();
+        }
+        self.mode = Mode::Picker(p);
+        Vec::new()
+    }
+
+    /// Goes back to before the owner's message number `n` (counting from 1) by branching the kept conversation there; the message
+    /// is put back in the box to change. The original conversation is untouched.
+    fn rewind_to(&mut self, n: usize) -> Vec<Req> {
+        let Some(id) = self.session.clone() else {
+            self.say(
+                Kind::Info,
+                "Only a kept conversation can be rewound. /keep saves this one first.",
+            );
+            return Vec::new();
+        };
+        match self.chat_history.get(n - 1) {
+            Some((role, content)) if role == "user" => {
+                self.rewound = Some(content.clone());
+            }
+            Some(_) => {
+                self.say(
+                            Kind::Error,
+                            format!("Message {n} is not one of yours; choose the number of a message you wrote."),
+                        );
+                return Vec::new();
+            }
+            None => {
+                self.say(
+                    Kind::Error,
+                    format!(
+                        "This conversation has {} message(s); choose a number up to that.",
+                        self.chat_history.len()
+                    ),
+                );
+                return Vec::new();
+            }
+        }
+        vec![self.req(
+            Intent::Branch,
+            false,
+            Method::Post,
+            &format!("/api/sessions/{id}/fork"),
+            Some(json!({"at": n - 1})),
+        )]
+    }
+
     /// Opens a kept conversation from the list, or a branch of it (a new kept conversation with all its messages; the original is untouched).
     fn open_or_branch(&mut self, k: &Value, fork: bool) -> Vec<Req> {
         let Some(id) = k["id"].as_str().map(clean) else {
@@ -1080,7 +1165,16 @@ impl App {
                         Some(json!({})),
                     )];
                 }
-                Delete::NotAllowed => p.error = Some("Reviews are not removed here.".into()),
+                Delete::NotAllowed => {
+                    p.error = Some(
+                        if p.current().is_some_and(|it| it.kind == ItemKind::Message) {
+                            "Your messages are not forgotten here; Enter goes back to one."
+                        } else {
+                            "Reviews are not removed here."
+                        }
+                        .into(),
+                    )
+                }
                 Delete::Nothing => {}
             },
             KeyCode::Enter => {
@@ -1096,6 +1190,10 @@ impl App {
                         &format!("/api/sessions/{}", it.id),
                         None,
                     )],
+                    ItemKind::Message => match it.id.parse::<usize>() {
+                        Ok(n) => self.rewind_to(n),
+                        Err(_) => Vec::new(),
+                    },
                     ItemKind::Review => vec![self.req(
                         Intent::Poll(it.id.clone()),
                         false,
@@ -1607,6 +1705,13 @@ impl App {
                     } else {
                         self.esc_armed = ESC_ARM_TICKS;
                     }
+                } else if self.input.is_empty() {
+                    // Esc twice on an empty box: choose a message to go back to
+                    if self.esc_armed > 0 {
+                        self.esc_armed = 0;
+                        return self.rewind_picker();
+                    }
+                    self.esc_armed = ESC_ARM_TICKS;
                 } else {
                     self.input.clear();
                     self.cursor = 0;
@@ -1925,44 +2030,8 @@ impl App {
                     Some(json!({"at": at})),
                 )]
             }
-            Command::Rewind(n) => {
-                let Some(id) = self.session.clone() else {
-                    self.say(
-                        Kind::Info,
-                        "Only a kept conversation can be rewound. /keep saves this one first.",
-                    );
-                    return Vec::new();
-                };
-                match self.chat_history.get(n - 1) {
-                    Some((role, content)) if role == "user" => {
-                        self.rewound = Some(content.clone());
-                    }
-                    Some(_) => {
-                        self.say(
-                            Kind::Error,
-                            format!("Message {n} is not one of yours; choose the number of a message you wrote."),
-                        );
-                        return Vec::new();
-                    }
-                    None => {
-                        self.say(
-                            Kind::Error,
-                            format!(
-                                "This conversation has {} message(s); choose a number up to that.",
-                                self.chat_history.len()
-                            ),
-                        );
-                        return Vec::new();
-                    }
-                }
-                vec![self.req(
-                    Intent::Branch,
-                    false,
-                    Method::Post,
-                    &format!("/api/sessions/{id}/fork"),
-                    Some(json!({"at": n - 1})),
-                )]
-            }
+            Command::Rewind(n) => self.rewind_to(n),
+            Command::RewindPick => self.rewind_picker(),
             Command::Resume(id) => self.open_chat_by_id(&id),
             Command::Sessions => {
                 let mut p = crate::picker::Picker::new("Conversations and reviews");
@@ -2176,6 +2245,7 @@ impl App {
                     return Vec::new();
                 }
                 self.chat_waiting = true;
+                self.esc_armed = 0;
                 vec![self.req(
                     Intent::Ask,
                     false,
@@ -2442,6 +2512,7 @@ impl App {
             .collect();
         self.chat_history.push(("user".into(), message.to_string()));
         self.chat_waiting = true;
+        self.esc_armed = 0;
         self.live = None;
         self.cancel
             .store(false, std::sync::atomic::Ordering::SeqCst);

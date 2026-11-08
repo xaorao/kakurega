@@ -4565,13 +4565,7 @@ fn tu74_rewind_makes_a_copy_that_stops_before_one_of_your_messages_and_puts_it_b
         ("user".into(), "second question".into()),
         ("assistant".into(), "second answer".into()),
     ];
-    for bad in [
-        "/rewind",
-        "/rewind 0",
-        "/rewind x",
-        "/rewind -1",
-        "/rewind 1 2",
-    ] {
+    for bad in ["/rewind 0", "/rewind x", "/rewind -1", "/rewind 1 2"] {
         assert!(enter(&mut a, bad).is_empty(), "{bad}");
     }
     assert!(
@@ -5194,5 +5188,122 @@ fn tu82_the_owner_is_alerted_once_when_the_service_stops_answering_and_again_onl
     assert_eq!(
         a.attention.take(),
         Some(kk_tui::attention::Attention::ServiceDown)
+    );
+}
+
+#[test]
+fn tu83_rewind_alone_and_escape_twice_list_the_owners_messages_and_choosing_one_rewinds_to_it() {
+    // nothing kept: the same sentence as /rewind N
+    let mut a = booted();
+    assert!(
+        enter(&mut a, "/rewind").is_empty()
+            && text(&a).contains("Only a kept conversation can be rewound")
+    );
+    assert!(!matches!(a.mode, Mode::Picker(_)));
+    // kept, but nothing written yet
+    a.session = Some("chat-1".into());
+    assert!(
+        enter(&mut a, "/rewind").is_empty() && text(&a).contains("You have not written a message")
+    );
+    a.chat_history = vec![
+        ("user".into(), "first question".into()),
+        ("assistant".into(), "first answer".into()),
+        (
+            "user".into(),
+            format!("second   question\n{}", "long ".repeat(40)),
+        ),
+        ("assistant".into(), "second answer".into()),
+        ("user".into(), "third question".into()),
+    ];
+    enter(&mut a, "/rewind");
+    // only the owner's messages, newest first, numbered as /rewind N numbers them
+    assert_eq!(picker_rows(&a), ["5", "3", "1"]);
+    let (lines, _) = render(&a, 110, 24, false);
+    let screen = lines.join("\n");
+    assert!(
+        screen.contains("Go back to before one of your messages")
+            && screen.contains("Your messages, newest first"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("third question")
+            && screen.contains("message 5")
+            && screen.contains("first question"),
+        "{screen}"
+    );
+    assert!(
+        !screen.contains("first answer") && !screen.contains("second answer"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("second question long") && screen.contains("…"),
+        "a long message is one cut line: {screen}"
+    );
+    // choosing the middle one rewinds to it, like /rewind 3
+    a.handle(key(KeyCode::Down));
+    let r = a.handle(key(KeyCode::Enter));
+    assert!(!matches!(a.mode, Mode::Picker(_)));
+    assert_eq!(
+        (r[0].method, r[0].path.as_str()),
+        (Method::Post, "/api/sessions/chat-1/fork")
+    );
+    assert_eq!(r[0].body.as_ref().unwrap(), &json!({"at": 2}));
+    assert!(
+        a.rewound
+            .as_deref()
+            .is_some_and(|m| m.starts_with("second   question")),
+        "the message is put back in the box"
+    );
+    // Ctrl-D on a message forgets nothing
+    enter(&mut a, "/rewind");
+    let none = a.handle(ctrl('d'));
+    assert!(
+        none.is_empty()
+            && render(&a, 110, 24, false)
+                .0
+                .join("\n")
+                .contains("Your messages are not forgotten here; Enter goes back to one.")
+    );
+    a.handle(key(KeyCode::Esc));
+    // Esc twice on an empty box opens the same list; once does not
+    let mut b = booted();
+    b.session = Some("chat-9".into());
+    b.chat_history = vec![
+        ("user".into(), "only question".into()),
+        ("assistant".into(), "answer".into()),
+    ];
+    b.handle(key(KeyCode::Esc));
+    assert!(!matches!(b.mode, Mode::Picker(_)));
+    b.handle(key(KeyCode::Esc));
+    assert!(matches!(b.mode, Mode::Picker(_)));
+    assert_eq!(picker_rows(&b), ["1"]);
+    // with something typed, Esc clears it and does not open anything
+    let mut c = booted();
+    c.session = Some("chat-9".into());
+    c.chat_history = vec![("user".into(), "q".into())];
+    typed(&mut c, "half a thought");
+    c.handle(key(KeyCode::Esc));
+    c.handle(key(KeyCode::Esc));
+    assert!(c.input.is_empty() && !matches!(c.mode, Mode::Picker(_)));
+    // the first Esc of a pair expires, so a stray Esc long before another opens nothing
+    let mut d = booted();
+    d.session = Some("chat-9".into());
+    d.chat_history = vec![("user".into(), "q".into())];
+    d.handle(key(KeyCode::Esc));
+    for _ in 0..10 {
+        d.handle(Event::Tick);
+    }
+    d.handle(key(KeyCode::Esc));
+    assert!(!matches!(d.mode, Mode::Picker(_)));
+    // a stray Esc before a chat starts does not make the first Esc during the answer stop it
+    let mut e = booted();
+    e.handle(key(KeyCode::Esc));
+    typed(&mut e, "hello there");
+    let r = e.handle(key(KeyCode::Enter));
+    assert!(r.iter().any(|q| q.path.contains("chat")) || e.chat_waiting);
+    e.handle(key(KeyCode::Esc));
+    assert!(
+        !e.cancel.load(std::sync::atomic::Ordering::SeqCst),
+        "one Esc arms, it does not stop the answer"
     );
 }

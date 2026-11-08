@@ -457,12 +457,59 @@ if kept:
         pp.kill()
         pp.wait()
     os.close(m)
+    # Esc twice on an empty box lists the owner's messages; choosing one rewinds to it with the message back in the box
+    before_rewind = len(json.loads(subprocess.run([kaku, "sessions", "--json", "--data-dir", str(data)], capture_output=True, text=True).stdout)["sessions"])
+    m, sl = pty.openpty()
+    fcntl.ioctl(sl, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 110, 0, 0))
+    pq = subprocess.Popen([str(kaku), "tui", "--resume", older_id, "--data-dir", str(data), "--root", str(work / "root"), "--scripted", str(repo / "tests/e2e/script.json"), "--ui-dir", str(repo / "apps/web/dist")], stdin=sl, stdout=sl, stderr=sl, env=env3, close_fds=True)
+    os.close(sl)
+    scr = Screen(32, 110)
+    dc = codecs.getincrementaldecoder("utf8")(errors="replace")
+
+    def pump_rw(seconds, until_text=None):
+        end = time.time() + seconds
+        while time.time() < end and (until_text is None or until_text not in scr.text()):
+            r, _, _ = select.select([m], [], [], 0.2)
+            if r:
+                try:
+                    scr.feed(dc.decode(os.read(m, 65536)))
+                except OSError:
+                    break
+
+    pump_rw(40, "Opened the kept conversation")
+    os.write(m, b"\x1b")
+    pump_rw(0.4)
+    check("one Esc on an empty box opens nothing", "Go back to before one of your messages" not in scr.text())
+    os.write(m, b"\x1b")
+    pump_rw(15, "Go back to before one of your messages")
+    listed = scr.text()
+    check("Esc twice lists the owner's messages, numbered", "Go back to before one of your messages" in listed and "resumecanary words" in listed and "message 1" in listed, listed[-600:])
+    os.write(m, b"\r")
+    pump_rw(30, "Opened the kept conversation")
+    pump_rw(1.0)
+    after_pick = scr.text()
+    check("choosing the message opens the copy and puts the message back in the box", after_pick.count("resumecanary words") >= 1 and "Command" in after_pick and "resumecanary words" in after_pick.split("Command")[-1], after_pick[-600:])
+    os.write(m, b"\x15/quit\r")
+    end = time.time() + 20
+    while pq.poll() is None and time.time() < end:
+        r, _, _ = select.select([m], [], [], 0.2)
+        if r:
+            try:
+                os.read(m, 65536)
+            except OSError:
+                break
+    if pq.poll() is None:
+        pq.kill()
+        pq.wait()
+    os.close(m)
+    after_rewind = len(json.loads(subprocess.run([kaku, "sessions", "--json", "--data-dir", str(data)], capture_output=True, text=True).stdout)["sessions"])
+    check("and the original is kept, with the copy as one more conversation", after_rewind == before_rewind + 1, f"{before_rewind} -> {after_rewind}")
     # --fork opens a branch: a third conversation appears holding the same messages, and the original is untouched
     run_resume(["--resume", older_id, "--fork"], "resumecanary words", "launching with --resume ID --fork opens a branch of that conversation", absent="newercanary words")
     after = json.loads(subprocess.run([kaku, "sessions", "--json", "--data-dir", str(data)], capture_output=True, text=True).stdout)["sessions"]
     original = [x for x in after if x["id"] == older_id]
-    branches = [x for x in after if x["id"] not in {older_id, both[0]["id"], both[1]["id"]}]
-    check("the branch is a new kept conversation with the same messages and the original keeps its own", len(after) == 3 and len(original) == 1 and original[0]["messages"] == kept[0]["messages"] and len(branches) == 1 and branches[0]["messages"] == kept[0]["messages"], json.dumps(after)[:400])
+    branches = [x for x in after if x["id"] not in {older_id, both[0]["id"], both[1]["id"]} and x["messages"] == kept[0]["messages"]]
+    check("the branch is a new kept conversation with the same messages and the original keeps its own", len(after) == before_rewind + 2 and len(original) == 1 and original[0]["messages"] == kept[0]["messages"] and len(branches) == 1 and branches[0]["messages"] == kept[0]["messages"], json.dumps(after)[:400])
 rc = run_resume(["--resume", "../admin/secrets"], "not a conversation id", "an id that is not an id is refused on the screen and nothing is requested", absent="resumecanary words")
 rc = run_resume(["--resume", "feedfacefeedfacefeedface"], "no such", "an unknown id says so and opens nothing", absent="resumecanary words")
 # a hard kill of the workspace (terminal closed, SIGKILL) must not leave the service it started running
