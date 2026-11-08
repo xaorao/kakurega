@@ -145,6 +145,11 @@ pub fn scan_with(text: &str, allow: &Allow) -> Scan {
                     add(Kind::IndianPan, word);
                 } else if is_iban(word) {
                     add(Kind::Iban, word);
+                } else if let Some(end) = spaced_iban(text, i) {
+                    // printed in groups of four: GB82 WEST 1234 5698 7654 32
+                    add(Kind::Iban, &text[i..end]);
+                    i = end;
+                    continue;
                 }
             }
             i = j.max(i + 1);
@@ -338,6 +343,17 @@ fn digit_groups(b: &[u8], start: usize) -> (Vec<(Vec<u8>, usize)>, usize) {
         {
             i += 1;
             groups += 1;
+        } else if b[i] == b')'
+            && start > 0
+            && b[start - 1] == b'('
+            && digits.len() == 3
+            && i + 2 < b.len()
+            && b[i + 1] == b' '
+            && b[i + 2].is_ascii_digit()
+        {
+            // an area code in brackets: (415) 555-2671
+            i += 2;
+            groups += 1;
         } else {
             break;
         }
@@ -367,7 +383,10 @@ fn classify_digits(d: &[u8], raw: &str, plus: bool) -> Option<Kind> {
         }
     }
     // a phone number is only claimed with an international "+" or clear grouping, so ids and timestamps are left alone
-    let sizes: Vec<usize> = raw.split([' ', '-', '.']).map(str::len).collect();
+    let sizes: Vec<usize> = raw
+        .split([' ', '-', '.'])
+        .map(|g| g.trim_end_matches(')').len())
+        .collect();
     let national = matches!(sizes.as_slice(), [3, 3, 4] | [4, 3, 3] | [5, 5]);
     if (10..=15).contains(&len)
         && !all_same(d)
@@ -462,6 +481,49 @@ fn is_pan(w: &str) -> bool {
         && b[5..9].iter().all(u8::is_ascii_digit)
         && b[9].is_ascii_uppercase()
         && b"PCHABGJLFT".contains(&b[3])
+}
+
+/// An IBAN written in groups of up to four letters and digits separated by single spaces, starting at `start` with the two
+/// letters and two check digits: where it ends, if the groups together are a valid IBAN.
+fn spaced_iban(text: &str, start: usize) -> Option<usize> {
+    let b = text.as_bytes();
+    let first = &b[start..];
+    if first.len() < 4
+        || !(first[0].is_ascii_uppercase()
+            && first[1].is_ascii_uppercase()
+            && first[2].is_ascii_digit()
+            && first[3].is_ascii_digit())
+    {
+        return None;
+    }
+    let mut joined = String::new();
+    let mut i = start;
+    let mut best = None;
+    let mut groups = 0;
+    while groups < 10 {
+        let g_start = i;
+        while i < b.len() && (b[i].is_ascii_uppercase() || b[i].is_ascii_digit()) {
+            i += 1;
+        }
+        let len = i - g_start;
+        if len == 0 || len > 4 || (groups == 0 && len != 4) {
+            break;
+        }
+        joined.push_str(&text[g_start..i]);
+        groups += 1;
+        // a group must end the token: a lower-case letter right after it means this is a word, not an IBAN
+        if i < b.len() && b[i].is_ascii_alphanumeric() {
+            break;
+        }
+        if groups >= 3 && joined.len() <= 34 && is_iban(&joined) {
+            best = Some(i);
+        }
+        if joined.len() >= 34 || i + 1 >= b.len() || b[i] != b' ' {
+            break;
+        }
+        i += 1;
+    }
+    best
 }
 
 fn is_iban(w: &str) -> bool {

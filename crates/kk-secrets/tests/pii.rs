@@ -267,3 +267,93 @@ mod allowlist {
         assert_eq!(scan_with("user3@acme.com", &a).allowed, 1);
     }
 }
+
+#[test]
+fn pi20_an_iban_printed_in_groups_of_four_is_found_once_and_only_when_its_check_digits_hold() {
+    // the example IBANs the banks publish, as printed on a statement and as typed without spaces
+    for printed in [
+        "GB82 WEST 1234 5698 7654 32",
+        "DE89 3704 0044 0532 0130 00",
+        "FR14 2004 1010 0505 0001 3M02 606",
+        "NL91 ABNA 0417 1643 00",
+    ] {
+        let compact: String = printed.split(' ').collect();
+        assert_eq!(
+            count(&format!("pay to {printed} by friday"), Kind::Iban),
+            1,
+            "{printed}"
+        );
+        assert_eq!(
+            count(&format!("IBAN: {printed}."), Kind::Iban),
+            1,
+            "{printed}"
+        );
+        assert_eq!(
+            count(&format!("pay to {compact} by friday"), Kind::Iban),
+            1,
+            "{compact}"
+        );
+        assert_eq!(
+            count(&format!("{printed} and {printed}"), Kind::Iban),
+            2,
+            "two in a line"
+        );
+    }
+    // a changed check digit, a group missing, or a group that runs on into a word, is not an IBAN
+    for not_iban in [
+        "GB83 WEST 1234 5698 7654 32",
+        "GB82 WEST 1234 5698 7654",
+        "GB82 WEST 1234 5698 7654 32x",
+        "GB82 west 1234 5698 7654 32",
+        "GB82 WEST 1234",
+        "AB12 CDEF GHIJ KLMN",
+        "GB82  WEST 1234 5698 7654 32",
+    ] {
+        assert_eq!(
+            count(&format!("see {not_iban} ok"), Kind::Iban),
+            0,
+            "{not_iban}"
+        );
+    }
+    // text that follows is not swallowed: a number after the IBAN is still read on its own
+    assert_eq!(
+        count(
+            "GB82 WEST 1234 5698 7654 32 then call +91 98765 43210",
+            Kind::Phone
+        ),
+        1
+    );
+}
+
+#[test]
+fn pi21_a_us_phone_number_with_the_area_code_in_brackets_is_found_and_ordinary_brackets_are_left_alone(
+) {
+    for phone in [
+        "(415) 555-2671",
+        "+1 (415) 555-2671",
+        "(415) 555 2671",
+        "(415) 555.2671",
+    ] {
+        assert_eq!(
+            count(&format!("call {phone} today"), Kind::Phone),
+            1,
+            "{phone}"
+        );
+    }
+    for not_phone in [
+        "(2024) 2024-01-31",
+        "(1) 234 5678",
+        "(415)555-2671 stuck together",
+        "tests (123) 4567 passed",
+        "(415) 55-2671",
+        "(41) 555-2671",
+        "chapter (4) 555 2671 a",
+        "415) 555-2671 closing bracket only",
+    ] {
+        assert_eq!(
+            count(&format!("see {not_phone}"), Kind::Phone),
+            0,
+            "{not_phone}"
+        );
+    }
+}
