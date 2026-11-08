@@ -1444,6 +1444,23 @@ try {
     await page.getByRole("button", { name: "Clear" }).click();
     await page.waitForTimeout(300);
   }
+  {
+    // an answer that tries to make one word look like another: direction overrides, zero-width marks, a byte order mark
+    const sneaky = "Pay to account 1234\u202e5678\u202c now, then open [the invoice](https://example.com/inv\u202e) \u200bhidden\ufeff words\n\n```\nrm \u202e-rf\n```";
+    await page.route("**/api/chat/stream", (r) => r.fulfill({ status: 200, contentType: "application/x-ndjson", body: doneLine(sneaky) + "\n" }));
+    await page.getByLabel("Your message").fill("pay it");
+    await page.getByLabel("Your message").press("Enter");
+    await page.locator(".msg.assistant").last().getByText("hidden", { exact: false }).waitFor();
+    const shownText = await page.locator(".msg.assistant").last().innerText();
+    const bad = ["\u202e", "\u202c", "\u200b", "\ufeff"].filter((c) => shownText.includes(c));
+    check("an answer with direction overrides and zero-width characters shows none of them", bad.length === 0, JSON.stringify(bad));
+    check("the replacement mark shows that something was there, and the words around it are intact", shownText.includes("\ufffd") && shownText.includes("Pay to account 1234") && shownText.includes("hidden"), shownText.slice(0, 120));
+    const codeText = await page.locator(".msg.assistant").last().locator("pre").innerText();
+    check("and the same inside a code block", !codeText.includes("\u202e") && codeText.includes("rm"), JSON.stringify(codeText));
+    await page.unroute("**/api/chat/stream");
+    await page.getByRole("button", { name: "Clear" }).click();
+    await page.waitForTimeout(300);
+  }
   const footLocal = await replyFrom({ id: "o", class: "device_only", simulated: false, stays_here: true, host: "127.0.0.1" });
   check("an answer from a model at this computer says it was answered on this computer", footLocal.includes("Private: answered on this computer"), footLocal);
   const footRemote = await replyFrom({ id: "o", class: "device_only", simulated: false, stays_here: false, host: "models.example.com" });

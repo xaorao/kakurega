@@ -490,13 +490,20 @@ fn wrap_pieces(
 }
 
 /// The answer as styled lines, each at most `width` columns, with no control character from the text in any of them.
+/// Characters that show nothing or change the order text is drawn in: zero-width and direction marks, direction overrides and
+/// isolates, the byte order mark, and the line and paragraph separators. A model's answer or a file's text must not be able
+/// to make one thing look like another on the screen.
+fn hidden_format(c: char) -> bool {
+    matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{feff}' | '\u{2028}' | '\u{2029}')
+}
+
 pub fn render(text: &str, width: usize, th: &Theme) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = Vec::new();
     let dim = Style::default().add_modifier(Modifier::DIM);
     // text reaches here already cleaned; a control character that arrives anyway is dropped, never drawn
     let clean: String = text
         .chars()
-        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+        .filter(|c| (!c.is_control() || *c == '\n' || *c == '\t') && !hidden_format(*c))
         .collect();
     let blocks = parse(&clean);
     for (bi, b) in blocks.iter().enumerate() {

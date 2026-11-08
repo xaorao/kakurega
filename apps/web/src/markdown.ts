@@ -1,6 +1,8 @@
 /** A small, safe Markdown reader for assistant answers. It produces a tree of plain data, never HTML: the screen builds
  * elements from the tree, so nothing a model writes can become markup, a script, an image request or a hidden link. */
 
+import { visible } from "./visible.ts";
+
 export type Inline =
   | { t: "text"; v: string }
   | { t: "code"; v: string }
@@ -159,7 +161,7 @@ export function tableToTsv(b: Extract<Block, { t: "table" }>): string {
 }
 
 export function parse(input: string): Block[] {
-  const lines = input.slice(0, MAX_INPUT).replace(/\r\n?/g, "\n").split("\n");
+  const lines = visible(input.slice(0, MAX_INPUT)).replace(/\r\n?/g, "\n").split("\n");
   const blocks: Block[] = [];
   let para: string[] = [];
   const endPara = () => {

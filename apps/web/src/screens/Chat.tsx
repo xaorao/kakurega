@@ -1,6 +1,7 @@
 import { againPoint, editPoint, type BranchPoint } from "../branching";
 import { carriesFiles, fileNotes, fingerprint, pastedFiles, room, sizeText, MAX_BYTES } from "../attach";
 import { findMatches, stepTo, type Match } from "../find";
+import { visible } from "../visible";
 import { exportFileName, tooLarge, transcriptIn, validExportName, type ExportFormat } from "../transcript";
 import { afterInput, closedAtStart, matches as slashMatches, onKey as slashKey, parseLine, slashQuery, validJob, type PopoverState, type SlashCommand } from "../slash";
 import { batch, createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
@@ -1088,7 +1089,7 @@ export function Chat() {
                               <For each={p.lines.slice(0, 40)}>
                                 {(l) => (
                                   <p class={l.flagged ? "mem-text muted struck" : "mem-text"}>
-                                    {l.text.length > 300 ? l.text.slice(0, 300) + "…" : l.text}
+                                    {visible(l.text.length > 300 ? l.text.slice(0, 300) + "…" : l.text)}
                                     <Show when={l.flagged}> <span class="chip">{t(l.flagged === "secret" ? "files.passageFlagSecret" : "files.passageFlag")}</span></Show>
                                   </p>
                                 )}

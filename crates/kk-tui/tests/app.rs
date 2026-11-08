@@ -5445,3 +5445,52 @@ fn tu85_the_terminal_usage_shows_a_cost_only_where_a_price_was_entered_and_marks
     d.handle(ok(&r[0], 200, json!({"from": 0, "to": 1, "routes": [{"route": "r", "class": "device_only", "simulated": false, "turns": 1, "prompt_tokens": 10, "measured_turns": 1, "reply_tokens": 5, "avg_ms": 1, "max_ms": 1, "reply_tokens_per_second": 1.0, "cost": {"amount": 1.0, "currency": "U\u{1b}[2JD", "tokens_estimated": false}}], "total": {"turns": 1, "prompt_tokens": 10, "reply_tokens": 5, "cost": []}, "note": "n"})));
     assert!(!text(&d).contains('\u{1b}'), "{}", text(&d));
 }
+
+#[test]
+fn tu86_an_answer_with_direction_and_invisible_characters_never_draws_them_on_the_screen() {
+    let hostile = "safe\u{202e}gnirts desrever\u{202c} zero\u{200b}width bom\u{feff}mark isolate\u{2066}x\u{2069} sep\u{2028}arator \u{1b}[2Jescape";
+    let mut app = booted();
+    let r = enter(&mut app, "hello");
+    app.handle(ok(
+        &r[0],
+        200,
+        json!({"reply": hostile, "route": {"simulated": false}, "notes_used": 0}),
+    ));
+    for width in [30u16, 80, 140] {
+        let (rows, _) = render(&app, width, 30, false);
+        let screen = rows.join("\n");
+        assert!(
+            screen.contains("safe") && screen.contains("width"),
+            "the answer is shown: {screen}"
+        );
+        for bad in [
+            '\u{202e}', '\u{202c}', '\u{200b}', '\u{feff}', '\u{2066}', '\u{2069}', '\u{2028}',
+            '\u{1b}',
+        ] {
+            assert!(
+                !screen.contains(bad),
+                "U+{:04X} reached the screen at width {width}: {screen}",
+                bad as u32
+            );
+        }
+    }
+}
+
+#[test]
+fn tu87_clean_turns_control_direction_and_invisible_characters_into_the_replacement_mark_and_keeps_everything_else(
+) {
+    use kk_tui::app::clean;
+    for bad in [
+        '\u{1b}', '\u{7}', '\u{0}', '\u{9f}', '\u{200b}', '\u{200c}', '\u{200d}', '\u{200e}',
+        '\u{200f}', '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}', '\u{202e}', '\u{2066}',
+        '\u{2067}', '\u{2068}', '\u{2069}', '\u{2028}', '\u{2029}', '\u{feff}',
+    ] {
+        assert_eq!(
+            clean(&format!("a{bad}b")),
+            "a\u{fffd}b",
+            "U+{:04X}",
+            bad as u32
+        );
+    }
+    assert_eq!(clean("a\nb\tc é 日本語 😀"), "a\nb\tc é 日本語 😀");
+}

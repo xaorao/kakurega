@@ -1,3 +1,4 @@
+import { visible } from "../visible";
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, type AskReply, type Passage } from "../api";
 import { editorLocation } from "../cite";
@@ -100,7 +101,7 @@ export function Documents() {
                           {(p) => (
                             <Show when={typeof p() !== "string"} fallback={<p role="alert" class="bad">{String(p())}</p>}>
                               <pre class="passage" tabindex="0" aria-label={t("docs.passageLabel", { file: c.file })}>
-                                <For each={(p() as Passage).lines}>{(l, i) => <div class={(p() as Passage).start + i() === (p() as Passage).focus ? "hit" : ""}><span class="ln">{(p() as Passage).start + i()}</span> {l}</div>}</For>
+                                <For each={(p() as Passage).lines}>{(l, i) => <div class={(p() as Passage).start + i() === (p() as Passage).focus ? "hit" : ""}><span class="ln">{(p() as Passage).start + i()}</span> {visible(l)}</div>}</For>
                               </pre>
                             </Show>
                           )}

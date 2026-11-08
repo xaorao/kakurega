@@ -1,3 +1,5 @@
+import { visible } from "./visible.ts";
+
 export interface Piece {
   text: string;
   hit: boolean;
@@ -12,7 +14,8 @@ const MAX_TERM_LENGTH = 80;
  * a search can become markup or change what the pattern matches. A term that is empty or longer than 80 characters is skipped,
  * and no more than 12 are used.
  */
-export function markTerms(text: string, terms: readonly string[]): Piece[] {
+export function markTerms(raw: string, terms: readonly string[]): Piece[] {
+  const text = visible(raw);
   const usable = [...new Set(terms.map((t) => t.trim()).filter((t) => t.length > 0 && t.length <= MAX_TERM_LENGTH))]
     .slice(0, MAX_TERMS)
     .sort((a, b) => b.length - a.length);
