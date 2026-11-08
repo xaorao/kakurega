@@ -3355,9 +3355,21 @@ impl App {
                             clean(m["id"].as_str().unwrap_or("?")),
                             clean(m["level"].as_str().unwrap_or("?")),
                             format!(
-                                "{}{}",
+                                "{}{}{}{}",
                                 if m["untrusted"] == true {
                                     " untrusted"
+                                } else {
+                                    ""
+                                },
+                                // where the note came from, from a closed set: nothing the service sends is shown as it is
+                                match m["origin"].as_str() {
+                                    Some("imported") => " imported",
+                                    Some("conversation") => " from a conversation",
+                                    Some("review") => " from a review",
+                                    _ => "",
+                                },
+                                if m["instruction_like"] == true {
+                                    " reads like instructions"
                                 } else {
                                     ""
                                 },

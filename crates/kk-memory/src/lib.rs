@@ -2097,6 +2097,8 @@ impl Memories {
         if self.source_is_forgotten(job_id)? {
             return Ok(None);
         }
+        // text the owner already has in any state is not news: active, put away, merged under another note, replaced by a correction
+        // or held for a check. Only a note that was forgotten leaves no row, and that is the tombstone's job.
         let fp = self.fingerprint(text);
         let blocked: bool = self
             .conn()
@@ -2110,7 +2112,7 @@ impl Memories {
             || self
                 .conn()
                 .query_row(
-                    "SELECT 1 FROM memories WHERE fingerprint = ?1 AND status = 'active'",
+                    "SELECT 1 FROM memories WHERE fingerprint = ?1",
                     params![fp],
                     |_| Ok(()),
                 )

@@ -4406,3 +4406,46 @@ fn me93_a_newer_secret_detector_also_checks_archived_notes() {
         "it was held, not left archived"
     );
 }
+
+#[test]
+fn me94_a_review_cannot_suggest_back_text_the_owner_archived_merged_or_replaced() {
+    let m = old_store(&dir());
+    let c = &internal();
+    let lbl = Label::new(Level::Internal).untrusted();
+    let suggest = |at: i64, text: &str| m.propose(at, "job-9", text, "why", &lbl).unwrap();
+    // put away on purpose: not offered again, however it is spelled
+    let a = id(m
+        .remember(1, nm("the Oslo canteen closes at three", internal()))
+        .unwrap());
+    m.archive(2, &a, c).unwrap();
+    assert!(
+        suggest(3, "The Oslo  CANTEEN closes at three").is_none(),
+        "archived text is not suggested again"
+    );
+    // merged under another note: the owner already decided which wording to keep
+    let keep = id(m
+        .remember(4, nm("the Bergen ferry leaves at nine", internal()))
+        .unwrap());
+    let dup = id(m
+        .remember(5, nm("the Bergen ferry departs at nine", internal()))
+        .unwrap());
+    m.merge(6, &keep, &[dup], c).unwrap();
+    assert!(
+        suggest(7, "the Bergen ferry departs at nine").is_none(),
+        "merged text is not suggested again"
+    );
+    // replaced by a correction: the old wording is history, not news
+    let old = id(m
+        .remember(8, nm("the Tromso quay opens in May", internal()))
+        .unwrap());
+    m.correct(9, &old, nm("the Tromso quay opens in June", internal()))
+        .unwrap();
+    assert!(
+        suggest(10, "the Tromso quay opens in May").is_none(),
+        "replaced text is not suggested again"
+    );
+    // restoring brings the note back and it is known again, and a new fact is still suggested
+    m.restore(11, &a, c).unwrap();
+    assert!(suggest(12, "the Oslo canteen closes at three").is_none());
+    assert!(suggest(13, "a brand new fact about the Narvik depot").is_some());
+}

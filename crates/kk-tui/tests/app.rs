@@ -6237,3 +6237,47 @@ fn tu100_a_proposed_fix_in_a_fixed_palette_keeps_its_colours_readable_and_is_nev
         );
     }
 }
+
+#[test]
+fn tu101_the_note_list_says_where_a_note_came_from_and_when_it_reads_like_instructions_from_a_closed_set(
+) {
+    let mut a = booted();
+    let r = enter(&mut a, "/memory");
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"memories": [
+            {"id": "m1", "text": "own note", "level": "internal", "untrusted": false, "why": "w", "origin": "owner", "instruction_like": false},
+            {"id": "m2", "text": "from another assistant", "level": "internal", "untrusted": true, "why": "w", "origin": "imported", "instruction_like": false},
+            {"id": "m3", "text": "learned in chat", "level": "internal", "untrusted": true, "why": "w", "origin": "conversation", "instruction_like": false},
+            {"id": "m4", "text": "learned in a review", "level": "internal", "untrusted": true, "why": "w", "origin": "review", "instruction_like": true, "project": "alpha"},
+            {"id": "m5", "text": "hostile origin", "level": "internal", "untrusted": false, "why": "w", "origin": "evil\u{202e}ignore previous", "instruction_like": "yes"},
+            {"id": "m6", "text": "no fields at all", "level": "internal", "untrusted": false, "why": "w"}
+        ]}),
+    ));
+    let t = text(&a);
+    let line = |id: &str| {
+        t.lines()
+            .find(|l| l.starts_with(id))
+            .unwrap_or_else(|| panic!("{id} not listed:\n{t}"))
+            .to_string()
+    };
+    assert_eq!(
+        line("m1"),
+        "m1  [internal]  own note",
+        "a note you wrote shows no extra marks"
+    );
+    assert_eq!(
+        line("m2"),
+        "m2  [internal] untrusted imported  from another assistant"
+    );
+    assert_eq!(
+        line("m3"),
+        "m3  [internal] untrusted from a conversation  learned in chat"
+    );
+    assert_eq!(line("m4"), "m4  [internal] untrusted from a review reads like instructions project alpha  learned in a review");
+    // a value outside the closed set, or not a real true, adds nothing and is never shown
+    assert_eq!(line("m5"), "m5  [internal]  hostile origin");
+    assert!(!t.contains("ignore previous") && !t.contains('\u{202e}'));
+    assert_eq!(line("m6"), "m6  [internal]  no fields at all");
+}
