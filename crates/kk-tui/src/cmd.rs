@@ -115,6 +115,9 @@ pub enum Command {
     Dormant(Option<i64>),
     /// `/archived` lists the notes the owner put away.
     Archived,
+    /// `/quarantine` lists notes a newer secret check kept out of every answer; `/notsecret ID` says one is not a secret.
+    Held,
+    NotSecret(String),
     /// `/archive ID`, `/restore ID`, `/pin ID`, `/unpin ID` and `/stilltrue ID`: one owner decision about how a note is kept.
     NoteKeeping {
         action: &'static str,
@@ -173,6 +176,8 @@ pub const NAMES: &[&str] = &[
     "similar",
     "dormant",
     "archived",
+    "quarantine",
+    "notsecret",
     "archive",
     "restore",
     "pin",
@@ -238,6 +243,8 @@ pub fn describe(name: &str) -> &'static str {
         "similar" => "list saved notes that say almost the same thing",
         "dormant" => "list notes nobody has used for a long time (nothing is put away)",
         "archived" => "list the notes you put away",
+        "quarantine" => "list notes kept back because they look like secrets",
+        "notsecret" => "say a held note is not a secret, so it is offered again",
         "archive" => "put a note away; it can be brought back",
         "restore" => "bring an archived note back",
         "pin" => "keep a note out of the quiet-notes list",
@@ -290,6 +297,8 @@ pub fn usage(name: &str) -> &'static str {
         "similar" => "/similar",
         "dormant" => "/dormant [DAYS]   (30 to 3650, default 180)",
         "archived" => "/archived",
+        "quarantine" => "/quarantine",
+        "notsecret" => "/notsecret ID",
         "archive" => "/archive ID",
         "restore" => "/restore ID",
         "pin" => "/pin ID",
@@ -421,6 +430,20 @@ pub fn parse(line: &str) -> Result<Command, String> {
                     Ok(d) if (30..=3650).contains(&d) => Ok(Command::Dormant(Some(d))),
                     _ => Err(format!("usage: {}", usage("dormant"))),
                 }
+            }
+        }
+        "quarantine" if rest.is_empty() => Ok(Command::Held),
+        "quarantine" => Err(format!("usage: {}", usage("quarantine"))),
+        "notsecret" => {
+            let plain = !rest.is_empty()
+                && rest.len() <= 64
+                && rest
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
+            if plain {
+                Ok(Command::NotSecret(rest.to_string()))
+            } else {
+                Err(format!("usage: {}", usage("notsecret")))
             }
         }
         "archived" if rest.is_empty() => Ok(Command::Archived),

@@ -5893,3 +5893,79 @@ fn tu94_archived_lists_put_away_notes_and_each_keeping_command_sends_one_post_an
         assert!(text(&a).contains("no such memory"), "{line}");
     }
 }
+
+#[test]
+fn tu95_held_and_notsecret_parse_strictly() {
+    assert_eq!(cmd::parse("/quarantine"), Ok(Command::Held));
+    assert!(cmd::parse("/quarantine now").is_err());
+    assert_eq!(
+        cmd::parse("/notsecret m-3"),
+        Ok(Command::NotSecret("m-3".into()))
+    );
+    for bad in ["", " ", "a b", "../x", "a/b", "ü", "a\nb"] {
+        assert_eq!(
+            cmd::parse(&format!("/notsecret {bad}")),
+            Err(format!("usage: {}", cmd::usage("notsecret"))),
+            "{bad:?}"
+        );
+    }
+    assert_eq!(
+        cmd::parse(&format!("/notsecret {}", "x".repeat(65))),
+        Err(format!("usage: {}", cmd::usage("notsecret")))
+    );
+    for name in ["quarantine", "notsecret"] {
+        assert!(
+            cmd::NAMES.contains(&name)
+                && !cmd::describe(name).is_empty()
+                && cmd::usage(name).starts_with(&format!("/{name}"))
+        );
+    }
+}
+
+#[test]
+fn tu96_held_lists_what_was_kept_back_without_hidden_characters_and_notsecret_reports_the_outcome()
+{
+    let mut a = booted();
+    let r = enter(&mut a, "/quarantine");
+    assert_eq!(
+        (r[0].method, r[0].path.as_str()),
+        (Method::Get, "/api/memories/held")
+    );
+    a.handle(ok(&r[0], 200, json!({"held": [{"id": "m-7", "text": "Deploy token\u{202e} abc", "kind": "github token\u{200b}", "project": null, "created_at": 1}], "note": "x"})));
+    let t = text(&a);
+    assert!(
+        t.contains("m-7  looks like: github token\u{fffd}  Deploy token\u{fffd} abc"),
+        "{t}"
+    );
+    assert!(
+        t.contains("in no answer, review or list")
+            && t.contains("/forget ID")
+            && t.contains("/notsecret ID"),
+        "{t}"
+    );
+    assert!(!t.contains('\u{202e}') && !t.contains('\u{200b}'));
+    let r = enter(&mut a, "/quarantine");
+    a.handle(ok(&r[0], 200, json!({"held": [], "note": "x"})));
+    assert!(text(&a).contains("No notes are held back."));
+    let r = enter(&mut a, "/quarantine");
+    a.handle(ok(
+        &r[0],
+        500,
+        json!({"error": {"code": "MEMORY_STORAGE", "message": "the memory store failed"}}),
+    ));
+    assert!(text(&a).contains("the memory store failed"));
+    let r = enter(&mut a, "/notsecret m-7");
+    assert_eq!(
+        (r[0].method, r[0].path.as_str()),
+        (Method::Post, "/api/memories/m-7/release-hold")
+    );
+    a.handle(ok(&r[0], 200, json!({"released": true})));
+    assert!(text(&a).contains("Released. The note is offered again."));
+    let r = enter(&mut a, "/notsecret m-7");
+    a.handle(ok(
+        &r[0],
+        404,
+        json!({"error": {"code": "NO_MEMORY", "message": "no such memory"}}),
+    ));
+    assert!(text(&a).contains("no such memory"));
+}

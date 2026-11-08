@@ -157,6 +157,8 @@ enum Intent {
     Similar,
     Dormant(i64),
     Archived,
+    Held,
+    NotSecret,
     NoteKeeping(&'static str),
     Remember,
     Ask,
@@ -2301,6 +2303,16 @@ impl App {
                 "/api/memories/archived",
                 None,
             )],
+            Command::Held => {
+                vec![self.req(Intent::Held, false, Method::Get, "/api/memories/held", None)]
+            }
+            Command::NotSecret(id) => vec![self.req(
+                Intent::NotSecret,
+                false,
+                Method::Post,
+                &format!("/api/memories/{id}/release-hold"),
+                Some(json!({})),
+            )],
             Command::NoteKeeping { action, id } => vec![self.req(
                 Intent::NoteKeeping(action),
                 false,
@@ -3433,6 +3445,42 @@ impl App {
                     lines.push("Nothing was put away. /archive ID puts one away, /stilltrue ID restarts its quiet time, /pin ID keeps it out of this list.".to_string());
                 }
                 self.push(Kind::Info, Some("Quiet notes"), lines);
+                Vec::new()
+            }
+            Intent::Held => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let list = body["held"].as_array().cloned().unwrap_or_default();
+                let mut lines: Vec<String> = list
+                    .iter()
+                    .map(|m| {
+                        format!(
+                            "{}  looks like: {}  {}",
+                            clean(m["id"].as_str().unwrap_or("?")),
+                            clean(m["kind"].as_str().unwrap_or("a secret")),
+                            clean(m["text"].as_str().unwrap_or(""))
+                        )
+                    })
+                    .collect();
+                if list.is_empty() {
+                    lines.push("No notes are held back.".to_string());
+                } else {
+                    lines.push("These are in no answer, review or list. /forget ID deletes one for good; /notsecret ID says it is not a secret and offers it again.".to_string());
+                }
+                self.push(Kind::Info, Some("Held back"), lines);
+                Vec::new()
+            }
+            Intent::NotSecret => {
+                self.say(
+                    if ok { Kind::Ok } else { Kind::Error },
+                    if ok {
+                        "Released. The note is offered again.".to_string()
+                    } else {
+                        err_text(status, &body)
+                    },
+                );
                 Vec::new()
             }
             Intent::Archived => {
