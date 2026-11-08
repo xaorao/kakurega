@@ -73,6 +73,8 @@ pub fn finding(status: &CheckStatus) -> Value {
                 verdict("failed", "The script printed REPRODUCED without first printing CONTROL_OK. First exercise and assert the normal behaviour and print CONTROL_OK on its own line, then print REPRODUCED or NOT REPRODUCED on its own line.")
             } else if starts(m, msg::INDEPENDENT) {
                 verdict("failed", "The script still printed REPRODUCED when the cited file was emptied, so its result does not depend on the code you named. Make the verdict come from calling that code.")
+            } else if starts(m, msg::DOES_NOT_COMPILE) {
+                verdict("failed", "The Rust script did not compile. It must be one file with a main function, use only the standard library and the project's crate (available as `project`), and end by printing its verdict lines. Fix it and report the finding again with the same title.")
             } else if starts(m, msg::ENDED) {
                 verdict("failed", "The script ended with an error or hit a limit. It must exit normally after printing its verdict lines, use no network, touch no file outside the project and finish quickly.")
             } else {

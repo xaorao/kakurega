@@ -44,6 +44,7 @@ pub struct Repair {
     scratch: PathBuf,
     python: String,
     node: String,
+    rustc: String,
     findings: HashMap<Vec<u8>, CheckedFinding>,
     fixes: HashMap<(Vec<u8>, Vec<u8>), CheckedFix>,
     /// The finding as it stands, by (title, file), and the order those were first reported in.
@@ -69,6 +70,7 @@ impl Repair {
         scratch: PathBuf,
         python: String,
         node: String,
+        rustc: String,
     ) -> Repair {
         Repair {
             known,
@@ -77,6 +79,7 @@ impl Repair {
             scratch,
             python,
             node,
+            rustc,
             findings: HashMap::new(),
             fixes: HashMap::new(),
             latest: HashMap::new(),
@@ -109,6 +112,7 @@ impl Repair {
                 scratch: &self.scratch,
                 python: &self.python,
                 node: &self.node,
+                rustc: &self.rustc,
             };
             let started = Instant::now();
             let check = run_reproducer(&finding, &index, &env);
@@ -147,6 +151,7 @@ impl Repair {
             scratch: &self.scratch,
             python: &self.python,
             node: &self.node,
+            rustc: &self.rustc,
         };
         let started = Instant::now();
         let (status, tests) =
@@ -271,6 +276,7 @@ mod tests {
             std::env::temp_dir(),
             "/nonexistent/python".into(),
             "/nonexistent/node".into(),
+            "/nonexistent/rustc".into(),
         )
     }
 

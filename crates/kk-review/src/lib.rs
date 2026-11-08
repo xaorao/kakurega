@@ -7,4 +7,5 @@ pub mod job;
 pub mod pattern;
 pub mod release;
 pub mod repair;
+pub mod rust;
 pub mod withhold;

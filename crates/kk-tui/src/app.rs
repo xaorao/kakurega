@@ -3098,6 +3098,7 @@ impl App {
                             None | Some("python") => "Python".to_string(),
                             Some("javascript") => "JavaScript".to_string(),
                             Some("typescript") => "TypeScript".to_string(),
+                            Some("rust") => "Rust".to_string(),
                             Some(_) => "unknown language".to_string(),
                         };
                         lines.push(format!("Checked with {language}"));

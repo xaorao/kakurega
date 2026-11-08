@@ -1,4 +1,5 @@
 use crate::import::ImportedFile;
+use crate::rust::{self, BuildProblem};
 use kk_sandbox::{run_with, Bind, Exit, Limits, SandboxError, SandboxSpec, Transport};
 use kk_types::label::Level;
 use serde_json::Value;
@@ -27,6 +28,7 @@ pub mod msg {
     pub const NO_VERDICT_AFTER: &str =
         "after the change the script ended without printing its NOT REPRODUCED verdict";
     pub const UNTRUSTED_AFTER: &str = "the check after the change could not be trusted";
+    pub const DOES_NOT_COMPILE: &str = "the script did not compile";
 }
 
 pub const MAX_TITLE: usize = 200;
@@ -41,6 +43,8 @@ pub enum Language {
     JavaScript,
     /// Run by Node's own type stripping: plain type annotations only, no build step.
     TypeScript,
+    /// Built with `rustc` against the project's library crate, which is built the same way: no cargo, no packages.
+    Rust,
 }
 
 impl Language {
@@ -49,6 +53,7 @@ impl Language {
             Language::Python => "python",
             Language::JavaScript => "javascript",
             Language::TypeScript => "typescript",
+            Language::Rust => "rust",
         }
     }
 
@@ -58,6 +63,7 @@ impl Language {
             "python" => Some(Language::Python),
             "javascript" => Some(Language::JavaScript),
             "typescript" => Some(Language::TypeScript),
+            "rust" => Some(Language::Rust),
             _ => None,
         }
     }
@@ -160,6 +166,8 @@ pub fn parse_finding(bytes: &[u8], known_files: &BTreeSet<String>) -> Option<Fin
 pub enum ClosureError {
     NeedsRestrictedFile(String),
     EntryMissing,
+    /// The check cannot be done here, for a reason that has one fixed sentence.
+    Unavailable(&'static str),
 }
 
 fn module_paths(module: &str) -> Vec<String> {
@@ -313,6 +321,76 @@ pub fn ts_closure(
     script_closure(entry, files, &TS_EXTENSIONS)
 }
 
+/// The files the compiler needs to build the crate a Rust finding is in: its whole module tree.
+pub fn rust_closure(
+    entry: &str,
+    files: &BTreeMap<String, &ImportedFile>,
+) -> Result<Vec<String>, ClosureError> {
+    match rust::rust_crate(entry, files) {
+        Ok(c) => Ok(c.sample),
+        Err(rust::Problem::Restricted(p)) => Err(ClosureError::NeedsRestrictedFile(p)),
+        Err(rust::Problem::EntryMissing) => Err(ClosureError::EntryMissing),
+        Err(rust::Problem::Unavailable(why)) => Err(ClosureError::Unavailable(why.sentence())),
+    }
+}
+
+/// Builds the project's library crate (in the edition its manifest names), then the reproducer against it as `project` (always in
+/// the 2021 edition: the script is not the project's code, and `use project::...` needs 2018 or later), then runs the reproducer, all in
+/// one sandbox:
+/// the only place a sandbox can write is its own `/tmp`, so a program built in one run could not be found by the next. The four
+/// words after the script are the compiler, the edition, the crate root and the crate's name; they are passed as arguments, never
+/// put into the script, and each was checked before. `gcc` is named where a program is linked (not for a library, which is never
+/// linked) because `cc` is a link into `/etc`, which the sandbox lacks.
+/// A failed build says so on the first line of its error stream; the program's own output is never read as that.
+const RUST_BUILD_AND_RUN: &str = r#"set -u
+rustc="$1"; edition="$2"; root="$3"; name="$4"
+"$rustc" --edition "$edition" --crate-type lib --crate-name "$name" --cap-lints allow -C opt-level=0 -C debuginfo=0 -o "/tmp/lib$name.rlib" "/sample/$root" 2>/tmp/e1 || { echo "KK_BUILD_FAILED crate" >&2; head -c 4000 /tmp/e1 >&2; exit 97; }
+"$rustc" -C linker=/usr/bin/gcc --edition 2021 --cap-lints allow -C opt-level=0 -C debuginfo=0 --extern "project=/tmp/lib$name.rlib" -o /tmp/repro /repro/repro.rs 2>/tmp/e2 || { echo "KK_BUILD_FAILED script" >&2; head -c 4000 /tmp/e2 >&2; exit 97; }
+exec /tmp/repro
+"#;
+
+/// The same builds for the crate's own tests: the crate with its test harness, then the harness with one thread.
+const RUST_BUILD_AND_TEST: &str = r#"set -u
+rustc="$1"; edition="$2"; root="$3"; name="$4"
+"$rustc" -C linker=/usr/bin/gcc --edition "$edition" --test --crate-name "$name" --cap-lints allow -C opt-level=0 -C debuginfo=0 -o /tmp/tests "/sample/$root" 2>/tmp/e1 || { echo "KK_BUILD_FAILED crate" >&2; head -c 4000 /tmp/e1 >&2; exit 97; }
+exec /tmp/tests --test-threads=1
+"#;
+
+/// Asks the sandbox, once, whether it can build and run a Rust program at all: a program is built and run, and the answer is the
+/// result, not a version number. The error says which part is missing (the compiler, the linker, the edition).
+fn rust_unavailable(rustc: &str, transport: &Transport) -> Option<String> {
+    const PROBE: &str = r#"set -u
+echo 'fn main() { println!("ok"); }' > /tmp/probe.rs
+"$1" -C linker=/usr/bin/gcc --edition 2021 -o /tmp/probe /tmp/probe.rs 2>/tmp/e || { echo "KK_BUILD_FAILED script" >&2; head -c 2000 /tmp/e >&2; exit 97; }
+exec /tmp/probe
+"#;
+    let mut spec = SandboxSpec::new("/usr/bin/sh");
+    spec.args = vec!["-c".into(), PROBE.into(), "sh".into(), rustc.into()];
+    spec.limits = Limits {
+        wall: Duration::from_secs(30),
+        cpu_secs: 20,
+        ..Limits::default()
+    };
+    match run_with(&spec, transport) {
+        Ok(o) if o.exit == Exit::Code(0) && String::from_utf8_lossy(&o.stdout) == "ok\n" => None,
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            if let Some((stage, rest)) = rust::build_failure(&stderr) {
+                if let Some(BuildProblem::Environment(why)) =
+                    rust::classify_build_failure(stage, rest)
+                {
+                    if why != rust::CRATE_SENTENCE {
+                        return Some(why.into());
+                    }
+                }
+            }
+            Some("the sandbox cannot build a Rust program (the Rust compiler and gcc are needed under /usr/bin), so this cannot be checked here".into())
+        }
+        Err(SandboxError::Unsupported(m)) => Some(m.to_string()),
+        Err(e) => Some(e.to_string()),
+    }
+}
+
 fn script_closure(
     entry: &str,
     files: &BTreeMap<String, &ImportedFile>,
@@ -364,6 +442,8 @@ pub struct CheckEnv<'a> {
     pub scratch: &'a Path,
     pub python: &'a str,
     pub node: &'a str,
+    /// The Rust compiler as seen inside the sandbox.
+    pub rustc: &'a str,
 }
 
 /// The major version in the answer of `node --version` (`v22.22.1`), or nothing if the answer is anything else. The answer is
@@ -434,6 +514,7 @@ pub fn run_reproducer(
         Language::Python => python_closure(&finding.file, files),
         Language::JavaScript => js_closure(&finding.file, files),
         Language::TypeScript => ts_closure(&finding.file, files),
+        Language::Rust => rust_closure(&finding.file, files),
     };
     let sample_paths = match closure {
         Ok(p) => p,
@@ -447,6 +528,13 @@ pub fn run_reproducer(
         Err(ClosureError::EntryMissing) => {
             return CheckResult {
                 status: CheckStatus::Unavailable(msg::NOT_IN_PROJECT.into()),
+                stdout: String::new(),
+                sample_paths: vec![],
+            }
+        }
+        Err(ClosureError::Unavailable(why)) => {
+            return CheckResult {
+                status: CheckStatus::Unavailable(why.into()),
                 stdout: String::new(),
                 sample_paths: vec![],
             }
@@ -482,6 +570,12 @@ pub fn run_reproducer(
         Language::Python => ("repro.py", env.python),
         Language::JavaScript => ("repro.mjs", env.node),
         Language::TypeScript => ("repro.mts", env.node),
+        Language::Rust => ("repro.rs", env.rustc),
+    };
+    let rust_plan = if finding.language == Language::Rust {
+        rust::rust_crate(&finding.file, files).ok()
+    } else {
+        None
     };
     let script = dir.join(script_name);
     if fs::write(&script, finding.reproducer.as_bytes()).is_err() {
@@ -501,6 +595,16 @@ pub fn run_reproducer(
             };
         }
     }
+    if finding.language == Language::Rust {
+        if let Some(why) = rust_unavailable(interpreter, env.transport) {
+            let _ = fs::remove_dir_all(&dir);
+            return CheckResult {
+                status: CheckStatus::Unavailable(why),
+                stdout: String::new(),
+                sample_paths,
+            };
+        }
+    }
     let mut outputs = Vec::new();
     // Round 2 is the negative control: the cited file is emptied. A script whose verdict does not depend on that
     // code cannot be evidence about it.
@@ -509,8 +613,31 @@ pub fn run_reproducer(
         if round == 2 {
             let _ = fs::write(sample.join(&finding.file), b"");
         }
-        let mut spec = SandboxSpec::new(interpreter);
+        let mut spec = SandboxSpec::new(if finding.language == Language::Rust {
+            "/usr/bin/sh"
+        } else {
+            interpreter
+        });
         match finding.language {
+            Language::Rust => {
+                let Some(plan) = rust_plan.as_ref() else {
+                    let _ = fs::remove_dir_all(&dir);
+                    return CheckResult {
+                        status: CheckStatus::Failed("could not prepare the crate".into()),
+                        stdout: String::new(),
+                        sample_paths,
+                    };
+                };
+                spec.args = vec![
+                    "-c".into(),
+                    RUST_BUILD_AND_RUN.into(),
+                    "sh".into(),
+                    interpreter.into(),
+                    plan.edition.clone().into(),
+                    plan.root.clone().into(),
+                    plan.crate_name.clone().into(),
+                ];
+            }
             Language::Python => {
                 spec.args = vec!["-B".into(), "/repro/repro.py".into()];
                 spec.env = vec![("PYTHONPATH".into(), "/sample".into())];
@@ -533,10 +660,19 @@ pub fn run_reproducer(
             writable: false,
         });
         spec.chdir = Some("/sample".into());
-        spec.limits = Limits {
-            wall: Duration::from_secs(30),
-            cpu_secs: 15,
-            ..Limits::default()
+        spec.limits = if finding.language == Language::Rust {
+            // building the crate and the script takes part of the same budget as running the script
+            Limits {
+                wall: Duration::from_secs(60),
+                cpu_secs: 45,
+                ..Limits::default()
+            }
+        } else {
+            Limits {
+                wall: Duration::from_secs(30),
+                cpu_secs: 15,
+                ..Limits::default()
+            }
         };
         match run_with(&spec, env.transport) {
             Ok(o) if round == 2 => {
@@ -548,6 +684,29 @@ pub fn run_reproducer(
                 if o.exit != Exit::Code(0) {
                     let _ = fs::remove_dir_all(&dir);
                     let stderr = String::from_utf8_lossy(&o.stderr);
+                    if finding.language == Language::Rust {
+                        if let Some((stage, rest)) = rust::build_failure(&stderr) {
+                            let status = match rust::classify_build_failure(stage, rest) {
+                                Some(BuildProblem::Environment(why)) => {
+                                    CheckStatus::Unavailable(why.into())
+                                }
+                                Some(BuildProblem::Package(pkg)) => CheckStatus::Unavailable(format!(
+                                    "{}{pkg}', which is not in the sandbox (it has no installed packages and no network), so this cannot be checked here",
+                                    msg::NEEDS_PACKAGE
+                                )),
+                                None => CheckStatus::Failed(format!(
+                                    "{}: {}",
+                                    msg::DOES_NOT_COMPILE,
+                                    rest.chars().take(300).collect::<String>()
+                                )),
+                            };
+                            return CheckResult {
+                                status,
+                                stdout: String::new(),
+                                sample_paths,
+                            };
+                        }
+                    }
                     if finding.language == Language::TypeScript {
                         if let Some(why) = typescript_environment_problem(&stderr) {
                             return CheckResult {
@@ -1007,6 +1166,9 @@ pub fn is_test_path(path: &str) -> bool {
         "js" | "mjs" | "cjs" | "ts" | "mts" | "cts" | "jsx" | "tsx" => {
             stem.ends_with(".test") || stem.ends_with(".spec") || stem.ends_with("_test")
         }
+        "rs" => {
+            matches!(stem, "tests" | "test") || stem.ends_with("_test") || stem.ends_with("_tests")
+        }
         _ => false,
     }
 }
@@ -1147,6 +1309,7 @@ pub fn missing_package(language: Language, stderr: &str) -> Option<String> {
                     }
                 }
             }
+            Language::Rust => {}
             Language::JavaScript | Language::TypeScript => {
                 for marker in ["Cannot find package '", "Cannot find module '"] {
                     if let Some(at) = line.find(marker) {
@@ -1218,7 +1381,8 @@ pub fn run_project_tests(files: &BTreeMap<String, &ImportedFile>, env: &CheckEnv
     }
 }
 
-/// The project's own tests for one language. Python runs `unittest`; JavaScript runs Node's built-in `node --test`.
+/// The project's own tests for one language. Python runs `unittest`; JavaScript runs Node's built-in `node --test`. Rust needs to
+/// know which crate, so it is run by `run_project_tests_of`; asked here, it says so.
 pub fn run_project_tests_for(
     language: Language,
     files: &BTreeMap<String, &ImportedFile>,
@@ -1228,6 +1392,100 @@ pub fn run_project_tests_for(
         Language::Python => run_project_tests(files, env),
         Language::JavaScript => run_node_tests(files, env, false),
         Language::TypeScript => run_node_tests(files, env, true),
+        Language::Rust => TestRun::Unavailable("Rust tests are run for a particular crate".into()),
+    }
+}
+
+/// The project's own tests for the language of a finding, and for Rust the crate the finding is in.
+pub fn run_project_tests_of(
+    finding: &Finding,
+    files: &BTreeMap<String, &ImportedFile>,
+    env: &CheckEnv<'_>,
+) -> TestRun {
+    match finding.language {
+        Language::Rust => run_rust_tests(&finding.file, files, env),
+        other => run_project_tests_for(other, files, env),
+    }
+}
+
+/// The crate's own unit tests, built and run in the sandbox with the same strict reading of the runner's summary as the others.
+/// Tests in a `tests` folder need the crate as a dependency and are not run; a crate with no `#[test]` has none to run.
+fn run_rust_tests(
+    entry: &str,
+    files: &BTreeMap<String, &ImportedFile>,
+    env: &CheckEnv<'_>,
+) -> TestRun {
+    let plan = match rust::rust_crate(entry, files) {
+        Ok(c) => c,
+        Err(rust::Problem::Unavailable(why)) => return TestRun::Unavailable(why.sentence().into()),
+        Err(rust::Problem::Restricted(_)) => {
+            return TestRun::Unavailable(msg::WITHHELD_FILE.into());
+        }
+        Err(rust::Problem::EntryMissing) => return TestRun::NoTests,
+    };
+    let holds_tests = plan.sample.iter().any(|p| {
+        p.ends_with(".rs")
+            && files
+                .get(p)
+                .is_some_and(|f| rust::has_inline_tests(&String::from_utf8_lossy(&f.bytes)))
+    });
+    if !holds_tests {
+        return TestRun::NoTests;
+    }
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir: PathBuf = env
+        .scratch
+        .join(format!("rstests-{}-{n}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let sample = dir.join("sample");
+    for p in &plan.sample {
+        let dest = sample.join(p);
+        if dest.parent().map(fs::create_dir_all).transpose().is_err()
+            || fs::write(&dest, &files[p].bytes).is_err()
+        {
+            let _ = fs::remove_dir_all(&dir);
+            return TestRun::Unavailable("could not prepare the crate".into());
+        }
+    }
+    let mut spec = SandboxSpec::new("/usr/bin/sh");
+    spec.args = vec![
+        "-c".into(),
+        RUST_BUILD_AND_TEST.into(),
+        "sh".into(),
+        env.rustc.into(),
+        plan.edition.clone().into(),
+        plan.root.clone().into(),
+        plan.crate_name.clone().into(),
+    ];
+    spec.binds.push(Bind {
+        host: sample,
+        inside: "/sample".into(),
+        writable: false,
+    });
+    spec.chdir = Some("/sample".into());
+    spec.limits = Limits {
+        wall: Duration::from_secs(90),
+        cpu_secs: 60,
+        ..Limits::default()
+    };
+    let result = run_with(&spec, env.transport);
+    let _ = fs::remove_dir_all(&dir);
+    match result {
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            if let Some((stage, rest)) = rust::build_failure(&stderr) {
+                return match rust::classify_build_failure(stage, rest) {
+                    Some(BuildProblem::Environment(why)) => TestRun::Unavailable(why.into()),
+                    _ => TestRun::Unavailable(
+                        "the crate's tests do not build in this environment (they may need packages or dev-dependencies)".into(),
+                    ),
+                };
+            }
+            rust::parse_rust_tests(&o.exit, &String::from_utf8_lossy(&o.stdout))
+        }
+        Err(SandboxError::Unsupported(m)) => TestRun::Unavailable(m.to_string()),
+        Err(e) => TestRun::Unavailable(e.to_string()),
     }
 }
 
@@ -1369,7 +1627,7 @@ pub fn verify_fix_with_tests(
     if status != FixStatus::FixesTheReproducer {
         return (status, String::new());
     }
-    let before_tests = run_project_tests_for(finding.language, files, env);
+    let before_tests = run_project_tests_of(finding, files, env);
     let Some(new_bytes) = apply_all(files, fix) else {
         return (status, String::new());
     };
@@ -1391,7 +1649,7 @@ pub fn verify_fix_with_tests(
     for p in &patched {
         map.insert(p.path.clone(), p);
     }
-    let after_tests = run_project_tests_for(finding.language, &map, env);
+    let after_tests = run_project_tests_of(finding, &map, env);
     match compare_test_runs(&before_tests, &after_tests) {
         TestVerdict::Maintained(note) => (status, note),
         TestVerdict::Broken(note) => (FixStatus::BreaksTests(note.clone()), note),
@@ -1420,6 +1678,24 @@ pub fn verify_fix(
             msg::FIX_TEST_FILE,
             e.file
         ));
+    }
+    if finding.language == Language::Rust {
+        // Rust keeps its unit tests in the file they test, so a change is also refused when it touches a test inside a file
+        if let Some(e) = fix.edits().iter().find(|e| {
+            files.get(&e.file).is_some_and(|f| {
+                rust::change_touches_tests(
+                    &String::from_utf8_lossy(&f.bytes),
+                    &e.old_text,
+                    &e.new_text,
+                )
+            })
+        }) {
+            return FixStatus::CouldNotApply(format!(
+                "{} ({}): a change to the tests it must pass proves nothing",
+                msg::FIX_TEST_FILE,
+                e.file
+            ));
+        }
     }
     let Some(new_bytes) = apply_all(files, fix) else {
         return FixStatus::CouldNotApply(msg::FIX_ONCE.into());

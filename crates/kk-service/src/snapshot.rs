@@ -34,7 +34,7 @@ pub struct SnapFinding {
     pub line: i64,
     pub explanation: String,
     pub reproducer: String,
-    /// "python", "javascript" or "typescript"; reviews stored before the field existed read as python.
+    /// "python", "javascript", "typescript" or "rust"; reviews stored before the field existed read as python.
     #[serde(default = "python_name")]
     pub language: String,
     pub status: String,

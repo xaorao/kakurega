@@ -159,6 +159,7 @@ fn c03_the_kernel_reproduces_the_real_defect_and_does_not_confirm_a_false_one() 
         scratch: &scratch(),
         python: "/usr/bin/python3",
         node: "/usr/bin/node",
+        rustc: "/usr/bin/rustc",
     };
     let real = run_reproducer(&finding(REPRO), &idx, &env);
     assert_eq!(real.status, CheckStatus::Reproduced, "{real:?}");
@@ -181,6 +182,7 @@ fn c04_hostile_or_broken_reproducers_never_become_confirmations() {
         scratch: &scratch(),
         python: "/usr/bin/python3",
         node: "/usr/bin/node",
+        rustc: "/usr/bin/rustc",
     };
     let cases: Vec<(&str, &str)> = vec![
         ("print('REPRODUCED')\nimport sys; sys.exit(3)\n", "ended"),
@@ -279,6 +281,7 @@ fn f02_a_fix_is_only_called_good_when_the_reproducer_stops_reproducing_and_still
         scratch: &scratch(),
         python: "/usr/bin/python3",
         node: "/usr/bin/node",
+        rustc: "/usr/bin/rustc",
     };
     let f = finding(REPRO);
     let before = run_reproducer(&f, &idx, &env);
@@ -361,6 +364,7 @@ fn c05_a_script_that_prints_the_marker_without_touching_the_cited_code_is_not_a_
         scratch: &scratch(),
         python: "/usr/bin/python3",
         node: "/usr/bin/node",
+        rustc: "/usr/bin/rustc",
     };
     for (name, code) in [
         ("unconditional marker", "print('REPRODUCED')\n"),
@@ -474,6 +478,7 @@ fn f05_a_fix_that_stops_the_reproducer_but_breaks_the_projects_passing_tests_is_
         scratch: &scratch(),
         python: "/usr/bin/python3",
         node: "/usr/bin/node",
+        rustc: "/usr/bin/rustc",
     };
     assert_eq!(
         run_project_tests(&idx, &env),
@@ -771,6 +776,7 @@ fn c22_javascript_reproducers_confirm_a_real_defect_and_hostile_ones_never_pass(
         scratch: &scratch(),
         python: "/usr/bin/python3",
         node: "/usr/bin/node",
+        rustc: "/usr/bin/rustc",
     };
     let real = run_reproducer(&js_finding(JS_REPRO), &idx, &env);
     assert_eq!(real.status, CheckStatus::Reproduced, "{real:?}");
@@ -860,6 +866,7 @@ fn f08_a_fix_may_not_change_a_test_file_and_is_refused_before_anything_runs() {
         scratch: &scratch,
         python: "/nonexistent/python",
         node: "/nonexistent/node",
+        rustc: "/usr/bin/rustc",
     };
     let f = finding(REPRO);
     let reproduced = kk_review::check::CheckResult {
@@ -1027,6 +1034,7 @@ fn c24_a_missing_third_party_package_is_unavailable_and_a_mistake_about_the_proj
         scratch: &scratch(),
         python: "/usr/bin/python3",
         node: "/usr/bin/node",
+        rustc: "/usr/bin/rustc",
     };
     let run = |f: &Finding| run_reproducer(f, &idx, &env).status;
     let py = |code: &str| finding(code);
@@ -1076,6 +1084,7 @@ fn f10_a_fix_that_just_ends_the_program_before_the_verdict_is_not_a_fix() {
         scratch: &scratch(),
         python: "/usr/bin/python3",
         node: "/usr/bin/node",
+        rustc: "/usr/bin/rustc",
     };
     // Python: the "fix" makes logout end the whole program cleanly, after CONTROL_OK and before any verdict
     let files = fixture_files();
@@ -1290,6 +1299,7 @@ fn n02_the_projects_javascript_tests_are_run_in_the_sandbox_and_a_fix_is_held_to
         scratch: &scratch(),
         python: "/usr/bin/python3",
         node: "/usr/bin/node",
+        rustc: "/usr/bin/rustc",
     };
     let none = js_files();
     assert_eq!(
@@ -1426,6 +1436,7 @@ fn c25_a_reproducer_may_not_name_the_sandboxs_own_paths_because_no_one_else_coul
         scratch: &scratch,
         python: "/nonexistent/python",
         node: "/nonexistent/node",
+        rustc: "/usr/bin/rustc",
     };
     let mut f = finding(REPRO);
     f.reproducer = format!("{}\nopen('/sample/payments/auth/session.py')\n", REPRO);
@@ -1449,6 +1460,7 @@ fn e01_what_the_sandbox_confirmed_is_what_the_recipients_own_machine_reproduces_
         scratch: &scratch_dir,
         python: "/usr/bin/python3",
         node: "/usr/bin/node",
+        rustc: "/usr/bin/rustc",
     };
     let mut files = fixture_files();
     files.extend(js_files());
@@ -2353,6 +2365,7 @@ fn c30_typescript_reproducers_confirm_a_real_defect_and_what_node_cannot_run_is_
         scratch: &scratch(),
         python: "/usr/bin/python3",
         node: TS_NODE,
+        rustc: "/usr/bin/rustc",
     };
     let real = run_reproducer(&ts_finding(TS_REPRO), &idx, &env);
     assert_eq!(real.status, CheckStatus::Reproduced, "{real:?}");
@@ -2433,6 +2446,7 @@ fn c30_typescript_reproducers_confirm_a_real_defect_and_what_node_cannot_run_is_
         scratch: &scratch(),
         python: "/usr/bin/python3",
         node: "/usr/bin/node",
+        rustc: "/usr/bin/rustc",
     };
     let r = run_reproducer(&ts_finding(TS_REPRO), &idx, &distro);
     match &r.status {
@@ -2452,6 +2466,7 @@ fn n03_the_projects_typescript_tests_are_run_in_the_sandbox_and_a_fix_is_held_to
         scratch: &scratch(),
         python: "/usr/bin/python3",
         node: TS_NODE,
+        rustc: "/usr/bin/rustc",
     };
     let none = ts_project(TS_SESSION, TS_TOKENS);
     assert_eq!(

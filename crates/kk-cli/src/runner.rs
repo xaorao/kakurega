@@ -55,6 +55,7 @@ impl JobRunner for ReviewRunner {
             scratch: self.scratch.clone(),
             python: "/usr/bin/python3".into(),
             node: sandbox_node(),
+            rustc: sandbox_rustc(),
             max_turns: self.max_turns,
             now,
             ttl_secs: 86_400,
@@ -371,6 +372,17 @@ impl JobRunner for ReviewRunner {
                 let version = probe(&["--version"]);
                 let feature = probe(&["-p", "process.features.typescript"]);
                 out.push(node_check(version.as_deref(), feature.as_deref()));
+                let rustc_version = std::process::Command::new(sandbox_rustc())
+                    .arg("--version")
+                    .output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+                let gcc = std::process::Command::new("/usr/bin/gcc")
+                    .arg("--version")
+                    .output()
+                    .is_ok_and(|o| o.status.success());
+                out.push(rust_check(rustc_version.as_deref(), gcc));
             }
             Transport::Lima { vm, .. } => {
                 let status = std::process::Command::new("limactl")
@@ -417,6 +429,19 @@ impl JobRunner for ReviewRunner {
                     let version = probe(&["--version"]);
                     let feature = probe(&["-p", "process.features.typescript"]);
                     out.push(node_check(version.as_deref(), feature.as_deref()));
+                    let in_vm = |program: &std::ffi::OsStr| {
+                        std::process::Command::new("limactl")
+                            .args(["shell", vm, "--"])
+                            .arg(program)
+                            .arg("--version")
+                            .output()
+                            .ok()
+                            .filter(|o| o.status.success())
+                            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                    };
+                    let rustc_version = in_vm(std::ffi::OsStr::new(&sandbox_rustc()));
+                    let gcc = in_vm(std::ffi::OsStr::new("/usr/bin/gcc")).is_some();
+                    out.push(rust_check(rustc_version.as_deref(), gcc));
                 } else {
                     out.push(check(
                         "worker",
@@ -594,6 +619,43 @@ pub fn sandbox_node() -> String {
     choose_node(std::env::var("KAKU_NODE").ok())
 }
 
+/// The Rust compiler the sandbox builds Rust checks with: the path in `KAKU_RUSTC` when it is a plain absolute path (as seen inside
+/// the sandbox, where only `/usr` is visible, so a compiler installed under a home folder cannot be used), else `/usr/bin/rustc`.
+pub fn sandbox_rustc() -> String {
+    choose_rustc(std::env::var("KAKU_RUSTC").ok())
+}
+
+fn choose_rustc(setting: Option<String>) -> String {
+    match setting {
+        Some(p) if plain_absolute_path(&p) => p,
+        _ => "/usr/bin/rustc".to_string(),
+    }
+}
+
+/// The readiness entry for Rust findings: optional, and built from what the compiler and the linker themselves answer.
+fn rust_check(rustc_version: Option<&str>, gcc: bool) -> Value {
+    let (ok, detail) = match rustc_version {
+        None => (
+            false,
+            "the Rust compiler was not found in the sandbox (it must be under /usr, where the sandbox can see it)".to_string(),
+        ),
+        Some(t) => match kk_review::rust::rustc_minor(t) {
+            Some(minor) if !gcc => (
+                false,
+                format!("rustc 1.{minor} is there, but gcc was not found at /usr/bin/gcc, which it needs to link"),
+            ),
+            Some(minor) if minor >= 75 => (true, format!("rustc 1.{minor} and gcc; editions up to {}", if minor >= 85 { "2024" } else { "2021" })),
+            Some(minor) => (false, format!("rustc 1.{minor} is too old (1.75 or newer is needed)")),
+            None => (false, "the Rust compiler gave an answer that was not a version".to_string()),
+        },
+    };
+    json!({
+        "id": "rust", "label": "Rust checks (rustc and gcc under /usr, optional)", "required": false,
+        "ok": ok, "detail": detail,
+        "fix": if ok { "" } else { "To check Rust findings, install rustc and gcc where the sandbox can see them (for example `apt install rustc gcc` on Ubuntu); a compiler under your home folder is not visible to the sandbox. Findings in other languages do not need it." },
+    })
+}
+
 fn choose_node(setting: Option<String>) -> String {
     match setting {
         Some(p) if plain_absolute_path(&p) => p,
@@ -760,6 +822,66 @@ mod node_check_tests {
             "/a b",
         ] {
             assert_eq!(choose_node(Some(bad.into())), "/usr/bin/node", "{bad:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod rust_check_tests {
+    use super::{choose_rustc, rust_check};
+
+    #[test]
+    fn rc01_the_rust_entry_is_optional_and_says_what_is_missing() {
+        let ok = rust_check(Some("rustc 1.93.1 (01f6ddf75 2026-02-11)\n"), true);
+        assert_eq!(
+            (ok["ok"].clone(), ok["required"].clone(), ok["id"].clone()),
+            (true.into(), false.into(), "rust".into())
+        );
+        assert!(
+            ok["detail"].as_str().unwrap().contains("1.93")
+                && ok["detail"].as_str().unwrap().contains("2024")
+        );
+        let old = rust_check(Some("rustc 1.80.0 (x 2024-07-01)\n"), true);
+        assert!(
+            old["ok"] == true
+                && old["detail"].as_str().unwrap().contains("2021")
+                && !old["detail"].as_str().unwrap().contains("2024")
+        );
+        for (text, gcc, needle) in [
+            (None, true, "not found"),
+            (Some("rustc 1.93.1 (x)\n"), false, "gcc"),
+            (Some("rustc 1.60.0 (x)\n"), true, "too old"),
+            (Some("hello"), true, "not a version"),
+        ] {
+            let c = rust_check(text, gcc);
+            assert_eq!(c["ok"], false, "{text:?}");
+            assert!(
+                c["detail"].as_str().unwrap().contains(needle),
+                "{}",
+                c["detail"]
+            );
+            assert!(c["fix"].as_str().unwrap().contains("apt install rustc gcc"));
+            assert_eq!(c["required"], false);
+        }
+    }
+
+    #[test]
+    fn rc02_the_compiler_path_is_a_plain_absolute_path_or_the_default() {
+        assert_eq!(choose_rustc(None), "/usr/bin/rustc");
+        assert_eq!(
+            choose_rustc(Some("/usr/local/bin/rustc".into())),
+            "/usr/local/bin/rustc"
+        );
+        for bad in [
+            "rustc",
+            "./rustc",
+            "/usr/bin/rustc --version",
+            "/x/../bin/rustc",
+            "/usr/bin/rustc;rm",
+            "",
+            "~/.cargo/bin/rustc",
+        ] {
+            assert_eq!(choose_rustc(Some(bad.into())), "/usr/bin/rustc", "{bad:?}");
         }
     }
 }

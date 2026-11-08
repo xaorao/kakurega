@@ -15,7 +15,15 @@ failed = 0
 missing = 0
 for item in index["findings"]:
     language = item.get("language", "python")
-    if language in ("javascript", "typescript"):
+    rustc = None
+    if language == "rust":
+        rustc = shutil.which("rustc")
+        if rustc is None:
+            print("MISSING " + item["title"] + " (this check needs the Rust compiler, rustc: install it from rust-lang.org and run this again)")
+            missing += 1
+            continue
+        argv = None
+    elif language in ("javascript", "typescript"):
         node = shutil.which("node")
         if node is None:
             print("MISSING " + item["title"] + " (this check needs Node.js 22 or newer: install it from nodejs.org and run this again)")
@@ -48,7 +56,22 @@ for item in index["findings"]:
         env = dict(os.environ, PYTHONPATH=root, PYTHONDONTWRITEBYTECODE="1")
         env.pop("NODE_OPTIONS", None)
         env.pop("NODE_PATH", None)
+        built = tempfile.TemporaryDirectory()
+        if language == "rust":
+            info = item["rust"]
+            base = ["--cap-lints", "allow", "-C", "opt-level=0"]
+            lib = os.path.join(built.name, "lib" + info["name"] + ".rlib")
+            exe = os.path.join(built.name, "repro" + (".exe" if os.name == "nt" else ""))
+            first = subprocess.run([rustc] + base + ["--edition", info["edition"], "--crate-type", "lib", "--crate-name", info["name"], "-o", lib, os.path.join(root, info["root"])], capture_output=True, text=True, encoding="utf-8")
+            second = first if first.returncode != 0 else subprocess.run([rustc] + base + ["--edition", "2021", "--extern", "project=" + lib, "-o", exe, os.path.join(here, item["reproducer"])], capture_output=True, text=True, encoding="utf-8")
+            if second.returncode != 0:
+                print("FAIL " + item["title"] + " (the crate or the script did not build with this Rust compiler)")
+                failed += 1
+                built.cleanup()
+                continue
+            argv = [exe]
         out = subprocess.run(argv, cwd=root, env=env, capture_output=True, text=True, encoding="utf-8")
+        built.cleanup()
         expected = open(os.path.join(here, item["expected"]), encoding="utf-8", newline="").read()
         ok = out.returncode == 0 and out.stdout == expected
         print(("OK   " if ok else "FAIL ") + item["title"])
@@ -183,6 +206,20 @@ pub fn assemble(
             ));
             continue;
         }
+        let rust_plan = if finding.language == Language::Rust {
+            match crate::rust::rust_crate(&finding.file, project_files) {
+                Ok(plan) => Some(plan),
+                Err(_) => {
+                    not_confirmed.push((
+                        finding.title.clone(),
+                        "the crate could not be described for the recipient".into(),
+                    ));
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
         n += 1;
         let (script_name, how) = match finding.language {
             Language::Python => (
@@ -192,6 +229,10 @@ pub fn assemble(
             Language::JavaScript => (
                 format!("repro-{n}.mjs"),
                 format!("run run-check.py (Python 3, with Node.js 22 or newer on the path). It rebuilds the minimal sample from sample-{n}.json, runs repro-{n}.mjs with Node.js and compares the output with expected-{n}.txt."),
+            ),
+            Language::Rust => (
+                format!("repro-{n}.rs"),
+                format!("run run-check.py (Python 3, with the Rust compiler rustc on the path). It rebuilds the minimal sample from sample-{n}.json, builds the project's library crate and repro-{n}.rs with rustc, runs the program and compares the output with expected-{n}.txt."),
             ),
             Language::TypeScript => (
                 format!("repro-{n}.mts"),
@@ -243,6 +284,17 @@ pub fn assemble(
             entry.push((
                 "language".into(),
                 Value::Str(finding.language.as_str().into()),
+            ));
+        }
+        if let Some(plan) = rust_plan {
+            // what the recipient needs to build the crate the script links against: its root file, edition and name
+            entry.push((
+                "rust".into(),
+                Value::Object(vec![
+                    ("root".into(), Value::Str(plan.root)),
+                    ("edition".into(), Value::Str(plan.edition)),
+                    ("name".into(), Value::Str(plan.crate_name)),
+                ]),
             ));
         }
         index_entries.push(Value::Object(entry));
@@ -333,6 +385,7 @@ pub fn claims_for(draft: &ReleaseDraft) -> Vec<kk_evidence::capsule::ClaimSpec> 
         }
         let how_to_check = match e["language"].as_str() {
             Some("javascript") => "Run run-check.py with Python 3, with Node.js 22 or newer on the path: it rebuilds the minimal sample, runs the Node.js script and compares the output with the expected output file.",
+            Some("rust") => "Run run-check.py with Python 3, with the Rust compiler rustc on the path: it rebuilds the minimal sample, builds the project's library crate and the Rust script with rustc, runs the program and compares the output with the expected output file.",
             Some("typescript") => "Run run-check.py with Python 3, with the official Node.js 22.18 or newer on the path: it rebuilds the minimal sample, runs the TypeScript script with Node.js itself and compares the output with the expected output file.",
             _ => "Run run-check.py with Python 3: it rebuilds the minimal sample and compares the output with the expected output file.",
         };

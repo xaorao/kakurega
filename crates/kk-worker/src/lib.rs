@@ -137,7 +137,7 @@ pub struct AgentConfig {
 pub fn finding_tool() -> ToolSpec {
     ToolSpec {
         name: "report_finding".into(),
-        description: "Record one confirmed defect. Give the file, the line, a short title, why it is a defect and, if you can, a reproducer script in the language named by `language` (python for .py files, javascript for .js, .mjs and .cjs files).".into(),
+        description: "Record one confirmed defect. Give the file, the line, a short title, why it is a defect and, if you can, a reproducer script in the language named by `language` (python for .py files, javascript for .js, .mjs and .cjs files, typescript for .ts, .mts and .cts files, rust for .rs files).".into(),
         parameters: json!({
             "type": "object",
             "properties": {
@@ -146,7 +146,7 @@ pub fn finding_tool() -> ToolSpec {
                 "line": {"type": "integer"},
                 "explanation": {"type": "string"},
                 "reproducer": {"type": "string"},
-                "language": {"type": "string", "enum": ["python", "javascript", "typescript"], "description": "The language of the reproducer; python if omitted."}
+                "language": {"type": "string", "enum": ["python", "javascript", "typescript", "rust"], "description": "The language of the reproducer; python if omitted."}
             },
             "required": ["title", "file", "line", "explanation"]
         }),
@@ -246,9 +246,9 @@ pub fn build_finding(a: &Value) -> Result<Value, String> {
     });
     if let Some(language) = a.get("language") {
         match language.as_str() {
-            Some(l @ ("python" | "javascript" | "typescript")) => finding["language"] = json!(l),
+            Some(l @ ("python" | "javascript" | "typescript" | "rust")) => finding["language"] = json!(l),
             _ => return Err(
-                "language must be exactly \"python\", \"javascript\" or \"typescript\" (or left out for python)"
+                "language must be exactly \"python\", \"javascript\", \"typescript\" or \"rust\" (or left out for python)"
                     .into(),
             ),
         }

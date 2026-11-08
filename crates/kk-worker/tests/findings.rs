@@ -2,12 +2,12 @@ use kk_worker::{build_finding, finding_tool};
 use serde_json::json;
 
 #[test]
-fn w01_the_finding_tool_offers_exactly_the_three_languages_and_does_not_require_one() {
+fn w01_the_finding_tool_offers_exactly_the_four_languages_and_does_not_require_one() {
     let t = finding_tool();
     let props = &t.parameters["properties"];
     assert_eq!(
         props["language"]["enum"],
-        json!(["python", "javascript", "typescript"])
+        json!(["python", "javascript", "typescript", "rust"])
     );
     let required: Vec<&str> = t.parameters["required"]
         .as_array()
@@ -32,14 +32,16 @@ fn w02_a_finding_carries_its_language_only_when_the_model_named_a_known_one() {
         plain.get("language").is_none(),
         "no language named, none added: {plain}"
     );
-    for lang in ["python", "javascript", "typescript"] {
+    for lang in ["python", "javascript", "typescript", "rust"] {
         let mut a = base.clone();
         a["language"] = json!(lang);
         assert_eq!(build_finding(&a).unwrap()["language"], lang);
     }
     // an unknown or oddly written language is sent back to the model to correct, never passed on or guessed
     for bad in [
-        json!("rust"),
+        json!("go"),
+        json!("Rust"),
+        json!("rs"),
         json!("TypeScript"),
         json!("ts"),
         json!("JavaScript"),
@@ -55,7 +57,10 @@ fn w02_a_finding_carries_its_language_only_when_the_model_named_a_known_one() {
         a["language"] = bad.clone();
         let err = build_finding(&a).expect_err(&format!("{bad} must be refused"));
         assert!(
-            err.contains("python") && err.contains("javascript") && err.contains("typescript"),
+            err.contains("python")
+                && err.contains("javascript")
+                && err.contains("typescript")
+                && err.contains("rust"),
             "{err}"
         );
     }

@@ -90,6 +90,7 @@ fn config(name: &str) -> JobConfig {
         scratch,
         python: "/usr/bin/python3".into(),
         node: "/usr/bin/node".into(),
+        rustc: "/usr/bin/rustc".into(),
         max_turns: 12,
         now: 1_700_000_000,
         ttl_secs: 86_400,
@@ -1234,6 +1235,144 @@ fn j16_a_typescript_script_with_the_wrong_language_label_is_never_confirmed() {
         report.draft.is_err(),
         "nothing confirmed, nothing to release"
     );
+}
+
+const RS_REVIEW_REPRO: &str = "use project::auth::session::{login, logout, validate};\nfn main() {\n    let token = login(\"alice\");\n    if !validate(&token) {\n        panic!(\"control\");\n    }\n    println!(\"CONTROL_OK\");\n    logout(&token);\n    println!(\"{}\", if validate(&token) { \"REPRODUCED\" } else { \"NOT REPRODUCED\" });\n}\n";
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn j17_a_rust_review_goes_from_the_models_tool_call_to_a_checked_fix_and_a_release_with_an_rs_script(
+) {
+    let mut cfg = config("j17");
+    cfg.repo = materialize_fixture("synthetic-rs-repo");
+    let (routes, ev) = scripted(vec![
+        calls(vec![("list_files", json!({}))]),
+        calls(vec![("read_file", json!({"path": "src/auth/session.rs"}))]),
+        calls(vec![(
+            "report_finding",
+            json!({"title": "Token still valid after logout", "file": "src/auth/session.rs", "line": 23, "explanation": "logout() only edits a local map, so validate() keeps accepting the token.", "reproducer": RS_REVIEW_REPRO, "language": "rust"}),
+        )]),
+        calls(vec![(
+            "propose_fix",
+            json!({"title": "Token still valid after logout", "file": "src/auth/session.rs",
+                   "old_text": "    // Clears the cookie on the client side; the server keeps the entry.\n    let mut cookie_jar: HashMap<&str, &str> = HashMap::new();\n    cookie_jar.insert(\"session\", token);\n    cookie_jar.remove(\"session\");\n",
+                   "new_text": "    ACTIVE_TOKENS.with(|a| a.borrow_mut().remove(token));\n",
+                   "explanation": "remove the server-side entry"}),
+        )]),
+        ChatMessage::new("assistant", "One defect found."),
+    ]);
+    let report = run_job(&cfg, routes, ev, &|_, _| {});
+    assert_eq!(report.error, None);
+    assert_eq!(
+        report.worker_exit,
+        Some(Exit::Code(0)),
+        "stderr: {}",
+        report.worker_stderr
+    );
+    assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
+    let (f, c) = &report.findings[0];
+    assert_eq!(f.language, kk_review::check::Language::Rust);
+    assert_eq!(c.status, CheckStatus::Reproduced, "{c:?}");
+    assert!(
+        !c.sample_paths
+            .iter()
+            .any(|p| p.contains(".env") || p.contains("docs/"))
+            && c.sample_paths.contains(&"src/lib.rs".to_string()),
+        "{:?}",
+        c.sample_paths
+    );
+    assert_eq!(report.fixes.len(), 1);
+    let fx = &report.fixes[0];
+    assert_eq!(
+        fx.status,
+        kk_review::check::FixStatus::FixesTheReproducer,
+        "{:?} {}",
+        fx.status,
+        fx.tests
+    );
+    assert!(
+        fx.tests.contains("3 test(s) passed before and after"),
+        "the crate's own tests were held to: {}",
+        fx.tests
+    );
+    let draft = report.draft.expect("a release draft");
+    assert!(
+        draft.files.contains_key("repro-1.rs")
+            && !draft.files.contains_key("repro-1.py")
+            && !draft.files.contains_key("repro-1.mjs"),
+        "{:?}",
+        draft.files.keys().collect::<Vec<_>>()
+    );
+    let index = String::from_utf8_lossy(&draft.files["index.json"]).into_owned();
+    assert!(
+        index.contains("\"language\":\"rust\"") && index.contains("orders_synthetic_rs"),
+        "{index}"
+    );
+    // nothing from the withheld .env reached the release
+    for (name, bytes) in &draft.files {
+        assert!(
+            !String::from_utf8_lossy(bytes).contains("hunter2-synthetic"),
+            "{name}"
+        );
+    }
+    let claims = kk_review::release::claims_for(&draft);
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].evidence[1], "repro-1.rs");
+    assert!(claims[0].how_to_check.contains("rustc"));
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn j18_a_rust_script_with_the_wrong_language_label_is_never_confirmed() {
+    let mut cfg = config("j18");
+    cfg.repo = materialize_fixture("synthetic-rs-repo");
+    let py = "from payments.auth import session\nprint('CONTROL_OK')\nprint('REPRODUCED')\n";
+    let (routes, ev) = scripted(vec![
+        calls(vec![(
+            "report_finding",
+            json!({"title": "A", "file": "src/auth/session.rs", "line": 23, "explanation": "e", "reproducer": RS_REVIEW_REPRO, "language": "python"}),
+        )]),
+        calls(vec![(
+            "report_finding",
+            json!({"title": "B", "file": "src/auth/session.rs", "line": 23, "explanation": "e", "reproducer": RS_REVIEW_REPRO, "language": "typescript"}),
+        )]),
+        calls(vec![(
+            "report_finding",
+            json!({"title": "C", "file": "src/auth/session.rs", "line": 23, "explanation": "e", "reproducer": py, "language": "rust"}),
+        )]),
+        calls(vec![(
+            "report_finding",
+            json!({"title": "D", "file": "src/auth/session.rs", "line": 23, "explanation": "e", "reproducer": RS_REVIEW_REPRO, "language": "go"}),
+        )]),
+        ChatMessage::new("assistant", "done"),
+    ]);
+    let report = run_job(&cfg, routes, ev, &|_, _| {});
+    assert_eq!(report.error, None);
+    for (f, c) in &report.findings {
+        assert_ne!(c.status, CheckStatus::Reproduced, "{}: {:?}", f.title, c);
+    }
+    assert!(
+        report.draft.is_err(),
+        "nothing confirmed, nothing to release"
+    );
+    // the model is told in fixed words, never in the compiler's
+    let (_, c) = report
+        .findings
+        .iter()
+        .find(|(f, _)| f.title == "C")
+        .expect("the Python script labelled rust was checked");
+    let note = kk_review::feedback::finding(&c.status);
+    assert_eq!(note["status"], "failed");
+    assert!(
+        !note["note"].as_str().unwrap().contains("payments"),
+        "{note}"
+    );
+}
+
+#[test]
+#[ignore]
+fn j25_live_local_model_on_the_rust_fixture_is_measured() {
+    measure("synthetic-rs-repo", kk_review::check::Language::Rust, "j25");
 }
 
 /// A scripted route whose requests can be read afterwards, to see exactly what the model was told.

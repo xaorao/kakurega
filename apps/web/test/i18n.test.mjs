@@ -21,6 +21,6 @@ test("i18n03 no translation is empty or left identical to English except names a
   const same = Object.keys(en).filter((k) => hi[k] === en[k]);
   assert.deepEqual(same.filter((k) => hi[k].trim() === ""), []);
   // names that are the same in every language: a search example, and the names of the two programming languages
-  const allowed = new Set(["nav.search.placeholder", "find.lang.python", "find.lang.javascript", "find.lang.typescript"]);
+  const allowed = new Set(["nav.search.placeholder", "find.lang.python", "find.lang.javascript", "find.lang.typescript", "find.lang.rust"]);
   assert.deepEqual(same.filter((k) => !allowed.has(k)), []);
 });

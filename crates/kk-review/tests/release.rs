@@ -1031,3 +1031,207 @@ fn rj05_a_typescript_finding_is_released_as_an_mts_script_and_the_recipient_with
     assert_eq!(nonode.status.code(), Some(2), "{}", text(&nonode));
     assert!(text(&nonode).contains("MISSING TS token not revoked"));
 }
+
+fn rs_project() -> Vec<ImportedFile> {
+    let label = Label::new(Level::Internal);
+    let mk = |path: &str, text: &str| {
+        let bytes = text.as_bytes().to_vec();
+        ImportedFile {
+            path: path.into(),
+            sha256: kk_evidence::capsule::sha256_hex(&bytes),
+            bytes,
+            label: label.clone(),
+            notes: vec![],
+        }
+    };
+    vec![
+        mk("Cargo.toml", "[package]\nname = \"payments-auth\"\nedition = \"2021\"\n"),
+        mk("src/lib.rs", "pub mod session;\n"),
+        mk("src/session.rs", "use std::cell::RefCell;\nuse std::collections::HashSet;\nthread_local! { static ACTIVE: RefCell<HashSet<String>> = RefCell::new(HashSet::new()); }\npub fn login(u: &str) -> String { let t = format!(\"{u}-é\"); ACTIVE.with(|a| a.borrow_mut().insert(t.clone())); t }\n// logout only drops the caller's copy, so the token stays valid\npub fn logout(t: &str) { let _c = t.to_string(); }\npub fn validate(t: &str) -> bool { ACTIVE.with(|a| a.borrow().contains(t)) }\n"),
+    ]
+}
+
+const RS_RELEASE_REPRO: &str = "use project::session::{login, logout, validate};\nfn main() {\n    let t = login(\"alice\");\n    assert!(validate(&t));\n    println!(\"CONTROL_OK\");\n    logout(&t);\n    println!(\"{}\", if validate(&t) { \"REPRODUCED\" } else { \"NOT REPRODUCED\" });\n}\n";
+
+fn rs_finding_for_release(reproducer: &str) -> Finding {
+    Finding {
+        title: "Rust token not revoked".into(),
+        file: "src/session.rs".into(),
+        line: 5,
+        explanation: "logout only drops the caller's copy, so validate() still accepts the token."
+            .into(),
+        reproducer: reproducer.into(),
+        language: kk_review::check::Language::Rust,
+    }
+}
+
+fn rs_confirmed() -> CheckResult {
+    CheckResult {
+        status: CheckStatus::Reproduced,
+        stdout: "CONTROL_OK\nREPRODUCED\n".into(),
+        sample_paths: vec!["src/lib.rs".into(), "src/session.rs".into()],
+    }
+}
+
+fn host_has_rustc() -> bool {
+    Command::new("rustc")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+#[test]
+fn rj06_a_rust_finding_is_released_as_an_rs_script_with_its_crate_and_the_recipient_can_rebuild_and_re_run_it(
+) {
+    assert!(
+        host_has_rustc(),
+        "this test runs the recipient's check with the host's rustc"
+    );
+    let mut proj = files();
+    proj.extend(rs_project());
+    let idx = index(&proj);
+    let draft = assemble(
+        &[
+            (finding(), confirmed()),
+            (rs_finding_for_release(RS_RELEASE_REPRO), rs_confirmed()),
+        ],
+        &idx,
+        "acme-audit",
+        "policy-1",
+        1_700_000_000,
+        86_400,
+    )
+    .expect("assemble");
+    assert!(draft.files.contains_key("repro-1.py") && draft.files.contains_key("repro-2.rs"));
+    let readme = String::from_utf8_lossy(&draft.files["finding-2.txt"]).into_owned();
+    assert!(
+        readme.contains("rustc") && readme.contains("repro-2.rs"),
+        "{readme}"
+    );
+    let index_json = String::from_utf8_lossy(&draft.files["index.json"]).into_owned();
+    assert!(index_json.contains("\"language\":\"rust\""), "{index_json}");
+    assert!(
+        index_json.contains(
+            "\"rust\":{\"edition\":\"2021\",\"name\":\"payments_auth\",\"root\":\"src/lib.rs\"}"
+        ) || (index_json.contains("\"root\":\"src/lib.rs\"")
+            && index_json.contains("\"name\":\"payments_auth\"")
+            && index_json.contains("\"edition\":\"2021\"")),
+        "{index_json}"
+    );
+    // the released sample is the crate's module tree, and not the manifest
+    let sample = String::from_utf8_lossy(&draft.files["sample-2.json"]).into_owned();
+    assert!(
+        sample.contains("src/lib.rs")
+            && sample.contains("src/session.rs")
+            && !sample.contains("Cargo.toml"),
+        "{sample}"
+    );
+    let dir = write_release(&draft, "rs");
+    // the recipient's own compiler (a different version from the sandbox's) builds the crate and the script and agrees
+    let both = recipient(&dir, None);
+    assert!(both.status.success(), "{}", text(&both));
+    assert!(
+        text(&both).contains("OK   Token not revoked")
+            && text(&both).contains("OK   Rust token not revoked"),
+        "{}",
+        text(&both)
+    );
+    // a changed script, a changed sample and a changed expected output each fail
+    let original = fs::read_to_string(dir.join("repro-2.rs")).unwrap();
+    fs::write(
+        dir.join("repro-2.rs"),
+        original.replace("\"REPRODUCED\"", "\"REPRODUCED?\""),
+    )
+    .unwrap();
+    assert_eq!(recipient(&dir, None).status.code(), Some(1));
+    fs::write(dir.join("repro-2.rs"), &original).unwrap();
+    let sample = fs::read_to_string(dir.join("sample-2.json")).unwrap();
+    fs::write(
+        dir.join("sample-2.json"),
+        sample.replace(
+            "pub fn logout(t: &str) { let _c = t.to_string(); }",
+            "pub fn logout(t: &str) { ACTIVE.with(|a| a.borrow_mut().remove(t)); }",
+        ),
+    )
+    .unwrap();
+    let changed = recipient(&dir, None);
+    assert_eq!(changed.status.code(), Some(1), "{}", text(&changed));
+    fs::write(dir.join("sample-2.json"), &sample).unwrap();
+    // a sample that no longer builds is a failed check, said plainly, not a crash
+    fs::write(
+        dir.join("sample-2.json"),
+        sample.replace("pub mod session;", "pub mod nowhere;"),
+    )
+    .unwrap();
+    let broken = recipient(&dir, None);
+    assert_eq!(broken.status.code(), Some(1), "{}", text(&broken));
+    assert!(text(&broken).contains("did not build"), "{}", text(&broken));
+    fs::write(dir.join("sample-2.json"), &sample).unwrap();
+    fs::write(dir.join("expected-2.txt"), "CONTROL_OK\nNOT REPRODUCED\n").unwrap();
+    assert_eq!(recipient(&dir, None).status.code(), Some(1));
+    fs::write(dir.join("expected-2.txt"), "CONTROL_OK\nREPRODUCED\n").unwrap();
+    assert!(recipient(&dir, None).status.success());
+    // no rustc on the path: that finding is MISSING (exit 2), never a failed check, and the Python finding is still checked
+    let empty = std::env::temp_dir().join(format!("kk-empty-path-rs-{}", std::process::id()));
+    fs::create_dir_all(&empty).unwrap();
+    let none = recipient(&dir, Some(empty.to_str().unwrap()));
+    assert_eq!(none.status.code(), Some(2), "{}", text(&none));
+    let t = text(&none);
+    assert!(t.contains("OK   Token not revoked"), "{t}");
+    assert!(
+        t.contains("MISSING Rust token not revoked") && t.contains("rust-lang.org"),
+        "{t}"
+    );
+    assert!(!t.contains("OK   Rust token") && !t.contains("FAIL"), "{t}");
+    // the capsule names the files released for the Rust finding
+    let claims = kk_review::release::claims_for(&draft);
+    assert_eq!(claims.len(), 2);
+    assert!(
+        claims[1].evidence.contains(&"repro-2.rs".to_string())
+            && claims[1].how_to_check.contains("rustc"),
+        "{:?}",
+        claims[1]
+    );
+}
+
+#[test]
+fn rj07_a_crate_without_an_edition_is_rebuilt_by_the_recipient_as_2015_and_the_script_as_2021() {
+    assert!(
+        host_has_rustc(),
+        "this test runs the recipient's check with the host's rustc"
+    );
+    let mut proj = files();
+    proj.extend(rs_project());
+    for f in proj.iter_mut() {
+        if f.path == "Cargo.toml" {
+            f.bytes = b"[package]\nname = \"payments-auth\"\n".to_vec();
+        }
+        if f.path == "src/session.rs" {
+            let text = String::from_utf8_lossy(&f.bytes).replace(
+                "pub fn validate(t: &str) -> bool {",
+                "pub fn validate(t: &str) -> bool { let async = 1; let _ = async;",
+            );
+            f.bytes = text.into_bytes();
+        }
+    }
+    let idx = index(&proj);
+    let draft = assemble(
+        &[(rs_finding_for_release(RS_RELEASE_REPRO), rs_confirmed())],
+        &idx,
+        "acme-audit",
+        "policy-1",
+        1_700_000_000,
+        86_400,
+    )
+    .expect("assemble");
+    let index_json = String::from_utf8_lossy(&draft.files["index.json"]).into_owned();
+    assert!(index_json.contains("\"edition\":\"2015\""), "{index_json}");
+    let dir = write_release(&draft, "rs2015");
+    let out = recipient(&dir, None);
+    assert!(out.status.success(), "{}", text(&out));
+    assert!(
+        text(&out).contains("OK   Rust token not revoked"),
+        "{}",
+        text(&out)
+    );
+}

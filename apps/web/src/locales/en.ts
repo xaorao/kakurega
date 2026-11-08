@@ -732,6 +732,7 @@ export const en = {
   "find.lang.python": "Python",
   "find.lang.javascript": "JavaScript",
   "find.lang.typescript": "TypeScript",
+  "find.lang.rust": "Rust",
   "find.lang.unknown": "unknown language",
   "find.repro": "Reproducer the kernel ran",
   "find.output": "Output",

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Puts the Rust compiler and gcc where the sandbox can see them, in the sandbox virtual machine. The sandbox shows a program only
+# what is under /usr, so a compiler installed with rustup under a home folder cannot be used by Rust checks; the distribution's
+# package puts rustc in /usr/bin. gcc is needed because rustc links with it, and /usr/bin/cc is a link into /etc, which the
+# sandbox does not have.
+set -euo pipefail
+vm="${KK_VM:-kak}"
+limactl start "$vm" >/dev/null 2>&1 || true
+limactl shell "$vm" -- bash -s <<'INNER'
+set -euo pipefail
+if /usr/bin/rustc --version >/dev/null 2>&1 && /usr/bin/gcc --version >/dev/null 2>&1; then
+  echo "rustc and gcc already under /usr/bin ($(/usr/bin/rustc --version))"
+  exit 0
+fi
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y rustc gcc >/dev/null
+/usr/bin/rustc --version
+/usr/bin/gcc --version | head -1

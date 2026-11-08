@@ -734,6 +734,7 @@ export const hi: Record<keyof typeof en, string> = {
   "find.lang.python": "Python",
   "find.lang.javascript": "JavaScript",
   "find.lang.typescript": "TypeScript",
+  "find.lang.rust": "Rust",
   "find.lang.unknown": "अज्ञात भाषा",
   "find.repro": "कर्नेल ने जो रिप्रोड्यूसर चलाया",
   "find.output": "आउटपुट",
