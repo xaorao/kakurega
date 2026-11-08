@@ -5706,3 +5706,190 @@ fn tu91_the_plain_line_mode_prints_the_notice_as_a_warning_and_nothing_when_ther
     );
     assert!(!with(None).contains("[Warning]"));
 }
+
+#[test]
+fn tu92_the_keeping_commands_parse_strictly_and_a_bad_form_gets_its_usage_line() {
+    assert_eq!(cmd::parse("/dormant"), Ok(Command::Dormant(None)));
+    assert_eq!(cmd::parse("/dormant 30"), Ok(Command::Dormant(Some(30))));
+    assert_eq!(
+        cmd::parse("/dormant 3650"),
+        Ok(Command::Dormant(Some(3650)))
+    );
+    for bad in [
+        "/dormant 29",
+        "/dormant 3651",
+        "/dormant -1",
+        "/dormant abc",
+        "/dormant 1.5",
+        "/dormant 30 60",
+        "/dormant 99999999999999999999",
+    ] {
+        assert_eq!(
+            cmd::parse(bad),
+            Err(format!("usage: {}", cmd::usage("dormant"))),
+            "{bad}"
+        );
+    }
+    assert_eq!(cmd::parse("/archived"), Ok(Command::Archived));
+    assert!(cmd::parse("/archived now").is_err());
+    for (line, action) in [
+        ("/archive m-1", "archive"),
+        ("/restore m-1", "restore"),
+        ("/pin m-1", "pin"),
+        ("/unpin m-1", "unpin"),
+        ("/stilltrue m-1", "keep"),
+    ] {
+        assert_eq!(
+            cmd::parse(line),
+            Ok(Command::NoteKeeping {
+                action,
+                id: "m-1".into()
+            }),
+            "{line}"
+        );
+    }
+    for name in ["archive", "restore", "pin", "unpin", "stilltrue"] {
+        for bad in [
+            String::new(),
+            " ".into(),
+            "a b".into(),
+            "../x".into(),
+            "a/b".into(),
+            "x".repeat(65),
+            "ü".into(),
+            "a\nb".into(),
+        ] {
+            let r = cmd::parse(&format!("/{name} {bad}"));
+            assert_eq!(
+                r,
+                Err(format!("usage: {}", cmd::usage(name))),
+                "/{name} {bad:?}"
+            );
+        }
+    }
+    // every new name is listed with a description and a usage line, and nothing is shadowed
+    for name in [
+        "dormant",
+        "archived",
+        "archive",
+        "restore",
+        "pin",
+        "unpin",
+        "stilltrue",
+    ] {
+        assert!(cmd::NAMES.contains(&name), "{name}");
+        assert!(
+            !cmd::describe(name).is_empty() && cmd::usage(name).starts_with(&format!("/{name}")),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        cmd::parse("/keep"),
+        Ok(Command::Keep),
+        "the older /keep and /quiet keep their meaning"
+    );
+    assert_eq!(cmd::parse("/quiet"), Ok(Command::Quiet));
+}
+
+#[test]
+fn tu93_dormant_lists_the_quiet_notes_with_why_and_says_nothing_was_put_away() {
+    let mut a = booted();
+    let r = enter(&mut a, "/dormant");
+    assert_eq!(
+        (r[0].method, r[0].path.as_str()),
+        (Method::Get, "/api/memories/dormant?days=180")
+    );
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"days": 180, "note": "x", "dormant": [
+            {"id": "m-9", "text": "Old fact\u{202e}about leases", "project": "alpha", "idle_days": 412, "uses": 3, "level": "internal"},
+            {"id": "m-8", "text": "Another old fact", "project": null, "idle_days": 200, "uses": 0, "level": "internal"}
+        ]}),
+    ));
+    let t = text(&a);
+    assert!(
+        t.contains("m-9 [project alpha]  quiet 412 days, given to the assistant 3 times"),
+        "{t}"
+    );
+    assert!(
+        t.contains("m-8  quiet 200 days, given to the assistant 0 times"),
+        "{t}"
+    );
+    assert!(
+        t.contains("Nothing was put away")
+            && t.contains("/archive ID")
+            && t.contains("/stilltrue ID")
+            && t.contains("/pin ID"),
+        "{t}"
+    );
+    assert!(
+        !t.contains('\u{202e}'),
+        "direction characters from a note are removed"
+    );
+    let r = enter(&mut a, "/dormant 365");
+    assert_eq!(r[0].path, "/api/memories/dormant?days=365");
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"days": 365, "note": "x", "dormant": []}),
+    ));
+    assert!(text(&a).contains("No note has been quiet for 365 days or more."));
+    let r = enter(&mut a, "/dormant");
+    a.handle(ok(&r[0], 422, json!({"error": {"code": "MEMORY_REFUSED", "message": "days must be a whole number from 30 to 3650"}})));
+    assert!(text(&a).contains("days must be a whole number"));
+}
+
+#[test]
+fn tu94_archived_lists_put_away_notes_and_each_keeping_command_sends_one_post_and_reports_the_outcome(
+) {
+    let mut a = booted();
+    let r = enter(&mut a, "/archived");
+    assert_eq!(
+        (r[0].method, r[0].path.as_str()),
+        (Method::Get, "/api/memories/archived")
+    );
+    a.handle(ok(&r[0], 200, json!({"archived": [{"id": "m-5", "text": "Put-away fact", "project": null, "level": "internal"}]})));
+    let t = text(&a);
+    assert!(
+        t.contains("m-5  Put-away fact") && t.contains("/restore ID") && t.contains("/forget ID"),
+        "{t}"
+    );
+    let r = enter(&mut a, "/archived");
+    a.handle(ok(&r[0], 200, json!({"archived": []})));
+    assert!(text(&a).contains("No notes are archived."));
+    for (line, path, said) in [
+        ("/archive m-5", "/api/memories/m-5/archive", "Put away."),
+        ("/restore m-5", "/api/memories/m-5/restore", "Brought back."),
+        ("/pin m-5", "/api/memories/m-5/pin", "Pinned."),
+        ("/unpin m-5", "/api/memories/m-5/unpin", "Unpinned."),
+        (
+            "/stilltrue m-5",
+            "/api/memories/m-5/keep",
+            "Marked still true.",
+        ),
+    ] {
+        let r = enter(&mut a, line);
+        assert_eq!(r.len(), 1, "{line}");
+        assert_eq!(
+            (r[0].method, r[0].path.as_str()),
+            (Method::Post, path),
+            "{line}"
+        );
+        a.handle(ok(&r[0], 200, json!({"done": "x", "id": "m-5"})));
+        assert!(text(&a).contains(said), "{line}: {}", text(&a));
+        let r = enter(&mut a, line);
+        a.handle(ok(&r[0], 422, json!({"error": {"code": "MEMORY_REFUSED", "message": "only a current note can be archived"}})));
+        assert!(
+            text(&a).contains("only a current note can be archived"),
+            "{line}"
+        );
+        let r = enter(&mut a, line);
+        a.handle(ok(
+            &r[0],
+            404,
+            json!({"error": {"code": "NO_MEMORY", "message": "no such memory"}}),
+        ));
+        assert!(text(&a).contains("no such memory"), "{line}");
+    }
+}

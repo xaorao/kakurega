@@ -13184,3 +13184,241 @@ fn sv134_a_new_data_folder_is_made_owner_only_with_an_owner_only_key_and_an_exis
     assert_eq!(mode(&existing), 0o755);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+fn ids_of(v: &Value, key: &str) -> Vec<String> {
+    v[key]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn sv135_dormant_notes_are_proposed_never_archived_by_themselves_and_days_is_validated() {
+    let (c, w, _repo, _root, svc) = boot("dormant", true);
+    let old = add_note(&w, "An old fact about the Berlin office lease");
+    let fresh = add_note(&w, "A new fact about the Lisbon office lease");
+    svc.memory_backdate_for_test(&old, 200 * 86_400);
+    let (s, v) = w.get("/api/memories/dormant");
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["days"], 180);
+    assert_eq!(ids_of(&v, "dormant"), vec![old.clone()], "{v}");
+    let d = &v["dormant"][0];
+    assert!(
+        d["idle_days"].as_i64().unwrap() >= 200
+            && d["uses"] == 0
+            && d["text"].as_str().unwrap().contains("Berlin"),
+        "{d}"
+    );
+    assert!(v["note"]
+        .as_str()
+        .unwrap()
+        .contains("Nothing is archived until you say so"));
+    // asking never changes anything: both notes are still current and recalled
+    assert_eq!(note_ids(&w).len(), 2);
+    assert!(!ids_of(&w.get("/api/memories/archived").1, "archived").contains(&old));
+    // a shorter window finds more, a longer one finds less, and a bad one is refused rather than clamped
+    assert_eq!(
+        ids_of(&w.get("/api/memories/dormant?days=30").1, "dormant"),
+        vec![old.clone()]
+    );
+    assert!(ids_of(&w.get("/api/memories/dormant?days=365").1, "dormant").is_empty());
+    for bad in ["0", "29", "3651", "-5"] {
+        assert_eq!(
+            w.get(&format!("/api/memories/dormant?days={bad}")).0,
+            422,
+            "{bad}"
+        );
+    }
+    assert_eq!(w.get("/api/memories/dormant?days=abc").0, 400);
+    let _ = fresh;
+    assert_eq!(Web::new(c.addr).get("/api/memories/dormant").0, 401);
+    assert_eq!(Web::new(c.addr).get("/api/memories/archived").0, 401);
+    assert_eq!(Web::new(c.addr).get("/api/memories/pinned").0, 401);
+}
+
+#[test]
+fn sv136_the_owner_can_archive_restore_pin_and_keep_and_each_is_logged_without_the_text() {
+    let (c, w, _repo, _root, svc) = boot("keeping", true);
+    let a = add_note(&w, "Quiet fact about the Oslo data centre contract");
+    let b = add_note(&w, "Quiet fact about the Tokyo data centre contract");
+    svc.memory_backdate_for_test(&a, 400 * 86_400);
+    svc.memory_backdate_for_test(&b, 400 * 86_400);
+    assert_eq!(w.post(&format!("/api/memories/{b}/pin"), json!({})).0, 200);
+    assert_eq!(
+        w.get("/api/memories/pinned").1["pinned"],
+        json!([b.clone()])
+    );
+    assert_eq!(
+        ids_of(&w.get("/api/memories/dormant").1, "dormant"),
+        vec![a.clone()]
+    );
+    // archive: gone from the list and from recall, present in the archive with its text
+    let (s, v) = w.post(&format!("/api/memories/{a}/archive"), json!({}));
+    assert_eq!((s, v["done"].as_str()), (200, Some("archive")), "{v}");
+    assert!(!note_ids(&w).contains(&a));
+    assert!(w.get("/api/memories?q=Oslo").1["memories"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let (_, arch) = w.get("/api/memories/archived");
+    assert_eq!(ids_of(&arch, "archived"), vec![a.clone()]);
+    assert!(arch["archived"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Oslo"));
+    assert!(w.get("/api/memories/dormant").1["dormant"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    // archiving twice, restoring something current, and unknown ids are refused with the usual errors
+    assert_eq!(
+        w.post(&format!("/api/memories/{a}/archive"), json!({})).0,
+        422
+    );
+    assert_eq!(
+        w.post(&format!("/api/memories/{b}/restore"), json!({})).0,
+        422
+    );
+    assert_eq!(
+        w.post("/api/memories/no-such-note/archive", json!({})).0,
+        404
+    );
+    assert_eq!(
+        w.post(&format!("/api/memories/{a}/pin"), json!({})).0,
+        422,
+        "an archived note cannot be pinned"
+    );
+    // restore starts the clock again, so it is not proposed straight away
+    assert_eq!(
+        w.post(&format!("/api/memories/{a}/restore"), json!({})).0,
+        200
+    );
+    assert!(note_ids(&w).contains(&a));
+    assert!(w.get("/api/memories/dormant").1["dormant"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    // unpin puts the pinned one back in the proposals after its clock restarts, keep never pins
+    assert_eq!(
+        w.post(&format!("/api/memories/{b}/unpin"), json!({})).0,
+        200
+    );
+    assert_eq!(w.get("/api/memories/pinned").1["pinned"], json!([]));
+    assert_eq!(w.post(&format!("/api/memories/{a}/keep"), json!({})).0, 200);
+    assert_eq!(w.get("/api/memories/pinned").1["pinned"], json!([]));
+    // every action is in the signed log by kind and id, never the text
+    let log = w.get("/api/log").1.to_string();
+    for k in [
+        "memory.archive",
+        "memory.restore",
+        "memory.pin",
+        "memory.unpin",
+        "memory.keep",
+    ] {
+        assert!(log.contains(k), "the log lacks {k}");
+    }
+    assert!(
+        !log.contains("Oslo") && !log.contains("Tokyo"),
+        "the log carries note text"
+    );
+    // a visitor with no session can do none of it
+    let anon = Web::new(c.addr);
+    for act in ["archive", "restore", "pin", "unpin", "keep"] {
+        assert_eq!(
+            anon.post(&format!("/api/memories/{a}/{act}"), json!({})).0,
+            401,
+            "{act}"
+        );
+    }
+}
+
+#[test]
+fn sv137_forgetting_an_archived_note_removes_it_and_an_archived_note_is_never_offered_to_a_model() {
+    let (_c, w, _repo, _root, _svc) = boot("archive-forget", true);
+    let a = add_note(&w, "Archived fact about the Cairo warehouse keys");
+    w.post(&format!("/api/memories/{a}/archive"), json!({}));
+    // not in a search or the live part of the export
+    assert!(w.get("/api/memories?q=Cairo").1["memories"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let backup: Value = serde_json::from_slice(&w.get_bytes("/api/memories/export").1).unwrap();
+    assert!(
+        backup["memories"].as_array().unwrap().is_empty()
+            && backup["archived"].as_array().unwrap().len() == 1,
+        "archived notes are in the owner's backup, under their own list"
+    );
+    // adding the same text again brings the archived note back instead of making a twin
+    let (s, v) = w.post(
+        "/api/memories",
+        json!({"text": "Archived fact about the Cairo warehouse keys"}),
+    );
+    assert!(s == 200 || s == 201, "{s} {v}");
+    assert_eq!(note_ids(&w), vec![a.clone()]);
+    assert!(w.get("/api/memories/archived").1["archived"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    // forgetting an archived note: gone for good
+    w.post(&format!("/api/memories/{a}/archive"), json!({}));
+    let (s, _) = w.post(&format!("/api/memories/{a}/forget"), json!({}));
+    assert_eq!(s, 200);
+    assert!(w.get("/api/memories/archived").1["archived"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(note_ids(&w).is_empty());
+    assert_eq!(
+        w.post(&format!("/api/memories/{a}/restore"), json!({})).0,
+        404
+    );
+}
+
+#[test]
+fn sv138_a_backup_carries_archived_notes_and_a_restore_puts_them_back_as_archived() {
+    let (_c, w, _repo, _root, _svc) = boot("archive-backup", true);
+    let live = add_note(&w, "Current fact about the Madrid sales region");
+    let away = add_note(&w, "Archived fact about the Madrid returns policy");
+    w.post(&format!("/api/memories/{away}/archive"), json!({}));
+    let (s, bytes) = w.get_bytes("/api/memories/export");
+    assert_eq!(s, 200);
+    let backup: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(backup["memories"].as_array().unwrap().len(), 1);
+    assert_eq!(backup["archived"].as_array().unwrap().len(), 1);
+    assert!(backup["archived"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("returns policy"));
+    // a fresh store gets both, the archived one still archived
+    let (_c2, w2, _repo2, _root2, _svc2) = boot("archive-backup-2", true);
+    let (s, v) = w2.post("/api/memories/import", backup.clone());
+    assert_eq!((s, v["added"].as_u64()), (200, Some(2)), "{v}");
+    assert_eq!(note_ids(&w2).len(), 1);
+    assert_eq!(
+        w2.get("/api/memories/archived").1["archived"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    // an old backup with no archived list still imports, and the size limit counts both lists
+    let (s, v) = w2.post(
+        "/api/memories/import",
+        json!({"kakurega_memory_backup": 1, "memories": []}),
+    );
+    assert_eq!((s, v["added"].as_u64()), (200, Some(0)));
+    let many: Vec<Value> = (0..2501)
+        .map(|i| json!({"text": format!("note number {i}")}))
+        .collect();
+    assert_eq!(
+        w2.post(
+            "/api/memories/import",
+            json!({"kakurega_memory_backup": 1, "memories": many.clone(), "archived": many})
+        )
+        .0,
+        400
+    );
+    let _ = live;
+}

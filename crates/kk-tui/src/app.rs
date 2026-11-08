@@ -155,6 +155,9 @@ enum Intent {
     Deliver,
     MemoryList,
     Similar,
+    Dormant(i64),
+    Archived,
+    NoteKeeping(&'static str),
     Remember,
     Ask,
     Correct,
@@ -2281,6 +2284,30 @@ impl App {
                     None,
                 )]
             }
+            Command::Dormant(days) => {
+                let days = days.unwrap_or(180);
+                vec![self.req(
+                    Intent::Dormant(days),
+                    false,
+                    Method::Get,
+                    &format!("/api/memories/dormant?days={days}"),
+                    None,
+                )]
+            }
+            Command::Archived => vec![self.req(
+                Intent::Archived,
+                false,
+                Method::Get,
+                "/api/memories/archived",
+                None,
+            )],
+            Command::NoteKeeping { action, id } => vec![self.req(
+                Intent::NoteKeeping(action),
+                false,
+                Method::Post,
+                &format!("/api/memories/{id}/{action}"),
+                Some(json!({})),
+            )],
             Command::Ask { folder, question } => {
                 if self.chat_waiting {
                     self.say(Kind::Warn, "Still waiting for the last answer.");
@@ -3378,6 +3405,83 @@ impl App {
                     ));
                 }
                 self.push(Kind::Info, Some("Similar notes"), lines);
+                Vec::new()
+            }
+            Intent::Dormant(days) => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let list = body["dormant"].as_array().cloned().unwrap_or_default();
+                let mut lines: Vec<String> = Vec::new();
+                for m in &list {
+                    lines.push(format!(
+                        "{}{}  quiet {} days, given to the assistant {} times  {}",
+                        clean(m["id"].as_str().unwrap_or("?")),
+                        m["project"]
+                            .as_str()
+                            .map(|p| format!(" [project {}]", clean(p)))
+                            .unwrap_or_default(),
+                        m["idle_days"].as_i64().unwrap_or(0),
+                        m["uses"].as_u64().unwrap_or(0),
+                        clean(m["text"].as_str().unwrap_or(""))
+                    ));
+                }
+                if list.is_empty() {
+                    lines.push(format!("No note has been quiet for {days} days or more."));
+                } else {
+                    lines.push("Nothing was put away. /archive ID puts one away, /stilltrue ID restarts its quiet time, /pin ID keeps it out of this list.".to_string());
+                }
+                self.push(Kind::Info, Some("Quiet notes"), lines);
+                Vec::new()
+            }
+            Intent::Archived => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let list = body["archived"].as_array().cloned().unwrap_or_default();
+                let mut lines: Vec<String> = list
+                    .iter()
+                    .map(|m| {
+                        format!(
+                            "{}{}  {}",
+                            clean(m["id"].as_str().unwrap_or("?")),
+                            m["project"]
+                                .as_str()
+                                .map(|p| format!(" [project {}]", clean(p)))
+                                .unwrap_or_default(),
+                            clean(m["text"].as_str().unwrap_or(""))
+                        )
+                    })
+                    .collect();
+                if list.is_empty() {
+                    lines.push("No notes are archived.".to_string());
+                } else {
+                    lines.push(
+                        "/restore ID brings one back. /forget ID deletes one for good.".to_string(),
+                    );
+                }
+                self.push(Kind::Info, Some("Archived notes"), lines);
+                Vec::new()
+            }
+            Intent::NoteKeeping(action) => {
+                if ok {
+                    self.say(
+                        Kind::Ok,
+                        match action {
+                            "archive" => {
+                                "Put away. /archived lists it and /restore ID brings it back."
+                            }
+                            "restore" => "Brought back. Its quiet time starts again.",
+                            "pin" => "Pinned. It will not be listed as quiet.",
+                            "unpin" => "Unpinned.",
+                            _ => "Marked still true. Its quiet time starts again.",
+                        },
+                    );
+                } else {
+                    self.say(Kind::Error, err_text(status, &body));
+                }
                 Vec::new()
             }
             Intent::Remember => {

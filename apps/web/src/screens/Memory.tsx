@@ -8,7 +8,7 @@ import { markTerms } from "../terms";
 
 const LEVELS = ["public", "internal", "confidential", "restricted"] as const;
 
-function Item(props: { m: MemoryItem; onChange: (msg?: string) => void; onLeft?: (l: LeftBehind | null) => void }) {
+function Item(props: { m: MemoryItem; pinned?: boolean; onChange: (msg?: string) => void; onLeft?: (l: LeftBehind | null) => void }) {
   const [editing, setEditing] = createSignal(false);
   const [draft, setDraft] = createSignal(props.m.text);
   const [draftProject, setDraftProject] = createSignal(props.m.project ?? "");
@@ -65,12 +65,14 @@ function Item(props: { m: MemoryItem; onChange: (msg?: string) => void; onLeft?:
           <Show when={props.m.instruction_like}><span class="chip warn">{t("mem.instructionLike")}</span>{" "}</Show>
           <Show when={props.m.origin === "imported" || props.m.origin === "conversation" || props.m.origin === "review"}><span class="chip">{t(`mem.origin.${props.m.origin}` as Key)}</span>{" "}</Show>
           <Show when={props.m.project}><span class="chip">{t("mem.project", { name: props.m.project ?? "" })}</span>{" "}</Show>
+          <Show when={props.pinned}><span class="chip">{t("mem.pinned")}</span>{" "}</Show>
           <Show when={(props.m.uses ?? 0) > 0}><span class="chip">{props.m.uses === 1 ? t("mem.used.one") : t("mem.used.many", { n: String(props.m.uses ?? 0) })}</span>{" "}</Show>
           {t("mem.why", { why: props.m.why })}
         </p>
         <div class="actions">
           <button onClick={() => setEditing(true)}>{t("mem.correct")}</button>
           <button onClick={() => setShowHistory(!showHistory())}>{showHistory() ? t("mem.history.hide") : t("mem.history")}</button>
+          <button onClick={() => run(() => api.keepMemory(props.m.id, props.pinned ? "unpin" : "pin"), props.pinned ? t("mem.unpinDone") : t("mem.pinDone"))}>{props.pinned ? t("mem.unpin") : t("mem.pin")}</button>
           <Show when={!confirming()} fallback={
             <span class="confirm" role="group">
               <span class="bad">{t("mem.forget.confirm")}</span>{" "}
@@ -332,6 +334,121 @@ function Held(props: { onChange: (msg?: string) => void; onLeft?: (l: LeftBehind
   );
 }
 
+function Quiet(props: { onChange: (msg?: string) => void }) {
+  const [open, setOpen] = createSignal(false);
+  const [days, setDays] = createSignal(180);
+  const [list, { refetch }] = createResource(() => (open() ? days() : 0), (d) => (d ? api.dormantMemories(d).then((r) => r.dormant) : Promise.resolve([])));
+  const [problem, setProblem] = createSignal("");
+  const act = async (id: string, action: "archive" | "keep" | "pin", done: Key) => {
+    setProblem("");
+    try {
+      await api.keepMemory(id, action);
+      props.onChange(t(done));
+      await refetch();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("mem.error"));
+    }
+  };
+  return (
+    <details class="card stack" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>{t("mem.quiet.title")}</summary>
+      <Show when={open()}>
+        <p class="muted">{t("mem.quiet.lead")}</p>
+        <label for="mem-quiet-days">{t("mem.quiet.days")}</label>
+        <select id="mem-quiet-days" value={String(days())} onChange={(e) => setDays(Number(e.currentTarget.value))}>
+          <For each={[30, 90, 180, 365, 730]}>{(d) => <option value={String(d)}>{t("mem.quiet.option", { n: String(d) })}</option>}</For>
+        </select>
+        <Show when={problem()}><p role="alert" class="bad">{problem()}</p></Show>
+        <Show when={(list() ?? []).length > 0} fallback={<p role="status">{list.loading ? t("review.loading") : t("mem.quiet.none")}</p>}>
+          <ul class="plain stack">
+            <For each={list() ?? []}>
+              {(m) => (
+                <li class="card stack">
+                  <p>{m.text}</p>
+                  <p class="muted">{t("mem.quiet.line", { days: String(m.idle_days), uses: String(m.uses) })}</p>
+                  <div class="actions">
+                    <button type="button" onClick={() => void act(m.id, "archive", "mem.quiet.awayDone")}>{t("mem.quiet.away")}</button>
+                    <button type="button" onClick={() => void act(m.id, "keep", "mem.quiet.keepDone")}>{t("mem.quiet.keep")}</button>
+                    <button type="button" onClick={() => void act(m.id, "pin", "mem.pinDone")}>{t("mem.quiet.pin")}</button>
+                  </div>
+                </li>
+              )}
+            </For>
+          </ul>
+        </Show>
+      </Show>
+    </details>
+  );
+}
+
+function Archived(props: { onChange: (msg?: string) => void; onLeft?: (l: LeftBehind | null) => void }) {
+  const [open, setOpen] = createSignal(false);
+  const [list, { refetch }] = createResource(open, (on) => (on ? api.archivedMemories().then((r) => r.archived) : Promise.resolve([])));
+  const [problem, setProblem] = createSignal("");
+  const [confirming, setConfirming] = createSignal("");
+  const back = async (id: string) => {
+    setProblem("");
+    try {
+      await api.keepMemory(id, "restore");
+      props.onChange(t("mem.archived.restored"));
+      await refetch();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("mem.error"));
+    }
+  };
+  const forget = async (id: string) => {
+    setProblem("");
+    try {
+      const r = await api.forgetMemory(id);
+      const { shown, more } = copyNames(r);
+      const parts = [t("mem.forgotten")];
+      if (shown.length > 0) {
+        parts.push(t("mem.forgotten.copies", { names: shown.join(", ") }));
+        if (more > 0) parts.push(t("mem.forgotten.more", { n: more }));
+      }
+      parts.push(t("mem.forgotten.notReached"));
+      props.onLeft?.(leftBehind(r));
+      props.onChange(parts.join(" "));
+      setConfirming("");
+      await refetch();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("mem.error"));
+    }
+  };
+  return (
+    <details class="card stack" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>{t("mem.archived.title")}</summary>
+      <Show when={open()}>
+        <p class="muted">{t("mem.archived.lead")}</p>
+        <Show when={problem()}><p role="alert" class="bad">{problem()}</p></Show>
+        <Show when={(list() ?? []).length > 0} fallback={<p role="status">{t("mem.archived.none")}</p>}>
+          <ul class="plain stack">
+            <For each={list() ?? []}>
+              {(m) => (
+                <li class="card stack">
+                  <p>{m.text}</p>
+                  <div class="actions">
+                    <button type="button" onClick={() => void back(m.id)}>{t("mem.archived.back")}</button>
+                    <Show when={confirming() !== m.id} fallback={
+                      <span class="confirm" role="group">
+                        <span class="bad">{t("mem.forget.confirm")}</span>{" "}
+                        <button class="danger" onClick={() => void forget(m.id)}>{t("mem.forget.yes")}</button>
+                        <button onClick={() => setConfirming("")}>{t("mem.cancel")}</button>
+                      </span>
+                    }>
+                      <button type="button" onClick={() => setConfirming(m.id)}>{t("mem.forget")}</button>
+                    </Show>
+                  </div>
+                </li>
+              )}
+            </For>
+          </ul>
+        </Show>
+      </Show>
+    </details>
+  );
+}
+
 function Merged(props: { onChange: (msg?: string) => void }) {
   const [open, setOpen] = createSignal(false);
   const [list, { refetch }] = createResource(open, (on) => (on ? api.mergedMemories().then((r) => r.merged) : Promise.resolve([])));
@@ -485,8 +602,9 @@ export function Memory() {
   const filtering = () => !!(fLevel() || fOrigin() || fProject() || fUnused() || fEnding());
   const [items, { refetch: refetchItems }] = createResource(filters, (f) => api.memories(f.q.trim() || undefined, { level: f.level || undefined, origin: f.origin || undefined, project: f.project || undefined, unused: f.unused, ending: f.ending }).then((r) => r.memories));
   const [stats, { refetch: refetchStats }] = createResource(() => api.memoryStats().catch(() => null));
+  const [pinned, { refetch: refetchPinned }] = createResource(() => api.pinnedMemories().then((r) => new Set(r.pinned)).catch(() => new Set<string>()));
   const refetch = async () => {
-    await Promise.all([refetchItems(), refetchStats()]);
+    await Promise.all([refetchItems(), refetchStats(), refetchPinned()]);
   };
   const [text, setText] = createSignal("");
   const [level, setLevel] = createSignal<string>("internal");
@@ -573,10 +691,12 @@ export function Memory() {
       <Similar onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />
       <Disagreements onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <Merged onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
+      <Quiet onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
+      <Archived onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />
       <ReviewSources onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <ul class="plain stack">
         <For each={items()} fallback={<li class="muted">{items.loading ? t("review.loading") : query().trim() || filtering() ? t("mem.nomatch") : t("mem.none")}</li>}>
-          {(m) => <Item m={m} onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />}
+          {(m) => <Item m={m} pinned={pinned()?.has(m.id)} onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />}
         </For>
       </ul>
     </section>

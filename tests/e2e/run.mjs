@@ -1814,6 +1814,75 @@ try {
   await page.getByRole("link", { name: "Memory" }).click();
   await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
   {
+    // quiet notes, archive, restore, pin: only the note's age is faked (in the quiet list); every action is the real service
+    const api = (method, path) => page.evaluate(async ([m, u]) => { const r = await fetch(u, { method: m, headers: { "content-type": "application/json" }, body: m === "POST" ? "{}" : undefined }); return { status: r.status, body: await r.json() }; }, [method, path]);
+    await page.getByLabel("Only for this project (optional folder name)").fill("");
+    await page.getByLabel("What should be remembered").fill("Quiet-test fact about the Oslo office");
+    await page.getByRole("button", { name: "Remember" }).click();
+    await page.locator(".mem", { hasText: "Quiet-test fact" }).waitFor();
+    const all = (await api("GET", "/api/memories")).body.memories;
+    const acme = all.find((m) => m.text.includes("Quiet-test fact"));
+    const real = (await api("GET", "/api/memories/dormant")).body;
+    check("a note just written is not proposed as quiet, and the service says nothing is archived by itself", real.dormant.length === 0 && real.days === 180 && real.note.includes("Nothing is archived until you say so"));
+    await page.route("**/api/memories/dormant**", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ days: 180, dormant: [{ id: acme.id, text: acme.text, project: null, level: "internal", idle_days: 200, uses: 0 }], note: "x" }) }));
+    const quietBox = page.locator("details", { has: page.locator("summary", { hasText: "Quiet notes" }) });
+    await quietBox.locator("summary").click();
+    await quietBox.getByText("Quiet for 200 days. Times given to the assistant: 0.").waitFor();
+    check("a quiet note is listed with how long it has been quiet and a promise that nothing is put away unless chosen", (await quietBox.innerText()).includes("Nothing is put away unless you choose to") && (await page.locator(".mem", { hasText: "Quiet-test fact" }).count()) === 1);
+    await axeCheck(page, "memory with the quiet notes open");
+    await quietBox.screenshot({ path: join(shots, "08d-quiet-notes.png") });
+    await quietBox.getByRole("button", { name: "Put away" }).click();
+    await page.waitForFunction(() => ![...document.querySelectorAll(".mem")].some((e) => e.textContent.includes("Quiet-test fact")));
+    await page.unroute("**/api/memories/dormant**");
+    const archivedBox = page.locator("details", { has: page.locator("summary", { hasText: "Archived notes" }) });
+    await archivedBox.locator("summary").click();
+    await archivedBox.getByText("Quiet-test fact about the Oslo office").waitFor();
+    check("putting a note away removes it from the list and shows it, whole, under Archived notes", (await archivedBox.getByRole("button", { name: "Bring back" }).count()) === 1 && (await archivedBox.getByRole("button", { name: "Forget" }).count()) === 1 && (await api("GET", "/api/memories?q=Quiet-test")).body.memories.length === 0);
+    await axeCheck(page, "memory with the archived notes open");
+    await archivedBox.screenshot({ path: join(shots, "08e-archived-notes.png") });
+    await archivedBox.getByRole("button", { name: "Bring back" }).click();
+    await page.locator(".mem", { hasText: "Quiet-test fact" }).waitFor();
+    await archivedBox.getByText("No notes are archived.").waitFor();
+    check("bringing a note back returns it to the list and empties the archive", (await page.locator(".mem", { hasText: "Quiet-test fact" }).count()) === 1);
+    const acmeItem = page.locator(".mem", { hasText: "Quiet-test fact" });
+    await acmeItem.getByRole("button", { name: "Pin" }).click();
+    await acmeItem.getByText("Pinned", { exact: true }).waitFor();
+    check("pinning shows a Pinned mark and the service agrees", (await api("GET", "/api/memories/pinned")).body.pinned.includes(acme.id));
+    await acmeItem.getByRole("button", { name: "Unpin" }).click();
+    await page.waitForFunction(() => ![...document.querySelectorAll(".mem")].some((e) => e.textContent.includes("Quiet-test fact") && e.textContent.includes("Pinned")));
+    check("unpinning removes the mark", (await api("GET", "/api/memories/pinned")).body.pinned.length === 0);
+    // forgetting from the archive deletes it for good
+    await page.getByLabel("Only for this project (optional folder name)").fill("");
+    await page.getByLabel("What should be remembered").fill("Scratch fact for the archive forget test");
+    await page.getByRole("button", { name: "Remember" }).click();
+    await page.locator(".mem", { hasText: "Scratch fact" }).waitFor();
+    const scratch = (await api("GET", "/api/memories")).body.memories.find((m) => m.text.includes("Scratch fact"));
+    await page.route("**/api/memories/dormant**", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ days: 180, dormant: [{ id: scratch.id, text: scratch.text, project: null, level: "internal", idle_days: 300, uses: 0 }], note: "x" }) }));
+    await page.reload();
+    await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
+    const quiet2 = page.locator("details", { has: page.locator("summary", { hasText: "Quiet notes" }) });
+    await quiet2.locator("summary").click();
+    await quiet2.getByRole("button", { name: "Put away" }).click();
+    await page.waitForFunction(() => ![...document.querySelectorAll(".mem")].some((e) => e.textContent.includes("Scratch fact")));
+    await page.unroute("**/api/memories/dormant**");
+    const archived2 = page.locator("details", { has: page.locator("summary", { hasText: "Archived notes" }) });
+    await archived2.locator("summary").click();
+    await archived2.getByText("Scratch fact for the archive forget test").waitFor();
+    await archived2.getByRole("button", { name: "Forget" }).click();
+    check("forgetting from the archive asks first", (await archived2.getByText("Forget this for good?").count()) === 1);
+    await archived2.locator("button.danger").click();
+    await archived2.getByText("No notes are archived.").waitFor();
+    check("a confirmed forget from the archive removes it from the archive and the list", (await api("GET", "/api/memories/archived")).body.archived.length === 0 && (await api("GET", "/api/memories?q=Scratch")).body.memories.length === 0);
+      await page.reload();
+    await page.getByLabel("Search memories").fill("Quiet-test");
+    await page.locator(".mem", { hasText: "Quiet-test fact" }).waitFor();
+    await page.locator(".mem", { hasText: "Quiet-test fact" }).getByRole("button", { name: "Forget", exact: true }).click();
+    await page.getByRole("button", { name: "Yes, forget it" }).click();
+    await page.waitForFunction(() => ![...document.querySelectorAll(".mem")].some((e) => e.textContent.includes("Quiet-test fact")));
+    await page.reload();
+    await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
+  }
+  {
     // a note whose words are also in a kept conversation and in the saved typed history: forgetting it must say so, and each copy
     // is removed only when the owner presses its own button
     const words = "The vault code is blue-heron-4471 for the east door";

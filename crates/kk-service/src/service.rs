@@ -420,6 +420,15 @@ impl Service {
             .plant_secret_for_test(id, text);
     }
 
+    /// For tests: see `Memories::backdate_for_test`.
+    #[doc(hidden)]
+    pub fn memory_backdate_for_test(&self, id: &str, secs: i64) {
+        self.memory
+            .lock()
+            .expect("lock")
+            .backdate_for_test(id, secs);
+    }
+
     /// How many notes have a use record: a test reads it to see that answers count the notes they used.
     #[doc(hidden)]
     pub fn memory_use_rows(&self) -> i64 {
@@ -1583,6 +1592,100 @@ async fn memory_unmerge(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>)
     }
 }
 
+#[derive(Deserialize)]
+struct DormantQuery {
+    days: Option<i64>,
+}
+
+/// Current notes that have shown no sign of life for `days` (default 180, 30 to 3650), oldest first. A proposal only: nothing
+/// is archived until the owner asks.
+async fn memories_dormant(axum::Extension(svc): Svc, Query(q): Query<DormantQuery>) -> Response {
+    let days = q.days.unwrap_or(kk_memory::DEFAULT_DORMANT_DAYS);
+    let mem = svc.memory.lock().expect("lock");
+    match mem
+        .owner_clearance()
+        .and_then(|c| mem.dormant(&c, now(), days, 100))
+    {
+        Ok(items) => Json(json!({
+            "days": days,
+            "dormant": items.iter().map(|d| json!({
+                "id": d.memory.id, "text": d.memory.text, "created_at": d.memory.created_at, "project": d.memory.project,
+                "level": format!("{:?}", d.memory.label.level).to_lowercase(),
+                "idle_days": d.idle_days, "uses": d.uses, "last_sign": d.last_sign,
+            })).collect::<Vec<_>>(),
+            "note": "Nothing is archived until you say so. Archive a note to put it away (you can bring it back), keep it to say it is still true, or pin it so it is never listed here.",
+        }))
+        .into_response(),
+        Err(e) => memory_error(e),
+    }
+}
+
+async fn memories_archived(axum::Extension(svc): Svc) -> Response {
+    let mem = svc.memory.lock().expect("lock");
+    match mem.owner_clearance().and_then(|c| mem.archived_notes(&c)) {
+        Ok(notes) => Json(json!({"archived": notes.iter().map(|m| json!({
+            "id": m.id, "text": m.text, "created_at": m.created_at, "project": m.project,
+            "level": format!("{:?}", m.label.level).to_lowercase(),
+        })).collect::<Vec<_>>()}))
+        .into_response(),
+        Err(e) => memory_error(e),
+    }
+}
+
+async fn memories_pinned(axum::Extension(svc): Svc) -> Response {
+    let mem = svc.memory.lock().expect("lock");
+    match mem.owner_clearance().and_then(|c| mem.list_scoped(&c, now(), 100_000, kk_memory::Scope::All)) {
+        Ok(items) => Json(json!({"pinned": items.iter().filter(|r| mem.is_pinned(&r.memory.id)).map(|r| r.memory.id.clone()).collect::<Vec<_>>()}))
+            .into_response(),
+        Err(e) => memory_error(e),
+    }
+}
+
+/// One owner action on a note's keeping: archive, restore, pin, unpin, or say it is still true.
+async fn memory_keeping(
+    svc: std::sync::Arc<Service>,
+    id: String,
+    action: &'static str,
+) -> Response {
+    let res = {
+        let mem = svc.memory.lock().expect("lock");
+        mem.owner_clearance().and_then(|c| match action {
+            "archive" => mem.archive(now(), &id, &c),
+            "restore" => mem.restore(now(), &id, &c),
+            "pin" => mem.pin(now(), &id, &c),
+            "unpin" => mem.unpin(now(), &id, &c),
+            _ => mem.keep(now(), &id, &c),
+        })
+    };
+    match res {
+        Ok(()) => {
+            svc.log_event(&format!("memory.{action}"), &id, &[]);
+            Json(json!({"done": action, "id": id})).into_response()
+        }
+        Err(e) => memory_error(e),
+    }
+}
+
+async fn memory_archive(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    memory_keeping(svc, id, "archive").await
+}
+
+async fn memory_restore(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    memory_keeping(svc, id, "restore").await
+}
+
+async fn memory_pin(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    memory_keeping(svc, id, "pin").await
+}
+
+async fn memory_unpin(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    memory_keeping(svc, id, "unpin").await
+}
+
+async fn memory_keep(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    memory_keeping(svc, id, "keep").await
+}
+
 async fn memories_merged_all(axum::Extension(svc): Svc) -> Response {
     let mem = svc.memory.lock().expect("lock");
     match mem.owner_clearance().and_then(|c| mem.merged_notes(&c)) {
@@ -1612,10 +1715,13 @@ async fn memory_merged(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) 
 
 async fn memories_export(axum::Extension(svc): Svc) -> Response {
     let mem = svc.memory.lock().expect("lock");
-    let res = mem
-        .owner_clearance()
-        .and_then(|c| mem.list_scoped(&c, now(), 100_000, kk_memory::Scope::All));
-    let items = match res {
+    let res = mem.owner_clearance().and_then(|c| {
+        Ok((
+            mem.list_scoped(&c, now(), 100_000, kk_memory::Scope::All)?,
+            mem.archived_notes(&c)?,
+        ))
+    });
+    let (items, archived) = match res {
         Ok(i) => i,
         Err(e) => return memory_error(e),
     };
@@ -1623,10 +1729,12 @@ async fn memories_export(axum::Extension(svc): Svc) -> Response {
     svc.log_event(
         "memory.exported",
         "memory",
-        &[("count", items.len().into())],
+        &[("count", (items.len() + archived.len()).into())],
     );
     let body = json!({"kakurega_memory_backup": 1, "exported_at": now(), "memories": items.iter().map(|r| {
         let m = &r.memory;
+        json!({"text": m.text, "level": format!("{:?}", m.label.level).to_lowercase(), "valid_to": m.valid_to, "project": m.project})
+    }).collect::<Vec<_>>(), "archived": archived.iter().map(|m| {
         json!({"text": m.text, "level": format!("{:?}", m.label.level).to_lowercase(), "valid_to": m.valid_to, "project": m.project})
     }).collect::<Vec<_>>()});
     (
@@ -1658,10 +1766,12 @@ struct ImportItem {
 struct ImportBody {
     kakurega_memory_backup: i64,
     memories: Vec<ImportItem>,
+    #[serde(default)]
+    archived: Vec<ImportItem>,
 }
 
 async fn memories_import(axum::Extension(svc): Svc, Json(b): Json<ImportBody>) -> Response {
-    if b.kakurega_memory_backup != 1 || b.memories.len() > 5000 {
+    if b.kakurega_memory_backup != 1 || b.memories.len() + b.archived.len() > 5000 {
         return error(
             StatusCode::BAD_REQUEST,
             "BAD_BACKUP",
@@ -1669,7 +1779,12 @@ async fn memories_import(axum::Extension(svc): Svc, Json(b): Json<ImportBody>) -
         );
     }
     let (mut added, mut known, mut refused) = (0usize, 0usize, 0usize);
-    for it in b.memories {
+    let items = b
+        .memories
+        .into_iter()
+        .map(|i| (i, false))
+        .chain(b.archived.into_iter().map(|i| (i, true)));
+    for (it, put_away) in items {
         let Some(level) = level_from(it.level.as_deref()) else {
             refused += 1;
             continue;
@@ -1684,8 +1799,16 @@ async fn memories_import(axum::Extension(svc): Svc, Json(b): Json<ImportBody>) -
             valid_from: None,
             valid_to: it.valid_to,
         };
-        match svc.memory.lock().expect("lock").remember(now(), m) {
-            Ok(kk_memory::Remembered::Added(_)) => added += 1,
+        let mem = svc.memory.lock().expect("lock");
+        match mem.remember(now(), m) {
+            Ok(kk_memory::Remembered::Added(id)) => {
+                added += 1;
+                if put_away {
+                    let _ = mem
+                        .owner_clearance()
+                        .and_then(|c| mem.archive(now(), &id, &c));
+                }
+            }
             Ok(_) => known += 1,
             Err(_) => refused += 1,
         }
@@ -7964,6 +8087,14 @@ impl Extension for Routes {
             .route("/api/memories/merge", post(memories_merge))
             .route("/api/memories/merged", get(memories_merged_all))
             .route("/api/memories/{id}/unmerge", post(memory_unmerge))
+            .route("/api/memories/dormant", get(memories_dormant))
+            .route("/api/memories/archived", get(memories_archived))
+            .route("/api/memories/pinned", get(memories_pinned))
+            .route("/api/memories/{id}/archive", post(memory_archive))
+            .route("/api/memories/{id}/restore", post(memory_restore))
+            .route("/api/memories/{id}/pin", post(memory_pin))
+            .route("/api/memories/{id}/unpin", post(memory_unpin))
+            .route("/api/memories/{id}/keep", post(memory_keep))
             .route("/api/memories/{id}/merged", get(memory_merged))
             .route("/api/memories/export", get(memories_export))
             .route("/api/memories/import", post(memories_import))

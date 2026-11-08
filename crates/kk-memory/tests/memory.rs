@@ -4048,3 +4048,361 @@ fn me85_a_note_accepted_from_a_conversation_reports_where_it_came_from_through_i
     // an unknown id is nothing, not an error that names it
     assert!(m.source_refs_of("no-such", &internal()).unwrap().is_empty());
 }
+
+fn old_store(d: &std::path::Path) -> Memories {
+    let m = mem(d);
+    m.set_use_records_since_for_test(0);
+    m
+}
+
+#[test]
+fn me86_dormant_lists_only_quiet_unpinned_notes_oldest_first_with_the_reason_and_validates_days() {
+    let m = old_store(&dir());
+    let c = &internal();
+    let quiet = id(m
+        .remember(0, nm("old quiet fact about billing", internal()))
+        .unwrap());
+    let used = id(m
+        .remember(0, nm("old fact that was used lately", internal()))
+        .unwrap());
+    let newer = id(m
+        .remember(100 * DAY, nm("newer fact about shipping", internal()))
+        .unwrap());
+    let oldest_used_twice = id(m
+        .remember(0, nm("fact used twice long ago", internal()))
+        .unwrap());
+    m.record_use(150 * DAY, std::slice::from_ref(&used))
+        .unwrap();
+    m.record_use(10 * DAY, std::slice::from_ref(&oldest_used_twice))
+        .unwrap();
+    m.record_use(20 * DAY, std::slice::from_ref(&oldest_used_twice))
+        .unwrap();
+    let now = 200 * DAY;
+    let got = m.dormant(c, now, 180, 50).unwrap();
+    let ids: Vec<&str> = got.iter().map(|d| d.memory.id.as_str()).collect();
+    assert_eq!(ids, [quiet.as_str(), oldest_used_twice.as_str()], "{ids:?}");
+    assert_eq!((got[0].idle_days, got[0].uses), (200, 0));
+    assert_eq!((got[1].idle_days, got[1].uses), (180, 2));
+    assert!(!ids.contains(&used.as_str()) && !ids.contains(&newer.as_str()));
+    // exactly at the line counts, one second inside does not
+    assert_eq!(m.dormant(c, 180 * DAY, 180, 50).unwrap().len(), 1);
+    assert_eq!(m.dormant(c, 180 * DAY - 1, 180, 50).unwrap().len(), 0);
+    // limit and the bounds of days
+    assert_eq!(m.dormant(c, now, 180, 1).unwrap().len(), 1);
+    for bad in [-1, 0, 29, 3651, i64::MAX, i64::MIN] {
+        assert!(m.dormant(c, now, bad, 10).is_err(), "{bad}");
+    }
+    assert!(m.dormant(c, now, 30, 10).is_ok() && m.dormant(c, now, 3650, 10).is_ok());
+    // a forgotten note, an empty store and a note above the clearance never show
+    let secret = id(m
+        .remember(0, nm("restricted old fact", Label::new(Level::Restricted)))
+        .unwrap());
+    assert!(!m
+        .dormant(c, now, 30, 50)
+        .unwrap()
+        .iter()
+        .any(|d| d.memory.id == secret));
+    assert!(m
+        .dormant(&Label::new(Level::Restricted), now, 30, 50)
+        .unwrap()
+        .iter()
+        .any(|d| d.memory.id == secret));
+    m.forget(now, &quiet, "gone").unwrap();
+    assert!(!m
+        .dormant(c, now, 30, 50)
+        .unwrap()
+        .iter()
+        .any(|d| d.memory.id == quiet));
+    assert!(old_store(&dir())
+        .dormant(c, now, 30, 50)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn me87_notes_older_than_the_use_records_are_not_proposed_until_the_records_themselves_are_old_enough(
+) {
+    let m = mem(&dir());
+    let since = m.use_records_since();
+    assert!(
+        since > 1_600_000_000,
+        "the anchor is the real time the store was opened: {since}"
+    );
+    let a = id(m
+        .remember(1, nm("note written long before use records", internal()))
+        .unwrap());
+    let c = &internal();
+    assert!(
+        m.dormant(c, since + 10 * DAY, 30, 10).unwrap().is_empty(),
+        "written years ago, but nobody could have recorded a use"
+    );
+    assert!(m
+        .dormant(c, since + 30 * DAY - 1, 30, 10)
+        .unwrap()
+        .is_empty());
+    let got = m.dormant(c, since + 31 * DAY, 30, 10).unwrap();
+    assert_eq!(
+        (got.len(), got[0].memory.id.as_str(), got[0].idle_days),
+        (1, a.as_str(), 31)
+    );
+    // the anchor is set once: opening again later does not move it
+    let d = dir();
+    let first = {
+        let m = mem(&d);
+        m.use_records_since()
+    };
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let again = Memories::open(Vault::open(&d.join("m.db"), &key(7)).unwrap(), [9; 32]).unwrap();
+    assert_eq!(again.use_records_since(), first);
+}
+
+#[test]
+fn me88_archiving_takes_a_note_out_of_recall_lists_counts_and_dormant_but_keeps_it_whole() {
+    let m = old_store(&dir());
+    let c = &internal();
+    let a = id(m
+        .remember(
+            1,
+            nm("archivable fact about kubernetes upgrades", internal()),
+        )
+        .unwrap());
+    let b = id(m
+        .remember(2, nm("other fact about kubernetes upgrades", internal()))
+        .unwrap());
+    assert_eq!(m.recall("kubernetes upgrades", c, 9, 10).unwrap().len(), 2);
+    m.archive(5, &a, c).unwrap();
+    let ids = |v: Vec<kk_memory::Recalled>| v.into_iter().map(|r| r.memory.id).collect::<Vec<_>>();
+    assert_eq!(
+        ids(m.recall("kubernetes upgrades", c, 9, 10).unwrap()),
+        vec![b.clone()]
+    );
+    assert_eq!(ids(m.list(c, 9, 10).unwrap()), vec![b.clone()]);
+    assert!(!m
+        .dormant(c, 400 * DAY, 30, 10)
+        .unwrap()
+        .iter()
+        .any(|d| d.memory.id == a));
+    assert_eq!(
+        m.counts_by_level()
+            .unwrap()
+            .iter()
+            .map(|x| x.1)
+            .sum::<i64>(),
+        1
+    );
+    let arch = m.archived_notes(c).unwrap();
+    assert_eq!(
+        (arch.len(), arch[0].id.as_str(), arch[0].status),
+        (1, a.as_str(), Status::Archived)
+    );
+    assert!(arch[0].text.contains("kubernetes"));
+    // the event names the kind and never the text
+    let ev: Vec<_> = m
+        .events()
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.1 == "archive")
+        .collect();
+    assert_eq!((ev.len(), ev[0].2.as_str()), (1, a.as_str()));
+    assert!(!ev[0].3.contains("kubernetes"));
+    // not twice, not something that is not current, not above the clearance, not an unknown id
+    assert!(m.archive(6, &a, c).is_err());
+    assert!(m.archive(6, "no-such-note", c).is_err());
+    let old = id(m
+        .remember(3, nm("first wording of a fact on tape drives", internal()))
+        .unwrap());
+    let new = m
+        .correct(
+            4,
+            &old,
+            nm("second wording of a fact on tape drives", internal()),
+        )
+        .unwrap();
+    assert!(
+        m.archive(7, &old, c).is_err(),
+        "a replaced version cannot be archived"
+    );
+    let hi = id(m
+        .remember(
+            8,
+            nm(
+                "restricted fact about audits",
+                Label::new(Level::Restricted),
+            ),
+        )
+        .unwrap());
+    assert!(matches!(m.archive(9, &hi, c), Err(MemoryError::NotFound)));
+    assert!(m.archive(9, &new, c).is_ok());
+    assert!(m
+        .archived_notes(&Label::new(Level::Public))
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn me89_restoring_brings_the_note_back_and_starts_its_clock_again() {
+    let m = old_store(&dir());
+    let c = &internal();
+    let a = id(m
+        .remember(0, nm("restorable fact about vendor contracts", internal()))
+        .unwrap());
+    m.archive(10, &a, c).unwrap();
+    assert!(m.recall("vendor contracts", c, 9, 5).unwrap().is_empty());
+    let now = 400 * DAY;
+    m.restore(now, &a, c).unwrap();
+    assert_eq!(m.recall("vendor contracts", c, now, 5).unwrap().len(), 1);
+    assert!(m.archived_notes(c).unwrap().is_empty());
+    assert!(
+        m.dormant(c, now + 179 * DAY, 180, 10).unwrap().is_empty(),
+        "a restored note is not proposed again at once"
+    );
+    assert_eq!(m.dormant(c, now + 180 * DAY, 180, 10).unwrap().len(), 1);
+    assert!(
+        m.restore(now, &a, c).is_err(),
+        "it is not archived any more"
+    );
+    assert!(m.restore(now, "nope", c).is_err());
+    let hi = id(m
+        .remember(
+            0,
+            nm("restricted archived thing", Label::new(Level::Restricted)),
+        )
+        .unwrap());
+    m.archive(1, &hi, &Label::new(Level::Restricted)).unwrap();
+    assert!(matches!(m.restore(2, &hi, c), Err(MemoryError::NotFound)));
+    let kinds: Vec<String> = m.events().unwrap().into_iter().map(|e| e.1).collect();
+    assert!(kinds.contains(&"archive".to_string()) && kinds.contains(&"restore".to_string()));
+}
+
+#[test]
+fn me90_pinning_exempts_a_note_and_still_true_only_restarts_the_clock() {
+    let m = old_store(&dir());
+    let c = &internal();
+    let a = id(m
+        .remember(0, nm("pinned fact about the office lease", internal()))
+        .unwrap());
+    let b = id(m
+        .remember(0, nm("kept fact about the parking permit", internal()))
+        .unwrap());
+    let now = 300 * DAY;
+    assert_eq!(m.dormant(c, now, 180, 10).unwrap().len(), 2);
+    m.pin(now, &a, c).unwrap();
+    assert!(m.is_pinned(&a) && !m.is_pinned(&b));
+    m.keep(now, &b, c).unwrap();
+    assert!(!m.is_pinned(&b), "still true is not a pin");
+    assert!(m.dormant(c, now, 180, 10).unwrap().is_empty());
+    assert_eq!(
+        m.dormant(c, now + 4000 * DAY, 180, 10).unwrap().len(),
+        1,
+        "only the pinned one stays out, however long"
+    );
+    assert_eq!(
+        m.dormant(c, now + 4000 * DAY, 180, 10).unwrap()[0]
+            .memory
+            .id,
+        b
+    );
+    m.unpin(now + 10 * DAY, &a, c).unwrap();
+    assert!(!m.is_pinned(&a));
+    assert_eq!(
+        m.dormant(c, now + 10 * DAY + 180 * DAY, 180, 10)
+            .unwrap()
+            .len(),
+        2,
+        "unpinning restarts the clock too"
+    );
+    // a still-true on a pinned note keeps it pinned
+    m.pin(now, &a, c).unwrap();
+    m.keep(now + DAY, &a, c).unwrap();
+    assert!(m.is_pinned(&a));
+    // only current notes, only readable ones
+    m.archive(now, &b, c).unwrap();
+    for r in [
+        m.pin(now, &b, c),
+        m.unpin(now, &b, c),
+        m.keep(now, &b, c),
+        m.pin(now, "nope", c),
+    ] {
+        assert!(r.is_err());
+    }
+    // archiving drops the pin, and restore does not bring it back
+    m.archive(now, &a, c).unwrap();
+    assert!(!m.is_pinned(&a));
+    let kinds: Vec<String> = m.events().unwrap().into_iter().map(|e| e.1).collect();
+    for k in ["pin", "unpin", "keep"] {
+        assert!(kinds.contains(&k.to_string()), "{k}");
+    }
+}
+
+#[test]
+fn me91_forgetting_an_archived_or_pinned_note_leaves_nothing_behind() {
+    let m = old_store(&dir());
+    let c = &internal();
+    let a = id(m
+        .remember(0, nm("archived then forgotten zebra fact", internal()))
+        .unwrap());
+    let b = id(m
+        .remember(0, nm("pinned then forgotten giraffe fact", internal()))
+        .unwrap());
+    m.archive(1, &a, c).unwrap();
+    m.pin(1, &b, c).unwrap();
+    m.forget(2, &a, "no").unwrap();
+    m.forget(2, &b, "no").unwrap();
+    assert!(m.archived_notes(c).unwrap().is_empty());
+    assert_eq!(fts_data_mentions(&m, "zebra"), 0);
+    assert_eq!(fts_data_mentions(&m, "giraffe"), 0);
+    let left: i64 = m_conn(&m)
+        .query_row("SELECT count(*) FROM memory_keep", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(left, 0);
+    // and the same text cannot come back through remember
+    assert!(m
+        .remember(3, nm("archived then forgotten zebra fact", internal()))
+        .is_err());
+}
+
+#[test]
+fn me92_remembering_the_same_text_as_an_archived_note_brings_that_note_back_instead_of_making_a_twin(
+) {
+    let m = old_store(&dir());
+    let c = &internal();
+    let a = id(m
+        .remember(0, nm("a fact about the weekly sync", internal()))
+        .unwrap());
+    m.archive(1, &a, c).unwrap();
+    let again = m
+        .remember(50 * DAY, nm("A  fact about the weekly sync", internal()))
+        .unwrap();
+    assert!(
+        matches!(&again, Remembered::AlreadyKnown(i) if *i == a),
+        "{again:?}"
+    );
+    assert_eq!(m.list(c, 60 * DAY, 10).unwrap().len(), 1);
+    assert!(m.archived_notes(c).unwrap().is_empty());
+}
+
+#[test]
+fn me93_a_newer_secret_detector_also_checks_archived_notes() {
+    let d = dir();
+    let a = {
+        let m = old_store(&d);
+        let a = id(m
+            .remember(0, nm("an ordinary archived sentence", internal()))
+            .unwrap());
+        m.archive(1, &a, &internal()).unwrap();
+        m.plant_secret_for_test(
+            &a,
+            &format!(
+                "token {}_{} archived",
+                "ghp", "R7kQ2mZx9LpV4nB8cT1yH6wD3sF5jA0gUe2K"
+            ),
+        );
+        a
+    };
+    let m = Memories::open(Vault::open(&d.join("m.db"), &key(7)).unwrap(), [9; 32]).unwrap();
+    assert!(m.archived_notes(&internal()).unwrap().is_empty());
+    assert!(
+        m.held(&internal()).unwrap().iter().any(|(n, _)| n.id == a),
+        "it was held, not left archived"
+    );
+}

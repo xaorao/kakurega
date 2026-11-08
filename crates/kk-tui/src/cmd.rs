@@ -111,6 +111,15 @@ pub enum Command {
     Project(Option<String>),
     /// `/similar` lists saved notes that say almost the same thing.
     Similar,
+    /// `/dormant [DAYS]` lists current notes nobody has used for that long (default 180). Nothing is put away by listing.
+    Dormant(Option<i64>),
+    /// `/archived` lists the notes the owner put away.
+    Archived,
+    /// `/archive ID`, `/restore ID`, `/pin ID`, `/unpin ID` and `/stilltrue ID`: one owner decision about how a note is kept.
+    NoteKeeping {
+        action: &'static str,
+        id: String,
+    },
     Verify(String),
     Quit,
 }
@@ -162,6 +171,13 @@ pub const NAMES: &[&str] = &[
     "newchat",
     "project",
     "similar",
+    "dormant",
+    "archived",
+    "archive",
+    "restore",
+    "pin",
+    "unpin",
+    "stilltrue",
     "rewind",
     "quiet",
     "quit",
@@ -220,6 +236,13 @@ pub fn describe(name: &str) -> &'static str {
         "newchat" => "leave this conversation and start a new one",
         "project" => "show or set the project this conversation is about",
         "similar" => "list saved notes that say almost the same thing",
+        "dormant" => "list notes nobody has used for a long time (nothing is put away)",
+        "archived" => "list the notes you put away",
+        "archive" => "put a note away; it can be brought back",
+        "restore" => "bring an archived note back",
+        "pin" => "keep a note out of the quiet-notes list",
+        "unpin" => "let a note appear in the quiet-notes list again",
+        "stilltrue" => "say a note is still true; its quiet time starts again",
         "quit" => "leave Kakurega",
         _ => "",
     }
@@ -265,6 +288,13 @@ pub fn usage(name: &str) -> &'static str {
         "project" => "/project [NAME | none]",
         "rewind" => "/rewind [N]   (N is the number of one of your messages; without it you choose from a list)",
         "similar" => "/similar",
+        "dormant" => "/dormant [DAYS]   (30 to 3650, default 180)",
+        "archived" => "/archived",
+        "archive" => "/archive ID",
+        "restore" => "/restore ID",
+        "pin" => "/pin ID",
+        "unpin" => "/unpin ID",
+        "stilltrue" => "/stilltrue ID",
         "ask" => "/ask FOLDER : QUESTION",
         "aside" => "/aside QUESTION",
         "correct" => "/correct ID NEW TEXT",
@@ -383,6 +413,40 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "resume" => Ok(Command::Resume(rest.to_string())),
         "newchat" => Ok(Command::NewChat),
         "similar" => Ok(Command::Similar),
+        "dormant" => {
+            if rest.is_empty() {
+                Ok(Command::Dormant(None))
+            } else {
+                match rest.parse::<i64>() {
+                    Ok(d) if (30..=3650).contains(&d) => Ok(Command::Dormant(Some(d))),
+                    _ => Err(format!("usage: {}", usage("dormant"))),
+                }
+            }
+        }
+        "archived" if rest.is_empty() => Ok(Command::Archived),
+        "archived" => Err(format!("usage: {}", usage("archived"))),
+        "archive" | "restore" | "pin" | "unpin" | "stilltrue" => {
+            let action = match name.as_str() {
+                "archive" => "archive",
+                "restore" => "restore",
+                "pin" => "pin",
+                "unpin" => "unpin",
+                _ => "keep",
+            };
+            let plain = !rest.is_empty()
+                && rest.len() <= 64
+                && rest
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
+            if plain {
+                Ok(Command::NoteKeeping {
+                    action,
+                    id: rest.to_string(),
+                })
+            } else {
+                Err(format!("usage: {}", usage(&name)))
+            }
+        }
         "project" => {
             if rest.is_empty() {
                 Ok(Command::Project(None))

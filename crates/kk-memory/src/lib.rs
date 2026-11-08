@@ -122,6 +122,22 @@ pub enum Status {
     /// Held back: a newer secret detector matched this note after it was saved. Not offered to any model, review or list until the
     /// owner decides: forget it, or say it is not a secret.
     Held,
+    /// Put away by the owner because it stopped being useful. Kept whole and encrypted, out of recall, lists and every prompt,
+    /// until the owner restores it or forgets it.
+    Archived,
+}
+
+pub const MIN_DORMANT_DAYS: i64 = 30;
+pub const MAX_DORMANT_DAYS: i64 = 3650;
+pub const DEFAULT_DORMANT_DAYS: i64 = 180;
+
+/// A current note proposed for putting away, with why: how long it has been quiet and how often a model has been given it.
+#[derive(Debug, Clone)]
+pub struct Dormant {
+    pub memory: Memory,
+    pub idle_days: i64,
+    pub uses: u32,
+    pub last_sign: i64,
 }
 
 /// What forgetting a review removes (or would remove).
@@ -270,6 +286,11 @@ CREATE TABLE IF NOT EXISTS memory_use (
     id TEXT PRIMARY KEY,
     last_at INTEGER NOT NULL,
     uses INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memory_keep (
+    id TEXT PRIMARY KEY,
+    pinned INTEGER NOT NULL,
+    kept_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS memory_hold (
     id TEXT PRIMARY KEY,
@@ -572,6 +593,7 @@ fn row_to_memory(r: &kk_vault::rusqlite::Row<'_>) -> kk_vault::rusqlite::Result<
                 "active" => Status::Active,
                 "merged" => Status::Merged,
                 "held" => Status::Held,
+                "archived" => Status::Archived,
                 _ => Status::Superseded,
             },
             superseded_by: r.get("superseded_by")?,
@@ -604,7 +626,7 @@ impl Memories {
         }
         let rows: Vec<(String, String)> = {
             let mut st = c.prepare(
-                "SELECT id, text FROM memories WHERE status IN ('active', 'merged') AND text <> ''",
+                "SELECT id, text FROM memories WHERE status IN ('active', 'merged', 'archived') AND text <> ''",
             )?;
             let found = st
                 .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
@@ -837,6 +859,14 @@ impl Memories {
                 .execute_batch("ALTER TABLE memories ADD COLUMN merged_into TEXT;")?;
         }
         vault.connection().execute_batch("CREATE TABLE IF NOT EXISTS memory_vectors(id TEXT PRIMARY KEY, model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL);")?;
+        let opened = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        vault.connection().execute(
+            "INSERT OR IGNORE INTO memory_meta(key, value) VALUES ('use_records_since', ?1)",
+            params![opened.to_string()],
+        )?;
         Ok(Memories {
             vault,
             fp_key: fingerprint_key,
@@ -982,6 +1012,18 @@ impl Memories {
             )
             .optional()?;
         if let Some(id) = existing {
+            return Ok(Remembered::AlreadyKnown(id));
+        }
+        let archived: Option<String> = self
+            .conn()
+            .query_row(
+                "SELECT id FROM memories WHERE fingerprint = ?1 AND status = 'archived' AND project IS ?2",
+                params![fp, m.project],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(id) = archived {
+            self.bring_back(now, &id)?;
             return Ok(Remembered::AlreadyKnown(id));
         }
         let id = new_id();
@@ -1157,6 +1199,8 @@ impl Memories {
                 .execute("DELETE FROM memory_use WHERE id = ?1", params![mid])?;
             self.conn()
                 .execute("DELETE FROM memory_hold WHERE id = ?1", params![mid])?;
+            self.conn()
+                .execute("DELETE FROM memory_keep WHERE id = ?1", params![mid])?;
             self.conn()
                 .execute("DELETE FROM memories WHERE id = ?1", params![mid])?;
             self.event(now, "forget", mid, "deleted")?;
@@ -1417,6 +1461,224 @@ impl Memories {
             }
         }
         Ok(out)
+    }
+
+    /// The earliest moment this store began recording which notes reach a model (unix seconds). A note older than this has no
+    /// use record because none was kept, not because it was never used, so this is the oldest "last sign of life" any note can have.
+    pub fn use_records_since(&self) -> i64 {
+        self.conn()
+            .query_row(
+                "SELECT value FROM memory_meta WHERE key = 'use_records_since'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    }
+
+    /// For tests: moves the point where use records began, so a note can be made to look old.
+    #[doc(hidden)]
+    pub fn set_use_records_since_for_test(&self, at: i64) {
+        let _ = self.conn().execute(
+            "INSERT OR REPLACE INTO memory_meta(key, value) VALUES ('use_records_since', ?1)",
+            params![at.to_string()],
+        );
+    }
+
+    /// For tests: makes a note, its use record and its keep record look `secs` older, and says use records began long ago.
+    #[doc(hidden)]
+    pub fn backdate_for_test(&self, id: &str, secs: i64) {
+        let c = self.conn();
+        let _ = c.execute(
+            "UPDATE memories SET created_at = created_at - ?1 WHERE id = ?2",
+            params![secs, id],
+        );
+        let _ = c.execute(
+            "UPDATE memory_use SET last_at = last_at - ?1 WHERE id = ?2",
+            params![secs, id],
+        );
+        let _ = c.execute(
+            "UPDATE memory_keep SET kept_at = kept_at - ?1 WHERE id = ?2",
+            params![secs, id],
+        );
+        self.set_use_records_since_for_test(0);
+    }
+
+    /// Active, unpinned notes that have shown no sign of life for at least `days` (30 to 3650), oldest sign first, with how many
+    /// whole days it has been and how often the note has reached a model. A sign of life is the latest of: when the note was
+    /// written, when it last reached a model, when the owner last kept, restored or pinned it, and when use records began.
+    /// A note is only ever proposed here; nothing is archived until the owner says so. At most 200.
+    pub fn dormant(
+        &self,
+        clearance: &Label,
+        now: i64,
+        days: i64,
+        limit: usize,
+    ) -> Result<Vec<Dormant>, MemoryError> {
+        if !(MIN_DORMANT_DAYS..=MAX_DORMANT_DAYS).contains(&days) {
+            return refuse("days must be a whole number from 30 to 3650");
+        }
+        let cutoff = now.saturating_sub(days.saturating_mul(86_400));
+        let since = self.use_records_since();
+        let mut st = self.conn().prepare(
+            "SELECT m.*, COALESCE(u.last_at, 0) AS used_at, COALESCE(u.uses, 0) AS uses, COALESCE(k.kept_at, 0) AS kept_at
+               FROM memories m
+               LEFT JOIN memory_use u ON u.id = m.id
+               LEFT JOIN memory_keep k ON k.id = m.id
+              WHERE m.status = 'active' AND m.text <> '' AND COALESCE(k.pinned, 0) = 0
+              ORDER BY m.rowid",
+        )?;
+        let rows = st.query_map([], |r| {
+            Ok((
+                row_to_memory(r)?,
+                r.get::<_, i64>("used_at")?,
+                r.get::<_, i64>("uses")?,
+                r.get::<_, i64>("kept_at")?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (row, used_at, uses, kept_at) = row?;
+            let last = row.m.created_at.max(used_at).max(kept_at).max(since);
+            if last > cutoff || !row.m.label.confidentiality_within(clearance) {
+                continue;
+            }
+            out.push(Dormant {
+                idle_days: (now.saturating_sub(last) / 86_400).max(0),
+                uses: uses.clamp(0, u32::MAX as i64) as u32,
+                memory: row.m,
+                last_sign: last,
+            });
+        }
+        out.sort_by(|a, b| {
+            a.last_sign
+                .cmp(&b.last_sign)
+                .then(a.memory.id.cmp(&b.memory.id))
+        });
+        out.truncate(limit.clamp(1, 200));
+        Ok(out)
+    }
+
+    fn readable_in(&self, id: &str, clearance: &Label) -> Result<Memory, MemoryError> {
+        let row = self
+            .conn()
+            .query_row(
+                "SELECT * FROM memories WHERE id = ?1",
+                params![id],
+                row_to_memory,
+            )
+            .optional()?
+            .ok_or(MemoryError::NotFound)?;
+        if !row.m.label.confidentiality_within(clearance) {
+            return Err(MemoryError::NotFound);
+        }
+        Ok(row.m)
+    }
+
+    /// Puts a current note away. Out of recall, lists and prompts; kept whole; `restore` brings it back.
+    pub fn archive(&self, now: i64, id: &str, clearance: &Label) -> Result<(), MemoryError> {
+        self.readable_in(id, clearance)?;
+        let n = self.conn().execute(
+            "UPDATE memories SET status = 'archived' WHERE id = ?1 AND status = 'active'",
+            params![id],
+        )?;
+        if n == 0 {
+            return refuse("only a current note can be archived");
+        }
+        self.conn()
+            .execute("DELETE FROM memory_keep WHERE id = ?1", params![id])?;
+        self.event(now, "archive", id, "put away")
+    }
+
+    fn bring_back(&self, now: i64, id: &str) -> Result<(), MemoryError> {
+        let n = self.conn().execute(
+            "UPDATE memories SET status = 'active' WHERE id = ?1 AND status = 'archived'",
+            params![id],
+        )?;
+        if n == 0 {
+            return refuse("that note is not archived");
+        }
+        self.conn().execute(
+            "INSERT OR REPLACE INTO memory_keep(id, pinned, kept_at) VALUES (?1, 0, ?2)",
+            params![id, now],
+        )?;
+        self.event(now, "restore", id, "brought back")
+    }
+
+    /// Brings an archived note back. Its clock starts again from now.
+    pub fn restore(&self, now: i64, id: &str, clearance: &Label) -> Result<(), MemoryError> {
+        self.readable_in(id, clearance)?;
+        self.bring_back(now, id)
+    }
+
+    /// Every archived note `clearance` may read, newest first. At most 500.
+    pub fn archived_notes(&self, clearance: &Label) -> Result<Vec<Memory>, MemoryError> {
+        let mut st = self.conn().prepare(
+            "SELECT * FROM memories WHERE status = 'archived' ORDER BY created_at DESC, rowid DESC LIMIT 500",
+        )?;
+        let rows = st.query_map([], row_to_memory)?;
+        let mut out = Vec::new();
+        for row in rows {
+            let row = row?;
+            if row.m.label.confidentiality_within(clearance) {
+                out.push(row.m);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Says a current note is still true: its clock starts again from now. Changes nothing else.
+    pub fn keep(&self, now: i64, id: &str, clearance: &Label) -> Result<(), MemoryError> {
+        self.set_keep(now, id, clearance, None, "keep", "still true")
+    }
+
+    /// Exempts a current note from being proposed as dormant, for as long as it is pinned.
+    pub fn pin(&self, now: i64, id: &str, clearance: &Label) -> Result<(), MemoryError> {
+        self.set_keep(now, id, clearance, Some(true), "pin", "pinned")
+    }
+
+    pub fn unpin(&self, now: i64, id: &str, clearance: &Label) -> Result<(), MemoryError> {
+        self.set_keep(now, id, clearance, Some(false), "unpin", "unpinned")
+    }
+
+    fn set_keep(
+        &self,
+        now: i64,
+        id: &str,
+        clearance: &Label,
+        pinned: Option<bool>,
+        kind: &str,
+        note: &str,
+    ) -> Result<(), MemoryError> {
+        self.readable_in(id, clearance)?;
+        let active: bool = self.conn().query_row(
+            "SELECT status = 'active' FROM memories WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )?;
+        if !active {
+            return refuse("only a current note can be kept or pinned");
+        }
+        let was = self.is_pinned(id);
+        let pin = pinned.unwrap_or(was);
+        self.conn().execute(
+            "INSERT OR REPLACE INTO memory_keep(id, pinned, kept_at) VALUES (?1, ?2, ?3)",
+            params![id, pin as i64, now],
+        )?;
+        self.event(now, kind, id, note)
+    }
+
+    /// Whether the owner pinned this note.
+    pub fn is_pinned(&self, id: &str) -> bool {
+        self.conn()
+            .query_row(
+                "SELECT pinned FROM memory_keep WHERE id = ?1",
+                params![id],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|v| v != 0)
+            .unwrap_or(false)
     }
 
     /// Whether a note exists and `clearance` may read it.
