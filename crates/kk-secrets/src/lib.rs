@@ -1523,6 +1523,77 @@ fn take_value(v: &str) -> (&str, bool) {
     }
 }
 
+/// A path that begins with names: its first one or two segments read as names (lower-case words with dashes or underscores, or
+/// CamelCase words, each with at most eight digits at the end), as in `/home/deploy/...` or `/srv/Backup20240131/...`. The
+/// segments of a random key are not names, whatever slashes the key happens to hold; what comes after the first two segments
+/// of a real path (an id, a timestamp) can look like anything.
+fn wordy_path(v: &str) -> bool {
+    let name = |seg: &str| {
+        let body = seg.trim_end_matches(|c: char| c.is_ascii_digit());
+        let digits = seg.len() - body.len();
+        digits <= 8
+            && !body.is_empty()
+            && (body
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || matches!(c, '-' | '_'))
+                || camel_words_counting(body, 0, 1))
+    };
+    let first: Vec<&str> = v.split('/').filter(|s| !s.is_empty()).take(2).collect();
+    !first.is_empty() && first.iter().all(|s| name(s))
+}
+
+/// A CamelCase or camelCase identifier made of words: `MyPasswordField`, `getAccessToken2`. Every capital letter starts a
+/// word of at least two letters (a capital followed by lower-case letters), and at most two digits close the name. A
+/// random mix of letters and digits such as `YqSYcZaiM9aIjsnGIS5X` has capitals in a row, one-letter pieces and digits in the
+/// middle, so it is not taken for a name, and a value that long after `password:` is read as the password it is.
+fn camel_identifier(v: &str) -> bool {
+    if !v.chars().all(|c| c.is_ascii_alphanumeric())
+        || !v.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+    {
+        return false;
+    }
+    let digits = v.chars().filter(|c| c.is_ascii_digit()).count();
+    let mut body = v.trim_end_matches(|c: char| c.is_ascii_digit());
+    if digits > 2 || v.len() - body.len() != digits || body.is_empty() {
+        return false;
+    }
+    // a numeric type name: `AtomicU64`, `Vec3`-style endings made of one capital and digits count as a word
+    let mut extra = 0usize;
+    if digits > 0 {
+        let mut it = body.chars().rev();
+        if let (Some(last), Some(before)) = (it.next(), it.next()) {
+            if last.is_ascii_uppercase() && before.is_ascii_lowercase() {
+                body = &body[..body.len() - 1];
+                extra = 1;
+            }
+        }
+    }
+    camel_words_counting(body, extra, 2)
+}
+
+/// Whether letters make at least `min` words, each a capital (or the start of a camelCase name) and lower-case letters, two
+/// letters or more; `extra` words were already counted.
+fn camel_words_counting(body: &str, extra: usize, min: usize) -> bool {
+    let chars: Vec<char> = body.chars().collect();
+    let mut words = extra;
+    let mut i = 0usize;
+    while i < chars.len() {
+        let start = i;
+        if chars[i].is_ascii_uppercase() {
+            i += 1;
+        }
+        let lower_from = i;
+        while i < chars.len() && chars[i].is_ascii_lowercase() {
+            i += 1;
+        }
+        if i == lower_from || i - start < 2 {
+            return false;
+        }
+        words += 1;
+    }
+    words >= min
+}
+
 /// Code is full of `token = point.tokens`, `secret: Optional[str]` and `"test-key"`. An unquoted value is a literal only if
 /// it has no code syntax; a quoted one must not be a placeholder word, a test marker or plain readable words.
 fn literal_credential(v: &str, quoted: bool, allow_identifier: bool) -> bool {
@@ -1530,10 +1601,20 @@ fn literal_credential(v: &str, quoted: bool, allow_identifier: bool) -> bool {
         return false;
     }
     let lower = v.to_ascii_lowercase();
-    if [
-        "test",
-        "mock",
-        "fake",
+    // A long run of random-looking characters is a token, whatever it spells by chance: a marker word ("test", "demo") inside
+    // it, or a slash or two (the alphabet of an AWS secret key includes `/` and `+`), does not make it a fixture or a path.
+    let random_token = v.len() >= 24
+        && !v.contains('.')
+        && v.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '='))
+        && v.chars().any(|c| c.is_ascii_lowercase())
+        && v.chars().any(|c| c.is_ascii_uppercase())
+        && v.chars().any(|c| c.is_ascii_digit())
+        && entropy(v) >= 4.2
+        && !wordy_path(v);
+    // A word that says what the value is ("example", "placeholder", "redacted") is never chance, so it always counts. The
+    // four-letter ones can turn up inside a random token by chance, so a value shaped like a token is not dropped for them.
+    let says_so = [
         "dummy",
         "example",
         "sample",
@@ -1543,12 +1624,13 @@ fn literal_credential(v: &str, quoted: bool, allow_identifier: bool) -> bool {
         "xxxx",
         "lorem",
         "default",
-        "demo",
     ]
     .iter()
-    .any(|m| lower.contains(m))
-        && v.len() < 48
-    {
+    .any(|m| lower.contains(m));
+    let maybe_chance = ["test", "mock", "fake", "demo"]
+        .iter()
+        .any(|m| lower.contains(m));
+    if (says_so || (maybe_chance && !random_token)) && v.len() < 48 {
         return false;
     }
     // readable identifiers: lowercase words joined by dashes or underscores, no digits
@@ -1564,28 +1646,16 @@ fn literal_credential(v: &str, quoted: bool, allow_identifier: bool) -> bool {
         && v.chars().next().is_some_and(|c| c.is_ascii_uppercase())
         && v.chars()
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
-    let camel = {
-        let mut upper_runs = 0;
-        let mut prev_lower = false;
-        for c in v.chars() {
-            if c.is_ascii_uppercase() && prev_lower {
-                upper_runs += 1;
-            }
-            prev_lower = c.is_ascii_lowercase();
-        }
-        v.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-            && upper_runs >= 1
-            && v.chars().all(|c| c.is_ascii_alphanumeric())
-            && v.chars().filter(|c| c.is_ascii_digit()).count() <= 2
-    };
-    let path_like = v.starts_with('/')
-        || v.starts_with("./")
-        || v.starts_with("~/")
-        || (v.contains('/')
-            && !v.contains('=')
-            && !v.contains('+')
-            && v.split('/').filter(|p| !p.is_empty()).count() >= 2
-            && v.chars().filter(|c| *c == '/').count() >= 2);
+    let camel = camel_identifier(v);
+    let path_like = !random_token
+        && (v.starts_with('/')
+            || v.starts_with("./")
+            || v.starts_with("~/")
+            || (v.contains('/')
+                && !v.contains('=')
+                && !v.contains('+')
+                && v.split('/').filter(|p| !p.is_empty()).count() >= 2
+                && v.chars().filter(|c| *c == '/').count() >= 2));
     if env_name || camel || path_like {
         return false;
     }
