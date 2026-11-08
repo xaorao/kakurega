@@ -278,7 +278,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | F-X3 | Origin pinning | KEEP | KEPT | pinned origin |
 | F-X4 | Port discovery | IMPROVE with native messaging? EXCLUDE: Ghast-style `nativeMessaging` widens the permissio | EXCLUDED | no native messaging |
 | F-X5 | Page content capture beyond a selection | Not adopted; any addition needs `activeTab` and an explicit click. Decide only after readi | EXCLUDED | selection only |
-| F-X6 | MV3 hardening review | Search and read Chrome extension security guidance before store submission | PARTIAL | Chrome MV3 security guidance read (two pages, partly) and the extension checked item by item against it, all already enforced by tests ex06-ex09; rest of Stay secure and store policies not read (browser-extension.md) |
+| F-X6 | MV3 hardening review | Search and read Chrome extension security guidance before store submission | BUILT | Stay secure read in full, the program policies and user data FAQ read for the sections that apply, extension checked rule by rule; the missing privacy policy and listing text written and tied to the code by tests ex11-ex15; icon, screenshots, public policy address and 2-Step Verification are a person's steps (browser-extension.md) |
 
 ## Matrix G: Ghast whole product
 
