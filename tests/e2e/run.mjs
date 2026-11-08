@@ -99,6 +99,7 @@ let leaseRefusals = 1;
 let instructionRefusals = 0; // the one deliberate 422 when an instruction holds a secret
 let attachmentRefusals = 0; // the one deliberate 422 when a password-protected file is attached
 let chatFailureRefusals = 0; // the one deliberate 422 when a chat send is made to fail
+let piiAllowRefusals = 0; // the one deliberate 422 when a pattern that would match everything is added to the personal-data list
 let forgottenWordsRefusals = 0; // the one deliberate 422 when forgotten words are typed in again
 page.on("request", (r) => { try { requestOrigins.add(new URL(r.url()).origin); } catch { /* data: urls */ } });
 page.on("console", (m) => {
@@ -112,6 +113,10 @@ page.on("console", (m) => {
   }
   if (m.location().url.endsWith("/api/chat/stream") && /status of 422/.test(m.text()) && chatFailureRefusals > 0) {
     chatFailureRefusals--;
+    return;
+  }
+  if (m.location().url.endsWith("/api/pii-allow") && /status of 422/.test(m.text()) && piiAllowRefusals > 0) {
+    piiAllowRefusals--;
     return;
   }
   if (m.location().url.endsWith("/api/memories") && /status of 422/.test(m.text()) && forgottenWordsRefusals > 0) {
@@ -1747,7 +1752,7 @@ try {
   // settings: one place for every setting, searchable by name, meaning or a word people use
   await page.getByRole("link", { name: "Settings" }).click();
   await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
-  check("the settings screen lists every setting in its section", (await page.locator("li[id^='setting-']").count()) === 11);
+  check("the settings screen lists every setting in its section", (await page.locator("li[id^='setting-']").count()) === 12);
   await axeCheck(page, "settings screen");
   await page.screenshot({ path: join(shots, "14d-settings.png"), fullPage: true });
   await page.getByLabel("Search settings").fill("notify");
@@ -1756,6 +1761,35 @@ try {
   await page.getByLabel("Search settings").fill("analytics");
   await page.locator("#setting-telemetry").waitFor();
   check("a word that is only a keyword finds the telemetry statement", (await page.locator("#setting-telemetry").innerText()).includes("no analytics"));
+  {
+    // the owner's list of values that are not personal data: add, refuse, show, remove
+    await page.getByLabel("Search settings").fill("false positive");
+    await page.locator("#setting-pii-allow").waitFor();
+    check("a word people use finds the personal-data setting", (await page.locator("li[id^='setting-']").count()) === 1);
+    const box = page.locator("#setting-pii-allow");
+    await box.getByText("Nothing is left out. Every personal value found is counted.").waitFor();
+    await box.getByLabel("A value or pattern to leave out of the personal-data count").fill("ops@example.com");
+    await box.getByRole("button", { name: "Leave it out" }).click();
+    await box.getByText("Added. Release notices now leave it out and say so.").waitFor();
+    check("an added value is listed", (await box.locator("code").allInnerTexts()).includes("ops@example.com"));
+    piiAllowRefusals = 1;
+    await box.getByLabel("A value or pattern to leave out of the personal-data count").fill("*");
+    await box.getByRole("button", { name: "Leave it out" }).click();
+    const refused = await box.getByRole("alert").innerText();
+    check("a pattern that would match everything is refused with the service's reason and nothing is added", refused.includes("at least four letters or digits") && (await box.locator("code").count()) === 1, refused);
+    await box.getByLabel("A value or pattern to leave out of the personal-data count").fill("ops@example.com");
+    await box.getByRole("button", { name: "Leave it out" }).click();
+    await box.getByText("That changed nothing.").waitFor();
+    check("adding the same value again changes nothing and says so", (await box.locator("code").count()) === 1);
+    await axeCheck(page, "settings with the personal-data list");
+    await page.reload();
+    await page.getByLabel("Search settings").fill("false positive");
+    await page.locator("#setting-pii-allow code", { hasText: "ops@example.com" }).waitFor();
+    check("the list is still there after a reload (it is kept by the service)", true);
+    await page.locator("#setting-pii-allow").getByRole("button", { name: "Remove ops@example.com" }).click();
+    await box.getByText("Removed. It is counted again.").waitFor();
+    check("a removed value is gone from the list", (await box.locator("code").count()) === 0);
+  }
   await page.getByLabel("Search settings").fill("zxqvj");
   await page.getByText("No setting matches.").waitFor();
   await page.getByLabel("Search settings").fill("");

@@ -220,6 +220,9 @@ export const api = {
     const qs = p.toString();
     return request<{ memories: MemoryItem[] }>("GET", `/api/memories${qs ? `?${qs}` : ""}`);
   },
+  piiAllow: () => request<{ entries: { entry: string; added_at: number }[]; max_entries: number; note: string }>("GET", "/api/pii-allow"),
+  piiAllowAdd: (entry: string) => request<{ changed: boolean; entries: number }>("POST", "/api/pii-allow", { add: entry }),
+  piiAllowRemove: (entry: string) => request<{ changed: boolean; entries: number }>("POST", "/api/pii-allow", { remove: entry }),
   memoryStats: () => request<MemoryStats>("GET", "/api/memories/stats"),
   addMemory: (b: { text: string; level: string; reason?: string; project?: string }) => request<{ id: string; added: boolean }>("POST", "/api/memories", b),
   correctMemory: (id: string, b: { text: string; reason?: string; project?: string }) => request<{ id: string }>("POST", `/api/memories/${id}/correct`, b),

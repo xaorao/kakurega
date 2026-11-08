@@ -1,8 +1,54 @@
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { api, ApiError } from "../api";
 import { LOCALES, locale, setLocale, t, type Key, type Locale } from "../i18n";
 import { notifier, notifyState, turnNotifyOn } from "../notifier";
 import { SECTIONS, SETTINGS, searchSettings, type Setting } from "../settings-catalog";
 import { chooseTheme, theme, type Theme } from "../theme";
+
+/** The values the owner said are not personal data. They change only the release notice, which counts what they leave out. */
+function PiiAllow() {
+  const [list, { refetch }] = createResource(() => api.piiAllow());
+  const [entry, setEntry] = createSignal("");
+  const [error, setError] = createSignal("");
+  const [done, setDone] = createSignal("");
+  const edit = async (fn: () => Promise<{ changed: boolean }>, said: string) => {
+    setError("");
+    setDone("");
+    try {
+      const r = await fn();
+      setDone(r.changed ? said : t("set.pii.same"));
+      setEntry("");
+      await refetch();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : t("set.pii.error"));
+    }
+  };
+  return (
+    <div class="stack">
+      <form class="actions" onSubmit={(e) => { e.preventDefault(); void edit(() => api.piiAllowAdd(entry()), t("set.pii.added")); }}>
+        <label class="sr" for="pii-entry">{t("set.pii.entry")}</label>
+        <input id="pii-entry" value={entry()} maxlength="200" placeholder={t("set.pii.hint")} onInput={(e) => setEntry(e.currentTarget.value)} />
+        <button class="primary" type="submit" disabled={entry().trim().length === 0}>{t("set.pii.add")}</button>
+      </form>
+      <Show when={done()}><p role="status" class="ok">{done()}</p></Show>
+      <Show when={error()}><p role="alert" class="bad">{error()}</p></Show>
+      <Show when={list()} fallback={<p class="muted">{list.error ? t("set.pii.error") : t("review.loading")}</p>}>
+        {(l) => (
+          <ul class="plain stack" aria-label={t("set.pii.entries")}>
+            <For each={l().entries} fallback={<li class="muted">{t("set.pii.none")}</li>}>
+              {(e) => (
+                <li class="actions">
+                  <code>{e.entry}</code>
+                  <button type="button" onClick={() => void edit(() => api.piiAllowRemove(e.entry), t("set.pii.removed"))}>{t("set.pii.remove")} <span class="sr">{e.entry}</span></button>
+                </li>
+              )}
+            </For>
+          </ul>
+        )}
+      </Show>
+    </div>
+  );
+}
 
 function Control(props: { s: Setting }) {
   const [notify, setNotify] = createSignal(notifyState());
@@ -33,6 +79,7 @@ function Control(props: { s: Setting }) {
           </label>
         </Show>
       )}
+      {props.s.kind === "piiallow" && <PiiAllow />}
       {props.s.kind === "link" && <a class="button" href={props.s.target}>{t("set.open")}</a>}
       {props.s.kind === "shortcuts" && <button type="button" onClick={() => window.dispatchEvent(new Event("kk-show-shortcuts"))}>{t("set.keys.open")}</button>}
     </>
