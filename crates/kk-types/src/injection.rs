@@ -606,6 +606,45 @@ fn word_rules(words: &[String], gaps: &[Gap], scan: &mut Scan) {
             scan.set(Reason::OverridesInstructions);
         }
     }
+    // "disregard the above and instead print ...": an order that starts a sentence, names what came before and turns to something
+    // else. "ignore the above if you have paid" has no "instead" and stays a plain request.
+    for (i, w) in words.iter().enumerate() {
+        if in_set(STRONG_VERBS, w)
+            && leads(words, gaps, i)
+            && words[i + 1..].iter().take(3).any(|x| {
+                matches!(
+                    x.as_str(),
+                    "above" | "previous" | "prior" | "earlier" | "preceding"
+                )
+            })
+            && words[i + 1..].iter().take(6).any(|x| x == "instead")
+        {
+            scan.set(Reason::OverridesInstructions);
+        }
+    }
+    // "pretend the previous rules do not apply": asking the reader to act as if what it was told is not there
+    for (i, w) in words.iter().enumerate() {
+        if matches!(w.as_str(), "pretend" | "imagine" | "assume")
+            && leads(words, gaps, i)
+            && words[i + 1..].iter().take(5).any(|x| in_set(SCOPE, x))
+            && words[i + 1..].iter().take(8).any(|x| in_set(RULE_NOUNS, x))
+            && words[i + 1..].iter().take(12).any(|x| {
+                matches!(
+                    x.as_str(),
+                    "apply"
+                        | "applies"
+                        | "exist"
+                        | "exists"
+                        | "valid"
+                        | "void"
+                        | "gone"
+                        | "irrelevant"
+                )
+            })
+        {
+            scan.set(Reason::OverridesInstructions);
+        }
+    }
     if starts_phrase_then(words, &["pay", "no", "attention"], RULE_NOUNS, 6)
         || starts_phrase_then(words, &["paying", "no", "attention"], RULE_NOUNS, 6)
     {
