@@ -14,7 +14,14 @@ export type Block =
   | { t: "code"; lang: string; v: string }
   | { t: "ul"; v: Inline[][] }
   | { t: "ol"; v: Inline[][] }
-  | { t: "quote"; v: Inline[] };
+  | { t: "quote"; v: Inline[] }
+  | { t: "table"; head: Inline[][]; align: Align[]; rows: Inline[][][] };
+
+/** How a column is aligned: from the colons of the delimiter row; none means the reader's default. */
+export type Align = "left" | "right" | "center" | null;
+
+export const MAX_TABLE_ROWS = 100;
+export const MAX_TABLE_COLUMNS = 20;
 
 export const MAX_INPUT = 200_000;
 
@@ -82,6 +89,75 @@ export function inline(src: string): Inline[] {
   return out;
 }
 
+/** The cells of one table line: split at pipes that are not escaped, outer pipes optional, `\\|` is a literal pipe. */
+function cells(line: string): string[] {
+  const t = line.trim();
+  const out: string[] = [];
+  let cur = "";
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i] ?? "";
+    if (c === "\\" && t[i + 1] === "|") {
+      cur += "|";
+      i++;
+    } else if (c === "|") {
+      out.push(cur);
+      cur = "";
+    } else {
+      cur += c;
+    }
+  }
+  out.push(cur);
+  // a pipe at the start or the end only frames the row
+  if (t.startsWith("|")) out.shift();
+  if (t.endsWith("|") && !t.endsWith("\\|")) out.pop();
+  return out.map((x) => x.trim());
+}
+
+function alignOf(cell: string): Align | undefined {
+  if (!/^:?-+:?$/.test(cell)) return undefined;
+  const l = cell.startsWith(":");
+  const r = cell.endsWith(":");
+  return l && r ? "center" : r ? "right" : l ? "left" : null;
+}
+
+/** A table starts at a header line with at least two cells, followed by a delimiter line with as many cells that are only
+ * hyphens and optional colons. Rows follow until a blank line or a line without a pipe. */
+function tableAt(lines: string[], n: number): { block: Block; next: number } | null {
+  const first = lines[n] ?? "";
+  const delim = lines[n + 1];
+  if (delim === undefined || !first.includes("|") || !delim.includes("-")) return null;
+  // a list item or a quote that happens to hold pipes is not a table
+  if (/^\s*(>|[-*+]\s|\d{1,3}[.)]\s)/.test(first)) return null;
+  const head = cells(first);
+  const marks = cells(delim).map(alignOf);
+  if (head.length < 2 || marks.length !== head.length || marks.some((m) => m === undefined)) return null;
+  const width = Math.min(head.length, MAX_TABLE_COLUMNS);
+  const rows: Inline[][][] = [];
+  let k = n + 2;
+  for (; k < lines.length; k++) {
+    const l = lines[k] ?? "";
+    if (!l.trim() || !l.includes("|")) break;
+    if (rows.length >= MAX_TABLE_ROWS) continue;
+    const row = cells(l);
+    rows.push(Array.from({ length: width }, (_, c) => inline(row[c] ?? "")));
+  }
+  return {
+    block: { t: "table", head: head.slice(0, width).map((c) => inline(c)), align: (marks as Align[]).slice(0, width), rows },
+    next: k - 1,
+  };
+}
+
+/** The visible text of some inline pieces, as it would be copied from the screen. */
+export function plain(v: Inline[]): string {
+  return v.map((x) => (x.t === "text" || x.t === "code" ? x.v : x.t === "link" ? `${x.v} (${x.host})` : plain(x.v))).join("");
+}
+
+/** A table as tab-separated lines, which a spreadsheet pastes into cells. Tabs and line breaks inside a cell become spaces. */
+export function tableToTsv(b: Extract<Block, { t: "table" }>): string {
+  const cell = (v: Inline[]) => plain(v).replace(/[\t\r\n]+/g, " ").trim();
+  return [b.head, ...b.rows].map((r) => r.map(cell).join("\t")).join("\n") + "\n";
+}
+
 export function parse(input: string): Block[] {
   const lines = input.slice(0, MAX_INPUT).replace(/\r\n?/g, "\n").split("\n");
   const blocks: Block[] = [];
@@ -106,6 +182,13 @@ export function parse(input: string): Block[] {
     }
     if (!line.trim()) {
       endPara();
+      continue;
+    }
+    const tbl = tableAt(lines, n);
+    if (tbl) {
+      endPara();
+      blocks.push(tbl.block);
+      n = tbl.next;
       continue;
     }
     const h = /^#{1,6}\s+(.*)$/.exec(line);

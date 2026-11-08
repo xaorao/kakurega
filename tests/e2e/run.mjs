@@ -1415,6 +1415,30 @@ try {
     await page.waitForTimeout(300); // the page shrinks and the browser reports it as a scroll; let that settle before the next send
     return foot;
   };
+  {
+    // an answer with a table is shown as a table with real headers, and "Copy table" puts tab-separated lines on the clipboard
+    const tableAnswer = "Here is the comparison:\n\n| Item | Cost | Note |\n|:--|--:|:-:|\n| **tea** | 3 | <b>hot</b> |\n| coffee | 10 | [menu](https://example.com/menu) |\n\nAnd a closing line.";
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
+    await page.route("**/api/chat/stream", (r) => r.fulfill({ status: 200, contentType: "application/x-ndjson", body: doneLine(tableAnswer) + "\n" }));
+    await page.getByLabel("Your message").fill("compare them in a table");
+    await page.getByLabel("Your message").press("Enter");
+    await page.locator(".msg.assistant table").waitFor();
+    const heads = await page.locator(".msg.assistant table th[scope='col']").allInnerTexts();
+    check("an answer with a table shows it as a table with column headers", JSON.stringify(heads) === JSON.stringify(["Item", "Cost", "Note"]), JSON.stringify(heads));
+    const cellsText = await page.locator(".msg.assistant table tbody td").allInnerTexts();
+    check("the cells hold the answer's words, and markup in a cell stays as text", cellsText.includes("<b>hot</b>") && cellsText.includes("tea") && (await page.locator(".msg.assistant table b").count()) === 0, JSON.stringify(cellsText));
+    check("a column's alignment from the answer is kept", (await page.locator(".msg.assistant table td.al-right").count()) === 2 && (await page.locator(".msg.assistant table td.al-center").count()) === 2);
+    check("the text around the table is still there", (await page.locator(".msg.assistant").last().innerText()).includes("And a closing line."));
+    check("a table too wide for the page scrolls inside its own box, which can be reached with the keyboard and has a name", (await page.getByRole("region", { name: "Table" }).count()) === 1);
+    await axeCheck(page, "chat with a table answer");
+    await page.getByRole("button", { name: "Copy table" }).click();
+    await page.getByRole("button", { name: "Copied" }).waitFor();
+    const clip = await page.evaluate(() => navigator.clipboard.readText());
+    check("Copy table puts tab-separated lines on the clipboard: headers, then each row, the link's words and address in plain text", clip === "Item\tCost\tNote\ntea\t3\t<b>hot</b>\ncoffee\t10\tmenu (example.com)\n", JSON.stringify(clip));
+    await page.unroute("**/api/chat/stream");
+    await page.getByRole("button", { name: "Clear" }).click();
+    await page.waitForTimeout(300);
+  }
   const footLocal = await replyFrom({ id: "o", class: "device_only", simulated: false, stays_here: true, host: "127.0.0.1" });
   check("an answer from a model at this computer says it was answered on this computer", footLocal.includes("Private: answered on this computer"), footLocal);
   const footRemote = await replyFrom({ id: "o", class: "device_only", simulated: false, stays_here: false, host: "models.example.com" });

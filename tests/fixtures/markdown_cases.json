@@ -783,6 +783,22 @@
   "input": "| a | b |\n|---|---|\n| 1 | 2 |",
   "blocks": [
    {
+    "t": "table",
+    "head": [
+     [{ "t": "text", "v": "a" }],
+     [{ "t": "text", "v": "b" }]
+    ],
+    "align": [null, null],
+    "rows": [
+     [
+      [{ "t": "text", "v": "1" }],
+      [{ "t": "text", "v": "2" }]
+     ]
+    ]
+   }
+  ],
+  "terminal_blocks": [
+   {
     "t": "p",
     "v": [
      {

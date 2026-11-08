@@ -48,7 +48,8 @@ fn md01_the_terminal_reader_makes_the_same_tree_as_the_web_reader_for_every_shar
         let input = c["input"].as_str().unwrap();
         let mut got = Value::Array(parse(input).iter().map(block_json).collect());
         without_host(&mut got);
-        let mut want = c["blocks"].clone();
+        // a case may record that the terminal reader deliberately differs (tables stay text here): `terminal_blocks`
+        let mut want = c.get("terminal_blocks").unwrap_or(&c["blocks"]).clone();
         without_host(&mut want);
         if got != want {
             different.push(format!("{input:?}\n  web:      {want}\n  terminal: {got}"));

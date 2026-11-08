@@ -1,6 +1,6 @@
 import { Code } from "./Code";
 import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
-import { parse, type Block, type Inline } from "../markdown";
+import { parse, tableToTsv, type Align, type Block, type Inline } from "../markdown";
 import { t } from "../i18n";
 
 function Inlines(props: { v: Inline[] }) {
@@ -45,6 +45,36 @@ function CodeBlock(props: { lang: string; v: string }) {
   );
 }
 
+const alignClass = (a: Align) => (a === "right" ? "al-right" : a === "center" ? "al-center" : undefined);
+
+function TableBlock(props: { b: Extract<Block, { t: "table" }> }) {
+  const [copied, setCopied] = createSignal(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(tableToTsv(props.b));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* copying is a convenience; the cells are still selectable */
+    }
+  };
+  return (
+    <div class="tablebox">
+      <div class="actions"><button type="button" class="link" onClick={copy}>{copied() ? t("md.copied") : t("md.copyTable")}</button></div>
+      <div class="tablewrap" role="region" aria-label={t("md.table")} tabindex="0">
+        <table>
+          <thead>
+            <tr><For each={props.b.head}>{(h, i) => <th scope="col" class={alignClass(props.b.align[i()] ?? null)}><Inlines v={h} /></th>}</For></tr>
+          </thead>
+          <tbody>
+            <For each={props.b.rows}>{(r) => <tr><For each={r}>{(c, i) => <td class={alignClass(props.b.align[i()] ?? null)}><Inlines v={c} /></td>}</For></tr>}</For>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 /** Renders assistant text as formatted, safe elements. No HTML is ever inserted; see markdown.ts. */
 export function Markdown(props: { text: string }) {
   const blocks = createMemo<Block[]>(() => parse(props.text));
@@ -57,6 +87,7 @@ export function Markdown(props: { text: string }) {
             <Match when={b.t === "h" && b}>{(x) => <p><strong><Inlines v={x().v} /></strong></p>}</Match>
             <Match when={b.t === "quote" && b}>{(x) => <blockquote><Inlines v={x().v} /></blockquote>}</Match>
             <Match when={b.t === "code" && b}>{(x) => <CodeBlock lang={x().lang} v={x().v} />}</Match>
+            <Match when={b.t === "table" && b}>{(x) => <TableBlock b={x() as Extract<Block, { t: "table" }>} />}</Match>
             <Match when={b.t === "ul" && b}>{(x) => <ul><For each={x().v}>{(li) => <li><Inlines v={li} /></li>}</For></ul>}</Match>
             <Match when={b.t === "ol" && b}>{(x) => <ol><For each={x().v}>{(li) => <li><Inlines v={li} /></li>}</For></ol>}</Match>
           </Switch>

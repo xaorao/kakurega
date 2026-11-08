@@ -416,6 +416,8 @@ export const hi: Record<keyof typeof en, string> = {
   "palette.account": "खाता",
   "md.code": "कोड",
   "md.copy": "कॉपी करें",
+  "md.copyTable": "तालिका कॉपी करें",
+  "md.table": "तालिका",
   "md.copied": "कॉपी हो गया",
   "proof.title": "गोपनीय मॉडल का हार्डवेयर प्रमाण जाँचें",
   "proof.lead": "केवल मॉडल का नाम NEAR AI Cloud और Intel व NVIDIA की सत्यापन सेवाओं को भेजा जाता है। कोई प्रश्न, नोट या फ़ाइल शामिल नहीं होती। प्रमाण की जाँच Kakurega इसी कंप्यूटर पर स्वयं करता है।",

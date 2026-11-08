@@ -339,3 +339,12 @@ button.linklike:hover { color: var(--ink); }
 .sent-text { max-height: 18rem; margin: 0.25rem 0 0.75rem; font-size: 0.9em; }
 
 .mem-text mark { background: transparent; color: inherit; font-weight: 700; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 2px; }
+
+.tablebox { margin: 8px 0; }
+.tablewrap { overflow-x: auto; max-width: 100%; border: 1px solid var(--line); border-radius: var(--radius-s); }
+.tablewrap table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.tablewrap th, .tablewrap td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.tablewrap th { font-weight: 600; background: var(--veil); }
+.tablewrap tr:last-child td { border-bottom: 0; }
+.tablewrap .al-right { text-align: right; }
+.tablewrap .al-center { text-align: center; }

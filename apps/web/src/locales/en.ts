@@ -414,6 +414,8 @@ export const en = {
   "palette.account": "Account",
   "md.code": "code",
   "md.copy": "Copy",
+  "md.copyTable": "Copy table",
+  "md.table": "Table",
   "md.copied": "Copied",
   "proof.title": "Check a confidential model's hardware proof",
   "proof.lead": "Only the model name is sent, to NEAR AI Cloud and to Intel and NVIDIA's verification services. No prompt, note or file is involved. Kakurega checks the proof itself on this computer.",
