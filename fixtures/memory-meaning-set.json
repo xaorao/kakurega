@@ -1,0 +1,301 @@
+{
+ "about": "A small labelled set for meaning-based recall. Synthetic: invented people, places and numbers. A 'paraphrase' question shares no word of four or more letters with the note it should find; a 'keyword' question does; an 'unrelated' question has no right note and should match none.",
+ "notes": [
+  {
+   "id": "n01",
+   "text": "The quarterly tax filing is due on the fifteenth of the month after the quarter ends."
+  },
+  {
+   "id": "n02",
+   "text": "Maya is allergic to peanuts and carries an epinephrine pen."
+  },
+  {
+   "id": "n03",
+   "text": "The office printer on the third floor jams whenever it is asked to print double-sided."
+  },
+  {
+   "id": "n04",
+   "text": "Our production database is backed up every night at two in the morning."
+  },
+  {
+   "id": "n05",
+   "text": "Dad's birthday is on the ninth of March and he likes dark chocolate."
+  },
+  {
+   "id": "n06",
+   "text": "The Lisbon flight leaves from terminal two and boarding closes forty minutes before departure."
+  },
+  {
+   "id": "n07",
+   "text": "The landlord requires sixty days written notice before the lease ends."
+  },
+  {
+   "id": "n08",
+   "text": "Weekly team sync happens on Tuesday at ten, in the blue meeting room."
+  },
+  {
+   "id": "n09",
+   "text": "The dog Biscuit needs her vaccinations renewed every spring."
+  },
+  {
+   "id": "n10",
+   "text": "Expense reports above five hundred euros need a second approver."
+  },
+  {
+   "id": "n11",
+   "text": "The new hire starts on Monday and needs a laptop and a badge."
+  },
+  {
+   "id": "n12",
+   "text": "Solar panels on the garage roof produce most of their power between noon and three."
+  },
+  {
+   "id": "n13",
+   "text": "The gym membership renews automatically in January and costs forty-five a month."
+  },
+  {
+   "id": "n14",
+   "text": "Customer Acme prefers invoices in euros and pays within thirty days."
+  },
+  {
+   "id": "n15",
+   "text": "The staging server listens on port 8081 and resets every Sunday."
+  },
+  {
+   "id": "n16",
+   "text": "Grandma's apple cake recipe uses cinnamon, brown sugar and a splash of rum."
+  },
+  {
+   "id": "n17",
+   "text": "The car needs an oil change every ten thousand kilometres."
+  },
+  {
+   "id": "n18",
+   "text": "Passwords for the shared accounts are rotated at the end of every quarter by the security team."
+  },
+  {
+   "id": "n19",
+   "text": "The conference talk is twenty minutes long with five minutes for questions."
+  },
+  {
+   "id": "n20",
+   "text": "Sam is vegetarian and does not eat fish either."
+  },
+  {
+   "id": "n21",
+   "text": "The bakery on Elm Street closes at four on Saturdays."
+  },
+  {
+   "id": "n22",
+   "text": "Our mobile app must support the two most recent major versions of the phone's operating system."
+  },
+  {
+   "id": "n23",
+   "text": "The yearly performance review conversation takes place in November."
+  },
+  {
+   "id": "n24",
+   "text": "Heating in the old building is switched off over the weekend to save money."
+  },
+  {
+   "id": "n25",
+   "text": "The garden hose is stored in the shed behind the compost heap."
+  },
+  {
+   "id": "n26",
+   "text": "Delivery of the new desks is expected the week before Christmas."
+  },
+  {
+   "id": "n27",
+   "text": "The marathon training plan has a long run every Sunday morning."
+  },
+  {
+   "id": "n28",
+   "text": "Interns are not allowed to deploy to production without a mentor present."
+  },
+  {
+   "id": "n29",
+   "text": "The credit card statement closes on the twentieth and payment is due ten days later."
+  },
+  {
+   "id": "n30",
+   "text": "Emma's piano lesson is on Thursday afternoon at a quarter past four."
+  },
+  {
+   "id": "n31",
+   "text": "Customer data older than seven years must be deleted under the retention policy."
+  },
+  {
+   "id": "n32",
+   "text": "The ferry to the island runs only twice a day in winter."
+  },
+  {
+   "id": "n33",
+   "text": "The coffee machine in the kitchen needs descaling once a month."
+  },
+  {
+   "id": "n34",
+   "text": "Our main competitor launched a cheaper plan last spring."
+  },
+  {
+   "id": "n35",
+   "text": "Visitors must sign in at the front desk and wear a visitor pass."
+  },
+  {
+   "id": "n36",
+   "text": "The wifi password for guests is posted by the reception and changes monthly."
+  }
+ ],
+ "questions": [
+  {
+   "kind": "paraphrase",
+   "question": "When do I hand in my revenue paperwork to the authorities?",
+   "expect": "n01"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "Is there anything that could trigger a dangerous reaction for my colleague?",
+   "expect": "n02"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "Why does the copier upstairs choke when copying on both sides?",
+   "expect": "n03"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "How frequently is the information archive duplicated?",
+   "expect": "n04"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "What can I bring for my father's celebration?",
+   "expect": "n05"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "How early must I be at the gate for the trip to Portugal?",
+   "expect": "n06"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "How far ahead must I tell the property owner that I am leaving?",
+   "expect": "n07"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "Where does the squad assemble for its regular status update?",
+   "expect": "n08"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "When should the pet go to the vet for her shots?",
+   "expect": "n09"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "Who has to countersign a big reimbursement claim?",
+   "expect": "n10"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "What equipment should be ready for the person joining us?",
+   "expect": "n11"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "At what time of day is the rooftop energy highest?",
+   "expect": "n12"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "How much do I pay for working out?",
+   "expect": "n13"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "Which currency does the big client want on bills?",
+   "expect": "n14"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "Which network socket does the pre-release environment use?",
+   "expect": "n15"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "What goes into the dessert my nan used to bake?",
+   "expect": "n16"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "How frequently should the vehicle's engine lubricant be replaced?",
+   "expect": "n17"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "When are the credentials used by everyone refreshed?",
+   "expect": "n18"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "For how much time am I on stage at the event?",
+   "expect": "n19"
+  },
+  {
+   "kind": "paraphrase",
+   "question": "What should I avoid serving to my friend who skips meat?",
+   "expect": "n20"
+  },
+  {
+   "kind": "keyword",
+   "question": "peanuts allergy",
+   "expect": "n02"
+  },
+  {
+   "kind": "keyword",
+   "question": "Acme invoices euros",
+   "expect": "n14"
+  },
+  {
+   "kind": "keyword",
+   "question": "staging server port",
+   "expect": "n15"
+  },
+  {
+   "kind": "keyword",
+   "question": "Elm Street bakery closes Saturday",
+   "expect": "n21"
+  },
+  {
+   "kind": "keyword",
+   "question": "retention policy customer data",
+   "expect": "n31"
+  },
+  {
+   "kind": "unrelated",
+   "question": "What is the capital of Peru?",
+   "expect": null
+  },
+  {
+   "kind": "unrelated",
+   "question": "How do I knit a scarf?",
+   "expect": null
+  },
+  {
+   "kind": "unrelated",
+   "question": "Explain quantum chromodynamics",
+   "expect": null
+  },
+  {
+   "kind": "unrelated",
+   "question": "Will it rain tomorrow?",
+   "expect": null
+  },
+  {
+   "kind": "unrelated",
+   "question": "Who won the football world cup in 2010?",
+   "expect": null
+  }
+ ]
+}

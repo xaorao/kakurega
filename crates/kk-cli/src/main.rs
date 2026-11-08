@@ -9,6 +9,8 @@ mod extension;
 mod log;
 mod mcp;
 mod mcp_install;
+#[cfg(test)]
+mod meaning_set;
 mod memory_import;
 mod parse_child;
 #[cfg(test)]

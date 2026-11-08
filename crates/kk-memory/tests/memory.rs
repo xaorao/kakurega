@@ -1021,7 +1021,12 @@ fn me24_a_note_is_found_by_meaning_when_it_shares_no_word_with_the_question() {
         .unwrap();
     assert_eq!(got.len(), 1, "{got:?}");
     assert!(got[0].memory.text.contains("Suppliers"));
-    assert!(got[0].why.contains("by meaning"), "{}", got[0].why);
+    assert!(got[0].why.ends_with("matched by meaning"), "{}", got[0].why);
+    assert!(
+        got[0].matched_terms.is_empty() && !got[0].why.contains(" on "),
+        "a match by meaning shares no word with the question, so it names none: {:?}",
+        got[0]
+    );
     assert_eq!(m.vector_count(), 2, "vectors were made on the way");
     assert!(
         m.recall("quantum chromodynamics", &internal(), 9, 5)

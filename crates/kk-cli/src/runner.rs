@@ -469,6 +469,12 @@ pub(crate) struct OllamaEmbedder {
     model: String,
 }
 
+/// How close a note must be to the question for `nomic-embed-text`. 0.50 was chosen on a chat-history benchmark that never counted
+/// wrong notes; on short fact notes it let unrelated questions draw notes (7 notes for 5 unrelated questions), and 0.55 draws 1
+/// with no right note lost, for about a point of session recall on that benchmark (see docs/engineering-decisions/memory.md,
+/// "Meaning recall on short fact notes"). 0.58 and above start to miss right answers.
+const NOMIC_MIN_SIMILARITY: f32 = 0.55;
+
 impl OllamaEmbedder {
     #[cfg(test)]
     pub(crate) fn new(route: OllamaRoute, model: String) -> Self {
@@ -518,7 +524,7 @@ impl kk_memory::Embedder for OllamaEmbedder {
     }
     fn min_similarity(&self) -> f32 {
         if self.prefixed() {
-            0.5
+            NOMIC_MIN_SIMILARITY
         } else {
             0.6
         }
@@ -883,5 +889,27 @@ mod rust_check_tests {
         ] {
             assert_eq!(choose_rustc(Some(bad.into())), "/usr/bin/rustc", "{bad:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod cutoff_tests {
+    use super::*;
+    use kk_memory::Embedder;
+
+    #[test]
+    fn rc03_the_closeness_cutoff_is_what_the_measurements_chose() {
+        let route = || OllamaRoute::new("http://127.0.0.1:11434", "x").expect("route");
+        let nomic = OllamaEmbedder::new(route(), "nomic-embed-text".into());
+        assert_eq!(nomic.min_similarity(), 0.55);
+        assert_eq!(
+            OllamaEmbedder::new(route(), "nomic-embed-text:latest".into()).min_similarity(),
+            0.55
+        );
+        // a model with another score spread keeps its own, unmeasured, setting
+        assert_eq!(
+            OllamaEmbedder::new(route(), "mxbai-embed-large".into()).min_similarity(),
+            0.6
+        );
     }
 }
