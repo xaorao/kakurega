@@ -604,6 +604,18 @@ bare = _re6.sub(rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", b"", raw6).count(b"\x07")
 check("in a terminal that shows notifications, a finished review sends one desktop notification with a fixed phrase", raw6.count(note) == 1, str(raw6.count(note)))
 check("and no separate bell", bare == 0, f"bells={bare}")
 check("and nothing in any escape sequence names the folder, the recipient or the job", all(b"payments-service" not in t and b"osc-audit" not in t and b"job-" not in t for t in _re6.findall(rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", raw6)))
+# the service is stopped under the running workspace: the next request fails and the owner is alerted once
+mark6 = len(raw6)
+subprocess.run(["pkill", "-f", f"kaku serve --data-dir {data6}"], capture_output=True)
+time.sleep(1.0)
+os.write(m6, b"/status\r")
+pump6(20, b"the service is not answering")
+pump6(1.5)
+down_note = b"\x1b]9;Kakurega: the service is not answering\x07"
+check("and sends one desktop notification with a fixed phrase", raw6[mark6:].count(down_note) == 1, str(raw6[mark6:].count(down_note)))
+os.write(m6, b"/status\r")
+pump6(3)
+check("a second failure while it stays down does not notify again", raw6[mark6:].count(down_note) == 1, str(raw6[mark6:].count(down_note)))
 os.write(m6, b"/quit\r")
 end6 = time.time() + 20
 while p6.poll() is None and time.time() < end6:

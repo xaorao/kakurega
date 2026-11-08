@@ -11,6 +11,8 @@ pub enum Attention {
     ReviewReady,
     /// A review stopped without a result to release.
     ReviewStopped,
+    /// The service the workspace talks to stopped answering.
+    ServiceDown,
 }
 
 impl Attention {
@@ -19,6 +21,7 @@ impl Attention {
         match self {
             Attention::ReviewReady => "a review is ready",
             Attention::ReviewStopped => "a review stopped",
+            Attention::ServiceDown => "the service is not answering",
         }
     }
 }

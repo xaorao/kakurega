@@ -5142,3 +5142,57 @@ fn tu81_what_stopped_while_the_owner_was_away_is_shown_once_at_launch_and_marked
         (Method::Post, "/api/away/seen")
     );
 }
+
+fn down(req: &Req) -> Event {
+    Event::Resp(Resp {
+        id: req.id,
+        result: Err("connection refused".into()),
+    })
+}
+
+#[test]
+fn tu82_the_owner_is_alerted_once_when_the_service_stops_answering_and_again_only_after_it_came_back(
+) {
+    let mut a = booted();
+    let r = enter(&mut a, "/status");
+    a.handle(down(&r[0]));
+    assert!(text(&a).contains("Could not reach the service: connection refused"));
+    assert_eq!(
+        a.attention.take(),
+        Some(kk_tui::attention::Attention::ServiceDown),
+        "the first failure alerts"
+    );
+    // more failures while it is still down: the card says so each time, the alert does not repeat
+    let r = enter(&mut a, "/status");
+    a.handle(down(&r[0]));
+    assert_eq!(
+        a.attention.take(),
+        None,
+        "no second alert while it stays down"
+    );
+    // any answer means it is back; the next failure alerts again
+    let r = enter(&mut a, "/status");
+    a.handle(ok(&r[0], 200, json!({"jobs": []})));
+    assert_eq!(a.attention.take(), None);
+    let r = enter(&mut a, "/status");
+    a.handle(down(&r[0]));
+    assert_eq!(
+        a.attention.take(),
+        Some(kk_tui::attention::Attention::ServiceDown),
+        "alerted again after it came back and went away"
+    );
+    // an error answer is still an answer: the service is up, so no alert and the flag is cleared
+    let r = enter(&mut a, "/status");
+    a.handle(ok(
+        &r[0],
+        500,
+        json!({"error": {"code": "STORE", "message": "x"}}),
+    ));
+    assert_eq!(a.attention.take(), None);
+    let r = enter(&mut a, "/status");
+    a.handle(down(&r[0]));
+    assert_eq!(
+        a.attention.take(),
+        Some(kk_tui::attention::Attention::ServiceDown)
+    );
+}

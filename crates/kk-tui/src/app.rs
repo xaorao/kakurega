@@ -289,6 +289,8 @@ pub struct App {
     history_to_save: Vec<String>,
     history_loaded: bool,
     away_pending: bool,
+    /// Set once the service stopped answering, so the owner is alerted once and not on every failed request; cleared by any answer.
+    service_down: bool,
     /// Set by Esc while an answer is streaming; the network thread then closes the connection.
     pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     live: Option<(usize, String)>,
@@ -395,6 +397,7 @@ impl App {
             history_to_save: Vec::new(),
             history_loaded: false,
             away_pending: true,
+            service_down: false,
             cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             live: None,
             chat_waiting: false,
@@ -2638,9 +2641,14 @@ impl App {
                     Kind::Error,
                     format!("Could not reach the service: {}", clean(&e)),
                 );
+                if !std::mem::replace(&mut self.service_down, true) {
+                    self.attention = Some(crate::attention::Attention::ServiceDown);
+                }
                 return Vec::new();
             }
         };
+        // any answer at all means the service is there again
+        self.service_down = false;
         let ok = status < 300;
         match intent {
             Intent::Config => {
