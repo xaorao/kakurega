@@ -68,8 +68,8 @@ pub fn tools() -> Value {
     json!([
         tool("overview", "Overview", "Counts only: setup problems, reviews by state, memories by privacy level and the signed log's latest entry. Never returns source text, memory text or findings.", obj(json!({}), &[]),
             out_obj(json!({"version": {"type": "string"}, "ready": {"type": "boolean"}, "approvals_require_signature": {"type": "boolean"}, "setup_problems": {"type": "array", "items": {"type": "string"}}, "optional_missing": {"type": "array", "items": {"type": "string"}}, "reviews": {"type": "object"}, "memories_by_level": {"type": "object"}, "log": {"type": "object"}}), &["ready", "reviews"])),
-        tool("list_reviews", "List reviews", "List reviews with state and counts only. Never returns source text.", obj(json!({}), &[]),
-            out_obj(json!({"jobs": {"type": "array", "items": {"type": "object"}}}), &["jobs"])),
+        tool("list_reviews", "List reviews", "List reviews with state and counts only, newest first. Never returns source text. Give a `limit` to get only the newest ones; with it the answer also says the `total` and whether it was `truncated`.", obj(json!({"limit": {"type": "integer", "description": "How many reviews at most, newest first, 1 to 500. Leave it out for all of them.", "minimum": 1, "maximum": 500}}), &[]),
+            out_obj(json!({"jobs": {"type": "array", "items": {"type": "object"}}, "total": {"type": "integer"}, "truncated": {"type": "boolean"}}), &["jobs"])),
         tool("start_review", "Start a review", "Start a private review of a project folder for a named recipient. Nothing is released by starting a review.",
             obj(json!({"repo": string_prop("Absolute path of the project folder, inside a root the owner allowed.", 4096), "recipient": string_prop("Who will receive the result.", 128)}), &["repo", "recipient"]),
             out_obj(json!({"id": {"type": "string"}}), &["id"])),
@@ -241,13 +241,20 @@ pub struct Ctx {
 /// counted here.
 pub const CALLS_PER_MINUTE: usize = 60;
 pub const STARTS_PER_HOUR: usize = 4;
+/// Approvals one connection may get created in an hour. A review that is not ready, or one that already has an approval waiting,
+/// does not count: only an approval that was really created asks something of the owner.
+pub const APPROVALS_PER_HOUR: usize = 4;
+/// The largest structured answer a tool sends. The same text is also in `content`, so the bytes on the wire are about double.
+pub const MAX_RESULT_BYTES: usize = 256 * 1024;
 
 #[derive(Debug)]
 pub struct Budget {
     calls_per_minute: usize,
     starts_per_hour: usize,
+    approvals_per_hour: usize,
     calls: std::collections::VecDeque<std::time::Instant>,
     starts: std::collections::VecDeque<std::time::Instant>,
+    approvals: std::collections::VecDeque<std::time::Instant>,
 }
 
 impl Budget {
@@ -255,9 +262,21 @@ impl Budget {
         Budget {
             calls_per_minute,
             starts_per_hour,
+            approvals_per_hour: APPROVALS_PER_HOUR,
             calls: Default::default(),
             starts: Default::default(),
+            approvals: Default::default(),
         }
+    }
+
+    pub fn set_approvals_per_hour(&mut self, n: usize) {
+        self.approvals_per_hour = n;
+    }
+
+    /// Gives back the room a `request_approval` took when it was admitted, because it did not create an approval. Room is
+    /// counted, not timed: the entry that goes is the newest, which leaves the count exact and the window slightly generous.
+    pub fn refund_approval(&mut self) {
+        self.approvals.pop_back();
     }
 
     /// Takes one call from the budget, or says after how many seconds there is room again. Refused calls cost nothing.
@@ -278,6 +297,13 @@ impl Budget {
         {
             self.starts.pop_front();
         }
+        while self
+            .approvals
+            .front()
+            .is_some_and(|t| now.saturating_duration_since(*t) >= hour)
+        {
+            self.approvals.pop_front();
+        }
         let wait = |oldest: Option<&std::time::Instant>, span: std::time::Duration| {
             oldest.map_or(1, |t| {
                 span.saturating_sub(now.saturating_duration_since(*t))
@@ -291,9 +317,16 @@ impl Budget {
         if tool == "start_review" && self.starts.len() >= self.starts_per_hour {
             return Err(wait(self.starts.front(), hour));
         }
+        // room is taken here, when the call is admitted, so calls that run at the same time cannot all slip past the limit
+        if tool == "request_approval" && self.approvals.len() >= self.approvals_per_hour {
+            return Err(wait(self.approvals.front(), hour));
+        }
         self.calls.push_back(now);
         if tool == "start_review" {
             self.starts.push_back(now);
+        }
+        if tool == "request_approval" {
+            self.approvals.push_back(now);
         }
         Ok(())
     }
@@ -321,6 +354,12 @@ impl Ctx {
     /// Replaces the default limits (used by tests and by an owner who wants them tighter).
     pub fn with_budget(self, calls_per_minute: usize, starts_per_hour: usize) -> Ctx {
         *self.budget.lock().expect("lock") = Budget::new(calls_per_minute, starts_per_hour);
+        self
+    }
+
+    /// How many approvals this connection may get created in an hour (`--approvals-per-hour`).
+    pub fn with_approvals_per_hour(self, n: usize) -> Ctx {
+        self.budget.lock().expect("lock").set_approvals_per_hour(n);
         self
     }
 
@@ -474,6 +513,13 @@ fn call(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, name: &str, a: &Va
         if let Err(why) = conforms(&schema, &result["structuredContent"]) {
             return fail(&format!(
                 "the answer did not match this tool's output schema ({why}), so it was not used"
+            ));
+        }
+        // the schema says what shape an answer has, not how big it may be
+        if result["structuredContent"].to_string().len() > MAX_RESULT_BYTES {
+            return fail(&format!(
+                "the answer is larger than {} KiB, so it was not sent; ask for less (list_reviews takes a limit)",
+                MAX_RESULT_BYTES / 1024
             ));
         }
     }
@@ -637,7 +683,17 @@ fn call_inner(
     };
     let r = match name {
         "overview" => admin.get("/admin/overview"),
-        "list_reviews" => admin.get("/admin/jobs"),
+        "list_reviews" => admin.get("/admin/jobs").map(|(code, mut v)| {
+            if let Some(n) = a.get("limit").and_then(Value::as_u64) {
+                let total = v["jobs"].as_array().map_or(0, Vec::len);
+                if let Some(jobs) = v["jobs"].as_array_mut() {
+                    jobs.truncate(usize::try_from(n).unwrap_or(usize::MAX));
+                }
+                v["total"] = json!(total);
+                v["truncated"] = json!(u64::try_from(total).unwrap_or(u64::MAX) > n);
+            }
+            (code, v)
+        }),
         "start_review" => admin.post(
             "/admin/jobs",
             json!({"repo": s("repo"), "recipient": s("recipient")}),
@@ -849,6 +905,10 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
                 .cloned()
                 .unwrap_or(Value::Object(Map::new()));
             let result = call(admin, ctx, name, &args);
+            if name == "request_approval" && result["isError"] == true {
+                // nothing was created, so nothing is asked of the owner and the room goes back
+                ctx.budget.lock().expect("lock").refund_approval();
+            }
             report(admin, name, outcome_of(&result), traceparent(&p));
             ok(result)
         }
@@ -1138,7 +1198,11 @@ fn unknown_option(args: &[String]) -> Option<String> {
         let a = args[i].as_str();
         if matches!(
             a,
-            "--data-dir" | "--allow" | "--calls-per-minute" | "--starts-per-hour"
+            "--data-dir"
+                | "--allow"
+                | "--calls-per-minute"
+                | "--starts-per-hour"
+                | "--approvals-per-hour"
         ) {
             let value = args.get(i + 1).map(String::as_str).unwrap_or("");
             if value.is_empty() || value.starts_with("--") {
@@ -1199,7 +1263,7 @@ pub fn run(args: &[String]) -> u8 {
     }
     if let Some(why) = unknown_option(args) {
         eprintln!(
-            "{why}\nusage: kaku mcp [--read-only] [--allow TOOL,TOOL] [--leased] [--calls-per-minute N] [--starts-per-hour N] [--data-dir DIR]"
+            "{why}\nusage: kaku mcp [--read-only] [--allow TOOL,TOOL] [--leased] [--calls-per-minute N] [--starts-per-hour N] [--approvals-per-hour N] [--data-dir DIR]"
         );
         return 2;
     }
@@ -1232,9 +1296,10 @@ pub fn run(args: &[String]) -> u8 {
     match (
         limit("--calls-per-minute", CALLS_PER_MINUTE),
         limit("--starts-per-hour", STARTS_PER_HOUR),
+        limit("--approvals-per-hour", APPROVALS_PER_HOUR),
     ) {
-        (Ok(c), Ok(h)) => ctx = ctx.with_budget(c, h),
-        (Err(why), _) | (_, Err(why)) => {
+        (Ok(c), Ok(h), Ok(a)) => ctx = ctx.with_budget(c, h).with_approvals_per_hour(a),
+        (Err(why), _, _) | (_, Err(why), _) | (_, _, Err(why)) => {
             eprintln!("{why}");
             return 2;
         }
@@ -1699,6 +1764,55 @@ mod budget_tests {
         );
         // a clock that goes backwards never panics
         assert!(Budget::new(1, 1).admit(t0, "overview").is_ok());
+    }
+
+    #[test]
+    fn bd02_approvals_have_their_own_hourly_limit_that_is_taken_on_admission_and_given_back_on_failure(
+    ) {
+        let t0 = Instant::now();
+        assert_eq!(APPROVALS_PER_HOUR, 4);
+        let mut b = Budget::new(100, 100);
+        b.set_approvals_per_hour(2);
+        assert!(b.admit(t0, "request_approval").is_ok());
+        assert!(b
+            .admit(t0 + Duration::from_secs(1), "request_approval")
+            .is_ok());
+        let wait = b
+            .admit(t0 + Duration::from_secs(2), "request_approval")
+            .unwrap_err();
+        assert!((3597..=3600).contains(&wait), "{wait}");
+        // other tools are not held by it, and a refused approval does not use up a call
+        assert!(b.admit(t0 + Duration::from_secs(2), "overview").is_ok());
+        assert!(b.admit(t0 + Duration::from_secs(2), "start_review").is_ok());
+        // a call that did not create an approval gives its room back: exactly one place
+        b.refund_approval();
+        assert!(b
+            .admit(t0 + Duration::from_secs(3), "request_approval")
+            .is_ok());
+        assert!(b
+            .admit(t0 + Duration::from_secs(3), "request_approval")
+            .is_err());
+        // an hour later the first one has left the window
+        assert!(b
+            .admit(t0 + Duration::from_secs(3600), "request_approval")
+            .is_ok());
+        // calls at the very same moment cannot all pass: the room is taken when each is admitted
+        let mut b = Budget::new(100, 100);
+        b.set_approvals_per_hour(2);
+        let results: Vec<bool> = (0..5)
+            .map(|_| b.admit(t0, "request_approval").is_ok())
+            .collect();
+        assert_eq!(results, [true, true, false, false, false]);
+        // a refund with nothing to give back is harmless, and a limit of one means one
+        let mut b = Budget::new(100, 100);
+        b.refund_approval();
+        b.set_approvals_per_hour(1);
+        assert!(b.admit(t0, "request_approval").is_ok());
+        assert!(b.admit(t0, "request_approval").is_err());
+        // the call limit still applies to approvals
+        let mut b = Budget::new(1, 100);
+        assert!(b.admit(t0, "request_approval").is_ok());
+        assert!(b.admit(t0, "request_approval").is_err());
     }
 }
 

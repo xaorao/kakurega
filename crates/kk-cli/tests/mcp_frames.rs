@@ -2263,3 +2263,363 @@ fn mc94_a_cancelled_call_sends_no_more_progress_and_no_answer() {
         "{rest:?}"
     );
 }
+
+/// A service stand-in for the limits: jobs come from `jobs`, approvals are created for any review whose id does not start with
+/// `bad` (those get a refusal), leases are always granted, and the record of each call is kept.
+fn limits_admin(token: &str, delay_ms: u64, jobs: Value) -> (FakeAdmin, Arc<Mutex<Vec<Value>>>) {
+    let recorded = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let rec = recorded.clone();
+    let counter = Arc::new(Mutex::new(0u32));
+    let admin = FakeAdmin::start_router(
+        token,
+        delay_ms,
+        Arc::new(move |path, body| {
+            match path {
+            "/admin/agent-calls" => {
+                if let Ok(v) = serde_json::from_str::<Value>(body) {
+                    rec.lock().unwrap().push(v);
+                }
+                (200, "{}".to_string())
+            }
+            "/admin/agent-access/use" => (200, json!({"allowed": true, "remaining": 9}).to_string()),
+            "/admin/agent-access/refund" => (200, json!({"refunded": true}).to_string()),
+            "/admin/jobs" => (200, json!({"jobs": jobs}).to_string()),
+            p if p.ends_with("/approval") && p.contains("/bad") => (
+                409,
+                json!({"error": {"code": "NOTHING_TO_RELEASE", "message": "there is nothing to approve"}}).to_string(),
+            ),
+            p if p.ends_with("/approval") => {
+                let mut n = counter.lock().unwrap();
+                *n += 1;
+                (200, json!({"approval": format!("appr-{n}"), "digest": "d", "how": "h"}).to_string())
+            }
+            _ => (200, r#"{"ready":true,"reviews":{},"jobs":[],"id":"job-1"}"#.to_string()),
+        }
+        }),
+    );
+    (admin, recorded)
+}
+
+fn jobs_of(n: usize) -> Value {
+    // newest first, as the service lists them
+    json!((0..n)
+        .rev()
+        .map(|i| json!({"id": format!("job-{i}"), "state": "ready"}))
+        .collect::<Vec<_>>())
+}
+
+fn approval_posts(admin: &FakeAdmin) -> usize {
+    admin
+        .work_seen()
+        .iter()
+        .filter(|l| l.contains("/approval"))
+        .count()
+}
+
+#[test]
+fn mc96_list_reviews_gives_the_newest_few_with_the_total_when_asked_and_everything_when_not() {
+    let dir = fresh("mc96");
+    let (admin, _) = limits_admin("tok-96", 0, jobs_of(30));
+    admin.publish(&dir);
+    let mut s = live(&dir);
+    let mut id = 0;
+    let mut ask = |s: &mut Live, args: Value| {
+        id += 1;
+        s.send(&call(id, "list_reviews", args));
+        s.recv()
+    };
+    // no limit: nothing changes, and no extra fields appear
+    let r = ask(&mut s, json!({}));
+    assert_eq!(r["result"]["isError"], false, "{r}");
+    let sc = &r["result"]["structuredContent"];
+    assert_eq!(sc["jobs"].as_array().unwrap().len(), 30);
+    assert!(
+        sc.get("total").is_none() && sc.get("truncated").is_none(),
+        "{sc}"
+    );
+    // a limit: the newest few, in the service's order, and what was left out is said
+    let r = ask(&mut s, json!({"limit": 5}));
+    let sc = &r["result"]["structuredContent"];
+    let ids: Vec<&str> = sc["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|j| j["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        ["job-29", "job-28", "job-27", "job-26", "job-25"],
+        "{sc}"
+    );
+    assert_eq!(
+        (sc["total"].as_u64(), sc["truncated"].as_bool()),
+        (Some(30), Some(true))
+    );
+    // a limit at or over the number of reviews is not truncated, and 1 and 500 are the ends of the range
+    for (limit, want, truncated) in [
+        (30, 30, false),
+        (31, 30, false),
+        (500, 30, false),
+        (1, 1, true),
+        (29, 29, true),
+    ] {
+        let r = ask(&mut s, json!({"limit": limit}));
+        let sc = &r["result"]["structuredContent"];
+        assert_eq!(sc["jobs"].as_array().unwrap().len(), want, "limit {limit}");
+        assert_eq!(
+            (sc["total"].as_u64(), sc["truncated"].as_bool()),
+            (Some(30), Some(truncated)),
+            "limit {limit}"
+        );
+    }
+    // a limit that is not a whole number from 1 to 500 is refused before the service is asked
+    let before = admin.work_seen().len();
+    for bad in [
+        json!(0),
+        json!(501),
+        json!(-1),
+        json!("5"),
+        json!(1.5),
+        json!(true),
+        json!(null),
+        json!([5]),
+        json!(9_007_199_254_740_993u64),
+    ] {
+        let r = ask(&mut s, json!({"limit": bad.clone()}));
+        assert_eq!(r["result"]["isError"], true, "{bad}: {r}");
+        assert!(r["result"].get("structuredContent").is_none(), "{bad}");
+    }
+    assert_eq!(
+        admin.work_seen().len(),
+        before,
+        "a bad limit never reaches the service"
+    );
+    assert!(s.close().is_empty());
+}
+
+#[test]
+fn mc97_an_answer_over_256_kib_is_not_sent_one_at_the_limit_is_and_the_cap_covers_every_tool() {
+    let dir = fresh("mc97");
+    // the size the server measures is the structured answer as one compact JSON text
+    let size = |n: usize| {
+        serde_json::to_string(&json!({"jobs": [{"pad": "x".repeat(n)}]}))
+            .unwrap()
+            .len()
+    };
+    let overhead = size(0);
+    let exact = 256 * 1024 - overhead;
+    assert_eq!(size(exact), 256 * 1024);
+    for (name, pad, expect_ok) in [
+        ("under", exact - 1000, true),
+        ("exactly", exact, true),
+        ("one over", exact + 1, false),
+        ("far over", 600 * 1024, false),
+    ] {
+        let (admin, _) = limits_admin(
+            &format!("tok-97-{name}"),
+            0,
+            json!([{"pad": "x".repeat(pad)}]),
+        );
+        admin.publish(&dir);
+        let mut s = live(&dir);
+        s.send(&call(1, "list_reviews", json!({})));
+        let r = s.recv();
+        assert_eq!(r["result"]["isError"], !expect_ok, "{name}");
+        if expect_ok {
+            assert!(
+                r["result"]["structuredContent"]["jobs"].is_array(),
+                "{name}"
+            );
+        } else {
+            let t = text_of(&r);
+            assert!(
+                t.contains("larger than 256 KiB") && t.contains("limit"),
+                "{name}: {t}"
+            );
+            assert!(
+                r["result"].get("structuredContent").is_none(),
+                "{name}: nothing of the big answer is sent"
+            );
+            assert!(
+                t.len() < 300,
+                "{name}: the refusal itself is short: {}",
+                t.len()
+            );
+        }
+        assert!(s.close().is_empty());
+    }
+    // asking for less makes the same big store fit: 40 reviews of about 10 KB each are over the cap, ten of them are not
+    let jobs: Vec<Value> = (0..40)
+        .map(|i| json!({"id": format!("job-{i}"), "pad": "y".repeat(10_000)}))
+        .collect();
+    assert!(serde_json::to_string(&json!({"jobs": jobs})).unwrap().len() > 256 * 1024);
+    let (admin, _) = limits_admin("tok-97-less", 0, json!(jobs));
+    admin.publish(&dir);
+    let mut s = live(&dir);
+    s.send(&call(1, "list_reviews", json!({})));
+    let r = s.recv();
+    assert_eq!(
+        r["result"]["isError"],
+        true,
+        "all forty are too much: {}",
+        text_of(&r)
+    );
+    s.send(&call(2, "list_reviews", json!({"limit": 10})));
+    let r = s.recv();
+    assert_eq!(r["result"]["isError"], false, "{}", text_of(&r));
+    assert_eq!(
+        r["result"]["structuredContent"]["jobs"]
+            .as_array()
+            .unwrap()
+            .len(),
+        10
+    );
+    assert_eq!(
+        (
+            r["result"]["structuredContent"]["total"].as_u64(),
+            r["result"]["structuredContent"]["truncated"].as_bool()
+        ),
+        (Some(40), Some(true))
+    );
+    assert!(s.close().is_empty());
+    // another tool: an answer that fits its schema but carries a huge extra field is refused too
+    let dir2 = fresh("mc97-overview");
+    let admin = FakeAdmin::start_with(
+        "tok-97-overview",
+        0,
+        &json!({"ready": true, "reviews": {}, "extra": "z".repeat(300 * 1024)}).to_string(),
+    );
+    admin.publish(&dir2);
+    let mut s = live(&dir2);
+    s.send(&call(1, "overview", json!({})));
+    let r = s.recv();
+    assert_eq!(r["result"]["isError"], true, "{}", text_of(&r));
+    assert!(text_of(&r).contains("larger than 256 KiB"));
+    assert!(s.close().is_empty());
+}
+
+#[test]
+fn mc98_a_connection_may_get_only_so_many_approvals_created_an_hour_and_only_created_ones_count() {
+    let dir = fresh("mc98");
+    let (admin, recorded) = limits_admin("tok-98", 0, json!([]));
+    admin.publish(&dir);
+    let mut s = live_with(&dir, &["--leased", "--approvals-per-hour", "2"]);
+    let mut id = 0;
+    let mut ask = |s: &mut Live, job: &str| {
+        id += 1;
+        s.send(&call(id, "request_approval", json!({"id": job})));
+        s.recv()
+    };
+    // an agent that asks too early, again and again, is turned away by the service and is not locked out by this limit
+    for n in 1..=5 {
+        let r = ask(&mut s, &format!("bad-{n}"));
+        assert_eq!(r["result"]["isError"], true);
+        assert!(!text_of(&r).contains("rate limit"), "{}", text_of(&r));
+    }
+    // two approvals are created, the third is refused by the limit, and the service never hears about it
+    assert_eq!(ask(&mut s, "job-1")["result"]["isError"], false);
+    assert_eq!(ask(&mut s, "job-2")["result"]["isError"], false);
+    let posts_before = approval_posts(&admin);
+    let r = ask(&mut s, "job-3");
+    assert_eq!(r["result"]["isError"], true);
+    assert!(text_of(&r).contains("rate limit"), "{}", text_of(&r));
+    assert_eq!(
+        approval_posts(&admin),
+        posts_before,
+        "a refused call does not reach the service"
+    );
+    assert!(!admin.work_seen().iter().any(|l| l.contains("job-3")));
+    // other tools are not held, and the refusal is in the signed log as a refusal
+    id += 1;
+    s.send(&call(id, "overview", json!({})));
+    assert_eq!(s.recv()["result"]["isError"], false);
+    assert!(s.close().is_empty());
+    let got = recorded.lock().unwrap().clone();
+    let refused = got
+        .iter()
+        .filter(|c| c == &&json!({"tool": "request_approval", "outcome": "refused"}))
+        .count();
+    assert_eq!(refused, 1, "{got:?}");
+    assert!(
+        !format!("{got:?}").contains("job-3"),
+        "the log never carries a review id"
+    );
+}
+
+#[test]
+fn mc99_calls_made_at_the_same_moment_cannot_all_get_past_the_approval_limit() {
+    let dir = fresh("mc99");
+    // a slow service keeps all four calls in flight together
+    let (admin, _) = limits_admin("tok-99", 400, json!([]));
+    admin.publish(&dir);
+    let mut s = live_with(&dir, &["--leased", "--approvals-per-hour", "2"]);
+    for n in 1..=4 {
+        s.send(&call(
+            n,
+            "request_approval",
+            json!({"id": format!("job-{n}")}),
+        ));
+    }
+    let mut errors = 0;
+    let mut oks = 0;
+    for _ in 0..4 {
+        let r = s.recv();
+        if r["result"]["isError"] == true {
+            errors += 1;
+            assert!(text_of(&r).contains("rate limit"), "{}", text_of(&r));
+        } else {
+            oks += 1;
+        }
+    }
+    assert_eq!((oks, errors), (2, 2));
+    assert_eq!(
+        approval_posts(&admin),
+        2,
+        "only two ever reached the service"
+    );
+    assert!(s.close().is_empty());
+}
+
+#[test]
+fn mc9a_the_approvals_per_hour_option_takes_a_whole_number_from_1_to_1000_and_nothing_else() {
+    let dir = fresh("mc9a");
+    for bad in ["0", "1001", "-1", "many", "1.5", ""] {
+        let out = Command::new(env!("CARGO_BIN_EXE_kaku"))
+            .args(["mcp", "--data-dir"])
+            .arg(&dir)
+            .args(["--approvals-per-hour", bad])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{bad:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("--approvals-per-hour"), "{bad:?}: {err}");
+        assert!(out.stdout.is_empty());
+    }
+    // a missing value, and the usage line names the option
+    let out = Command::new(env!("CARGO_BIN_EXE_kaku"))
+        .args(["mcp", "--data-dir"])
+        .arg(&dir)
+        .arg("--approvals-per-hour")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let out = Command::new(env!("CARGO_BIN_EXE_kaku"))
+        .args(["mcp", "--bogus"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("[--approvals-per-hour N]"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // 1 and 1000 are accepted
+    for good in ["1", "1000"] {
+        let mut s = live_with(&dir, &["--approvals-per-hour", good]);
+        s.send(&ping(json!(1)));
+        assert_eq!(s.recv()["id"], 1);
+        assert!(s.close().is_empty());
+    }
+}

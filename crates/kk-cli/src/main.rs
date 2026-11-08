@@ -37,7 +37,7 @@ Usage:
   kaku sessions [--json]            list the kept conversations; `kaku sessions export ID [--out FILE]` writes one as Markdown; these commands cannot approve anything
   kaku pair                         print a new one-time pairing link for the browser
   kaku approve [APPROVAL-ID]        review the exact release in this terminal and approve it
-  kaku mcp [--read-only] [--allow TOOL,TOOL] [--leased]   speak MCP on stdin and stdout for an agent client (cannot approve; --read-only hides the tools that start a review or ask for an approval; --allow gives the agent exactly the tools named; --calls-per-minute N and --starts-per-hour N lower the call limits, which are 60 and 4)
+  kaku mcp [--read-only] [--allow TOOL,TOOL] [--leased]   speak MCP on stdin and stdout for an agent client (cannot approve; --read-only hides the tools that start a review or ask for an approval; --allow gives the agent exactly the tools named; --calls-per-minute N, --starts-per-hour N and --approvals-per-hour N lower the limits, which are 60, 4 and 4; an answer over 256 KiB is not sent)
   kaku telegram set-token | clear-token   keep the bot token in the encrypted store (piped in, never on the command line)
   kaku telegram pair | kaku telegram [--clear-webhook]   notifications and counts on your phone (never contents); --clear-webhook removes a webhook that blocks polling
   kaku approver enroll|list|revoke   key that signs approvals (required once enrolled)

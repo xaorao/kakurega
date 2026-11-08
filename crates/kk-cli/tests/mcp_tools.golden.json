@@ -58,10 +58,17 @@
   {
     "name": "list_reviews",
     "title": "List reviews",
-    "description": "List reviews with state and counts only. Never returns source text.",
+    "description": "List reviews with state and counts only, newest first. Never returns source text. Give a `limit` to get only the newest ones; with it the answer also says the `total` and whether it was `truncated`.",
     "inputSchema": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "description": "How many reviews at most, newest first, 1 to 500. Leave it out for all of them.",
+          "minimum": 1,
+          "maximum": 500
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -73,6 +80,12 @@
           "items": {
             "type": "object"
           }
+        },
+        "total": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
         }
       },
       "required": [
