@@ -27,7 +27,14 @@ export function Chat() {
   const [recovered, setRecovered] = createSignal(false);
   const [live, setLive] = createSignal("");
   let abort: AbortController | null = null;
-  const [error, setError] = createSignal("");
+  const [error, setErrorRaw] = createSignal("");
+  // set only when sending a message failed and the message came back to the box, so "Try again" can never send some other draft:
+  // every other error, and every clearing of the error, takes it away
+  const [sendFailed, setSendFailed] = createSignal(false);
+  const setError = (message: string) => {
+    setErrorRaw(message);
+    setSendFailed(false);
+  };
   const [session, setSession] = createSignal<string | null>(null);
   // the project this conversation is about; its notes are offered, and no other project's
   const [project, setProject] = createSignal("");
@@ -670,6 +677,7 @@ export function Chat() {
     setText("");
     setBusy(true);
     setError("");
+    setSendFailed(false);
     setRecovered(false);
     setLive("");
     abort = new AbortController();
@@ -732,7 +740,10 @@ export function Chat() {
       }
       setTurns(turns().slice(0, -1));
       setText(message);
-      if (!aborted) setError(err instanceof ApiError ? err.message : t("chat.error"));
+      if (!aborted) {
+        setError(err instanceof ApiError ? err.message : t("chat.error"));
+        setSendFailed(true);
+      }
     } finally {
       setBusy(false);
       setLive("");
@@ -1193,8 +1204,9 @@ export function Chat() {
         <div class="actions">
           <button class="primary" type="submit" disabled={busy() || text().trim().length === 0}>{t("chat.send")}</button>
           <Show when={busy()}><button type="button" onClick={() => abort?.abort()}>{t("chat.stop")}</button></Show>
-          <button type="button" disabled={busy() || turns().length === 0} onClick={() => { setTurns([]); setError(""); forgetSent(draftKey(session())); hist = idleHistory(); }}>{t("chat.clear")}</button>
+          <button type="button" disabled={busy() || turns().length === 0} onClick={() => { setTurns([]); setError(""); setSendFailed(false); forgetSent(draftKey(session())); hist = idleHistory(); }}>{t("chat.clear")}</button>
           <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
+          <Show when={sendFailed() && error() && !busy() && text().trim().length > 0}><button type="button" onClick={() => void send()}>{t("chat.retry")}</button></Show>
           <Show when={recovered()}><span role="status" class="muted">{t("chat.recovered")}</span></Show>
         </div>
         <p class="muted">{t("chat.pick.hint")}</p>

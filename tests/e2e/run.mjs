@@ -99,6 +99,7 @@ let leaseRefusals = 1;
 let instructionRefusals = 0; // the one deliberate 422 when an instruction holds a secret
 let attachmentRefusals = 0; // the one deliberate 422 when a password-protected file is attached
 let chatFailureRefusals = 0; // the one deliberate 422 when a chat send is made to fail
+let sessionRefusals = 0; // the one deliberate 422 when keeping a conversation is made to fail
 let piiAllowRefusals = 0; // the one deliberate 422 when a pattern that would match everything is added to the personal-data list
 let forgottenWordsRefusals = 0; // the one deliberate 422 when forgotten words are typed in again
 page.on("request", (r) => { try { requestOrigins.add(new URL(r.url()).origin); } catch { /* data: urls */ } });
@@ -113,6 +114,10 @@ page.on("console", (m) => {
   }
   if (m.location().url.endsWith("/api/chat/stream") && /status of 422/.test(m.text()) && chatFailureRefusals > 0) {
     chatFailureRefusals--;
+    return;
+  }
+  if (m.location().url.endsWith("/api/sessions") && /status of 422/.test(m.text()) && sessionRefusals > 0) {
+    sessionRefusals--;
     return;
   }
   if (m.location().url.endsWith("/api/pii-allow") && /status of 422/.test(m.text()) && piiAllowRefusals > 0) {
@@ -1342,11 +1347,33 @@ try {
     await page.getByRole("alert").filter({ hasText: "The model is not running." }).waitFor();
     const afterFail = await page.locator(".msg.assistant").count();
     check("a failed send says why in words, adds no assistant bubble, and gives the message back", afterFail === before && (await page.getByLabel("Your message").inputValue()) === "retry canary question", `${before}->${afterFail} bubbles, box=${JSON.stringify(await page.getByLabel("Your message").inputValue())}`);
+    check("a Try again button is offered next to the reason", (await page.getByRole("button", { name: "Try again" }).count()) === 1);
     await page.unroute("**/api/chat/stream");
-    await page.getByRole("button", { name: "Send" }).click();
+    await page.getByRole("button", { name: "Try again" }).click();
     await page.locator(".msg.assistant").nth(before).waitFor();
+    check("Try again sends the message that came back, and the button goes with the error", (await page.getByRole("button", { name: "Try again" }).count()) === 0);
     await page.getByRole("button", { name: "Stop" }).waitFor({ state: "detached" }).catch(() => {});
     check("sending the same message again after the failure works and clears the error", (await page.getByRole("alert").filter({ hasText: "The model is not running." }).count()) === 0 && (await page.locator(".msg.assistant").count()) === before + 1);
+    await page.getByLabel("Your message").fill("");
+    // a second failure: emptying the box takes the offer away
+    chatFailureRefusals = 1;
+    await page.route("**/api/chat/stream", (route) => route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: { code: "NO_MODEL", message: "The model is not running." } }) }));
+    await page.getByLabel("Your message").fill("second retry canary");
+    await page.getByRole("button", { name: "Send" }).click();
+    await page.getByRole("alert").filter({ hasText: "The model is not running." }).waitFor();
+    await page.getByRole("button", { name: "Try again" }).waitFor();
+    await page.getByLabel("Your message").fill("");
+    check("emptying the box takes the Try again offer away, so nothing is sent by it", (await page.getByRole("button", { name: "Try again" }).count()) === 0);
+    await page.getByLabel("Your message").fill("second retry canary");
+    await page.getByRole("button", { name: "Try again" }).waitFor();
+    // a different action that fails while the failed message is still in the box must not turn into a way to send it
+    await page.route("**/api/sessions", (route) => route.request().method() === "POST" ? route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: { code: "NO_STORE", message: "Keeping is not possible right now." } }) }) : route.continue());
+    sessionRefusals = 1;
+    await page.getByRole("button", { name: "Keep this conversation" }).click();
+    await page.getByRole("alert").filter({ hasText: "Keeping is not possible right now." }).waitFor();
+    check("another error with the message still in the box offers no Try again", (await page.getByRole("button", { name: "Try again" }).count()) === 0 && (await page.getByLabel("Your message").inputValue()) === "second retry canary");
+    await page.unroute("**/api/sessions");
+    await page.unroute("**/api/chat/stream");
     await page.getByLabel("Your message").fill("");
   }
   await messageBox.fill("half text");

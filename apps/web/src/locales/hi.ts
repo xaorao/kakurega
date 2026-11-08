@@ -575,6 +575,7 @@ export const hi: Record<keyof typeof en, string> = {
   "web.searchResults": "खोज साइट के सुझाव (अविश्वसनीय)",
   "web.searchUse": "पतों में जोड़ें",
   "chat.whichNotes": "इस उत्तर के लिए उपयोग किए गए नोट ({n})",
+  "chat.retry": "फिर से कोशिश करें",
   "chat.error": "सहायक उत्तर नहीं दे सका।",
   "nav.docs": "दस्तावेज़",
   "docs.title": "अपने दस्तावेज़ों से पूछें",
