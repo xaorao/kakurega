@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { flipFuses, getCurrentFuseWire, FuseVersion, FuseV1Options } from "@electron/fuses";
+import { requireCurrentElectron } from "./electron-current.mjs";
 
 const require = createRequire(import.meta.url);
 const asar = require("@electron/asar");
@@ -106,6 +107,7 @@ export async function packageLinux({ electronDist, kaku, worker, web, outDir, ve
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  requireCurrentElectron();
   const [electronDist, kaku, worker, web, outDir, version] = process.argv.slice(2);
   const r = await packageLinux({ electronDist, kaku, worker, web, outDir, version });
   console.log(JSON.stringify({ deb: r.deb, fuses: r.fuses }));

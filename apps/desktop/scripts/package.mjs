@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { flipFuses, getCurrentFuseWire, FuseVersion, FuseV1Options } from "@electron/fuses";
+import { requireCurrentElectron } from "./electron-current.mjs";
 
 const require = createRequire(import.meta.url);
 const asar = require("@electron/asar");
@@ -57,6 +58,7 @@ export async function packageApp(outDir, { cookieEncryption = true } = {}) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  requireCurrentElectron();
   const r = await packageApp(process.argv[2] ?? join(appDir, "../../target/packaged"));
   console.log(JSON.stringify({ app: r.app, hash: r.hash, fuses: r.fuses }));
 }
