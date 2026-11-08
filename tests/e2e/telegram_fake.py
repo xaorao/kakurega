@@ -46,11 +46,15 @@ class H(BaseHTTPRequestHandler):
 
     def reply(self, obj):
         body = json.dumps(obj).encode()
-        self.send_response(200)
-        self.send_header("content-type", "application/json")
-        self.send_header("content-length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            # the bridge was stopped while its poll was held open: nobody is left to answer
+            pass
 
     def do_GET(self):
         self.path = self.path.replace(STORED, TOKEN)
@@ -95,10 +99,28 @@ class H(BaseHTTPRequestHandler):
             with lock:
                 menus.append(body)
             self.reply({"ok": True, "result": True})
+        elif self.path == f"/bot{TOKEN}/sendMessage" and send_mode[0] != "ok":
+            with lock:
+                attempts.append((time.time(), send_mode[0], body.get("text", "")[:40]))
+                mode = send_mode[0]
+                if mode == "429-once":
+                    send_mode[0] = "ok"
+            if mode == "500":
+                out = json.dumps({"ok": False, "error_code": 500, "description": "Internal Server Error"}).encode()
+                code = 500
+            else:
+                out = json.dumps({"ok": False, "error_code": 429, "description": "Too Many Requests: retry after 2", "parameters": {"retry_after": 2}}).encode()
+                code = 429
+            self.send_response(code)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
         elif self.path == f"/bot{TOKEN}/sendMessage":
             with lock:
                 msg_ids[0] += 1
                 body["_message_id"] = msg_ids[0]
+                body["_t"] = time.time()
                 sent.append(body)
             self.reply({"ok": True, "result": {"message_id": msg_ids[0]}})
         elif self.path == f"/bot{TOKEN}/deleteWebhook":
@@ -113,6 +135,8 @@ class H(BaseHTTPRequestHandler):
             self.send_response(404); self.end_headers()
 
 
+send_mode = ["ok"]
+attempts = []
 menus = []
 polls = []
 closing = [False]
@@ -274,6 +298,58 @@ try:
     with lock:
         replay = [x for x in sent[n_before:] if "finished" in x["text"] or "approval for" in x["text"]]
     check("and does not replay old notifications", not replay, str(replay)[:100])
+
+    # /mute end to end: notices carry disable_notification while muted, the reply to /mute itself does not, and /mute off ends it
+    def review_notice(recipient="tg-recipient-Acme"):
+        start = len(sent)
+        j = adm("/admin/jobs", {"repo": str(work / "root/payments-service"), "recipient": recipient})["id"]
+        m = wait_sent(lambda m: j in m["text"] and "finished" in m["text"], timeout=120)
+        return j, m
+
+    n0 = len(sent)
+    say(111, "/mute 30m")
+    mm = wait_sent(lambda m: "without a sound for" in m["text"])
+    check("/mute 30m is answered, and that answer itself is not quiet", mm is not None and not mm.get("disable_notification"), str(mm)[:120])
+    j1, n1 = review_notice()
+    check("a notice sent while muted is quiet on the wire (disable_notification true) and still arrives", n1 is not None and n1.get("disable_notification") is True, str(n1)[:160])
+    say(111, "/mute off")
+    mo = wait_sent(lambda m: "Sound is back on" in m["text"])
+    check("/mute off is answered", mo is not None)
+    j2, n2 = review_notice()
+    check("after /mute off the next notice carries no quiet flag", n2 is not None and not n2.get("disable_notification"), str(n2)[:160])
+
+    # Telegram's flood control (429 with retry_after): the notice is held for that long, then delivered once
+    send_mode[0] = "429-once"
+    t429 = time.time()
+    j3, n3 = review_notice()
+    with lock:
+        tries = [a for a in attempts if a[1] == "429-once"]
+    gap = ((n3 or {}).get("_t", 0) - tries[0][0]) if tries else 0
+    check("after a 429 the bridge tried once, waited the 2 seconds Telegram named, and then delivered the notice", n3 is not None and len(tries) == 1 and 1.9 <= gap < 15, f"tries={len(tries)} gap={gap:.1f}s")
+    check("and the notice was delivered once, not twice", len([x for x in sent if j3 in x["text"] and "finished" in x["text"]]) == 1)
+
+    # an outage with the bridge restarted in the middle: the notice waits in the owner-only outbox file and arrives once afterwards
+    b2.terminate(); b2.wait(timeout=10)
+    send_mode[0] = "500"
+    b3 = start_bridge()
+    time.sleep(2)
+    j4 = adm("/admin/jobs", {"repo": str(work / "root/payments-service"), "recipient": "tg-recipient-Acme"})["id"]
+    ob = data / "telegram-outbox.json"
+    for _ in range(300):
+        if ob.exists() and j4 in ob.read_text():
+            break
+        time.sleep(0.2)
+    check("while Telegram is failing the notice waits in an owner-only outbox file", ob.exists() and j4 in ob.read_text() and (ob.stat().st_mode & 0o077) == 0, "")
+    check("and nothing was delivered yet", not any(j4 in x["text"] for x in sent))
+    b3.terminate(); b3.wait(timeout=10)
+    send_mode[0] = "ok"
+    b4 = start_bridge()
+    got = wait_sent(lambda m: j4 in m["text"] and "finished" in m["text"], timeout=60)
+    check("after a restart, with Telegram working again, the waiting notice is delivered", got is not None)
+    time.sleep(4)
+    check("and delivered exactly once", len([x for x in sent if j4 in x["text"] and "finished" in x["text"]]) == 1)
+    check("the outbox file is empty or gone afterwards", (not ob.exists()) or j4 not in ob.read_text())
+    b2 = b4
 
     everything = json.dumps(sent)
     for marker in ["tg-recipient", "Acme", "payments", "session.py", "Token still valid", "hunter2", "/Users/", ".env"]:
