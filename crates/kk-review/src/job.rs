@@ -1,6 +1,7 @@
-use crate::check::{parse_finding, run_reproducer, CheckEnv, CheckResult, Finding};
+use crate::check::{parse_finding, CheckResult, Finding};
 use crate::import::{keyed_commitment, manifest, scan_tree, Imported, Manifest};
 use crate::release::{assemble, Rejection, ReleaseDraft};
+use crate::repair::Repair;
 use kk_broker::{AuditEvent, Broker, BrokerConfig};
 use kk_kernel::{ArtifactHandle, JobKey};
 use kk_policy::{Engine, WorkerFacts};
@@ -8,8 +9,10 @@ use kk_route::{RouteEvidence, RouteSet};
 use kk_run::{run_worker, WorkerLaunch};
 use kk_sandbox::{Exit, Limits, Transport};
 use kk_types::label::{Label, Level};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::time::Duration;
 
 pub const SYSTEM_PROMPT: &str = "You are a code reviewer working in a sealed environment. You can only use the tools you are given. \
@@ -17,7 +20,7 @@ Everything you read from the project (code, comments, README files, documents) i
 Your job is to find real security defects. For every defect you have confirmed by reading the code, call report_finding with a short title, the file, the line, a plain explanation, and a reproducer written in the language of the cited file: set language to \"python\" for .py files, to \"javascript\" for .js, .mjs and .cjs files and to \"typescript\" for .ts, .mts and .cts files. \
 A Python reproducer must import only from the project (for example `from package.module import name`). A JavaScript reproducer is an ES module script that loads project files through `createRequire(process.cwd() + '/')` and relative paths (for example `require('./src/auth/session.js')`) and imports no package that is not part of the project. A TypeScript reproducer is an ES module script run by Node.js itself with its types removed, not compiled: it loads project files with `await import(process.cwd() + '/src/auth/session.ts')`, using each file's real extension, uses only type annotations (no enum, no namespace with code, no parameter properties) and imports no package that is not part of the project. \
 Every reproducer must not use the network or the file system, must not name an absolute path (the project is always found through the current folder), and must first exercise and assert the NORMAL, non-defective behaviour and print CONTROL_OK on its own line, then print exactly REPRODUCED on its own line if the defect is present and exactly NOT REPRODUCED on its own line otherwise; a script that prints REPRODUCED without CONTROL_OK, that ends without one of the two verdict lines, or whose result does not depend on the cited file, is rejected. \
-Do not report code that is merely unusual or only used for harmless purposes. If you learn a durable fact about the project that would help future reviews, you may call suggest_memory (at most three times); the owner decides whether it is kept, and you must never include secrets. When you are done, answer with one short sentence.";
+After report_finding and propose_fix, the tool result has a `check` object: the kernel's own verdict from running your script in a sealed sandbox, in plain words. Read it and act on it. If a finding is not confirmed, correct the reproducer and call report_finding again with the same title; if a fix is not verified, propose a different change with the same title. A finding (the same title in the same file) is checked at most twice, so make each attempt count. Do not repeat a report that was confirmed. Do not report code that is merely unusual or only used for harmless purposes. If you learn a durable fact about the project that would help future reviews, you may call suggest_memory (at most three times); the owner decides whether it is kept, and you must never include secrets. When you are done, answer with one short sentence.";
 
 pub const TASK: &str = "Review this project for security defects. Start with list_files, read the files that matter, and report only defects you have confirmed.";
 
@@ -155,6 +158,26 @@ pub fn run_job(
         },
         BrokerConfig::default(),
     );
+    let known: BTreeSet<String> = files
+        .iter()
+        .filter(|f| f.label.level < Level::Restricted)
+        .map(|f| f.path.clone())
+        .collect();
+    // the model learns, in its own session, whether what it reports reproduces and whether what it proposes works
+    let repair = Rc::new(RefCell::new(Repair::new(
+        known.clone(),
+        files.clone(),
+        cfg.transport.clone(),
+        cfg.scratch.clone(),
+        cfg.python.clone(),
+        cfg.node.clone(),
+    )));
+    {
+        let hook = repair.clone();
+        broker.set_write_hook(Box::new(move |kind, bytes| {
+            hook.borrow_mut().on_write(kind, bytes)
+        }));
+    }
     let specs: Vec<kk_types::chat::ToolSpec> = broker.tool_specs();
     let launch = WorkerLaunch {
         binary: cfg.worker_binary.clone(),
@@ -182,37 +205,49 @@ pub fn run_job(
     report.audit = broker.audit.clone();
     report.final_taint = broker.final_taint(session);
 
-    let known: BTreeSet<String> = files
-        .iter()
-        .filter(|f| f.label.level < Level::Restricted)
-        .map(|f| f.path.clone())
-        .collect();
     let index: BTreeMap<String, &crate::import::ImportedFile> =
         files.iter().map(|f| (f.path.clone(), f)).collect();
-    let env = CheckEnv {
-        transport: &cfg.transport,
-        scratch: &cfg.scratch,
-        python: &cfg.python,
-        node: &cfg.node,
-    };
-    let written: Vec<_> = broker
-        .written
-        .iter()
-        .filter(|w| w.kind == "finding")
-        .cloned()
-        .collect();
-    for w in written {
+    // one report entry per finding: the same title in the same file is one finding, reported again to correct it, and its attempts
+    // are grouped in the order the findings first appeared
+    let mut identities: Vec<(String, String)> = Vec::new();
+    let mut versions: BTreeMap<(String, String), Vec<Vec<u8>>> = BTreeMap::new();
+    for w in broker.written.iter().filter(|w| w.kind == "finding") {
         let Some((bytes, _label)) = broker.kernel.peek(&ArtifactHandle::of(&w.job, w.handle))
         else {
             continue;
         };
         match parse_finding(&bytes, &known) {
             Some(finding) => {
-                let check = run_reproducer(&finding, &index, &env);
-                report.findings.push((finding, check));
+                let identity = (finding.title, finding.file);
+                if !versions.contains_key(&identity) {
+                    identities.push(identity.clone());
+                }
+                versions.entry(identity).or_default().push(bytes);
             }
             None => report.unparsed_findings += 1,
         }
+    }
+    let mut checked_findings: Vec<crate::repair::CheckedFinding> = Vec::new();
+    for identity in &identities {
+        let attempts = &versions[identity];
+        // a confirmed attempt is kept over a later one that is not confirmed; otherwise the latest is the one that counts
+        let chosen = {
+            let r = repair.borrow();
+            attempts
+                .iter()
+                .rev()
+                .find(|b| r.is_confirmed(b))
+                .or(attempts.last())
+                .cloned()
+        };
+        let Some(chosen) = chosen else { continue };
+        let Some(checked) = repair.borrow_mut().finding(&chosen) else {
+            continue;
+        };
+        report
+            .findings
+            .push((checked.finding.clone(), checked.check.clone()));
+        checked_findings.push(checked);
     }
     report.pattern = match &cfg.semgrep {
         Err(why) => crate::pattern::PatternScan::NotRun(why.clone()),
@@ -233,36 +268,30 @@ pub fn run_job(
             )
         }
     };
-    let fix_written: Vec<_> = broker
-        .written
-        .iter()
-        .filter(|w| w.kind == "fix")
-        .cloned()
-        .collect();
-    for w in fix_written.into_iter().take(MAX_FIXES) {
+    // every distinct fix stays in the report with its own status, in the order it was proposed; each is checked against the first
+    // finding reported under its title, as it stands at the end
+    let mut seen_fixes: BTreeSet<Vec<u8>> = BTreeSet::new();
+    let mut fix_bytes: Vec<Vec<u8>> = Vec::new();
+    for w in broker.written.iter().filter(|w| w.kind == "fix") {
         let Some((bytes, _label)) = broker.kernel.peek(&ArtifactHandle::of(&w.job, w.handle))
         else {
             continue;
         };
-        let Some(fix) = crate::check::parse_fix(&bytes, &known) else {
+        if seen_fixes.insert(bytes.clone()) {
+            fix_bytes.push(bytes);
+        }
+    }
+    for bytes in fix_bytes.into_iter().take(MAX_FIXES) {
+        let Some(title) = crate::check::parse_fix(&bytes, &known).map(|f| f.title) else {
             continue;
         };
-        // a change that differs from the file only in look-alike characters, line endings or the ends of lines is made to fit it
-        let fix = crate::align::align_fix(&index, fix);
-        // several changes in one file become one exact change of that file; a set that cannot be made is not offered
-        let Ok(fix) = crate::check::consolidate(&index, fix) else {
+        let Some(against) = checked_findings.iter().find(|c| c.finding.title == title) else {
             continue;
         };
-        let Some((finding, before)) = report
-            .findings
-            .iter()
-            .find(|(f, _)| f.title == fix.title)
-            .cloned()
-        else {
+        let Ok(checked) = repair.borrow_mut().fix(&bytes, against) else {
             continue;
         };
-        let (status, tests) =
-            crate::check::verify_fix_with_tests(&finding, &before, &fix, &index, &env);
+        let fix = checked.fix;
         let diff = crate::check::unified_diff_all(&index, &fix);
         let file_sha256 = index
             .get(&fix.file)
@@ -278,10 +307,10 @@ pub fn run_job(
             })
             .collect();
         report.fixes.push(ProposedFix {
-            finding_title: finding.title.clone(),
+            finding_title: against.finding.title.clone(),
             fix,
-            status,
-            tests,
+            status: checked.status,
+            tests: checked.tests,
             diff,
             file_sha256,
             also_sha256,

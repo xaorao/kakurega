@@ -7,6 +7,28 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// The wording the checks use, as names, so that what is told to a model (`feedback.rs`) is chosen by these and not by text that
+/// could drift. Messages that end in something variable are prefixes; the rest are the whole message.
+pub mod msg {
+    pub const NO_REPRODUCER: &str = "the finding has no reproducer";
+    pub const SANDBOX_PATH: &str = "the script names a path that exists only inside the sandbox";
+    pub const WITHHELD_FILE: &str = "the code depends on a withheld file";
+    pub const NOT_IN_PROJECT: &str = "the cited file is not in the project";
+    pub const NEEDS_PACKAGE: &str = "the script needs the package '";
+    pub const ENDED: &str = "the reproducer ended with ";
+    pub const NO_CONTROL: &str = "the script printed REPRODUCED without a CONTROL_OK line: it must first show, and assert, that the normal behaviour works";
+    pub const INDEPENDENT: &str = "the script still prints REPRODUCED when the cited file is emptied, so its result does not depend on the code it claims to test";
+    pub const FINDING_NOT_REPRODUCED: &str = "the finding it belongs to was not reproduced";
+    pub const FIX_FILE_MISSING: &str = "a file the fix names is not in the project";
+    pub const FIX_TEST_FILE: &str = "a fix may not change a test file";
+    pub const FIX_ONCE: &str = "the text to replace must appear exactly once in each file";
+    pub const NO_CONTROL_AFTER: &str =
+        "after the change the script no longer shows the normal behaviour working";
+    pub const NO_VERDICT_AFTER: &str =
+        "after the change the script ended without printing its NOT REPRODUCED verdict";
+    pub const UNTRUSTED_AFTER: &str = "the check after the change could not be trusted";
+}
+
 pub const MAX_TITLE: usize = 200;
 pub const MAX_EXPLANATION: usize = 4000;
 pub const MAX_REPRODUCER: usize = 16_000;
@@ -61,6 +83,34 @@ pub fn clean_text(s: &str, max: usize) -> String {
         .collect()
 }
 
+/// A script that arrives wrapped in one markdown code fence (a line of three backticks with at most a short language word, the code,
+/// and a closing line of three backticks) is the script without the fence: a small model very often wraps its code like this, and
+/// the fence is a syntax error in every language the checks run. Only exactly one fenced block is unwrapped. Text around it, a
+/// second block, a longer fence, a fence line inside the code or a fence with anything but a short word after it is left exactly
+/// as it came, so nothing is guessed.
+pub fn unfence(text: &str) -> String {
+    let lines: Vec<&str> = text.trim().lines().collect();
+    if lines.len() < 2 {
+        return text.to_string();
+    }
+    let (first, last) = (lines[0].trim(), lines[lines.len() - 1].trim());
+    let word = first.strip_prefix("```").unwrap_or("x`");
+    let word_ok = word.len() <= 12
+        && word
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'#');
+    if !word_ok || last != "```" {
+        return text.to_string();
+    }
+    let body = &lines[1..lines.len() - 1];
+    if body.iter().any(|l| l.trim_start().starts_with("```")) {
+        return text.to_string();
+    }
+    let mut out = body.join("\n");
+    out.push('\n');
+    out
+}
+
 pub fn parse_finding(bytes: &[u8], known_files: &BTreeSet<String>) -> Option<Finding> {
     let v: Value = serde_json::from_slice(bytes).ok()?;
     let o = v.as_object()?;
@@ -95,13 +145,14 @@ pub fn parse_finding(bytes: &[u8], known_files: &BTreeSet<String>) -> Option<Fin
         file,
         line,
         explanation: clean_text(o.get("explanation")?.as_str()?, MAX_EXPLANATION),
-        reproducer: o
-            .get("reproducer")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .chars()
-            .take(MAX_REPRODUCER)
-            .collect(),
+        reproducer: unfence(
+            &o.get("reproducer")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .chars()
+                .take(MAX_REPRODUCER)
+                .collect::<String>(),
+        ),
     })
 }
 
@@ -365,7 +416,7 @@ pub fn run_reproducer(
 ) -> CheckResult {
     if finding.reproducer.trim().is_empty() {
         return CheckResult {
-            status: CheckStatus::Unavailable("the finding has no reproducer".into()),
+            status: CheckStatus::Unavailable(msg::NO_REPRODUCER.into()),
             stdout: String::new(),
             sample_paths: vec![],
         };
@@ -373,7 +424,7 @@ pub fn run_reproducer(
     if names_sandbox_path(&finding.reproducer) {
         return CheckResult {
             status: CheckStatus::Unavailable(
-                "the script names a path that exists only inside the sandbox (/sample or /repro), so no one else could re-run it; it must find the project through the current folder".into(),
+                format!("{} (/sample or /repro), so no one else could re-run it; it must find the project through the current folder", msg::SANDBOX_PATH),
             ),
             stdout: String::new(),
             sample_paths: vec![],
@@ -388,16 +439,14 @@ pub fn run_reproducer(
         Ok(p) => p,
         Err(ClosureError::NeedsRestrictedFile(p)) => {
             return CheckResult {
-                status: CheckStatus::Unavailable(format!(
-                    "the code depends on a withheld file ({p})"
-                )),
+                status: CheckStatus::Unavailable(format!("{} ({p})", msg::WITHHELD_FILE)),
                 stdout: String::new(),
                 sample_paths: vec![],
             }
         }
         Err(ClosureError::EntryMissing) => {
             return CheckResult {
-                status: CheckStatus::Unavailable("the cited file is not in the project".into()),
+                status: CheckStatus::Unavailable(msg::NOT_IN_PROJECT.into()),
                 stdout: String::new(),
                 sample_paths: vec![],
             }
@@ -515,7 +564,8 @@ pub fn run_reproducer(
                         if !in_project {
                             return CheckResult {
                                 status: CheckStatus::Unavailable(format!(
-                                    "the script needs the package '{pkg}', which is not in the sandbox (it has no installed packages and no network), so this cannot be checked here"
+                                    "{}{pkg}', which is not in the sandbox (it has no installed packages and no network), so this cannot be checked here",
+                                    msg::NEEDS_PACKAGE
                                 )),
                                 stdout: String::new(),
                                 sample_paths,
@@ -524,7 +574,8 @@ pub fn run_reproducer(
                     }
                     return CheckResult {
                         status: CheckStatus::Failed(format!(
-                            "the reproducer ended with {:?}: {}",
+                            "{}{:?}: {}",
+                            msg::ENDED,
                             o.exit,
                             String::from_utf8_lossy(&o.stderr)
                                 .chars()
@@ -568,9 +619,9 @@ pub fn run_reproducer(
     let status = if !marker(&stdout, "REPRODUCED") {
         CheckStatus::NotReproduced
     } else if !marker(&stdout, "CONTROL_OK") {
-        CheckStatus::Failed("the script printed REPRODUCED without a CONTROL_OK line: it must first show, and assert, that the normal behaviour works".into())
+        CheckStatus::Failed(msg::NO_CONTROL.into())
     } else if marker(&control_stdout, "REPRODUCED") {
-        CheckStatus::Failed("the script still prints REPRODUCED when the cited file is emptied, so its result does not depend on the code it claims to test".into())
+        CheckStatus::Failed(msg::INDEPENDENT.into())
     } else {
         CheckStatus::Reproduced
     };
@@ -1358,21 +1409,20 @@ pub fn verify_fix(
     env: &CheckEnv<'_>,
 ) -> FixStatus {
     if before.status != CheckStatus::Reproduced {
-        return FixStatus::NotChecked("the finding it belongs to was not reproduced".into());
+        return FixStatus::NotChecked(msg::FINDING_NOT_REPRODUCED.into());
     }
     if fix.edits().iter().any(|e| !files.contains_key(&e.file)) {
-        return FixStatus::CouldNotApply("a file the fix names is not in the project".into());
+        return FixStatus::CouldNotApply(msg::FIX_FILE_MISSING.into());
     }
     if let Some(e) = fix.edits().iter().find(|e| is_test_path(&e.file)) {
         return FixStatus::CouldNotApply(format!(
-            "a fix may not change a test file ({}): a change to the tests it must pass proves nothing",
+            "{} ({}): a change to the tests it must pass proves nothing",
+            msg::FIX_TEST_FILE,
             e.file
         ));
     }
     let Some(new_bytes) = apply_all(files, fix) else {
-        return FixStatus::CouldNotApply(
-            "the text to replace must appear exactly once in each file".into(),
-        );
+        return FixStatus::CouldNotApply(msg::FIX_ONCE.into());
     };
     let patched: Vec<ImportedFile> = new_bytes
         .into_iter()
@@ -1390,13 +1440,17 @@ pub fn verify_fix(
     let control_after = after.stdout.lines().any(|l| l.trim() == "CONTROL_OK");
     let verdict_after = after.stdout.lines().any(|l| l.trim() == "NOT REPRODUCED");
     match after.status {
-        CheckStatus::NotReproduced if !control_after => FixStatus::NotChecked("after the change the script no longer shows the normal behaviour working (no CONTROL_OK), so this cannot be told apart from removing the feature".into()),
-        CheckStatus::NotReproduced if !verdict_after => FixStatus::NotChecked("after the change the script ended without printing its NOT REPRODUCED verdict, so it cannot be told apart from the code ending the program early".into()),
+        CheckStatus::NotReproduced if !control_after => FixStatus::NotChecked(format!(
+            "{} (no CONTROL_OK), so this cannot be told apart from removing the feature",
+            msg::NO_CONTROL_AFTER
+        )),
+        CheckStatus::NotReproduced if !verdict_after => FixStatus::NotChecked(format!(
+            "{}, so it cannot be told apart from the code ending the program early",
+            msg::NO_VERDICT_AFTER
+        )),
         CheckStatus::NotReproduced => FixStatus::FixesTheReproducer,
         CheckStatus::Reproduced => FixStatus::StillReproduced,
-        other => FixStatus::NotChecked(format!(
-            "the check after the change could not be trusted: {other:?}"
-        )),
+        other => FixStatus::NotChecked(format!("{}: {other:?}", msg::UNTRUSTED_AFTER)),
     }
 }
 

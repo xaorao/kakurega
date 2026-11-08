@@ -503,3 +503,76 @@ fn b15_every_request_is_audited_including_refusals() {
     let outcomes: Vec<&str> = b.audit.iter().map(|e| e.outcome.as_str()).collect();
     assert_eq!(outcomes, vec!["ok", "DenyPolicy"]);
 }
+
+#[test]
+fn b21_a_write_hook_sees_the_kind_and_bytes_and_what_it_returns_reaches_the_worker_as_feedback() {
+    let mut b = setup(routes(RouteClass::DeviceOnly, false, vec![]));
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, Vec<u8>)>::new()));
+    let log = seen.clone();
+    b.set_write_hook(Box::new(move |kind, bytes| {
+        log.lock().unwrap().push((kind.to_string(), bytes.to_vec()));
+        (kind == "finding").then(|| json!({"status": "confirmed"}))
+    }));
+    let s = open(&mut b, "AGENT", internal());
+    let r = call(
+        &mut b,
+        s,
+        json!({"id": 1, "op": "write.artifact", "bytes_b64": b64::encode(b"one"), "kind": "finding"}),
+    );
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(
+        r["result"]["feedback"],
+        json!({"status": "confirmed"}),
+        "{r}"
+    );
+    assert!(r["result"]["handle"].is_number());
+    // a kind the hook has nothing to say about: the reply has no feedback field at all
+    let r = call(
+        &mut b,
+        s,
+        json!({"id": 2, "op": "write.artifact", "bytes_b64": b64::encode(b"two"), "kind": "note"}),
+    );
+    assert_eq!(r["ok"], true);
+    assert!(r["result"].get("feedback").is_none(), "{r}");
+    let seen = seen.lock().unwrap();
+    assert_eq!(
+        *seen,
+        vec![
+            ("finding".to_string(), b"one".to_vec()),
+            ("note".to_string(), b"two".to_vec())
+        ]
+    );
+}
+
+#[test]
+fn b22_the_hook_is_not_called_for_a_write_that_was_refused_and_no_hook_changes_nothing() {
+    // refused: too large
+    let mut b = setup(routes(RouteClass::DeviceOnly, false, vec![]));
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+    let c = calls.clone();
+    b.set_write_hook(Box::new(move |_, _| {
+        *c.lock().unwrap() += 1;
+        Some(json!("x"))
+    }));
+    let small = BrokerConfig {
+        max_write_bytes: 4,
+        ..BrokerConfig::default()
+    };
+    let s = b.open_session(&job(), worker("AGENT", internal(), &[]), small);
+    let r = call(
+        &mut b,
+        s,
+        json!({"id": 1, "op": "write.artifact", "bytes_b64": b64::encode(b"too long"), "kind": "finding"}),
+    );
+    assert_eq!(code(&r), "BUDGET_EXCEEDED");
+    assert_eq!(*calls.lock().unwrap(), 0, "a refused write is never judged");
+    // no hook installed: the reply is exactly what it was before the hook existed
+    let mut plain = setup(routes(RouteClass::DeviceOnly, false, vec![]));
+    let s = open(&mut plain, "AGENT", internal());
+    let r = call(
+        &mut plain,
+        s,
+        json!({"id": 1, "op": "write.artifact", "bytes_b64": b64::encode(b"x"), "kind": "finding"}),
+    );
+    assert_eq!(r["result"], json!({"handle": r["result"]["handle"]}), "{r}");
+}

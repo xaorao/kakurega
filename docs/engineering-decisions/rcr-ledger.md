@@ -226,7 +226,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | E-C10 | Diff review UX | IMPROVE: real unified diff with context using `similar` (Apache-2.0, add to NOTICE); side- | BUILT | fix diff viewer (row 19) |
 | E-C11 | Permission gating of edits | keep; explicitly do NOT adopt a second rule engine (policy stays in `kk-policy`) | KEPT | one policy engine |
 | E-C12 | Repo mapping / context building | Study before deciding; candidate: tree-sitter symbol map built locally, labelled per file | LATER | study before deciding |
-| E-C13 | Reproducer-first repair loop | IMPROVE order: let the model re-propose after `StillReproduced`/`CouldNotApply` feedback ( | PARTIAL | reproducer-first; re-proposal after a still-reproduced result not looped |
+| E-C13 | Reproducer-first repair loop | IMPROVE order: let the model re-propose after `StillReproduced`/`CouldNotApply` feedback ( | BUILT | the model is told in its own session whether its finding reproduces and whether its fix works (fixed wording, bounded: 2 checks per finding, 8 per session, 10 minutes), with a scripted-model proof (j17, j18); real-model effect: it keeps working but a 3B model confirms nothing, a stronger model NOT MEASURED (reproducer-languages.md) |
 
 ## Matrix F: Desktop, documents, security, tooling
 

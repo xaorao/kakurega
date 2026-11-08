@@ -2,9 +2,9 @@ use kk_review::check::{
     apply_all, apply_fix, clean_text, compare_test_runs, consolidate, is_test_path, js_closure,
     missing_package, names_sandbox_path, node_has_typescript, node_major, parse_finding, parse_fix,
     parse_node_test, parse_unittest, python_closure, run_project_tests, run_project_tests_for,
-    run_reproducer, ts_closure, typescript_environment_problem, unified_diff, unified_diff_all,
-    verify_fix, verify_fix_with_tests, CheckEnv, CheckStatus, ClosureError, Edit, Finding, Fix,
-    FixStatus, Language, TestRun, TestVerdict,
+    run_reproducer, ts_closure, typescript_environment_problem, unfence, unified_diff,
+    unified_diff_all, verify_fix, verify_fix_with_tests, CheckEnv, CheckStatus, ClosureError, Edit,
+    Finding, Fix, FixStatus, Language, TestRun, TestVerdict,
 };
 use kk_review::import::{scan_tree, ImportedFile};
 use kk_sandbox::{Exit, Transport};
@@ -2503,4 +2503,69 @@ fn n03_the_projects_typescript_tests_are_run_in_the_sandbox_and_a_fix_is_held_to
         &env,
     );
     assert!(matches!(bad, FixStatus::BreaksTests(_)), "{bad:?} {note}");
+}
+
+#[test]
+fn uf01_a_reproducer_that_is_exactly_one_fenced_block_loses_the_fence_and_nothing_else_does() {
+    let code = "import os\nprint('CONTROL_OK')\nprint('REPRODUCED')\n";
+    // the fences small models put around code, with and without a language word, with other line endings and stray spaces
+    for wrapped in [
+        format!("```py\n{code}```"),
+        format!("```python\n{code}```\n"),
+        format!("```\n{code}```"),
+        format!("```javascript\n{code}```"),
+        format!("  ```ts  \n{code}  ```  \n\n"),
+        format!("```py\r\n{}```", code.replace('\n', "\r\n")),
+        format!("\n\n```py\n{code}```\n"),
+    ] {
+        let got = unfence(&wrapped);
+        assert_eq!(got.replace("\r\n", "\n"), code, "{wrapped:?} -> {got:?}");
+    }
+    // not exactly one fenced block: left exactly as it came
+    for same in [
+        code.to_string(),
+        String::new(),
+        "```".to_string(),
+        "```py\nprint(1)\n".to_string(),
+        format!("Here is the script:\n```py\n{code}```"),
+        format!("```py\n{code}```\nand that is all"),
+        format!("```py\n{code}```\n\n```py\nprint(2)\n```"),
+        format!("```py title=x\n{code}```"),
+        format!("```this-is-not-a-short-language-word\n{code}```"),
+        format!("```abcdefghijklmnopqrstuvwxyz\n{code}```"),
+        format!("```abcdefghijklm\n{code}```"),
+        format!("````py\n{code}````"),
+        "```py\nprint('```')\n```x".to_string(),
+        "print('```')\n".to_string(),
+        "x = \"\"\"\n```\n\"\"\"\nprint(x)\n".to_string(),
+    ] {
+        assert_eq!(unfence(&same), same, "{same:?}");
+    }
+    // a fence line inside the code means it is not one block, so nothing is removed
+    let inner = "```py\ns = \"\"\"\n```\n\"\"\"\nprint(s)\n```";
+    assert_eq!(unfence(inner), inner, "{inner:?}");
+    // idempotent: a stripped script is not stripped again
+    let once = unfence(&format!("```py\n{code}```"));
+    assert_eq!(unfence(&once), once);
+}
+
+#[test]
+fn uf02_a_finding_carries_the_unfenced_script_and_every_other_field_is_untouched() {
+    let known: BTreeSet<String> = ["payments/auth/session.py".to_string()].into();
+    let body = |r: &str| {
+        serde_json::json!({"title": "T", "file": "payments/auth/session.py", "line": 15, "explanation": "why", "reproducer": r}).to_string()
+    };
+    let f = parse_finding(body("```py\nprint(1)\n```").as_bytes(), &known).unwrap();
+    assert_eq!(f.reproducer, "print(1)\n");
+    assert_eq!((f.title.as_str(), f.line), ("T", 15));
+    let plain = parse_finding(body("print(1)\n").as_bytes(), &known).unwrap();
+    assert_eq!(plain.reproducer, "print(1)\n");
+    // the size limit still applies to what the model sent
+    let big = format!("```py\n{}\n```", "x".repeat(20_000));
+    let f = parse_finding(body(&big).as_bytes(), &known).unwrap();
+    assert!(
+        f.reproducer.chars().count() <= 16_000,
+        "{}",
+        f.reproducer.len()
+    );
 }

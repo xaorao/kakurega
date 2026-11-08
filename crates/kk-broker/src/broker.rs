@@ -66,6 +66,11 @@ struct Session {
     config: BrokerConfig,
 }
 
+/// Called by the host after a worker writes an artifact, with the artifact's kind and bytes. Whatever it returns is added to the
+/// worker's reply as `feedback`, so a host that can judge a write (run a check on it, say) can tell the worker at once. The worker
+/// never supplies or sees the hook; the broker does not look inside what it returns.
+pub type WriteHook = Box<dyn FnMut(&str, &[u8]) -> Option<Value>>;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WrittenArtifact {
     pub job: JobKey,
@@ -98,6 +103,7 @@ pub struct Broker {
     pub audit: Vec<AuditEvent>,
     pub release_drafts: Vec<ReleaseDraft>,
     pub written: Vec<WrittenArtifact>,
+    write_hook: Option<WriteHook>,
 }
 
 struct Failure {
@@ -158,6 +164,7 @@ impl Broker {
             audit: Vec::new(),
             release_drafts: Vec::new(),
             written: Vec::new(),
+            write_hook: None,
         }
     }
 
@@ -396,6 +403,11 @@ impl Broker {
         Ok(json!({"bytes_b64": b64::encode(&bytes)}))
     }
 
+    /// Installs the hook called after every artifact a worker writes (see `WriteHook`). Replaces any earlier one.
+    pub fn set_write_hook(&mut self, hook: WriteHook) {
+        self.write_hook = Some(hook);
+    }
+
     fn op_write(
         &mut self,
         id: SessionId,
@@ -426,6 +438,7 @@ impl Broker {
         ))?;
         let hints: Vec<ArtifactHandle> =
             hint.iter().map(|i| ArtifactHandle::of(&job, *i)).collect();
+        let for_hook = self.write_hook.is_some().then(|| bytes.clone());
         let h = self
             .kernel
             .write_artifact(step, bytes, &hints)
@@ -438,7 +451,14 @@ impl Broker {
             handle: h.index(),
             kind: kind.to_string(),
         });
-        Ok(json!({"handle": h.index()}))
+        let feedback = match (self.write_hook.as_mut(), for_hook) {
+            (Some(hook), Some(bytes)) => hook(kind, &bytes),
+            _ => None,
+        };
+        Ok(match feedback {
+            Some(f) => json!({"handle": h.index(), "feedback": f}),
+            None => json!({"handle": h.index()}),
+        })
     }
 
     fn op_model(

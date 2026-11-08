@@ -256,7 +256,15 @@ pub fn build_finding(a: &Value) -> Result<Value, String> {
     Ok(finding)
 }
 
-fn run_local_tool(link: &mut dyn Link, call: &ToolCall) -> Result<Value, WorkerError> {
+/// The broker's judgement of what was just written, when it gave one: the model reads it as `check` in the tool result.
+fn with_check(mut result: Value, reply: &Value) -> Value {
+    if !reply["feedback"].is_null() {
+        result["check"] = reply["feedback"].clone();
+    }
+    result
+}
+
+pub fn run_local_tool(link: &mut dyn Link, call: &ToolCall) -> Result<Value, WorkerError> {
     match call.name.as_str() {
         "report_finding" => {
             let finding = match build_finding(&call.arguments) {
@@ -266,7 +274,10 @@ fn run_local_tool(link: &mut dyn Link, call: &ToolCall) -> Result<Value, WorkerE
             let bytes =
                 serde_json::to_vec(&finding).map_err(|e| WorkerError::Link(e.to_string()))?;
             let r = ok_result(link.call(json!({"op": "write.artifact", "bytes_b64": b64::encode(&bytes), "kind": "finding"}))?)?;
-            Ok(json!({"recorded": true, "handle": r["handle"]}))
+            Ok(with_check(
+                json!({"recorded": true, "handle": r["handle"]}),
+                &r,
+            ))
         }
         "propose_fix" => {
             let a = &call.arguments;
@@ -288,7 +299,10 @@ fn run_local_tool(link: &mut dyn Link, call: &ToolCall) -> Result<Value, WorkerE
             let r = ok_result(link.call(
                 json!({"op": "write.artifact", "bytes_b64": b64::encode(&bytes), "kind": "fix"}),
             )?)?;
-            Ok(json!({"proposed": true, "handle": r["handle"]}))
+            Ok(with_check(
+                json!({"proposed": true, "handle": r["handle"]}),
+                &r,
+            ))
         }
         "suggest_memory" => {
             let a = &call.arguments;
