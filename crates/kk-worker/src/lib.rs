@@ -146,7 +146,7 @@ pub fn finding_tool() -> ToolSpec {
                 "line": {"type": "integer"},
                 "explanation": {"type": "string"},
                 "reproducer": {"type": "string"},
-                "language": {"type": "string", "enum": ["python", "javascript"], "description": "The language of the reproducer; python if omitted."}
+                "language": {"type": "string", "enum": ["python", "javascript", "typescript"], "description": "The language of the reproducer; python if omitted."}
             },
             "required": ["title", "file", "line", "explanation"]
         }),
@@ -246,9 +246,9 @@ pub fn build_finding(a: &Value) -> Result<Value, String> {
     });
     if let Some(language) = a.get("language") {
         match language.as_str() {
-            Some(l @ ("python" | "javascript")) => finding["language"] = json!(l),
+            Some(l @ ("python" | "javascript" | "typescript")) => finding["language"] = json!(l),
             _ => return Err(
-                "language must be exactly \"python\" or \"javascript\" (or left out for python)"
+                "language must be exactly \"python\", \"javascript\" or \"typescript\" (or left out for python)"
                     .into(),
             ),
         }

@@ -1078,3 +1078,105 @@ fn j13_planted_secrets_reach_neither_the_model_nor_the_release_nor_the_record_un
         "every project, attack, surface and secret was graded"
     );
 }
+
+const TS_REVIEW_REPRO: &str = "const session = await import(process.cwd() + '/src/auth/session.ts');\nconst token: string = session.login('alice');\nif (!session.validate(token)) throw new Error('control');\nconsole.log('CONTROL_OK');\nsession.logout(token);\nconsole.log(session.validate(token) ? 'REPRODUCED' : 'NOT REPRODUCED');\n";
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn j15_a_typescript_review_goes_from_the_models_tool_call_to_a_checked_fix_and_a_release_with_an_mts_script(
+) {
+    let mut cfg = config("j15");
+    cfg.repo = materialize_fixture("synthetic-ts-repo");
+    cfg.node = "/usr/local/bin/node".into();
+    let (routes, ev) = scripted(vec![
+        calls(vec![("list_files", json!({}))]),
+        calls(vec![("read_file", json!({"path": "src/auth/session.ts"}))]),
+        calls(vec![(
+            "report_finding",
+            json!({"title": "Token still valid after logout", "file": "src/auth/session.ts", "line": 17, "explanation": "logout() only deletes a key of a local object, so validate() keeps accepting the token.", "reproducer": TS_REVIEW_REPRO, "language": "typescript"}),
+        )]),
+        calls(vec![(
+            "propose_fix",
+            json!({"title": "Token still valid after logout", "file": "src/auth/session.ts",
+                   "old_text": "  const cookieJar: { session?: string } = { session: token };\n  delete cookieJar.session;\n",
+                   "new_text": "  ACTIVE_TOKENS.delete(token);\n",
+                   "explanation": "remove the server-side entry"}),
+        )]),
+        ChatMessage::new("assistant", "One defect found."),
+    ]);
+    let report = run_job(&cfg, routes, ev, &|_, _| {});
+    assert_eq!(report.error, None);
+    assert_eq!(
+        report.worker_exit,
+        Some(Exit::Code(0)),
+        "stderr: {}",
+        report.worker_stderr
+    );
+    assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
+    let (f, c) = &report.findings[0];
+    assert_eq!(f.language, kk_review::check::Language::TypeScript);
+    assert_eq!(c.status, CheckStatus::Reproduced, "{c:?}");
+    assert_eq!(report.fixes.len(), 1);
+    let fx = &report.fixes[0];
+    assert_eq!(
+        fx.status,
+        kk_review::check::FixStatus::FixesTheReproducer,
+        "{:?} {}",
+        fx.status,
+        fx.tests
+    );
+    assert!(
+        fx.tests.contains("3 test(s) passed before and after"),
+        "the project's own TypeScript tests were held to: {}",
+        fx.tests
+    );
+    let draft = report.draft.expect("a release draft");
+    assert!(
+        draft.files.contains_key("repro-1.mts")
+            && !draft.files.contains_key("repro-1.py")
+            && !draft.files.contains_key("repro-1.mjs"),
+        "{:?}",
+        draft.files.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        String::from_utf8_lossy(&draft.files["index.json"]).contains("\"language\":\"typescript\"")
+    );
+    let claims = kk_review::release::claims_for(&draft);
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].evidence[1], "repro-1.mts");
+    assert!(claims[0].how_to_check.contains("22.18"));
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn j16_a_typescript_script_with_the_wrong_language_label_is_never_confirmed() {
+    let mut cfg = config("j16");
+    cfg.repo = materialize_fixture("synthetic-ts-repo");
+    cfg.node = "/usr/local/bin/node".into();
+    // typed code labelled javascript cannot even be parsed as JavaScript; labelled python it is not Python either
+    let (routes, ev) = scripted(vec![
+        calls(vec![(
+            "report_finding",
+            json!({"title": "A", "file": "src/auth/session.ts", "line": 17, "explanation": "e", "reproducer": TS_REVIEW_REPRO, "language": "javascript"}),
+        )]),
+        calls(vec![(
+            "report_finding",
+            json!({"title": "B", "file": "src/auth/session.ts", "line": 17, "explanation": "e", "reproducer": TS_REVIEW_REPRO, "language": "python"}),
+        )]),
+        calls(vec![(
+            "report_finding",
+            json!({"title": "C", "file": "src/auth/session.ts", "line": 17, "explanation": "e", "reproducer": "from payments.auth import session\nprint('CONTROL_OK')\nprint('REPRODUCED')\n", "language": "typescript"}),
+        )]),
+        ChatMessage::new("assistant", "done"),
+    ]);
+    let report = run_job(&cfg, routes, ev, &|_, _| {});
+    assert_eq!(report.error, None);
+    assert_eq!(report.findings.len(), 3);
+    for (f, c) in &report.findings {
+        assert_ne!(c.status, CheckStatus::Reproduced, "{}: {:?}", f.title, c);
+    }
+    assert!(
+        report.draft.is_err(),
+        "nothing confirmed, nothing to release"
+    );
+}

@@ -2397,6 +2397,7 @@ fn tu60_a_finding_says_which_language_its_check_ran_in_and_never_trusts_the_name
     app.handle(ok(&r[0], 200, json!({"findings": [
         {"title": "Py", "file": "a.py", "line": 1, "status": "reproduced", "explanation": "e", "reproducer": "print(1)", "language": "python"},
         {"title": "Js", "file": "a.js", "line": 2, "status": "reproduced", "explanation": "e", "reproducer": "x", "language": "javascript"},
+        {"title": "Ts", "file": "a.ts", "line": 2, "status": "reproduced", "explanation": "e", "reproducer": "x", "language": "typescript"},
         {"title": "Old", "file": "b.py", "line": 3, "status": "reproduced", "explanation": "e", "reproducer": "x"},
         {"title": "None", "file": "c.js", "line": 4, "status": "not_reproduced", "explanation": "e", "reproducer": "", "language": "javascript"},
         {"title": "Odd", "file": "d.x", "line": 5, "status": "reproduced", "explanation": "e", "reproducer": "x", "language": "ru\u{1b}[31mby\u{202e}"}
@@ -2414,6 +2415,11 @@ fn tu60_a_finding_says_which_language_its_check_ran_in_and_never_trusts_the_name
         card("Js").contains("Checked with JavaScript"),
         "{}",
         card("Js")
+    );
+    assert!(
+        card("Ts").contains("Checked with TypeScript"),
+        "{}",
+        card("Ts")
     );
     assert!(
         card("Old").contains("Checked with Python"),

@@ -3,6 +3,7 @@ set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 vm="${KK_VM:-kak}"
 limactl start "$vm" >/dev/null 2>&1 || true
+"$repo/scripts/provision-lima-node"
 vm_home="$(limactl shell "$vm" -- bash -lc 'echo $HOME' | tail -1)"
 limactl shell "$vm" -- bash -lc ". \$HOME/.cargo/env; cd '$repo' && export CARGO_TARGET_DIR=\$HOME/kk-target RUSTUP_TOOLCHAIN=1.94.1; cargo build --locked -p kk-worker -p kk-sandbox"
 KK_VM_HOME="$vm_home" cargo test -p kk-run --test lima_transport -- --ignored --test-threads=1

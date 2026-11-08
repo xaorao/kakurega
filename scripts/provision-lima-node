@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Puts the official Node.js build at /usr/local/bin/node inside the sandbox virtual machine, unless it is already there with
+# TypeScript support. The Node.js that Debian and Ubuntu package under the same version number is built without the TypeScript
+# parser (process.features.typescript is false), so TypeScript findings cannot be checked with it. The tarball is checked
+# against the SHASUMS256.txt that nodejs.org publishes next to it before anything is installed.
+set -euo pipefail
+vm="${KK_VM:-kak}"
+version="v22.22.1"
+limactl start "$vm" >/dev/null 2>&1 || true
+limactl shell "$vm" -- bash -s "$version" <<'INNER'
+set -euo pipefail
+version="$1"
+have="$(/usr/local/bin/node -p process.features.typescript 2>/dev/null || true)"
+if [ "$have" = "strip" ] || [ "$have" = "transform" ]; then
+  echo "node with TypeScript support already at /usr/local/bin/node ($(/usr/local/bin/node --version))"
+  exit 0
+fi
+case "$(uname -m)" in
+  aarch64) arch="arm64" ;;
+  x86_64) arch="x64" ;;
+  *) echo "no official Node.js build is chosen for $(uname -m)" >&2; exit 1 ;;
+esac
+name="node-$version-linux-$arch"
+work="$(mktemp -d)"
+cd "$work"
+curl -fsSL -o SHASUMS256.txt "https://nodejs.org/dist/$version/SHASUMS256.txt"
+curl -fsSL -o "$name.tar.xz" "https://nodejs.org/dist/$version/$name.tar.xz"
+want="$(grep " $name.tar.xz\$" SHASUMS256.txt | cut -d' ' -f1)"
+got="$(sha256sum "$name.tar.xz" | cut -d' ' -f1)"
+if [ -z "$want" ] || [ "$want" != "$got" ]; then
+  echo "checksum of $name.tar.xz does not match nodejs.org (want '$want', got '$got'); nothing installed" >&2
+  exit 1
+fi
+tar -xJf "$name.tar.xz" --strip-components=2 "$name/bin/node"
+sudo install -m 0755 node /usr/local/bin/node
+feature="$(/usr/local/bin/node -p process.features.typescript)"
+if [ "$feature" != "strip" ] && [ "$feature" != "transform" ]; then
+  echo "the installed Node.js reports no TypeScript support: '$feature'" >&2
+  exit 1
+fi
+echo "installed $(/usr/local/bin/node --version) with TypeScript support ($feature)"
+INNER

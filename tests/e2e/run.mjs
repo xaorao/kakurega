@@ -313,6 +313,26 @@ try {
   await page.getByText("Confirmed by the kernel").waitFor();
   check("finding is confirmed by the kernel", true);
   check("the finding says which language its check ran in", (await page.getByText("Reproducer the kernel ran (Python)").count()) === 1);
+  {
+    // the same page with the service's answer replaced: a TypeScript, a JavaScript and an unknown language name
+    await page.route(/\/api\/jobs\/[^/]+\/findings/, async (route) => {
+      const base = { line: 3, explanation: "e", status: "reproduced", reproducer: "console.log(1)", output: "", sample: [] };
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ unparsed: 0, findings: [
+        { ...base, title: "Ts one", file: "a.ts", language: "typescript" },
+        { ...base, title: "Js one", file: "a.js", language: "javascript" },
+        { ...base, title: "Odd one", file: "a.x", language: "ru\u001b[31mby" },
+      ] }) });
+    });
+    await page.reload();
+    await page.getByRole("tab", { name: "Findings" }).click();
+    await page.getByText("Reproducer the kernel ran (TypeScript)").waitFor();
+    check("a TypeScript finding says it was checked with TypeScript", (await page.getByText("Reproducer the kernel ran (TypeScript)").count()) === 1);
+    check("and a JavaScript one with JavaScript, an unknown name is never repeated", (await page.getByText("Reproducer the kernel ran (JavaScript)").count()) === 1 && (await page.getByText("Reproducer the kernel ran (ru").count()) === 0);
+    await page.unroute(/\/api\/jobs\/[^/]+\/findings/);
+    await page.reload();
+    await page.getByRole("tab", { name: "Findings" }).click();
+    await page.getByText("Reproducer the kernel ran (Python)").waitFor();
+  }
   await page.getByText("Reproducer the kernel ran (Python)").click();
   const repro = page.locator("details[open] pre code").first();
   await repro.waitFor();

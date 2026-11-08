@@ -884,3 +884,150 @@ fn rj04_the_capsule_claims_name_exactly_the_files_that_were_released_for_each_la
         .insert("index.json".into(), b"not json".to_vec());
     assert!(kk_review::release::claims_for(&broken).is_empty());
 }
+
+fn ts_project() -> Vec<ImportedFile> {
+    let label = Label::new(Level::Internal);
+    let mk = |path: &str, text: &str| {
+        let bytes = text.as_bytes().to_vec();
+        ImportedFile {
+            path: path.into(),
+            sha256: kk_evidence::capsule::sha256_hex(&bytes),
+            bytes,
+            label: label.clone(),
+            notes: vec![],
+        }
+    };
+    vec![
+        mk("src/auth/tokens.ts", "let n = 0;\nexport const make = (u: string): string => `${u}-${++n}-é`;\n"),
+        mk("src/auth/session.ts", "import { make } from './tokens.ts';\nconst ACTIVE: Set<string> = new Set();\nexport function login(u: string): string { const t = make(u); ACTIVE.add(t); return t; }\n// logout only clears a local copy, so the token stays valid\nexport function logout(t: string): null { let copy: string | null = t; copy = null; return copy; }\nexport function validate(t: string): boolean { return ACTIVE.has(t); }\n"),
+    ]
+}
+
+const TS_RELEASE_REPRO: &str = "const s = await import(process.cwd() + '/src/auth/session.ts');\nconst t: string = s.login('alice');\nif (!s.validate(t)) throw new Error('control');\nconsole.log('CONTROL_OK');\ns.logout(t);\nconsole.log(s.validate(t) ? 'REPRODUCED' : 'NOT REPRODUCED');\n";
+
+fn ts_finding_for_release(reproducer: &str) -> Finding {
+    Finding {
+        title: "TS token not revoked".into(),
+        file: "src/auth/session.ts".into(),
+        line: 5,
+        explanation: "logout only clears a local copy, so validate() still accepts the token."
+            .into(),
+        reproducer: reproducer.into(),
+        language: kk_review::check::Language::TypeScript,
+    }
+}
+
+fn ts_confirmed() -> CheckResult {
+    CheckResult {
+        status: CheckStatus::Reproduced,
+        stdout: "CONTROL_OK\nREPRODUCED\n".into(),
+        sample_paths: vec!["src/auth/session.ts".into(), "src/auth/tokens.ts".into()],
+    }
+}
+
+fn host_node_has_typescript() -> bool {
+    Command::new("node")
+        .args(["-p", "process.features.typescript"])
+        .output()
+        .ok()
+        .is_some_and(|o| {
+            o.status.success()
+                && kk_review::check::node_has_typescript(&String::from_utf8_lossy(&o.stdout))
+        })
+}
+
+/// A `node` that answers the capability question the way a build without the TypeScript parser does.
+fn node_without_typescript() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("kk-fake-node-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let script = dir.join("node");
+    fs::write(&script, "#!/bin/sh\necho false\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    dir
+}
+
+#[test]
+fn rj05_a_typescript_finding_is_released_as_an_mts_script_and_the_recipient_without_typescript_is_told_so(
+) {
+    assert!(
+        host_node_has_typescript(),
+        "this test runs the recipient's check with the host's Node.js: install the official Node.js 22.18 or newer from nodejs.org (a packaged build may leave TypeScript out)"
+    );
+    let mut proj = files();
+    proj.extend(ts_project());
+    let idx = index(&proj);
+    let draft = assemble(
+        &[
+            (finding(), confirmed()),
+            (ts_finding_for_release(TS_RELEASE_REPRO), ts_confirmed()),
+        ],
+        &idx,
+        "acme-audit",
+        "policy-1",
+        1_700_000_000,
+        86_400,
+    )
+    .expect("assemble");
+    assert!(draft.files.contains_key("repro-1.py") && draft.files.contains_key("repro-2.mts"));
+    let readme = String::from_utf8_lossy(&draft.files["finding-2.txt"]).into_owned();
+    assert!(
+        readme.contains("22.18")
+            && readme.contains("repro-2.mts")
+            && readme.contains("no build step"),
+        "{readme}"
+    );
+    let index_json = String::from_utf8_lossy(&draft.files["index.json"]).into_owned();
+    assert!(
+        index_json.contains("\"language\":\"typescript\""),
+        "{index_json}"
+    );
+    let dir = write_release(&draft, "ts");
+    let both = recipient(&dir, None);
+    assert!(both.status.success(), "{}", text(&both));
+    assert!(
+        text(&both).contains("OK   Token not revoked")
+            && text(&both).contains("OK   TS token not revoked"),
+        "{}",
+        text(&both)
+    );
+    // the same checks as for JavaScript: a changed script, sample or expected output each fail
+    let original = fs::read_to_string(dir.join("repro-2.mts")).unwrap();
+    fs::write(
+        dir.join("repro-2.mts"),
+        original.replace("'REPRODUCED'", "'REPRODUCED?'"),
+    )
+    .unwrap();
+    assert_eq!(recipient(&dir, None).status.code(), Some(1));
+    fs::write(dir.join("repro-2.mts"), &original).unwrap();
+    let sample = fs::read_to_string(dir.join("sample-2.json")).unwrap();
+    fs::write(
+        dir.join("sample-2.json"),
+        sample.replace("return ACTIVE.has(t)", "return false"),
+    )
+    .unwrap();
+    assert_eq!(recipient(&dir, None).status.code(), Some(1));
+    fs::write(dir.join("sample-2.json"), &sample).unwrap();
+    assert!(recipient(&dir, None).status.success());
+    // a Node.js that says it has no TypeScript parser: that finding is MISSING (exit 2), never a failed check, and the
+    // Python finding is still checked
+    let fake = node_without_typescript();
+    let none = recipient(&dir, Some(fake.to_str().unwrap()));
+    assert_eq!(none.status.code(), Some(2), "{}", text(&none));
+    let t = text(&none);
+    assert!(t.contains("OK   Token not revoked"), "{t}");
+    assert!(
+        t.contains("MISSING TS token not revoked")
+            && t.contains("22.18")
+            && t.contains("nodejs.org"),
+        "{t}"
+    );
+    assert!(!t.contains("OK   TS token") && !t.contains("FAIL"), "{t}");
+    // no node at all: the same, with the older sentence
+    let empty = std::env::temp_dir().join(format!("kk-empty-path-ts-{}", std::process::id()));
+    fs::create_dir_all(&empty).unwrap();
+    let nonode = recipient(&dir, Some(empty.to_str().unwrap()));
+    assert_eq!(nonode.status.code(), Some(2), "{}", text(&nonode));
+    assert!(text(&nonode).contains("MISSING TS token not revoked"));
+}

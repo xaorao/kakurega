@@ -220,7 +220,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | E-C4 | Snapshots, checkpoints, undo | BUILD: before apply, store the original bytes in the vault (encrypted, labelled) keyed by  | BUILT | originals stored, undo guarded (ff, sv24) |
 | E-C5 | How a patch is judged correct | IMPROVE: add a second oracle = the project's own tests/linter run in the sandbox before an | BUILT | reproducer plus the project's own tests (verify_fix_with_tests) |
 | E-C6 | Running tests and linters safely | BUILD: test/lint runner in `kk-sandbox`, no network, project read-only, scratch writable,  | BUILT | in the sandbox, no network |
-| E-C7 | Language coverage | BUILD closure per language (start JS/TS and Rust); ast-grep (MIT, per project standard) fo | PARTIAL | Python and JavaScript; TypeScript and Rust owed |
+| E-C7 | Language coverage | BUILD closure per language (start JS/TS and Rust); ast-grep (MIT, per project standard) fo | PARTIAL | Python, JavaScript and TypeScript (Node type stripping; the packaged Node.js has none, found by running it; capability asked of Node itself); Rust owed (reproducer-languages.md, c30, n03, rj05, j15, j16) |
 | E-C8 | Withheld-file handling | keep | KEPT | withheld files never leave |
 | E-C9 | Error messages that quote file text | ADAPT the rule: any hint quoting source goes through the label check for the viewer | PARTIAL | audit found no message quoting source or program output beyond a validated package name; name-based guard script added to scripts/test; OpenCode edit.ts block read (fix-format.md) |
 | E-C10 | Diff review UX | IMPROVE: real unified diff with context using `similar` (Apache-2.0, add to NOTICE); side- | BUILT | fix diff viewer (row 19) |

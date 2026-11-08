@@ -3047,6 +3047,7 @@ impl App {
                         let language = match f["language"].as_str() {
                             None | Some("python") => "Python".to_string(),
                             Some("javascript") => "JavaScript".to_string(),
+                            Some("typescript") => "TypeScript".to_string(),
                             Some(_) => "unknown language".to_string(),
                         };
                         lines.push(format!("Checked with {language}"));

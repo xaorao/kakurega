@@ -14,12 +14,19 @@ index = json.load(open(os.path.join(here, "index.json"), encoding="utf-8"))
 failed = 0
 missing = 0
 for item in index["findings"]:
-    if item.get("language", "python") == "javascript":
+    language = item.get("language", "python")
+    if language in ("javascript", "typescript"):
         node = shutil.which("node")
         if node is None:
             print("MISSING " + item["title"] + " (this check needs Node.js 22 or newer: install it from nodejs.org and run this again)")
             missing += 1
             continue
+        if language == "typescript":
+            probe = subprocess.run([node, "-p", "process.features.typescript"], capture_output=True, text=True, encoding="utf-8")
+            if probe.returncode != 0 or probe.stdout.strip() not in ("strip", "transform"):
+                print("MISSING " + item["title"] + " (this check runs TypeScript with Node.js itself: use the official Node.js 22.18 or newer from nodejs.org; some packaged builds leave TypeScript out)")
+                missing += 1
+                continue
         argv = [node, os.path.join(here, item["reproducer"])]
     else:
         argv = [sys.executable, os.path.join(here, item["reproducer"])]
@@ -186,6 +193,10 @@ pub fn assemble(
                 format!("repro-{n}.mjs"),
                 format!("run run-check.py (Python 3, with Node.js 22 or newer on the path). It rebuilds the minimal sample from sample-{n}.json, runs repro-{n}.mjs with Node.js and compares the output with expected-{n}.txt."),
             ),
+            Language::TypeScript => (
+                format!("repro-{n}.mts"),
+                format!("run run-check.py (Python 3, with the official Node.js 22.18 or newer on the path: it runs TypeScript itself, with no build step). It rebuilds the minimal sample from sample-{n}.json, runs repro-{n}.mts with Node.js and compares the output with expected-{n}.txt."),
+            ),
         };
         let bound: String = check
             .sample_paths
@@ -320,10 +331,10 @@ pub fn claims_for(draft: &ReleaseDraft) -> Vec<kk_evidence::capsule::ClaimSpec> 
         if evidence.iter().any(|n| !draft.files.contains_key(n)) {
             return Vec::new();
         }
-        let how_to_check = if e["language"].as_str() == Some("javascript") {
-            "Run run-check.py with Python 3, with Node.js 22 or newer on the path: it rebuilds the minimal sample, runs the Node.js script and compares the output with the expected output file."
-        } else {
-            "Run run-check.py with Python 3: it rebuilds the minimal sample and compares the output with the expected output file."
+        let how_to_check = match e["language"].as_str() {
+            Some("javascript") => "Run run-check.py with Python 3, with Node.js 22 or newer on the path: it rebuilds the minimal sample, runs the Node.js script and compares the output with the expected output file.",
+            Some("typescript") => "Run run-check.py with Python 3, with the official Node.js 22.18 or newer on the path: it rebuilds the minimal sample, runs the TypeScript script with Node.js itself and compares the output with the expected output file.",
+            _ => "Run run-check.py with Python 3: it rebuilds the minimal sample and compares the output with the expected output file.",
         };
         out.push(kk_evidence::capsule::ClaimSpec {
             statement: title,

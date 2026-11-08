@@ -19,6 +19,7 @@ const STAGES: [string, Key][] = [
 function languageName(language?: string): string {
   if (language === undefined || language === "python") return t("find.lang.python");
   if (language === "javascript") return t("find.lang.javascript");
+  if (language === "typescript") return t("find.lang.typescript");
   return t("find.lang.unknown");
 }
 

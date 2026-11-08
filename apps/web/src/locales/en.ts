@@ -705,6 +705,7 @@ export const en = {
   "find.reproIn": "Reproducer the kernel ran ({language})",
   "find.lang.python": "Python",
   "find.lang.javascript": "JavaScript",
+  "find.lang.typescript": "TypeScript",
   "find.lang.unknown": "unknown language",
   "find.repro": "Reproducer the kernel ran",
   "find.output": "Output",

@@ -17,6 +17,8 @@ pub enum Language {
     #[default]
     Python,
     JavaScript,
+    /// Run by Node's own type stripping: plain type annotations only, no build step.
+    TypeScript,
 }
 
 impl Language {
@@ -24,6 +26,7 @@ impl Language {
         match self {
             Language::Python => "python",
             Language::JavaScript => "javascript",
+            Language::TypeScript => "typescript",
         }
     }
 
@@ -32,6 +35,7 @@ impl Language {
         match name {
             "python" => Some(Language::Python),
             "javascript" => Some(Language::JavaScript),
+            "typescript" => Some(Language::TypeScript),
             _ => None,
         }
     }
@@ -197,7 +201,18 @@ fn js_specifiers(source: &str) -> Vec<String> {
     out
 }
 
-fn js_resolve(from: &str, spec: &str, files: &BTreeMap<String, &ImportedFile>) -> Option<String> {
+const JS_EXTENSIONS: [&str; 3] = [".js", ".mjs", ".cjs"];
+const TS_EXTENSIONS: [&str; 6] = [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"];
+
+/// The file a relative import names, among the project's files. For TypeScript the build tool's convention is followed as well:
+/// `./x.js` stands for `./x.ts` (and `.mjs` for `.mts`, `.cjs` for `.cts`), so the file is part of the sample even though only
+/// code that names its own extension runs under Node's type stripping.
+fn script_resolve(
+    from: &str,
+    spec: &str,
+    files: &BTreeMap<String, &ImportedFile>,
+    exts: &[&str],
+) -> Option<String> {
     let dir = Path::new(from).parent().unwrap_or(Path::new(""));
     let mut parts: Vec<String> = dir
         .components()
@@ -214,10 +229,17 @@ fn js_resolve(from: &str, spec: &str, files: &BTreeMap<String, &ImportedFile>) -
     }
     let base = parts.join("/");
     let mut candidates = vec![base.clone()];
-    for ext in [".js", ".mjs", ".cjs"] {
+    for ext in exts {
         candidates.push(format!("{base}{ext}"));
     }
-    for ext in [".js", ".mjs", ".cjs"] {
+    if exts.contains(&".ts") {
+        for (written, real) in [(".js", ".ts"), (".mjs", ".mts"), (".cjs", ".cts")] {
+            if let Some(stem) = base.strip_suffix(written) {
+                candidates.push(format!("{stem}{real}"));
+            }
+        }
+    }
+    for ext in exts {
         candidates.push(format!("{base}/index{ext}"));
     }
     candidates.into_iter().find(|c| files.contains_key(c))
@@ -228,6 +250,22 @@ fn js_resolve(from: &str, spec: &str, files: &BTreeMap<String, &ImportedFile>) -
 pub fn js_closure(
     entry: &str,
     files: &BTreeMap<String, &ImportedFile>,
+) -> Result<Vec<String>, ClosureError> {
+    script_closure(entry, files, &JS_EXTENSIONS)
+}
+
+/// The same for TypeScript: the cited file plus every file it reaches through literal relative imports, `.ts` family first.
+pub fn ts_closure(
+    entry: &str,
+    files: &BTreeMap<String, &ImportedFile>,
+) -> Result<Vec<String>, ClosureError> {
+    script_closure(entry, files, &TS_EXTENSIONS)
+}
+
+fn script_closure(
+    entry: &str,
+    files: &BTreeMap<String, &ImportedFile>,
+    exts: &[&str],
 ) -> Result<Vec<String>, ClosureError> {
     if !files.contains_key(entry) {
         return Err(ClosureError::EntryMissing);
@@ -245,7 +283,7 @@ pub fn js_closure(
         let source = String::from_utf8_lossy(&f.bytes).to_string();
         for spec in js_specifiers(&source) {
             if spec.starts_with("./") || spec.starts_with("../") {
-                if let Some(target) = js_resolve(&path, &spec, files) {
+                if let Some(target) = script_resolve(&path, &spec, files, exts) {
                     stack.push(target);
                 }
             }
@@ -344,6 +382,7 @@ pub fn run_reproducer(
     let closure = match finding.language {
         Language::Python => python_closure(&finding.file, files),
         Language::JavaScript => js_closure(&finding.file, files),
+        Language::TypeScript => ts_closure(&finding.file, files),
     };
     let sample_paths = match closure {
         Ok(p) => p,
@@ -393,6 +432,7 @@ pub fn run_reproducer(
     let (script_name, interpreter) = match finding.language {
         Language::Python => ("repro.py", env.python),
         Language::JavaScript => ("repro.mjs", env.node),
+        Language::TypeScript => ("repro.mts", env.node),
     };
     let script = dir.join(script_name);
     if fs::write(&script, finding.reproducer.as_bytes()).is_err() {
@@ -401,6 +441,16 @@ pub fn run_reproducer(
             stdout: String::new(),
             sample_paths,
         };
+    }
+    if finding.language == Language::TypeScript {
+        if let Some(why) = typescript_unavailable(interpreter, env.transport) {
+            let _ = fs::remove_dir_all(&dir);
+            return CheckResult {
+                status: CheckStatus::Unavailable(why),
+                stdout: String::new(),
+                sample_paths,
+            };
+        }
     }
     let mut outputs = Vec::new();
     // Round 2 is the negative control: the cited file is emptied. A script whose verdict does not depend on that
@@ -418,6 +468,9 @@ pub fn run_reproducer(
             }
             Language::JavaScript => {
                 spec.args = vec!["/repro/repro.mjs".into()];
+            }
+            Language::TypeScript => {
+                spec.args = vec!["/repro/repro.mts".into()];
             }
         }
         spec.binds.push(Bind {
@@ -446,6 +499,15 @@ pub fn run_reproducer(
                 if o.exit != Exit::Code(0) {
                     let _ = fs::remove_dir_all(&dir);
                     let stderr = String::from_utf8_lossy(&o.stderr);
+                    if finding.language == Language::TypeScript {
+                        if let Some(why) = typescript_environment_problem(&stderr) {
+                            return CheckResult {
+                                status: CheckStatus::Unavailable(why.into()),
+                                stdout: String::new(),
+                                sample_paths,
+                            };
+                        }
+                    }
                     if let Some(pkg) = missing_package(finding.language, &stderr) {
                         let in_project = files.keys().any(|p| {
                             p == &format!("{pkg}.py") || p.starts_with(&format!("{pkg}/"))
@@ -935,6 +997,61 @@ pub fn compare_test_runs(before: &TestRun, after: &TestRun) -> TestVerdict {
     }
 }
 
+/// Whether a failed TypeScript run failed because of what Node's type stripping cannot do, not because of the code: the answer is
+/// one of three fixed sentences chosen from Node's own error codes, never text taken from the error. Node refuses `enum`,
+/// `namespace` with code and parameter properties (ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX), refuses an import without its file
+/// extension (ERR_MODULE_NOT_FOUND on a path), and before 22.18 does not know the `.mts` extension at all.
+pub fn typescript_environment_problem(stderr: &str) -> Option<&'static str> {
+    if stderr.contains("ERR_UNKNOWN_FILE_EXTENSION") || stderr.contains("Unknown file extension") {
+        return Some("Node.js in the sandbox is too old to run TypeScript (22.18 or newer is needed), so this cannot be checked here");
+    }
+    if stderr.contains("ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX") {
+        return Some("the code uses TypeScript syntax that needs a build step (an enum, a namespace with code or a parameter property), and only plain type annotations can be checked here");
+    }
+    if stderr.contains("ERR_MODULE_NOT_FOUND")
+        && stderr.lines().any(|l| {
+            l.find("Cannot find module '/")
+                .is_some_and(|_| l.contains("imported from"))
+        })
+    {
+        return Some("a project file imports another without its file extension (for example './util' instead of './util.ts'), which needs a build step, so this cannot be checked here");
+    }
+    None
+}
+
+/// Asks the sandbox's Node.js, once, whether it can run TypeScript at all. The error a Node.js without the parser gives depends on
+/// the shape of the script, so the answer is not read from a failed run: `node -p process.features.typescript` is run first, and
+/// a Node.js that does not say `strip` or `transform` makes the check unavailable instead of failed.
+fn typescript_unavailable(node: &str, transport: &Transport) -> Option<String> {
+    let mut spec = SandboxSpec::new(node);
+    spec.args = vec!["-p".into(), "process.features.typescript".into()];
+    spec.limits = Limits {
+        wall: Duration::from_secs(20),
+        cpu_secs: 10,
+        ..Limits::default()
+    };
+    match run_with(&spec, transport) {
+        Ok(o) if o.exit == Exit::Code(0) => {
+            if node_has_typescript(&String::from_utf8_lossy(&o.stdout)) {
+                None
+            } else {
+                Some("the Node.js in the sandbox has no TypeScript support (the official build from nodejs.org, 22.18 or newer, has it; some packaged builds leave it out), so this cannot be checked here".into())
+            }
+        }
+        Ok(_) => Some("the Node.js in the sandbox could not be asked whether it runs TypeScript (it may be older than 22.10), so this cannot be checked here".into()),
+        Err(SandboxError::Unsupported(m)) => Some(m.to_string()),
+        Err(e) => Some(e.to_string()),
+    }
+}
+
+/// Whether this Node.js can run TypeScript, from its own answer to `node -p process.features.typescript`: `strip` or `transform`.
+/// The version number is not a safe test: the official 22.22.1 answers `strip`, but the package Debian and Ubuntu ship with the
+/// same number is built without the TypeScript parser and answers `false`. An older Node that has no such property prints
+/// `undefined`, which is also a no.
+pub fn node_has_typescript(feature_text: &str) -> bool {
+    matches!(feature_text.trim_end_matches('\n'), "strip" | "transform")
+}
+
 /// The package a failed script was missing, read from the interpreter's own error. Only a plain package name is ever
 /// returned (never text taken from the error), so it is safe to show.
 pub fn missing_package(language: Language, stderr: &str) -> Option<String> {
@@ -979,7 +1096,7 @@ pub fn missing_package(language: Language, stderr: &str) -> Option<String> {
                     }
                 }
             }
-            Language::JavaScript => {
+            Language::JavaScript | Language::TypeScript => {
                 for marker in ["Cannot find package '", "Cannot find module '"] {
                     if let Some(at) = line.find(marker) {
                         let rest = &line[at + marker.len()..];
@@ -1058,22 +1175,32 @@ pub fn run_project_tests_for(
 ) -> TestRun {
     match language {
         Language::Python => run_project_tests(files, env),
-        Language::JavaScript => run_node_tests(files, env),
+        Language::JavaScript => run_node_tests(files, env, false),
+        Language::TypeScript => run_node_tests(files, env, true),
     }
 }
 
-fn is_js_test_file(path: &str) -> bool {
-    is_test_path(path)
-        && matches!(
-            path.rsplit_once('.')
-                .map(|(_, e)| e.to_ascii_lowercase())
-                .as_deref(),
-            Some("js" | "mjs" | "cjs")
-        )
+fn is_js_test_file(path: &str, typescript: bool) -> bool {
+    if !is_test_path(path) {
+        return false;
+    }
+    let ext = path
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "js" | "mjs" | "cjs" => true,
+        "ts" | "mts" | "cts" => typescript,
+        _ => false,
+    }
 }
 
-fn run_node_tests(files: &BTreeMap<String, &ImportedFile>, env: &CheckEnv<'_>) -> TestRun {
-    if !files.keys().any(|p| is_js_test_file(p)) {
+fn run_node_tests(
+    files: &BTreeMap<String, &ImportedFile>,
+    env: &CheckEnv<'_>,
+    typescript: bool,
+) -> TestRun {
+    if !files.keys().any(|p| is_js_test_file(p, typescript)) {
         return TestRun::NoTests;
     }
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

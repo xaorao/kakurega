@@ -54,7 +54,7 @@ impl JobRunner for ReviewRunner {
             transport: self.transport.clone(),
             scratch: self.scratch.clone(),
             python: "/usr/bin/python3".into(),
-            node: "/usr/bin/node".into(),
+            node: sandbox_node(),
             max_turns: self.max_turns,
             now,
             ttl_secs: 86_400,
@@ -360,13 +360,17 @@ impl JobRunner for ReviewRunner {
                     },
                     "Install bubblewrap with your package manager",
                 ));
-                let node = std::process::Command::new("/usr/bin/node")
-                    .arg("--version")
-                    .output()
-                    .ok()
-                    .filter(|o| o.status.success())
-                    .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
-                out.push(node_check(node.as_deref()));
+                let probe = |args: &[&str]| {
+                    std::process::Command::new(sandbox_node())
+                        .args(args)
+                        .output()
+                        .ok()
+                        .filter(|o| o.status.success())
+                        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                };
+                let version = probe(&["--version"]);
+                let feature = probe(&["-p", "process.features.typescript"]);
+                out.push(node_check(version.as_deref(), feature.as_deref()));
             }
             Transport::Lima { vm, .. } => {
                 let status = std::process::Command::new("limactl")
@@ -400,13 +404,19 @@ impl JobRunner for ReviewRunner {
                         self.worker_binary.display().to_string(),
                         worker_fix,
                     ));
-                    let node = std::process::Command::new("limactl")
-                        .args(["shell", vm, "--", "/usr/bin/node", "--version"])
-                        .output()
-                        .ok()
-                        .filter(|o| o.status.success())
-                        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
-                    out.push(node_check(node.as_deref()));
+                    let probe = |args: &[&str]| {
+                        std::process::Command::new("limactl")
+                            .args(["shell", vm, "--"])
+                            .arg(sandbox_node())
+                            .args(args)
+                            .output()
+                            .ok()
+                            .filter(|o| o.status.success())
+                            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                    };
+                    let version = probe(&["--version"]);
+                    let feature = probe(&["-p", "process.features.typescript"]);
+                    out.push(node_check(version.as_deref(), feature.as_deref()));
                 } else {
                     out.push(check(
                         "worker",
@@ -577,13 +587,50 @@ mod live {
     }
 }
 
-/// The readiness entry for JavaScript checks. Optional: Python findings do not need Node.js, so a machine without it is
-/// still ready, and the entry only says what is missing.
-fn node_check(version_text: Option<&str>) -> Value {
+/// The Node.js the sandbox runs JavaScript and TypeScript checks with: the path in `KAKU_NODE` when it is a plain absolute path
+/// (as seen inside the sandbox, where `/usr` is visible read-only), else `/usr/bin/node`. A distribution's Node is often built
+/// without the TypeScript parser; the official build from nodejs.org copied to `/usr/local/bin/node` has it.
+pub fn sandbox_node() -> String {
+    choose_node(std::env::var("KAKU_NODE").ok())
+}
+
+fn choose_node(setting: Option<String>) -> String {
+    match setting {
+        Some(p) if plain_absolute_path(&p) => p,
+        _ => "/usr/bin/node".to_string(),
+    }
+}
+
+fn plain_absolute_path(p: &str) -> bool {
+    p.starts_with('/')
+        && p.len() <= 200
+        && !p.contains("..")
+        && p.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'-' | b'.'))
+}
+
+/// The readiness entry for JavaScript and TypeScript checks. Optional: Python findings do not need Node.js, so a machine without
+/// it is still ready, and the entry only says what is missing. TypeScript needs more than a version number: it is asked of
+/// Node itself (`process.features.typescript`), because the same version number can be built with or without the parser.
+fn node_check(version_text: Option<&str>, typescript_feature: Option<&str>) -> Value {
     let (ok, detail) = match version_text {
         None => (false, "Node.js was not found in the sandbox".to_string()),
         Some(t) => match kk_review::check::node_major(t) {
-            Some(m) if m >= 22 => (true, format!("Node.js {}", t.trim_end())),
+            Some(m) if m >= 22 => {
+                let ts = typescript_feature.is_some_and(kk_review::check::node_has_typescript);
+                (
+                    true,
+                    format!(
+                        "Node.js {}; TypeScript checks: {}",
+                        t.trim_end(),
+                        if ts {
+                            "available"
+                        } else {
+                            "not available (this build has no TypeScript support)"
+                        }
+                    ),
+                )
+            }
             Some(_) => (
                 false,
                 format!(
@@ -598,24 +645,27 @@ fn node_check(version_text: Option<&str>) -> Value {
         },
     };
     json!({
-        "id": "node", "label": "JavaScript checks (Node.js 22 or newer, optional)", "required": false,
+        "id": "node", "label": "JavaScript and TypeScript checks (Node.js 22 or newer, optional)", "required": false,
         "ok": ok, "detail": detail,
-        "fix": if ok { "" } else { "Install Node.js 22 or newer in the sandbox to check JavaScript findings; Python findings do not need it." },
+        "fix": if ok { "" } else { "Install Node.js 22 or newer in the sandbox to check JavaScript findings; Python findings do not need it. For TypeScript findings use the official build from nodejs.org (a packaged Node.js can leave TypeScript out) and set KAKU_NODE to its path inside the sandbox." },
     })
 }
 
 #[cfg(test)]
 mod node_check_tests {
-    use super::node_check;
+    use super::{choose_node, node_check, plain_absolute_path};
 
     #[test]
     fn nc01_the_node_entry_is_optional_and_says_what_is_wrong() {
-        let ok = node_check(Some("v22.22.1\n"));
+        let ok = node_check(Some("v22.22.1\n"), Some("strip\n"));
         assert_eq!(
             (ok["ok"].clone(), ok["required"].clone()),
             (true.into(), false.into())
         );
-        assert_eq!(ok["detail"], "Node.js v22.22.1");
+        assert_eq!(
+            ok["detail"],
+            "Node.js v22.22.1; TypeScript checks: available"
+        );
         assert_eq!(ok["fix"], "");
         for (text, want) in [
             (None, "was not found"),
@@ -624,7 +674,7 @@ mod node_check_tests {
             (Some("not a version"), "not a version"),
             (Some("v22.1.1 \u{1b}[31mred"), "not a version"),
         ] {
-            let c = node_check(text);
+            let c = node_check(text, None);
             assert_eq!(c["ok"], false, "{text:?}");
             assert_eq!(
                 c["required"], false,
@@ -635,6 +685,81 @@ mod node_check_tests {
                 "{text:?}: {c}"
             );
             assert!(c["fix"].as_str().unwrap().contains("Node.js 22"), "{c}");
+        }
+    }
+
+    #[test]
+    fn nc02_typescript_readiness_is_asked_of_node_and_a_version_number_does_not_stand_in_for_it() {
+        // the official 22.22.1 says strip; the distribution's build of the same version says false
+        let official = node_check(Some("v22.22.1\n"), Some("strip\n"));
+        let packaged = node_check(Some("v22.22.1\n"), Some("false\n"));
+        let older = node_check(Some("v22.10.0\n"), Some("undefined\n"));
+        let unasked = node_check(Some("v22.22.1\n"), None);
+        assert!(official["detail"]
+            .as_str()
+            .unwrap()
+            .contains("TypeScript checks: available"));
+        for c in [&packaged, &older, &unasked] {
+            assert_eq!(c["ok"], true, "JavaScript still works: {c}");
+            assert!(
+                c["detail"]
+                    .as_str()
+                    .unwrap()
+                    .contains("TypeScript checks: not available"),
+                "{c}"
+            );
+        }
+        // a hostile answer is not echoed as an answer: only the two words count
+        let spoof = node_check(Some("v22.22.1\n"), Some("strip\u{1b}[2J"));
+        assert!(
+            spoof["detail"].as_str().unwrap().contains("not available"),
+            "{spoof}"
+        );
+        assert!(!spoof["detail"].as_str().unwrap().contains('\u{1b}'));
+    }
+
+    #[test]
+    fn nc03_the_node_path_comes_from_a_plain_absolute_path_or_not_at_all() {
+        for ok in [
+            "/usr/local/bin/node",
+            "/opt/node-22.22.1/bin/node",
+            "/usr/bin/node",
+        ] {
+            assert!(plain_absolute_path(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "node",
+            "./node",
+            "bin/node",
+            "/usr/local/../bin/node",
+            "/usr/bin/node --inspect",
+            "/usr/bin/node;rm",
+            "/usr/bin/$HOME",
+            "/usr/bin/no de",
+            "/usr/\u{1b}[2J",
+            "/usr/bin/\u{e9}",
+        ] {
+            assert!(!plain_absolute_path(bad), "{bad:?}");
+        }
+        assert!(!plain_absolute_path(&format!("/{}", "a".repeat(250))));
+    }
+
+    #[test]
+    fn nc04_kaku_node_is_used_only_when_it_is_a_plain_path_and_the_default_stays_otherwise() {
+        assert_eq!(choose_node(None), "/usr/bin/node");
+        assert_eq!(
+            choose_node(Some("/usr/local/bin/node".into())),
+            "/usr/local/bin/node"
+        );
+        for bad in [
+            "node",
+            "/usr/bin/node --inspect",
+            "/x/../bin/node",
+            "",
+            "/a b",
+        ] {
+            assert_eq!(choose_node(Some(bad.into())), "/usr/bin/node", "{bad:?}");
         }
     }
 }
