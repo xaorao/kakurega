@@ -529,7 +529,17 @@ try {
   await page.getByLabel("Search memories").fill("euros");
   await page.locator(".mem").first().waitFor();
   check("searching finds the memory", (await page.locator(".mem").count()) === 1);
+  {
+    // the words the search matched are marked in the note, in the note's own spelling, as bold underlined text and not as markup
+    const marks = await page.locator(".mem .mem-text mark").allInnerTexts();
+    check("the matched word is marked in the found note", marks.length >= 1 && marks.every((m) => m.toLowerCase() === "euros"), JSON.stringify(marks));
+    const noteText = await page.locator(".mem .mem-text").first().innerText();
+    check("marking never changes the note's text", noteText.toLowerCase().includes("euros"), noteText);
+    await axeCheck(page, "memory with a marked search result");
+  }
   await page.getByLabel("Search memories").fill("");
+  await page.waitForFunction(() => document.querySelectorAll(".mem .mem-text mark").length === 0, null, { timeout: 10000 }).catch(() => {});
+  check("with no search nothing is marked", (await page.locator(".mem .mem-text mark").count()) === 0);
   await axeCheck(page, "memory screen");
   await page.getByRole("button", { name: "Correct" }).click();
   await page.locator("textarea[id^=edit-]").fill("Acme prefers invoices in pounds");

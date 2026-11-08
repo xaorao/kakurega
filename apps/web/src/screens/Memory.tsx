@@ -4,6 +4,7 @@ import { api, ApiError, type MemoryItem } from "../api";
 import { t, type Key } from "../i18n";
 import { isNoteFile, notesFromFile } from "../notes-import";
 import { Suggestions } from "./ReviewView";
+import { markTerms } from "../terms";
 
 const LEVELS = ["public", "internal", "confidential", "restricted"] as const;
 
@@ -54,7 +55,9 @@ function Item(props: { m: MemoryItem; onChange: (msg?: string) => void }) {
           </div>
         </div>
       }>
-        <p class="mem-text">{props.m.text}</p>
+        <p class="mem-text">
+          <For each={markTerms(props.m.text, props.m.matched_terms ?? [])}>{(piece) => (piece.hit ? <mark>{piece.text}</mark> : <>{piece.text}</>)}</For>
+        </p>
         <p class="muted">
           <span class="chip">{t(`mem.level.${props.m.level}` as Key)}</span>{" "}
           <Show when={props.m.untrusted}><span class="chip warn">{t("mem.untrusted")}</span>{" "}</Show>

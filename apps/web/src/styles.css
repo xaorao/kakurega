@@ -337,3 +337,5 @@ button.linklike:hover { color: var(--ink); }
 
 /* what was sent to the model: the text exactly, shorter than the general pre so a long prompt does not push the page down */
 .sent-text { max-height: 18rem; margin: 0.25rem 0 0.75rem; font-size: 0.9em; }
+
+.mem-text mark { background: transparent; color: inherit; font-weight: 700; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 2px; }
