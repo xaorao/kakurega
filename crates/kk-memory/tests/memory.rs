@@ -4454,3 +4454,47 @@ fn me94_a_review_cannot_suggest_back_text_the_owner_archived_merged_or_replaced(
     assert!(suggest(12, "the Oslo canteen closes at three").is_none());
     assert!(suggest(13, "a brand new fact about the Narvik depot").is_some());
 }
+
+#[test]
+fn me95_a_credential_is_refused_as_a_project_name_a_reason_a_subject_or_a_forget_reason() {
+    let m = mem(&dir());
+    let bearer = "Authorization: Bearer k3Jd9Xm2QpL7vN4wR8tY1aZ5cB6eF0hG";
+    let token = format!("ghp_{}", "R7kQ2mZx9LpV4nB8cT1yH6wD3sF5jA0gUe2K");
+    // the project name is shown beside notes and sent with them
+    assert!(!kk_memory::valid_project(bearer));
+    assert!(!kk_memory::valid_project(&token));
+    assert!(kk_memory::valid_project("payments-service") && kk_memory::valid_project("ghp-notes"));
+    // the reason and the subject are stored and shown
+    for (reason, subject) in [
+        (bearer, None),
+        ("you told me", Some(token.clone())),
+        (bearer, Some(token.clone())),
+    ] {
+        let mut n = nm("the Oslo canteen closes at three", internal());
+        n.reason = reason.into();
+        n.subject = subject;
+        let r = m.remember(1, n);
+        assert!(
+            matches!(&r, Err(e) if e.to_string().contains("secret")),
+            "{reason:?} was accepted: {r:?}"
+        );
+    }
+    // an ordinary reason and subject still work
+    let mut n = nm("the Oslo canteen closes at three", internal());
+    n.reason = "the canteen manager told me".into();
+    n.subject = Some("Oslo canteen".into());
+    let kept = id(m.remember(2, n).unwrap());
+    // the reason for forgetting is stored too
+    let r = m.forget(3, &kept, bearer);
+    assert!(
+        matches!(&r, Err(e) if e.to_string().contains("secret")),
+        "{r:?}"
+    );
+    m.forget(4, &kept, "it was wrong").unwrap();
+    // and so is the reason for erasing everything a review suggested
+    let r = m.forget_source(5, "job-1", bearer);
+    assert!(
+        matches!(&r, Err(e) if e.to_string().contains("secret")),
+        "{r:?}"
+    );
+}

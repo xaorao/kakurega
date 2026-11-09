@@ -943,6 +943,10 @@ impl Service {
         {
             return Err("name the recipient in 1 to 128 characters".into());
         }
+        // the recipient is written into the record and the log and printed on the release the recipient receives
+        if kk_secrets::holds_secret(recipient) {
+            return Err("the recipient looks like a secret; use a plain name".into());
+        }
         let (id, first) = {
             let mut g = self.inner.lock().expect("lock");
             // counted under the same lock that adds the review, so a burst of starts cannot slip past the limit
@@ -2421,6 +2425,13 @@ async fn transcript_export(axum::Extension(svc): Svc, Json(b): Json<TranscriptEx
     if !plain {
         return bad_name();
     }
+    if kk_secrets::holds_secret(&b.name) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "SECRET_IN_NAME",
+            "the name looks like a secret; choose a plain name",
+        );
+    }
     let file_name = match b.name.rsplit_once('.') {
         Some((stem, ext)) if matches!(ext, "md" | "txt" | "json") && !stem.is_empty() => {
             b.name.clone()
@@ -2751,7 +2762,12 @@ async fn pii_allow_set(axum::Extension(svc): Svc, Json(b): Json<PiiAllowBody>) -
     };
     let entry = if add {
         match kk_secrets::pii::check_entry(entry) {
-            Ok(e) => e,
+            Ok(e) => {
+                if kk_secrets::holds_secret(&e) {
+                    return refuse("that looks like a secret, not a personal detail to allow");
+                }
+                e
+            }
             Err(why) => return refuse(why),
         }
     } else {
@@ -3910,6 +3926,13 @@ async fn schedule_new(axum::Extension(svc): Svc, Json(b): Json<ScheduleNew>) -> 
             "name the recipient in 1 to 128 characters",
         );
     }
+    if kk_secrets::holds_secret(&rec) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_RECIPIENT",
+            "the recipient looks like a secret; use a plain name",
+        );
+    }
     let mut raw = [0u8; 4];
     getrandom::fill(&mut raw).expect("operating system randomness");
     let id = format!(
@@ -4593,6 +4616,14 @@ async fn attachment_upload(
         Ok(n) => n,
         Err(e) => return parse_error_response(&e),
     };
+    // the file's name goes into the prompt and the log beside its text
+    if kk_secrets::holds_secret(&name) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "SECRET_IN_NAME",
+            "the file name looks like a secret; rename the file",
+        );
+    }
     if body.is_empty() {
         return parse_error_response(&kk_parse::ParseError::Empty);
     }

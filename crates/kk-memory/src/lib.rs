@@ -55,7 +55,9 @@ pub fn valid_project(p: &str) -> bool {
         || p.chars().any(char::is_control)
         || has_hidden_chars(p)
         || p.contains('/')
-        || p.contains('\\'))
+        || p.contains('\\')
+        // a name is shown next to notes and sent along with them; a credential is not a name
+        || secret::looks_secret(p).is_some())
 }
 
 /// Which notes a lookup may see by project. `Global` is what applies everywhere; `Project` adds that project's notes;
@@ -946,6 +948,15 @@ impl Memories {
                 "this looks like {what}; secrets are never stored as memory"
             )));
         }
+        if secret::looks_secret(reason).is_some()
+            || subject
+                .as_ref()
+                .is_some_and(|s| secret::looks_secret(s).is_some())
+        {
+            return refuse(
+                "the reason or subject looks like a secret; secrets are never stored as memory",
+            );
+        }
         Ok(())
     }
 
@@ -1095,6 +1106,9 @@ impl Memories {
     pub fn forget(&self, now: i64, id: &str, reason: &str) -> Result<(), MemoryError> {
         if reason.len() > MAX_REASON || has_hidden_chars(reason) {
             return refuse("the reason is too long or contains control characters");
+        }
+        if secret::looks_secret(reason).is_some() {
+            return refuse("the reason looks like a secret; secrets are never stored as memory");
         }
         self.conn().execute_batch("SAVEPOINT forget")?;
         let r = (|| -> Result<(), MemoryError> {
@@ -1257,6 +1271,9 @@ impl Memories {
         Self::check_source_name(job_id)?;
         if reason.len() > MAX_REASON || has_hidden_chars(reason) {
             return refuse("the reason is too long or contains control characters");
+        }
+        if secret::looks_secret(reason).is_some() {
+            return refuse("the reason looks like a secret; secrets are never stored as memory");
         }
         self.conn().execute_batch("SAVEPOINT forget")?;
         let r = (|| -> Result<Purge, MemoryError> {

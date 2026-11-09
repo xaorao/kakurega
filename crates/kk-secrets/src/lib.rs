@@ -3125,6 +3125,12 @@ pub fn scan(text: &str) -> Vec<Hit> {
 /// detector's answers over its corpus change and this number was not bumped.
 pub const DETECTOR_VERSION: u32 = 1;
 
+/// Whether the text holds a credential in any form the detector knows. Used for every stored or shared piece of free text that
+/// has no reason to hold one: a recipient, a project name, a reason, a file name.
+pub fn holds_secret(text: &str) -> bool {
+    !scan(text).is_empty()
+}
+
 pub fn looks_secret(text: &str) -> Option<&'static str> {
     scan(text).first().map(|h| h.rule)
 }

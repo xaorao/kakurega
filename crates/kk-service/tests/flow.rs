@@ -14201,3 +14201,97 @@ fn sv148_a_bearer_token_or_a_session_cookie_typed_into_a_note_instructions_or_a_
     );
     assert_eq!(s, 201, "{v}");
 }
+
+#[test]
+fn sv149_a_secret_typed_where_a_name_or_a_reason_is_expected_is_refused_everywhere_it_would_be_stored_logged_or_shared(
+) {
+    const ALNUM: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let (c, w, repo, _root, _svc) = boot("name-fields", true);
+    let repo_s = repo.to_string_lossy().to_string();
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    let admin_token = c.security.admin_token().to_string();
+    for round in 0..4 {
+        let header = format!("Authorization: Bearer {}", fresh(ALNUM, 40));
+        let token_name = format!("ghp_{}", fresh(ALNUM, 36));
+        let refused = |what: &str, s: u16, v: &Value| {
+            assert!(
+                (400..500).contains(&s),
+                "round {round}: {what} accepted a secret ({s}): {v}"
+            );
+        };
+        let (s, v) = w.post("/api/jobs", json!({"repo": repo_s, "recipient": header}));
+        refused("the review recipient", s, &v);
+        let (s, v) = admin(
+            &base,
+            &admin_token,
+            "POST",
+            "/admin/jobs",
+            Some(json!({"repo": repo_s, "recipient": header})),
+        );
+        refused("the review recipient (admin door)", s, &v);
+        let (s, v) = w.post(
+            "/api/schedules",
+            json!({"repo": repo_s, "recipient": header, "every_hours": 1}),
+        );
+        refused("the schedule recipient", s, &v);
+        let (s, v) = w.post("/api/sessions", json!({"title": "x", "project": header}));
+        refused("a conversation's project", s, &v);
+        let (s, v) = w.post(
+            "/api/memories",
+            json!({"text": "an ordinary note about rounding", "project": header}),
+        );
+        refused("a note's project", s, &v);
+        let (s, v) = w.post("/api/memories", json!({"text": format!("another ordinary note number {round} about planning"), "reason": header}));
+        refused("a note's reason", s, &v);
+        let (s, v) = w.post(
+            "/api/instructions",
+            json!({"project": header, "text": "Answer briefly."}),
+        );
+        refused("an instruction's project", s, &v);
+        let (s, v) = w.post("/api/chat", json!({"message": "hello", "project": header}));
+        refused("a chat's project", s, &v);
+        let (s, v) = w.post(
+            "/api/exports/transcript",
+            json!({"name": format!("{token_name}.md"), "text": "hello"}),
+        );
+        refused("an export's file name", s, &v);
+        let (s, v) = w.post_raw(&format!("/api/attachments?name={token_name}.txt"), b"hello");
+        refused("an attachment's file name", s, &v);
+        let (s, v) = w.post("/api/pii-allow", json!({"add": header}));
+        refused("the personal-data allow list", s, &v);
+        // the typed-line history answers 200 but does not keep it
+        let (s, v) = w.post("/api/history", json!({"text": header}));
+        assert_eq!(
+            (s, v["saved"].as_bool()),
+            (200, Some(false)),
+            "round {round}: {v}"
+        );
+    }
+    // the same fields take ordinary values
+    let (s, v) = w.post(
+        "/api/jobs",
+        json!({"repo": repo_s, "recipient": "Acme Audit"}),
+    );
+    assert_eq!(s, 202, "{v}");
+    let (s, v) = w.post(
+        "/api/schedules",
+        json!({"repo": repo_s, "recipient": "Acme Audit", "every_hours": 1}),
+    );
+    assert_eq!(s, 201, "{v}");
+    let (s, v) = w.post(
+        "/api/sessions",
+        json!({"title": "x", "project": "payments-service"}),
+    );
+    assert_eq!(s, 201, "{v}");
+    let (s, v) = w.post("/api/memories", json!({"text": "an ordinary note about rounding", "project": "payments-service", "reason": "you asked for it"}));
+    assert_eq!(s, 201, "{v}");
+    let (s, v) = w.post(
+        "/api/exports/transcript",
+        json!({"name": "notes-2024.md", "text": "hello"}),
+    );
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w.post_raw("/api/attachments?name=pricing.txt", b"hello");
+    assert_eq!(s, 201, "{v}");
+    let (s, v) = w.post("/api/pii-allow", json!({"add": "jane.doe@example.com"}));
+    assert_eq!(s, 200, "{v}");
+}
