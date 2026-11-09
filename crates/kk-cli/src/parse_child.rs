@@ -19,6 +19,11 @@ const OUTPUT_LIMIT: u64 = 12 * 1024 * 1024;
 pub fn child(args: &[String]) -> ExitCode {
     let limits = Limits::default();
     let name = crate::flag(args, "--name").unwrap_or_default();
+    // the service names the helper; this reader has no environment of its own to look it up in
+    let helper = crate::flag(args, "--ocr")
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_file())
+        .map(crate::ocr::Helper::new);
     let mut bytes = Vec::new();
     let read = std::io::stdin()
         .lock()
@@ -26,7 +31,12 @@ pub fn child(args: &[String]) -> ExitCode {
         .read_to_end(&mut bytes);
     let answer = match read {
         Err(_) => ParseError::Damaged("the file could not be read".into()).to_json(),
-        Ok(_) => match kk_parse::parse(&name, &bytes, &limits) {
+        Ok(_) => match kk_parse::parse_with(
+            &name,
+            &bytes,
+            &limits,
+            helper.as_ref().map(|h| h as &dyn kk_parse::Recogniser),
+        ) {
             Ok(p) => p.to_json(),
             Err(e) => e.to_json(),
         },
@@ -44,7 +54,13 @@ pub fn run_isolated(name: &str, bytes: &[u8]) -> Result<Parsed, ParseError> {
         .map_err(|_| ParseError::Damaged("the reader could not be started".into()))?;
     let mut cmd = Command::new(exe);
     cmd.arg("parse-attachment").arg("--name").arg(&name);
-    run_child(cmd, bytes, TIME_LIMIT)
+    let mut limit = TIME_LIMIT;
+    if let Some(helper) = crate::ocr::find() {
+        cmd.arg("--ocr").arg(helper);
+        // recognition has its own limit inside; the reader waits for it
+        limit = TIME_LIMIT + crate::ocr::TIME_LIMIT;
+    }
+    run_child(cmd, bytes, limit)
 }
 
 /// Runs `cmd` as the reader: no environment, bytes in, one JSON line out, killed at the limit. The command is a parameter so
@@ -74,10 +90,11 @@ pub(crate) fn run_child(
     let writer = std::thread::spawn(move || {
         let _ = stdin.write_all(&input);
     });
-    let reader = std::thread::spawn(move || {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
         let mut out = Vec::new();
         let _ = (&mut stdout).take(OUTPUT_LIMIT + 1).read_to_end(&mut out);
-        out
+        let _ = tx.send(out);
     });
     let started = Instant::now();
     let status = loop {
@@ -95,11 +112,13 @@ pub(crate) fn run_child(
             }
         }
     };
-    let _ = writer.join();
-    let out = reader.join().unwrap_or_default();
     let Some(status) = status else {
+        // a program the reader started may still hold the pipe open: the answer is not waited for
+        drop(rx);
         return Err(broken("reading took too long and was stopped"));
     };
+    let _ = writer.join();
+    let out = rx.recv_timeout(Duration::from_secs(2)).unwrap_or_default();
     // a reader cut off for writing too much dies of the closed pipe, so the size is judged before the exit status
     if out.len() as u64 > OUTPUT_LIMIT {
         return Err(broken("the reader's answer was too large"));
@@ -142,6 +161,26 @@ mod tests {
     fn pc02_a_reader_that_never_finishes_is_stopped_at_the_limit() {
         let started = Instant::now();
         let e = run_child(sh("sleep 30"), b"hello", Duration::from_millis(300)).unwrap_err();
+        assert!(
+            matches!(&e, ParseError::Damaged(w) if w.contains("too long")),
+            "{e}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn pc02b_a_reader_that_leaves_a_child_holding_the_pipe_does_not_hold_up_the_service() {
+        let started = Instant::now();
+        let e = run_child(
+            sh("sleep 30 & sleep 30"),
+            b"hello",
+            Duration::from_millis(300),
+        )
+        .unwrap_err();
         assert!(
             matches!(&e, ParseError::Damaged(w) if w.contains("too long")),
             "{e}"

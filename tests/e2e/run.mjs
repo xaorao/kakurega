@@ -59,7 +59,13 @@ const check = (name, ok, detail = "") => {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  " + detail : ""}`);
 };
 
-const server = spawn(kaku, ["serve", "--data-dir", data, "--root", root, "--scripted", join(here, "script.json"), "--ui-dir", join(repo, "apps/web/dist")], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, KAKUREGA_SEARCH_URL: "https://search.example/search" } });
+// text recognition for pictures and scanned pages uses the operating system's own engine; the helper is built here each run
+const ocrHelper = join(repo, "target/debug/kaku-ocr");
+if (process.platform === "darwin") {
+  const built = spawnSync("sh", [join(repo, "helpers/ocr/build.sh"), ocrHelper], { encoding: "utf8" });
+  if (built.status !== 0) throw new Error("the text recognition helper did not build: " + built.stderr);
+}
+const server = spawn(kaku, ["serve", "--data-dir", data, "--root", root, "--scripted", join(here, "script.json"), "--ui-dir", join(repo, "apps/web/dist")], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, KAKUREGA_SEARCH_URL: "https://search.example/search", ...(process.platform === "darwin" ? { KAKU_OCR: ocrHelper } : {}) } });
 let out = "";
 server.stdout.on("data", (d) => (out += d));
 server.stderr.on("data", (d) => (out += d));
@@ -1856,6 +1862,32 @@ try {
   await page.getByRole("cell", { name: "Delivery finished" }).first().waitFor();
   const rows = await page.locator("tbody tr").allInnerTexts();
   check("the activity list shows approvals, delivery and memory changes in plain words", ["Release approved", "Delivery finished", "Memory forgotten", "Review finished", "Suggestion accepted"].every((w) => rows.join("\n").includes(w)));
+  // pictures and scanned pages are read on this computer: a scan, a hostile picture and a picture holding a secret
+  if (process.platform === "darwin") {
+    await page.goto(base + "/#/chat");
+    await page.getByLabel("Your message").waitFor();
+    const ocrDir = join(repo, "crates/kk-cli/tests/fixtures/ocr");
+    await page.locator('input[type="file"]').setInputFiles([
+      { name: "scan.jpg", mimeType: "image/jpeg", buffer: readFileSync(join(ocrDir, "scan.jpg")) },
+      { name: "inject.png", mimeType: "image/png", buffer: readFileSync(join(ocrDir, "inject.png")) },
+      { name: "secret.png", mimeType: "image/png", buffer: readFileSync(join(ocrDir, "secret.png")) },
+      { name: "mixed.pdf", mimeType: "application/pdf", buffer: readFileSync(join(ocrDir, "mixed.pdf")) },
+    ]);
+    await page.locator(".file-chip", { hasText: "mixed.pdf" }).waitFor({ timeout: 60000 });
+    await page.locator(".file-chip", { hasText: "scan.jpg" }).getByRole("button", { name: "What was read" }).click();
+    await page.locator(".read-passages").getByText("Invoice 4471 total 1,280.00 EUR").waitFor();
+    check("a picture of a document is read on this computer and its text is shown with where it came from", (await page.locator(".file-chip", { hasText: "scan.jpg" }).getByText("recognised from a picture by this computer and may contain mistakes").count()) === 1 && (await page.locator(".read-passages code", { hasText: "recognised text" }).count()) >= 1);
+    check("a picture that gives the assistant orders is flagged before anything is sent", (await page.locator(".file-chip", { hasText: "inject.png" }).getByText("hold lines that read like instructions").count()) === 1);
+    check("a picture holding a secret is flagged as one", (await page.locator(".file-chip", { hasText: "secret.png" }).getByText("hold what looks like a secret").count()) === 1);
+    await page.locator(".file-chip", { hasText: "mixed.pdf" }).getByRole("button", { name: "What was read" }).click();
+    await page.locator(".read-passages code", { hasText: "page 2 (recognised)" }).waitFor();
+    check("a PDF with a text page and a scanned page keeps both, the scanned one marked as recognised", (await page.locator(".read-passages code", { hasText: "page 1" }).count()) >= 1 && (await page.locator(".read-passages").getByText("Delivery on 14 March").count()) >= 1);
+    await axeCheck(page, "chat with recognised pictures");
+    await page.screenshot({ path: join(shots, "13f-recognised-pictures.png") });
+    // back to the activity page, where the journey continues
+    await page.getByRole("link", { name: "Activity" }).click();
+    await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();
+  }
   check("the activity page never shows memory text or file contents", !rows.join("\n").includes("in-process dictionary") && !rows.join("\n").includes("euros"));
   // leave the Activity page only once the usage card and its price list have loaded, so nothing of theirs is in flight
   await page.locator("#usage").getByRole("cell", { name: /test model/i }).first().waitFor();

@@ -12,6 +12,7 @@ mod mcp_install;
 #[cfg(test)]
 mod meaning_set;
 mod memory_import;
+mod ocr;
 mod parse_child;
 #[cfg(test)]
 mod recall_bench;

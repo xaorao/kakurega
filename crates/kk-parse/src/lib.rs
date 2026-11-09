@@ -311,8 +311,45 @@ pub fn detect(name: &str, bytes: &[u8]) -> Option<Kind> {
     None
 }
 
-/// Reads one file. `name` is only a label.
+/// What a text recogniser is shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Medium {
+    Picture,
+    Pdf,
+}
+
+/// One page of recognised text.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Recognised {
+    pub page: u32,
+    pub text: String,
+    /// The recogniser's own mean confidence for the page, 0 to 1.
+    pub confidence: f64,
+}
+
+/// Turns pictures into text. It is a parameter because the engine is the operating system's, run as a separate process by
+/// the program, while this crate stays free of processes. `pages` names the PDF pages wanted (empty means a picture).
+pub trait Recogniser {
+    fn recognise(
+        &self,
+        medium: Medium,
+        bytes: &[u8],
+        pages: &[u32],
+    ) -> Result<Vec<Recognised>, String>;
+}
+
+/// Reads one file. `name` is only a label. Pictures and scans are named, not read.
 pub fn parse(name: &str, bytes: &[u8], limits: &Limits) -> Result<Parsed, ParseError> {
+    parse_with(name, bytes, limits, None)
+}
+
+/// Reads one file, using `ocr` for pictures and for PDF pages that hold no text layer.
+pub fn parse_with(
+    name: &str,
+    bytes: &[u8],
+    limits: &Limits,
+    ocr: Option<&dyn Recogniser>,
+) -> Result<Parsed, ParseError> {
     let name = clean_name(name)?;
     if bytes.is_empty() {
         return Err(ParseError::Empty);
@@ -321,6 +358,7 @@ pub fn parse(name: &str, bytes: &[u8], limits: &Limits) -> Result<Parsed, ParseE
         return Err(ParseError::TooLarge);
     }
     let mut ctx = Ctx::new(limits);
+    ctx.ocr = ocr;
     let kind = detect(&name, bytes).ok_or_else(|| ParseError::Unsupported(describe(bytes)))?;
     read(&mut ctx, "", &name, kind, bytes, 0)?;
     Ok(Parsed {
@@ -349,6 +387,7 @@ pub(crate) struct Ctx<'a> {
     pub unpacked: u64,
     pub cells: usize,
     pub entries: usize,
+    pub ocr: Option<&'a dyn Recogniser>,
 }
 
 impl<'a> Ctx<'a> {
@@ -362,6 +401,7 @@ impl<'a> Ctx<'a> {
             unpacked: 0,
             cells: 0,
             entries: 0,
+            ocr: None,
         }
     }
 
@@ -437,10 +477,36 @@ pub(crate) fn read(
         Kind::Pdf => pdf::read(ctx, prefix, bytes),
         Kind::Archive => archive::read(ctx, prefix, name, bytes, depth),
         Kind::Picture => {
-            ctx.note(format!(
-                "{}: this is a picture. Pictures are not read: there is no text recognition on this computer yet.",
-                if prefix.is_empty() { name } else { prefix }
-            ));
+            let label = if prefix.is_empty() { name } else { prefix };
+            let Some(ocr) = ctx.ocr else {
+                ctx.note(format!(
+                    "{label}: this is a picture. Pictures are not read: there is no text recognition on this computer yet."
+                ));
+                return Ok(());
+            };
+            match ocr.recognise(Medium::Picture, bytes, &[]) {
+                Ok(pages) => {
+                    let text: String = pages
+                        .iter()
+                        .map(|p| p.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let clean = text::clean(&text);
+                    if clean.trim().is_empty() {
+                        ctx.note(format!(
+                            "{label}: this is a picture, and no text could be recognised in it."
+                        ));
+                    } else {
+                        ctx.note(format!(
+                            "{label}: the text was recognised from a picture by this computer and may contain mistakes."
+                        ));
+                        ctx.push(prefix, "recognised text".to_string(), clean);
+                    }
+                }
+                Err(why) => ctx.note(format!(
+                    "{label}: this is a picture, and its text could not be recognised ({why})."
+                )),
+            }
             Ok(())
         }
     }
