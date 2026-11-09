@@ -633,6 +633,7 @@ fn measure(fixture: &str, language_wanted: kk_review::check::Language, tag: &str
     let (mut not_reproduced, mut nondeterministic, mut unparsed, mut errors, mut with_verdict_line) =
         (0, 0, 0, 0, 0);
     let mut reasons: Vec<String> = Vec::new();
+    let mut stuck = 0usize;
     let (mut writes, mut fixes_kept) = (0usize, 0usize);
     let mut verdicts: Vec<Vec<String>> = Vec::new();
     for i in 0..runs {
@@ -661,6 +662,18 @@ fn measure(fixture: &str, language_wanted: kk_review::check::Language, tag: &str
         verdicts.push(shown);
         if report.error.is_some() {
             errors += 1;
+        }
+        // runs the loop detector ended: the worker says why on its error stream
+        if let Some(line) = report
+            .worker_stderr
+            .lines()
+            .find(|l| l.contains("worker_stopped"))
+        {
+            stuck += 1;
+            reasons.push(format!(
+                "run {i}: {}",
+                line.chars().take(200).collect::<String>()
+            ));
         }
         unparsed += report.unparsed_findings;
         writes += report
@@ -703,7 +716,7 @@ fn measure(fixture: &str, language_wanted: kk_review::check::Language, tag: &str
         }
     }
     println!(
-        "MEASURE {tag} model={model} runs={runs} findings={findings} right_language={right_language} reproduced={reproduced} not_reproduced={not_reproduced} failed={failed} unavailable={unavailable} nondeterministic={nondeterministic} with_NOT_REPRODUCED_line={with_verdict_line} unparsed={unparsed} job_errors={errors} artifact_writes={writes} fixes_kept={fixes_kept} verdicts_seen={verdicts:?}"
+        "MEASURE {tag} model={model} runs={runs} stuck={stuck} findings={findings} right_language={right_language} reproduced={reproduced} not_reproduced={not_reproduced} failed={failed} unavailable={unavailable} nondeterministic={nondeterministic} with_NOT_REPRODUCED_line={with_verdict_line} unparsed={unparsed} job_errors={errors} artifact_writes={writes} fixes_kept={fixes_kept} verdicts_seen={verdicts:?}"
     );
     for r in reasons.iter().take(20) {
         println!("MEASURE-REASON {tag} {r}");
