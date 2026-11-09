@@ -193,6 +193,8 @@ try:
     check("the status line says the service is ready", wait_for(r"ready", 30) is not None)
     send("/help\r")
     check("/help lists the commands", wait_for(r"/review FOLDER for RECIPIENT") is not None)
+    send("/model\r")
+    check("/model names the model in use and says there is nothing to choose with the test model", wait_for(r"Answering with: scripted test model", 30) is not None and wait_for(r"Nothing to choose") is not None)
     send("a plain question about rounding\r")
     _m = wait_for(r"answer: about \d+ tokens in [\d.]+ (ms|s)", 60)
     check("after a chat answer the footer says how long the answer is and how long it took", _m is not None, screen_text()[-500:].replace("\n", " | ") if _m is None else _m.group(0))

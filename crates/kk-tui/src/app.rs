@@ -175,6 +175,8 @@ enum Intent {
     FindChats,
     ExportTranscript,
     UsageShow,
+    ModelList,
+    ModelChoose(String),
     RenameChat,
     ChooseNote,
     BothRight,
@@ -2369,6 +2371,16 @@ impl App {
                     None,
                 )]
             }
+            Command::Model(None) => {
+                vec![self.req(Intent::ModelList, false, Method::Get, "/api/models", None)]
+            }
+            Command::Model(Some(name)) => vec![self.req(
+                Intent::ModelChoose(name.clone()),
+                false,
+                Method::Post,
+                "/api/model",
+                Some(json!({ "model": name })),
+            )],
             Command::Transcript(words) => {
                 let (total, hits) = self.search_transcript(&words);
                 if total == 0 {
@@ -3676,6 +3688,44 @@ impl App {
                     } else {
                         err_text(status, &body)
                     },
+                );
+                Vec::new()
+            }
+            Intent::ModelList => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let current = clean(body["current"].as_str().unwrap_or("?"));
+                let installed: Vec<String> = body["installed"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|m| m.as_str())
+                    .map(clean)
+                    .collect();
+                let mut lines = vec![format!("Answering with: {current}")];
+                if body["can_choose"] == true {
+                    lines.push(
+                        "Installed on this computer (choose one with /model NAME):".to_string(),
+                    );
+                    for m in &installed {
+                        lines.push(format!("  {} {m}", if *m == current { "*" } else { " " }));
+                    }
+                } else {
+                    lines.push("Nothing to choose: no other model that can answer is installed on this computer, or the model is not run here.".to_string());
+                }
+                self.push(Kind::Info, Some("Model"), lines);
+                Vec::new()
+            }
+            Intent::ModelChoose(name) => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                self.say(
+                    Kind::Info,
+                    format!("{} will answer from now on. A review already running keeps the model it started with.", clean(&name)),
                 );
                 Vec::new()
             }

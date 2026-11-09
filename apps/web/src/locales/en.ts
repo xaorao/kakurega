@@ -873,6 +873,7 @@ export const en = {
   "slash.ask": "Ask about documents; every quote is checked",
   "slash.instructions": "Your standing orders to the assistant",
   "slash.usage": "What each model answered over some days",
+  "slash.model": "Choose which installed model answers (in Settings)",
   "slash.log": "The activity log",
   "slash.newchat": "Leave this conversation and start a fresh one",
   "slash.title": "Commands",

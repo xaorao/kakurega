@@ -875,6 +875,7 @@ export const hi: Record<keyof typeof en, string> = {
   "slash.ask": "दस्तावेज़ों के बारे में पूछें; हर उद्धरण जाँचा जाता है",
   "slash.instructions": "सहायक के लिए आपके स्थायी निर्देश",
   "slash.usage": "कुछ दिनों में हर मॉडल ने क्या उत्तर दिया",
+  "slash.model": "चुनें कि कौन-सा लगा हुआ मॉडल उत्तर दे (सेटिंग में)",
   "slash.log": "गतिविधि लॉग",
   "slash.newchat": "यह बातचीत छोड़कर नई शुरू करें",
   "slash.title": "कमांड",

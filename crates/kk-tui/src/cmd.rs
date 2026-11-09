@@ -73,6 +73,8 @@ pub enum Command {
     Copy(bool),
     Export(String),
     Usage(u32),
+    /// `/model`: the models installed on this computer; `/model NAME`: answer with that one from now on.
+    Model(Option<String>),
     /// Branch the open kept conversation, keeping its first N messages (all when none is given).
     Branch(Option<usize>),
     /// Go back to before message N of the open kept conversation: a copy that stops just before it, with that message back in the box.
@@ -185,6 +187,7 @@ pub const NAMES: &[&str] = &[
     "stilltrue",
     "rewind",
     "quiet",
+    "model",
     "quit",
 ];
 
@@ -217,6 +220,7 @@ pub fn describe(name: &str) -> &'static str {
         "copy" => "copy the last reply (or all) to the clipboard, after asking",
         "export" => "write this conversation to a file in the exports folder",
         "usage" => "what each model route answered over some days",
+        "model" => "show the models installed on this computer, or choose which one answers",
         "branch" => "start a copy of this kept conversation, optionally cut after message N",
         "rename" => "rename a kept conversation",
         "conflicts" => "notes that seem to disagree",
@@ -316,6 +320,7 @@ pub fn usage(name: &str) -> &'static str {
         "copy" => "/copy [all]",
         "export" => "/export NAME",
         "usage" => "/usage [DAYS]",
+        "model" => "/model [NAME]",
         "branch" => "/branch [N]",
         "rename" => "/rename ID NEW TITLE",
         "resume" => "/resume [ID]",
@@ -368,6 +373,19 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "keep" => Ok(Command::Keep),
         "stash" => Ok(Command::Stash(true)),
         "quiet" => Ok(Command::Quiet),
+        "model" if rest.is_empty() => Ok(Command::Model(None)),
+        "model" => {
+            // one plain model name: the same characters the service accepts, so nothing else is ever sent
+            let ok = rest.len() <= 100
+                && rest
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '_' | '-' | '/'));
+            if ok {
+                Ok(Command::Model(Some(rest.to_string())))
+            } else {
+                Err(format!("usage: {}", usage("model")))
+            }
+        }
         "pop" => Ok(Command::Stash(false)),
         "clearhistory" => Ok(Command::ClearHistory),
         "gateway" => Ok(Command::Gateway),

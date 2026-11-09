@@ -6494,3 +6494,122 @@ fn tu105_a_busy_answer_when_starting_a_review_is_shown_as_the_service_said_it_an
         "nothing is polled for a review that never started"
     );
 }
+
+#[test]
+fn tu106_model_alone_asks_the_service_which_models_are_installed_and_marks_the_one_in_use() {
+    let mut app = booted();
+    let r = enter(&mut app, "/model");
+    assert_eq!(r.len(), 1);
+    assert_eq!(
+        (r[0].path.as_str(), r[0].body.clone()),
+        ("/api/models", None)
+    );
+    app.handle(ok(
+        &r[0],
+        200,
+        json!({"current": "qwen2.5:1.5b", "installed": ["qwen2.5:1.5b", "qwen2.5:3b"], "can_choose": true}),
+    ));
+    let all = text(&app);
+    assert!(all.contains("Answering with: qwen2.5:1.5b"), "{all}");
+    assert!(
+        all.contains("* qwen2.5:1.5b") && all.contains("  qwen2.5:3b"),
+        "{all}"
+    );
+    assert!(all.contains("/model NAME"), "{all}");
+}
+
+#[test]
+fn tu107_when_there_is_nothing_to_choose_it_says_why_and_lists_nothing() {
+    let mut app = booted();
+    let r = enter(&mut app, "/model");
+    app.handle(ok(
+        &r[0],
+        200,
+        json!({"current": "only:1b", "installed": [], "can_choose": false}),
+    ));
+    let all = text(&app);
+    assert!(
+        all.contains("Answering with: only:1b") && all.contains("Nothing to choose"),
+        "{all}"
+    );
+    assert!(!all.contains("Installed on this computer"), "{all}");
+}
+
+#[test]
+fn tu108_a_named_model_is_sent_as_one_plain_name_and_the_answer_is_shown_or_the_refusal_as_said() {
+    let mut app = booted();
+    let r = enter(&mut app, "/model qwen2.5:3b");
+    assert_eq!(r[0].path, "/api/model");
+    assert_eq!(r[0].body, Some(json!({"model": "qwen2.5:3b"})));
+    app.handle(ok(&r[0], 200, json!({"route": {"model": "qwen2.5:3b"}})));
+    assert!(
+        text(&app).contains("qwen2.5:3b will answer from now on"),
+        "{}",
+        text(&app)
+    );
+    let mut app = booted();
+    let r = enter(&mut app, "/model llama3:70b");
+    app.handle(ok(
+        &r[0],
+        400,
+        json!({"error": {"code": "BAD_MODEL", "message": "that model is not installed on this computer"}}),
+    ));
+    let all = text(&app);
+    assert!(
+        all.contains("that model is not installed on this computer"),
+        "{all}"
+    );
+    assert!(!all.contains("will answer from now on"), "{all}");
+}
+
+#[test]
+fn tu109_a_name_that_is_not_plain_is_refused_before_anything_is_sent_and_a_hostile_reply_is_cleaned(
+) {
+    for bad in [
+        "a b",
+        "x;y",
+        "$(id)",
+        "`id`",
+        "x|y",
+        "m\u{202e}x",
+        &format!("/model {}", "a".repeat(101)),
+    ] {
+        let mut app = booted();
+        let line = if bad.starts_with("/model ") {
+            bad.to_string()
+        } else {
+            format!("/model {bad}")
+        };
+        let r = enter(&mut app, &line);
+        assert!(r.is_empty(), "{line:?} must not reach the service");
+        assert!(
+            text(&app).contains("usage: /model [NAME]"),
+            "{line:?}: {}",
+            text(&app)
+        );
+    }
+    let mut app = booted();
+    let r = enter(&mut app, "/model");
+    app.handle(ok(
+        &r[0],
+        200,
+        json!({"current": "ok\u{1b}[31m:1b", "installed": ["ok\u{1b}[31m:1b", "b\u{202e}:2b"], "can_choose": true}),
+    ));
+    let all = text(&app);
+    assert!(
+        !all.contains('\u{1b}') && !all.contains('\u{202e}'),
+        "{all:?}"
+    );
+}
+
+#[test]
+fn tu110_model_is_in_the_command_list_with_help_and_a_usage_line() {
+    assert!(cmd::NAMES.contains(&"model"));
+    assert!(!cmd::describe("model").is_empty());
+    assert_eq!(cmd::usage("model"), "/model [NAME]");
+    assert_eq!(cmd::parse("/model").unwrap(), Command::Model(None));
+    assert_eq!(
+        cmd::parse("/model m1").unwrap(),
+        Command::Model(Some("m1".into()))
+    );
+}

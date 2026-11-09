@@ -32,6 +32,7 @@ export const COMMANDS: readonly SlashCommand[] = [
   { name: "ask", about: "slash.ask", go: { hash: "#/docs" } },
   { name: "instructions", about: "slash.instructions", go: { hash: "#/instructions" } },
   { name: "usage", about: "slash.usage", go: { hash: "#/activity" } },
+  { name: "model", about: "slash.model", go: { hash: "#/settings" } },
   { name: "log", about: "slash.log", go: { hash: "#/activity" } },
   { name: "newchat", about: "slash.newchat", go: { newChat: true } },
 ];
