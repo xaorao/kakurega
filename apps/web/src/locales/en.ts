@@ -688,6 +688,8 @@ export const en = {
   "new.recipient.help": "The release and the signed capsule are bound to this name. A capsule made for one recipient is rejected for another.",
   "new.start": "Start review",
   "new.startError": "Could not start the review.",
+  "new.busy": "The most reviews are already running. Wait for one to finish, then start this one again.",
+  "progress.againFailed": "Could not start it again: {why}",
   "new.model": "Model: <b>{model}</b> {where}. Small local models find fewer defects than hosted ones; the kernel will not release a finding it cannot reproduce.",
   "new.model.scripted": "(scripted, test mode)",
   "new.model.local": "(runs on this computer)",

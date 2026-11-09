@@ -103,6 +103,7 @@ let chatFailureRefusals = 0; // the one deliberate 422 when a chat send is made 
 let piiPricesBad = 0; // the one deliberate 422 when a negative price is typed
 let sessionRefusals = 0; // the one deliberate 422 when keeping a conversation is made to fail
 let piiAllowRefusals = 0; // the one deliberate 422 when a pattern that would match everything is added to the personal-data list
+let busyRefusals = 0; // the one deliberate 429 when four reviews are already running
 let forgottenWordsRefusals = 0; // the one deliberate 422 when forgotten words are typed in again
 page.on("request", (r) => { try { requestOrigins.add(new URL(r.url()).origin); } catch { /* data: urls */ } });
 page.on("console", (m) => {
@@ -124,6 +125,10 @@ page.on("console", (m) => {
   }
   if (m.location().url.endsWith("/api/usage/prices") && /status of 422/.test(m.text()) && piiPricesBad > 0) {
     piiPricesBad--;
+    return;
+  }
+  if (m.location().url.endsWith("/api/jobs") && /status of 429/.test(m.text()) && busyRefusals > 0) {
+    busyRefusals--;
     return;
   }
   if (m.location().url.endsWith("/api/pii-allow") && /status of 422/.test(m.text()) && piiAllowRefusals > 0) {
@@ -254,6 +259,25 @@ try {
   await page.getByRole("button", { name: "payments-service" }).click();
   await page.waitForFunction(() => document.querySelector(".path")?.textContent?.endsWith("payments-service"));
   await page.getByLabel("Recipient name").fill("acme-audit");
+  // the service answers a fifth review that would run at the same time with 429 BUSY (its exact body, as sv145 checks); what the person sees
+  await page.route("**/api/jobs", (route) => route.request().method() === "POST" ? route.fulfill({ status: 429, contentType: "application/json", body: JSON.stringify({ error: { code: "BUSY", message: "4 reviews are already running; wait for one to finish, then start this one again" } }) }) : route.continue());
+  busyRefusals = 1;
+  await page.getByRole("button", { name: "Start review" }).click();
+  const busy = page.getByRole("alert").filter({ hasText: "already running" });
+  await busy.waitFor({ timeout: 15000 });
+  check("when the most reviews are already running the page says so in plain words and what to do", /The most reviews are already running\. Wait for one to finish, then start this one again\./.test(await busy.innerText()));
+  // in Hindi it is said in Hindi: it is an ordinary state, not a fault, so it is not left in the service's English
+  await page.getByLabel("Language").selectOption("hi");
+  busyRefusals = 1;
+  await page.getByRole("button", { name: "समीक्षा शुरू करें" }).click();
+  const busyHi = page.getByRole("alert").filter({ hasText: "पहले से चल रही हैं" });
+  await busyHi.waitFor({ timeout: 15000 });
+  check("and in Hindi the same refusal is in Hindi", /अधिकतम समीक्षाएँ पहले से चल रही हैं/.test(await busyHi.innerText()) && !/already running/.test(await busyHi.innerText()));
+  await page.getByLabel("भाषा").selectOption("en");
+  check("and the form still holds the folder and the recipient, with the button usable again", (await page.getByLabel("Recipient name").inputValue()) === "acme-audit" && await page.getByRole("button", { name: "Start review" }).isEnabled() && (await page.locator(".path").first().innerText()).endsWith("payments-service"));
+  await page.screenshot({ path: join(shots, "01b-busy.png") });
+  await axeCheck(page, "new review with the busy refusal");
+  await page.unroute("**/api/jobs");
   await page.getByRole("button", { name: "Start review" }).click();
   await page.getByRole("tab", { name: "Release" }).waitFor({ timeout: 120000 });
   await page.getByRole("heading", { name: "The exact release" }).waitFor({ timeout: 120000 });
@@ -905,6 +929,25 @@ try {
   await page.getByRole("button", { name: "Run this review again" }).click();
   await page.waitForURL(/#\/job\/job-78/);
   check("an interrupted review offers to run again and starts the same folder for the same recipient", startedAgain?.repo === "/some/folder" && startedAgain?.recipient === "Acme");
+  // when the service is already running as many reviews as it allows, the button says so (it used to do nothing at all)
+  await page.goto(base + "/#/");
+  await page.getByRole("heading", { name: "Review a project" }).waitFor();
+  await page.unroute("**/api/jobs**");
+  await page.route("**/api/jobs**", async (route) => {
+    const req = route.request();
+    if (req.method() === "POST") return route.fulfill({ status: 429, contentType: "application/json", body: JSON.stringify({ error: { code: "BUSY", message: "4 reviews are already running; wait for one to finish, then start this one again" } }) });
+    if (req.url().endsWith("/api/jobs")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ jobs: [dead] }) });
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(dead) });
+  });
+  await page.goto(base + "/#/job/job-77");
+  await page.reload();
+  busyRefusals = 1;
+  await page.getByRole("button", { name: "Run this review again" }).click();
+  const againBusy = page.getByRole("alert").filter({ hasText: "already running" });
+  await againBusy.waitFor({ timeout: 15000 });
+  check("when the service is at its limit, Run this review again says so beside the button and the old review stays open", /The most reviews are already running/.test(await againBusy.innerText()) && page.url().endsWith("#/job/job-77"));
+  await page.screenshot({ path: join(shots, "01c-run-again-busy.png") });
+  await axeCheck(page, "interrupted review with the busy message");
   await page.goto(base + "/#/");
   await page.getByRole("heading", { name: "Review a project" }).waitFor();
   await page.unroute("**/api/jobs**");

@@ -153,6 +153,10 @@ button.link:hover { color: var(--ink); }
 .steps li.done .mark { background: var(--cipher); border-color: var(--cipher); color: var(--paper); }
 .steps li.active .mark { border-color: var(--ink); }
 .steps .sub { font-size: 12.5px; color: var(--graphite); font-weight: 400; }
+/* the actions of a stopped step sit under its words, across the two right-hand columns, not squeezed into the marker column */
+.steps li .actions { grid-column: 2 / -1; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 4px; }
+.steps li .actions button { white-space: nowrap; }
+.steps li .actions .sub { font-size: 13px; color: var(--redline); }
 
 table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
 th { text-align: left; font-weight: 500; color: var(--graphite); border-bottom: 1px solid var(--line); padding: 6px 8px; }

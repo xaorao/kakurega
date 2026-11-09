@@ -33,6 +33,7 @@ function statusText(s: string): [string, string] {
 }
 
 function Progress(props: { job: Job }) {
+  const [againError, setAgainError] = createSignal("");
   const reached = () => new Set(props.job.events.map((e) => e.stage));
   const finished = () => reached().has("finished");
   return (
@@ -52,7 +53,7 @@ function Progress(props: { job: Job }) {
       </For>
       <Show when={props.job.state === "failed"}>
         <li class="fail"><span class="mark">!</span><span>{t("progress.stopped")}</span><span class="sub">{props.job.note}</span>
-          <span class="actions"><button type="button" onClick={async () => { try { const r = await api.startJob(props.job.repo, props.job.recipient); location.hash = `#/job/${r.id}`; } catch { /* the folder may no longer be available; the old review stays as it was */ } }}>{t("progress.again")}</button></span>
+          <span class="actions"><button type="button" onClick={async () => { setAgainError(""); try { const r = await api.startJob(props.job.repo, props.job.recipient); location.hash = `#/job/${r.id}`; } catch (e) { /* the old review stays as it was; the person is told why nothing started */ setAgainError(e instanceof ApiError && e.code === "BUSY" ? t("new.busy") : t("progress.againFailed", { why: e instanceof ApiError ? e.message : t("new.startError") })); } }}>{t("progress.again")}</button><Show when={againError()}><span class="sub" role="alert">{againError()}</span></Show></span>
         </li>
       </Show>
     </ol>

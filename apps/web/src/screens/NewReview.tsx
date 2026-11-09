@@ -53,7 +53,8 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
       const r = await api.startJob(chosen(), recipient().trim());
       props.onStarted(r.id);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : t("new.startError"));
+      // the service is already running as many reviews as it allows: a normal state, said in the page's language
+      setError(e instanceof ApiError ? (e.code === "BUSY" ? t("new.busy") : e.message) : t("new.startError"));
     } finally {
       setBusy(false);
     }
