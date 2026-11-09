@@ -94,6 +94,8 @@ pub fn setup_from_flags(args: &[String], quiet: bool) -> Result<Setup, String> {
 fn serve(args: &[String]) -> Result<(), String> {
     let data = crate::data_dir(args);
     kk_service::keys::ensure_private_dir(&data).map_err(|e| e.to_string())?;
+    // a crash leaves a small readable report in the data folder (`kaku diagnostics` shows it); nothing is sent anywhere
+    kk_service::crash::install(&data);
     let home = PathBuf::from(std::env::var("HOME").map_err(|_| "HOME is not set")?);
     let mut roots: Vec<PathBuf> = crate::flags(args, "--root")
         .into_iter()

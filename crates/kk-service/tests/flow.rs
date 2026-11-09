@@ -14878,3 +14878,38 @@ fn sv158_vectors_of_one_embedding_model_are_never_used_for_another() {
         "a new model embeds every passage again"
     );
 }
+
+#[test]
+fn sv159_diagnostics_list_recorded_crashes_as_fixed_fields_and_never_a_planted_file() {
+    let runner = FileRunner::new("http://127.0.0.1:11434", 16384);
+    let (c, _w, root) = file_service("diag-crash", runner);
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    let tok = c.security.admin_token().to_string();
+    let data = root.join("data");
+    let (_, v) = admin(&base, &tok, "GET", "/admin/diagnostics", None);
+    assert_eq!(v["crashes"], json!([]), "a fresh install has none");
+    kk_service::crash::record(
+        &data,
+        "review-worker",
+        "/Users/alice/near/kakurega/crates/kk-review/src/job.rs",
+        88,
+        "text",
+    );
+    // a stranger's file in the same folder, dressed as a report but carrying a path and a secret
+    let dir = data.join("crashes");
+    std::fs::write(
+        dir.join("crash-999999999999-0001.txt"),
+        "kakurega-crash 1\nversion 9.9.9\nat 1\nthread main\nplace /Users/alice/secret/plan.rs:1\nmessage text\nextra: Zorblax merger closes Friday\n",
+    )
+    .unwrap();
+    let (st, v) = admin(&base, &tok, "GET", "/admin/diagnostics", None);
+    assert_eq!(st, 200);
+    let list = v["crashes"].as_array().unwrap();
+    assert_eq!(list.len(), 1, "{v}");
+    assert_eq!(list[0]["place"], json!("crates/kk-review/src/job.rs:88"));
+    assert_eq!(list[0]["thread"], json!("review-worker"));
+    let text = v.to_string();
+    for leak in ["alice", "Zorblax", "/Users", "9.9.9"] {
+        assert!(!text.contains(leak), "{leak} reached the report");
+    }
+}

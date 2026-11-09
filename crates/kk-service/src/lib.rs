@@ -2,6 +2,7 @@ mod attachments;
 pub mod backup;
 mod budget;
 mod compaction;
+pub mod crash;
 pub mod deliver;
 mod extraction;
 mod fixfiles;

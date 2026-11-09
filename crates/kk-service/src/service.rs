@@ -3011,6 +3011,14 @@ async fn log_summary(axum::Extension(svc): Svc) -> Response {
 /// What the owner can read, check and attach to a bug report: versions, the checks and how they came out, counts, and the kinds
 /// of the last events. Never a name, a path, a word of any note, conversation or file, or any key. Paths inside a check's own
 /// text are shortened to `~` or `<data>` before they are shown.
+/// The recorded crashes, newest first, as fixed fields only (see `crash`).
+fn kk_service_crashes(data: &Path) -> Vec<Value> {
+    crate::crash::reports(data)
+        .into_iter()
+        .map(|r| json!({"version": r.version, "at": r.at, "thread": r.thread, "place": r.place}))
+        .collect()
+}
+
 async fn diagnostics(axum::Extension(svc): Svc) -> Json<Value> {
     let svc2 = svc.clone();
     let checks = tokio::task::spawn_blocking(move || svc2.runner.readiness())
@@ -3070,6 +3078,7 @@ async fn diagnostics(axum::Extension(svc): Svc) -> Json<Value> {
             "log_entries": svc.log.head().ok().flatten().map(|h| h.0 as i64).unwrap_or(0),
         },
         "recent_event_kinds": kinds,
+        "crashes": kk_service_crashes(&svc.data_dir),
         "holds_no": ["file names", "paths", "note, conversation or file text", "keys or tokens"],
     }))
 }

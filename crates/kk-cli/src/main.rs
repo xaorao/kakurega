@@ -67,6 +67,13 @@ fn main() -> ExitCode {
         Some("serve") => serve::run(&args[1..]),
         // started by the service to read one attached file; not for people to run
         Some("parse-attachment") => return parse_child::child(&args[1..]),
+        // internal: records a deliberate crash in the folder given, so the suite can read what a real one leaves behind
+        Some("crash-probe") => {
+            let dir = std::path::PathBuf::from(args.get(1).cloned().unwrap_or_default());
+            kk_service::crash::install(&dir);
+            let key = format!("{}{}", "sk_li", "ve_abcdefghijklmnop0123");
+            panic!("probe: could not read /Users/someone/private/notes.txt holding {key}");
+        }
         Some("pair") => approve::pair(&args[1..]),
         Some("approve") => approve::run(&args[1..]),
         Some("verify") => verify::run(&args[1..]),

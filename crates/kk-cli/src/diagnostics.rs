@@ -54,6 +54,23 @@ pub fn render(v: &Value) -> String {
             out.push_str(&format!("  {name}: {n}\n"));
         }
     }
+    out.push_str("\nCrashes recorded on this computer\n");
+    let crashes: Vec<&Value> = v["crashes"].as_array().into_iter().flatten().collect();
+    if crashes.is_empty() {
+        out.push_str("  none\n");
+    }
+    for c in crashes {
+        out.push_str(&format!(
+            "  unix time {}, version {}, thread {}, in {}\n",
+            c["at"],
+            s(&c["version"]),
+            s(&c["thread"]),
+            s(&c["place"])
+        ));
+    }
+    if v["crashes"].as_array().is_some_and(|a| !a.is_empty()) {
+        out.push_str("  (A crash report holds no message and no personal part of a path; it is shown here and sent nowhere.)\n");
+    }
     out.push_str("\nThis report holds no file names, paths, note, conversation or file text, keys or tokens.\n");
     out
 }
@@ -122,6 +139,30 @@ mod tests {
         assert!(
             render(&json!({})).contains("Kakurega diagnostics"),
             "a damaged answer still renders"
+        );
+    }
+
+    #[test]
+    fn dg02_crashes_are_listed_in_plain_words_or_said_to_be_none() {
+        let none = render(
+            &json!({"version":"1","os":"macos","arch":"arm64","test_mode":false,"route":{},"checks":[],"counts":{},"recent_event_kinds":{},"crashes":[]}),
+        );
+        assert!(
+            none.contains("Crashes recorded on this computer\n  none\n"),
+            "{none}"
+        );
+        let some = render(
+            &json!({"version":"1","os":"macos","arch":"arm64","test_mode":false,"route":{},"checks":[],"counts":{},"recent_event_kinds":{},"crashes":[{"at":1700000000u64,"version":"0.1.0","thread":"main","place":"crates/a/src/b.rs:3"}]}),
+        );
+        assert!(
+            some.contains(
+                "unix time 1700000000, version 0.1.0, thread main, in crates/a/src/b.rs:3"
+            ),
+            "{some}"
+        );
+        assert!(
+            some.contains("holds no message and no personal part of a path"),
+            "{some}"
         );
     }
 }
