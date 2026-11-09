@@ -220,6 +220,22 @@ pub fn assemble(
         } else {
             None
         };
+        // a check that used a file the project does not hold (not imported, or a link that was never followed) cannot be
+        // described to the recipient; the finding is left out with that reason, and the release is still built
+        if let Some(missing) = check
+            .sample_paths
+            .iter()
+            .find(|p| !project_files.contains_key(p.as_str()))
+        {
+            not_confirmed.push((
+                finding.title.clone(),
+                format!(
+                    "the check used a file that is not part of the project being released ({})",
+                    clean_text(missing, 120)
+                ),
+            ));
+            continue;
+        }
         n += 1;
         let (script_name, how) = match finding.language {
             Language::Python => (

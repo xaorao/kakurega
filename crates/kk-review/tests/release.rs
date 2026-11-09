@@ -1235,3 +1235,36 @@ fn rj07_a_crate_without_an_edition_is_rebuilt_by_the_recipient_as_2015_and_the_s
         text(&out)
     );
 }
+
+#[test]
+fn rj08_a_confirmed_finding_whose_check_used_a_file_the_project_does_not_hold_is_left_out_not_a_crash(
+) {
+    let proj = files();
+    let idx = index(&proj);
+    let (good_finding, good_check) = (finding(), confirmed());
+    let (bad_finding, mut bad_check) = (finding(), confirmed());
+    bad_check.sample_paths = vec!["src/never_imported.py".into()];
+    let draft = assemble(
+        &[(bad_finding, bad_check), (good_finding, good_check)],
+        &idx,
+        "acme-audit",
+        "policy-1",
+        1_700_000_000,
+        86_400,
+    )
+    .expect("a finding with a missing file must not stop the release");
+    assert!(
+        draft.files.contains_key("repro-1.py"),
+        "the other finding is still released"
+    );
+    assert!(!draft.files.contains_key("repro-2.py"));
+    assert!(
+        draft
+            .not_confirmed
+            .iter()
+            .any(|(_, why)| why.contains("not part of the project")
+                && why.contains("never_imported.py")),
+        "{:?}",
+        draft.not_confirmed
+    );
+}
