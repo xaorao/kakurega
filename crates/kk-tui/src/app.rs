@@ -3007,7 +3007,11 @@ impl App {
                 self.inflight_polls.remove(&id);
                 if !ok {
                     self.watching.remove(&id);
-                    self.say(Kind::Error, err_text(status, &body));
+                    // with several reviews running, the failure has to say which one it is about
+                    self.say(
+                        Kind::Error,
+                        format!("{}: {}", clean(&id), err_text(status, &body)),
+                    );
                     return Vec::new();
                 }
                 let seen = self.watching.get(&id).copied();

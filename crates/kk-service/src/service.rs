@@ -926,6 +926,13 @@ impl Service {
         self.persist_job(&j, None)
     }
 
+    /// The answer for a review that cannot start because the most allowed are already running.
+    fn busy_message() -> String {
+        format!(
+            "{MAX_RUNNING_REVIEWS} reviews are already running; wait for one to finish, then start this one again"
+        )
+    }
+
     pub fn start_job(self: &Arc<Self>, repo: &str, recipient: &str) -> Result<String, String> {
         let dir = self
             .allowed_dir(repo)
@@ -938,6 +945,15 @@ impl Service {
         }
         let (id, first) = {
             let mut g = self.inner.lock().expect("lock");
+            // counted under the same lock that adds the review, so a burst of starts cannot slip past the limit
+            let running = g
+                .jobs
+                .values()
+                .filter(|j| matches!(j.state, JobState::Running))
+                .count();
+            if running >= MAX_RUNNING_REVIEWS {
+                return Err(Self::busy_message());
+            }
             let id = format!("job-{}", g.next);
             g.next += 1;
             let job = Job {
@@ -6252,11 +6268,21 @@ async fn fs_list(axum::Extension(svc): Svc, Query(q): Query<PathQuery>) -> Respo
 }
 
 async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -> Response {
-    match svc.start_job(&b.repo, &b.recipient) {
+    start_response(svc.start_job(&b.repo, &b.recipient))
+}
+
+/// 202 with the review's id; 429 when the most allowed reviews are already running; 400 for anything else wrong with the request.
+fn start_response(r: Result<String, String>) -> Response {
+    match r {
         Ok(id) => (StatusCode::ACCEPTED, Json(json!({"id": id}))).into_response(),
+        Err(m) if m == Service::busy_message() => error(StatusCode::TOO_MANY_REQUESTS, "BUSY", &m),
         Err(m) => error(StatusCode::BAD_REQUEST, "BAD_JOB", &m),
     }
 }
+
+/// The most reviews that run at the same time. Each one starts a model run and a sandbox, so an unbounded number could
+/// exhaust the computer; a review beyond this is refused, not queued, so nothing waits unseen.
+const MAX_RUNNING_REVIEWS: usize = 4;
 
 const MAX_EVENT_STREAMS: usize = 8;
 
@@ -8060,10 +8086,7 @@ async fn admin_jobs_list(axum::Extension(svc): Svc) -> Json<Value> {
 }
 
 async fn admin_job_start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -> Response {
-    match svc.start_job(&b.repo, &b.recipient) {
-        Ok(id) => (StatusCode::ACCEPTED, Json(json!({"id": id}))).into_response(),
-        Err(m) => error(StatusCode::BAD_REQUEST, "BAD_JOB", &m),
-    }
+    start_response(svc.start_job(&b.repo, &b.recipient))
 }
 
 #[derive(Deserialize)]

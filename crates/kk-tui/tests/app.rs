@@ -6349,3 +6349,148 @@ fn tu102_the_footer_says_how_big_and_how_fast_the_last_answer_was_and_only_when_
     a.handle(ok(&r[0], 200, json!({"done": true, "reply": "ok", "route": {"simulated": true}, "notes_used": 0, "usage": {"context_tokens_estimate": 77, "reply_tokens_estimate": 9}})));
     assert!(text(&a).contains("about 77 tokens of context sent"));
 }
+
+#[test]
+fn tu103_two_reviews_running_at_once_each_keep_their_own_progress_and_the_header_follows_them() {
+    let mut app = booted();
+    let r = enter(&mut app, "/reviews");
+    app.handle(ok(&r[0], 200, json!({"jobs": [{"id": "job-1", "recipient": "acme", "state": "running"}, {"id": "job-2", "recipient": "globex", "state": "running"}]})));
+    assert!(
+        app.status_line().contains("2 review(s)") && app.status_line().contains("2 running"),
+        "{}",
+        app.status_line()
+    );
+    let ev = |stage: &str, detail: &str, state: &str, recipient: &str| json!({"state": state, "recipient": recipient, "note": "", "events": [{"stage": "queued", "detail": ""}, {"stage": stage, "detail": detail}]});
+    // one tick asks about each running review, once each
+    let t = app.handle(Event::Tick);
+    let mut paths: Vec<_> = t.iter().map(|q| q.path.clone()).collect();
+    paths.sort();
+    assert_eq!(paths, ["/api/jobs/job-1", "/api/jobs/job-2"], "{paths:?}");
+    for q in &t {
+        if q.path.ends_with("job-1") {
+            app.handle(ok(
+                q,
+                200,
+                ev("import", "reading acme files", "running", "acme"),
+            ));
+        } else {
+            app.handle(ok(
+                q,
+                200,
+                ev("review", "agent working for globex", "running", "globex"),
+            ));
+        }
+    }
+    let all = text(&app);
+    assert!(
+        all.contains("job-1  import") && all.contains("reading acme files"),
+        "{all}"
+    );
+    assert!(
+        all.contains("job-2  review") && all.contains("agent working for globex"),
+        "{all}"
+    );
+    assert!(
+        !all.contains("job-1  review") && !all.contains("job-2  import"),
+        "progress never lands on the other review: {all}"
+    );
+    // the first finishes: it leaves the running count and is polled no more, the second carries on
+    let t = app.handle(Event::Tick);
+    for q in &t {
+        if q.path.ends_with("job-1") {
+            app.handle(ok(q, 200, ev("finished", "", "ready", "acme")));
+        } else {
+            app.handle(ok(
+                q,
+                200,
+                ev("review", "agent working for globex", "running", "globex"),
+            ));
+        }
+    }
+    assert!(text(&app).contains("job-1 finished: ready"));
+    assert!(
+        app.status_line().contains("1 running"),
+        "{}",
+        app.status_line()
+    );
+    let t = app.handle(Event::Tick);
+    assert_eq!(
+        t.iter().map(|q| q.path.as_str()).collect::<Vec<_>>(),
+        ["/api/jobs/job-2"]
+    );
+    // the second fails: nothing is left running and the failure names the right review
+    app.handle(ok(&t[0], 200, ev("finished", "", "failed", "globex")));
+    assert!(
+        text(&app).contains("job-2 finished: failed"),
+        "{}",
+        text(&app)
+    );
+    assert!(
+        !app.status_line().contains("running"),
+        "{}",
+        app.status_line()
+    );
+    assert!(app.handle(Event::Tick).is_empty());
+}
+
+#[test]
+fn tu104_a_review_whose_status_cannot_be_read_stops_being_polled_and_the_other_keeps_going() {
+    let mut app = booted();
+    let r = enter(&mut app, "/reviews");
+    app.handle(ok(&r[0], 200, json!({"jobs": [{"id": "job-1", "recipient": "acme", "state": "running"}, {"id": "job-2", "recipient": "globex", "state": "running"}]})));
+    let t = app.handle(Event::Tick);
+    assert_eq!(t.len(), 2);
+    for q in &t {
+        if q.path.ends_with("job-1") {
+            app.handle(ok(
+                q,
+                404,
+                json!({"error": {"code": "NO_REVIEW", "message": "no such review"}}),
+            ));
+        } else {
+            app.handle(ok(q, 200, json!({"state": "running", "recipient": "globex", "note": "", "events": [{"stage": "review", "detail": "agent working"}]})));
+        }
+    }
+    assert!(
+        text(&app).contains("job-1: no such review (404)"),
+        "the failure is shown and names the review: {}",
+        text(&app)
+    );
+    assert!(
+        !text(&app).contains("job-2: "),
+        "and does not name the other one"
+    );
+    assert!(
+        app.status_line().contains("1 running"),
+        "{}",
+        app.status_line()
+    );
+    let t = app.handle(Event::Tick);
+    assert_eq!(
+        t.iter().map(|q| q.path.as_str()).collect::<Vec<_>>(),
+        ["/api/jobs/job-2"],
+        "the unreadable review is not polled again"
+    );
+}
+
+#[test]
+fn tu105_a_busy_answer_when_starting_a_review_is_shown_as_the_service_said_it_and_starts_nothing() {
+    let mut app = booted();
+    let r = enter(&mut app, "/review payments for acme-audit");
+    let msg = "4 reviews are already running; wait for one to finish, then start this one again";
+    app.handle(ok(
+        &r[0],
+        429,
+        json!({"error": {"code": "BUSY", "message": msg}}),
+    ));
+    let all = text(&app);
+    assert!(all.contains(&format!("{msg} (429)")), "{all}");
+    assert!(
+        !all.contains("Review job-") && !app.status_line().contains("running"),
+        "{all}"
+    );
+    assert!(
+        app.handle(Event::Tick).is_empty(),
+        "nothing is polled for a review that never started"
+    );
+}

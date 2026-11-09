@@ -745,6 +745,7 @@ fn call_inner(
 /// through an agent that has no right to see it.
 const FORWARDED_CODES: &[&str] = &[
     "BAD_JOB",
+    "BUSY",
     "NO_JOB",
     "NO_APPROVAL",
     "TOO_MANY",
@@ -1669,6 +1670,14 @@ mod forwarded_error_tests {
         assert_eq!(
             forwardable(&e(json!("NO_JOB"), "no such review")),
             "no such review"
+        );
+        // the limit on reviews running at once: the agent is told to wait and try again, in the service's own words
+        assert_eq!(
+            forwardable(&e(
+                json!("BUSY"),
+                "4 reviews are already running; wait for one to finish, then start this one again"
+            )),
+            "4 reviews are already running; wait for one to finish, then start this one again"
         );
         // a known code whose text looks like it names a file, an address, a person or program output is not forwarded
         for text in [

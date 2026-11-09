@@ -13811,3 +13811,224 @@ fn sv144_a_chat_reply_says_how_long_the_answer_took_and_that_is_the_figure_the_u
     );
     assert_eq!(route["max_ms"].as_i64().unwrap(), ms);
 }
+
+/// The canned runner, except that a review stays running until the test lets it finish.
+struct HoldRunner {
+    inner: CannedRunner,
+    open: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+}
+
+impl JobRunner for HoldRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        let (lock, cv) = &*self.open;
+        let mut open = lock.lock().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while !*open {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            open = cv.wait_timeout(open, left).unwrap().0;
+        }
+        drop(open);
+        self.inner.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        self.inner.route_info()
+    }
+}
+
+#[test]
+fn sv145_only_a_few_reviews_run_at_once_the_rest_are_refused_with_a_clear_busy_answer_from_every_door(
+) {
+    let (root, repo) = repo_copy("review-cap");
+    let open = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(HoldRunner {
+            inner: CannedRunner { confirm: true },
+            open: open.clone(),
+        }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let body = json!({"repo": repo.to_string_lossy(), "recipient": "acme"});
+    // the first four are accepted and stay running
+    for i in 0..4 {
+        let (s, v) = w.post("/api/jobs", body.clone());
+        assert_eq!(s, 202, "review {i}: {v}");
+    }
+    // the fifth is refused before anything starts, and says why and what to do
+    let (s, v) = w.post("/api/jobs", body.clone());
+    assert_eq!(s, 429, "{v}");
+    assert_eq!(v["error"]["code"], "BUSY", "{v}");
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(
+        msg.contains("4 reviews are already running") && msg.contains("finish"),
+        "{msg}"
+    );
+    // short, plain and free of paths and addresses, so the MCP door passes it on to an agent as it is
+    assert!(
+        msg.chars().count() <= 120
+            && !msg
+                .chars()
+                .any(|c| c.is_control() || matches!(c, '/' | '\\' | '@' | '`')),
+        "{msg}"
+    );
+    let (_, jobs) = w.get("/api/jobs");
+    assert_eq!(
+        jobs["jobs"].as_array().unwrap().len(),
+        4,
+        "a refused review leaves nothing behind: {jobs}"
+    );
+    // the same limit holds for a burst of starts from several clients at once
+    let mut clients = Vec::new();
+    for _ in 0..6 {
+        let mut x = Web::new(c.addr);
+        x.pair(&c.security.issue_pairing_code());
+        clients.push(x);
+    }
+    let handles: Vec<_> = clients
+        .into_iter()
+        .map(|x| {
+            let b = body.clone();
+            std::thread::spawn(move || {
+                (0..5)
+                    .map(|_| x.post("/api/jobs", b.clone()).0)
+                    .collect::<Vec<_>>()
+            })
+        })
+        .collect();
+    let codes: Vec<u16> = handles
+        .into_iter()
+        .flat_map(|h| h.join().unwrap())
+        .collect();
+    assert!(
+        codes.iter().all(|c| *c == 429),
+        "nothing more is accepted while four are running: {codes:?}"
+    );
+    // letting them finish frees the room, and a new review is accepted again
+    {
+        let (lock, cv) = &*open;
+        *lock.lock().unwrap() = true;
+        cv.notify_all();
+    }
+    let mut free = false;
+    for _ in 0..200 {
+        let (_, j) = w.get("/api/jobs");
+        if j["jobs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|x| x["state"] != "running")
+        {
+            free = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(free, "the held reviews finish once released");
+    let (s, v) = w.post("/api/jobs", body.clone());
+    assert_eq!(s, 202, "room again after they finished: {v}");
+}
+
+#[test]
+fn sv146_the_admin_door_and_the_scheduler_hold_the_same_limit_and_the_scheduler_says_it_could_not_start(
+) {
+    let (root, repo) = repo_copy("review-cap-doors");
+    let open = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(HoldRunner {
+            inner: CannedRunner { confirm: true },
+            open: open.clone(),
+        }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    let tok = c.security.admin_token().to_string();
+    // five schedules, all due at once: four start, the fifth is recorded as not started and starts nothing
+    let mut ids = Vec::new();
+    for i in 0..5 {
+        let (s, made) = w.post(
+            "/api/schedules",
+            json!({"repo": repo.to_string_lossy(), "recipient": format!("r{i}"), "every_hours": 1}),
+        );
+        assert_eq!(s, 201, "{made}");
+        ids.push(made["id"].as_str().unwrap().to_string());
+    }
+    let due = w.get("/api/schedules").1["schedules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["next_at"].as_i64().unwrap())
+        .max()
+        .unwrap();
+    assert_eq!(
+        svc.run_due(due),
+        4,
+        "four reviews start, the fifth does not"
+    );
+    let runs = w.get("/api/schedules").1["runs"].clone();
+    let outcomes: Vec<String> = runs
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["outcome"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|o| o.starts_with("could_not_start"))
+            .count(),
+        1,
+        "{outcomes:?}"
+    );
+    assert!(
+        outcomes
+            .iter()
+            .any(|o| o.contains("reviews are already running")),
+        "{outcomes:?}"
+    );
+    assert_eq!(w.get("/api/jobs").1["jobs"].as_array().unwrap().len(), 4);
+    // and the admin door refuses a start with the same busy answer
+    let (s, v) = admin(
+        &base,
+        &tok,
+        "POST",
+        "/admin/jobs",
+        Some(json!({"repo": repo.to_string_lossy(), "recipient": "x"})),
+    );
+    assert_eq!(s, 429, "{v}");
+    assert_eq!(v["error"]["code"], "BUSY", "{v}");
+    {
+        let (lock, cv) = &*open;
+        *lock.lock().unwrap() = true;
+        cv.notify_all();
+    }
+}

@@ -673,6 +673,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ex_busy_the_limit_on_reviews_running_at_once_is_a_refusal_with_the_services_own_words_not_a_crash(
+    ) {
+        let msg =
+            "4 reviews are already running; wait for one to finish, then start this one again";
+        let (m, code) = refusal(429, &json!({"error": {"code": "BUSY", "message": msg}}));
+        assert_eq!((m.as_str(), code), (msg, REFUSED));
+        // a service error is still told apart from a refusal
+        assert_eq!(refusal(503, &json!({})).1, UNAVAILABLE);
+        // control characters in a message are removed before they reach the terminal
+        assert!(
+            !refusal(429, &json!({"error": {"message": "wait\u{1b}[2J"}}))
+                .0
+                .contains('\u{1b}')
+        );
+    }
+
+    #[test]
     fn ex01_a_conversation_becomes_markdown_with_control_characters_removed() {
         let turns = vec![
             json!({"role": "user", "content": "first\nsecond"}),
