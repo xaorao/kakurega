@@ -15105,3 +15105,115 @@ fn sv164_the_service_checks_a_model_name_itself_even_when_the_runner_would_accep
     }
     assert_eq!(w.get("/api/models").1["current"], "m1");
 }
+
+/// A second life of the service over the same data folder, with its own runner that starts on `first`.
+fn pick_again(root: &Path, endpoint: &str, installed: &[&str]) -> (kk_companion::Companion, Web) {
+    pick_again_with(root, endpoint, installed, false)
+}
+
+fn pick_again_with(
+    root: &Path,
+    endpoint: &str,
+    installed: &[&str],
+    lenient: bool,
+) -> (kk_companion::Companion, Web) {
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.to_path_buf()],
+        Arc::new(PickRunner {
+            inner: CannedRunner { confirm: true },
+            current: Mutex::new(installed[0].to_string()),
+            installed: installed.iter().map(|s| s.to_string()).collect(),
+            endpoint: endpoint.to_string(),
+            lenient,
+        }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    (c, w)
+}
+
+/// Starts the service over `root`, reads the model it answers with, and stops it again.
+fn current_model(root: &Path, endpoint: &str, installed: &[&str]) -> String {
+    current_model_with(root, endpoint, installed, false)
+}
+
+fn current_model_with(root: &Path, endpoint: &str, installed: &[&str], lenient: bool) -> String {
+    let (c, w) = pick_again_with(root, endpoint, installed, lenient);
+    let v = w.get("/api/models").1["current"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    drop(c);
+    v
+}
+
+#[test]
+fn sv165_the_chosen_model_is_kept_and_used_again_when_the_service_starts_if_it_is_still_installed()
+{
+    let (root, _repo) = repo_copy("pick-keep");
+    {
+        let (c, w) = pick_again(&root, "http://127.0.0.1:11434", &["m1", "m2"]);
+        assert_eq!(w.post("/api/model", json!({"model": "m2"})).0, 200);
+        // a refusal is not kept
+        assert_eq!(w.post("/api/model", json!({"model": "nope"})).0, 400);
+        drop(c);
+    }
+    let file = root.join("data").join("model.choice");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "m2");
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(
+        current_model(&root, "http://127.0.0.1:11434", &["m1", "m2"]),
+        "m2",
+        "the choice survives a restart"
+    );
+    // the model was removed from this computer: the default stays
+    assert_eq!(
+        current_model(&root, "http://127.0.0.1:11434", &["m1", "m3"]),
+        "m1"
+    );
+}
+
+#[test]
+fn sv166_a_kept_choice_is_not_applied_to_a_route_that_is_not_on_this_computer_or_when_the_file_is_not_a_plain_name(
+) {
+    let (root, _repo) = repo_copy("pick-keep-hostile");
+    std::fs::create_dir_all(root.join("data")).unwrap();
+    let file = root.join("data").join("model.choice");
+    std::fs::write(&file, "m2").unwrap();
+    assert_eq!(
+        current_model(&root, "https://cloud-api.near.ai", &["m1", "m2"]),
+        "m1",
+        "a remote route keeps its own model"
+    );
+    // the runner here would accept any name, so only the service's own check stands between the file and the model
+    for junk in ["m2\n; rm -rf /", "../../m2 x", "", "a b", &"m".repeat(300)] {
+        std::fs::write(&file, junk).unwrap();
+        assert_eq!(
+            current_model_with(&root, "http://127.0.0.1:11434", &["m1", "m2"], true),
+            "m1",
+            "{junk:?}"
+        );
+    }
+    // a link to a well-formed name kept elsewhere is not followed
+    let elsewhere = root.join("elsewhere.txt");
+    std::fs::write(&elsewhere, "m2").unwrap();
+    std::fs::remove_file(&file).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &file).unwrap();
+    assert_eq!(
+        current_model(&root, "http://127.0.0.1:11434", &["m1", "m2"]),
+        "m1",
+        "a link is not followed"
+    );
+}

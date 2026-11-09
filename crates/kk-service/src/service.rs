@@ -646,6 +646,15 @@ impl Service {
         test_mode: bool,
     ) -> Result<Arc<Service>, String> {
         crate::keys::ensure_private_dir(data_dir).map_err(|e| e.to_string())?;
+        // the model the owner last chose in Settings or with /model, if it is still installed (a refusal leaves the default)
+        let here = runner.route_info()["endpoint"]
+            .as_str()
+            .and_then(host_only)
+            .as_deref()
+            .is_some_and(host_is_this_computer);
+        if let Some(name) = saved_model(data_dir).filter(|_| here) {
+            let _ = runner.choose_model(&name);
+        }
         let keys = load_keys(data_dir)?;
         let ledger_vault = open_vault(data_dir, "ledger.db")?;
         let ledger = Ledger::open_owner(ledger_vault, SystemClock, &data_dir.join("ledger.lock"))
@@ -4895,6 +4904,24 @@ struct ModelBody {
 
 /// Changes which installed local model answers, for chat and for reviews started from now on. A name the model service does
 /// not itself list is refused, and so is any change while the route is not on this computer.
+const MODEL_FILE: &str = "model.choice";
+
+/// The model name the owner last chose, if the file holds exactly one plain name. Anything else is ignored.
+fn saved_model(data: &Path) -> Option<String> {
+    let meta = std::fs::symlink_metadata(data.join(MODEL_FILE)).ok()?;
+    if !meta.is_file() || meta.len() > 200 {
+        return None;
+    }
+    let text = std::fs::read_to_string(data.join(MODEL_FILE)).ok()?;
+    let name = text.trim();
+    (!name.is_empty()
+        && name.len() <= 100
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | ':')))
+    .then(|| name.to_string())
+}
+
 async fn model_choose(axum::Extension(svc): Svc, Json(b): Json<ModelBody>) -> Response {
     let model = b.model.trim().to_string();
     if model.is_empty()
@@ -4922,6 +4949,11 @@ async fn model_choose(axum::Extension(svc): Svc, Json(b): Json<ModelBody>) -> Re
     match done {
         Ok(Ok(())) => {
             svc.log_event("model.chosen", "settings", &[]);
+            let _ = kk_vault::durable::write_atomic(
+                &svc.data_dir.join(MODEL_FILE),
+                model.as_bytes(),
+                0o600,
+            );
             Json(json!({"route": svc.route_for_owner()})).into_response()
         }
         Ok(Err(m)) => error(StatusCode::BAD_REQUEST, "BAD_MODEL", &m),
