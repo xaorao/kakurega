@@ -127,3 +127,6 @@ Real Telegram delivery, group chats, webhooks, media, rate limits imposed by Tel
 - Behaviour change to know: an old or mistyped proxy variable that used to be ignored now stops the bridge with a clear message. That is intended.
 - Not covered: Windows system proxy settings, proxy auto-config files, and `socks4`/`socks4a` (accepted by the library, not exercised).
 
+## Pacing timed end to end (ledger C-25)
+- The burst scenario of the fake-Telegram suite now reads the arrival times of the four messages: the first three arrive together (under a second) and the count line about a second later (gaps 0.0, 0.0, 1.03 s measured). Two mutants caught: refill at 100 a second (no wait), and a burst of one (the second message waits).
+- Not covered: Telegram's real per-chat limits (needs the live service), and more than one bound chat.

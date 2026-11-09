@@ -351,6 +351,8 @@ try:
     singles = [x for x in after if any(j in x["text"] for j in burst)]
     folds = [x for x in after if "more things happened at once" in x["text"]]
     check("eight reviews finishing at once become three notices and one line with the count", fold is not None and len(singles) == 3 and len(folds) == 1 and folds[0]["text"].startswith("5 more things happened at once"), f"singles={len(singles)} folds={[x['text'][:40] for x in folds]}")
+    gaps = [after[i + 1]["_t"] - after[i]["_t"] for i in range(len(after) - 1)]
+    check("the burst is paced: three go out together, and the count line follows about a second later, not at once", len(after) == 4 and sum(gaps[:2]) < 1.0 and 0.7 <= gaps[2] <= 6.0, f"gaps={[round(g, 2) for g in gaps]}")
     import re as _re
     nums = [int(_re.search(r"job-(\d+)", x["text"]).group(1)) for x in singles]
     check("and the three shown are the three newest reviews, newest first, none is repeated, and the count line comes last", len({x["text"] for x in singles}) == 3 and nums == sorted((int(j.split("-")[1]) for j in burst), reverse=True)[:3] and after[-1]["text"].startswith("5 more"), f"{nums} {sorted((int(j.split('-')[1]) for j in burst), reverse=True)[:3]}")
