@@ -1734,7 +1734,7 @@ try {
   const memBefore = await page.evaluate(async () => (await (await fetch("/api/memories")).json()).memories.length);
   await findBtn.click();
   await page.getByText("2 suggested. Each waits for your decision.").waitFor();
-  check("reading the conversation suggests the plain facts and leaves out the injected instruction, saying so", (await page.getByText("1 left out because they looked like instructions or held a secret.").count()) === 1 && (await page.getByText("Acme pays invoices on the 5th of each month.").count()) === 1 && (await page.getByText("evil@example.com").count()) === 0);
+  check("reading the conversation suggests the plain facts and leaves out the injected instruction, saying so", (await page.getByText("1 left out: they looked like instructions, held a secret, were the assistant's own words, or used a date relative to today (write the day instead).").count()) === 1 && (await page.getByText("Acme pays invoices on the 5th of each month.").count()) === 1 && (await page.getByText("evil@example.com").count()) === 0);
   check("nothing became a note by itself", (await page.evaluate(async () => (await (await fetch("/api/memories")).json()).memories.length)) === memBefore);
   check("a suggestion says it was written by the assistant and offers Keep and Not this", (await page.getByText("Written by the assistant from this conversation").count()) === 2 && (await page.getByRole("button", { name: "Keep this note" }).count()) === 2);
   await axeCheck(page, "chat with suggested notes");

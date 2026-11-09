@@ -382,7 +382,7 @@ export const en = {
   "chat.notesHelp": "The assistant reads this conversation, when you ask, and suggests what to remember. Nothing is saved until you keep it.",
   "chat.notesNone": "Nothing new worth keeping was found.",
   "chat.notesFound": "{n} suggested. Each waits for your decision.",
-  "chat.notesDropped": "{n} left out because they looked like instructions or held a secret.",
+  "chat.notesDropped": "{n} left out: they looked like instructions, held a secret, were the assistant's own words, or used a date relative to today (write the day instead).",
   "chat.notesTitle": "Suggested notes",
   "chat.notesFrom": "Written by the assistant from this conversation: check it before you keep it.",
   "chat.notesKeep": "Keep this note",

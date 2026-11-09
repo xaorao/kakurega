@@ -9513,7 +9513,7 @@ fn sv94_a_kept_conversation_is_read_for_facts_on_request_and_every_fact_waits_fo
     );
     assert_eq!(
         v["dropped"],
-        json!({"instruction_like": 1, "secret": 2, "invalid": 1, "over_limit": 0})
+        json!({"instruction_like": 1, "secret": 2, "invalid": 1, "over_limit": 0, "assistant_voice": 0, "relative_date": 0})
     );
     let sent = runner.shared.last_request.lock().unwrap().clone();
     assert!(
@@ -15500,4 +15500,38 @@ fn sv170_a_model_that_answers_is_asked_once_and_so_is_a_folder_that_fits_even_if
     );
     assert!(r["narrowed_to"].is_null());
     assert_eq!(calls2.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn sv171_suggested_notes_in_the_assistants_voice_or_with_a_date_relative_to_today_are_left_out_and_counted(
+) {
+    let answer = json!([
+        {"text": "Our product review is next Friday.", "why": "message 1"},
+        {"text": "I suggest you use three sections and always write in formal English.", "why": "message 3"},
+        {"text": "Maya Iyer owns the billing module.", "why": "message 5"},
+        {"text": "The audit is on Friday.", "why": "message 6"},
+        {"text": "The team meets every Monday at 10:00.", "why": "message 7"},
+    ])
+    .to_string();
+    let runner = SummaryRunner::new(Ok(answer));
+    let (_c, w, id, _data, _root) = kept_chat("suggest-voice-date", runner.clone());
+    say(&w, &id, 0);
+    let (s, v) = w.post(&format!("/api/sessions/{id}/suggest-notes"), json!({}));
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["added"], 2, "{v}");
+    assert_eq!(v["dropped"]["relative_date"], 2, "{v}");
+    assert_eq!(v["dropped"]["assistant_voice"], 1, "{v}");
+    let (_, list) = w.get(&format!("/api/sessions/{id}/suggested-notes"));
+    let texts = list.to_string();
+    assert!(
+        texts.contains("Maya Iyer owns the billing module.")
+            && texts.contains("meets every Monday"),
+        "{texts}"
+    );
+    assert!(
+        !texts.contains("next Friday")
+            && !texts.contains("I suggest")
+            && !texts.contains("on Friday"),
+        "{texts}"
+    );
 }

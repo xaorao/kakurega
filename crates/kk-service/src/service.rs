@@ -4545,14 +4545,20 @@ async fn session_suggest_notes(
             ("already_known", known.into()),
             (
                 "dropped",
-                (d.instruction_like + d.secret + d.invalid + d.over_limit).into(),
+                (d.instruction_like
+                    + d.secret
+                    + d.invalid
+                    + d.over_limit
+                    + d.assistant_voice
+                    + d.relative_date)
+                    .into(),
             ),
         ],
     );
     Json(json!({
         "added": added,
         "already_known": known,
-        "dropped": {"instruction_like": d.instruction_like, "secret": d.secret, "invalid": d.invalid, "over_limit": d.over_limit},
+        "dropped": {"instruction_like": d.instruction_like, "secret": d.secret, "invalid": d.invalid, "over_limit": d.over_limit, "assistant_voice": d.assistant_voice, "relative_date": d.relative_date},
     }))
     .into_response()
 }

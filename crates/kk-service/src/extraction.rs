@@ -63,6 +63,10 @@ pub struct Dropped {
     pub secret: usize,
     pub invalid: usize,
     pub over_limit: usize,
+    /// Written in the assistant's own voice ("I suggest ..."): something the assistant said, not a fact the person gave.
+    pub assistant_voice: usize,
+    /// Holds a date relative to today ("next Friday", "tomorrow"), which means something else every day after it is written.
+    pub relative_date: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -113,6 +117,10 @@ pub fn parse(answer: &str) -> Option<Extracted> {
             out.dropped.invalid += 1;
         } else if kk_memory::instruction_like(text) || kk_memory::instruction_like(why) {
             out.dropped.instruction_like += 1;
+        } else if assistant_voice(text) {
+            out.dropped.assistant_voice += 1;
+        } else if relative_date(text) {
+            out.dropped.relative_date += 1;
         } else if !kk_secrets::scan(text).is_empty()
             || kk_secrets::looks_secret(text).is_some()
             || !kk_secrets::scan(why).is_empty()
@@ -130,6 +138,119 @@ pub fn parse(answer: &str) -> Option<Extracted> {
         }
     }
     Some(out)
+}
+
+/// True when a note begins the way an assistant talks to a person: a suggestion, an offer or an instruction to the reader. The
+/// prompt asks the model not to record what only the assistant said, and a small model sometimes does.
+fn assistant_voice(text: &str) -> bool {
+    let t = text
+        .trim()
+        .trim_matches(|c: char| c == '"' || c == '\'' || c == '“' || c == '”')
+        .trim()
+        .to_lowercase();
+    const STARTS: &[&str] = &[
+        "i suggest",
+        "i recommend",
+        "i will ",
+        "i'll ",
+        "i can ",
+        "i could ",
+        "i would ",
+        "i think ",
+        "i believe ",
+        "i'd ",
+        "let me ",
+        "let's ",
+        "you should",
+        "you could",
+        "you can ",
+        "you may ",
+        "you must",
+        "you need",
+        "you might",
+        "please ",
+        "here is",
+        "here's",
+        "here are",
+        "sure,",
+        "sure!",
+        "certainly",
+        "of course",
+        "as an ai",
+        "as a language model",
+        "my suggestion",
+        "my recommendation",
+        "it would be best",
+        "it is best to",
+        "it's best to",
+        "try to ",
+        "make sure",
+    ];
+    STARTS.iter().any(|s| t.starts_with(s))
+}
+
+/// True when a note holds a date that is relative to the day it was written. A recurring habit ("meets every Monday") and a
+/// duration ("within 30 days") are not; a weekday is relative only after "next", "last", "this" or "on".
+fn relative_date(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let words: Vec<&str> = lower
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .filter(|w| !w.is_empty())
+        .collect();
+    const DAYS: &[&str] = &[
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+    ];
+    const SPANS: &[&str] = &[
+        "week",
+        "weekend",
+        "month",
+        "year",
+        "quarter",
+        "day",
+        "morning",
+        "evening",
+        "night",
+        "fortnight",
+    ];
+    const UNITS: &[&str] = &[
+        "day", "days", "week", "weeks", "month", "months", "year", "years", "hour", "hours",
+    ];
+    for (i, w) in words.iter().enumerate() {
+        let next = words.get(i + 1).copied().unwrap_or("");
+        let prev = if i > 0 { words[i - 1] } else { "" };
+        match *w {
+            "today" | "tomorrow" | "yesterday" | "tonight" | "yesterday's" | "tomorrow's"
+            | "today's" => return true,
+            "next" | "last" | "this" | "coming" | "previous"
+                if SPANS.contains(&next) || DAYS.contains(&next) =>
+            {
+                return true
+            }
+            _ => {}
+        }
+        if UNITS.contains(w) && next == "ago" {
+            return true;
+        }
+        if DAYS.contains(w) && prev == "on" {
+            return true;
+        }
+    }
+    // Hindi: whole words only ("कलाकार", an artist, is not "कल")
+    let hi: Vec<&str> = text
+        .split(|c: char| c.is_whitespace() || matches!(c, '।' | ',' | '.' | ';' | ':' | '!' | '?'))
+        .filter(|w| !w.is_empty())
+        .collect();
+    hi.iter().enumerate().any(|(i, w)| {
+        matches!(*w, "आज" | "कल" | "परसों")
+            || (matches!(*w, "अगले" | "पिछले")
+                && matches!(hi.get(i + 1), Some(&"सप्ताह") | Some(&"महीने") | Some(&"साल")))
+    })
 }
 
 fn is_direction(c: char) -> bool {
@@ -244,7 +365,9 @@ mod tests {
                 instruction_like: 1,
                 secret: 1,
                 invalid: 6,
-                over_limit: 0
+                over_limit: 0,
+                assistant_voice: 0,
+                relative_date: 0
             }
         );
     }
@@ -272,5 +395,118 @@ mod tests {
         assert_eq!(iso_date(1_793_923_200), "2026-11-06");
         assert_eq!(iso_date(-86_400), "1969-12-31");
         assert_eq!(iso_date(4_107_542_399), "2100-02-28");
+    }
+
+    fn kept(text: &str) -> (usize, Dropped) {
+        let body = serde_json::json!([{"text": text, "why": "said"}]).to_string();
+        let e = parse(&body).unwrap();
+        (e.notes.len(), e.dropped)
+    }
+
+    #[test]
+    fn ex_rel01_a_note_with_a_date_relative_to_today_is_left_out_and_counted() {
+        for rel in [
+            "Our product review is next Friday.",
+            "The release shipped yesterday.",
+            "Maya is travelling tomorrow.",
+            "Maya is in the Pune office today.",
+            "Today's agenda covers the budget.",
+            "The audit is on Friday.",
+            "The deadline moved to this week.",
+            "The invoice was paid 3 days ago.",
+            "We met a week ago and agreed on the scope.",
+            "Budget talks start next month.",
+            "आज की बैठक में बजट तय हुआ।",
+            "टीम की बैठक अगले सप्ताह है।",
+        ] {
+            let (n, d) = kept(rel);
+            assert_eq!((n, d.relative_date), (0, 1), "{rel}");
+        }
+    }
+
+    #[test]
+    fn ex_rel02_a_stable_fact_with_a_weekday_a_duration_or_an_absolute_date_is_kept() {
+        for stable in [
+            "The team meets every Monday at 10:00.",
+            "Invoices must be paid within 30 days of receipt.",
+            "The release is scheduled for 2026-11-13.",
+            "I prefer short answers with bullet points.",
+            "The Friday report goes to the finance team.",
+            "Maya Iyer owns the billing module.",
+            "The contract runs for 12 months.",
+            "कलाकार का नाम माया है।",
+            "Next.js is the web framework.",
+        ] {
+            let (n, d) = kept(stable);
+            assert_eq!(
+                (n, d.relative_date, d.assistant_voice),
+                (1, 0, 0),
+                "{stable}"
+            );
+        }
+    }
+
+    #[test]
+    fn ex_voice01_a_note_in_the_assistants_voice_is_left_out_and_counted() {
+        for said in [
+            "I suggest you use three sections and always write in formal English.",
+            "I recommend the report has an executive summary.",
+            "You should always use formal English.",
+            "Let me know if you want more detail.",
+            "Please send the file to finance.",
+            "Here is a summary of what we agreed.",
+            "\"I will remember that.\"",
+            "Make sure invoices go to the Pune office.",
+            "As an AI I cannot store passwords.",
+        ] {
+            let (n, d) = kept(said);
+            assert_eq!((n, d.assistant_voice), (0, 1), "{said}");
+        }
+        for person in [
+            "The user prefers short answers.",
+            "I prefer short answers.",
+            "Priya works from the Pune office.",
+            "I live in Pune.",
+        ] {
+            let (n, d) = kept(person);
+            assert_eq!((n, d.assistant_voice), (1, 0), "{person}");
+        }
+    }
+
+    #[test]
+    fn ex_rel03_no_text_makes_the_two_rules_panic() {
+        let mut seed = 0x9E3779B97F4A7C15u64;
+        let pieces = [
+            "next",
+            "last",
+            "this",
+            "week",
+            "ago",
+            "on",
+            "Friday",
+            "आज",
+            "कल",
+            "अगले",
+            "सप्ताह",
+            "I",
+            "suggest",
+            "3",
+            "days",
+            "’",
+            "\u{202e}",
+            "\n",
+            " ",
+        ];
+        for _ in 0..2000 {
+            let mut text = String::new();
+            for _ in 0..(seed % 12) {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                text.push_str(pieces[(seed % pieces.len() as u64) as usize]);
+                text.push(' ');
+            }
+            let _ = (relative_date(&text), assistant_voice(&text));
+        }
     }
 }

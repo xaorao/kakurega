@@ -286,7 +286,7 @@ export function Chat() {
     try {
       const r = await api.suggestNotes(id);
       await loadSuggested(id);
-      const left = r.dropped.instruction_like + r.dropped.secret;
+      const left = r.dropped.instruction_like + r.dropped.secret + (r.dropped.assistant_voice ?? 0) + (r.dropped.relative_date ?? 0);
       setNotesInfo(r.added === 0 ? t("chat.notesNone") : t("chat.notesFound", { n: r.added }) + (left > 0 ? " " + t("chat.notesDropped", { n: left }) : ""));
     } catch (err) {
       setNotesInfo(err instanceof ApiError ? err.message : t("chat.notesError"));
