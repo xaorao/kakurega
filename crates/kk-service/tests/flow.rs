@@ -12433,6 +12433,8 @@ fn sv126_fresh_secrets_in_attached_files_never_reach_a_model_elsewhere_the_log_o
         "RSA PRIVATE"
     );
     let password = fresh(ALNUM, 20);
+    let bearer_token = fresh(ALNUM, 40);
+    let session_cookie = fresh(ALNUM, 32);
     let b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let key_lines: Vec<String> = (0..25).map(|_| fresh(b64, 64)).collect();
     let open_lines: Vec<String> = (0..3).map(|_| fresh(b64, 64)).collect();
@@ -12456,6 +12458,16 @@ fn sv126_fresh_secrets_in_attached_files_never_reach_a_model_elsewhere_the_log_o
             "pem.txt",
             format!("Pricing is flat.\n\n{pem}\n\nEnd of note."),
             vec![pem_body.clone()],
+        ),
+        (
+            "request-dump.txt",
+            format!("Pricing is flat.\n\nPOST /v1/refunds HTTP/1.1\nAuthorization: Bearer {bearer_token}\nAccept: */*\n\nEnd of note."),
+            vec![bearer_token.clone()],
+        ),
+        (
+            "cookie-jar.txt",
+            format!("Pricing is flat.\n\nSet-Cookie: sessionid={session_cookie}; Path=/; HttpOnly\n\nEnd of note."),
+            vec![session_cookie.clone()],
         ),
         (
             "password.txt",
@@ -12637,6 +12649,16 @@ fn sv127_fresh_secrets_in_a_folder_never_reach_the_model_through_the_ask_path() 
         ),
     )
     .unwrap();
+    // an HTTP request dump and a cookie jar: a bearer token and a session cookie that are not inside a curl command
+    let bearer = fresh(ALNUM, 40);
+    let cookie = fresh(ALNUM, 32);
+    std::fs::write(
+        dir.join("debug_session.md"),
+        format!(
+            "# Debugging the refund call\n\nRequest as sent:\n\nPOST /v1/refunds HTTP/1.1\nHost: api.example.com\nAuthorization: Bearer {bearer}\nContent-Type: application/json\n\nResponse headers:\n\nSet-Cookie: sessionid={cookie}; Path=/; HttpOnly\n"
+        ),
+    )
+    .unwrap();
     // files whose only giveaway is their name: the content shows nothing alone
     let name_only_env = fresh("abcdefghijklmnopqrstuvwxyz", 24);
     let name_only_key = fresh(b64, 64);
@@ -12648,7 +12670,14 @@ fn sv127_fresh_secrets_in_a_folder_never_reach_the_model_through_the_ask_path() 
     )
     .unwrap();
     let values: Vec<String> = [
-        vec![env_value, src_key, name_only_env, name_only_key],
+        vec![
+            env_value,
+            src_key,
+            name_only_env,
+            name_only_key,
+            bearer,
+            cookie,
+        ],
         rsa_lines,
         src_pem,
     ]
@@ -14129,4 +14158,46 @@ fn sv147_a_large_reply_arrives_whole_even_when_the_request_body_is_late_and_the_
         let doc: Value = serde_json::from_slice(&all[split..]).expect("the whole reply is JSON");
         assert_eq!(doc["notes"], 300);
     }
+}
+
+#[test]
+fn sv148_a_bearer_token_or_a_session_cookie_typed_into_a_note_instructions_or_a_kept_chat_is_refused(
+) {
+    const ALNUM: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let (_c, w, _repo, _root, _svc) = boot("typed-headers", true);
+    let id = w.post("/api/sessions", json!({"title": ""})).1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for i in 0..5 {
+        let bearer = fresh(ALNUM, 40);
+        let cookie = fresh(ALNUM, 32);
+        for text in [
+            format!("The refund call sends Authorization: Bearer {bearer} on every request."),
+            format!("Set-Cookie: sessionid={cookie}; Path=/; HttpOnly"),
+        ] {
+            let (s, v) = w.post("/api/memories", json!({"text": text}));
+            assert!(
+                (400..500).contains(&s),
+                "round {i}: a note holding a header secret was accepted ({s}): {v}"
+            );
+            let (s, v) = w.post("/api/instructions", json!({"text": text}));
+            assert!(
+                (400..500).contains(&s),
+                "round {i}: instructions holding a header secret were accepted ({s}): {v}"
+            );
+            let (s, r) = w.post("/api/chat", json!({"message": text, "session": id}));
+            assert_eq!(
+                (s, r["error"]["code"].as_str()),
+                (400, Some("SECRET_IN_KEPT_CHAT")),
+                "round {i}: {r}"
+            );
+        }
+    }
+    // an ordinary sentence about headers is still accepted
+    let (s, v) = w.post(
+        "/api/memories",
+        json!({"text": "Our API takes an Authorization header with a Bearer token and sets a session cookie."}),
+    );
+    assert_eq!(s, 201, "{v}");
 }

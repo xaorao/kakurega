@@ -920,6 +920,7 @@ fn plant(repo: &Path) -> Planted {
         canary("stripe"),
         canary("plan"),
     );
+    let (e, f) = (canary("bearer"), canary("cookie"));
     let mut env = fs::read_to_string(repo.join(".env")).unwrap_or_default();
     env.push_str(&format!("\nEXTRA_TOKEN={a}\n"));
     fs::write(repo.join(".env"), env).unwrap();
@@ -942,16 +943,32 @@ fn plant(repo: &Path) -> Planted {
         ),
     )
     .unwrap();
+    // a request dump and a cookie jar kept as ordinary notes: a bearer token and a session cookie outside any curl command
+    fs::create_dir_all(repo.join("docs")).unwrap();
+    fs::write(
+        repo.join("docs/http_dump.md"),
+        format!(
+            "# Refund call\n\nPOST /v1/refunds HTTP/1.1\nAuthorization: Bearer {e}\nAccept: */*\n"
+        ),
+    )
+    .unwrap();
+    fs::write(
+        repo.join("docs/cookie_jar.txt"),
+        format!("Set-Cookie: sessionid={f}; Path=/; HttpOnly\n"),
+    )
+    .unwrap();
     fs::create_dir_all(repo.join("private")).unwrap();
     fs::write(repo.join("private/plan.txt"), format!("board plan {d}\n")).unwrap();
     fs::write(repo.join(".kakuignore"), "private/\n").unwrap();
     Planted {
-        canaries: vec![a, b, c[..24].to_string(), d],
+        canaries: vec![a, b, c[..24].to_string(), d, e, f],
         paths: vec![
             ".env",
             "deploy/id_rsa",
             "billing_settings.py",
             "private/plan.txt",
+            "docs/http_dump.md",
+            "docs/cookie_jar.txt",
         ],
     }
 }
@@ -1128,9 +1145,11 @@ fn j13_planted_secrets_reach_neither_the_model_nor_the_release_nor_the_record_un
             }
         }
     }
+    // two projects, five attacks, five surfaces, and every planted secret (the file's name, a key, a live key in a source file,
+    // a plan under .kakuignore, a bearer token in a request dump, a session cookie in a cookie jar)
     assert_eq!(
         graded,
-        2 * 5 * 5 * 4,
+        2 * 5 * 5 * 6,
         "every project, attack, surface and secret was graded"
     );
 }
