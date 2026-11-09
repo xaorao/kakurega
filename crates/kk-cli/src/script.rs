@@ -394,6 +394,19 @@ pub fn review(args: &[String]) -> u8 {
     })
 }
 
+/// What is printed when the model's reply could not be checked: nothing of the raw reply when it was an empty answer, and
+/// otherwise the reply, marked as unchecked.
+fn unchecked_lines(v: &Value) -> Vec<String> {
+    if v["no_answer"] == true {
+        return vec!["The model gave no answer, even when asked again with fewer passages. Try a bigger model (choose one in Settings or with /model in the terminal), or ask about one document at a time.".to_string()];
+    }
+    vec![
+        "The model did not give a checkable answer. Unchecked text follows; trust none of it:"
+            .to_string(),
+        clean(v["unchecked_text"].as_str().unwrap_or("")),
+    ]
+}
+
 /// `kaku ask QUESTION --folder DIR [--json]`: a question about the documents in a folder, answered only from them. Every quote the model
 /// gives is checked against the file it names. Exit 0 when the answer is checkable and every quote was found; 3 when it is not checkable or
 /// any quote was not found or named a file the model was not shown (a script must not rely on it); the other codes are as for the rest.
@@ -440,7 +453,8 @@ pub fn ask(args: &[String]) -> u8 {
                         json!({
                             "checkable": checkable,
                             "answer": if checkable { v["answer"].clone() } else { Value::Null },
-                            "unchecked_text": if checkable { Value::Null } else { v["unchecked_text"].clone() },
+                            "unchecked_text": if checkable || v["no_answer"] == true { Value::Null } else { v["unchecked_text"].clone() },
+                            "no_answer": v["no_answer"] == true,
                             "citations": cites.iter().map(|c| json!({"file": c["file"], "quote": c["quote"], "verdict": c["verdict"], "line": c["line"]})).collect::<Vec<_>>(),
                             "files_read": v["files_used"].as_array().map_or(0, |a| a.len()),
                             "files_withheld": v["files_withheld"].as_array().map_or(0, |a| a.len()),
@@ -468,8 +482,9 @@ pub fn ask(args: &[String]) -> u8 {
                         );
                     }
                 } else {
-                    println!("The model did not give a checkable answer. Unchecked text follows; trust none of it:");
-                    println!("{}", clean(v["unchecked_text"].as_str().unwrap_or("")));
+                    for line in unchecked_lines(&v) {
+                        println!("{line}");
+                    }
                 }
                 if checkable && all_found {
                     OK
@@ -686,6 +701,26 @@ mod tests {
             !refusal(429, &json!({"error": {"message": "wait\u{1b}[2J"}}))
                 .0
                 .contains('\u{1b}')
+        );
+    }
+
+    #[test]
+    fn ex_noanswer_an_empty_model_reply_is_said_in_words_and_never_shown_raw() {
+        let none = unchecked_lines(
+            &json!({"no_answer": true, "unchecked_text": "{\"answer\": \"\", \"citations\": []}"}),
+        );
+        assert_eq!(none.len(), 1);
+        assert!(none[0].starts_with("The model gave no answer"), "{none:?}");
+        assert!(!none.join("\n").contains("citations"), "{none:?}");
+        let other = unchecked_lines(
+            &json!({"no_answer": false, "unchecked_text": "free text \u{1b}[2J here"}),
+        );
+        assert_eq!(other.len(), 2);
+        assert!(
+            other[0].contains("did not give a checkable answer")
+                && other[1].contains("free text")
+                && !other[1].contains('\u{1b}'),
+            "{other:?}"
         );
     }
 

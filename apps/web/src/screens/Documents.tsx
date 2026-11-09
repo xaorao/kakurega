@@ -77,7 +77,7 @@ export function Documents() {
         {(r) => (
           <section class="card stack" aria-labelledby="h-answer">
             <h2 id="h-answer">{t("docs.answer")}</h2>
-            <Show when={r().checkable} fallback={<><p class="warn">{t("docs.unchecked")}</p><p class="mem-text">{r().unchecked_text}</p></>}>
+            <Show when={r().checkable} fallback={r().no_answer ? <p class="warn">{t("docs.noAnswer")}</p> : <><p class="warn">{t("docs.unchecked")}</p><p class="mem-text">{r().unchecked_text}</p></>}>
               <p class="mem-text">{r().answer}</p>
               <p class="muted">{t("docs.notProof")}</p>
               <h3>{t("docs.checked")}</h3>
@@ -114,6 +114,7 @@ export function Documents() {
             </Show>
             <p class="muted">{t("docs.used", { list: list(r().files_used) })}</p>
             <Show when={r().files_withheld.length > 0}><p class="muted">{t("docs.withheld", { list: list(r().files_withheld) })}</p></Show>
+            <Show when={r().narrowed_to}><p class="muted">{t("docs.narrowed", { n: r().narrowed_to ?? 0 })}</p></Show>
             <Show when={r().searched}><p class="muted">{t("docs.searched")} {t(r().by_meaning ? "docs.byMeaning" : "docs.byWords")}</p></Show>
             <Show when={(r().files_partial ?? []).length > 0}><p class="muted">{t("docs.partial", { list: list(r().files_partial ?? []) })}</p></Show>
             <Show when={r().files_skipped.length > 0}><p class="muted">{t(r().searched ? "docs.skippedSearched" : "docs.skipped", { list: list(r().files_skipped) })}</p></Show>

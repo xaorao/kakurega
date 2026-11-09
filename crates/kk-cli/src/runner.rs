@@ -614,6 +614,50 @@ mod live {
         }
     }
 
+    #[test]
+    #[ignore]
+    fn live_similarity_spread() {
+        let route = OllamaRoute::new("http://127.0.0.1:11434", "nomic-embed-text").expect("route");
+        let e = OllamaEmbedder::new(route, "nomic-embed-text".into());
+        let fact =
+            "A late payment incurs a penalty of two percent per month on the outstanding balance.";
+        let mut texts: Vec<String> = (0..11)
+            .map(|k| (0..40).map(|i| format!("Section {k}.{i}: routine notes about scheduling, offices and equipment.\n")).collect::<String>())
+            .collect();
+        texts.push(format!(
+            "{}{fact}\n{}",
+            (0..20)
+                .map(|i| format!(
+                    "Section 9.{i}: routine notes about scheduling, offices and equipment.\n"
+                ))
+                .collect::<String>(),
+            (0..19)
+                .map(|i| format!(
+                    "Section 9.{}: routine notes about scheduling, offices and equipment.\n",
+                    i + 30
+                ))
+                .collect::<String>()
+        ));
+        let v = kk_memory::Embedder::embed(&e, &texts).unwrap();
+        let q = kk_memory::Embedder::embed_query(
+            &e,
+            "What extra charge applies if I pay after the due date?",
+        )
+        .unwrap();
+        let mut sims: Vec<(f32, usize)> = v
+            .iter()
+            .enumerate()
+            .map(|(i, x)| (kk_memory::cosine(&q, x), i))
+            .collect();
+        sims.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        for (s, i) in sims {
+            println!(
+                "sim {s:.3} passage {i}{}",
+                if i == 11 { "  <- holds the fact" } else { "" }
+            );
+        }
+    }
+
     /// Needs a local Ollama with nomic-embed-text. Twelve facts, each asked about in other words, each fact in a 25,000
     /// character file among thirty others, so the model window cannot hold the folder. Prints how often the window holds the
     /// fact for the plain window, for words alone and for words with meaning. Run with
@@ -668,10 +712,16 @@ mod live {
             {
                 words += 1;
             }
-            if kk_review::ask::build_context_for(&files, question, Some(&semantic))
-                .text
-                .contains(fact)
-            {
+            let ctx = kk_review::ask::build_context_for(&files, question, Some(&semantic));
+            println!(
+                "  fact in window: {:5}  window {:6} chars, {:2} passages, {:2} files | {}",
+                ctx.text.contains(fact),
+                ctx.text.chars().count(),
+                ctx.text.matches("=== FILE ").count(),
+                ctx.used.len(),
+                &question[..question.len().min(50)]
+            );
+            if ctx.text.contains(fact) {
                 both += 1;
             }
         }

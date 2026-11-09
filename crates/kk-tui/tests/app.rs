@@ -6613,3 +6613,46 @@ fn tu110_model_is_in_the_command_list_with_help_and_a_usage_line() {
         Command::Model(Some("m1".into()))
     );
 }
+
+#[test]
+fn tu111_an_empty_model_reply_to_a_document_question_is_said_in_words_and_never_shown_raw() {
+    let mut a = booted();
+    let r = enter(&mut a, "/ask /x : What is the notice period?");
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"checkable": false, "no_answer": true, "unchecked_text": "{\"answer\": \"\", \"citations\": []}",
+               "files_used": [], "files_withheld": [], "files_skipped": [], "injection_suspects": []}),
+    ));
+    let text = a
+        .cards
+        .iter()
+        .flat_map(|c| c.lines.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains("The model gave no answer, even when asked again with fewer passages"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("citations") && !text.contains("trust none of it"),
+        "{text}"
+    );
+    let r2 = enter(&mut a, "/ask /x : second");
+    a.handle(ok(
+        &r2[0],
+        200,
+        json!({"checkable": false, "no_answer": false, "unchecked_text": "free text",
+               "files_used": [], "files_withheld": [], "files_skipped": [], "injection_suspects": []}),
+    ));
+    let text = a
+        .cards
+        .iter()
+        .flat_map(|c| c.lines.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains("did not give a checkable answer") && text.contains("free text"),
+        "{text}"
+    );
+}

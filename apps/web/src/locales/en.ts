@@ -669,6 +669,8 @@ export const en = {
   "docs.searched": "The folder is bigger than the model can read at once, so the passages that best match your question were chosen.",
   "docs.byMeaning": "They were matched by meaning as well as by words.",
   "docs.byWords": "They were matched by words only, because the meaning model is not available.",
+  "docs.narrowed": "The model gave no answer from all the matching passages, so it was asked again with only the best {n}.",
+  "docs.noAnswer": "The model gave no answer, even when asked again with fewer passages. Try a bigger model (Settings), or ask about one document at a time.",
   "docs.partial": "Only the matching passages were read from: {list}",
   "docs.skippedSearched": "Nothing in these matched your question, so they were not read: {list}",
   "docs.injection": "These documents contain text aimed at AI assistants; it was treated as data: {list}",

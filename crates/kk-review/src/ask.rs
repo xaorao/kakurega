@@ -47,8 +47,18 @@ fn rrf(rank_from_zero: usize) -> f64 {
 /// Lines in one searchable passage, and the most characters one passage holds.
 const CHUNK_LINES: usize = 40;
 const CHUNK_CHARS: usize = 2_500;
-/// No single file may take more than this many passages, so one large file cannot crowd out the others.
-const MAX_CHUNKS_PER_FILE: usize = 12;
+/// No single file may take more than this many passages, so one large file cannot crowd out the others (half of the window).
+const MAX_CHUNKS_PER_FILE: usize = 5;
+/// A searched window holds at most this many passages. More does not help a model that has to find the answer among them:
+/// a small local model given thirty passages of which one answers the question often gives an empty answer.
+pub const MAX_PASSAGES: usize = 10;
+/// The windows of the next tries, when the one before gave no usable answer. Measured with a 3-billion-parameter model: given
+/// the one passage that answers, it answers; given that passage among three others, it returns an empty answer.
+pub const RETRY_LADDER: [usize; 3] = [4, 2, 1];
+/// A passage counts only if it is close to the best one: by words, at least this share of the best score; by meaning, within
+/// this much of the best similarity. Passages that merely clear the model's own floor are noise that a small model cannot see past.
+const WORD_SHARE: f64 = 0.35;
+const MEANING_MARGIN: f32 = 0.08;
 
 const STOPWORDS: &[&str] = &[
     "the", "an", "of", "to", "in", "is", "are", "was", "were", "be", "what", "which", "who",
@@ -172,6 +182,16 @@ pub fn build_context_for(
     question: &str,
     semantic: Option<&dyn Semantic>,
 ) -> Context {
+    build_context_limited(files, question, semantic, MAX_PASSAGES)
+}
+
+/// `build_context_for` with a smaller cap on passages, for asking again when a model could not answer from a full window.
+pub fn build_context_limited(
+    files: &[ImportedFile],
+    question: &str,
+    semantic: Option<&dyn Semantic>,
+    max_passages: usize,
+) -> Context {
     let plain = build_context(files);
     if plain.skipped_too_large.is_empty() {
         return plain;
@@ -237,6 +257,9 @@ pub fn build_context_for(
             .then_with(|| chunks[x.1].path.cmp(chunks[y.1].path))
             .then_with(|| chunks[x.1].start.cmp(&chunks[y.1].start))
     });
+    if let Some(top) = scored.first().map(|x| x.0) {
+        scored.retain(|(s, _)| *s >= top * WORD_SHARE);
+    }
     // meaning: a second ranking over the same passages, merged with the first by reciprocal rank fusion
     let mut by_meaning = false;
     if let Some(sem) = semantic {
@@ -257,6 +280,9 @@ pub fn build_context_for(
                     .unwrap_or(std::cmp::Ordering::Equal)
                     .then_with(|| x.1.cmp(&y.1))
             });
+            if let Some(top) = near.first().map(|x| x.0) {
+                near.retain(|(s, _)| *s >= top - MEANING_MARGIN);
+            }
             let mut fused: std::collections::HashMap<usize, f64> = std::collections::HashMap::new();
             for (rank, (_, i)) in scored.iter().enumerate() {
                 *fused.entry(*i).or_insert(0.0) += rrf(rank);
@@ -281,6 +307,9 @@ pub fn build_context_for(
     let mut per_file: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
     let (mut used_chars, mut file_count) = (0usize, std::collections::HashSet::new());
     for (_, i) in scored {
+        if picked.len() >= max_passages.min(MAX_PASSAGES) {
+            break;
+        }
         let c = &chunks[i];
         let block = rendered(c.path, false, c.start, c.end, &c.text)
             .chars()
@@ -384,6 +413,33 @@ pub struct Citation {
 pub struct Answer {
     pub answer: String,
     pub citations: Vec<Citation>,
+}
+
+/// True when the reply is the answer shape with nothing in it: an empty (or empty-list) answer and no citations. A model
+/// that has nothing to say sometimes says exactly that; it is not an answer and is not shown as one.
+pub fn is_empty_reply(reply: &str) -> bool {
+    let (Some(start), Some(end)) = (reply.find('{'), reply.rfind('}')) else {
+        return false;
+    };
+    if end <= start || reply.len() > 100_000 {
+        return false;
+    }
+    let Ok(v) = serde_json::from_str::<Value>(&reply[start..=end]) else {
+        return false;
+    };
+    let Some(obj) = v.as_object() else {
+        return false;
+    };
+    let empty = |x: Option<&Value>| match x {
+        None | Some(Value::Null) => true,
+        Some(Value::String(s)) => s.trim().is_empty(),
+        Some(Value::Array(a)) => a.is_empty(),
+        _ => false,
+    };
+    !obj.is_empty()
+        && obj.keys().all(|k| k == "answer" || k == "citations")
+        && empty(obj.get("answer"))
+        && empty(obj.get("citations"))
 }
 
 pub fn parse_answer(reply: &str) -> Option<Answer> {

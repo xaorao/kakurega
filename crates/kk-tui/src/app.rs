@@ -4144,8 +4144,12 @@ impl App {
                         ));
                     }
                 } else {
-                    lines.push("The model did not give a checkable answer. Unchecked text follows; trust none of it:".into());
-                    lines.extend(text_lines(body["unchecked_text"].as_str().unwrap_or("")));
+                    if body["no_answer"] == true {
+                        lines.push("The model gave no answer, even when asked again with fewer passages. Try a bigger model (/model), or ask about one document at a time.".into());
+                    } else {
+                        lines.push("The model did not give a checkable answer. Unchecked text follows; trust none of it:".into());
+                        lines.extend(text_lines(body["unchecked_text"].as_str().unwrap_or("")));
+                    }
                 }
                 lines.push(String::new());
                 lines.push(format!(

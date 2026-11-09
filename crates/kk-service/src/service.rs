@@ -6402,11 +6402,47 @@ async fn ask(axum::Extension(svc): Svc, Json(b): Json<AskBody>) -> Response {
             kk_types::chat::ChatMessage::new("system", kk_review::ask::SYSTEM),
             kk_types::chat::ChatMessage::new("user", &format!("{}\nQuestion: {q}", ctx.text)),
         ];
-        let reply = svc2.runner.chat(messages)?;
-        Ok((reply, imported.files, ctx, suspects))
+        let mut reply = svc2.runner.chat(messages)?;
+        let mut ctx = ctx;
+        let mut narrowed_to: Option<usize> = None;
+        // a model that is given a window of passages and answers with nothing usable (an empty answer, the wrong shape) is
+        // asked again with fewer and fewer of the best passages: small local models answer from the one passage that holds the
+        // answer and fail when it is among others
+        if ctx.searched {
+            for size in kk_review::ask::RETRY_LADDER {
+                if kk_review::ask::parse_answer(&reply.text).is_some() {
+                    break;
+                }
+                let tight = kk_review::ask::build_context_limited(
+                    &imported.files,
+                    &q,
+                    meaning.as_ref().map(|m| m as &dyn kk_review::ask::Semantic),
+                    size,
+                );
+                if tight.used.is_empty() || tight.text == ctx.text {
+                    continue;
+                }
+                let again = vec![
+                    kk_types::chat::ChatMessage::new("system", kk_review::ask::SYSTEM),
+                    kk_types::chat::ChatMessage::new(
+                        "user",
+                        &format!("{}\nQuestion: {q}", tight.text),
+                    ),
+                ];
+                if let Ok(second) = svc2.runner.chat(again) {
+                    if kk_review::ask::parse_answer(&second.text).is_some() {
+                        reply = second;
+                        ctx = tight;
+                        narrowed_to = Some(size);
+                        break;
+                    }
+                }
+            }
+        }
+        Ok((reply, imported.files, ctx, suspects, narrowed_to))
     })
     .await;
-    let (reply, files, ctx, suspects) = match out {
+    let (reply, files, ctx, suspects, narrowed_to) = match out {
         Ok(Ok(x)) => x,
         Ok(Err(m)) => return error(StatusCode::BAD_GATEWAY, "NO_ANSWER", &m),
         Err(_) => {
@@ -6418,7 +6454,7 @@ async fn ask(axum::Extension(svc): Svc, Json(b): Json<AskBody>) -> Response {
         }
     };
     let route = json!({"id": reply.route_id, "class": reply.class, "simulated": reply.simulated});
-    let base = json!({"files_used": ctx.used, "files_withheld": ctx.withheld, "files_skipped": ctx.skipped_too_large, "files_partial": ctx.partial, "searched": ctx.searched, "by_meaning": ctx.by_meaning, "injection_suspects": suspects, "route": route});
+    let base = json!({"files_used": ctx.used, "files_withheld": ctx.withheld, "files_skipped": ctx.skipped_too_large, "files_partial": ctx.partial, "searched": ctx.searched, "by_meaning": ctx.by_meaning, "narrowed_to": narrowed_to, "injection_suspects": suspects, "route": route});
     let mut body = base.as_object().cloned().unwrap_or_default();
     match kk_review::ask::parse_answer(&reply.text) {
         Some(a) => {
@@ -6463,6 +6499,11 @@ async fn ask(axum::Extension(svc): Svc, Json(b): Json<AskBody>) -> Response {
                 ],
             );
             body.insert("checkable".into(), json!(false));
+            // a reply that is the answer shape with nothing in it is said to be no answer, not shown as text
+            body.insert(
+                "no_answer".into(),
+                json!(kk_review::ask::is_empty_reply(&reply.text)),
+            );
             let t: String = reply
                 .text
                 .chars()

@@ -1903,6 +1903,21 @@ try {
   check("for a folder too big to read at once the page says the matching passages were chosen and names the file read in part", bigAns.includes("passages that best match your question were chosen") && bigAns.includes("matched by words only, because the meaning model is not available") && bigAns.includes("Only the matching passages were read from: zz_terms.txt"), bigAns.replace(/\n/g, " | ").slice(0, 300));
   check("the quote from the chosen passage is checked against the real file and found", bigAns.includes("1 of 2 quote(s) found") && bigAns.includes("Found in the file (line 201)"), bigAns.replace(/\n/g, " | ").slice(0, 300));
   await axeCheck(page, "documents screen with a searched folder");
+  {
+    // what the page says when the model gave nothing, and when it had to be asked again with fewer passages (stood in for)
+    const reply = (extra) => ({ checkable: false, files_used: ["a.txt"], files_withheld: [], files_skipped: [], files_partial: [], searched: true, by_meaning: false, injection_suspects: [], route: { simulated: true }, ...extra });
+    let next = reply({ no_answer: true, unchecked_text: null });
+    await page.route("**/api/ask", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(next) }));
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    await page.getByText("The model gave no answer, even when asked again with fewer passages").waitFor();
+    check("an empty model reply is said to be no answer and the raw reply is not shown", (await page.getByText("The model gave no answer").count()) === 1 && (await page.locator("p.mem-text", { hasText: '"answer"' }).count()) === 0);
+    next = { ...reply({}), checkable: true, answer: "Ninety days.", citations: [{ file: "a.txt", quote: "ninety days written warning", verdict: "not_found", line: null }], verified: 0, narrowed_to: 2 };
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    await page.getByText("asked again with only the best 2").waitFor();
+    check("when the model had to be asked again, the page says with how many passages", (await page.getByText("asked again with only the best 2").count()) === 1);
+    await axeCheck(page, "documents screen after narrowing");
+    await page.unroute("**/api/ask");
+  }
   await page.screenshot({ path: join(shots, "14b-documents-searched.png"), fullPage: true });
   // back to the activity page, where the journey continues
   await page.getByRole("link", { name: "Activity" }).click();

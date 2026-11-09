@@ -474,7 +474,7 @@ fn ask29_one_file_with_a_great_many_matches_cannot_crowd_the_others_out() {
     let c = build_context_for(&[hog, other], "notice", None);
     assert!(c.used.iter().any(|f| f == "b_other.txt"), "{:?}", c.used);
     let hog_passages = c.text.matches("=== FILE a_hog.txt").count();
-    assert!(hog_passages <= 12, "{hog_passages}");
+    assert!(hog_passages <= 5, "{hog_passages}");
 }
 
 #[test]
@@ -785,5 +785,51 @@ fn ask38_a_score_below_the_floor_counts_for_nothing_and_ties_never_depend_on_cha
     let first = build_context_for(&files, "notice", Some(&tied));
     for _ in 0..25 {
         assert_eq!(first, build_context_for(&files, "notice", Some(&tied)));
+    }
+}
+
+#[test]
+fn ask39_a_searched_window_never_holds_more_than_ten_passages() {
+    // forty files each with many matching passages: the budget would allow dozens, the cap allows ten
+    let files: Vec<ImportedFile> = (0..40)
+        .map(|i| {
+            file(
+                &format!("n{i:02}.txt"),
+                &"notice period routine text\n".repeat(900),
+                Level::Internal,
+            )
+        })
+        .collect();
+    let c = build_context_for(&files, "notice period", None);
+    assert!(c.searched);
+    let passages = c.text.matches("=== FILE ").count();
+    assert!((1..=MAX_PASSAGES).contains(&passages), "{passages}");
+    assert!(c.text.chars().count() <= MAX_CONTEXT_CHARS);
+}
+
+#[test]
+fn ask40_an_empty_reply_is_recognised_and_nothing_else_is() {
+    for empty in [
+        r#"{"answer": "", "citations": []}"#,
+        r#"{"answer": [], "citations":[]}"#,
+        r#"Here you go: {"answer":"  ","citations":[]}"#,
+        r#"{"answer": null}"#,
+        r#"{"citations": []}"#,
+        r#"[{"answer": ""}]"#,
+    ] {
+        assert!(is_empty_reply(empty), "{empty}");
+    }
+    for not_empty in [
+        r#"{"answer": "ninety days", "citations": []}"#,
+        r#"{"answer": "", "citations": [{"file": "a.txt", "quote": "x"}]}"#,
+        r#"{"answer": [], "citations": ["a"]}"#,
+        r#"{"answer": 0, "citations": []}"#,
+        r#"{"answer": "", "extra": "text the model added"}"#,
+        r#"{}"#,
+        "",
+        "no json at all",
+        "{not json}",
+    ] {
+        assert!(!is_empty_reply(not_empty), "{not_empty}");
     }
 }

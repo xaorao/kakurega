@@ -15326,3 +15326,178 @@ fn sv167_encoded_shapes_of_a_key_in_attached_files_are_withheld_and_the_known_li
         leaks.join("; ")
     );
 }
+
+/// A small model: it answers when it is shown at most `max_blocks` passages and returns an empty answer otherwise.
+struct FussyRunner {
+    inner: CannedRunner,
+    max_blocks: usize,
+    calls: Arc<Mutex<Vec<usize>>>,
+}
+
+impl JobRunner for FussyRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        self.inner.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        self.inner.route_info()
+    }
+    fn chat(&self, m: Vec<kk_types::chat::ChatMessage>) -> Result<kk_service::ChatReply, String> {
+        let blocks = m
+            .last()
+            .map_or(0, |x| x.content.matches("=== FILE ").count());
+        self.calls.lock().unwrap().push(blocks);
+        if blocks > self.max_blocks {
+            let mut r = self.inner.chat(m)?;
+            r.text = "{\"answer\": \"\", \"citations\": []}".into();
+            return Ok(r);
+        }
+        self.inner.chat(m)
+    }
+}
+
+fn fussy_service(
+    tag: &str,
+    max_blocks: usize,
+) -> (
+    kk_companion::Companion,
+    Web,
+    PathBuf,
+    Arc<Mutex<Vec<usize>>>,
+) {
+    let (root, _repo) = repo_copy(tag);
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(FussyRunner {
+            inner: CannedRunner { confirm: true },
+            max_blocks,
+            calls: calls.clone(),
+        }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let docs = root.join("docs");
+    std::fs::create_dir_all(&docs).unwrap();
+    let filler = |tag: &str, n: usize| -> String {
+        (0..n)
+            .map(|i| format!("{tag} routine paragraph {i} about scheduling and offices\n"))
+            .collect()
+    };
+    for i in 0..12 {
+        let fact = format!(
+            "Clause {i}: the notice period of contract {i} is {} days.\n",
+            10 + i
+        );
+        std::fs::write(
+            docs.join(format!("c{i:02}.txt")),
+            format!(
+                "{}{fact}{}",
+                filler(&format!("a{i}"), 200),
+                filler(&format!("b{i}"), 200)
+            ),
+        )
+        .unwrap();
+    }
+    (c, w, docs, calls)
+}
+
+#[test]
+fn sv168_a_model_that_cannot_answer_from_a_full_window_is_asked_again_with_fewer_passages() {
+    let q = json!({"question": "What is the notice period of contract?"});
+    for (max, expect_narrowed, expect_calls) in [(2usize, Some(2u64), 3usize), (1, Some(1), 4)] {
+        let (_c, w, docs, calls) = fussy_service(&format!("fussy-{max}"), max);
+        let (st, r) = w.post(
+            "/api/ask",
+            json!({"folder": docs.to_string_lossy(), "question": q["question"]}),
+        );
+        assert_eq!(st, 200, "{r}");
+        assert_eq!(r["checkable"], true, "{r}");
+        assert_eq!(r["narrowed_to"].as_u64(), expect_narrowed, "{r}");
+        assert_eq!(
+            calls.lock().unwrap().len(),
+            expect_calls,
+            "{:?}",
+            calls.lock().unwrap()
+        );
+        let sizes = calls.lock().unwrap().clone();
+        assert!(
+            sizes.windows(2).all(|p| p[1] < p[0]),
+            "each try shows fewer passages: {sizes:?}"
+        );
+        assert!(*sizes.last().unwrap() <= max);
+        assert!(
+            r["files_used"].as_array().unwrap().len() <= max,
+            "the files named are those of the window that answered: {r}"
+        );
+    }
+}
+
+#[test]
+fn sv169_a_model_that_never_answers_is_tried_a_bounded_number_of_times_and_the_reply_is_not_shown_as_an_answer(
+) {
+    let (_c, w, docs, calls) = fussy_service("fussy-never", 0);
+    let (st, r) = w.post("/api/ask", json!({"folder": docs.to_string_lossy(), "question": "What is the notice period of contract?"}));
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["checkable"], false, "{r}");
+    assert!(r["narrowed_to"].is_null(), "{r}");
+    assert_eq!(
+        r["no_answer"], true,
+        "an empty reply is said to be no answer: {r}"
+    );
+    assert_eq!(
+        calls.lock().unwrap().len(),
+        1 + kk_review::ask::RETRY_LADDER.len(),
+        "one try and the ladder, no more"
+    );
+}
+
+#[test]
+fn sv170_a_model_that_answers_is_asked_once_and_so_is_a_folder_that_fits_even_if_the_model_returns_nothing(
+) {
+    let (_c, w, docs, calls) = fussy_service("fussy-fine", 100);
+    let (st, r) = w.post("/api/ask", json!({"folder": docs.to_string_lossy(), "question": "What is the notice period of contract?"}));
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["checkable"], true);
+    assert!(r["narrowed_to"].is_null());
+    assert_eq!(
+        calls.lock().unwrap().len(),
+        1,
+        "an answer on the first try is the only try"
+    );
+    // a folder that fits the window is read whole: there are no passages to narrow, so an empty answer is not tried again
+    let (_c2, w2, docs2, calls2) = fussy_service("fussy-fits", 0);
+    let small = docs2.parent().unwrap().join("small");
+    std::fs::create_dir_all(&small).unwrap();
+    std::fs::write(
+        small.join("one.txt"),
+        "Only file. The notice period is 5 days.\n",
+    )
+    .unwrap();
+    let (st, r) = w2.post(
+        "/api/ask",
+        json!({"folder": small.to_string_lossy(), "question": "What is the notice period?"}),
+    );
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(
+        r["checkable"], false,
+        "the empty answer is reported as it is"
+    );
+    assert!(r["narrowed_to"].is_null());
+    assert_eq!(calls2.lock().unwrap().len(), 1);
+}
