@@ -8,6 +8,33 @@ export interface Usage {
   estimate?: boolean;
 }
 
+export interface AnswerUsage {
+  elapsed_ms?: unknown;
+  reply_tokens_estimate?: unknown;
+}
+
+export interface AnswerLine {
+  key: "chat.answer" | "chat.answerSpeed";
+  tokens: number;
+  took: string;
+  per?: number;
+}
+
+const whole = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+
+/** What the footer says about the last answer: about how long it is and how long it took. The speed is a whole-answer figure
+ *  (the time includes reading notes and building the prompt), shown only when the answer took at least half a second and the
+ *  speed is at least one token a second. A missing, negative, fractional or non-number figure, or an answer with no length,
+ *  gives no line at all. The same rules as the terminal's footer. */
+export function answerLine(u: AnswerUsage): AnswerLine | null {
+  if (!whole(u.elapsed_ms) || !whole(u.reply_tokens_estimate) || u.reply_tokens_estimate === 0) return null;
+  const ms = u.elapsed_ms;
+  const tokens = u.reply_tokens_estimate;
+  const took = ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+  const per = ms >= 500 ? Math.floor((tokens * 1000) / ms) : 0;
+  return per >= 1 ? { key: "chat.answerSpeed", tokens, took, per } : { key: "chat.answer", tokens, took };
+}
+
 export type MeterKey = "chat.context" | "chat.contextWindow" | "chat.contextCounted" | "chat.contextCountedWindow";
 
 export interface MeterLine {

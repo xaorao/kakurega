@@ -612,6 +612,8 @@ export const en = {
   "chat.contextCounted": "{n} tokens of context sent (counted by the model)",
   "chat.contextWindow": "about {n} of {max} tokens of context used ({pct}%)",
   "chat.contextCountedWindow": "{n} of {max} tokens of context used ({pct}%, counted by the model)",
+  "chat.answer": "answer: about {tokens} tokens in {took}",
+  "chat.answerSpeed": "answer: about {tokens} tokens in {took} (about {per} tokens a second overall)",
   "chat.contextNear": "This conversation is close to the model's limit. Start a new conversation soon.",
   "chat.summarisedNow": "The oldest {n} messages were just summarised to make room. You can still open them in full.",
   "chat.summarised": "The oldest {n} messages are replaced by a summary. You can still open them in full.",

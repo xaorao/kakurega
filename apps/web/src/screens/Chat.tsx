@@ -11,7 +11,7 @@ import { Markdown } from "../components/Markdown";
 import { HistoryPicker } from "../components/HistoryPicker";
 import { SentView } from "../components/SentView";
 import { draftKey, exchangeWasSaved, opensHistoryPicker, forgetDraft, forgetSent, historyKey, historyStep, idleHistory, loadDraft, rememberSent, retagSent, saveDraft, sentHistory, stopsReply } from "../composer";
-import { meterLine, noteNotes, pageNotes, savedLine, summaryNotes } from "../meter";
+import { answerLine, meterLine, noteNotes, pageNotes, savedLine, summaryNotes } from "../meter";
 import { baseline, loadSeen, markSeen, saveSeen, unreadIds, type Seen } from "../unread";
 
 interface Shown extends ChatTurn {
@@ -702,6 +702,8 @@ export function Chat() {
         const m = meterLine(r.usage);
         foot.push(t(m.key, { n: m.n, max: m.max ?? 0, pct: m.pct ?? 0 }));
         if (m.near) foot.push(t("chat.contextNear"));
+        const a = answerLine(r.usage);
+        if (a) foot.push(t(a.key, { tokens: a.tokens, took: a.took, per: a.per ?? 0 }));
         for (const s of summaryNotes(r.usage)) foot.push(t(s.key, { n: s.n }));
         if (r.usage.history_turns_dropped > 0) foot.push(t("chat.dropped", { n: r.usage.history_turns_dropped }));
       }

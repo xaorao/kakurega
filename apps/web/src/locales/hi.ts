@@ -614,6 +614,8 @@ export const hi: Record<keyof typeof en, string> = {
   "chat.contextCounted": "{n} टोकन का संदर्भ भेजा गया (मॉडल ने गिना)",
   "chat.contextWindow": "{max} में से लगभग {n} टोकन का संदर्भ इस्तेमाल हुआ ({pct}%)",
   "chat.contextCountedWindow": "{max} में से {n} टोकन का संदर्भ इस्तेमाल हुआ ({pct}%, मॉडल ने गिना)",
+  "chat.answer": "उत्तर: लगभग {tokens} टोकन, {took} में",
+  "chat.answerSpeed": "उत्तर: लगभग {tokens} टोकन, {took} में (कुल मिलाकर लगभग {per} टोकन प्रति सेकंड)",
   "chat.contextNear": "यह बातचीत मॉडल की सीमा के करीब है। जल्द ही नई बातचीत शुरू करें।",
   "chat.summarisedNow": "जगह बनाने के लिए सबसे पुराने {n} संदेशों का सार अभी बनाया गया। आप उन्हें पूरा अब भी खोल सकते हैं।",
   "chat.summarised": "सबसे पुराने {n} संदेशों की जगह उनका सार भेजा जाता है। आप उन्हें पूरा अब भी खोल सकते हैं।",
