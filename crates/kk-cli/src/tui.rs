@@ -64,7 +64,10 @@ fn ensure_service(dir: &std::path::Path, args: &[String], guard: &mut Guard) -> 
                 cmd.arg(a);
             }
         }
-        cmd.stdin(Stdio::null()).env("KAKU_EXIT_WITH_PARENT", "1");
+        // the service is told which process owns it, so it leaves when that one is gone even if it died before the service
+        // finished starting
+        cmd.stdin(Stdio::null())
+            .env("KAKU_EXIT_WITH_PARENT", std::process::id().to_string());
         match log {
             Some(f) => {
                 let f2 = f.try_clone().ok();

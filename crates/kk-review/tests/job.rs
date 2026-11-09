@@ -23,7 +23,13 @@ fn materialize_fixture(fixture: &str) -> PathBuf {
     } else {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/job-tmp")
     };
-    let dst = base.join(format!("repo-{}", std::process::id()));
+    // one directory per call: tests that run at the same time must not delete each other's copy
+    static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let dst = base.join(format!(
+        "repo-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    ));
     let _ = fs::remove_dir_all(&dst);
     fn copy(src: &Path, dst: &Path) {
         fs::create_dir_all(dst).unwrap();
@@ -1816,4 +1822,46 @@ fn j24_a_reproducer_wrapped_in_a_markdown_fence_confirms_the_defect_and_is_relea
     let draft = report.draft.expect("a release draft");
     let script = String::from_utf8_lossy(&draft.files["repro-1.py"]).into_owned();
     assert!(!script.contains("```"), "{script}");
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn j26_four_full_reviews_at_once_through_the_shared_sandbox_all_finish_correctly() {
+    // the service lets four reviews run at the same time (MAX_RUNNING_REVIEWS); they share one sandbox VM, one worker binary
+    // and one scratch area, so any collision between them shows here
+    let handles: Vec<_> = (0..4)
+        .map(|i| {
+            std::thread::spawn(move || {
+                let cfg = config(&format!("j26-{i}"));
+                let (routes, ev) = scripted(vec![
+                    calls(vec![("list_files", json!({}))]),
+                    calls(vec![("read_file", json!({"path": "payments/auth/session.py"}))]),
+                    calls(vec![(
+                        "report_finding",
+                        json!({"title": "Token still valid after logout", "file": "payments/auth/session.py", "line": 15, "explanation": "logout() only pops a local dict, so validate() keeps accepting the token.", "reproducer": REPRO}),
+                    )]),
+                    ChatMessage::new("assistant", "One defect found."),
+                ]);
+                run_job(&cfg, routes, ev, &|_, _| {})
+            })
+        })
+        .collect();
+    for (i, h) in handles.into_iter().enumerate() {
+        let report = h.join().expect("a review thread");
+        assert_eq!(report.error, None, "review {i}");
+        assert_eq!(
+            report.worker_exit,
+            Some(Exit::Code(0)),
+            "review {i}: {}",
+            report.worker_stderr
+        );
+        assert_eq!(report.findings.len(), 1, "review {i}");
+        assert_eq!(
+            report.findings[0].1.status,
+            CheckStatus::Reproduced,
+            "review {i}: {:?}",
+            report.findings[0].1
+        );
+        assert!(report.draft.is_ok(), "review {i}: a release draft");
+    }
 }

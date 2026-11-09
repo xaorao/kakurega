@@ -202,8 +202,10 @@ fn serve(args: &[String]) -> Result<(), String> {
         None => println!("  No web interface build found (apps/web/dist); only the API is served."),
     }
     println!("Press Ctrl-C to stop.");
-    let owner =
-        std::env::var_os("KAKU_EXIT_WITH_PARENT").map(|_| std::os::unix::process::parent_id());
+    let owner = owner_from_env(
+        std::env::var("KAKU_EXIT_WITH_PARENT").ok().as_deref(),
+        std::os::unix::process::parent_id(),
+    );
     // A shell that handed over its secret keeps the other end of the pipe open for as long as it lives. When the pipe
     // closes the shell is gone, however it went (a crash or a forced quit leave no time to say so), and nothing is left to
     // serve: the service leaves too instead of running on with nobody holding its window.
@@ -219,16 +221,63 @@ fn serve(args: &[String]) -> Result<(), String> {
         });
     }
     loop {
-        std::thread::sleep(std::time::Duration::from_secs(1));
         if shell_gone.load(std::sync::atomic::Ordering::SeqCst) {
             let _ = std::fs::remove_file(data.join("admin.json"));
             return Ok(());
         }
-        if let Some(p) = owner {
-            if std::os::unix::process::parent_id() != p {
-                let _ = std::fs::remove_file(data.join("admin.json"));
-                return Ok(());
-            }
+        if owner_gone(owner, std::os::unix::process::parent_id()) {
+            let _ = std::fs::remove_file(data.join("admin.json"));
+            return Ok(());
         }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+}
+
+/// The process that owns this service, from `KAKU_EXIT_WITH_PARENT`. It holds the owner's own process number, so that an owner
+/// that died while the service was still starting is noticed too: reading "my parent" at the end of startup would then
+/// have read the reaper's number and the service would never leave. A value that is not a number means "whoever started me".
+fn owner_from_env(value: Option<&str>, parent_now: u32) -> Option<u32> {
+    value.map(|v| {
+        v.trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|p| *p > 1)
+            .unwrap_or(parent_now)
+    })
+}
+
+/// Whether the owner is gone: this process has been handed to a different parent than the one that owns it.
+fn owner_gone(owner: Option<u32>, parent_now: u32) -> bool {
+    owner.is_some_and(|p| parent_now != p)
+}
+
+#[cfg(test)]
+mod owner_tests {
+    use super::{owner_from_env, owner_gone};
+
+    #[test]
+    fn ow01_the_owner_is_the_process_the_parent_named_not_whoever_the_parent_is_when_startup_ends()
+    {
+        assert_eq!(
+            owner_from_env(Some("4242"), 1),
+            Some(4242),
+            "named by its number"
+        );
+        // the owner died during startup, so "my parent" now reads 1: the named owner is still the one that counts
+        assert!(owner_gone(owner_from_env(Some("4242"), 1), 1));
+        assert!(!owner_gone(owner_from_env(Some("4242"), 4242), 4242));
+        // an owner that is still the parent keeps the service
+        assert!(!owner_gone(Some(77), 77));
+    }
+
+    #[test]
+    fn ow02_without_a_named_owner_the_service_stays_and_an_unreadable_name_means_whoever_started_it(
+    ) {
+        assert_eq!(owner_from_env(None, 500), None);
+        assert!(!owner_gone(None, 1));
+        for odd in ["", " ", "x", "-3", "1", "0", "99999999999999"] {
+            assert_eq!(owner_from_env(Some(odd), 500), Some(500), "{odd:?}");
+        }
+        assert_eq!(owner_from_env(Some(" 4242\n"), 1), Some(4242));
     }
 }

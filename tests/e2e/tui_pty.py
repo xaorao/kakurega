@@ -611,6 +611,40 @@ for _ in range(240):
     time.sleep(0.25)
 os.close(m2)
 check("after the workspace is killed outright, the service it started exits by itself", gone, f"after {time.time() - killed_at:.1f} s")
+# an owner that died before the service had finished starting: the service is told its owner's number, so it still leaves
+data6 = work / "data6"
+dead = subprocess.Popen(["sleep", "0"])
+dead.wait()
+srv_args = [str(kaku), "serve", "--data-dir", str(data6), "--root", str(work / "root"), "--scripted", str(repo / "tests/e2e/script.json"), "--ui-dir", str(repo / "apps/web/dist")]
+srv6 = subprocess.Popen(srv_args, env=dict(os.environ, KAKU_EXIT_WITH_PARENT=str(dead.pid)), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+try:
+    srv6.wait(timeout=20)
+    left = True
+except subprocess.TimeoutExpired:
+    left = False
+    srv6.kill()
+    srv6.wait()
+check("a service told that its owner is already gone leaves by itself", left)
+data7 = work / "data7"
+srv7 = subprocess.Popen([*srv_args[:3], str(data7), *srv_args[4:]], env=dict(os.environ, KAKU_EXIT_WITH_PARENT=str(os.getpid())), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+time.sleep(6)
+stayed = srv7.poll() is None
+srv7.terminate()
+srv7.wait()
+check("and one whose owner is alive stays", stayed)
+# the exact race: a parent that starts the service and exits at once, as a workspace killed during the service's startup does
+data8 = work / "data8"
+serve_cmd = " ".join(["'%s'" % a for a in [str(kaku), "serve", "--data-dir", str(data8), "--root", str(work / "root"), "--scripted", str(repo / "tests/e2e/script.json"), "--ui-dir", str(repo / "apps/web/dist")]])
+subprocess.run(["sh", "-c", f"KAKU_EXIT_WITH_PARENT=$$ {serve_cmd} >/dev/null 2>&1 & exit 0"])
+gone8 = False
+for _ in range(60):
+    time.sleep(0.5)
+    if subprocess.run(["pgrep", "-f", f"kaku serve --data-dir {data8}"], capture_output=True).returncode != 0:
+        gone8 = True
+        break
+if not gone8:
+    subprocess.run(["pkill", "-f", f"kaku serve --data-dir {data8}"])
+check("a service whose owner exits before the service has finished starting still leaves", gone8)
 # reviews that stop while the workspace is closed are reported at the next launch, once
 data5 = work / "data5"
 srv5 = subprocess.Popen([str(kaku), "serve", "--data-dir", str(data5), "--root", str(work / "root"), "--scripted", str(repo / "tests/e2e/script.json"), "--ui-dir", str(repo / "apps/web/dist")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
