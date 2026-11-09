@@ -3666,6 +3666,8 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
     let window = svc.runner.route_info()["context_tokens"].as_u64();
     let estimated = kk_route::tokens::estimate_messages(&ctx.messages);
     let measured = r.prompt_tokens.filter(|n| *n > 0);
+    // measured once, so the ledger and the reply cannot disagree about how long the answer took
+    let elapsed_ms = run.started.elapsed().as_millis() as i64;
     svc.record_usage(
         &r.route_id,
         &r.class,
@@ -3673,9 +3675,9 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
         measured.unwrap_or(estimated),
         measured.is_some(),
         kk_route::tokens::estimate_text(&r.text),
-        run.started.elapsed().as_millis() as i64,
+        elapsed_ms,
     );
-    let usage = json!({"context_tokens": measured.unwrap_or(estimated), "context_tokens_estimate": estimated, "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "history_turns_summarized": run.summarized, "summary_text": run.summary, "compacted_now": run.compacted_now, "compaction_failed": run.compaction_failed, "estimate": measured.is_none()});
+    let usage = json!({"elapsed_ms": elapsed_ms, "context_tokens": measured.unwrap_or(estimated), "context_tokens_estimate": estimated, "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "history_turns_summarized": run.summarized, "summary_text": run.summary, "compacted_now": run.compacted_now, "compaction_failed": run.compaction_failed, "estimate": measured.is_none()});
     json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated, "stays_here": svc.route_for_owner()["stays_here"], "host": svc.route_for_owner()["host"]}, "instructions_used": ctx.instructions_used, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "files": {"used": ctx.files_used, "trimmed": ctx.files_trimmed, "left_out": ctx.files_left_out, "withheld_instructions": ctx.files_withheld_instructions, "withheld_secrets": ctx.files_withheld_secrets}, "saved": saved, "not_saved": not_saved, "project": run.body.project})
 }
 

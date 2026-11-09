@@ -13787,3 +13787,27 @@ fn sv143_a_restore_request_over_the_size_limits_is_turned_away_before_anything_i
         "a route that did not ask for more keeps the one-megabyte limit: {r:?}"
     );
 }
+
+#[test]
+fn sv144_a_chat_reply_says_how_long_the_answer_took_and_that_is_the_figure_the_usage_ledger_keeps()
+{
+    let (_c, w, _seen, _root) = instructions_service("elapsed");
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "one question about elapsed time"}),
+    );
+    assert_eq!(s, 200, "{r}");
+    let ms = r["usage"]["elapsed_ms"]
+        .as_i64()
+        .expect("the reply says how long the answer took");
+    assert!((0..60_000).contains(&ms), "{ms}");
+    let (_, v) = w.get("/api/usage");
+    let route = &v["routes"][0];
+    assert_eq!(route["turns"], 1);
+    assert_eq!(
+        route["avg_ms"].as_i64().unwrap(),
+        ms,
+        "one measurement serves the reply and the ledger"
+    );
+    assert_eq!(route["max_ms"].as_i64().unwrap(), ms);
+}

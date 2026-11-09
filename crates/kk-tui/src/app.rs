@@ -4418,6 +4418,9 @@ impl App {
                         }
                         None => foot.push(format!("about {n} tokens of context sent")),
                     }
+                    if let Some(line) = answer_speed_line(&body["usage"]) {
+                        foot.push(line);
+                    }
                     let summarised = body["usage"]["history_turns_summarized"]
                         .as_u64()
                         .unwrap_or(0);
@@ -5069,6 +5072,28 @@ pub fn release_lines_at(d: &Value, now: i64) -> Vec<String> {
         lines.push(format!("  - {}", clean(n.as_str().unwrap_or(""))));
     }
     lines
+}
+
+/// What the status footer says about the last answer's size and speed: its length (an estimate, so "about"), how long it took
+/// from the question to the answer, and how fast that is, only when the time was long enough for a speed to mean anything. The
+/// time includes reading the notes and building the prompt, so the speed is a whole-answer figure and says so. Values that are
+/// not whole numbers, or a reply with no length, give no line at all.
+fn answer_speed_line(usage: &Value) -> Option<String> {
+    let ms = usage["elapsed_ms"].as_u64()?;
+    let tokens = usage["reply_tokens_estimate"].as_u64().filter(|t| *t > 0)?;
+    let took = if ms < 1000 {
+        format!("{ms} ms")
+    } else {
+        format!("{:.1} s", ms as f64 / 1000.0)
+    };
+    let mut line = format!("answer: about {tokens} tokens in {took}");
+    if ms >= 500 {
+        let per = tokens.saturating_mul(1000) / ms;
+        if per >= 1 {
+            line.push_str(&format!(" (about {per} tokens a second overall)"));
+        }
+    }
+    Some(line)
 }
 
 /// The short form of the context use for the status line: `context 12% (2.0k of 16.4k)` with a known window, `context about

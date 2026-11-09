@@ -6281,3 +6281,71 @@ fn tu101_the_note_list_says_where_a_note_came_from_and_when_it_reads_like_instru
     assert!(!t.contains("ignore previous") && !t.contains('\u{202e}'));
     assert_eq!(line("m6"), "m6  [internal]  no fields at all");
 }
+
+#[test]
+fn tu102_the_footer_says_how_big_and_how_fast_the_last_answer_was_and_only_when_the_figures_make_sense(
+) {
+    // a fresh window for every case, so a footer from an earlier case can never be read as this one's
+    let footer_for = |usage: serde_json::Value| -> String {
+        let mut a = booted();
+        let r = enter(&mut a, "a question");
+        a.handle(ok(&r[0], 200, json!({"done": true, "reply": "an answer", "route": {"simulated": true}, "notes_used": 0, "usage": usage})));
+        text(&a)
+            .lines()
+            .find(|l| l.contains("answer: about"))
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let with = |elapsed: serde_json::Value, tokens: serde_json::Value| json!({"context_tokens_estimate": 100, "elapsed_ms": elapsed, "reply_tokens_estimate": tokens});
+    // a normal answer: size, time, and a whole-answer speed
+    assert!(footer_for(with(json!(3200), json!(140)))
+        .ends_with("answer: about 140 tokens in 3.2 s (about 43 tokens a second overall)"));
+    // exactly at the speed limit and just under it
+    assert!(footer_for(with(json!(500), json!(10)))
+        .ends_with("answer: about 10 tokens in 500 ms (about 20 tokens a second overall)"));
+    assert!(
+        footer_for(with(json!(499), json!(10))).ends_with("answer: about 10 tokens in 499 ms"),
+        "too short for a speed to mean anything"
+    );
+    assert!(footer_for(with(json!(0), json!(5))).ends_with("answer: about 5 tokens in 0 ms"));
+    // the switch from milliseconds to seconds is at exactly one second
+    assert!(footer_for(with(json!(999), json!(10))).contains("in 999 ms"));
+    assert!(footer_for(with(json!(1000), json!(10))).contains("in 1.0 s"));
+    assert!(footer_for(with(json!(1500), json!(10)))
+        .contains("in 1.5 s (about 6 tokens a second overall)"));
+    // a very slow answer gives no speed rather than "0 tokens a second"
+    assert!(
+        footer_for(with(json!(600_000), json!(10))).ends_with("answer: about 10 tokens in 600.0 s")
+    );
+    // a reply with no length, a missing figure, or a figure that is not a whole number gives no line at all
+    for (elapsed, tokens) in [
+        (json!(1000), json!(0)),
+        (json!(null), json!(10)),
+        (json!(1000), json!(null)),
+        (json!("1000"), json!(10)),
+        (json!(1.5), json!(10)),
+        (json!(-5), json!(10)),
+        (json!(1000), json!(-1)),
+        (json!([1000]), json!(10)),
+    ] {
+        assert_eq!(
+            footer_for(with(elapsed.clone(), tokens.clone())),
+            "",
+            "{elapsed} {tokens}"
+        );
+    }
+    // enormous figures neither overflow nor panic
+    let big = footer_for(with(json!(u64::MAX), json!(u64::MAX)));
+    assert!(
+        big.starts_with("answer: about 18446744073709551615 tokens in "),
+        "{big}"
+    );
+    let fast = footer_for(with(json!(1000), json!(u64::MAX)));
+    assert!(fast.contains("tokens a second overall"), "{fast}");
+    // an old service that sends no time still gets its context line, and no speed line
+    let mut a = booted();
+    let r = enter(&mut a, "once more");
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "ok", "route": {"simulated": true}, "notes_used": 0, "usage": {"context_tokens_estimate": 77, "reply_tokens_estimate": 9}})));
+    assert!(text(&a).contains("about 77 tokens of context sent"));
+}
