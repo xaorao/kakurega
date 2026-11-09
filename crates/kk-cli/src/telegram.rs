@@ -616,17 +616,82 @@ enum Polled {
     Unreachable(String),
 }
 
+/// The proxy variables ureq reads, in the order it tries them.
+const PROXY_VARS: [&str; 6] = [
+    "ALL_PROXY",
+    "all_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+];
+
+/// Whether `NO_PROXY` names this host (or `*`), so a direct connection is what the owner asked for.
+fn no_proxy_covers(no_proxy: &str, host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    no_proxy.split(',').map(str::trim).any(|e| {
+        let e = e.trim_start_matches('.').to_ascii_lowercase();
+        !e.is_empty() && (e == "*" || host == e || host.ends_with(&format!(".{e}")))
+    })
+}
+
+/// A reason the bridge must not connect, when the environment names a proxy it cannot use. ureq skips a proxy setting it cannot
+/// read and ends up connecting directly, so a mistyped or unsupported proxy would send the bot token and every message round the
+/// proxy the owner asked for, and show Telegram the owner's own address. The bridge refuses instead. The value is never
+/// printed: it may carry a password.
+fn proxy_refusal(api: &str, env: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    let host = api
+        .parse::<ureq::http::Uri>()
+        .ok()
+        .and_then(|u| u.host().map(str::to_string))
+        .unwrap_or_default();
+    let no_proxy = env("NO_PROXY")
+        .or_else(|| env("no_proxy"))
+        .unwrap_or_default();
+    if no_proxy_covers(&no_proxy, &host) {
+        return None;
+    }
+    for var in PROXY_VARS {
+        let Some(value) = env(var).filter(|v| !v.trim().is_empty()) else {
+            continue;
+        };
+        if ureq::Proxy::new(value.trim()).is_err() {
+            let scheme = value
+                .split_once("://")
+                .map(|(s, _)| s.to_ascii_lowercase())
+                .filter(|s| s.len() <= 12 && s.chars().all(|c| c.is_ascii_alphanumeric()));
+            return Some(format!(
+                "{var} is set to a proxy that cannot be used{}; the bridge will not connect around a proxy. Use an http or socks5 proxy address, or unset {var}.",
+                scheme.map(|s| format!(" ({s}://)")).unwrap_or_default()
+            ));
+        }
+    }
+    None
+}
+
+/// The one way every client that talks to Telegram is made: it follows the environment's proxy, and refuses to be made when
+/// that proxy cannot be used.
+fn telegram_agent(api: &str, secs: u64) -> Result<ureq::Agent, String> {
+    if let Some(why) = proxy_refusal(api, &|k| std::env::var(k).ok()) {
+        return Err(why);
+    }
+    Ok(ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_global(Some(Duration::from_secs(secs)))
+        .build()
+        .into())
+}
+
 /// Asks Telegram for messages again and again, on a thread of its own, so that waiting for a message never delays anything else
 /// the bridge does (announcing a finished review, flushing the outbox, writing its status). A poll that finds nothing is held
 /// open by Telegram for up to `LONG_POLL_SECS`, so an idle bridge makes a few requests a minute instead of one every two
 /// seconds, and a message that arrives ends the wait at once. Errors back off with a growing, jittered pause. The offset is
 /// moved past a batch only after it has been handed over.
 fn poll_loop(api: String, token: String, tx: std::sync::mpsc::Sender<Polled>) {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .timeout_global(Some(Duration::from_secs(POLL_CLIENT_TIMEOUT_SECS)))
-        .build()
-        .into();
+    // the run command has already refused to start when the proxy cannot be used, so this does not fail here
+    let Ok(agent) = telegram_agent(&api, POLL_CLIENT_TIMEOUT_SECS) else {
+        return;
+    };
     let mut offset: i64 = 0;
     let mut backoff = Backoff::default();
     let mut last_conflict_check: Option<Instant> = None;
@@ -772,11 +837,13 @@ pub fn run(args: &[String]) -> u8 {
         .and_then(|token| {
             let api = crate::flag(args, "--api-base")
                 .unwrap_or_else(|| "https://api.telegram.org".into());
-            let agent: ureq::Agent = ureq::Agent::config_builder()
-                .http_status_as_error(false)
-                .timeout_global(Some(Duration::from_secs(8)))
-                .build()
-                .into();
+            let agent = match telegram_agent(&api, 8) {
+                Ok(a) => a,
+                Err(why) => {
+                    eprintln!("{why}");
+                    return None;
+                }
+            };
             bot_username(&agent, &api, &token)
         })
         .and_then(|u| bot_link(&u));
@@ -832,11 +899,13 @@ pub fn run(args: &[String]) -> u8 {
         }
     };
     let api = crate::flag(args, "--api-base").unwrap_or_else(|| "https://api.telegram.org".into());
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .timeout_global(Some(Duration::from_secs(40)))
-        .build()
-        .into();
+    let agent = match telegram_agent(&api, 40) {
+        Ok(a) => a,
+        Err(why) => {
+            eprintln!("{why}");
+            return 1;
+        }
+    };
     let mut bridge = Bridge::new(load_bound(&dir));
     let reload_code = |bridge: &mut Bridge| {
         let path = dir.join("telegram.pairing");
@@ -1114,54 +1183,51 @@ fn doctor(args: &[String], dir: &Path) -> u8 {
     if let Ok(token) = token {
         let api =
             crate::flag(args, "--api-base").unwrap_or_else(|| "https://api.telegram.org".into());
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_global(Some(Duration::from_secs(10)))
-            .build()
-            .into();
-        match agent.get(&format!("{api}/bot{token}/getMe")).call() {
-            Ok(mut r) if r.status().as_u16() == 200 => {
-                let v: Value = r.body_mut().read_json().unwrap_or(Value::Null);
-                say(
-                    v["ok"] == true,
+        if let Ok(agent) = telegram_agent(&api, 10).map_err(|why| say(false, why)) {
+            match agent.get(&format!("{api}/bot{token}/getMe")).call() {
+                Ok(mut r) if r.status().as_u16() == 200 => {
+                    let v: Value = r.body_mut().read_json().unwrap_or(Value::Null);
+                    say(
+                        v["ok"] == true,
+                        format!(
+                            "Telegram accepts the token (bot @{})",
+                            plain(v["result"]["username"].as_str().unwrap_or("?"))
+                        ),
+                    );
+                }
+                Ok(r) => say(
+                    false,
                     format!(
-                        "Telegram accepts the token (bot @{})",
-                        plain(v["result"]["username"].as_str().unwrap_or("?"))
+                        "Telegram answered {} to getMe: the token is wrong or revoked",
+                        r.status()
                     ),
-                );
-            }
-            Ok(r) => say(
-                false,
-                format!(
-                    "Telegram answered {} to getMe: the token is wrong or revoked",
-                    r.status()
                 ),
-            ),
-            Err(e) => say(
-                false,
-                format!(
-                    "Telegram is not reachable: {}",
-                    scrub(&e.to_string(), &token)
+                Err(e) => say(
+                    false,
+                    format!(
+                        "Telegram is not reachable: {}",
+                        scrub(&e.to_string(), &token)
+                    ),
                 ),
-            ),
-        }
-        match agent
-            .get(&format!("{api}/bot{token}/getWebhookInfo"))
-            .call()
-        {
-            Ok(mut r) if r.status().as_u16() == 200 => {
-                let v: Value = r.body_mut().read_json().unwrap_or(Value::Null);
-                let url = v["result"]["url"].as_str().unwrap_or("");
-                say(
-                    url.is_empty(),
-                    if url.is_empty() {
-                        "no webhook is set, so polling works".into()
-                    } else {
-                        "a webhook is set for this bot; polling will conflict with it (the bridge calls deleteWebhook only if you ask)".into()
-                    },
-                );
             }
-            _ => say(false, "could not read the webhook state".into()),
+            match agent
+                .get(&format!("{api}/bot{token}/getWebhookInfo"))
+                .call()
+            {
+                Ok(mut r) if r.status().as_u16() == 200 => {
+                    let v: Value = r.body_mut().read_json().unwrap_or(Value::Null);
+                    let url = v["result"]["url"].as_str().unwrap_or("");
+                    say(
+                        url.is_empty(),
+                        if url.is_empty() {
+                            "no webhook is set, so polling works".into()
+                        } else {
+                            "a webhook is set for this bot; polling will conflict with it (the bridge calls deleteWebhook only if you ask)".into()
+                        },
+                    );
+                }
+                _ => say(false, "could not read the webhook state".into()),
+            }
         }
     }
     say(
@@ -1582,6 +1648,126 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         r.save_if_changed(&path);
         assert!(!path.exists(), "nothing changed, so nothing was written");
+    }
+
+    fn env_of(pairs: &[(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        let map: std::collections::BTreeMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |k: &str| map.get(k).cloned()
+    }
+
+    #[test]
+    fn tg93_a_proxy_the_bridge_cannot_use_stops_it_instead_of_sending_it_round_the_proxy() {
+        let api = "https://api.telegram.org";
+        // exactly the variables ureq reads (ureq 3.5.1 `Proxy::try_from_env`); one missing here would be a way round the guard
+        assert_eq!(
+            PROXY_VARS,
+            [
+                "ALL_PROXY",
+                "all_proxy",
+                "HTTPS_PROXY",
+                "https_proxy",
+                "HTTP_PROXY",
+                "http_proxy"
+            ]
+        );
+        // usable proxies, with and without a password and for every variable ureq reads
+        for v in [
+            "http://127.0.0.1:3128",
+            "http://alice:S3cret@proxy.corp:8080",
+            "socks5://127.0.0.1:9050",
+            "socks5h://user:pw@127.0.0.1:1080",
+        ] {
+            for var in PROXY_VARS {
+                assert_eq!(proxy_refusal(api, &env_of(&[(var, v)])), None, "{var}={v}");
+            }
+        }
+        // nothing set, or an empty value that means "no proxy"
+        assert_eq!(proxy_refusal(api, &env_of(&[])), None);
+        assert_eq!(proxy_refusal(api, &env_of(&[("HTTPS_PROXY", "")])), None);
+        assert_eq!(proxy_refusal(api, &env_of(&[("HTTPS_PROXY", "   ")])), None);
+        // a value ureq would skip silently, and then connect directly
+        for (var, v) in [
+            ("HTTPS_PROXY", "ftp://proxy.corp:21"),
+            ("ALL_PROXY", "gopher://x:70"),
+            ("http_proxy", "not a proxy at all"),
+            ("https_proxy", "://missing-scheme"),
+        ] {
+            let why = proxy_refusal(api, &env_of(&[(var, v)]))
+                .unwrap_or_else(|| panic!("{var}={v} was accepted"));
+            assert!(
+                why.contains(var) && why.contains("will not connect around a proxy"),
+                "{why}"
+            );
+        }
+        // the value never appears in the message: it may hold a password
+        let why = proxy_refusal(
+            api,
+            &env_of(&[("HTTPS_PROXY", "ftp://alice:S3cretPass@proxy.corp:21")]),
+        )
+        .unwrap();
+        assert!(
+            !why.contains("S3cretPass") && !why.contains("alice") && !why.contains("proxy.corp"),
+            "{why}"
+        );
+        assert!(why.contains("(ftp://)"), "only the scheme is named: {why}");
+        // one bad variable is enough even when a good one follows (ureq would use the good one, and skip the bad one silently)
+        assert!(proxy_refusal(
+            api,
+            &env_of(&[
+                ("ALL_PROXY", "ftp://x"),
+                ("HTTPS_PROXY", "http://127.0.0.1:1")
+            ])
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn tg94_no_proxy_for_the_telegram_host_means_a_direct_connection_is_what_was_asked_for() {
+        let api = "https://api.telegram.org";
+        let bad = ("HTTPS_PROXY", "ftp://x");
+        for np in [
+            "api.telegram.org",
+            "telegram.org",
+            ".telegram.org",
+            "*",
+            "example.com, api.telegram.org",
+            "API.TELEGRAM.ORG",
+        ] {
+            assert_eq!(
+                proxy_refusal(api, &env_of(&[bad, ("NO_PROXY", np)])),
+                None,
+                "NO_PROXY={np}"
+            );
+            assert_eq!(
+                proxy_refusal(api, &env_of(&[bad, ("no_proxy", np)])),
+                None,
+                "no_proxy={np}"
+            );
+        }
+        for np in [
+            "example.com",
+            "",
+            "notelegram.org",
+            "telegram.org.evil.example",
+            "api.telegram.org.example",
+            "gram.org",
+            "api.telegram",
+            "telegram",
+            "tele",
+        ] {
+            assert!(
+                proxy_refusal(api, &env_of(&[bad, ("NO_PROXY", np)])).is_some(),
+                "NO_PROXY={np:?}"
+            );
+        }
+        assert!(no_proxy_covers(
+            "localhost,.telegram.org",
+            "api.telegram.org"
+        ));
+        assert!(!no_proxy_covers("localhost", "api.telegram.org"));
     }
 
     #[test]
