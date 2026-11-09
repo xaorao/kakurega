@@ -7,7 +7,8 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 pub struct ReviewRunner {
-    pub model: String,
+    /// The local model that answers. The owner can change it while the service runs (`choose_model`).
+    pub model: std::sync::RwLock<String>,
     pub ollama: String,
     pub transport: Transport,
     pub worker_binary: PathBuf,
@@ -20,8 +21,12 @@ pub struct ReviewRunner {
 }
 
 impl ReviewRunner {
+    fn model_name(&self) -> String {
+        self.model.read().map(|m| m.clone()).unwrap_or_default()
+    }
+
     fn route(&self) -> Result<OllamaRoute, kk_route::RouteError> {
-        OllamaRoute::new(&self.ollama, &self.model)
+        OllamaRoute::new(&self.ollama, &self.model_name())
             .map(|r| r.with_context_tokens(self.context_tokens))
     }
 }
@@ -272,8 +277,8 @@ impl JobRunner for ReviewRunner {
                 });
                 true
             })
-            .map_err(|e| format!("could not install {}: {e}", self.model))?;
-        Ok(format!("{} is installed", self.model))
+            .map_err(|e| format!("could not install {}: {e}", self.model_name()))?;
+        Ok(format!("{} is installed", self.model_name()))
     }
 
     fn readiness(&self) -> Vec<Value> {
@@ -306,11 +311,11 @@ impl JobRunner for ReviewRunner {
                         format!("running at {}", self.ollama),
                         "",
                     ));
+                    let current = self.model_name();
                     let has = v["models"].as_array().is_some_and(|m| {
                         m.iter().any(|x| {
                             let n = x["name"].as_str().unwrap_or("");
-                            n == self.model
-                                || n.strip_suffix(":latest") == Some(self.model.as_str())
+                            n == current || n.strip_suffix(":latest") == Some(current.as_str())
                         })
                     });
                     out.push(check(
@@ -318,11 +323,11 @@ impl JobRunner for ReviewRunner {
                         "Model",
                         has,
                         if has {
-                            format!("{} is installed", self.model)
+                            format!("{current} is installed")
                         } else {
-                            format!("{} is not installed", self.model)
+                            format!("{current} is not installed")
                         },
-                        &format!("Run in a terminal: ollama pull {}", self.model),
+                        &format!("Run in a terminal: ollama pull {current}"),
                     ));
                 }
                 Err(_) => {
@@ -456,8 +461,62 @@ impl JobRunner for ReviewRunner {
         out
     }
 
+    fn local_models(&self) -> Vec<String> {
+        if self.scripted.is_some() {
+            return Vec::new();
+        }
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .proxy(None)
+            .build()
+            .into();
+        let Ok(mut r) = agent
+            .get(&format!("{}/api/tags", self.ollama.trim_end_matches('/')))
+            .call()
+        else {
+            return Vec::new();
+        };
+        let v: Value = r.body_mut().read_json().unwrap_or(Value::Null);
+        let mut names: Vec<String> = v["models"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|m| m["name"].as_str())
+            // a model that only makes vectors cannot answer a question
+            .filter(|n| !n.to_lowercase().contains("embed") && !n.to_lowercase().contains("rerank"))
+            .filter(|n| {
+                !n.is_empty()
+                    && n.len() <= 100
+                    && n.chars().all(|c| {
+                        c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '_' | '-' | '/')
+                    })
+            })
+            .map(str::to_string)
+            .collect();
+        names.sort();
+        names.dedup();
+        names.truncate(50);
+        names
+    }
+
+    fn choose_model(&self, name: &str) -> Result<(), String> {
+        if self.scripted.is_some() {
+            return Err("the test model cannot be changed".into());
+        }
+        // only a name this computer's model service itself lists: never a free-form string
+        if !self.local_models().iter().any(|m| m == name) {
+            return Err("that model is not installed on this computer".into());
+        }
+        *self
+            .model
+            .write()
+            .map_err(|_| "the model setting is busy".to_string())? = name.to_string();
+        Ok(())
+    }
+
     fn route_info(&self) -> Value {
-        json!({"id": format!("ollama:{}", self.model), "class": "device_only", "model": if self.scripted.is_some() { "scripted test model".to_string() } else { self.model.clone() }, "simulated": self.scripted.is_some(), "endpoint": self.ollama, "context_tokens": self.context_tokens,
+        let model = self.model_name();
+        json!({"id": format!("ollama:{model}"), "class": "device_only", "model": if self.scripted.is_some() { "scripted test model".to_string() } else { model.clone() }, "simulated": self.scripted.is_some(), "endpoint": self.ollama, "context_tokens": self.context_tokens,
                "transport": match &self.transport { Transport::Local => "local sandbox".to_string(), Transport::Lima { vm, .. } => format!("sandbox in the {vm} virtual machine") }})
     }
 }
@@ -625,7 +684,7 @@ mod live {
     #[ignore]
     fn live_a_real_chat_reply_carries_the_model_s_own_prompt_count() {
         let runner = ReviewRunner {
-            model: "qwen2.5:1.5b".into(),
+            model: std::sync::RwLock::new("qwen2.5:1.5b".into()),
             ollama: "http://127.0.0.1:11434".into(),
             transport: Transport::Local,
             worker_binary: PathBuf::new(),
@@ -665,7 +724,7 @@ mod live {
     #[ignore]
     fn live_a_real_summary_keeps_the_facts_and_passes_the_safety_checks() {
         let runner = ReviewRunner {
-            model: "qwen2.5:3b".into(),
+            model: std::sync::RwLock::new("qwen2.5:3b".into()),
             ollama: "http://127.0.0.1:11434".into(),
             transport: Transport::Local,
             worker_binary: PathBuf::new(),
@@ -995,5 +1054,118 @@ mod cutoff_tests {
             OllamaEmbedder::new(route(), "mxbai-embed-large".into()).min_similarity(),
             0.6
         );
+    }
+}
+
+#[cfg(test)]
+mod pick {
+    use super::*;
+    use kk_service::JobRunner;
+    use std::io::{Read, Write};
+
+    /// Answers every request with `body` as JSON, like the model service's `/api/tags`. Returns its address.
+    fn tags_server(body: String) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut stream = stream;
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                let reply = format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn runner_at(ollama: &str, scripted: bool) -> ReviewRunner {
+        ReviewRunner {
+            model: std::sync::RwLock::new("qwen2.5:1.5b".into()),
+            ollama: ollama.into(),
+            transport: Transport::Local,
+            worker_binary: PathBuf::new(),
+            scratch: std::env::temp_dir(),
+            commitment_key: [0; 32],
+            max_turns: 1,
+            scripted: scripted.then(|| PathBuf::from("/nonexistent/script.json")),
+            context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
+        }
+    }
+
+    fn tags(names: &[&str]) -> String {
+        let models: Vec<serde_json::Value> = names
+            .iter()
+            .map(|n| serde_json::json!({"name": n}))
+            .collect();
+        serde_json::json!({"models": models}).to_string()
+    }
+
+    #[test]
+    fn pk01_only_models_that_can_answer_are_offered_sorted_once_and_with_plain_names() {
+        let many: Vec<String> = (0..70).map(|i| format!("m{i:02}:1b")).collect();
+        let mut names: Vec<&str> = vec![
+            "qwen2.5:3b",
+            "qwen2.5:1.5b",
+            "nomic-embed-text:latest",
+            "BAAI/bge-reranker",
+            "qwen2.5:3b",
+            "bad name with spaces",
+            "evil;rm",
+            "x\u{202e}y",
+            "",
+        ];
+        let long = "a".repeat(101);
+        names.push(&long);
+        let r = runner_at(&tags_server(tags(&names)), false);
+        assert_eq!(r.local_models(), vec!["qwen2.5:1.5b", "qwen2.5:3b"]);
+        let refs: Vec<&str> = many.iter().map(String::as_str).collect();
+        let r = runner_at(&tags_server(tags(&refs)), false);
+        assert_eq!(r.local_models().len(), 50, "at most fifty are offered");
+    }
+
+    #[test]
+    fn pk02_choosing_takes_effect_for_the_route_and_refuses_what_is_not_listed() {
+        let r = runner_at(
+            &tags_server(tags(&["qwen2.5:1.5b", "qwen2.5:3b", "nomic-embed-text"])),
+            false,
+        );
+        assert_eq!(r.route_info()["model"], "qwen2.5:1.5b");
+        assert!(r.choose_model("qwen2.5:3b").is_ok());
+        assert_eq!(r.route_info()["model"], "qwen2.5:3b");
+        assert_eq!(r.route_info()["id"], "ollama:qwen2.5:3b");
+        {
+            use kk_route::Route;
+            assert!(
+                r.route().unwrap().id().contains("qwen2.5:3b"),
+                "the next question goes to the chosen model"
+            );
+        }
+        for bad in [
+            "llama3:70b",
+            "nomic-embed-text",
+            "",
+            "qwen2.5:3b ",
+            "QWEN2.5:3B",
+        ] {
+            assert!(r.choose_model(bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(
+            r.route_info()["model"],
+            "qwen2.5:3b",
+            "a refusal changes nothing"
+        );
+    }
+
+    #[test]
+    fn pk03_with_no_model_service_or_a_test_model_nothing_is_offered_or_chosen() {
+        let down = runner_at("http://127.0.0.1:1", false);
+        assert!(down.local_models().is_empty());
+        assert!(down.choose_model("qwen2.5:3b").is_err());
+        let scripted = runner_at(&tags_server(tags(&["a", "b"])), true);
+        assert!(scripted.local_models().is_empty());
+        assert!(scripted.choose_model("a").is_err());
+        let junk = runner_at(&tags_server("not json".into()), false);
+        assert!(junk.local_models().is_empty());
     }
 }

@@ -14913,3 +14913,195 @@ fn sv159_diagnostics_list_recorded_crashes_as_fixed_fields_and_never_a_planted_f
         assert!(!text.contains(leak), "{leak} reached the report");
     }
 }
+
+/// A runner that offers a few installed models and lets one be chosen, as a local model service would.
+struct PickRunner {
+    inner: CannedRunner,
+    current: Mutex<String>,
+    installed: Vec<String>,
+    endpoint: String,
+    /// Accepts any name, as a careless runner might: the service's own check must still stand.
+    lenient: bool,
+}
+
+impl JobRunner for PickRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        self.inner.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        json!({"id": "ollama:x", "class": "device_only", "model": self.current.lock().unwrap().clone(), "simulated": false, "endpoint": self.endpoint, "context_tokens": 8192})
+    }
+    fn local_models(&self) -> Vec<String> {
+        self.installed.clone()
+    }
+    fn choose_model(&self, name: &str) -> Result<(), String> {
+        if !self.lenient && !self.installed.iter().any(|m| m == name) {
+            return Err("that model is not installed on this computer".into());
+        }
+        *self.current.lock().unwrap() = name.to_string();
+        Ok(())
+    }
+}
+
+fn pick_service(
+    tag: &str,
+    endpoint: &str,
+    installed: &[&str],
+) -> (kk_companion::Companion, Web, String) {
+    pick_service_with(tag, endpoint, installed, false)
+}
+
+fn pick_service_with(
+    tag: &str,
+    endpoint: &str,
+    installed: &[&str],
+    lenient: bool,
+) -> (kk_companion::Companion, Web, String) {
+    let (root, _repo) = repo_copy(tag);
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(PickRunner {
+            inner: CannedRunner { confirm: true },
+            current: Mutex::new(installed[0].to_string()),
+            installed: installed.iter().map(|s| s.to_string()).collect(),
+            endpoint: endpoint.to_string(),
+            lenient,
+        }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let tok = c.security.admin_token().to_string();
+    (c, w, tok)
+}
+
+#[test]
+fn sv160_the_owner_lists_the_installed_models_and_chooses_one_that_then_answers() {
+    let (c, w, _tok) = pick_service(
+        "pick-ok",
+        "http://127.0.0.1:11434",
+        &["qwen2.5:1.5b", "qwen2.5:3b"],
+    );
+    assert_eq!(
+        Web::new(c.addr).get("/api/models").0,
+        401,
+        "signing in is needed to list"
+    );
+    assert_eq!(
+        Web::new(c.addr)
+            .post("/api/model", json!({"model": "qwen2.5:3b"}))
+            .0,
+        401
+    );
+    let (st, v) = w.get("/api/models");
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["current"], "qwen2.5:1.5b");
+    assert_eq!(v["installed"], json!(["qwen2.5:1.5b", "qwen2.5:3b"]));
+    assert_eq!(v["can_choose"], true);
+    let (st, r) = w.post("/api/model", json!({"model": "qwen2.5:3b"}));
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["route"]["model"], "qwen2.5:3b");
+    let (_, cfg) = w.get("/api/config");
+    assert_eq!(
+        cfg["route"]["model"], "qwen2.5:3b",
+        "the page's route now names the chosen model"
+    );
+    assert_eq!(w.get("/api/models").1["current"], "qwen2.5:3b");
+}
+
+#[test]
+fn sv161_a_model_that_is_not_installed_or_not_a_plain_name_is_refused_and_nothing_changes() {
+    let (_c, w, _tok) = pick_service(
+        "pick-bad",
+        "http://127.0.0.1:11434",
+        &["qwen2.5:1.5b", "qwen2.5:3b"],
+    );
+    for bad in [
+        "llama3:70b",
+        "",
+        "  ",
+        "../../etc/passwd",
+        "qwen2.5:3b; rm -rf /",
+        "qwen2.5:3b\nx",
+        "http://evil.example/x",
+        &"a".repeat(101),
+    ] {
+        let (st, r) = w.post("/api/model", json!({"model": bad}));
+        assert_eq!(st, 400, "{bad:?} -> {r}");
+    }
+    assert_eq!(
+        w.post("/api/model", json!({"model": "qwen2.5:3b", "extra": 1}))
+            .0,
+        422,
+        "unknown fields are refused"
+    );
+    assert_eq!(
+        w.get("/api/models").1["current"],
+        "qwen2.5:1.5b",
+        "nothing changed"
+    );
+}
+
+#[test]
+fn sv162_a_route_that_is_not_on_this_computer_offers_and_accepts_no_choice() {
+    let (_c, w, _tok) = pick_service(
+        "pick-remote",
+        "https://cloud-api.near.ai",
+        &["a-model", "b-model"],
+    );
+    let (st, v) = w.get("/api/models");
+    assert_eq!(st, 200);
+    assert_eq!(
+        (v["can_choose"].clone(), v["installed"].clone()),
+        (json!(false), json!([])),
+        "{v}"
+    );
+    let (st, r) = w.post("/api/model", json!({"model": "b-model"}));
+    assert_eq!(st, 403, "{r}");
+    assert_eq!(w.get("/api/models").1["current"], "a-model");
+}
+
+#[test]
+fn sv163_a_single_installed_model_offers_no_choice_and_a_choice_is_recorded_in_the_log() {
+    let (c, w, tok) = pick_service("pick-one", "http://127.0.0.1:11434", &["only:1b"]);
+    let (_, v) = w.get("/api/models");
+    assert_eq!(v["can_choose"], false);
+    let (_c2, w2, _t2) = pick_service("pick-log", "http://127.0.0.1:11434", &["m1", "m2"]);
+    assert_eq!(w2.post("/api/model", json!({"model": "m2"})).0, 200);
+    let (_, log) = w2.get("/api/log");
+    assert!(log["recent"].to_string().contains("model.chosen"), "{log}");
+    let _ = (c, tok);
+}
+
+#[test]
+fn sv164_the_service_checks_a_model_name_itself_even_when_the_runner_would_accept_anything() {
+    let (_c, w, _tok) = pick_service_with(
+        "pick-lenient",
+        "http://127.0.0.1:11434",
+        &["m1", "m2"],
+        true,
+    );
+    for bad in ["a b", "x;y", "x\ny", "x|y", "`id`", "$(id)"] {
+        assert_eq!(
+            w.post("/api/model", json!({"model": bad})).0,
+            400,
+            "{bad:?}"
+        );
+    }
+    assert_eq!(w.get("/api/models").1["current"], "m1");
+}

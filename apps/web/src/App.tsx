@@ -182,6 +182,11 @@ export function App() {
   window.addEventListener("keydown", onKey);
   onCleanup(() => window.removeEventListener("keydown", onKey));
 
+  // a setting that changes what the header says about the route (the model) asks for the configuration again
+  const configStale = () => void api.config().then(setConfig).catch(() => {});
+  window.addEventListener("kk-config-stale", configStale);
+  onCleanup(() => window.removeEventListener("kk-config-stale", configStale));
+
   const load = async () => {
     try {
       const s = await api.session();

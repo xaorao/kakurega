@@ -211,6 +211,8 @@ export const api = {
   session: () => request<{ paired: boolean; csrf: string }>("GET", "/api/session"),
   logout: () => request<void>("POST", "/api/logout"),
   config: () => request<Config>("GET", "/api/config"),
+  models: () => request<{ current: string; installed: string[]; can_choose: boolean }>("GET", "/api/models"),
+  chooseModel: (model: string) => request<{ route: { model: string } }>("POST", "/api/model", { model }),
   memories: (q?: string, f?: MemoryFilter) => {
     const p = new URLSearchParams();
     if (q) p.set("q", q);

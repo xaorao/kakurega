@@ -758,7 +758,7 @@ fn readiness_limited(args: &[String], limit: Duration) -> Result<Vec<Value>, Str
     use kk_service::JobRunner;
     let setup = crate::serve::setup_from_flags(args, true)?;
     let runner = crate::runner::ReviewRunner {
-        model: setup.model,
+        model: std::sync::RwLock::new(setup.model),
         ollama: setup.ollama,
         transport: setup.transport,
         worker_binary: setup.worker_binary,

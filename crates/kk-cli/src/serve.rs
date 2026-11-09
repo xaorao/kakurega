@@ -118,7 +118,7 @@ fn serve(args: &[String]) -> Result<(), String> {
     std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
     let keys = kk_service::keys::load_keys(&data)?;
     let runner = Arc::new(ReviewRunner {
-        model,
+        model: std::sync::RwLock::new(model),
         ollama,
         transport,
         worker_binary,

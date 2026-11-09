@@ -2181,9 +2181,38 @@ try {
   // settings: one place for every setting, searchable by name, meaning or a word people use
   await page.getByRole("link", { name: "Settings" }).click();
   await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
-  check("the settings screen lists every setting in its section", (await page.locator("li[id^='setting-']").count()) === 13);
+  check("the settings screen lists every setting in its section", (await page.locator("li[id^='setting-']").count()) === 14);
+  await page.locator("#setting-model").getByText("Using scripted test model").waitFor();
+  check("with a test model there is nothing to choose and the Model setting says so", (await page.locator("#set-model").count()) === 0);
   await axeCheck(page, "settings screen");
   await page.screenshot({ path: join(shots, "14d-settings.png"), fullPage: true });
+  {
+    // several models installed on this computer: the owner chooses one (the service's answers are stood in for here; the real
+    // listing and choice are tested against the service and against a stand-in model server)
+    let chosen = null;
+    let configReads = 0;
+    page.on("request", (r) => { if (r.method() === "GET" && r.url().endsWith("/api/config")) configReads++; });
+    await page.route("**/api/models", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ current: chosen ?? "qwen2.5:1.5b", installed: ["qwen2.5:1.5b", "qwen2.5:3b"], can_choose: true }) }));
+    await page.route("**/api/model", async (route) => {
+      chosen = JSON.parse(route.request().postData() ?? "{}").model;
+      if (chosen === "refused:model") return route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: { code: "BAD_MODEL", message: "that model is not installed on this computer" } }) });
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ route: { model: chosen } }) });
+    });
+    await page.reload();
+    await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+    await page.locator("#set-model").waitFor();
+    check("with two models installed the Model setting offers exactly those two", (await page.locator("#set-model option").allInnerTexts()).join("|") === "qwen2.5:1.5b|qwen2.5:3b");
+    const before = configReads;
+    await page.locator("#set-model").selectOption("qwen2.5:3b");
+    await page.getByText("qwen2.5:3b will answer from now on").waitFor();
+    check("choosing a model sends that name, says which one answers from now on and asks for the configuration again", chosen === "qwen2.5:3b" && configReads > before, `chosen=${chosen} reads=${configReads - before}`);
+    await axeCheck(page, "settings with the model choice");
+    await page.locator("#setting-model").screenshot({ path: join(shots, "14e-settings-model.png") });
+    await page.unroute("**/api/models");
+    await page.unroute("**/api/model");
+    await page.reload();
+    await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+  }
   await page.getByLabel("Search settings").fill("notify");
   await page.locator("#setting-notifications").waitFor();
   check("searching for notify finds the notification setting and only what matches", (await page.locator("li[id^='setting-']").count()) >= 1 && (await page.locator("#setting-notifications").count()) === 1 && (await page.locator("#setting-theme").count()) === 0);

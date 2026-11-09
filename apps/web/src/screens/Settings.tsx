@@ -51,6 +51,41 @@ function PiiAllow() {
   );
 }
 
+/** Which installed model on this computer answers. Offered only when there is more than one and the model runs here. */
+function ModelChoice(props: { id: string }) {
+  const [info, { refetch }] = createResource(() => api.models());
+  const [error, setError] = createSignal("");
+  const [done, setDone] = createSignal("");
+  const choose = async (name: string) => {
+    setError("");
+    setDone("");
+    try {
+      await api.chooseModel(name);
+      setDone(t("set.model.done", { name }));
+      window.dispatchEvent(new Event("kk-config-stale"));
+      await refetch();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : t("set.model.error"));
+      await refetch();
+    }
+  };
+  return (
+    <div class="stack">
+      <Show when={info()} fallback={<p class="muted">{info.error ? t("set.model.error") : t("review.loading")}</p>}>
+        {(m) => (
+          <Show when={m().can_choose} fallback={<p class="muted">{t("set.model.fixed", { name: m().current })}</p>}>
+            <select id={`set-${props.id}`} aria-labelledby={`lab-${props.id}`} value={m().current} onChange={(e) => void choose(e.currentTarget.value)}>
+              <For each={m().installed}>{(n) => <option value={n} selected={n === m().current}>{n}</option>}</For>
+            </select>
+          </Show>
+        )}
+      </Show>
+      <Show when={done()}><p role="status" class="ok">{done()}</p></Show>
+      <Show when={error()}><p role="alert" class="bad">{error()}</p></Show>
+    </div>
+  );
+}
+
 function Control(props: { s: Setting }) {
   const [notify, setNotify] = createSignal(notifyState());
   const flip = async (on: boolean) => {
@@ -81,6 +116,7 @@ function Control(props: { s: Setting }) {
         </Show>
       )}
       {props.s.kind === "piiallow" && <PiiAllow />}
+      {props.s.kind === "model" && <ModelChoice id={props.s.id} />}
       {props.s.kind === "singlekeys" && (
         <label class="row">
           <input id={`set-${props.s.id}`} type="checkbox" checked={singleKeys()} onChange={(e) => chooseSingleKeys(e.currentTarget.checked)} />

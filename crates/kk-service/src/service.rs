@@ -50,6 +50,14 @@ pub trait JobRunner: Send + Sync {
     ) -> Result<kk_parse::Parsed, kk_parse::ParseError> {
         kk_parse::parse(name, bytes, &kk_parse::Limits::default())
     }
+    /// The models this runner could answer with, installed on this computer. Empty when the choice is fixed.
+    fn local_models(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// Makes `name`, one of `local_models`, the model that answers from now on.
+    fn choose_model(&self, _name: &str) -> Result<(), String> {
+        Err("this configuration has one fixed model".into())
+    }
     /// Checks whose failure this runner can fix on its own, by id.
     fn repairable(&self) -> Vec<String> {
         Vec::new()
@@ -4858,6 +4866,73 @@ struct AttestBody {
     model: String,
 }
 
+/// The local model in use and the others installed on this computer. Only a model that runs on this computer is ever offered:
+/// when the route is not local, nothing can be chosen here.
+async fn models_list(axum::Extension(svc): Svc) -> Response {
+    let route = svc.route_for_owner();
+    let here = route["stays_here"] == true;
+    let svc2 = svc.clone();
+    let installed = if here {
+        tokio::task::spawn_blocking(move || svc2.runner.local_models())
+            .await
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    Json(json!({
+        "current": route["model"],
+        "installed": installed,
+        "can_choose": here && installed.len() > 1,
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelBody {
+    model: String,
+}
+
+/// Changes which installed local model answers, for chat and for reviews started from now on. A name the model service does
+/// not itself list is refused, and so is any change while the route is not on this computer.
+async fn model_choose(axum::Extension(svc): Svc, Json(b): Json<ModelBody>) -> Response {
+    let model = b.model.trim().to_string();
+    if model.is_empty()
+        || model.len() > 100
+        || !model
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | ':'))
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_MODEL",
+            "a model name is 1 to 100 letters, digits or / . _ - :",
+        );
+    }
+    if svc.route_for_owner()["stays_here"] != true {
+        return error(
+            StatusCode::FORBIDDEN,
+            "NOT_LOCAL",
+            "the model can only be chosen here while it runs on this computer",
+        );
+    }
+    let svc2 = svc.clone();
+    let name = model.clone();
+    let done = tokio::task::spawn_blocking(move || svc2.runner.choose_model(&name)).await;
+    match done {
+        Ok(Ok(())) => {
+            svc.log_event("model.chosen", "settings", &[]);
+            Json(json!({"route": svc.route_for_owner()})).into_response()
+        }
+        Ok(Err(m)) => error(StatusCode::BAD_REQUEST, "BAD_MODEL", &m),
+        Err(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "MODEL_FAILED",
+            "the model could not be changed",
+        ),
+    }
+}
+
 /// Checks, on demand, the hardware proof of a NEAR AI Cloud model. Only the model name leaves this computer; no
 /// prompt, note or file is involved. A failure is reported in plain words and is never shown as a pass.
 async fn route_attest(axum::Extension(svc): Svc, Json(b): Json<AttestBody>) -> Response {
@@ -8367,6 +8442,8 @@ impl Extension for Routes {
                 "/api/sessions/{id}/suggested-notes/{sid}/dismiss",
                 post(suggestion_dismiss),
             )
+            .route("/api/models", get(models_list))
+            .route("/api/model", post(model_choose))
             .route("/api/route/attest", post(route_attest))
             .route("/api/route/gateway", post(route_gateway))
             .route("/api/search/status", get(search_status))
