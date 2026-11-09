@@ -20,6 +20,11 @@ renameSync(join(project, "_env"), join(project, ".env"));
 mkdirSync(join(root, "contracts"), { recursive: true });
 writeFileSync(join(root, "contracts/agreement.md"), "The term of this agreement is twelve (12) months from the Effective Date.\nEither party may terminate with sixty (60) days notice.\n");
 writeFileSync(join(root, "contracts/.env"), "API_TOKEN=" + "sk_" + "live_abcdefghijklmnop0123456789\n");
+// a folder too big for the model to read at once: the answer is in the last file alphabetically
+mkdirSync(join(root, "archive"), { recursive: true });
+const archiveFiller = (tag, n) => Array.from({ length: n }, (_, i) => `${tag} routine paragraph ${i} about scheduling and offices\n`).join("");
+for (let i = 0; i < 30; i++) writeFileSync(join(root, "archive", `a${String(i).padStart(2, "0")}.txt`), archiveFiller(`a${i}`, 450));
+writeFileSync(join(root, "archive/zz_terms.txt"), archiveFiller("zz", 200) + "The termination notice period is ninety (90) days.\n" + archiveFiller("zy", 200));
 const data = join(work, "data");
 
 const chrome = join(homedir(), "Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing");
@@ -1884,10 +1889,24 @@ try {
     check("a PDF with a text page and a scanned page keeps both, the scanned one marked as recognised", (await page.locator(".read-passages code", { hasText: "page 1" }).count()) >= 1 && (await page.locator(".read-passages").getByText("Delivery on 14 March").count()) >= 1);
     await axeCheck(page, "chat with recognised pictures");
     await page.screenshot({ path: join(shots, "13f-recognised-pictures.png") });
-    // back to the activity page, where the journey continues
-    await page.getByRole("link", { name: "Activity" }).click();
-    await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();
   }
+  // a folder bigger than the model can read at once: the page says the passages were chosen by the question
+  await page.getByRole("link", { name: "Documents" }).click();
+  await page.getByRole("heading", { name: "Ask your documents", exact: true }).waitFor();
+  await page.getByRole("button", { name: "contracts" }).click();
+  await page.getByRole("button", { name: "↑ Up" }).click();
+  await page.getByRole("button", { name: "archive" }).click();
+  await page.getByLabel("Your question").fill("What is the termination notice period?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await page.getByText("The folder is bigger than the model can read at once").waitFor({ timeout: 60000 });
+  const bigAns = await page.locator("#h-answer").locator("xpath=..").innerText();
+  check("for a folder too big to read at once the page says the matching passages were chosen and names the file read in part", bigAns.includes("passages that best match your question were chosen") && bigAns.includes("Only the matching passages were read from: zz_terms.txt"), bigAns.replace(/\n/g, " | ").slice(0, 300));
+  check("the quote from the chosen passage is checked against the real file and found", bigAns.includes("1 of 2 quote(s) found") && bigAns.includes("Found in the file (line 201)"), bigAns.replace(/\n/g, " | ").slice(0, 300));
+  await axeCheck(page, "documents screen with a searched folder");
+  await page.screenshot({ path: join(shots, "14b-documents-searched.png"), fullPage: true });
+  // back to the activity page, where the journey continues
+  await page.getByRole("link", { name: "Activity" }).click();
+  await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();
   check("the activity page never shows memory text or file contents", !rows.join("\n").includes("in-process dictionary") && !rows.join("\n").includes("euros"));
   // leave the Activity page only once the usage card and its price list have loaded, so nothing of theirs is in flight
   await page.locator("#usage").getByRole("cell", { name: /test model/i }).first().waitFor();

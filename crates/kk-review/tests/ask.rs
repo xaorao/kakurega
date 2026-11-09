@@ -177,3 +177,362 @@ fn ask04_text_planted_in_a_document_cannot_make_a_false_quote_verify() {
     };
     assert!(matches!(verify(&b, &f, &used)[0].verdict, Verdict::Verified { .. }), "a planted sentence is a real quote of the document: verification is about presence, not truth");
 }
+
+// --- choosing what fits the window by the question -------------------------------------------------------------------
+
+fn filler(tag: &str, lines: usize) -> String {
+    (0..lines)
+        .map(|i| format!("{tag} routine paragraph {i} about scheduling and offices\n"))
+        .collect()
+}
+
+fn crowded(answer_file: &str) -> Vec<ImportedFile> {
+    // about 25,000 characters each: two fit the 60,000-character window, so the answer file is left out when it comes later
+    let mut v: Vec<ImportedFile> = (0..30)
+        .map(|i| {
+            file(
+                &format!("a{i:02}.txt"),
+                &filler(&format!("a{i:02}"), 450),
+                Level::Internal,
+            )
+        })
+        .collect();
+    let body = format!(
+        "{}intro line\nThe termination notice period is ninety (90) days.\nclosing line\n{}",
+        filler("zz", 200),
+        filler("zy", 200)
+    );
+    v.push(file(answer_file, &body, Level::Internal));
+    v
+}
+
+#[test]
+fn ask20_when_the_window_is_full_the_question_decides_what_is_in_it() {
+    let files = crowded("zz_terms.txt");
+    let old = build_context(&files);
+    assert!(
+        old.skipped_too_large.iter().any(|f| f == "zz_terms.txt"),
+        "the old window drops the file that holds the answer"
+    );
+    let c = build_context_for(&files, "What is the termination notice period?");
+    assert!(c.searched);
+    assert!(c.used.iter().any(|f| f == "zz_terms.txt"), "{:?}", c.used);
+    assert!(c.text.contains("ninety (90) days"));
+    assert!(
+        c.text.contains("=== FILE zz_terms.txt ===\n")
+            && c.text.contains("=== END FILE (lines 201-240) ==="),
+        "{}",
+        &c.text[..200.min(c.text.len())]
+    );
+    assert!(c.text.chars().count() <= MAX_CONTEXT_CHARS);
+}
+
+#[test]
+fn ask21_when_everything_fits_nothing_changes() {
+    let a = build_context(&docs());
+    let b = build_context_for(&docs(), "What is the term of the agreement?");
+    assert_eq!(a, b);
+    assert!(!b.searched && b.partial.is_empty());
+}
+
+#[test]
+fn ask22_a_restricted_file_never_enters_the_ranking_or_the_window() {
+    let mut files = crowded("zz_terms.txt");
+    files.push(file(
+        "hr.txt",
+        &"termination notice period layoff list Alex Rivera\n".repeat(50),
+        Level::Restricted,
+    ));
+    let c = build_context_for(&files, "What is the termination notice period?");
+    assert!(c.withheld.iter().any(|f| f == "hr.txt"));
+    assert!(
+        !c.text.contains("Alex Rivera")
+            && !c.text.contains("layoff")
+            && !c.used.iter().any(|f| f == "hr.txt")
+    );
+    assert!(
+        c.text.contains("ninety (90) days"),
+        "restricted words must not push the real answer out"
+    );
+}
+
+#[test]
+fn ask23_a_question_with_no_usable_words_or_no_match_falls_back_to_the_plain_window() {
+    let files = crowded("zz_terms.txt");
+    let plain = build_context(&files);
+    for q in ["what is the", "??", "", "zzqxjv wwkpl"] {
+        let c = build_context_for(&files, q);
+        assert_eq!(c, plain, "{q:?}");
+    }
+}
+
+#[test]
+fn ask24_one_file_bigger_than_the_window_is_searched_instead_of_dropped() {
+    let mut body = filler("big", 4000);
+    body.push_str("The renewal fee is EUR 12,500 per year.\n");
+    body.push_str(&filler("tail", 500));
+    let files = vec![file("handbook.txt", &body, Level::Internal)];
+    assert!(
+        build_context(&files).used.is_empty(),
+        "the old window held nothing at all"
+    );
+    let c = build_context_for(&files, "What is the renewal fee?");
+    assert_eq!(c.used, ["handbook.txt"]);
+    assert_eq!(c.partial, ["handbook.txt"]);
+    assert!(c.text.contains("The renewal fee is EUR 12,500 per year."));
+    // the line numbers in the header are the real ones
+    let line = body
+        .lines()
+        .position(|l| l.starts_with("The renewal fee"))
+        .unwrap()
+        + 1;
+    assert_eq!(
+        c.text.lines().next().unwrap(),
+        "=== FILE handbook.txt ===",
+        "the marker is exactly the path, which is the name a quote is cited under"
+    );
+    let range = c.text.lines().last().unwrap();
+    let (a, b) = range
+        .trim_start_matches("=== END FILE (lines ")
+        .trim_end_matches(") ===")
+        .split_once('-')
+        .map(|(a, b)| (a.parse::<usize>().unwrap(), b.parse::<usize>().unwrap()))
+        .unwrap();
+    assert!(a <= line && line <= b, "{range} vs line {line}");
+}
+
+fn big_with(path: &str, middle: &str) -> ImportedFile {
+    file(
+        path,
+        &format!("{}{middle}{}", filler("zz", 200), filler("zy", 200)),
+        Level::Internal,
+    )
+}
+
+fn crowd_of(prefix: &str) -> Vec<ImportedFile> {
+    (0..30)
+        .map(|i| {
+            file(
+                &format!("{prefix}{i:02}.txt"),
+                &filler(&format!("{prefix}{i:02}"), 450),
+                Level::Internal,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn ask25_the_name_of_a_file_counts_as_part_of_what_it_is_about() {
+    let mut files = crowd_of("m");
+    files.push(big_with(
+        "zz_invoice_2024.txt",
+        "Amount: 4,200.00\nPay by 20 March\n",
+    ));
+    assert!(
+        build_context(&files)
+            .skipped_too_large
+            .iter()
+            .any(|f| f == "zz_invoice_2024.txt"),
+        "the old window leaves it out"
+    );
+    let c = build_context_for(&files, "when must the invoice be paid");
+    assert!(
+        c.used.iter().any(|f| f == "zz_invoice_2024.txt"),
+        "{:?}",
+        c.used
+    );
+}
+
+#[test]
+fn ask26_a_citation_from_a_chosen_passage_is_verified_against_the_real_file_and_line() {
+    let files = crowded("zz_terms.txt");
+    let c = build_context_for(&files, "What is the termination notice period?");
+    let answer = Answer {
+        answer: "ninety days".into(),
+        citations: vec![Citation {
+            file: "zz_terms.txt".into(),
+            quote: "The termination notice period is ninety (90) days.".into(),
+        }],
+    };
+    let checked = verify(&answer, &files, &c.used);
+    assert_eq!(checked[0].verdict, Verdict::Verified { line: 202 });
+    // a file that was left out of the window cannot be cited
+    let wrong = Answer {
+        answer: "x".into(),
+        citations: vec![Citation {
+            file: "a05.txt".into(),
+            quote: "a05 routine paragraph 3 about scheduling".into(),
+        }],
+    };
+    if !c.used.iter().any(|f| f == "a05.txt") {
+        assert_eq!(
+            verify(&wrong, &files, &c.used)[0].verdict,
+            Verdict::UnknownFile
+        );
+    }
+}
+
+#[test]
+fn ask27_a_question_in_hindi_finds_its_passage() {
+    let mut files = crowd_of("h");
+    files.push(big_with(
+        "zz_hindi.txt",
+        "अनुबंध की समाप्ति की सूचना अवधि नब्बे दिन है।\n",
+    ));
+    assert!(build_context(&files)
+        .skipped_too_large
+        .iter()
+        .any(|f| f == "zz_hindi.txt"));
+    let c = build_context_for(&files, "समाप्ति की सूचना अवधि क्या है");
+    assert!(c.used.iter().any(|f| f == "zz_hindi.txt"), "{:?}", c.used);
+    assert!(c.text.contains("नब्बे दिन"));
+}
+
+#[test]
+fn ask28_the_window_obeys_its_limits_for_any_mix_of_files_and_questions() {
+    let mut seed = 0x2545F491u64;
+    let mut next = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    let vocab = [
+        "alpha",
+        "beta",
+        "gamma",
+        "delta",
+        "notice",
+        "fee",
+        "term",
+        "renewal",
+        "आदेश",
+        "x1",
+        "42",
+    ];
+    for round in 0..60 {
+        let n = 1 + (next() % 70) as usize;
+        let files: Vec<ImportedFile> = (0..n)
+            .map(|i| {
+                let lines = 1 + (next() % 900) as usize;
+                let body: String = (0..lines)
+                    .map(|_| {
+                        format!(
+                            "{} {} {}\n",
+                            vocab[(next() % 11) as usize],
+                            vocab[(next() % 11) as usize],
+                            next() % 1000
+                        )
+                    })
+                    .collect();
+                let level = if next() % 7 == 0 {
+                    Level::Restricted
+                } else {
+                    Level::Internal
+                };
+                file(&format!("f{i:02}.txt"), &body, level)
+            })
+            .collect();
+        let q = format!(
+            "{} {} {}",
+            vocab[(next() % 11) as usize],
+            vocab[(next() % 11) as usize],
+            vocab[(next() % 11) as usize]
+        );
+        let c = build_context_for(&files, &q);
+        assert!(c.text.chars().count() <= MAX_CONTEXT_CHARS, "round {round}");
+        assert!(c.used.len() <= MAX_FILES, "round {round}");
+        assert_eq!(
+            c,
+            build_context_for(&files, &q),
+            "round {round}: the same question gives the same window"
+        );
+        for f in &files {
+            if f.label.effective_level() >= Level::Restricted {
+                assert!(!c.used.contains(&f.path), "round {round}");
+            }
+        }
+    }
+}
+
+#[test]
+fn ask29_one_file_with_a_great_many_matches_cannot_crowd_the_others_out() {
+    let hog = file(
+        "a_hog.txt",
+        &"notice notice notice notice routine\n".repeat(5000),
+        Level::Internal,
+    );
+    let other = file(
+        "b_other.txt",
+        &format!(
+            "{}Either party may give notice in writing.\n{}",
+            filler("o", 20),
+            filler("p", 19)
+        ),
+        Level::Internal,
+    );
+    let c = build_context_for(&[hog, other], "notice");
+    assert!(c.used.iter().any(|f| f == "b_other.txt"), "{:?}", c.used);
+    let hog_passages = c.text.matches("=== FILE a_hog.txt").count();
+    assert!(hog_passages <= 12, "{hog_passages}");
+}
+
+#[test]
+fn ask30_a_rare_word_in_the_question_counts_for_more_than_a_common_one() {
+    // "notice" is on every line of 160 passages; "fee" is on one line of one. The window cannot hold them all.
+    let mut files: Vec<ImportedFile> = (0..8)
+        .map(|i| {
+            file(
+                &format!("c{i}.txt"),
+                &"notice notice routine\n".repeat(800),
+                Level::Internal,
+            )
+        })
+        .collect();
+    files.push(file(
+        "zz_fees.txt",
+        &format!(
+            "{}The renewal fee is EUR 900.\n{}",
+            filler("q", 20),
+            filler("r", 19)
+        ),
+        Level::Internal,
+    ));
+    let c = build_context_for(&files, "notice fee");
+    assert!(c.searched);
+    assert!(
+        c.text.contains("The renewal fee is EUR 900."),
+        "the rare word decides, not the many repeats of the common one"
+    );
+}
+
+#[test]
+fn ask31_measured_how_often_the_window_holds_the_answer_before_and_after() {
+    // 60 files of about 25,000 characters; each holds one fact in the middle. One question per fact.
+    let files: Vec<ImportedFile> = (0..60)
+        .map(|k| {
+            let body = format!(
+                "{}The code word for project P{k:02} is W{k:02}x.\n{}",
+                filler(&format!("f{k:02}"), 220),
+                filler(&format!("g{k:02}"), 220)
+            );
+            file(&format!("project_{k:02}.txt"), &body, Level::Internal)
+        })
+        .collect();
+    let (mut old_hits, mut new_hits) = (0usize, 0usize);
+    for k in 0..60 {
+        let q = format!("What is the code word for project P{k:02}?");
+        let answer = format!("W{k:02}x");
+        if build_context(&files).text.contains(&answer) {
+            old_hits += 1;
+        }
+        let c = build_context_for(&files, &q);
+        assert!(c.text.chars().count() <= MAX_CONTEXT_CHARS);
+        if c.text.contains(&answer) {
+            new_hits += 1;
+        }
+    }
+    println!("window holds the answer: before {old_hits}/60, after {new_hits}/60");
+    assert!(old_hits <= 6, "{old_hits}");
+    assert_eq!(new_hits, 60);
+}

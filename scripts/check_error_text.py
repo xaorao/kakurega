@@ -18,7 +18,10 @@ RISKY = r"(stdout|stderr|output|content|contents|text|source|body|snippet|diff|f
 # every `{name}` or `{name:...}` inside a format-like macro call, across lines
 CALL = re.compile(r"(format|write|writeln|println|eprintln|panic|anyhow|bail)!\s*\((?P<args>(?:[^()]|\((?:[^()]|\([^()]*\))*\))*)\)", re.S)
 HOLE = re.compile(r"\{" + RISKY + r"(?::[^}]*)?\}")
-ALLOWED: dict[str, str] = {}
+ALLOWED: dict[str, str] = {
+    "crates/kk-review/src/ask.rs:137": "not a message: the block of a file's own text handed to the model as labelled data, after the label check and the secret withholding",
+    "crates/kk-review/src/ask.rs:141": "not a message: the block of a file's own text handed to the model as labelled data, after the label check and the secret withholding",
+}
 
 def selftest():
     bad = [

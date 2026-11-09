@@ -6175,7 +6175,7 @@ async fn ask(axum::Extension(svc): Svc, Json(b): Json<AskBody>) -> Response {
     let svc2 = svc.clone();
     let out = tokio::task::spawn_blocking(move || {
         let imported = kk_review::import::scan_tree(&dir, kk_types::label::Level::Internal);
-        let ctx = kk_review::ask::build_context(&imported.files);
+        let ctx = kk_review::ask::build_context_for(&imported.files, &q);
         if ctx.used.is_empty() {
             return Err("there are no readable text documents in that folder".to_string());
         }
@@ -6205,7 +6205,7 @@ async fn ask(axum::Extension(svc): Svc, Json(b): Json<AskBody>) -> Response {
         }
     };
     let route = json!({"id": reply.route_id, "class": reply.class, "simulated": reply.simulated});
-    let base = json!({"files_used": ctx.used, "files_withheld": ctx.withheld, "files_skipped": ctx.skipped_too_large, "injection_suspects": suspects, "route": route});
+    let base = json!({"files_used": ctx.used, "files_withheld": ctx.withheld, "files_skipped": ctx.skipped_too_large, "files_partial": ctx.partial, "searched": ctx.searched, "injection_suspects": suspects, "route": route});
     let mut body = base.as_object().cloned().unwrap_or_default();
     match kk_review::ask::parse_answer(&reply.text) {
         Some(a) => {

@@ -14461,3 +14461,91 @@ fn sv152_waiting_approvals_are_listed_oldest_first_by_number_when_the_numbers_pa
     );
     assert_eq!(listed, asked, "waiting approvals, oldest first");
 }
+
+#[test]
+fn sv153_a_question_about_a_folder_too_big_for_the_model_gets_the_passages_that_match_it() {
+    let (c, mut w, seen, root) = instructions_service("ask-crowded");
+    let _ = &c;
+    let docs = root.join("docs");
+    std::fs::create_dir_all(&docs).unwrap();
+    let filler = |tag: &str, n: usize| -> String {
+        (0..n)
+            .map(|i| format!("{tag} routine paragraph {i} about scheduling and offices\n"))
+            .collect()
+    };
+    for i in 0..30 {
+        std::fs::write(
+            docs.join(format!("a{i:02}.txt")),
+            filler(&format!("a{i:02}"), 450),
+        )
+        .unwrap();
+    }
+    let body = format!(
+        "{}intro line\nThe termination notice period is ninety (90) days.\nclosing line\n{}",
+        filler("zz", 200),
+        filler("zy", 200)
+    );
+    std::fs::write(docs.join("zz_terms.txt"), body).unwrap();
+    let key = format!("{}{}", "sk_li", "ve_abcdefghijklmnop0123");
+    std::fs::write(
+        docs.join("hr.env"),
+        format!("API_TOKEN={key} termination notice period\n"),
+    )
+    .unwrap();
+    let _ = &mut w;
+    let (st, r) = w.post("/api/ask", json!({"folder": docs.to_string_lossy(), "question": "What is the termination notice period?"}));
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["searched"], true, "{r}");
+    assert!(
+        r["files_used"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f == "zz_terms.txt"),
+        "{}",
+        r["files_used"]
+    );
+    assert!(
+        r["files_partial"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f == "zz_terms.txt"),
+        "{}",
+        r["files_partial"]
+    );
+    let sent = seen.lock().unwrap().last().unwrap().clone();
+    let prompt: String = sent
+        .iter()
+        .map(|m| m.content.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        prompt.contains("The termination notice period is ninety (90) days."),
+        "the model was given the passage that answers"
+    );
+    assert!(
+        prompt.contains("=== END FILE (lines "),
+        "with its line numbers"
+    );
+    assert!(
+        !prompt.contains(&key),
+        "a secret never reaches the model, ranked or not"
+    );
+    assert!(
+        prompt.chars().count() < 70_000,
+        "{}",
+        prompt.chars().count()
+    );
+    // a folder that fits is read whole, as before
+    let small = root.join("small");
+    std::fs::create_dir_all(&small).unwrap();
+    std::fs::write(small.join("one.txt"), "Only file. The fee is EUR 5.\n").unwrap();
+    let (st, r) = w.post(
+        "/api/ask",
+        json!({"folder": small.to_string_lossy(), "question": "What is the fee?"}),
+    );
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["searched"], false);
+    assert_eq!(r["files_partial"], json!([]));
+}
