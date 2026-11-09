@@ -661,6 +661,8 @@ export const en = {
   "docs.withheld": "Not sent to the model (secret or restricted): {list}",
   "docs.skipped": "Left out because there was no room: {list}",
   "docs.searched": "The folder is bigger than the model can read at once, so the passages that best match your question were chosen.",
+  "docs.byMeaning": "They were matched by meaning as well as by words.",
+  "docs.byWords": "They were matched by words only, because the meaning model is not available.",
   "docs.partial": "Only the matching passages were read from: {list}",
   "docs.skippedSearched": "Nothing in these matched your question, so they were not read: {list}",
   "docs.injection": "These documents contain text aimed at AI assistants; it was treated as data: {list}",

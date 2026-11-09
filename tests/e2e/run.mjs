@@ -1900,7 +1900,7 @@ try {
   await page.getByRole("button", { name: "Ask", exact: true }).click();
   await page.getByText("The folder is bigger than the model can read at once").waitFor({ timeout: 60000 });
   const bigAns = await page.locator("#h-answer").locator("xpath=..").innerText();
-  check("for a folder too big to read at once the page says the matching passages were chosen and names the file read in part", bigAns.includes("passages that best match your question were chosen") && bigAns.includes("Only the matching passages were read from: zz_terms.txt"), bigAns.replace(/\n/g, " | ").slice(0, 300));
+  check("for a folder too big to read at once the page says the matching passages were chosen and names the file read in part", bigAns.includes("passages that best match your question were chosen") && bigAns.includes("matched by words only, because the meaning model is not available") && bigAns.includes("Only the matching passages were read from: zz_terms.txt"), bigAns.replace(/\n/g, " | ").slice(0, 300));
   check("the quote from the chosen passage is checked against the real file and found", bigAns.includes("1 of 2 quote(s) found") && bigAns.includes("Found in the file (line 201)"), bigAns.replace(/\n/g, " | ").slice(0, 300));
   await axeCheck(page, "documents screen with a searched folder");
   await page.screenshot({ path: join(shots, "14b-documents-searched.png"), fullPage: true });

@@ -336,6 +336,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, title TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL, project TEXT);
              CREATE TABLE IF NOT EXISTS session_turns(session TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (session, seq));
              CREATE TABLE IF NOT EXISTS session_summaries(session TEXT PRIMARY KEY, upto INTEGER NOT NULL, text TEXT NOT NULL, at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS doc_vectors(model TEXT NOT NULL, hash TEXT NOT NULL, vec BLOB NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(model, hash));
              CREATE TABLE IF NOT EXISTS prompt_history(id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS schedules(id TEXT PRIMARY KEY, repo TEXT NOT NULL, recipient TEXT NOT NULL, every_secs INTEGER NOT NULL, next_at INTEGER NOT NULL, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS schedule_runs(id INTEGER PRIMARY KEY AUTOINCREMENT, schedule TEXT NOT NULL, at INTEGER NOT NULL, outcome TEXT NOT NULL, job TEXT);
@@ -6149,6 +6150,94 @@ async fn ask_excerpt(axum::Extension(svc): Svc, Json(b): Json<ExcerptBody>) -> R
     }
 }
 
+/// Ranks the passages of a folder by meaning with the runner's local embedding model. A passage's vector is kept in the
+/// encrypted store under the hash of its text, so asking again about the same folder embeds nothing, and a changed passage
+/// is the only one embedded again. Only vectors and hashes are kept, never the text.
+struct CachedMeaning {
+    svc: Arc<Service>,
+    embedder: Arc<dyn kk_memory::Embedder>,
+}
+
+/// The most passages embedded for one question, one request's worth of vectors, and the most vectors kept.
+const MEANING_NEW_LIMIT: usize = 1500;
+const MEANING_BATCH: usize = 32;
+const MEANING_ROWS: i64 = 50_000;
+
+impl kk_review::ask::Semantic for CachedMeaning {
+    fn similarities(&self, question: &str, passages: &[&str]) -> Option<Vec<f32>> {
+        let model = self.embedder.model();
+        let question_vector = self.embedder.embed_query(question).ok()?;
+        let hashes: Vec<String> = passages
+            .iter()
+            .map(|p| kk_evidence::capsule::sha256_hex(p.as_bytes()))
+            .collect();
+        let mut vectors: Vec<Option<Vec<f32>>> = vec![None; passages.len()];
+        {
+            let store = self.svc.store.lock().expect("lock");
+            let c = store.connection();
+            let mut find = c
+                .prepare("SELECT vec FROM doc_vectors WHERE model = ?1 AND hash = ?2")
+                .ok()?;
+            for (i, h) in hashes.iter().enumerate() {
+                vectors[i] = find
+                    .query_row(kk_vault::rusqlite::params![model, h], |r| {
+                        r.get::<_, Vec<u8>>(0)
+                    })
+                    .ok()
+                    .and_then(|b| kk_memory::from_blob(&b));
+            }
+        }
+        let missing: Vec<usize> = (0..passages.len())
+            .filter(|i| vectors[*i].is_none())
+            .take(MEANING_NEW_LIMIT)
+            .collect();
+        for batch in missing.chunks(MEANING_BATCH) {
+            let texts: Vec<String> = batch.iter().map(|i| passages[*i].to_string()).collect();
+            let made = self.embedder.embed(&texts).ok()?;
+            if made.len() != batch.len() {
+                return None;
+            }
+            let store = self.svc.store.lock().expect("lock");
+            let c = store.connection();
+            let now = now();
+            for (i, v) in batch.iter().zip(made) {
+                let _ = c.execute(
+                    "INSERT OR REPLACE INTO doc_vectors(model, hash, vec, at) VALUES (?1, ?2, ?3, ?4)",
+                    kk_vault::rusqlite::params![model, hashes[*i], kk_memory::to_blob(&v), now],
+                );
+                vectors[*i] = Some(v);
+            }
+        }
+        {
+            let store = self.svc.store.lock().expect("lock");
+            let c = store.connection();
+            let now = now();
+            for h in &hashes {
+                let _ = c.execute(
+                    "UPDATE doc_vectors SET at = ?1 WHERE model = ?2 AND hash = ?3",
+                    kk_vault::rusqlite::params![now, model, h],
+                );
+            }
+            let _ = c.execute(
+                "DELETE FROM doc_vectors WHERE rowid IN (SELECT rowid FROM doc_vectors ORDER BY at ASC LIMIT MAX(0, (SELECT COUNT(*) FROM doc_vectors) - ?1))",
+                kk_vault::rusqlite::params![MEANING_ROWS],
+            );
+        }
+        Some(
+            vectors
+                .iter()
+                .map(|v| match v {
+                    Some(v) => kk_memory::cosine(&question_vector, v),
+                    None => -1.0,
+                })
+                .collect(),
+        )
+    }
+    fn min_similarity(&self) -> f32 {
+        self.embedder.min_similarity()
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AskBody {
@@ -6175,7 +6264,15 @@ async fn ask(axum::Extension(svc): Svc, Json(b): Json<AskBody>) -> Response {
     let svc2 = svc.clone();
     let out = tokio::task::spawn_blocking(move || {
         let imported = kk_review::import::scan_tree(&dir, kk_types::label::Level::Internal);
-        let ctx = kk_review::ask::build_context_for(&imported.files, &q);
+        let meaning = svc2.runner.embedder().map(|embedder| CachedMeaning {
+            svc: svc2.clone(),
+            embedder,
+        });
+        let ctx = kk_review::ask::build_context_for(
+            &imported.files,
+            &q,
+            meaning.as_ref().map(|m| m as &dyn kk_review::ask::Semantic),
+        );
         if ctx.used.is_empty() {
             return Err("there are no readable text documents in that folder".to_string());
         }
@@ -6205,7 +6302,7 @@ async fn ask(axum::Extension(svc): Svc, Json(b): Json<AskBody>) -> Response {
         }
     };
     let route = json!({"id": reply.route_id, "class": reply.class, "simulated": reply.simulated});
-    let base = json!({"files_used": ctx.used, "files_withheld": ctx.withheld, "files_skipped": ctx.skipped_too_large, "files_partial": ctx.partial, "searched": ctx.searched, "injection_suspects": suspects, "route": route});
+    let base = json!({"files_used": ctx.used, "files_withheld": ctx.withheld, "files_skipped": ctx.skipped_too_large, "files_partial": ctx.partial, "searched": ctx.searched, "by_meaning": ctx.by_meaning, "injection_suspects": suspects, "route": route});
     let mut body = base.as_object().cloned().unwrap_or_default();
     match kk_review::ask::parse_answer(&reply.text) {
         Some(a) => {

@@ -114,7 +114,7 @@ export function Documents() {
             </Show>
             <p class="muted">{t("docs.used", { list: list(r().files_used) })}</p>
             <Show when={r().files_withheld.length > 0}><p class="muted">{t("docs.withheld", { list: list(r().files_withheld) })}</p></Show>
-            <Show when={r().searched}><p class="muted">{t("docs.searched")}</p></Show>
+            <Show when={r().searched}><p class="muted">{t("docs.searched")} {t(r().by_meaning ? "docs.byMeaning" : "docs.byWords")}</p></Show>
             <Show when={(r().files_partial ?? []).length > 0}><p class="muted">{t("docs.partial", { list: list(r().files_partial ?? []) })}</p></Show>
             <Show when={r().files_skipped.length > 0}><p class="muted">{t(r().searched ? "docs.skippedSearched" : "docs.skipped", { list: list(r().files_skipped) })}</p></Show>
             <Show when={r().injection_suspects.length > 0}><p class="warn">{t("docs.injection", { list: list(r().injection_suspects) })}</p></Show>

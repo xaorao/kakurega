@@ -536,6 +536,90 @@ mod live {
     use super::*;
     use kk_service::JobRunner;
 
+    /// Folder passages ranked by the real embedding model through the same trait the service uses, without the cache.
+    struct Direct(OllamaEmbedder);
+
+    impl kk_review::ask::Semantic for Direct {
+        fn similarities(&self, question: &str, passages: &[&str]) -> Option<Vec<f32>> {
+            let q = kk_memory::Embedder::embed_query(&self.0, question).ok()?;
+            let mut out = Vec::new();
+            for batch in passages.chunks(32) {
+                let texts: Vec<String> = batch.iter().map(|t| t.to_string()).collect();
+                let v = kk_memory::Embedder::embed(&self.0, &texts).ok()?;
+                out.extend(v.iter().map(|x| kk_memory::cosine(&q, x)));
+            }
+            Some(out)
+        }
+        fn min_similarity(&self) -> f32 {
+            kk_memory::Embedder::min_similarity(&self.0)
+        }
+    }
+
+    /// Needs a local Ollama with nomic-embed-text. Twelve facts, each asked about in other words, each fact in a 25,000
+    /// character file among thirty others, so the model window cannot hold the folder. Prints how often the window holds the
+    /// fact for the plain window, for words alone and for words with meaning. Run with
+    /// `cargo test -p kk-cli --bin kaku -- --ignored live::paraphrase_recall --nocapture`.
+    #[test]
+    #[ignore]
+    fn live_paraphrase_recall_of_the_document_window() {
+        let pairs: [(&str, &str); 12] = [
+            ("The landlord must return the security deposit within thirty days after the tenant moves out.", "How long until I get my bond back after leaving the flat?"),
+            ("Employees accrue twenty-five vacation days each calendar year.", "How many days off per year do staff earn?"),
+            ("A late payment incurs a penalty of two percent per month on the outstanding balance.", "What extra charge applies if I pay after the due date?"),
+            ("Either side may end the agreement by giving ninety days written warning.", "Can the contract be cancelled early, and how?"),
+            ("The warranty covers manufacturing defects for a period of eighteen months from purchase.", "How long is the product guaranteed against faults?"),
+            ("Confidential information must not be disclosed to third parties without prior written consent.", "Am I allowed to share the secrets with outsiders?"),
+            ("All disputes shall be resolved by binding arbitration in Geneva.", "Where would a disagreement be settled, in court or elsewhere?"),
+            ("The supplier shall deliver the goods to the buyer's warehouse by the fifteenth of March.", "When does the vendor have to ship the order?"),
+            ("Maintenance windows take place every second Sunday between two and four in the morning.", "When is the system taken offline for upkeep?"),
+            ("Reimbursement of travel costs requires original receipts submitted within sixty days.", "What paperwork do I need to get my trip expenses paid back?"),
+            ("The licence is non-transferable and may not be sublicensed to any other party.", "Can I pass the software rights on to another company?"),
+            ("Personal data is erased from our systems ninety days after an account is closed.", "How long do you keep my information once I leave?"),
+        ];
+        let filler = |tag: usize, n: usize| -> String {
+            (0..n)
+                .map(|i| format!("Section {tag}.{i}: routine notes about scheduling, offices and equipment.\n"))
+                .collect()
+        };
+        let files: Vec<kk_review::import::ImportedFile> = pairs
+            .iter()
+            .enumerate()
+            .map(|(k, (fact, _))| {
+                let body = format!("{}{fact}\n{}", filler(k, 180), filler(k + 100, 180));
+                let bytes = body.into_bytes();
+                kk_review::import::ImportedFile {
+                    path: format!("doc_{k:02}.txt"),
+                    sha256: kk_evidence::capsule::sha256_hex(&bytes),
+                    bytes,
+                    label: kk_types::label::Label::new(kk_types::label::Level::Internal),
+                    notes: vec![],
+                }
+            })
+            .collect();
+        let route = OllamaRoute::new("http://127.0.0.1:11434", "nomic-embed-text").expect("route");
+        let semantic = Direct(OllamaEmbedder::new(route, "nomic-embed-text".into()));
+        let (mut plain, mut words, mut both) = (0, 0, 0);
+        for (fact, question) in pairs {
+            if kk_review::ask::build_context(&files).text.contains(fact) {
+                plain += 1;
+            }
+            if kk_review::ask::build_context_for(&files, question, None)
+                .text
+                .contains(fact)
+            {
+                words += 1;
+            }
+            if kk_review::ask::build_context_for(&files, question, Some(&semantic))
+                .text
+                .contains(fact)
+            {
+                both += 1;
+            }
+        }
+        println!("window holds the fact: plain {plain}/12, words {words}/12, words with meaning {both}/12");
+        assert!(both >= words);
+    }
+
     /// Needs a local Ollama with qwen2.5:1.5b. Run with `cargo test -p kk-cli --bin kaku -- --ignored live::`.
     #[test]
     #[ignore]

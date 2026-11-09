@@ -1,5 +1,6 @@
 mod cjk;
 mod fuse;
+pub use fuse::{cosine, from_blob, to_blob};
 mod retention;
 mod secret;
 

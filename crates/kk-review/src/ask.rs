@@ -25,6 +25,23 @@ pub struct Context {
     pub partial: Vec<String>,
     /// True when the window could not hold everything and the passages were chosen by the question.
     pub searched: bool,
+    /// True when the passages were also ranked by meaning, not by words alone.
+    pub by_meaning: bool,
+}
+
+/// A way to rank passages by meaning, for questions that share no words with the passage that answers them. It is given
+/// only passages of files that may go to a model at all (restricted files never reach it).
+pub trait Semantic {
+    /// One similarity per passage, in order, or `None` when meaning search is not available right now. A passage that could
+    /// not be scored is given a negative value and is not considered.
+    fn similarities(&self, question: &str, passages: &[&str]) -> Option<Vec<f32>>;
+    /// How close a passage must be to count as a match.
+    fn min_similarity(&self) -> f32;
+}
+
+/// The weight a rank adds when two rankings are merged by reciprocal rank fusion (the constant is the usual 60).
+fn rrf(rank_from_zero: usize) -> f64 {
+    1.0 / (60.0 + rank_from_zero as f64 + 1.0)
 }
 
 /// Lines in one searchable passage, and the most characters one passage holds.
@@ -134,10 +151,12 @@ fn chunks_of<'a>(file_index: usize, path: &'a str, body: &str) -> Vec<Chunk<'a>>
 
 fn rendered(path: &str, whole: bool, start: usize, end: usize, text: &str) -> String {
     if whole {
+        // error-text-ok: not a message; a file's own text handed to the model as labelled data, after the label check
         format!("=== FILE {path} ===\n{text}=== END FILE ===\n")
     } else {
         // the opening marker stays exactly the file's path (the name a quote is cited under) and nothing but the file's own
         // text follows it; the range of lines is said on the closing marker
+        // error-text-ok: not a message; a file's own text handed to the model as labelled data, after the label check
         format!("=== FILE {path} ===\n{text}=== END FILE (lines {start}-{end}) ===\n")
     }
 }
@@ -148,13 +167,17 @@ fn rendered(path: &str, whole: bool, start: usize, end: usize, text: &str) -> St
 /// text), the best come first, no file takes more than a dozen, and each is shown with its line numbers. Restricted files
 /// never enter the ranking, so their words cannot decide what is shown. A question with no usable words falls back to the
 /// alphabetical window.
-pub fn build_context_for(files: &[ImportedFile], question: &str) -> Context {
+pub fn build_context_for(
+    files: &[ImportedFile],
+    question: &str,
+    semantic: Option<&dyn Semantic>,
+) -> Context {
     let plain = build_context(files);
     if plain.skipped_too_large.is_empty() {
         return plain;
     }
     let terms = question_terms(question);
-    if terms.is_empty() {
+    if terms.is_empty() && semantic.is_none() {
         return plain;
     }
     let mut sorted: Vec<&ImportedFile> = files
@@ -208,15 +231,52 @@ pub fn build_context_for(files: &[ImportedFile], question: &str) -> Context {
         })
         .filter(|(s, _)| *s > 0.0)
         .collect();
-    if scored.is_empty() {
-        return plain;
-    }
     scored.sort_by(|x, y| {
         y.0.partial_cmp(&x.0)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| chunks[x.1].path.cmp(chunks[y.1].path))
             .then_with(|| chunks[x.1].start.cmp(&chunks[y.1].start))
     });
+    // meaning: a second ranking over the same passages, merged with the first by reciprocal rank fusion
+    let mut by_meaning = false;
+    if let Some(sem) = semantic {
+        let texts: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
+        if let Some(sims) = sem
+            .similarities(question, &texts)
+            .filter(|s| s.len() == chunks.len())
+        {
+            let min = sem.min_similarity();
+            let mut near: Vec<(f32, usize)> = sims
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.is_finite() && **s >= min)
+                .map(|(i, s)| (*s, i))
+                .collect();
+            near.sort_by(|x, y| {
+                y.0.partial_cmp(&x.0)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| x.1.cmp(&y.1))
+            });
+            let mut fused: std::collections::HashMap<usize, f64> = std::collections::HashMap::new();
+            for (rank, (_, i)) in scored.iter().enumerate() {
+                *fused.entry(*i).or_insert(0.0) += rrf(rank);
+            }
+            for (rank, (_, i)) in near.iter().enumerate() {
+                *fused.entry(*i).or_insert(0.0) += rrf(rank);
+            }
+            by_meaning = !near.is_empty();
+            scored = fused.into_iter().map(|(i, s)| (s, i)).collect();
+            scored.sort_by(|x, y| {
+                y.0.partial_cmp(&x.0)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| chunks[x.1].path.cmp(chunks[y.1].path))
+                    .then_with(|| chunks[x.1].start.cmp(&chunks[y.1].start))
+            });
+        }
+    }
+    if scored.is_empty() {
+        return plain;
+    }
     let mut picked: Vec<usize> = Vec::new();
     let mut per_file: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
     let (mut used_chars, mut file_count) = (0usize, std::collections::HashSet::new());
@@ -276,6 +336,7 @@ pub fn build_context_for(files: &[ImportedFile], question: &str) -> Context {
         skipped_too_large: skipped,
         partial,
         searched: true,
+        by_meaning,
     }
 }
 
@@ -309,6 +370,7 @@ pub fn build_context(files: &[ImportedFile]) -> Context {
         skipped_too_large: skipped,
         partial: Vec::new(),
         searched: false,
+        by_meaning: false,
     }
 }
 

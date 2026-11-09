@@ -14549,3 +14549,332 @@ fn sv153_a_question_about_a_folder_too_big_for_the_model_gets_the_passages_that_
     assert_eq!(r["searched"], false);
     assert_eq!(r["files_partial"], json!([]));
 }
+
+/// Meaning vectors from a table of words that share a sense, counting what it is asked to embed. A stand-in for the local model.
+struct CountingEmbedder {
+    embedded: Arc<Mutex<Vec<String>>>,
+    queries: Arc<Mutex<usize>>,
+    fail: bool,
+    /// Answers with one vector too few, as a broken model server might.
+    short: bool,
+    name: String,
+}
+
+fn sense_vector(text: &str) -> Vec<f32> {
+    let table: [&[&str]; 4] = [
+        &[
+            "cancel",
+            "cancelled",
+            "terminate",
+            "termination",
+            "end",
+            "ended",
+        ],
+        &["warning", "notice", "advance"],
+        &["early", "before", "prematurely"],
+        &["fee", "price", "cost", "charge"],
+    ];
+    let mut v = vec![0.0f32; 4];
+    for w in text.to_lowercase().split(|c: char| !c.is_alphanumeric()) {
+        for (i, group) in table.iter().enumerate() {
+            if group.contains(&w) {
+                v[i] += 1.0;
+            }
+        }
+    }
+    v
+}
+
+impl kk_memory::Embedder for CountingEmbedder {
+    fn model(&self) -> String {
+        self.name.clone()
+    }
+    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        if self.fail {
+            return Err("the embedding model is not running".into());
+        }
+        self.embedded.lock().unwrap().extend(texts.iter().cloned());
+        let mut out: Vec<Vec<f32>> = texts.iter().map(|t| sense_vector(t)).collect();
+        if self.short {
+            out.pop();
+        }
+        Ok(out)
+    }
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>, String> {
+        if self.fail {
+            return Err("the embedding model is not running".into());
+        }
+        *self.queries.lock().unwrap() += 1;
+        Ok(sense_vector(text))
+    }
+    fn min_similarity(&self) -> f32 {
+        0.5
+    }
+}
+
+struct MeaningRunner {
+    inner: CannedRunner,
+    seen: Conversations,
+    embedder: Arc<CountingEmbedder>,
+}
+
+impl JobRunner for MeaningRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        self.inner.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        self.inner.route_info()
+    }
+    fn chat(&self, m: Vec<kk_types::chat::ChatMessage>) -> Result<kk_service::ChatReply, String> {
+        self.seen.lock().unwrap().push(m.clone());
+        self.inner.chat(m)
+    }
+    fn embedder(&self) -> Option<Arc<dyn kk_memory::Embedder>> {
+        Some(self.embedder.clone())
+    }
+}
+
+fn meaning_service(
+    tag: &str,
+    fail: bool,
+) -> (
+    kk_companion::Companion,
+    Web,
+    Conversations,
+    PathBuf,
+    Arc<CountingEmbedder>,
+) {
+    let (root, _repo) = repo_copy(tag);
+    let (c, w, seen, emb) = meaning_service_in(&root, "stub-senses", fail, false);
+    (c, w, seen, root, emb)
+}
+
+/// A service over `root`'s data folder whose embedding model has the given name and behaviour.
+fn meaning_service_in(
+    root: &Path,
+    name: &str,
+    fail: bool,
+    short: bool,
+) -> (
+    kk_companion::Companion,
+    Web,
+    Conversations,
+    Arc<CountingEmbedder>,
+) {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let embedder = Arc::new(CountingEmbedder {
+        embedded: Arc::new(Mutex::new(Vec::new())),
+        queries: Arc::new(Mutex::new(0)),
+        fail,
+        short,
+        name: name.to_string(),
+    });
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.to_path_buf()],
+        Arc::new(MeaningRunner {
+            inner: CannedRunner { confirm: true },
+            seen: seen.clone(),
+            embedder: embedder.clone(),
+        }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    (c, w, seen, embedder)
+}
+
+fn meaning_folder(root: &Path) -> PathBuf {
+    let docs = root.join("agreements");
+    std::fs::create_dir_all(&docs).unwrap();
+    let filler = |tag: &str, n: usize| -> String {
+        (0..n)
+            .map(|i| format!("{tag} routine paragraph {i} about scheduling and offices\n"))
+            .collect()
+    };
+    for i in 0..30 {
+        std::fs::write(
+            docs.join(format!("p{i:02}.txt")),
+            filler(&format!("p{i:02}"), 450),
+        )
+        .unwrap();
+    }
+    let body = format!(
+        "{}Either party may terminate this agreement on ninety days written warning.\n{}",
+        filler("zz", 200),
+        filler("zy", 200)
+    );
+    std::fs::write(docs.join("zz_agreement.txt"), body).unwrap();
+    let key = format!("{}{}", "sk_li", "ve_abcdefghijklmnop0123");
+    std::fs::write(
+        docs.join(".env"),
+        format!("API_TOKEN={key} payroll for Alex Rivera cancelled early\n").repeat(40),
+    )
+    .unwrap();
+    docs
+}
+
+#[test]
+fn sv154_a_paraphrased_question_finds_its_passage_by_meaning_and_asking_again_embeds_nothing() {
+    let (_c, w, seen, root, emb) = meaning_service("ask-meaning", false);
+    let docs = meaning_folder(&root);
+    let ask = |q: &str| {
+        w.post(
+            "/api/ask",
+            json!({"folder": docs.to_string_lossy(), "question": q}),
+        )
+    };
+    let (st, r) = ask("How can the contract be cancelled early?");
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["by_meaning"], true, "{r}");
+    let sent = seen.lock().unwrap().last().unwrap().clone();
+    let prompt: String = sent
+        .iter()
+        .map(|m| m.content.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        prompt.contains("terminate this agreement on ninety days written warning"),
+        "the model was given the passage that answers"
+    );
+    let first = emb.embedded.lock().unwrap().len();
+    assert!(
+        first > 100,
+        "the passages of the folder were embedded once: {first}"
+    );
+    // the same question again: every vector is already kept
+    let (st, _) = ask("How can the contract be cancelled early?");
+    assert_eq!(st, 200);
+    assert_eq!(
+        emb.embedded.lock().unwrap().len(),
+        first,
+        "nothing is embedded twice"
+    );
+    // one line of one passage changes: only that passage is embedded again
+    let path = docs.join("zz_agreement.txt");
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        text.replacen(
+            "zy routine paragraph 3 about",
+            "zy changed paragraph 3 about",
+            1,
+        ),
+    )
+    .unwrap();
+    let (st, _) = ask("How can the contract be cancelled early?");
+    assert_eq!(st, 200);
+    assert_eq!(
+        emb.embedded.lock().unwrap().len(),
+        first + 1,
+        "only the changed passage"
+    );
+}
+
+#[test]
+fn sv155_a_restricted_file_is_never_embedded_and_only_hashes_and_vectors_are_kept() {
+    let (_c, w, _seen, root, emb) = meaning_service("ask-meaning-private", false);
+    let docs = meaning_folder(&root);
+    let (st, r) = w.post(
+        "/api/ask",
+        json!({"folder": docs.to_string_lossy(), "question": "How can the contract be cancelled early?"}),
+    );
+    assert_eq!(st, 200, "{r}");
+    assert!(
+        r["files_withheld"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f == ".env"),
+        "{r}"
+    );
+    assert!(
+        emb.embedded
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|t| !t.contains("Alex Rivera") && !t.contains("payroll")),
+        "a restricted passage reached the embedding model"
+    );
+}
+
+#[test]
+fn sv156_when_the_embedding_model_is_not_running_the_question_is_still_answered_by_words() {
+    let (_c, w, seen, root, _emb) = meaning_service("ask-meaning-down", true);
+    let docs = meaning_folder(&root);
+    let (st, r) = w.post(
+        "/api/ask",
+        json!({"folder": docs.to_string_lossy(), "question": "What does the agreement say about ninety days written warning?"}),
+    );
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["by_meaning"], false);
+    let sent = seen.lock().unwrap().last().unwrap().clone();
+    let prompt: String = sent
+        .iter()
+        .map(|m| m.content.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        prompt.contains("ninety days written warning"),
+        "words alone still find it"
+    );
+}
+
+#[test]
+fn sv157_a_model_that_answers_with_the_wrong_number_of_vectors_is_ignored_not_misaligned() {
+    let (root, _repo) = repo_copy("ask-meaning-short");
+    let docs = meaning_folder(&root);
+    let (_c, w, seen, _emb) = meaning_service_in(&root, "stub-senses", false, true);
+    let (st, r) = w.post(
+        "/api/ask",
+        json!({"folder": docs.to_string_lossy(), "question": "What does the agreement say about ninety days written warning?"}),
+    );
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["by_meaning"], false, "a broken answer is not used");
+    let sent = seen.lock().unwrap().last().unwrap().clone();
+    let prompt: String = sent
+        .iter()
+        .map(|m| m.content.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(prompt.contains("ninety days written warning"));
+}
+
+#[test]
+fn sv158_vectors_of_one_embedding_model_are_never_used_for_another() {
+    let (root, _repo) = repo_copy("ask-meaning-switch");
+    let docs = meaning_folder(&root);
+    let q = json!({"folder": docs.to_string_lossy(), "question": "How can the contract be cancelled early?"});
+    let first = {
+        let (c, w, _seen, emb) = meaning_service_in(&root, "model-a", false, false);
+        let (st, r) = w.post("/api/ask", q.clone());
+        assert_eq!(st, 200, "{r}");
+        let n = emb.embedded.lock().unwrap().len();
+        drop(c);
+        n
+    };
+    assert!(first > 100);
+    // the same data folder, now with a different model: the kept vectors belong to model-a and are not reused
+    let (_c, w, _seen, emb) = meaning_service_in(&root, "model-b", false, false);
+    let (st, r) = w.post("/api/ask", q);
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(
+        emb.embedded.lock().unwrap().len(),
+        first,
+        "a new model embeds every passage again"
+    );
+}

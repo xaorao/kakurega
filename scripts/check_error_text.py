@@ -18,10 +18,15 @@ RISKY = r"(stdout|stderr|output|content|contents|text|source|body|snippet|diff|f
 # every `{name}` or `{name:...}` inside a format-like macro call, across lines
 CALL = re.compile(r"(format|write|writeln|println|eprintln|panic|anyhow|bail)!\s*\((?P<args>(?:[^()]|\((?:[^()]|\([^()]*\))*\))*)\)", re.S)
 HOLE = re.compile(r"\{" + RISKY + r"(?::[^}]*)?\}")
-ALLOWED: dict[str, str] = {
-    "crates/kk-review/src/ask.rs:137": "not a message: the block of a file's own text handed to the model as labelled data, after the label check and the secret withholding",
-    "crates/kk-review/src/ask.rs:141": "not a message: the block of a file's own text handed to the model as labelled data, after the label check and the secret withholding",
-}
+ALLOWED: dict[str, str] = {}
+# a call that is not a message says so in a comment on one of the three lines above it: `// error-text-ok: <reason>`
+MARK = "error-text-ok:"
+
+
+def marked(above_lines):
+    """True when one of the lines above a call carries the mark and gives a reason."""
+    return any(MARK in l and l.split(MARK, 1)[1].strip() for l in above_lines)
+
 
 def selftest():
     bad = [
@@ -40,7 +45,10 @@ def selftest():
         assert any(HOLE.search(m.group("args")) for m in CALL.finditer(b)), b
     for g in good:
         assert not any(HOLE.search(m.group("args")) for m in CALL.finditer(g)), g
-    print("error-text check selftest: ok (4 violations found, 4 clean lines passed)")
+    assert marked(["x", "// error-text-ok: file text handed on as data"])
+    assert not marked(["x", "// error-text-ok:   "]), "a mark with no reason does not count"
+    assert not marked(["// error-text-ok: reason", "a", "b", "c"][:0] + ["a", "b", "c"]), "no mark, no exception"
+    print("error-text check selftest: ok (4 violations found, 4 clean lines passed, marks honoured only with a reason)")
 
 
 if "--selftest" in sys.argv:
@@ -57,7 +65,8 @@ for crate in CRATES:
             if HOLE.search(m.group("args")):
                 line = text.count("\n", 0, m.start()) + 1
                 key = f"{path.relative_to(repo)}:{line}"
-                if key not in ALLOWED:
+                above = text.splitlines()[max(0, line - 4):line]
+                if key not in ALLOWED and not marked(above):
                     hits.append(f"{key}: {' '.join(m.group('args').split())[:110]}")
 
 if hits:
