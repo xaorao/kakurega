@@ -589,3 +589,65 @@ fn sg12_names_with_acronyms_and_words_are_still_names_after_a_secret_key() {
         }
     }
 }
+
+#[test]
+fn sg13_the_text_of_a_key_written_in_hex_is_flagged_even_though_hex_digits_are_also_valid_base64() {
+    let a = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    let mut missed = Vec::new();
+    for round in 0..200u64 {
+        let key = format!("{}{}{}", "sk-ant", "-api03-", fresh(a, 43, t + round));
+        let lower: String = key.bytes().map(|b| format!("{b:02x}")).collect();
+        let upper: String = key.bytes().map(|b| format!("{b:02X}")).collect();
+        for (shape, text) in [("lower", &lower), ("upper", &upper)] {
+            for line in [
+                format!("Raw: {text}"),
+                format!("blob={text}"),
+                text.to_string(),
+            ] {
+                if looks_secret(&line).is_none() {
+                    missed.push(format!("{shape}: {line}"));
+                }
+            }
+        }
+    }
+    assert!(
+        missed.is_empty(),
+        "{} missed, first: {:?}",
+        missed.len(),
+        missed.first()
+    );
+}
+
+#[test]
+fn sg14_ordinary_long_hex_is_still_not_a_secret() {
+    // a hash or an id is hex too: decoding it as text must not turn it into a hit
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    let mut flagged = Vec::new();
+    for round in 0..300u64 {
+        for n in [32usize, 40, 64, 96, 128] {
+            let h = fresh("0123456789abcdef", n, t + round * 7 + n as u64);
+            for line in [
+                format!("sha256: {h}"),
+                format!("commit {h}"),
+                format!("etag=\"{h}\""),
+            ] {
+                if looks_secret(&line).is_some() {
+                    flagged.push(line);
+                }
+            }
+        }
+    }
+    assert!(
+        flagged.is_empty(),
+        "{} flagged, first: {:?}",
+        flagged.len(),
+        flagged.first()
+    );
+}

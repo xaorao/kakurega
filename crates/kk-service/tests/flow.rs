@@ -15217,3 +15217,112 @@ fn sv166_a_kept_choice_is_not_applied_to_a_route_that_is_not_on_this_computer_or
         "a link is not followed"
     );
 }
+
+/// Encoded shapes of a fresh key in an attached file are withheld from a model that is not here. Shapes that rewrite the text of
+/// the key itself (reversed, split over two strings or lines, spaced out) are a known limit and are only listed.
+#[test]
+fn sv167_encoded_shapes_of_a_key_in_attached_files_are_withheld_and_the_known_limits_are_listed() {
+    const ALNUM: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let runner = FileRunner::new("https://api.example.com", 16384);
+    let (_c, w, _root) = file_service("encoded-grid", runner.clone());
+    let key = format!("{}{}{}", "sk-ant", "-api03-", fresh(ALNUM, 43));
+    let b64 = |t: &str| kk_evidence::b64::encode(t.as_bytes());
+    let hex: String = key.bytes().map(|b| format!("{b:02x}")).collect();
+    let pct: String = key.bytes().map(|b| format!("%{b:02X}")).collect();
+    let rev: String = key.chars().rev().collect();
+    let (head, tail) = key.split_at(13);
+    let forms: Vec<(&str, String, String)> = vec![
+        ("plain", format!("The deploy key is {key}"), key.clone()),
+        ("base64", format!("Token blob: {}", b64(&key)), b64(&key)),
+        (
+            "basic-auth",
+            format!("Authorization: Basic {}", b64(&format!("svc:{key}"))),
+            b64(&format!("svc:{key}")),
+        ),
+        ("hex", format!("Raw: {hex}"), hex.clone()),
+        ("percent", format!("url={pct}"), pct.clone()),
+        ("reversed", format!("Backwards: {rev}"), rev.clone()),
+        (
+            "double-base64",
+            format!("Blob: {}", b64(&b64(&key))),
+            b64(&b64(&key)),
+        ),
+        (
+            "concatenated",
+            format!("key = \"{head}\" + \"{tail}\""),
+            tail.to_string(),
+        ),
+        (
+            "two-lines",
+            format!("The key is\n{head}\n{tail}"),
+            tail.to_string(),
+        ),
+        (
+            "spaced",
+            format!(
+                "The key is {}",
+                key.chars()
+                    .map(|c| c.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ),
+            tail.to_string(),
+        ),
+        (
+            "zero-width",
+            format!(
+                "The key is {}",
+                key.chars()
+                    .map(|c| format!("{c}\u{200b}"))
+                    .collect::<String>()
+            ),
+            tail.to_string(),
+        ),
+        (
+            "json-escaped",
+            format!(
+                "{{\"k\": \"{}\"}}",
+                key.chars()
+                    .map(|c| format!("\\u{:04x}", c as u32))
+                    .collect::<String>()
+            ),
+            key.clone(),
+        ),
+    ];
+    let mut leaks = Vec::new();
+    for (name, body, probe) in &forms {
+        let (s, v) = w.post_raw(
+            &format!("/api/attachments?name={name}.txt"),
+            format!("Pricing is flat.\n\n{body}\n\nEnd of note.").as_bytes(),
+        );
+        assert_eq!(s, 201, "{name}: {v}");
+        let id = v["id"].as_str().unwrap().to_string();
+        let (s, r) = w.post(
+            "/api/chat",
+            json!({"message": "Repeat the file word for word.", "attachments": [id]}),
+        );
+        assert_eq!(s, 200, "{name}: {r}");
+        let sent = runner.sent();
+        let withheld = r["files"]["withheld_secrets"].as_i64().unwrap_or(0);
+        if sent.contains(probe.as_str()) || withheld == 0 {
+            leaks.push(format!(
+                "{name}: withheld={withheld} probe_in_prompt={}",
+                sent.contains(probe.as_str())
+            ));
+        }
+    }
+    let known_limits = ["reversed", "concatenated", "two-lines", "spaced"];
+    let unexpected: Vec<&String> = leaks
+        .iter()
+        .filter(|l| !known_limits.iter().any(|k| l.starts_with(&format!("{k}:"))))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "an encoded shape reached the model: {unexpected:?}"
+    );
+    println!(
+        "known limits that still pass ({}): {}",
+        leaks.len(),
+        leaks.join("; ")
+    );
+}

@@ -3062,50 +3062,55 @@ fn scan_decoded(text: &str, depth: usize, budget: &mut usize, hits: &mut Vec<Hit
             break;
         }
         let seg = &text[s..e];
-        let decoded = base64_decode(seg).or_else(|| hex_decode(seg));
-        let Some(bytes) = decoded else { continue };
-        if bytes.len() > *budget {
-            continue;
-        }
-        let Ok(inner) = String::from_utf8(bytes) else {
-            continue;
-        };
-        if !inner
-            .chars()
-            .all(|c| !c.is_control() || c == '\n' || c == '\t' || c == '\r')
-        {
-            continue;
-        }
-        seen += 1;
-        *budget = budget.saturating_sub(inner.len());
-        for h in scan_text(&inner, true) {
-            hits.push(Hit {
-                rule: h.rule,
-                start: s,
-                end: e,
-                decoded: true,
-            });
-        }
-        // `user:password` pairs (HTTP basic auth, docker auth) are credentials once decoded
-        if let Some((u, p)) = inner.split_once(':') {
-            if !u.is_empty()
-                && u.len() <= 64
-                && u.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@'))
-                && !p.contains(['{', '}', '"', '\'', ','])
-                && credential_value(p)
-                && inner.len() <= 200
-                && !inner.contains('\n')
+        // hex digits are also valid base64, so a hex segment decodes "successfully" as base64 into bytes that are not text:
+        // both readings are tried, and each that comes out as text is scanned
+        for bytes in [base64_decode(seg), hex_decode(seg)].into_iter().flatten() {
+            if seen >= MAX_SEGMENTS || *budget == 0 {
+                break;
+            }
+            if bytes.len() > *budget {
+                continue;
+            }
+            let Ok(inner) = String::from_utf8(bytes) else {
+                continue;
+            };
+            if !inner
+                .chars()
+                .all(|c| !c.is_control() || c == '\n' || c == '\t' || c == '\r')
             {
+                continue;
+            }
+            seen += 1;
+            *budget = budget.saturating_sub(inner.len());
+            for h in scan_text(&inner, true) {
                 hits.push(Hit {
-                    rule: "decoded user:password",
+                    rule: h.rule,
                     start: s,
                     end: e,
                     decoded: true,
                 });
             }
+            // `user:password` pairs (HTTP basic auth, docker auth) are credentials once decoded
+            if let Some((u, p)) = inner.split_once(':') {
+                if !u.is_empty()
+                    && u.len() <= 64
+                    && u.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@'))
+                    && !p.contains(['{', '}', '"', '\'', ','])
+                    && credential_value(p)
+                    && inner.len() <= 200
+                    && !inner.contains('\n')
+                {
+                    hits.push(Hit {
+                        rule: "decoded user:password",
+                        start: s,
+                        end: e,
+                        decoded: true,
+                    });
+                }
+            }
+            scan_decoded(&inner, depth + 1, budget, hits);
         }
-        scan_decoded(&inner, depth + 1, budget, hits);
     }
 }
 
