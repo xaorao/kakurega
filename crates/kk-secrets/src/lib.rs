@@ -1256,7 +1256,7 @@ fn indirect_reference(v: &str) -> bool {
 
 fn placeholder(v: &str) -> bool {
     let l = v.to_ascii_lowercase();
-    [
+    ([
         "example",
         "your_",
         "your-",
@@ -1270,16 +1270,46 @@ fn placeholder(v: &str) -> bool {
         "sample",
         "<",
         "insert",
-        "todo",
-        "none",
-        "null",
         "undefined",
         "false",
-        "true",
     ]
     .iter()
     .any(|p| l.contains(p))
+        || ["todo", "none", "null", "true"]
+            .iter()
+            .any(|w| marker_word(v, w)))
         && l.len() < 40
+}
+
+/// Whether a four-letter marker such as `test` or `todo` is really there. In a value that mixes capitals and small letters
+/// the marker has to start a word of its own (`TestKey`, `mock_secret9`, `Todo2`, `Testing`): case-uniform and starting at a
+/// word boundary. A random mix of letters spells these four letters by chance about once in ten thousand values (`EtODo6`,
+/// `moCk`, `FAKeA9`) and must not be taken for a fixture. A value in one case keeps the plain substring test.
+fn marker_word(v: &str, marker: &str) -> bool {
+    let mixed =
+        v.bytes().any(|c| c.is_ascii_uppercase()) && v.bytes().any(|c| c.is_ascii_lowercase());
+    let lower = v.to_ascii_lowercase();
+    if !mixed {
+        return lower.contains(marker);
+    }
+    let b = v.as_bytes();
+    let mut from = 0usize;
+    while let Some(off) = lower[from..].find(marker) {
+        let i = from + off;
+        let j = i + marker.len();
+        let s = &b[i..j];
+        let uniform = s.iter().all(u8::is_ascii_lowercase)
+            || s.iter().all(u8::is_ascii_uppercase)
+            || (s[0].is_ascii_uppercase() && s[1..].iter().all(u8::is_ascii_lowercase));
+        let starts = i == 0
+            || !b[i - 1].is_ascii_alphabetic()
+            || (b[i - 1].is_ascii_lowercase() && s[0].is_ascii_uppercase());
+        if uniform && starts {
+            return true;
+        }
+        from = i + 1;
+    }
+    false
 }
 
 /// Alphabets written out in order, twice, so that any stretch of one (`ABCDEFGH`, `345678901`, `89ABCDEF`) is found
@@ -1568,7 +1598,45 @@ fn camel_identifier(v: &str) -> bool {
             }
         }
     }
-    camel_words_counting(body, extra, 2)
+    camel_words_counting(body, extra, 2) && camel_words_readable(body)
+}
+
+/// Consonant-only words that real names are built from (`HttpClient`, `jsxRuntime`, `fsPath`). Any other word with no vowel
+/// in it is not a word, so a name made of such pieces is a random value that happens to be cut at capital letters.
+const CONSONANT_WORDS: &[&str] = &[
+    "jsx", "tsx", "ts", "js", "mjs", "cjs", "ms", "fs", "ssr", "css", "bg", "rs", "pkg", "src",
+    "http", "https", "html", "xhtml", "khtml", "xml", "sql", "ssh", "tcp", "udp", "tls", "ssl",
+    "dns", "cfg", "ctx", "cmd", "dto", "fn", "npm", "cdp", "hmr", "wk", "ws", "cr", "zstd", "gz",
+    "jwt", "csv", "pdf", "sdk", "url",
+];
+
+/// Whether every word of a CamelCase name (cut as in `camel_words_counting`) has a vowel or is a known consonant-only word.
+/// A random mix of letters cut at its capitals gives pieces such as `Bk`, `Qzwpl` and `Cq`; about one in a thousand of those
+/// values passed the word-length test alone and was taken for a name. This also keeps about 99 in 100 real identifiers.
+fn camel_words_readable(body: &str) -> bool {
+    let chars: Vec<char> = body.chars().collect();
+    let mut i = 0usize;
+    while i < chars.len() {
+        let start = i;
+        if chars[i].is_ascii_uppercase() {
+            i += 1;
+        }
+        while i < chars.len() && chars[i].is_ascii_lowercase() {
+            i += 1;
+        }
+        let word: String = chars[start..i].iter().collect();
+        let lower = word.to_ascii_lowercase();
+        let vowel = lower
+            .chars()
+            .any(|c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u' | 'y'));
+        if !vowel && !CONSONANT_WORDS.contains(&lower.as_str()) {
+            return false;
+        }
+        if i == start {
+            return false;
+        }
+    }
+    true
 }
 
 /// Whether letters make at least `min` words, each a capital (or the start of a camelCase name) and lower-case letters, two
@@ -1621,15 +1689,15 @@ fn literal_credential(v: &str, quoted: bool, allow_identifier: bool) -> bool {
         "placeholder",
         "changeme",
         "redacted",
-        "xxxx",
         "lorem",
         "default",
     ]
     .iter()
-    .any(|m| lower.contains(m));
+    .any(|m| lower.contains(m))
+        || marker_word(v, "xxxx");
     let maybe_chance = ["test", "mock", "fake", "demo"]
         .iter()
-        .any(|m| lower.contains(m));
+        .any(|m| marker_word(v, m));
     if (says_so || (maybe_chance && !random_token)) && v.len() < 48 {
         return false;
     }
@@ -1642,10 +1710,13 @@ fn literal_credential(v: &str, quoted: bool, allow_identifier: bool) -> bool {
         return false;
     }
     // environment variable names, CamelCase identifiers and paths are names, not values
+    // A name has an underscore between its words, or is short, or has no digits. Sixteen or more capitals and digits with a
+    // digit among them and no underscore is a base32 or hexadecimal secret (`JBSWY3DPEHPK3PXP`), not a variable name.
     let env_name = v.len() >= 3
         && v.chars().next().is_some_and(|c| c.is_ascii_uppercase())
         && v.chars()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        && (v.contains('_') || v.len() < 16 || !v.chars().any(|c| c.is_ascii_digit()));
     let camel = camel_identifier(v);
     let path_like = !random_token
         && (v.starts_with('/')

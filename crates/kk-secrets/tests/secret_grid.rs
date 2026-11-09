@@ -90,10 +90,10 @@ fn sg01_every_secret_shape_is_flagged_and_no_ordinary_look_alike_is() {
             "The password policy requires twelve characters and a symbol.".to_string(),
         ),
     ];
-    let mut missed = vec![];
+    let mut missed: Vec<String> = vec![];
     for (n, v) in &secrets {
         if scan(v).is_empty() && looks_secret(v).is_none() {
-            missed.push(*n);
+            missed.push(format!("{n}: {v:?}"));
         }
     }
     let mut alarms = vec![];
@@ -297,10 +297,23 @@ fn sg07_what_does_not_look_like_a_random_token_keeps_its_old_treatment() {
     );
     assert_eq!(twenty.len(), 19);
     let text = format!("SECRET_KEY={twenty}7");
+    // `Test` glued into the middle of random letters, after a capital, is chance and not a word: this used to stay a fixture
+    // and is now a secret (about one in ten thousand random values spelled such a marker and was let through)
     assert!(
-        scan(&text).is_empty() && looks_secret(&text).is_none(),
-        "the 20-character boundary moved: {text}"
+        !scan(&text).is_empty() || looks_secret(&text).is_some(),
+        "a marker inside random letters was taken for a fixture: {text}"
     );
+    // the same marker as a word of its own, at the start of a word, is still a fixture
+    for fixture in [
+        "SECRET_KEY=Ab3Cd9EfTestGh1Jk2Lm",
+        "SECRET_KEY=mockSecret9Xy2Qz7Wn",
+        "SECRET_KEY=MyTestPassword12345",
+    ] {
+        assert!(
+            scan(fixture).is_empty() && looks_secret(fixture).is_none(),
+            "a marker word at the start of a word stays a fixture: {fixture}"
+        );
+    }
     // a long value with a marker word and no digit at all, or low variety, is not shaped like a random token
     for v in [
         "TestingTheDeploymentPipelineStage",
@@ -363,4 +376,129 @@ fn sg08_the_edges_of_what_counts_as_a_random_token_are_pinned() {
         "with digit: {}",
         flagged(&format!("SECRET_KEY={with_digit}"))
     );
+}
+
+#[test]
+fn sg09_random_values_the_old_rules_let_through_are_now_flagged_and_the_leftover_rate_is_pinned() {
+    // Found by sweeping: each of these random values was taken for something harmless by the old code.
+    for (why, text) in [
+        (
+            "two-letter pieces cut at capitals read as a CamelCase name",
+            "database:\n  password: puzotBkQzwplRsekCqO4\n",
+        ),
+        (
+            "the letters of `todo` fell inside the value",
+            "database:\n  password: EtODo6spTx66LPwKREa4\n",
+        ),
+        (
+            "the letters of `mock` fell inside the value",
+            "database:\n  password: TyqmoCk4atuDzbsXhVT4\n",
+        ),
+        (
+            "the letters of `fake` fell inside the value",
+            "database:\n  password: FAKeA9yZdBUyv6xW8JZ6\n",
+        ),
+        (
+            "the letters of `xxxx` fell inside the value",
+            "database:\n  password: XXxxOF3qVT3vDnzr3hw4\n",
+        ),
+        (
+            "capitals and digits read as an environment variable name",
+            "totp_secret: U5057UDV6CSOOL85\n",
+        ),
+        (
+            "a base32 seed read as an environment variable name",
+            "totp_secret: JBSWY3DPEHPK3PXP\n",
+        ),
+        (
+            "a longer base32 seed",
+            "otp_secret: GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ\n",
+        ),
+        ("hexadecimal capitals", "password: A1B2C3D4E5F6A7B8C9D0\n"),
+    ] {
+        assert!(
+            !scan(text).is_empty() || looks_secret(text).is_some(),
+            "not flagged ({why}): {text:?}"
+        );
+    }
+    // The leftover rate over a fixed sweep (the same values every run, so a change shows at once). What still passes is
+    // a value that is entirely made of readable-looking pieces, or one with a marker word spelt in capitals only; telling those
+    // apart would take a dictionary, and the real identifiers it would withhold cost more than the secrets it would catch.
+    let a = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let up = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let (mut mixed, mut capitals) = (0usize, 0usize);
+    for seed in 1..=200_000u64 {
+        let t = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 8;
+        let len = [16usize, 20, 20, 24, 32][(seed % 5) as usize];
+        let v = format!("{}{}", fresh(a, len - 1, t + 14), seed % 10);
+        let text = format!("database:\n  password: {v}\n");
+        if scan(&text).is_empty() && looks_secret(&text).is_none() {
+            mixed += 1;
+        }
+        let u = format!("{}{}", fresh(up, len - 1, t + 15), 1 + seed % 9);
+        let text = format!("totp_secret: {u}\n");
+        if scan(&text).is_empty() && looks_secret(&text).is_none() {
+            capitals += 1;
+        }
+    }
+    // before: 170 mixed-case and 144,902 capitals-and-digits values of 200,000 were let through
+    assert!(
+        mixed <= 30,
+        "{mixed} of 200000 mixed-case values were let through (was 170 before the fix, 19 after)"
+    );
+    assert!(capitals <= 40, "{capitals} of 200000 capital-and-digit values were let through (was 144902 before the fix, 25 after)");
+}
+
+#[test]
+fn sg10_real_names_and_fixtures_are_still_names_and_fixtures() {
+    // identifiers and constants that must not be withheld as secrets after a password-like key
+    // each ends in a digit, which is what makes the value a candidate for a secret at all (a name without digits is never one)
+    for name in [
+        "HttpClient2",
+        "getAccessToken2",
+        "MyPasswordField1",
+        "jsxRuntime2",
+        "fsPathResolver3",
+        "UserSessionStore2",
+        "parseJsonBody1",
+        "AtomicU64",
+        "readHtmlFile1",
+        "ssrRenderContext1",
+        "DatabaseConnectionPool2",
+        "loadCssModule2",
+        "HttpsAgentOptions1",
+        "ctxLoggerFactory2",
+    ] {
+        let text = format!("password: {name}\n");
+        assert!(
+            scan(&text).is_empty() && looks_secret(&text).is_none(),
+            "a name was withheld: {text:?}"
+        );
+    }
+    for name in [
+        "DATABASE_URL",
+        "AWS_ACCESS_KEY_ID",
+        "OAUTH2_CLIENT_SECRET",
+        "ANTHROPIC_API_KEY",
+        "HTTP_PROXY",
+        "S3_BUCKET_NAME2",
+    ] {
+        let text = format!("token: {name}\n");
+        assert!(
+            scan(&text).is_empty() && looks_secret(&text).is_none(),
+            "an environment variable name was withheld: {text:?}"
+        );
+    }
+    for fixture in [
+        "password: TestPassword1234",
+        "password: mock_secret_value9",
+        "api_key: FakeKey-1234567890",
+        "password: DemoPass123456",
+        "secret: Todo2List5Items",
+    ] {
+        assert!(
+            scan(fixture).is_empty() && looks_secret(fixture).is_none(),
+            "a fixture was withheld: {fixture:?}"
+        );
+    }
 }
