@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The Secure Enclave helper as a trusted approver: it must fetch the release from the kernel itself, refuse anything
 inconsistent, and never act as a generic signing oracle. Uses a fake kernel so hostile responses can be served."""
-import base64, json, os, shutil, subprocess, sys, threading, time
+import base64, json, os, re, shutil, subprocess, sys, threading, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -10,6 +10,11 @@ work = repo / "target/enclave-helper-tmp"
 shutil.rmtree(work, ignore_errors=True); work.mkdir(parents=True)
 helper = str(repo / "target/debug/kaku-enclave-test")
 prod = str(repo / "target/debug/kaku-enclave")
+# build both from the current source every time: a test that ran whatever binary was lying around could pass against an old build
+for flag in (["--test"], []):
+    built = subprocess.run(["sh", str(repo / "spikes/enclave/build.sh"), *flag], capture_output=True, text=True)
+    if built.returncode != 0:
+        print("FAIL  the helper did not build: " + built.stderr[-300:]); sys.exit(1)
 blob = str(work / "k.enclave")
 results = []
 def check(n, ok, d=""):
@@ -53,6 +58,12 @@ check("a consistent kernel release is shown and signed exactly as the kernel gav
 shown = r.stderr
 check("the dialog showed the recipient, the full fingerprint, the file, the withheld count and the cumulative figure", all(x in shown for x in ["acme-audit", DIGEST, "finding-1.txt", "Withheld: 1", "3 of 10"]))
 open(work / "p.json", "w").write(r.stdout)
+check("the dialog says how long the release can still be approved, without a warning when there is plenty of time", re.search(r"This release can be approved for another (1 h|59 min( \d+ s)?)\.\n", shown) is not None and "Only a few minutes" not in shown, shown[:200])
+for secs, pattern, warn in [(300, r"another (4 min( \d+ s)?|5 min)\.", True), (7500, r"another 2 h [45] min\.", False), (620, r"another 10 min( \d+ s)?\.", False), (590, r"another 9 min( \d+ s)?\.", True), (20, r"another (1[0-9]|20) s\.", True)]:
+    state["detail"]["appr-1"] = detail(statement=stmt(expires=int(time.time()) + secs))
+    rr = approve()
+    check(f"the dialog counts down for a release with {secs} seconds left, and warns only near the end", rr.returncode == 0 and re.search(pattern, rr.stderr) is not None and (("Only a few minutes are left." in rr.stderr) == warn), rr.stderr[:160])
+state["detail"]["appr-1"] = detail(statement=S0)
 v = subprocess.run(["cargo", "test", "-p", "kk-evidence", "hw02", "--", "--ignored"], cwd=repo, capture_output=True, text=True, env=dict(os.environ, KK_SE_PROOF=str(work / "p.json")))
 check("the Rust verifier accepts the enclave signature", "1 passed" in v.stdout, v.stdout[-120:] if "1 passed" not in v.stdout else "")
 

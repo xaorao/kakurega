@@ -71,6 +71,15 @@ func confirm(title: String, body: String, approve: String) -> Bool {
 }
 #endif
 
+/// "2 h 5 min", "4 min 12 s", "40 s": the two largest units that are not zero, never more (the same words as the desktop shell and the web app).
+func span(_ seconds: Int) -> String {
+    let s = max(0, seconds)
+    if s < 60 { return "\(s) s" }
+    let h = s / 3600, m = (s % 3600) / 60, r = s % 60
+    if h > 0 { return m > 0 ? "\(h) h \(m) min" : "\(h) h" }
+    return r > 0 ? "\(m) min \(r) s" : "\(m) min"
+}
+
 func fetchApproval(dataDir: String, id: String) -> [String: Any] {
     guard let raw = FileManager.default.contents(atPath: dataDir + "/admin.json"),
           let admin = try? JSONSerialization.jsonObject(with: raw) as? [String: Any],
@@ -116,6 +125,8 @@ case "approve":
     guard (detail["digest"] as? String) == f[1], (detail["recipient"] as? String) == f[6] else { fail("the approval details do not match the statement; refusing", 8) }
     guard let expires = Int(f[2]), expires > Int(Date().timeIntervalSince1970) else { fail("this approval has expired; refusing", 9) }
     var lines = ["Recipient: \(f[6])", "Release fingerprint (sha-256): \(f[1])", "Policy: \(f[5])", "Approval: \(f[0])   Job: \(f[3])"]
+    let left = expires - Int(Date().timeIntervalSince1970)
+    lines.append("This release can be approved for another \(span(left))." + (left <= 600 ? " Only a few minutes are left." : ""))
     if let files = detail["files"] as? [[String: Any]] {
         lines.append("")
         lines.append("Exactly these \(files.count) file(s) will be handed over:")
