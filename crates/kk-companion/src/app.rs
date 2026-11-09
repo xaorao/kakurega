@@ -105,6 +105,38 @@ fn secure(mut res: Response) -> Response {
     res
 }
 
+/// The most a request body may be for the server to read it all before a handler runs.
+const SMALL_BODY: usize = 64 * 1024;
+
+/// Runs the handler. A request whose small body the handler never reads (an action with an empty `{}`) must not be left
+/// with unread bytes in the connection: when the connection is closed after a large reply, the operating system resets it,
+/// and the reset discards the part of the reply the client has not read yet. About one full test run in four cut a
+/// 1.6 MB backup off that way. The body is read here instead; larger bodies keep streaming to the handlers that read them.
+async fn run_handler(req: Request, next: Next) -> Response {
+    let declared = req
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<usize>().ok());
+    let req = match declared {
+        Some(n) if n > 0 && n <= SMALL_BODY => {
+            let (parts, body) = req.into_parts();
+            match axum::body::to_bytes(body, SMALL_BODY).await {
+                Ok(bytes) => Request::from_parts(parts, axum::body::Body::from(bytes)),
+                Err(_) => {
+                    return secure(error(
+                        StatusCode::BAD_REQUEST,
+                        "BAD_BODY",
+                        "the request body could not be read",
+                    ))
+                }
+            }
+        }
+        _ => req,
+    };
+    secure(next.run(req).await)
+}
+
 async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     let expected_host = format!("127.0.0.1:{}", state.addr.port());
     let host_ok = req
@@ -174,7 +206,7 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
                 "this interface answers only the paired browser extension",
             ));
         }
-        return secure(next.run(req).await);
+        return run_handler(req, next).await;
     }
     if is_admin {
         if origin.is_some() || req.headers().contains_key(header::COOKIE) {
@@ -246,7 +278,7 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
             });
         }
     }
-    secure(next.run(req).await)
+    run_handler(req, next).await
 }
 
 #[derive(Deserialize)]

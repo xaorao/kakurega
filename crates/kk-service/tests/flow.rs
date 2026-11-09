@@ -460,10 +460,34 @@ fn admin(base: &str, token: &str, method: &str, path: &str, body: Option<Value>)
     )
 }
 
+/// Removes the data of earlier test runs, once per run. Every test keeps a directory of its own (with copies of a project and
+/// databases), and nothing removed them: a few hundred full runs left about twelve gigabytes and filled the disk. A directory
+/// untouched for an hour belongs to a run that is over; one in use by a run in progress is newer than that.
+fn prune_old_test_data(base: &Path) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let Ok(entries) = fs::read_dir(base) else {
+            return;
+        };
+        let hour = Duration::from_secs(3600);
+        for e in entries.flatten() {
+            let old = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > hour);
+            if old {
+                let _ = fs::remove_dir_all(e.path());
+            }
+        }
+    });
+}
+
 fn repo_copy(tag: &str) -> (PathBuf, PathBuf) {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/service-tmp")
-        .join(format!("{tag}-{}", std::process::id()));
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/service-tmp");
+    prune_old_test_data(&base);
+    let root = base.join(format!("{tag}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     let repo = root.join("repo");
     fn copy(src: &Path, dst: &Path) {
@@ -13727,8 +13751,11 @@ fn sv142_a_notes_backup_larger_than_the_usual_request_limit_can_still_be_restore
         plain.len()
     );
     let doc: Value = serde_json::from_slice(&plain).unwrap();
-    let (_, sealed) = w.post("/api/memories/export-sealed", json!({}));
-    assert_eq!(sealed["notes"], 300);
+    let (status, sealed) = w.post("/api/memories/export-sealed", json!({}));
+    assert_eq!(
+        sealed["notes"], 300,
+        "export-sealed answered {status}: {sealed}"
+    );
     let (_c2, w2, _r2, _x2, _s2) = boot("big-in-sealed", true);
     let (s, r) = w2.post(
         "/api/memories/import-sealed",
@@ -14030,5 +14057,76 @@ fn sv146_the_admin_door_and_the_scheduler_hold_the_same_limit_and_the_scheduler_
         let (lock, cv) = &*open;
         *lock.lock().unwrap() = true;
         cv.notify_all();
+    }
+}
+
+#[test]
+fn sv147_a_large_reply_arrives_whole_even_when_the_request_body_is_late_and_the_handler_never_reads_it(
+) {
+    use std::io::{Read, Write};
+    let (c, w, _repo, _root, _svc) = boot("late-body", true);
+    // 300 notes near the 4 KiB limit make the sealed backup over a megabyte
+    for i in 0..300 {
+        let mut t = format!("Late body note number {i} about quarterly planning. ");
+        while t.len() < 3900 {
+            t.push_str(&format!("Detail {} for item {i}. ", t.len()));
+        }
+        let (s, v) = w.post("/api/memories", json!({"text": t}));
+        assert_eq!(s, 201, "{i}: {v}");
+    }
+    // A raw request whose two-byte body follows the headers after a pause, as it can on a busy computer. A server that
+    // answers and closes without reading the body leaves those bytes unread; closing with unread bytes makes the operating
+    // system reset the connection, and the reset throws away the part of the reply the client has not read yet.
+    for round in 0..3 {
+        let mut sock = std::net::TcpStream::connect(c.addr).unwrap();
+        sock.set_read_timeout(Some(Duration::from_secs(60)))
+            .unwrap();
+        let head = format!(
+            "POST /api/memories/export-sealed HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nOrigin: {}\r\nCookie: {}\r\nX-KK-CSRF: {}\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n",
+            c.addr.port(),
+            w.base,
+            w.cookie,
+            w.csrf
+        );
+        sock.write_all(head.as_bytes()).unwrap();
+        std::thread::sleep(Duration::from_millis(700));
+        sock.write_all(b"{}").unwrap();
+        // read slowly, so that part of the reply is still waiting when the connection ends
+        std::thread::sleep(Duration::from_millis(300));
+        let mut all = Vec::new();
+        let mut buf = vec![0u8; 16384];
+        loop {
+            match sock.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => all.extend_from_slice(&buf[..n]),
+                Err(e) => panic!(
+                    "round {round}: the reply was cut off after {} bytes: {e}",
+                    all.len()
+                ),
+            }
+        }
+        let split = all
+            .windows(4)
+            .position(|x| x == b"\r\n\r\n")
+            .expect("a response head")
+            + 4;
+        let head_text = String::from_utf8_lossy(&all[..split]).to_ascii_lowercase();
+        assert!(
+            head_text.starts_with("http/1.1 200"),
+            "round {round}: {head_text}"
+        );
+        let promised: usize = head_text
+            .lines()
+            .find_map(|l| l.strip_prefix("content-length: "))
+            .and_then(|v| v.trim().parse().ok())
+            .expect("a content length");
+        assert!(promised > (1 << 20), "the reply is large: {promised}");
+        assert_eq!(
+            all.len() - split,
+            promised,
+            "round {round}: the reply arrived whole"
+        );
+        let doc: Value = serde_json::from_slice(&all[split..]).expect("the whole reply is JSON");
+        assert_eq!(doc["notes"], 300);
     }
 }
