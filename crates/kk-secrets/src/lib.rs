@@ -1607,7 +1607,8 @@ const CONSONANT_WORDS: &[&str] = &[
     "jsx", "tsx", "ts", "js", "mjs", "cjs", "ms", "fs", "ssr", "css", "bg", "rs", "pkg", "src",
     "http", "https", "html", "xhtml", "khtml", "xml", "sql", "ssh", "tcp", "udp", "tls", "ssl",
     "dns", "cfg", "ctx", "cmd", "dto", "fn", "npm", "cdp", "hmr", "wk", "ws", "cr", "zstd", "gz",
-    "jwt", "csv", "pdf", "sdk", "url",
+    "jwt", "csv", "pdf", "sdk", "url", "mcp", "db", "tx", "rx", "pk", "fk", "llm", "www", "mb",
+    "gb", "kb", "cwd", "pnpm",
 ];
 
 /// Whether every word of a CamelCase name (cut as in `camel_words_counting`) has a vowel or is a known consonant-only word.
@@ -1748,7 +1749,60 @@ fn literal_credential(v: &str, quoted: bool, allow_identifier: bool) -> bool {
             return false;
         }
     }
+    if allow_identifier && random_letters(v) {
+        return true;
+    }
     credential_value_with(v, allow_identifier)
+}
+
+/// A password that is a run of 16 or more letters of both cases and no digit, such as `TFOgGskGPxoGXWOnWiqH`. Without a
+/// digit the general rule asks for very high entropy and turned down about half of such values; after a key that names a
+/// secret they are credentials. A name made of words must still pass: it is told from random letters by its words, because
+/// a random cut at the capitals leaves pieces with no vowel (`Qzwpl`) or no lower-case run longer than three letters, and a
+/// real name (`bindCLIShortcuts`, `getOAuthClientSpy`) has neither. Measured on 41,487 real identifiers of 16 or more
+/// letters and on random letter values: 96% of the random values and 0.7% of the identifiers meet the test.
+fn random_letters(v: &str) -> bool {
+    if !(16..=64).contains(&v.len())
+        || !v.bytes().all(|c| c.is_ascii_alphabetic())
+        || !v.bytes().any(|c| c.is_ascii_uppercase())
+        || !v.bytes().any(|c| c.is_ascii_lowercase())
+        || entropy(v) < 3.5
+        || templated(v)
+        || indirect_reference(v)
+        || placeholder(v)
+        || sequential(v)
+    {
+        return false;
+    }
+    let b = v.as_bytes();
+    let mut longest_lower = 0usize;
+    let mut vowelless_words = 0usize;
+    let mut i = 0usize;
+    while i < b.len() {
+        if !b[i].is_ascii_lowercase() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < b.len() && b[i].is_ascii_lowercase() {
+            i += 1;
+        }
+        longest_lower = longest_lower.max(i - start);
+        // the word is the lower-case run with the capital letter just before it, as in `Shortcuts`
+        let word_start = if start > 0 && b[start - 1].is_ascii_uppercase() {
+            start - 1
+        } else {
+            start
+        };
+        let word = v[word_start..i].to_ascii_lowercase();
+        let has_vowel = word
+            .bytes()
+            .any(|c| matches!(c, b'a' | b'e' | b'i' | b'o' | b'u' | b'y'));
+        if word.len() >= 2 && !has_vowel && !CONSONANT_WORDS.contains(&word.as_str()) {
+            vowelless_words += 1;
+        }
+    }
+    vowelless_words >= 1 || longest_lower <= 3
 }
 
 /// A bare `...Key = value` is a credential only when the value is clearly one: 20 or more token characters with high
@@ -2509,6 +2563,208 @@ fn scan_curl(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
     }
 }
 
+/// The characters a bearer token, an API token or a cookie value is made of.
+fn token_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, b'_' | b'=' | b'~' | b'@' | b'.' | b'+' | b'/' | b'-')
+}
+
+/// The longest token or header line looked at. A real bearer token or cookie header is far shorter; the limit keeps a text
+/// made of thousands of keywords, each followed by a very long run, from costing time in proportion to the square of its size.
+const HEADER_WINDOW: usize = 8192;
+
+/// The end of the run of token characters that starts at `from`, at most `HEADER_WINDOW` bytes on.
+fn token_end(b: &[u8], from: usize) -> usize {
+    let limit = from.saturating_add(HEADER_WINDOW).min(b.len());
+    let mut e = from;
+    while e < limit && token_byte(b[e]) {
+        e += 1;
+    }
+    e
+}
+
+/// Which authorization scheme starts at `at` (in the lower-cased text), and where its value starts.
+fn auth_scheme(lower: &str, at: usize) -> Option<usize> {
+    let rest = &lower[at..];
+    ["bearer", "basic", "api-token", "token"]
+        .iter()
+        .find(|w| {
+            rest.starts_with(**w)
+                && rest[w.len()..]
+                    .bytes()
+                    .next()
+                    .is_some_and(|c| c == b' ' || c == b'\t')
+        })
+        .map(|w| {
+            let b = rest.as_bytes();
+            let mut k = w.len();
+            while k < b.len() && matches!(b[k], b' ' | b'\t') {
+                k += 1;
+            }
+            at + k
+        })
+}
+
+/// Whether an HTTP Basic value is a user and a password that someone would not publish: it decodes to `user:password`
+/// with a password that is not a placeholder word.
+fn basic_credential(v: &str) -> bool {
+    if v.len() < 8 || !v.bytes().all(token_byte) {
+        return false;
+    }
+    match base64_decode(v).and_then(|d| String::from_utf8(d).ok()) {
+        Some(pair) => match pair.split_once(':') {
+            Some((_, pw)) => {
+                !pw.is_empty()
+                    && !pw.contains(char::is_control)
+                    && !placeholder(pw)
+                    && !templated(pw)
+                    && !["password", "pass", "secret", "token"]
+                        .contains(&pw.to_ascii_lowercase().as_str())
+            }
+            None => credential_value_with(v, true),
+        },
+        None => credential_value_with(v, true),
+    }
+}
+
+/// Credentials in HTTP headers outside a `curl` command: `Authorization: Bearer ...` in a request dump, a JSON or YAML
+/// header, Python or JavaScript code or a sentence; a `Bearer` token anywhere; and the values of session cookies in `Cookie:` and
+/// `Set-Cookie:` lines. The reference scanners (gitleaks, detect-secrets) read an Authorization header only inside `curl`.
+fn scan_headers(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
+    let lower = text.to_ascii_lowercase();
+    let b = text.as_bytes();
+    let mut flagged: BTreeSet<usize> = BTreeSet::new();
+    let mut from = 0usize;
+    while let Some(off) = lower[from..].find("authorization") {
+        let i = from + off;
+        let mut p = i + "authorization".len();
+        from = p;
+        while p < b.len() && matches!(b[p], b'"' | b'\'' | b'`' | b' ' | b'\t') {
+            p += 1;
+        }
+        if p >= b.len() || !matches!(b[p], b':' | b'=') {
+            continue;
+        }
+        p += 1;
+        if p < b.len() && b[p] == b'>' {
+            p += 1;
+        }
+        while p < b.len() && matches!(b[p], b'"' | b'\'' | b'`' | b' ' | b'\t') {
+            p += 1;
+        }
+        let scheme_value = auth_scheme(&lower, p);
+        let vstart = scheme_value.unwrap_or(p);
+        let vend = token_end(b, vstart);
+        let value = &text[vstart..vend];
+        let basic = lower[p..].starts_with("basic");
+        // whatever follows in the same token has been read; a keyword inside it is part of this value
+        from = from.max(vend);
+        let ok = if value.len() < 8 || templated(value) {
+            false
+        } else if basic && scheme_value.is_some() {
+            basic_credential(value)
+        } else if scheme_value.is_some() {
+            literal_credential(value, false, true)
+        } else {
+            value.len() >= 12 && literal_credential(value, false, true)
+        };
+        if ok {
+            flagged.insert(vstart);
+            push(
+                hits,
+                "credential in an authorization header",
+                vstart,
+                vend,
+                decoded,
+            );
+        }
+    }
+    let mut from = 0usize;
+    while let Some(off) = lower[from..].find("bearer") {
+        let i = from + off;
+        from = i + 1;
+        // `bearer` is a word of its own, not the end of `http-bearer` or `is_bearer`
+        if i > 0 && (b[i - 1].is_ascii_alphanumeric() || matches!(b[i - 1], b'-' | b'_' | b'.')) {
+            continue;
+        }
+        let mut p = i + "bearer".len();
+        if p >= b.len() || !matches!(b[p], b' ' | b'\t') {
+            continue;
+        }
+        while p < b.len() && matches!(b[p], b' ' | b'\t') {
+            p += 1;
+        }
+        let vend = token_end(b, p);
+        from = from.max(vend);
+        let value = &text[p..vend];
+        if flagged.contains(&p)
+            || value.len() < 16
+            || !value.bytes().any(|c| c.is_ascii_digit())
+            || templated(value)
+        {
+            continue;
+        }
+        if literal_credential(value, false, true) {
+            push(hits, "bearer token", p, vend, decoded);
+        }
+    }
+    for header in ["set-cookie", "cookie"] {
+        let mut from = 0usize;
+        while let Some(off) = lower[from..].find(header) {
+            let i = from + off;
+            from = i + header.len();
+            if header == "cookie" && i >= 4 && &lower.as_bytes()[i - 4..i] == b"set-" {
+                continue;
+            }
+            let mut p = from;
+            while p < b.len() && matches!(b[p], b'"' | b'\'' | b' ' | b'\t') {
+                p += 1;
+            }
+            if p >= b.len() || b[p] != b':' {
+                continue;
+            }
+            p += 1;
+            let mut window = p.saturating_add(HEADER_WINDOW).min(text.len());
+            while !text.is_char_boundary(window) {
+                window -= 1;
+            }
+            let line_end = text[p..window]
+                .find(['\n', '\r', '"', '\''])
+                .map_or(window, |k| p + k);
+            // the header line is read once; a `Cookie:` inside it is part of this line
+            from = from.max(line_end);
+            let mut at = p;
+            for part in text[p..line_end].split(';') {
+                let part_start = at;
+                at += part.len() + 1;
+                let Some((name, value)) = part.split_once('=') else {
+                    continue;
+                };
+                let name_l = name.trim().to_ascii_lowercase();
+                let sensitive = [
+                    "sess", "sid", "token", "auth", "jwt", "secret", "key", "remember",
+                ]
+                .iter()
+                .any(|w| name_l.contains(w));
+                let value_t = value.trim();
+                if !sensitive || value_t.len() < 8 || templated(value_t) {
+                    continue;
+                }
+                if value_t.bytes().all(token_byte) && literal_credential(value_t, false, true) {
+                    let vstart = part_start + part.len() - value.len()
+                        + (value.len() - value.trim_start().len());
+                    push(
+                        hits,
+                        "session cookie value",
+                        vstart,
+                        vstart + value_t.len(),
+                        decoded,
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// Sidekiq Pro and Enterprise gems are fetched with a credential of two eight-character hex halves, kept in an
 /// environment variable named after the vendor host.
 fn scan_gem_credentials(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
@@ -2545,6 +2801,7 @@ fn scan_text(text: &str, decoded: bool) -> Vec<Hit> {
     scan_wallets(text, decoded, &mut hits);
     scan_shapes(text, decoded, &mut hits);
     scan_curl(text, decoded, &mut hits);
+    scan_headers(text, decoded, &mut hits);
     scan_gem_credentials(text, decoded, &mut hits);
     hits
 }

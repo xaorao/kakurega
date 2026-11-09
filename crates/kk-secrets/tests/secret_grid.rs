@@ -502,3 +502,90 @@ fn sg10_real_names_and_fixtures_are_still_names_and_fixtures() {
         );
     }
 }
+
+#[test]
+fn sg11_a_random_letters_only_password_after_a_secret_key_is_flagged_and_the_leftover_rate_is_pinned(
+) {
+    // Found by a failing run of the attachment grid (flow sv126): about 3% of random 20-character passwords have no digit, and
+    // the general rule turned down half of those, so 1.4% of such passwords were let through, the same before and after the
+    // detector changes of the same week.
+    for v in [
+        "TFOgGskGPxoGXWOnWiqH",
+        "bIrQkcBzbZYdgBgHawIc",
+        "VKknlkJFEjBzmixKbDDn",
+        "IjiIjPPDuqwcMCUnAzDh",
+    ] {
+        for text in [
+            format!("db_password = \"{v}\""),
+            format!("secret: {v}"),
+            format!("password={v}"),
+            format!("Pricing is flat.\n\ndb_password = \"{v}\"\n\nEnd of note."),
+        ] {
+            assert!(
+                !scan(&text).is_empty() || looks_secret(&text).is_some(),
+                "not flagged: {text:?}"
+            );
+        }
+    }
+    // only after a key that names a secret: the same letters under an ordinary key are left as they were
+    for text in [
+        "title = \"TFOgGskGPxoGXWOnWiqH\"",
+        "name: bIrQkcBzbZYdgBgHawIc",
+        "label=VKknlkJFEjBzmixKbDDn",
+        // a key that says the value is a hash, a checksum or a digest does not name a password
+        "password_hash = \"TFOgGskGPxoGXWOnWiqH\"",
+        "secret_checksum: bIrQkcBzbZYdgBgHawIc",
+        "token_digest=VKknlkJFEjBzmixKbDDn",
+        // the measured range starts at 16 letters; a shorter value is left as it was
+        "secret: aQzXkLmNpRtVwBc",
+    ] {
+        assert!(
+            scan(text).is_empty() && looks_secret(text).is_none(),
+            "an ordinary key now flags its value: {text:?}"
+        );
+    }
+    let a = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut missed = 0usize;
+    for seed in 1..=200_000u64 {
+        let t = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 8;
+        let v = fresh(a, 20, t);
+        let text = format!("Pricing is flat.\n\ndb_password = \"{v}\"\n\nEnd of note.");
+        if scan(&text).is_empty() && looks_secret(&text).is_none() {
+            missed += 1;
+        }
+    }
+    // before: 2,822 of 200,000
+    assert!(missed <= 190, "{missed} of 200000 random 20-character passwords were let through (was 2822 before, 176 after)");
+}
+
+#[test]
+fn sg12_names_with_acronyms_and_words_are_still_names_after_a_secret_key() {
+    // taken from real code; each has acronyms or words with vowels, so none is random letters
+    for name in [
+        "bindCLIShortcuts",
+        "isTSObjectKeyword",
+        "getOAuthClientSpy",
+        "OpenAIConversationsSession",
+        "setDOMStorageItemReturnValue",
+        "CSSContainerRule",
+        "createOAuthClientMetadata",
+        "JSDocCommentTextToken",
+        "TemplateHTMLAttributes",
+        "doUpdateExtraHTTPHeaders",
+        "stopFilesystemMcpServer",
+        "listMcpServerOAuthStatuses",
+        "UserSessionStoreFactory",
+        "loadConfigurationFromDisk",
+    ] {
+        for text in [
+            format!("db_password = \"{name}\""),
+            format!("secret: {name}"),
+            format!("token={name}"),
+        ] {
+            assert!(
+                scan(&text).is_empty() && looks_secret(&text).is_none(),
+                "a name was withheld: {text:?}"
+            );
+        }
+    }
+}
