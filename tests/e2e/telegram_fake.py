@@ -328,6 +328,33 @@ try:
     check("after a 429 the bridge tried once, waited the 2 seconds Telegram named, and then delivered the notice", n3 is not None and len(tries) == 1 and 1.9 <= gap < 15, f"tries={len(tries)} gap={gap:.1f}s")
     check("and the notice was delivered once, not twice", len([x for x in sent if j3 in x["text"] and "finished" in x["text"]]) == 1)
 
+    # a burst: eight reviews finish while the bridge is not looking (paused), so its next look sees eight new notices at once
+    import signal
+    os.kill(b2.pid, signal.SIGSTOP)
+    burst = []
+    for batch in range(2):
+        ids = [adm("/admin/jobs", {"repo": str(work / "root/payments-service"), "recipient": f"burst-{batch}-{i}"})["id"] for i in range(4)]
+        end = time.time() + 120
+        while time.time() < end:
+            states = {x["id"]: x["state"] for x in adm("/admin/jobs")["jobs"]}
+            if all(states.get(i) not in (None, "running") for i in ids):
+                break
+            time.sleep(0.5)
+        burst += ids
+    with lock:
+        n_pre = len(sent)
+    os.kill(b2.pid, signal.SIGCONT)
+    fold = wait_sent(lambda m: "more things happened at once" in m["text"], timeout=60)
+    time.sleep(4)
+    with lock:
+        after = sent[n_pre:]
+    singles = [x for x in after if any(j in x["text"] for j in burst)]
+    folds = [x for x in after if "more things happened at once" in x["text"]]
+    check("eight reviews finishing at once become three notices and one line with the count", fold is not None and len(singles) == 3 and len(folds) == 1 and folds[0]["text"].startswith("5 more things happened at once"), f"singles={len(singles)} folds={[x['text'][:40] for x in folds]}")
+    import re as _re
+    nums = [int(_re.search(r"job-(\d+)", x["text"]).group(1)) for x in singles]
+    check("and the three shown are the three newest reviews, newest first, none is repeated, and the count line comes last", len({x["text"] for x in singles}) == 3 and nums == sorted((int(j.split("-")[1]) for j in burst), reverse=True)[:3] and after[-1]["text"].startswith("5 more"), f"{nums} {sorted((int(j.split('-')[1]) for j in burst), reverse=True)[:3]}")
+
     # an outage with the bridge restarted in the middle: the notice waits in the owner-only outbox file and arrives once afterwards
     b2.terminate(); b2.wait(timeout=10)
     send_mode[0] = "500"

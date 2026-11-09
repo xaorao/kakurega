@@ -14377,3 +14377,87 @@ fn sv150_a_selection_holding_a_bearer_token_or_a_session_cookie_is_never_queued_
         "only the ordinary selection: {list}"
     );
 }
+
+#[test]
+fn sv151_the_review_list_is_newest_first_by_number_with_ten_or_more_reviews() {
+    let (c, w, repo, _root, _svc) = boot("job-order", true);
+    let repo_s = repo.to_string_lossy().to_string();
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    let admin_token = c.security.admin_token().to_string();
+    // twelve reviews, one after the other (the service runs four at once at most)
+    let mut ids = Vec::new();
+    for i in 0..12 {
+        let (s, v) = w.post(
+            "/api/jobs",
+            json!({"repo": repo_s, "recipient": format!("order-{i}")}),
+        );
+        assert_eq!(s, 202, "{v}");
+        let id = v["id"].as_str().unwrap().to_string();
+        wait_for(
+            &w,
+            &id,
+            &["ready", "failed", "nothing_to_release", "awaiting_approval"],
+        );
+        ids.push(id);
+    }
+    let want: Vec<String> = (1..=12).rev().map(|n| format!("job-{n}")).collect();
+    assert_eq!(ids.last().unwrap(), "job-12");
+    let from_web: Vec<String> = w.get("/api/jobs").1["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|j| j["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(from_web, want, "the web list: job-12 first, job-1 last");
+    let (_, admin_list) = admin(&base, &admin_token, "GET", "/admin/jobs", None);
+    let from_admin: Vec<String> = admin_list["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|j| j["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(from_admin, want, "the list agents and the phone read");
+}
+
+#[test]
+fn sv152_waiting_approvals_are_listed_oldest_first_by_number_when_the_numbers_pass_nine() {
+    let (c, w, repo, _root, _svc) = boot("approval-order", true);
+    let repo_s = repo.to_string_lossy().to_string();
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    let admin_token = c.security.admin_token().to_string();
+    // reviews and approvals share one counter, so asking for an approval straight after each review makes the approval
+    // numbers 2, 4, 6, 8, 10, 12 ...: as text, "appr-10" would come before "appr-2"
+    let mut asked = Vec::new();
+    for i in 0..8 {
+        let (s, v) = w.post(
+            "/api/jobs",
+            json!({"repo": repo_s, "recipient": format!("order-{i}")}),
+        );
+        assert_eq!(s, 202, "{v}");
+        let id = v["id"].as_str().unwrap().to_string();
+        wait_for(
+            &w,
+            &id,
+            &["ready", "failed", "nothing_to_release", "awaiting_approval"],
+        );
+        let (s, v) = w.post(&format!("/api/jobs/{id}/approval"), json!({}));
+        assert_eq!(s, 202, "{id}: {v}");
+        asked.push(v["approval"].as_str().unwrap().to_string());
+    }
+    let (_, waiting) = admin(&base, &admin_token, "GET", "/admin/approvals", None);
+    let listed: Vec<String> = waiting["approvals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["id"].as_str().unwrap().to_string())
+        .collect();
+    let numbers: Vec<u64> = asked
+        .iter()
+        .map(|a| a.trim_start_matches("appr-").parse().unwrap())
+        .collect();
+    assert!(
+        numbers.iter().any(|n| *n < 10) && numbers.iter().any(|n| *n >= 10),
+        "the numbers must cross from one digit to two: {numbers:?}"
+    );
+    assert_eq!(listed, asked, "waiting approvals, oldest first");
+}

@@ -6531,10 +6531,30 @@ async fn away_seen(axum::Extension(svc): Svc) -> Response {
     }
 }
 
+/// The number in a review's id: 12 for `job-12`. An id without one counts as 0.
+fn job_number(id: &str) -> u64 {
+    id.strip_prefix("job-")
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Reviews newest first, by the number in their id, so `job-10` comes before `job-9`. The map is keyed by the id as text, and
+/// walking it backwards puts `job-9` ahead of `job-13`: with ten or more reviews the list showed an old review at the top and
+/// the newest ones near the bottom, to the web page, to agents and to the phone.
+fn jobs_newest_first<'a>(jobs: impl Iterator<Item = &'a Job>) -> Vec<&'a Job> {
+    let mut v: Vec<&Job> = jobs.collect();
+    v.sort_by(|a, b| {
+        job_number(&b.id)
+            .cmp(&job_number(&a.id))
+            .then_with(|| b.id.cmp(&a.id))
+    });
+    v
+}
+
 async fn list(axum::Extension(svc): Svc) -> Json<Value> {
     let g = svc.inner.lock().expect("lock");
     Json(
-        json!({"jobs": g.jobs.values().rev().map(|j| svc.job_json(j, g.snaps.get(&j.id))).collect::<Vec<_>>()}),
+        json!({"jobs": jobs_newest_first(g.jobs.values()).into_iter().map(|j| svc.job_json(j, g.snaps.get(&j.id))).collect::<Vec<_>>()}),
     )
 }
 
@@ -7577,8 +7597,25 @@ async fn download(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Re
 
 async fn admin_list(axum::Extension(svc): Svc) -> Json<Value> {
     let g = svc.inner.lock().expect("lock");
+    // oldest first, by the number in the id: `appr-9` was asked before `appr-10`
+    let mut waiting: Vec<(&String, &ApprovalRec)> = g
+        .approvals
+        .iter()
+        .filter(|(_, a)| a.state == "waiting" && !a.denied)
+        .collect();
+    waiting.sort_by(|a, b| {
+        a.0.strip_prefix("appr-")
+            .and_then(|n| n.parse::<u64>().ok())
+            .unwrap_or(0)
+            .cmp(
+                &b.0.strip_prefix("appr-")
+                    .and_then(|n| n.parse::<u64>().ok())
+                    .unwrap_or(0),
+            )
+            .then_with(|| a.0.cmp(b.0))
+    });
     Json(
-        json!({"approvals": g.approvals.iter().filter(|(_, a)| a.state == "waiting" && !a.denied).map(|(id, a)| json!({"id": id, "job": a.job, "recipient": a.recipient})).collect::<Vec<_>>()}),
+        json!({"approvals": waiting.into_iter().map(|(id, a)| json!({"id": id, "job": a.job, "recipient": a.recipient})).collect::<Vec<_>>()}),
     )
 }
 
@@ -8113,7 +8150,9 @@ async fn admin_jobs_list(axum::Extension(svc): Svc) -> Json<Value> {
         .values()
         .cloned()
         .collect();
-    Json(json!({"jobs": jobs.iter().rev().map(|j| mcp_view(&svc, j)).collect::<Vec<_>>()}))
+    Json(
+        json!({"jobs": jobs_newest_first(jobs.iter()).into_iter().map(|j| mcp_view(&svc, j)).collect::<Vec<_>>()}),
+    )
 }
 
 async fn admin_job_start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -> Response {
