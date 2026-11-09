@@ -14295,3 +14295,85 @@ fn sv149_a_secret_typed_where_a_name_or_a_reason_is_expected_is_refused_everywhe
     let (s, v) = w.post("/api/pii-allow", json!({"add": "jane.doe@example.com"}));
     assert_eq!(s, 200, "{v}");
 }
+
+#[test]
+fn sv150_a_selection_holding_a_bearer_token_or_a_session_cookie_is_never_queued_from_the_browser_extension(
+) {
+    const ALNUM: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let (root, _repo) = repo_copy("ext-headers");
+    let ext = "chrome-extension://abcdefghijklmnopabcdefghijklmnop";
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(CannedRunner { confirm: true }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    let bearer = format!("Bearer {}", c.security.admin_token());
+    let code = raw(
+        &base,
+        "POST",
+        "/admin/extension/pairing",
+        &[("Authorization", &bearer)],
+        Some(json!({})),
+    )
+    .1["code"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (st, paired) = raw(
+        &base,
+        "POST",
+        "/ext/pair",
+        &[("Origin", ext)],
+        Some(json!({"code": code})),
+    );
+    assert_eq!(st, 200, "{paired}");
+    let auth = format!("Bearer {}", paired["token"].as_str().unwrap());
+    let h = [("Authorization", auth.as_str()), ("Origin", ext)];
+    let capture = |text: String| {
+        raw(
+            &base,
+            "POST",
+            "/ext/capture",
+            &h,
+            Some(json!({"text": text, "page": "https://docs.example.com/api"})),
+        )
+    };
+    for round in 0..5 {
+        let tok = fresh(ALNUM, 40);
+        let cookie = fresh(ALNUM, 32);
+        for text in [
+            format!("Authorization: Bearer {tok}"),
+            format!("curl-free example: the header is Authorization: Bearer {tok} on every call"),
+            format!("Set-Cookie: sessionid={cookie}; Path=/; HttpOnly"),
+            format!("Cookie: theme=dark; sessionid={cookie}"),
+        ] {
+            let (st, v) = capture(text.clone());
+            assert_eq!(
+                st, 422,
+                "round {round}: a selection holding a secret was queued: {text}: {v}"
+            );
+        }
+    }
+    // an ordinary selection that talks about the same headers is still queued
+    let (st, v) = capture(
+        "The API takes an Authorization header with a Bearer token and sets a session cookie."
+            .into(),
+    );
+    assert_eq!(st, 202, "{v}");
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (_, list) = w.get("/api/jobs/browser/memory-suggestions");
+    assert_eq!(
+        list["suggestions"].as_array().unwrap().len(),
+        1,
+        "only the ordinary selection: {list}"
+    );
+}
