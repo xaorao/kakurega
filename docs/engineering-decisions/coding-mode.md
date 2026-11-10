@@ -51,3 +51,8 @@
 3. More runners (Rust, Go) through the sandbox; a verdict line that runs the tests as they were before the task as well as after.
 4. Canonical-name retry for a path, if a real failure shows it is needed.
 5. Text tool-call recovery in the other agent loops (chat tools, research), decided per loop.
+
+## Attack grid (found a real gap)
+- `lp11` runs 40 path shapes (case variants, `./`, `..`, absolute, trailing slash or space or dot, leading space, non-breaking and zero-width characters) through all six tools against a project with a restricted `.env`, a mixed-case `.ENV.local`, a key file and an ordinary-named restricted `Private/Customers.CSV`, with fresh random values per run, and eight search probes (names, prefixes, key-block markers). Pass means no value or marker reaches the model, the report or the patch, the patch stays empty and no listing names a withheld file.
+- Found and fixed: a task could create `.env ` (trailing space), which Windows treats as the real `.env`. `writable` now refuses a path part that starts or ends with a space, ends with a dot, or holds a non-breaking or zero-width space. 3 of 3 mutants of the new rule caught; 4 mutants of the withhold logic caught (a case-sensitive check survived until the grid had a restricted file with an ordinary name, and until the create call stopped being undone by the delete before it).
+- Not covered: the sandboxed test run's view of the host (cs03 covers network and project writes), the real model's behaviour under injection text in project files (scripted here).

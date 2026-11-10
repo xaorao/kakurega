@@ -130,6 +130,16 @@ impl Workspace {
         {
             return Err("a path may not climb out of the project or have empty parts".into());
         }
+        // Windows drops a trailing space or dot, so ".env " would be the real ".env" there
+        if parts.iter().any(|p| {
+            p.trim() != *p
+                || p.ends_with('.')
+                || p.chars().any(|c| c == '\u{a0}' || c == '\u{200b}')
+        }) {
+            return Err(
+                "a part of a path may not start or end with a space or end with a dot".into(),
+            );
+        }
         const NEVER_DIRS: &[&str] = &[
             ".git",
             ".hg",
