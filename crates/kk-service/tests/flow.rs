@@ -17732,3 +17732,233 @@ fn sv215_at_most_twenty_suggestions_wait_at_once() {
         20
     );
 }
+
+fn pack_bytes(seed: u8, name: &str, version: &str, methods: Vec<&str>, not_after: i64) -> String {
+    let signer = kk_evidence::keys::Signer::from_seed([seed; 32]);
+    let ms: Vec<Value> = methods
+        .iter()
+        .map(|n| json!({"name": n, "description": "d", "triggers": ["contract"], "avoid": [], "body": "Quote clause numbers."}))
+        .collect();
+    let draft = json!({"format": "kakurega-pack", "version": 1, "name": name, "pack_version": version, "not_after": not_after, "methods": ms});
+    kk_packs::sign_pack(&draft, &signer, 1_000).unwrap()
+}
+
+fn pin_publisher(w: &Web, seed: u8, label: &str) -> (u16, Value) {
+    let signer = kk_evidence::keys::Signer::from_seed([seed; 32]);
+    w.post(
+        "/api/packs/publishers",
+        json!({"public": kk_evidence::keys::public_key_b64(&signer.public()), "label": label}),
+    )
+}
+
+#[test]
+fn sv216_a_pack_imports_only_from_a_pinned_publisher_and_its_methods_arrive_unapproved() {
+    let (c, w, _seen, _root) = instructions_service("packs-import");
+    let anon = Web::new(c.addr);
+    assert_eq!(anon.get("/api/packs").0, 401);
+    assert_eq!(anon.post("/api/packs/import", json!({"pack": "x"})).0, 401);
+    assert_eq!(
+        anon.post(
+            "/api/packs/publishers",
+            json!({"public": "x", "label": "y"})
+        )
+        .0,
+        401
+    );
+    let pack = pack_bytes(
+        1,
+        "legal-kit",
+        "1.0.0",
+        vec!["contract-check", "clause-notes"],
+        4_000_000_000,
+    );
+    let (s, v) = w.post("/api/packs/import", json!({"pack": pack}));
+    assert_eq!(
+        (s, v["error"]["code"].clone()),
+        (422, json!("PACK_REFUSED")),
+        "no publisher is pinned yet: {v}"
+    );
+    assert!(
+        w.get("/api/methods").1["methods"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "a refused pack changes nothing"
+    );
+    let (s, v) = pin_publisher(&w, 1, "Legal team");
+    assert_eq!(s, 200, "{v}");
+    let list = w.get("/api/packs").1;
+    assert_eq!(list["publishers"][0]["label"], "Legal team");
+    let (s, v) = w.post("/api/packs/import", json!({"pack": pack}));
+    assert_eq!(
+        (s, v["imported"].clone()),
+        (200, json!(["contract-check", "clause-notes"])),
+        "{v}"
+    );
+    let methods = w.get("/api/methods").1["methods"].clone();
+    assert_eq!(methods.as_array().unwrap().len(), 2);
+    assert!(
+        methods
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["approved"] == json!(false)),
+        "every imported method waits for approval"
+    );
+    // another publisher's pack is refused
+    let other = pack_bytes(2, "other-kit", "1.0.0", vec!["other-method"], 4_000_000_000);
+    assert_eq!(w.post("/api/packs/import", json!({"pack": other})).0, 422);
+    // a changed pack is refused
+    let tampered = pack.replacen("A", "B", 1);
+    assert_eq!(
+        w.post("/api/packs/import", json!({"pack": tampered})).0,
+        422
+    );
+}
+
+#[test]
+fn sv217_an_import_never_replaces_a_method_and_is_all_or_nothing() {
+    let (_c, w, _seen, _root) = instructions_service("packs-exists");
+    pin_publisher(&w, 1, "Legal team");
+    let (_, saved) = w.post("/api/methods", json!({"name": "clause-notes", "description": "mine", "triggers": ["contract"], "body": "My own text."}));
+    w.post(
+        "/api/methods/approve",
+        json!({"name": "clause-notes", "hash": saved["hash"]}),
+    );
+    let pack = pack_bytes(
+        1,
+        "legal-kit",
+        "1.0.0",
+        vec!["contract-check", "clause-notes"],
+        4_000_000_000,
+    );
+    let (s, v) = w.post("/api/packs/import", json!({"pack": pack}));
+    assert_eq!(
+        (s, v["error"]["code"].clone()),
+        (409, json!("PACK_NAME_EXISTS")),
+        "{v}"
+    );
+    let methods = w.get("/api/methods").1["methods"].clone();
+    assert_eq!(
+        methods.as_array().unwrap().len(),
+        1,
+        "nothing from the pack was saved, not even the method with a free name"
+    );
+    assert_eq!(
+        (methods[0]["body"].clone(), methods[0]["approved"].clone()),
+        (json!("My own text."), json!(true))
+    );
+}
+
+#[test]
+fn sv218_an_older_version_of_a_pack_than_one_imported_is_refused_and_a_removed_publisher_no_longer_counts(
+) {
+    let (_c, w, _seen, _root) = instructions_service("packs-rollback");
+    let (_, p) = pin_publisher(&w, 1, "Legal team");
+    let v2 = pack_bytes(1, "legal-kit", "2.0.0", vec!["new-method"], 4_000_000_000);
+    assert_eq!(w.post("/api/packs/import", json!({"pack": v2})).0, 200);
+    w.post("/api/methods/remove", json!({"name": "new-method"}));
+    let v1 = pack_bytes(1, "legal-kit", "1.0.0", vec!["old-method"], 4_000_000_000);
+    let (s, v) = w.post("/api/packs/import", json!({"pack": v1}));
+    assert_eq!(s, 422, "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("older than one you already imported"),
+        "{v}"
+    );
+    let expired = pack_bytes(1, "legal-kit", "3.0.0", vec!["late-method"], 2_000);
+    assert_eq!(
+        w.post("/api/packs/import", json!({"pack": expired})).0,
+        422,
+        "an expired pack is refused"
+    );
+    let v3 = pack_bytes(1, "legal-kit", "3.0.0", vec!["late-method"], 4_000_000_000);
+    w.post(
+        "/api/packs/publishers/remove",
+        json!({"key_id": p["key_id"]}),
+    );
+    assert_eq!(
+        w.post("/api/packs/import", json!({"pack": v3})).0,
+        422,
+        "an unpinned publisher is refused"
+    );
+}
+
+#[test]
+fn sv219_publisher_keys_are_checked_and_limited() {
+    let (_c, w, _seen, _root) = instructions_service("packs-keys");
+    let good_key =
+        kk_evidence::keys::public_key_b64(&kk_evidence::keys::Signer::from_seed([4; 32]).public());
+    let long_label = "x".repeat(81);
+    for (label, body) in [
+        ("not base64", json!({"public": "!!!", "label": "x"})),
+        ("too short", json!({"public": "AAAA", "label": "x"})),
+        (
+            "an unknown field",
+            json!({"public": "A".repeat(43), "label": "x", "trust": "full"}),
+        ),
+        (
+            "a label that is too long",
+            json!({"public": good_key.clone(), "label": long_label.clone()}),
+        ),
+        ("no label", json!({"public": good_key.clone(), "label": ""})),
+        (
+            "hidden text in the label",
+            json!({"public": good_key.clone(), "label": "x\u{202e}y"}),
+        ),
+        (
+            "a control character in the label",
+            json!({"public": good_key.clone(), "label": "x\u{7}y"}),
+        ),
+    ] {
+        let (s, v) = w.post("/api/packs/publishers", body);
+        assert!(s == 422 || s == 400, "{label}: {s} {v}");
+    }
+    let zero = kk_evidence::keys::public_key_b64(&[0u8; 32]);
+    let (s, v) = w.post(
+        "/api/packs/publishers",
+        json!({"public": zero, "label": "a weak key"}),
+    );
+    assert_eq!(s, 422, "a small-order key is refused as a publisher: {v}");
+    for i in 1..=10u8 {
+        assert_eq!(pin_publisher(&w, i, &format!("p{i}")).0, 200);
+    }
+    assert_eq!(pin_publisher(&w, 11, "one too many").0, 422);
+    assert_eq!(
+        pin_publisher(&w, 3, "again").0,
+        200,
+        "pinning a key that is already pinned changes its label"
+    );
+    let labels: Vec<String> = w.get("/api/packs").1["publishers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["label"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        labels.contains(&"again".to_string()) && !labels.contains(&"p3".to_string()),
+        "{labels:?}"
+    );
+}
+
+#[test]
+fn sv220_a_pack_whose_method_holds_a_secret_is_refused_whole() {
+    let (_c, w, _seen, _root) = instructions_service("packs-secret");
+    pin_publisher(&w, 1, "Legal team");
+    let signer = kk_evidence::keys::Signer::from_seed([1; 32]);
+    let key = format!("{}{}", "sk_li", "ve_abcdefghijklmnop0123");
+    let draft = json!({"format": "kakurega-pack", "version": 1, "name": "leaky-kit", "pack_version": "1.0.0", "not_after": 4_000_000_000i64,
+        "methods": [{"name": "fine-one", "description": "d", "triggers": ["contract"], "avoid": [], "body": "ok"}, {"name": "leaky-one", "description": "d", "triggers": ["contract"], "avoid": [], "body": format!("Use this key {key}")}]});
+    let pack = kk_packs::sign_pack(&draft, &signer, 1_000).unwrap();
+    let (s, v) = w.post("/api/packs/import", json!({"pack": pack}));
+    assert_eq!(s, 422, "{v}");
+    assert!(
+        w.get("/api/methods").1["methods"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "nothing was saved"
+    );
+}

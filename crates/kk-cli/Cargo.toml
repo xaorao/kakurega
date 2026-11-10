@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 kk-evidence = { path = "../kk-evidence" }
+kk-packs = { path = "../kk-packs" }
 kk-update = { path = "../kk-update" }
 kk-fetch = { path = "../kk-fetch" }
 kk-eventlog = { path = "../kk-eventlog" }

@@ -84,6 +84,62 @@ function Row(props: { m: Method; onChanged: (message: string) => void }) {
   );
 }
 
+function Packs(props: { onChanged: (message: string) => void }) {
+  const [data, { refetch }] = createResource(() => api.packs());
+  const [key, setKey] = createSignal("");
+  const [label, setLabel] = createSignal("");
+  const [pack, setPack] = createSignal("");
+  const [problem, setProblem] = createSignal("");
+  const act = async (fn: () => Promise<string | void>) => {
+    setProblem("");
+    try {
+      const message = await fn();
+      await refetch();
+      props.onChanged(message ?? "");
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("pack.error"));
+    }
+  };
+  const choose = async (file: File | undefined) => {
+    if (file && file.size <= 300_000) setPack(await file.text());
+  };
+  return (
+    <section class="card stack" aria-labelledby="h-pack">
+      <h3 id="h-pack">{t("pack.heading")}</h3>
+      <p class="muted">{t("pack.lead")}</p>
+      <h4>{t("pack.publishers")}</h4>
+      <Show when={(data()?.publishers ?? []).length === 0}><p class="muted">{t("pack.noPublishers")}</p></Show>
+      <ul class="plain stack">
+        <For each={data()?.publishers ?? []}>
+          {(p) => (
+            <li class="stack">
+              <p><strong>{p.label}</strong> <code>{p.key_id.slice(0, 20)}</code></p>
+              <div class="actions"><button type="button" onClick={() => void act(async () => { await api.packUnpin(p.key_id); return t("pack.unpinned"); })}>{t("pack.unpin")}</button></div>
+            </li>
+          )}
+        </For>
+      </ul>
+      <label for="pack-key">{t("pack.key")}</label>
+      <input id="pack-key" value={key()} onInput={(e) => setKey(e.currentTarget.value)} />
+      <label for="pack-label">{t("pack.label")}</label>
+      <input id="pack-label" value={label()} maxlength="80" onInput={(e) => setLabel(e.currentTarget.value)} />
+      <div class="actions">
+        <button type="button" disabled={!key().trim() || !label().trim()} onClick={() => void act(async () => { await api.packPin(key().trim(), label().trim()); setKey(""); setLabel(""); return t("pack.pinned"); })}>{t("pack.pin")}</button>
+      </div>
+      <label for="pack-text">{t("pack.paste")}</label>
+      <textarea id="pack-text" rows="4" value={pack()} onInput={(e) => setPack(e.currentTarget.value)} />
+      <input type="file" aria-label={t("pack.paste")} onChange={(e) => void choose(e.currentTarget.files?.[0])} />
+      <div class="actions">
+        <button class="primary" type="button" disabled={!pack().trim()} onClick={() => void act(async () => { const r = await api.packImport(pack().trim()); setPack(""); return t("pack.imported", { n: r.imported.length, name: r.pack, version: r.version }); })}>{t("pack.import")}</button>
+      </div>
+      <Show when={(data()?.imported ?? []).length > 0}>
+        <p class="muted">{t("pack.imported.list")}: {(data()?.imported ?? []).map((i) => `${i.name} ${i.version}`).join(", ")}</p>
+      </Show>
+      <Show when={problem()}><span role="alert" class="bad">{problem()}</span></Show>
+    </section>
+  );
+}
+
 function Proposals(props: { onChanged: (message: string) => void }) {
   const [data, { refetch }] = createResource(() => api.methodProposals());
   const [problem, setProblem] = createSignal("");
@@ -135,6 +191,7 @@ export function Methods() {
       <p class="muted">{t("met.limits")}</p>
       <Show when={status()}><p role="status" class="ok">{status()}</p></Show>
       <Proposals onChanged={changed} />
+      <Packs onChanged={changed} />
       <Show when={data()} fallback={<p class="muted">{t("review.loading")}</p>}>
         {(d) => (
           <>

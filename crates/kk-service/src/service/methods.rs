@@ -118,7 +118,7 @@ impl Service {
         Some((kk_methods::render(&chosen), names))
     }
 
-    fn method_save(&self, m: &Method) -> Result<(), String> {
+    pub(super) fn method_save(&self, m: &Method) -> Result<(), String> {
         let store = self.store.lock().expect("lock");
         let c = store.connection();
         let known: i64 = c

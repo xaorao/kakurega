@@ -42,7 +42,7 @@ fn ctx<'a>(t: &'a TrustedKeys) -> Context<'a> {
     Context {
         trusted: t,
         now: 1_700_000_000,
-        highest_seen: None,
+        seen: &|_| None,
     }
 }
 
@@ -270,17 +270,43 @@ fn pk08_an_expired_pack_is_refused_and_an_older_version_than_one_already_seen_is
         &payload("kit", "1.9.9", 2_000_000_000, vec![method("a-method")]),
         &s,
     );
-    let seen = Version::parse("2.0.0");
+    let seen = |name: &str| (name == "kit").then(|| Version::parse("2.0.0")).flatten();
     let c = Context {
         trusted: &t,
         now: 1_700_000_000,
-        highest_seen: seen,
+        seen: &seen,
     };
     assert!(
         check_pack(&v2, &c).is_ok(),
         "the same version again is fine"
     );
     assert!(matches!(check_pack(&v1, &c), Err(Refusal::Rollback)));
+    let other = sign_value(
+        &payload(
+            "other-kit",
+            "1.0.0",
+            2_000_000_000,
+            vec![method("a-method")],
+        ),
+        &s,
+    );
+    assert!(
+        check_pack(&other, &c).is_ok(),
+        "the highest seen belongs to one pack name only"
+    );
+    let other = sign_value(
+        &payload(
+            "other-kit",
+            "1.0.0",
+            2_000_000_000,
+            vec![method("a-method")],
+        ),
+        &s,
+    );
+    assert!(
+        check_pack(&other, &c).is_ok(),
+        "the highest seen belongs to one pack name only"
+    );
 }
 
 #[test]

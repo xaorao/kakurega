@@ -3,7 +3,7 @@ use kk_update::root::{self, Root, Seen};
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 
-fn now() -> u64 {
+pub(crate) fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -20,7 +20,7 @@ fn platform() -> String {
     format!("{os}-{arch}")
 }
 
-fn load_signer(path: &str) -> Result<keys::Signer, String> {
+pub(crate) fn load_signer(path: &str) -> Result<keys::Signer, String> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read the signing key {path}: {e}"))?;
     let hex = text.trim();
@@ -128,7 +128,11 @@ pub fn run(args: &[String]) -> u8 {
     }
 }
 
-fn keygen(args: &[String]) -> Result<(), String> {
+pub(crate) fn keygen(args: &[String]) -> Result<(), String> {
+    keygen_for(args, "announce updates")
+}
+
+pub(crate) fn keygen_for(args: &[String], power: &str) -> Result<(), String> {
     let out = crate::flag(args, "--out").ok_or("give --out FILE for the private signing key")?;
     let mut seed = [0u8; 32];
     std::fs::File::open("/dev/urandom")
@@ -143,9 +147,7 @@ fn keygen(args: &[String]) -> Result<(), String> {
         .open(&out)
         .and_then(|mut f| f.write_all(hex.as_bytes()))
         .map_err(|e| format!("cannot write {out}: {e} (an existing file is never overwritten)"))?;
-    println!(
-        "private key written to {out} (keep it offline; anyone holding it can announce updates)"
-    );
+    println!("private key written to {out} (keep it offline; anyone holding it can {power})");
     println!(
         "public key (give this to installations): {}",
         keys::public_key_b64(&signer.public())

@@ -19,6 +19,7 @@ mod meaning_set;
 mod memory_import;
 mod near;
 mod ocr;
+mod pack;
 mod parse_child;
 #[cfg(test)]
 mod recall_bench;
@@ -110,6 +111,7 @@ fn main() -> ExitCode {
         Some("chat") => script::chat(&args),
         Some("sessions") => script::sessions(&args[1..]),
         Some("update") => update::run(&args[1..]),
+        Some("pack") => pack::run(&args[1..]),
         None if std::io::IsTerminal::is_terminal(&std::io::stdout())
             && std::io::IsTerminal::is_terminal(&std::io::stdin()) =>
         {

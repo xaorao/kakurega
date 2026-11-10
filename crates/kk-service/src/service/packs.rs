@@ -1,0 +1,235 @@
+//! Signed method packs: the publishers the owner pinned and the packs imported from them.
+
+use super::*;
+use kk_evidence::keys::{KeyId, TrustedKeys};
+use kk_packs::{Context, Version};
+
+const MAX_PUBLISHERS: i64 = 10;
+const MAX_LABEL: usize = 80;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PublisherBody {
+    public: String,
+    label: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct KeyBody {
+    key_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ImportBody {
+    pack: String,
+}
+
+fn refuse(why: &str) -> Response {
+    error(StatusCode::UNPROCESSABLE_ENTITY, "PACK_REFUSED", why)
+}
+
+impl Service {
+    fn pack_publishers(&self) -> Vec<(String, Vec<u8>, String, i64)> {
+        let store = self.store.lock().expect("lock");
+        let c = store.connection();
+        let Ok(mut st) = c.prepare(
+            "SELECT key_id, public, label, added FROM pack_publishers ORDER BY added, key_id",
+        ) else {
+            return vec![];
+        };
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .map(|it| it.flatten().collect())
+            .unwrap_or_default()
+    }
+
+    fn pack_seen_version(&self, name: &str) -> Option<Version> {
+        let store = self.store.lock().expect("lock");
+        let v: String = store
+            .connection()
+            .query_row(
+                "SELECT version FROM pack_seen WHERE name = ?1",
+                [name],
+                |r| r.get(0),
+            )
+            .ok()?;
+        Version::parse(&v)
+    }
+}
+
+pub(super) async fn packs_get(axum::Extension(svc): Svc) -> Response {
+    let publishers: Vec<Value> = svc
+        .pack_publishers()
+        .into_iter()
+        .map(|(id, public, label, added)| {
+            let key: Option<[u8; 32]> = public.as_slice().try_into().ok();
+            json!({"key_id": id, "public": key.map(|k| kk_evidence::keys::public_key_b64(&k)), "label": label, "added": added})
+        })
+        .collect();
+    let seen: Vec<Value> = {
+        let store = svc.store.lock().expect("lock");
+        let c = store.connection();
+        c.prepare("SELECT name, version, at FROM pack_seen ORDER BY name")
+            .ok()
+            .map(|mut st| {
+                st.query_map([], |r| Ok(json!({"name": r.get::<_, String>(0)?, "version": r.get::<_, String>(1)?, "at": r.get::<_, i64>(2)?})))
+                    .map(|it| it.flatten().collect())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default()
+    };
+    Json(json!({"publishers": publishers, "imported": seen, "limits": {"publishers": MAX_PUBLISHERS}})).into_response()
+}
+
+/// Pins a publisher's public key. Pinning a key again changes its label. A small-order key is refused: it could sign anything.
+pub(super) async fn packs_publisher_add(
+    axum::Extension(svc): Svc,
+    Json(b): Json<PublisherBody>,
+) -> Response {
+    let label = b.label.trim();
+    if label.is_empty()
+        || label.chars().count() > MAX_LABEL
+        || label.chars().any(|c| c.is_control())
+        || kk_types::injection::hidden_chars(label)
+    {
+        return refuse("a label is 1 to 80 plain characters");
+    }
+    let Ok(raw) = kk_evidence::b64::decode(&b.public) else {
+        return refuse("the key is not 43 characters of base64");
+    };
+    let Ok(public): Result<[u8; 32], _> = raw.as_slice().try_into() else {
+        return refuse("the key must be 32 bytes");
+    };
+    let mut keys = TrustedKeys::new();
+    let Some(id) = keys.add(&public) else {
+        return refuse("that key cannot be used to sign packs");
+    };
+    let done = {
+        let store = svc.store.lock().expect("lock");
+        let c = store.connection();
+        let known: i64 = c
+            .query_row(
+                "SELECT count(*) FROM pack_publishers WHERE key_id = ?1",
+                [id.as_str()],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let all: i64 = c
+            .query_row("SELECT count(*) FROM pack_publishers", [], |r| r.get(0))
+            .unwrap_or(0);
+        if known == 0 && all >= MAX_PUBLISHERS {
+            return refuse(&format!(
+                "at most {MAX_PUBLISHERS} publishers can be pinned"
+            ));
+        }
+        c.execute(
+            "INSERT INTO pack_publishers(key_id, public, label, added) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(key_id) DO UPDATE SET label = ?3",
+            kk_vault::rusqlite::params![id.as_str(), public.to_vec(), label, now()],
+        )
+    };
+    match done {
+        Ok(_) => {
+            svc.log_event("pack.publisher_pinned", id.as_str(), &[]);
+            Json(json!({"key_id": id.as_str(), "label": label})).into_response()
+        }
+        Err(e) => refuse(&e.to_string()),
+    }
+}
+
+pub(super) async fn packs_publisher_remove(
+    axum::Extension(svc): Svc,
+    Json(b): Json<KeyBody>,
+) -> Response {
+    let n = {
+        let store = svc.store.lock().expect("lock");
+        store
+            .connection()
+            .execute("DELETE FROM pack_publishers WHERE key_id = ?1", [&b.key_id])
+            .unwrap_or(0)
+    };
+    svc.log_event("pack.publisher_removed", &b.key_id, &[]);
+    Json(json!({"removed": n > 0})).into_response()
+}
+
+/// Imports a pack: every method is saved unapproved, or none is. A name already in use stops the whole import.
+pub(super) async fn packs_import(axum::Extension(svc): Svc, Json(b): Json<ImportBody>) -> Response {
+    let mut trusted = TrustedKeys::new();
+    for (_, public, _, _) in svc.pack_publishers() {
+        if let Ok(k) = <[u8; 32]>::try_from(public.as_slice()) {
+            trusted.add(&k);
+        }
+    }
+    let seen = |name: &str| svc.pack_seen_version(name);
+    let cx = Context {
+        trusted: &trusted,
+        now: now(),
+        seen: &seen,
+    };
+    let checked = match kk_packs::check_pack(b.pack.as_bytes(), &cx) {
+        Ok(c) => c,
+        Err(r) => return refuse(&r.sentence()),
+    };
+    let text_all: String = checked
+        .methods
+        .iter()
+        .map(|m| format!("{}\n{}\n", m.description, m.body))
+        .collect();
+    if !kk_secrets::scan(&text_all).is_empty() || kk_secrets::looks_secret(&text_all).is_some() {
+        return refuse("a method in the pack looks like it holds a secret, so the pack is refused");
+    }
+    let existing: Vec<String> = svc
+        .methods_all()
+        .into_iter()
+        .map(|(m, _, _)| m.name)
+        .collect();
+    if let Some(clash) = checked.methods.iter().find(|m| existing.contains(&m.name)) {
+        return error(
+            StatusCode::CONFLICT,
+            "PACK_NAME_EXISTS",
+            &format!(
+                "a method named \"{}\" already exists; nothing was imported",
+                clash.name
+            ),
+        );
+    }
+    let total: i64 = {
+        let store = svc.store.lock().expect("lock");
+        store
+            .connection()
+            .query_row("SELECT count(*) FROM methods", [], |r| r.get(0))
+            .unwrap_or(0)
+    };
+    if total + checked.methods.len() as i64 > super::methods::MAX_METHODS {
+        return refuse("importing this pack would pass the limit of saved methods");
+    }
+    for m in &checked.methods {
+        if let Err(e) = svc.method_save(m) {
+            for done in &checked.methods {
+                let store = svc.store.lock().expect("lock");
+                let c = store.connection();
+                let _ = c.execute("DELETE FROM methods WHERE name = ?1", [&done.name]);
+            }
+            return refuse(&e);
+        }
+    }
+    {
+        let store = svc.store.lock().expect("lock");
+        let _ = store.connection().execute(
+            "INSERT INTO pack_seen(name, version, key_id, at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(name) DO UPDATE SET version = ?2, key_id = ?3, at = ?4",
+            kk_vault::rusqlite::params![checked.name, checked.version.to_string(), checked.key_id.as_str(), now()],
+        );
+    }
+    svc.log_event(
+        "pack.imported",
+        &checked.name,
+        &[("methods", checked.methods.len().into())],
+    );
+    let _: &KeyId = &checked.key_id;
+    Json(json!({
+        "pack": checked.name,
+        "version": checked.version.to_string(),
+        "imported": checked.methods.iter().map(|m| m.name.clone()).collect::<Vec<_>>(),
+    }))
+    .into_response()
+}

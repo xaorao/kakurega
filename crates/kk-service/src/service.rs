@@ -373,6 +373,8 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS mcp_servers(name TEXT PRIMARY KEY, program TEXT NOT NULL, args TEXT NOT NULL, env TEXT NOT NULL, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS mcp_tools(server TEXT NOT NULL, tool TEXT NOT NULL, pin TEXT NOT NULL, description TEXT NOT NULL, schema TEXT NOT NULL DEFAULT '{}', effect TEXT NOT NULL DEFAULT 'unknown', mode TEXT NOT NULL, PRIMARY KEY(server, tool));
              CREATE TABLE IF NOT EXISTS method_proposals(id INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS pack_publishers(key_id TEXT PRIMARY KEY, public BLOB NOT NULL, label TEXT NOT NULL, added INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS pack_seen(name TEXT PRIMARY KEY, version TEXT NOT NULL, key_id TEXT NOT NULL, at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS methods(name TEXT PRIMARY KEY, body TEXT NOT NULL, hash TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS method_approvals(name TEXT PRIMARY KEY, hash TEXT NOT NULL, approved_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS project_settings(project TEXT PRIMARY KEY, notes_only INTEGER NOT NULL, updated_at INTEGER NOT NULL);
@@ -1145,6 +1147,7 @@ struct PathQuery {
 
 mod mcp;
 mod methods;
+mod packs;
 
 type Svc = axum::Extension<Arc<Service>>;
 
@@ -9261,6 +9264,13 @@ impl Extension for Routes {
                 "/api/methods",
                 get(methods::methods_get).post(methods::methods_set),
             )
+            .route("/api/packs", get(packs::packs_get))
+            .route("/api/packs/publishers", post(packs::packs_publisher_add))
+            .route(
+                "/api/packs/publishers/remove",
+                post(packs::packs_publisher_remove),
+            )
+            .route("/api/packs/import", post(packs::packs_import))
             .route("/api/method-proposals", get(methods::proposals_get))
             .route("/api/method-proposals/keep", post(methods::proposals_keep))
             .route(
