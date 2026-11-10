@@ -7318,3 +7318,162 @@ fn tu_fc01_tab_finishes_the_folder_after_ask_and_code_as_it_does_after_review() 
         }
     }
 }
+
+#[test]
+fn tu_me01_method_commands_parse_and_bad_forms_are_refused() {
+    use kk_tui::cmd::MethodAction as M;
+    assert_eq!(cmd::parse("/method").unwrap(), Command::Method(M::List));
+    assert_eq!(
+        cmd::parse("/method show review-style").unwrap(),
+        Command::Method(M::Show("review-style".into()))
+    );
+    assert_eq!(
+        cmd::parse("/method approve a.b_c").unwrap(),
+        Command::Method(M::Approve("a.b_c".into()))
+    );
+    assert_eq!(
+        cmd::parse("/method revoke x").unwrap(),
+        Command::Method(M::Revoke("x".into()))
+    );
+    assert_eq!(
+        cmd::parse("/method remove x").unwrap(),
+        Command::Method(M::Remove("x".into()))
+    );
+    assert_eq!(
+        cmd::parse("/method add style review,findings Be brief and plain.").unwrap(),
+        Command::Method(M::Add {
+            name: "style".into(),
+            triggers: vec!["review".into(), "findings".into()],
+            text: "Be brief and plain.".into()
+        })
+    );
+    assert_eq!(
+        cmd::parse("/method add only-name - Used only by name.").unwrap(),
+        Command::Method(M::Add {
+            name: "only-name".into(),
+            triggers: vec![],
+            text: "Used only by name.".into()
+        })
+    );
+    for bad in [
+        "/method show",
+        "/method show a/b",
+        "/method show a b",
+        "/method approve",
+        "/method frobnicate x",
+        "/method add",
+        "/method add a",
+        "/method add a words",
+        "/method add a/b x text",
+        "/method show \u{7}x",
+    ] {
+        assert!(cmd::parse(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn tu_me02_the_owner_must_read_a_method_before_approving_and_the_approval_sends_the_hash_they_read()
+{
+    let mut a = booted();
+    let r = enter(&mut a, "/method approve style");
+    assert!(
+        r.is_empty(),
+        "nothing is sent for a method that was never shown"
+    );
+    assert!(
+        text(&a).contains("Read it first with /method show style"),
+        "{}",
+        text(&a)
+    );
+    let r = enter(&mut a, "/method show style");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/methods", Method::Get)
+    );
+    a.handle(ok(&r[0], 200, json!({"methods": [{"name": "style", "description": "", "triggers": ["review"], "avoid": [], "body": "Be brief.\nUse bullets.", "hash": "ab".repeat(32), "approved": false}]})));
+    let t = text(&a);
+    assert!(
+        t.contains("Be brief.") && t.contains("Use bullets.") && t.contains("Waiting for you"),
+        "{t}"
+    );
+    let r = enter(&mut a, "/method approve style");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/methods/approve", Method::Post)
+    );
+    assert_eq!(r[0].body.as_ref().unwrap()["hash"], json!("ab".repeat(32)));
+    assert_eq!(r[0].body.as_ref().unwrap()["name"], json!("style"));
+    a.handle(ok(&r[0], 200, json!({"approved": true})));
+    assert!(
+        text(&a).contains("Approved: it is used from now on."),
+        "{}",
+        text(&a)
+    );
+    // the text changed after it was shown: the service refuses and the terminal says to read it again
+    let r = enter(&mut a, "/method approve style");
+    a.handle(ok(
+        &r[0],
+        409,
+        json!({"error": {"code": "METHOD_CHANGED", "message": "x"}}),
+    ));
+    assert!(
+        text(&a).contains("changed after you read it"),
+        "{}",
+        text(&a)
+    );
+    // removing forgets what was shown
+    let r = enter(&mut a, "/method remove style");
+    a.handle(ok(&r[0], 200, json!({"removed": true})));
+    let r = enter(&mut a, "/method approve style");
+    assert!(r.is_empty());
+}
+
+#[test]
+fn tu_me03_the_list_shows_state_and_cleans_names_and_a_secret_is_scrubbed_from_history() {
+    let mut a = booted();
+    let r = enter(&mut a, "/method");
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"methods": [
+            {"name": "style", "triggers": ["review", "findings"], "approved": true},
+            {"name": "late\u{1b}[31m", "triggers": [], "approved": false},
+        {"name": "tricky", "triggers": ["red\u{1b}[31mword"], "approved": false}
+        ]}),
+    ));
+    let t = text(&a);
+    assert!(
+        t.contains("style") && t.contains("approved") && t.contains("review, findings"),
+        "{t}"
+    );
+    assert!(
+        t.contains("waiting for you") && t.contains("(only /name)"),
+        "{t}"
+    );
+    assert!(!t.contains('\u{1b}'), "control bytes are cleaned");
+    let mut a = booted();
+    let r = enter(&mut a, "/method");
+    a.handle(ok(&r[0], 200, json!({"methods": []})));
+    assert!(text(&a).contains("No methods yet"), "{}", text(&a));
+    let mut a = booted();
+    let r = enter(
+        &mut a,
+        "/method add style review Use this key sk_live_abcdefghijklmnop0123",
+    );
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/methods", Method::Post)
+    );
+    assert_eq!(
+        r[0].body.as_ref().unwrap()["body"],
+        json!("Use this key sk_live_abcdefghijklmnop0123")
+    );
+    a.handle(ok(&r[0], 422, json!({"error": {"code": "METHOD_REFUSED", "message": "this looks like a secret; methods are sent to the model, so keep secrets out of them"}})));
+    assert!(text(&a).contains("looks like a secret"), "{}", text(&a));
+    assert!(
+        !text(&a).contains("sk_live_"),
+        "the secret is not left in the transcript: {}",
+        text(&a)
+    );
+    assert!(text(&a).contains("[text hidden"), "{}", text(&a));
+}

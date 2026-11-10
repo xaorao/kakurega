@@ -84,7 +84,8 @@ export interface Suggestion { id: string; text: string; why: string; level: stri
 export interface LogEntry { seq: number; at: number; kind: string; subject: string; data: Record<string, string | number> }
 export interface LogSummary { count: number; head: string | null; public_key: string; recent: LogEntry[] }
 export interface ChatTurn { role: "user" | "assistant"; content: string }
-export interface ChatReply { instructions_used?: boolean; project?: string | null; reply: string; route: { id: string; class: string; simulated: boolean; stays_here?: boolean; host?: string | null }; notes_used: number; notes?: { id: string; text: string; why: string; untrusted: boolean; project?: string | null }[]; notes_withheld: number; notes_left_out?: number; files?: { used: number; trimmed: number; left_out: number; withheld_instructions: number; withheld_secrets: number }; web_sources_used: number; web_sources_trimmed?: number; web_sources_left_out?: number; saved?: boolean; not_saved?: "full" | "forgotten" | "error" | null; usage?: { elapsed_ms?: number; context_tokens?: number; context_window?: number | null; estimate?: boolean; context_tokens_estimate: number; reply_tokens_estimate: number; history_turns_sent: number; history_turns_dropped: number; history_turns_summarized?: number; summary_text?: string | null; compacted_now?: boolean; compaction_failed?: string | null } }
+export interface Method { name: string; description: string; triggers: string[]; avoid: string[]; body: string; hash: string; approved: boolean; approved_at?: number | null }
+export interface ChatReply { instructions_used?: boolean; methods_used?: string[]; project?: string | null; reply: string; route: { id: string; class: string; simulated: boolean; stays_here?: boolean; host?: string | null }; notes_used: number; notes?: { id: string; text: string; why: string; untrusted: boolean; project?: string | null }[]; notes_withheld: number; notes_left_out?: number; files?: { used: number; trimmed: number; left_out: number; withheld_instructions: number; withheld_secrets: number }; web_sources_used: number; web_sources_trimmed?: number; web_sources_left_out?: number; saved?: boolean; not_saved?: "full" | "forgotten" | "error" | null; usage?: { elapsed_ms?: number; context_tokens?: number; context_window?: number | null; estimate?: boolean; context_tokens_estimate: number; reply_tokens_estimate: number; history_turns_sent: number; history_turns_dropped: number; history_turns_summarized?: number; summary_text?: string | null; compacted_now?: boolean; compaction_failed?: string | null } }
 export interface Instructions {
   global: { text: string; updated_at: number } | null;
   projects: { project: string; text: string; updated_at: number }[];
@@ -281,6 +282,11 @@ export const api = {
   attestModel: (model: string) => request<ModelProof>("POST", "/api/route/attest", { model }),
   similarMemories: () => request<SimilarMemories>("GET", "/api/memories/similar"),
   instructions: () => request<Instructions>("GET", "/api/instructions"),
+  methods: () => request<{ methods: Method[]; limits: { methods: number; body_chars: number; triggers: number } }>("GET", "/api/methods"),
+  saveMethod: (m: { name: string; description: string; triggers: string[]; avoid: string[]; body: string }) => request<{ name: string; hash: string; approved: boolean }>("POST", "/api/methods", m),
+  approveMethod: (name: string, hash: string) => request<{ approved: boolean }>("POST", "/api/methods/approve", { name, hash }),
+  revokeMethod: (name: string) => request<{ revoked: boolean }>("POST", "/api/methods/revoke", { name }),
+  removeMethod: (name: string) => request<{ removed: boolean }>("POST", "/api/methods/remove", { name }),
   diagnostics: () => request<{ text: string; data: unknown }>("GET", "/api/diagnostics"),
   docIndex: () => request<{ vectors: number; models: { model: string; vectors: number; oldest: number; newest: number }[]; max: number }>("GET", "/api/documents/index"),
   forgetDocIndex: () => request<{ removed: number }>("POST", "/api/documents/index/forget", {}),

@@ -17,6 +17,21 @@ pub enum InstructionsAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MethodAction {
+    List,
+    Show(String),
+    /// Approve the text that `Show` displayed in this session.
+    Approve(String),
+    Revoke(String),
+    Remove(String),
+    Add {
+        name: String,
+        triggers: Vec<String>,
+        text: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotesOnlyAction {
     Show,
     /// Turn "answer only from this project's notes and files" on or off for the named project, or for the conversation's own.
@@ -78,6 +93,7 @@ pub enum Command {
     ForgetReview(String),
     Instructions(InstructionsAction),
     NotesOnly(NotesOnlyAction),
+    Method(MethodAction),
     Pii(PiiAction),
     Find(String),
     Transcript(String),
@@ -172,6 +188,7 @@ pub const NAMES: &[&str] = &[
     "forgetreview",
     "instructions",
     "notesonly",
+    "method",
     "pii",
     "find",
     "transcript",
@@ -238,6 +255,7 @@ pub fn describe(name: &str) -> &'static str {
         "forgetreview" => "delete everything one review left in memory",
         "instructions" => "your standing orders to the assistant",
         "notesonly" => "make a project answer only from its own notes and attached files",
+        "method" => "your saved methods: guidance that applies only after you approve its text",
         "pii" => "values you say are not personal data, left out of release notices",
         "find" => "search kept conversations by words",
         "transcript" => "search this conversation on the screen",
@@ -340,6 +358,7 @@ pub fn usage(name: &str) -> &'static str {
         "forgetreview" => "/forgetreview JOB",
         "instructions" => "/instructions [set [in PROJECT:] TEXT | clear [PROJECT]]",
         "notesonly" => "/notesonly [on|off [PROJECT]]",
+        "method" => "/method [show|approve|revoke|remove NAME | add NAME WORD,WORD|- TEXT]",
         "pii" => "/pii [add ENTRY | remove ENTRY]",
         "find" => "/find WORDS",
         "transcript" => "/transcript WORDS",
@@ -791,6 +810,55 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 "clear" if plain_project(tail) && !tail.contains(char::is_whitespace) => Ok(
                     Command::Instructions(InstructionsAction::Clear(Some(tail.to_string()))),
                 ),
+                _ => bad(),
+            }
+        }
+        "method" => {
+            let bad = || Err(format!("usage: {}", usage("method")));
+            if rest.is_empty() {
+                return Ok(Command::Method(MethodAction::List));
+            }
+            let (sub, tail) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+            let tail = tail.trim();
+            let plain_name = |n: &str| {
+                !n.is_empty()
+                    && n.len() <= 64
+                    && n.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+            };
+            match sub {
+                "show" | "approve" | "revoke" | "remove" if plain_name(tail) => {
+                    let n = tail.to_string();
+                    Ok(Command::Method(match sub {
+                        "show" => MethodAction::Show(n),
+                        "approve" => MethodAction::Approve(n),
+                        "revoke" => MethodAction::Revoke(n),
+                        _ => MethodAction::Remove(n),
+                    }))
+                }
+                "add" => {
+                    let mut parts = tail.splitn(3, char::is_whitespace);
+                    let name = parts.next().unwrap_or("");
+                    let words = parts.next().unwrap_or("");
+                    let text = parts.next().unwrap_or("").trim();
+                    if !plain_name(name) || words.is_empty() || text.is_empty() {
+                        return bad();
+                    }
+                    let triggers = if words == "-" {
+                        Vec::new()
+                    } else {
+                        words
+                            .split(',')
+                            .map(|w| w.trim().to_string())
+                            .filter(|w| !w.is_empty())
+                            .collect()
+                    };
+                    Ok(Command::Method(MethodAction::Add {
+                        name: name.to_string(),
+                        triggers,
+                        text: text.to_string(),
+                    }))
+                }
                 _ => bad(),
             }
         }

@@ -1,6 +1,7 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError } from "../api";
 import { t } from "../i18n";
+import { Methods } from "./Methods";
 
 /** One box: the text, how much room is left, save and remove. An empty text removes the instruction. */
 function Editor(props: { id: string; label: string; initial: string; project?: string; max: number; onSaved: () => void }) {
@@ -105,6 +106,7 @@ export function Instructions() {
                 <Editor id="ins-new-text" label={t("ins.project.label", { name: newProject().trim() })} initial="" project={newProject().trim()} max={d().max_chars} onSaved={() => { setNewProject(""); void refetch(); }} />
               </Show>
             </div>
+            <Methods />
           </>
         )}
       </Show>

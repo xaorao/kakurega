@@ -248,6 +248,10 @@ enum Intent {
     InstructionsShow,
     NotesOnlyShow,
     NotesOnlySet(String, bool),
+    MethodList,
+    MethodShow(String),
+    MethodDone(&'static str),
+    MethodAdd,
     InstructionsSet,
     ConflictsList,
     FindChats,
@@ -352,6 +356,8 @@ pub struct App {
     /// The project this conversation is about: its notes are offered, and no other project's. Set from the repository the
     /// terminal was started in, by `/project`, or by a kept conversation.
     pub chat_project: Option<String>,
+    /// The text of each method as `/method show` displayed it: approving sends that hash, so the owner approves what they read.
+    pub shown_methods: std::collections::HashMap<String, String>,
     /// How much of the model's window the last answer's question took, for the status line; empty until an answer comes.
     context_meter: Option<String>,
     /// Long pastes shown as a short placeholder in the composer and expanded when a chat message is sent.
@@ -495,6 +501,7 @@ impl App {
             chat_history: Vec::new(),
             session: None,
             chat_project: None,
+            shown_methods: std::collections::HashMap::new(),
             context_meter: None,
             pasted: Vec::new(),
             queued: Vec::new(),
@@ -2995,6 +3002,65 @@ impl App {
                     }
                 }
             }
+            Command::Method(action) => {
+                use crate::cmd::MethodAction as M;
+                match action {
+                    M::List => {
+                        vec![self.req(Intent::MethodList, false, Method::Get, "/api/methods", None)]
+                    }
+                    M::Show(name) => vec![self.req(
+                        Intent::MethodShow(name),
+                        false,
+                        Method::Get,
+                        "/api/methods",
+                        None,
+                    )],
+                    M::Approve(name) => match self.shown_methods.get(&name).cloned() {
+                        Some(hash) => vec![self.req(
+                            Intent::MethodDone("Approved: it is used from now on."),
+                            false,
+                            Method::Post,
+                            "/api/methods/approve",
+                            Some(json!({"name": name, "hash": hash})),
+                        )],
+                        None => {
+                            self.say(Kind::Error, format!("Read it first with /method show {name}, so you approve the text you saw."));
+                            Vec::new()
+                        }
+                    },
+                    M::Revoke(name) => vec![self.req(
+                        Intent::MethodDone("Approval taken away: it is not used."),
+                        false,
+                        Method::Post,
+                        "/api/methods/revoke",
+                        Some(json!({"name": name})),
+                    )],
+                    M::Remove(name) => {
+                        self.shown_methods.remove(&name);
+                        vec![self.req(
+                            Intent::MethodDone("Removed."),
+                            false,
+                            Method::Post,
+                            "/api/methods/remove",
+                            Some(json!({"name": name})),
+                        )]
+                    }
+                    M::Add {
+                        name,
+                        triggers,
+                        text,
+                    } => {
+                        self.shown_methods.remove(&name);
+                        vec![self.req(
+                            Intent::MethodAdd,
+                            false,
+                            Method::Post,
+                            "/api/methods",
+                            Some(json!({"name": name, "description": "", "triggers": triggers, "avoid": [], "body": text})),
+                        )]
+                    }
+                }
+            }
             Command::NotesOnly(action) => {
                 use crate::cmd::NotesOnlyAction as N;
                 match action {
@@ -4554,6 +4620,104 @@ impl App {
                     ),
                 );
                 self.next_attachment()
+            }
+            Intent::MethodList => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let rows: Vec<String> = body["methods"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|m| {
+                        let words: Vec<String> = m["triggers"]
+                            .as_array()
+                            .map(|a| a.iter().filter_map(|w| w.as_str().map(clean)).collect())
+                            .unwrap_or_default();
+                        format!(
+                            "  {}  {}  {}",
+                            clean(m["name"].as_str().unwrap_or("")),
+                            if m["approved"] == true {
+                                "approved"
+                            } else {
+                                "waiting for you"
+                            },
+                            if words.is_empty() {
+                                "(only /name)".to_string()
+                            } else {
+                                words.join(", ")
+                            }
+                        )
+                    })
+                    .collect();
+                if rows.is_empty() {
+                    self.say(Kind::Info, "No methods yet. /method add NAME WORD,WORD TEXT saves one; it is used only after you read and approve it.");
+                } else {
+                    self.push(Kind::Info, Some("Your methods"), rows);
+                }
+                Vec::new()
+            }
+            Intent::MethodShow(name) => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let found = body["methods"]
+                    .as_array()
+                    .and_then(|a| a.iter().find(|m| m["name"] == name.as_str()))
+                    .cloned();
+                match found {
+                    None => self.say(Kind::Error, "There is no method with that name."),
+                    Some(m) => {
+                        if let Some(h) = m["hash"].as_str() {
+                            self.shown_methods.insert(name.clone(), h.to_string());
+                        }
+                        let mut lines: Vec<String> = clean(m["body"].as_str().unwrap_or(""))
+                            .lines()
+                            .map(|l| format!("  {l}"))
+                            .collect();
+                        lines.push(String::new());
+                        lines.push(if m["approved"] == true {
+                            "Approved: in use. /method revoke NAME takes it away.".to_string()
+                        } else {
+                            format!(
+                                "Waiting for you. /method approve {} approves exactly this text.",
+                                clean(&name)
+                            )
+                        });
+                        self.push(Kind::Info, Some(&format!("Method {}", clean(&name))), lines);
+                    }
+                }
+                Vec::new()
+            }
+            Intent::MethodDone(done) => {
+                if ok {
+                    self.say(Kind::Ok, done);
+                } else if body["error"]["code"] == "METHOD_CHANGED" {
+                    self.say(Kind::Error, "The method changed after you read it. Read it again with /method show NAME, then approve.");
+                } else {
+                    self.say(Kind::Error, err_text(status, &body));
+                }
+                Vec::new()
+            }
+            Intent::MethodAdd => {
+                if ok {
+                    self.say(Kind::Ok, "Saved. It waits for you: read it with /method show NAME, then /method approve NAME.");
+                } else {
+                    if body["error"]["message"]
+                        .as_str()
+                        .is_some_and(|m| m.contains("looks like a secret"))
+                    {
+                        self.scrub_last(
+                            "/method add",
+                            "/method add [text hidden: it looked like a secret and was not saved]",
+                        );
+                    }
+                    self.say(Kind::Error, err_text(status, &body));
+                }
+                Vec::new()
             }
             Intent::NotesOnlyShow => {
                 if !ok {
