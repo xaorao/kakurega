@@ -1,0 +1,34 @@
+#!/bin/sh
+# The check for a routine commit (CLAUDE.md "EXECUTION RHYTHM"): what changed decides what runs.
+#   scripts/fast-check            checks the working tree against HEAD
+#   scripts/fast-check --staged   checks what is staged
+# Format, then lint and tests of only the crates that changed, the web checks when the web app changed, and the guards that are
+# cheap (secrets, layers, error text, documentation claims). A change in a high-risk crate stops here and asks for the full gate.
+set -eu
+cd "$(dirname "$0")/.."
+if [ "${1:-}" = "--staged" ]; then files=$(git diff --cached --name-only); else files=$(git diff --name-only HEAD; git ls-files --others --exclude-standard); fi
+[ -n "$files" ] || { echo "FAST OK: nothing changed"; exit 0; }
+HIGH="kk-secrets kk-policy kk-sandbox kk-broker kk-evidence kk-vault kk-disclosure kk-effects kk-kernel kk-run kk-fetch kk-update kk-companion kk-worker kk-route kk-near kk-eventlog"
+crates=$(printf '%s\n' "$files" | sed -n 's#^crates/\([^/]*\)/.*#\1#p' | sort -u)
+risky=""
+for c in $crates; do for h in $HIGH; do [ "$c" = "$h" ] && risky="$risky $c"; done; done
+if [ -n "$risky" ]; then
+  echo "HIGH-RISK change in:$risky"
+  echo "Run the deep suites for these crates and their hostile cases now, then the full gate before committing."
+  [ "${FULL_GATE_DONE:-}" = "1" ] || { echo "FAST STOP: set FULL_GATE_DONE=1 only after the full gate passed on this revision"; exit 3; }
+fi
+echo "== format"; cargo fmt --all -- --check
+for c in $crates; do
+  echo "== lint and tests: $c"
+  cargo clippy -q -p "$c" --all-targets -- -D warnings
+  cargo test -q -p "$c"
+done
+if printf '%s\n' "$files" | grep -q '^apps/web/'; then
+  echo "== web"; (cd apps/web && npx tsc --noEmit && node --test test/*.test.mjs)
+fi
+echo "== guards"
+python3 scripts/scan_secrets.py | tail -1
+python3 scripts/check_layers.py 2>&1 | tail -1
+python3 scripts/check_error_text.py | tail -1 | cut -c1-80
+python3 scripts/docs_check.py | tail -1
+echo "FAST OK (routine commit). The full gate is still required before a push and at checkpoints."

@@ -1,3 +1,4 @@
+import { pluralKey } from "./plural";
 import { createSignal, type JSX } from "solid-js";
 import { en } from "./locales/en";
 import { hi } from "./locales/hi";
@@ -37,7 +38,8 @@ export function applyLocale() {
 type Params = Record<string, string | number>;
 
 export function t(key: Key, params: Params = {}): string {
-  const text = catalogs[locale()][key] ?? catalogs.en[key] ?? key;
+  const use = pluralKey(key, params, (k) => k in catalogs.en) as Key;
+  const text = catalogs[locale()][use] ?? catalogs.en[use] ?? catalogs[locale()][key] ?? catalogs.en[key] ?? key;
   return text.replace(/\{(\w+)\}/g, (_, k) => String(params[k] ?? `{${k}}`));
 }
 

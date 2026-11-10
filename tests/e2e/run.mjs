@@ -1944,6 +1944,25 @@ try {
     await page.unroute("**/api/ask");
   }
   await page.screenshot({ path: join(shots, "14b-documents-searched.png"), fullPage: true });
+  {
+    // on a phone the menu is closed until asked for, the page's own content comes first, and a review's tabs do not widen the page
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(base + "/#/settings");
+    await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+    check("on a phone the navigation is closed at first and the page's heading is on the first screen", !(await page.locator("#side-nav").isVisible()) && (await page.locator("button.menu-toggle").isVisible()) && (await page.getByRole("heading", { name: "Settings", exact: true }).boundingBox()).y < 400);
+    await page.locator("button.menu-toggle").click();
+    check("the Menu button opens the navigation and says so", (await page.locator("#side-nav").isVisible()) && (await page.locator("button.menu-toggle").getAttribute("aria-expanded")) === "true");
+    await axeCheck(page, "phone with the menu open");
+    await page.locator("#side-nav").getByRole("link", { name: "Memory" }).click();
+    await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
+    check("choosing a page closes the menu again", !(await page.locator("#side-nav").isVisible()) && (await page.locator("button.menu-toggle").getAttribute("aria-expanded")) === "false");
+    await page.locator("button.menu-toggle").click();
+    await page.locator("#side-nav a[href^='#/job/']").first().click();
+    await page.getByRole("tab", { name: "Release" }).waitFor();
+    check("a review's tabs scroll inside their row and the page is not wider than the screen", (await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)));
+    await page.screenshot({ path: join(shots, "14g-phone-review.png") });
+    await page.setViewportSize({ width: 1280, height: 860 });
+  }
   // back to the activity page, where the journey continues
   await page.getByRole("link", { name: "Activity" }).click();
   await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();

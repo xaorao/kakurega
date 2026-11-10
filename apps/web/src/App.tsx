@@ -154,6 +154,9 @@ export function App() {
     onCleanup(() => window.removeEventListener("kk:help", open));
   }
   let searchBox: HTMLInputElement | undefined;
+  // on a narrow screen the menu is closed until asked for; choosing a page closes it again
+  const [menuOpen, setMenuOpen] = createSignal(false);
+  createEffect(() => { hash(); setMenuOpen(false); });
   const shown = createMemo(() => {
     const q = query().trim().toLowerCase();
     if (!q) return jobs();
@@ -167,6 +170,7 @@ export function App() {
     if (found.id === "palette") {
       if (paired()) setPaletteOpen(!paletteOpen());
     } else if (found.id === "search") {
+      setMenuOpen(true);
       searchBox?.focus();
       searchBox?.select();
     } else if (found.id === "help" || found.id === "help-anywhere") {
@@ -309,8 +313,9 @@ export function App() {
           <Show when={config()?.test_mode}>
             <div class="banner" role="status">{t("banner.test")}</div>
           </Show>
+          <button type="button" class="menu-toggle" aria-expanded={menuOpen()} aria-controls="side-nav" onClick={() => setMenuOpen(!menuOpen())}>{t("nav.menu")}</button>
           <div class="body">
-            <nav class="side" aria-label={t("nav.label")}>
+            <nav id="side-nav" class={menuOpen() ? "side open" : "side"} aria-label={t("nav.label")}>
               <a class="primary" href="#/">{t("nav.new")}</a>
               <a href="#/inbox" class={hash() === "#/inbox" ? "navlink active" : "navlink"}>{t("nav.inbox")}{waiting() > 0 ? <span class="count" aria-label={t("nav.inboxCount", { n: waiting() })}> ({waiting()})</span> : null}</a>
               <a href="#/docs" class={hash() === "#/docs" ? "navlink active" : "navlink"}>{t("nav.docs")}</a>
