@@ -11,6 +11,54 @@ pub enum Method {
     Post,
 }
 
+/// A message with `@path` files in it, while those files are attached one at a time.
+#[derive(Debug, Clone)]
+struct AttachFlow {
+    message: String,
+    /// Files still to attach: the name as typed and the path to read.
+    todo: Vec<(String, String)>,
+    ids: Vec<String>,
+}
+
+/// The files a message names with `@path`: an `@` at the start or after a space, then the path up to the next space, with
+/// closing punctuation left off. A name that is not a file on this computer (an address, a person) is left as plain text.
+/// At most five, each once.
+pub fn mentioned_files(message: &str, cwd: &std::path::Path) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut prev: Option<char> = None;
+    let chars: Vec<char> = message.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '@' && prev.is_none_or(char::is_whitespace) {
+            let mut j = i + 1;
+            while j < chars.len() && !chars[j].is_whitespace() {
+                j += 1;
+            }
+            let mut tok: String = chars[i + 1..j].iter().collect();
+            while tok.ends_with(['.', ',', ';', ':', '!', '?', ')', ']', '}', '\'', '"']) {
+                tok.pop();
+            }
+            if !tok.is_empty() && !tok.chars().any(char::is_control) {
+                let path = if std::path::Path::new(&tok).is_absolute() {
+                    std::path::PathBuf::from(&tok)
+                } else {
+                    cwd.join(&tok)
+                };
+                if path.is_file() && !out.iter().any(|(t, _)| *t == tok) && out.len() < 5 {
+                    out.push((tok, path.to_string_lossy().into_owned()));
+                }
+            }
+            prev = chars.get(j.saturating_sub(1)).copied();
+            i = j;
+            continue;
+        }
+        prev = Some(c);
+        i += 1;
+    }
+    out
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Req {
     pub id: u64,
@@ -136,6 +184,14 @@ enum Intent {
         head: String,
         partial: String,
     },
+    /// Files and folders asked for to finish an `@name` being typed: the same three parts as above.
+    MentionComplete {
+        line: String,
+        head: String,
+        partial: String,
+    },
+    /// A file named with `@path` in a message, being attached before the message is sent: the name as typed.
+    AttachMention(String),
     StartReview,
     Poll(String),
     Findings,
@@ -300,6 +356,9 @@ pub struct App {
     pub rewound: Option<String>,
     /// Set by Tab after /review: the folder to list, the line it was asked for, what comes before the last name, the part typed.
     path_request: Option<(String, String, String, String)>,
+    mention_request: Option<(String, String, String, String)>,
+    /// A message waiting for the files it names with `@path` to be attached.
+    attach_flow: Option<AttachFlow>,
     /// Set when a review finished or stopped; the screen loop takes it and rings the bell once.
     pub attention: Option<crate::attention::Attention>,
     /// What the terminal last said about focus; unknown until it says.
@@ -438,6 +497,8 @@ impl App {
             projects_seen: Vec::new(),
             rewound: None,
             path_request: None,
+            mention_request: None,
+            attach_flow: None,
             attention: None,
             focused: None,
             waiting: None,
@@ -819,6 +880,19 @@ impl App {
                 None,
             ));
         }
+        if let Some((dir, line, head, partial)) = self.mention_request.take() {
+            out.push(self.req(
+                Intent::MentionComplete {
+                    line,
+                    head,
+                    partial,
+                },
+                false,
+                Method::Get,
+                &format!("/api/fs?path={}&files=1", percent_encode(&dir)),
+                None,
+            ));
+        }
         if std::mem::take(&mut self.away_pending) {
             out.push(self.req(Intent::Away, false, Method::Get, "/api/away", None));
         }
@@ -1024,6 +1098,115 @@ impl App {
     /// What to ask the service when Tab is pressed while the folder after /review is being typed: the folder to list, the line
     /// as it is, the text that stays in front of the last name, and the part of the name typed so far. The listing is always
     /// the service's own view of its allowed folders, never this terminal's working directory.
+    /// Finishes the name being typed from a folder listing: one match completes it (a folder with `/`, a file with a space),
+    /// several fill in what they share and are listed. Files are offered only for an `@` mention.
+    fn finish_names(&mut self, head: &str, partial: &str, body: &Value, with_files: bool) {
+        let want = partial.to_ascii_lowercase();
+        let pick = |key: &str, dir: bool, out: &mut Vec<(String, bool)>| {
+            for n in body[key]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|d| d["name"].as_str())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+            {
+                if !n.is_empty()
+                    && clean(n) == n
+                    && !n.chars().any(char::is_whitespace)
+                    && n.to_ascii_lowercase().starts_with(&want)
+                {
+                    out.push((n.to_string(), dir));
+                }
+            }
+        };
+        let mut names: Vec<(String, bool)> = Vec::new();
+        pick("dirs", true, &mut names);
+        if with_files {
+            pick("files", false, &mut names);
+        }
+        names.sort();
+        match names.as_slice() {
+            [] => {}
+            [(one, dir)] => {
+                self.input = format!("{head}{one}{}", if *dir { "/" } else { " " });
+                self.cursor = self.input.chars().count();
+            }
+            many => {
+                let first = &many[0].0;
+                let mut common = first.chars().count();
+                for (m, _) in many {
+                    common = common.min(
+                        first
+                            .chars()
+                            .zip(m.chars())
+                            .take_while(|(a, b)| a.eq_ignore_ascii_case(b))
+                            .count(),
+                    );
+                }
+                if common > partial.chars().count() {
+                    let stem: String = first.chars().take(common).collect();
+                    self.input = format!("{head}{stem}");
+                    self.cursor = self.input.chars().count();
+                }
+                let shown: Vec<String> = many
+                    .iter()
+                    .take(12)
+                    .map(|(n, d)| if *d { format!("{n}/") } else { n.clone() })
+                    .collect();
+                let more = many.len().saturating_sub(12);
+                let mut lines = vec![shown.join("  ")];
+                if more > 0 {
+                    lines.push(format!("and {more} more"));
+                }
+                self.push(
+                    Kind::Info,
+                    Some(if with_files {
+                        "Files and folders"
+                    } else {
+                        "Folders"
+                    }),
+                    lines,
+                );
+            }
+        }
+    }
+
+    /// Tab on a word that starts with `@` at the end of the line: the folder to list for it (the terminal's own folder unless a
+    /// path is given), the line, what comes before the last name, and the part typed.
+    fn mention_request(&self) -> Option<(String, String, String, String)> {
+        let at = self.input.rfind('@')?;
+        let before = self.input[..at].chars().last();
+        if !before.is_none_or(char::is_whitespace) {
+            return None;
+        }
+        let token = &self.input[at + 1..];
+        if token.chars().any(char::is_whitespace) || token.chars().any(char::is_control) {
+            return None;
+        }
+        let (dir_part, partial) = match token.rfind('/') {
+            Some(i) => (&token[..=i], &token[i + 1..]),
+            None => ("", token),
+        };
+        let cwd = std::env::current_dir().ok()?;
+        let dir = if dir_part.starts_with('/') {
+            dir_part.to_string()
+        } else {
+            format!(
+                "{}/{}",
+                cwd.to_string_lossy().trim_end_matches('/'),
+                dir_part.trim_start_matches("./")
+            )
+        };
+        Some((
+            dir,
+            self.input.clone(),
+            format!("{}@{dir_part}", &self.input[..at]),
+            partial.to_string(),
+        ))
+    }
+
     fn folder_request(&self) -> Option<(String, String, String, String)> {
         let rest = self.input.strip_prefix("/review ")?;
         if rest.contains(" for ") || rest.trim_start() != rest {
@@ -1867,6 +2050,8 @@ impl App {
                     if let Some(list) = c.1 {
                         self.push(Kind::Info, Some("Matches"), list);
                     }
+                } else if let Some(m) = self.mention_request() {
+                    self.mention_request = Some(m);
                 } else {
                     self.path_request = self.folder_request();
                 }
@@ -2836,6 +3021,40 @@ impl App {
             }
             return Vec::new();
         }
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let todo = mentioned_files(message, &cwd);
+        if !todo.is_empty() {
+            self.chat_waiting = true;
+            self.attach_flow = Some(AttachFlow {
+                message: message.to_string(),
+                todo,
+                ids: Vec::new(),
+            });
+            return self.next_attachment();
+        }
+        self.send_chat(message, Vec::new())
+    }
+
+    /// The next file of a message to attach, or the message itself once they all are.
+    fn next_attachment(&mut self) -> Vec<Req> {
+        let Some(flow) = self.attach_flow.as_mut() else {
+            return Vec::new();
+        };
+        if flow.todo.is_empty() {
+            let flow = self.attach_flow.take().expect("a flow");
+            return self.send_chat(&flow.message, flow.ids);
+        }
+        let (token, path) = flow.todo.remove(0);
+        vec![self.req(
+            Intent::AttachMention(token),
+            false,
+            Method::Post,
+            "/api/attachments/path",
+            Some(json!({"path": path})),
+        )]
+    }
+
+    fn send_chat(&mut self, message: &str, attachments: Vec<String>) -> Vec<Req> {
         let start = self.chat_history.len().saturating_sub(18);
         let history: Vec<Value> = self.chat_history[start..]
             .iter()
@@ -2854,6 +3073,9 @@ impl App {
             "/api/chat/stream",
             Some({
                 let mut body = json!({"message": message, "history": history});
+                if !attachments.is_empty() {
+                    body["attachments"] = json!(attachments);
+                }
                 if let Some(id) = &self.session {
                     body["session"] = json!(id);
                     // an empty name tells a kept conversation to forget its project
@@ -3131,56 +3353,18 @@ impl App {
                 if !ok || self.input != line {
                     return Vec::new();
                 }
-                let want = partial.to_ascii_lowercase();
-                let mut names: Vec<String> = body["dirs"]
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|d| d["name"].as_str())
-                            .filter(|n| {
-                                !n.is_empty()
-                                    && clean(n) == *n
-                                    && !n.chars().any(char::is_whitespace)
-                                    && n.to_ascii_lowercase().starts_with(&want)
-                            })
-                            .map(String::from)
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                names.sort();
-                match names.as_slice() {
-                    [] => {}
-                    [one] => {
-                        self.input = format!("{head}{one}/");
-                        self.cursor = self.input.chars().count();
-                    }
-                    many => {
-                        let first = &many[0];
-                        let mut common = first.chars().count();
-                        for m in many {
-                            common = common.min(
-                                first
-                                    .chars()
-                                    .zip(m.chars())
-                                    .take_while(|(a, b)| a.eq_ignore_ascii_case(b))
-                                    .count(),
-                            );
-                        }
-                        if common > partial.chars().count() {
-                            let stem: String = first.chars().take(common).collect();
-                            self.input = format!("{head}{stem}");
-                            self.cursor = self.input.chars().count();
-                        }
-                        let shown: Vec<String> =
-                            many.iter().take(12).map(|n| format!("{n}/")).collect();
-                        let more = many.len().saturating_sub(12);
-                        let mut lines = vec![shown.join("  ")];
-                        if more > 0 {
-                            lines.push(format!("and {more} more"));
-                        }
-                        self.push(Kind::Info, Some("Folders"), lines);
-                    }
+                self.finish_names(&head, &partial, &body, false);
+                Vec::new()
+            }
+            Intent::MentionComplete {
+                line,
+                head,
+                partial,
+            } => {
+                if !ok || self.input != line {
+                    return Vec::new();
                 }
+                self.finish_names(&head, &partial, &body, true);
                 Vec::new()
             }
             Intent::Jobs => {
@@ -4241,6 +4425,44 @@ impl App {
                 }
                 Vec::new()
             }
+            Intent::AttachMention(token) => {
+                if !ok {
+                    let flow = self.attach_flow.take();
+                    self.chat_waiting = false;
+                    let dropped = std::mem::take(&mut self.queued).len();
+                    self.say(
+                        Kind::Error,
+                        format!(
+                            "Could not attach @{}: {} The message was not sent; it is back in the box.{}",
+                            clean(&token),
+                            err_text(status, &body),
+                            if dropped > 0 { format!(" {dropped} queued message(s) were dropped.") } else { String::new() }
+                        ),
+                    );
+                    if let Some(f) = flow {
+                        self.input = f.message;
+                        self.cursor = self.input.chars().count();
+                    }
+                    return Vec::new();
+                }
+                if let Some(f) = self.attach_flow.as_mut() {
+                    if let Some(id) = body["id"].as_str() {
+                        f.ids.push(id.to_string());
+                    }
+                }
+                self.say(
+                    Kind::Info,
+                    format!(
+                        "Attached {}: {} read on this computer.",
+                        clean(body["name"].as_str().unwrap_or(&token)),
+                        body["kind_label"]
+                            .as_str()
+                            .map(clean)
+                            .unwrap_or_else(|| "file".into())
+                    ),
+                );
+                self.next_attachment()
+            }
             Intent::NotesOnlyShow => {
                 if !ok {
                     self.say(Kind::Error, err_text(status, &body));
@@ -4908,6 +5130,31 @@ impl App {
                     foot.push(format!(
                         "{} page(s) left out: no room in the model's window",
                         pages("web_sources_left_out")
+                    ));
+                }
+                let files = |k: &str| body["files"][k].as_u64().unwrap_or(0);
+                if files("used") > 0 {
+                    foot.push(format!(
+                        "{} attached file(s) read for this answer",
+                        files("used")
+                    ));
+                }
+                if files("trimmed") > 0 {
+                    foot.push(format!(
+                        "{} attached file(s) cut short to fit the model's window",
+                        files("trimmed")
+                    ));
+                }
+                if files("left_out") > 0 {
+                    foot.push(format!(
+                        "{} attached file(s) left out: no room in the model's window",
+                        files("left_out")
+                    ));
+                }
+                if files("withheld_instructions") + files("withheld_secrets") > 0 {
+                    foot.push(format!(
+                        "{} passage(s) of attached files were not given to the model (they read like instructions or hold a secret)",
+                        files("withheld_instructions") + files("withheld_secrets")
                     ));
                 }
                 // the answer is a card of its own so it can be shown as formatted text; what the answer cost and used follows as a plain card

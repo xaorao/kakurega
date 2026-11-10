@@ -16204,3 +16204,128 @@ fn sv178_a_project_set_to_answer_only_from_its_material_asks_no_model_when_it_ho
     ask(Some("kestrel"), "who won the 1998 world cup");
     assert_eq!(calls(), n + 1);
 }
+
+#[test]
+fn sv179_a_file_in_the_allowed_folders_is_attached_by_path_and_nothing_outside_them_or_secret_by_name_is(
+) {
+    let (c, w, seen, root) = instructions_service("attach-path");
+    let anon = Web::new(c.addr);
+    assert_eq!(
+        anon.post("/api/attachments/path", json!({"path": "x"})).0,
+        401
+    );
+    let docs = root.join("docs");
+    fs::create_dir_all(&docs).unwrap();
+    fs::write(
+        docs.join("terms.txt"),
+        "Payment terms: net 30 days from invoice.",
+    )
+    .unwrap();
+    fs::write(docs.join(".env"), "API_TOKEN=tok-9f8e7d6c5b4a\n").unwrap();
+    fs::write(docs.join("deploy.pem"), "not really a key").unwrap();
+    fs::write(docs.join("id_rsa"), "x").unwrap();
+    fs::write(docs.join(".hidden.txt"), "hidden but allowed to be named").unwrap();
+    fs::write(docs.join("empty.txt"), "").unwrap();
+    let outside = root.parent().unwrap().join("outside-notes.txt");
+    fs::write(&outside, "outside the allowed folders").unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&outside, docs.join("link-out.txt")).unwrap();
+        std::os::unix::fs::symlink(root.parent().unwrap(), docs.join("dir-out")).unwrap();
+    }
+    let attach = |p: &str| w.post("/api/attachments/path", json!({"path": p}));
+    // a file inside the roots is read like an upload and can go with a message
+    let (s, a) = attach(docs.join("terms.txt").to_str().unwrap());
+    assert_eq!(s, 201, "{a}");
+    assert_eq!(a["name"], "terms.txt");
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "when do I pay", "attachments": [a["id"].clone()]}),
+    );
+    assert_eq!(s, 200, "{r}");
+    assert_eq!(r["files"]["used"], 1);
+    assert!(seen
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .iter()
+        .any(|m| m.content.contains("net 30 days")));
+    // refused, with nothing attached: outside the roots, a link out, a traversal, a folder, a missing file, an empty file
+    let mut refused = vec![
+        outside.to_str().unwrap().to_string(),
+        format!("{}/docs/../../outside-notes.txt", root.display()),
+        docs.to_str().unwrap().to_string(),
+        docs.join("missing.txt").to_str().unwrap().to_string(),
+        "/etc/hosts".to_string(),
+        "".to_string(),
+    ];
+    #[cfg(unix)]
+    {
+        refused.push(docs.join("link-out.txt").to_str().unwrap().to_string());
+        refused.push(
+            docs.join("dir-out/outside-notes.txt")
+                .to_str()
+                .unwrap()
+                .to_string(),
+        );
+    }
+    for p in &refused {
+        let (s, v) = attach(p);
+        assert_eq!(s, 403, "{p}: {v}");
+        assert_eq!(v["error"]["code"], "NOT_ALLOWED", "{p}");
+    }
+    assert_eq!(attach(docs.join("empty.txt").to_str().unwrap()).0, 400);
+    // a name that says secret is refused even inside the roots
+    for n in [".env", "deploy.pem", "id_rsa"] {
+        let (s, v) = attach(docs.join(n).to_str().unwrap());
+        assert_eq!(
+            (s, v["error"]["code"].clone()),
+            (403, json!("SECRET_FILE")),
+            "{n}: {v}"
+        );
+    }
+    // more than the limit, and a body with a field it does not know
+    fs::write(docs.join("big.txt"), vec![b'a'; 9 * 1024 * 1024]).unwrap();
+    assert_eq!(attach(docs.join("big.txt").to_str().unwrap()).0, 400);
+    assert_eq!(
+        w.post(
+            "/api/attachments/path",
+            json!({"path": docs.join("terms.txt").to_str().unwrap(), "x": 1})
+        )
+        .0,
+        422
+    );
+    // the listing offers files only when asked, leaves out hidden and secret-looking names, and stays inside the roots
+    let (s, v) = w.get(&format!("/api/fs?path={}&files=1", docs.display()));
+    assert_eq!(s, 200, "{v}");
+    let names: Vec<&str> = v["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        names.contains(&"terms.txt") && names.contains(&"empty.txt"),
+        "{names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|n| n.starts_with('.') || *n == "deploy.pem" || *n == "id_rsa"),
+        "{names:?}"
+    );
+    assert!(w
+        .get(&format!("/api/fs?path={}", docs.display()))
+        .1
+        .get("files")
+        .is_none());
+    assert_eq!(
+        w.get(&format!(
+            "/api/fs?path={}&files=1",
+            root.parent().unwrap().display()
+        ))
+        .0,
+        403
+    );
+}

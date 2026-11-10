@@ -945,6 +945,12 @@ impl Service {
         }
     }
 
+    /// A regular file the service may read: its real path, after links are resolved, lies inside one of the roots.
+    fn allowed_file(&self, p: &str) -> Option<PathBuf> {
+        let c = Path::new(p).canonicalize().ok()?;
+        (c.is_file() && self.roots.iter().any(|r| c.starts_with(r))).then_some(c)
+    }
+
     fn allowed_dir(&self, p: &str) -> Option<PathBuf> {
         let c = Path::new(p).canonicalize().ok()?;
         (c.is_dir() && self.roots.iter().any(|r| c.starts_with(r))).then_some(c)
@@ -1119,6 +1125,8 @@ struct StartBody {
 #[derive(Deserialize)]
 struct PathQuery {
     path: Option<String>,
+    /// Also list the files of the folder (names that say they hold secrets are left out).
+    files: Option<u8>,
 }
 
 type Svc = axum::Extension<Arc<Service>>;
@@ -4762,7 +4770,66 @@ async fn attachment_upload(
     Query(q): Query<AttachQuery>,
     body: axum::body::Bytes,
 ) -> Response {
-    let name = match kk_parse::clean_name(q.name.as_deref().unwrap_or("")) {
+    attach_bytes(svc, q.name.as_deref().unwrap_or(""), body).await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttachPathBody {
+    path: String,
+}
+
+/// Attaches a file the owner names from the folders this service may read (the same roots a review may use), instead of
+/// uploading its bytes: the terminal's `@path`. The path is resolved first, so a link or `..` that leaves the roots is
+/// refused, and the file then goes through exactly the same reading, limits and labelling as an upload.
+async fn attachment_from_path(
+    axum::Extension(svc): Svc,
+    Json(b): Json<AttachPathBody>,
+) -> Response {
+    let refuse = |code: &str, why: &str| error(StatusCode::FORBIDDEN, code, why);
+    let Some(path) = svc.allowed_file(&b.path) else {
+        return refuse(
+            "NOT_ALLOWED",
+            "that file is not in a folder this service may read",
+        );
+    };
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if kk_review::code::secret_file_name(&name) {
+        return refuse(
+            "SECRET_FILE",
+            "that file is kept out of conversations: its name says it holds secrets or keys",
+        );
+    }
+    let read = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        use std::io::Read;
+        let f =
+            std::fs::File::open(&path).map_err(|_| "the file could not be opened".to_string())?;
+        let mut bytes = Vec::new();
+        f.take(ATTACH_BODY_MAX as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "the file could not be read".to_string())?;
+        if bytes.len() > ATTACH_BODY_MAX {
+            return Err("the file is larger than 8 MB".to_string());
+        }
+        Ok(bytes)
+    })
+    .await;
+    match read {
+        Ok(Ok(bytes)) => attach_bytes(svc, &name, axum::body::Bytes::from(bytes)).await,
+        Ok(Err(m)) => error(StatusCode::BAD_REQUEST, "READ_FAILED", &m),
+        Err(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "READ_FAILED",
+            "the file could not be read",
+        ),
+    }
+}
+
+async fn attach_bytes(svc: Arc<Service>, raw_name: &str, body: axum::body::Bytes) -> Response {
+    let name = match kk_parse::clean_name(raw_name) {
         Ok(n) => n,
         Err(e) => return parse_error_response(&e),
     };
@@ -6976,11 +7043,32 @@ async fn fs_list(axum::Extension(svc): Svc, Query(q): Query<PathQuery>) -> Respo
         }
     }
     dirs.sort_by_key(|d| d["name"].as_str().unwrap_or("").to_lowercase());
+    let mut files = Vec::new();
+    if q.files == Some(1) {
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') || kk_review::code::secret_file_name(&name) {
+                    continue;
+                }
+                if let Ok(m) = std::fs::symlink_metadata(e.path()) {
+                    if m.is_file() {
+                        files.push(json!({"name": name, "path": e.path().to_string_lossy(), "bytes": m.len()}));
+                    }
+                }
+            }
+        }
+        files.sort_by_key(|d| d["name"].as_str().unwrap_or("").to_lowercase());
+    }
     let parent = dir
         .parent()
         .filter(|p| svc.roots.iter().any(|r| p.starts_with(r)))
         .map(|p| p.to_string_lossy().into_owned());
-    Json(json!({"path": dir.to_string_lossy(), "parent": parent, "dirs": dirs})).into_response()
+    let mut out = json!({"path": dir.to_string_lossy(), "parent": parent, "dirs": dirs});
+    if q.files == Some(1) {
+        out["files"] = json!(files);
+    }
+    Json(out).into_response()
 }
 
 async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -> Response {
@@ -8931,6 +9019,7 @@ impl Extension for Routes {
                 post(attachment_upload)
                     .layer(axum::extract::DefaultBodyLimit::max(ATTACH_BODY_MAX)),
             )
+            .route("/api/attachments/path", post(attachment_from_path))
             .route("/api/attachments/{id}", get(attachment_get))
             .route("/api/attachments/{id}/remove", post(attachment_remove))
             .route(

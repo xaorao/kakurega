@@ -6869,3 +6869,246 @@ fn tu_ns02_a_reply_where_no_model_was_asked_says_so_and_shows_no_model_figures()
     ));
     assert!(text(&app).contains("private, on this computer"));
 }
+
+fn at_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("kk-at-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("docs")).unwrap();
+    for f in [
+        "a.txt",
+        "b.md",
+        "docs/c.txt",
+        "d.txt",
+        "e.txt",
+        "f.txt",
+        "g.txt",
+    ] {
+        std::fs::write(dir.join(f), "x").unwrap();
+    }
+    dir
+}
+
+#[test]
+fn tu_at01_files_named_with_an_at_sign_are_found_and_anything_else_is_left_as_text() {
+    use kk_tui::app::mentioned_files;
+    let dir = at_dir("find");
+    let names = |m: &str| -> Vec<String> {
+        mentioned_files(m, &dir)
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect()
+    };
+    assert_eq!(names("summarise @a.txt please"), ["a.txt"]);
+    assert_eq!(names("@a.txt and @docs/c.txt"), ["a.txt", "docs/c.txt"]);
+    // closing punctuation is not part of the name; an @ inside a word or after a bracket is not a mention
+    assert_eq!(names("then @b.md."), ["b.md"]);
+    assert_eq!(names("then @b.md, and @a.txt!"), ["b.md", "a.txt"]);
+    assert!(names("read (@a.txt) and x@b.md and a@a.txt").is_empty());
+    // not a file here: a person, a folder, a missing name, an empty @, an @ alone
+    assert!(names("ask @ada about @docs and @missing.txt and @ and @@a.txt").is_empty());
+    // each once, and at most five
+    assert_eq!(names("@a.txt @a.txt"), ["a.txt"]);
+    assert_eq!(
+        names("@a.txt @b.md @docs/c.txt @d.txt @e.txt @f.txt @g.txt").len(),
+        5
+    );
+    // an absolute path works; a path with a control character does not
+    let abs = dir.join("a.txt");
+    assert_eq!(
+        names(&format!("see @{}", abs.display())),
+        [abs.to_string_lossy().to_string()]
+    );
+    assert!(names("see @a.txt\u{7}").is_empty());
+}
+
+#[test]
+fn tu_at02_a_message_with_files_attaches_them_first_and_sends_the_ids_with_the_question() {
+    let dir = at_dir("flow");
+    let (a, b) = (dir.join("a.txt"), dir.join("b.md"));
+    let mut app = booted();
+    let msg = format!("compare @{} with @{}", a.display(), b.display());
+    let r = enter(&mut app, &msg);
+    assert_eq!(r.len(), 1);
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/attachments/path", Method::Post)
+    );
+    assert_eq!(r[0].body, Some(json!({"path": a.to_string_lossy()})));
+    // while it waits, another message is queued and nothing else is sent
+    assert!(enter(&mut app, "and another thing").is_empty());
+    let r2 = app.handle(ok(
+        &r[0],
+        201,
+        json!({"id": "att-1", "name": "a.txt", "kind_label": "text file"}),
+    ));
+    assert_eq!(r2[0].path, "/api/attachments/path");
+    assert_eq!(r2[0].body, Some(json!({"path": b.to_string_lossy()})));
+    let r3 = app.handle(ok(
+        &r2[0],
+        201,
+        json!({"id": "att-2", "name": "b.md", "kind_label": "text file"}),
+    ));
+    assert_eq!(r3[0].path, "/api/chat/stream");
+    let body = r3[0].body.as_ref().unwrap();
+    assert_eq!(body["message"], msg.as_str());
+    assert_eq!(body["attachments"], json!(["att-1", "att-2"]));
+    assert!(
+        text(&app).contains("Attached a.txt") && text(&app).contains("Attached b.md"),
+        "{}",
+        text(&app)
+    );
+    // the answer says how many files were read, and the queued message follows
+    let next = app.handle(ok(&r3[0], 200, json!({"reply": "They differ.", "route": {"id": "local", "simulated": false}, "notes_used": 0,
+        "files": {"used": 2, "trimmed": 1, "left_out": 0, "withheld_instructions": 1, "withheld_secrets": 1}})));
+    let t = text(&app);
+    assert!(
+        t.contains("2 attached file(s) read")
+            && t.contains("1 attached file(s) cut short")
+            && t.contains("2 passage(s) of attached files were not given"),
+        "{t}"
+    );
+    assert_eq!(
+        next[0].body.as_ref().unwrap()["message"],
+        "and another thing"
+    );
+    assert!(next[0].body.as_ref().unwrap().get("attachments").is_none());
+    // a plain message has no attachments field
+    let mut plain = booted();
+    let r = enter(&mut plain, "no files here, only @nobody");
+    assert_eq!(r[0].path, "/api/chat/stream");
+    assert!(r[0].body.as_ref().unwrap().get("attachments").is_none());
+}
+
+#[test]
+fn tu_at03_a_file_that_cannot_be_attached_stops_the_message_and_gives_it_back() {
+    let dir = at_dir("fail");
+    let a = dir.join("a.txt");
+    let mut app = booted();
+    let msg = format!("read @{} now", a.display());
+    let r = enter(&mut app, &msg);
+    assert!(enter(&mut app, "queued one").is_empty());
+    let out = app.handle(ok(&r[0], 403, json!({"error": {"code": "SECRET_FILE", "message": "that file is kept out of conversations: its name says it holds secrets or keys"}})));
+    assert!(out.is_empty(), "nothing is sent after a refusal");
+    let t = text(&app);
+    assert!(
+        t.contains("Could not attach")
+            && t.contains("kept out of conversations")
+            && t.contains("1 queued message"),
+        "{t}"
+    );
+    assert_eq!(app.input, msg, "the message is back in the box");
+    // and the next message goes out normally
+    app.input.clear();
+    let r = enter(&mut app, "hello");
+    assert_eq!(r[0].path, "/api/chat/stream");
+}
+
+fn listing(dirs: &[&str], files: &[&str]) -> Value {
+    json!({"path": "/x", "parent": null,
+        "dirs": dirs.iter().map(|n| json!({"name": n, "path": format!("/x/{n}")})).collect::<Vec<_>>(),
+        "files": files.iter().map(|n| json!({"name": n, "path": format!("/x/{n}"), "bytes": 10})).collect::<Vec<_>>()})
+}
+
+#[test]
+fn tu_at04_tab_after_an_at_sign_finishes_a_file_or_folder_name_from_the_services_listing() {
+    let cwd = std::env::current_dir().unwrap();
+    let here = format!("{}/", cwd.to_string_lossy().trim_end_matches('/'));
+    // one file completes with a space after it so the sentence goes on
+    let mut app = booted();
+    typed(&mut app, "look at @ter");
+    let r = tab_and_ask(&mut app).expect("asks the service");
+    assert_eq!(
+        r.path,
+        format!(
+            "/api/fs?path={}&files=1",
+            kk_tui::app::percent_encode(&here)
+        )
+    );
+    app.handle(ok(&r, 200, listing(&["tests"], &["terms.txt", "notes.md"])));
+    assert_eq!(app.input, "look at @terms.txt ");
+    // a folder completes with a slash
+    let mut app = booted();
+    typed(&mut app, "see @te");
+    let r = tab_and_ask(&mut app).unwrap();
+    app.handle(ok(&r, 200, listing(&["tests"], &["notes.md"])));
+    assert_eq!(app.input, "see @tests/");
+    // several fill in what they share and are listed, folders with a slash
+    let mut app = booted();
+    typed(&mut app, "@re");
+    let r = tab_and_ask(&mut app).unwrap();
+    app.handle(ok(
+        &r,
+        200,
+        listing(&["reports"], &["readme.md", "release.txt"]),
+    ));
+    assert_eq!(app.input, "@re");
+    let t = text(&app);
+    assert!(
+        t.contains("reports/") && t.contains("readme.md") && t.contains("release.txt"),
+        "{t}"
+    );
+    let mut app = booted();
+    typed(&mut app, "@rea");
+    let r = tab_and_ask(&mut app).unwrap();
+    app.handle(ok(&r, 200, listing(&[], &["readme.md", "ready.txt"])));
+    assert_eq!(app.input, "@read");
+    // deeper levels ask for that folder; an absolute path is asked for as written
+    let mut app = booted();
+    typed(&mut app, "x @docs/c");
+    let r = tab_and_ask(&mut app).unwrap();
+    assert!(
+        r.path.contains("docs%2F") || r.path.contains("docs/"),
+        "{}",
+        r.path
+    );
+    app.handle(ok(&r, 200, listing(&[], &["c.txt"])));
+    assert_eq!(app.input, "x @docs/c.txt ");
+    let mut app = booted();
+    typed(&mut app, "x @/home/u/p/a");
+    let r = tab_and_ask(&mut app).unwrap();
+    assert!(
+        r.path.starts_with("/api/fs?path=")
+            && r.path.contains("home")
+            && r.path.ends_with("&files=1"),
+        "{}",
+        r.path
+    );
+}
+
+#[test]
+fn tu_at05_at_completion_is_asked_only_for_a_real_mention_and_hostile_listings_change_nothing() {
+    // not inside a word, not when the token has a space, not for a plain line, and /review keeps its own completion
+    for line in ["mail x@te", "a @te b", "te", "(@te"] {
+        let mut app = booted();
+        typed(&mut app, line);
+        assert!(tab_and_ask(&mut app).is_none(), "{line:?}");
+    }
+    let mut app = booted();
+    typed(&mut app, "/review pay");
+    let r = tab_and_ask(&mut app).unwrap();
+    assert!(
+        !r.path.contains("files=1"),
+        "folder completion must not list files: {}",
+        r.path
+    );
+    // names with spaces, escapes or no match are never put into the line
+    for names in [
+        listing(&[], &["a b.txt", "te\u{1b}[31m.txt"]),
+        listing(&[], &["other.txt"]),
+        listing(&[], &[]),
+        json!({"error": {"message": "no"}}),
+    ] {
+        let mut app = booted();
+        typed(&mut app, "q @te");
+        let r = tab_and_ask(&mut app).unwrap();
+        app.handle(ok(&r, 200, names));
+        assert_eq!(app.input, "q @te");
+    }
+    // an answer that arrives after the line changed is ignored
+    let mut app = booted();
+    typed(&mut app, "q @te");
+    let r = tab_and_ask(&mut app).unwrap();
+    typed(&mut app, "x");
+    app.handle(ok(&r, 200, listing(&[], &["terms.txt"])));
+    assert_eq!(app.input, "q @tex");
+}

@@ -157,16 +157,7 @@ impl Workspace {
             return Err("version control and generated folders are not changed by a task".into());
         }
         let name = parts[parts.len() - 1].to_lowercase();
-        let secret_name = name == ".env"
-            || name.starts_with(".env.")
-            || name.ends_with(".pem")
-            || name.ends_with(".key")
-            || name.ends_with(".p12")
-            || name.starts_with("id_rsa")
-            || name.starts_with("id_ed25519")
-            || name == ".npmrc"
-            || name == ".netrc"
-            || name.starts_with("credentials");
+        let secret_name = secret_file_name(&name);
         if secret_name || self.reserved.contains(&path.to_lowercase()) {
             return Err("that file holds secrets or is withheld; a task never writes it".into());
         }
@@ -538,6 +529,21 @@ impl Workspace {
         }
         out
     }
+}
+
+/// The most dangerous kind of file to hand to a model or to write: its name says it holds secrets or keys.
+pub fn secret_file_name(name: &str) -> bool {
+    let name = name.to_lowercase();
+    name == ".env"
+        || name.starts_with(".env.")
+        || name.ends_with(".pem")
+        || name.ends_with(".key")
+        || name.ends_with(".p12")
+        || name.starts_with("id_rsa")
+        || name.starts_with("id_ed25519")
+        || name == ".npmrc"
+        || name == ".netrc"
+        || name.starts_with("credentials")
 }
 
 pub const HINT_LINES: usize = 12;
