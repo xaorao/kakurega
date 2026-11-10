@@ -57,6 +57,7 @@ pub trait JobRunner: Send + Sync {
         _files: &[kk_review::import::ImportedFile],
         _task: &str,
         _progress: &dyn Fn(&str),
+        _external: Option<&kk_review::code::External<'_>>,
     ) -> Result<crate::coding::CodeOutcome, String> {
         Err("coding tasks are not available in this configuration".into())
     }
@@ -367,7 +368,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS pii_allow(entry TEXT PRIMARY KEY, added_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS owner_instructions(scope TEXT PRIMARY KEY, text TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS mcp_servers(name TEXT PRIMARY KEY, program TEXT NOT NULL, args TEXT NOT NULL, env TEXT NOT NULL, created INTEGER NOT NULL);
-             CREATE TABLE IF NOT EXISTS mcp_tools(server TEXT NOT NULL, tool TEXT NOT NULL, pin TEXT NOT NULL, description TEXT NOT NULL, mode TEXT NOT NULL, PRIMARY KEY(server, tool));
+             CREATE TABLE IF NOT EXISTS mcp_tools(server TEXT NOT NULL, tool TEXT NOT NULL, pin TEXT NOT NULL, description TEXT NOT NULL, schema TEXT NOT NULL DEFAULT '{}', mode TEXT NOT NULL, PRIMARY KEY(server, tool));
              CREATE TABLE IF NOT EXISTS methods(name TEXT PRIMARY KEY, body TEXT NOT NULL, hash TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS method_approvals(name TEXT PRIMARY KEY, hash TEXT NOT NULL, approved_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS project_settings(project TEXT PRIMARY KEY, notes_only INTEGER NOT NULL, updated_at INTEGER NOT NULL);
@@ -5243,7 +5244,10 @@ async fn code_start(axum::Extension(svc): Svc, Json(b): Json<CodeBody>) -> Respo
                 }
             }
         };
-        let result = svc2.runner.code_task(&imported.files, &task, &progress);
+        let external = svc2.mcp_external();
+        let result = svc2
+            .runner
+            .code_task(&imported.files, &task, &progress, external.as_ref());
         let mut g = svc2.coding.lock().expect("lock");
         if let Some(t) = g.list.get_mut(&id2) {
             match result {

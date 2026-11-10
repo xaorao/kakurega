@@ -543,9 +543,10 @@ impl JobRunner for ReviewRunner {
         files: &[kk_review::import::ImportedFile],
         task: &str,
         progress: &dyn Fn(&str),
+        external: Option<&kk_review::code::External<'_>>,
     ) -> Result<kk_service::coding::CodeOutcome, String> {
         use kk_review::code::{
-            detect_runner, run_task, Runner, SandboxTester, Tester, Workspace, MAX_TURNS,
+            detect_runner, run_task_with, Runner, SandboxTester, Tester, Workspace, MAX_TURNS,
         };
         if self.scripted.is_some() {
             return Err(
@@ -571,12 +572,13 @@ impl JobRunner for ReviewRunner {
             1 => format!("the model works on {} files; 1 is withheld because it holds secrets or private data", ws.files().len()),
             n => format!("the model works on {} files; {n} are withheld because they hold secrets or private data", ws.files().len()),
         });
-        let report = run_task(
+        let report = run_task_with(
             &route,
             &mut ws,
             task,
             tester.as_ref().map(|t| t as &dyn Tester),
             MAX_TURNS,
+            external,
         );
         progress("the tests run again on the final files, by the kernel");
         let kernel_test = tester.as_ref().map(|t| t.run(ws.files()));

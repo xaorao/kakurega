@@ -2,6 +2,7 @@ import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError } from "../api";
 import { t } from "../i18n";
 import { Methods } from "./Methods";
+import { Mcp } from "./Mcp";
 
 /** One box: the text, how much room is left, save and remove. An empty text removes the instruction. */
 function Editor(props: { id: string; label: string; initial: string; project?: string; max: number; onSaved: () => void }) {
@@ -107,6 +108,7 @@ export function Instructions() {
               </Show>
             </div>
             <Methods />
+            <Mcp />
           </>
         )}
       </Show>

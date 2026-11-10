@@ -15567,6 +15567,7 @@ impl JobRunner for CodeRunner {
         files: &[kk_review::import::ImportedFile],
         _task: &str,
         progress: &dyn Fn(&str),
+        _external: Option<&kk_review::code::External<'_>>,
     ) -> Result<kk_service::coding::CodeOutcome, String> {
         let (mut ws, left) = kk_review::code::Workspace::from_imported(files);
         progress("working");
@@ -17203,5 +17204,121 @@ fn sv205_at_most_twenty_servers_can_be_saved_and_changing_one_at_the_limit_is_al
     assert_eq!(
         w.post("/api/mcp/servers", mcp_server_body("s3", "many")).0,
         200
+    );
+}
+
+/// A runner whose coding task calls one outside tool if it was offered, and says what it got.
+struct ProbeRunner {
+    inner: CodeRunner,
+}
+
+impl JobRunner for ProbeRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        self.inner.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        self.inner.route_info()
+    }
+    fn code_task(
+        &self,
+        files: &[kk_review::import::ImportedFile],
+        task: &str,
+        progress: &dyn Fn(&str),
+        external: Option<&kk_review::code::External<'_>>,
+    ) -> Result<kk_service::coding::CodeOutcome, String> {
+        let mut out = self.inner.code_task(files, task, progress, None)?;
+        out.summary = match external {
+            None => "no outside tools".into(),
+            Some(e) => {
+                let names: Vec<String> = e.tools.iter().map(|t| t.name.clone()).collect();
+                let got = (e.call)("mcp__srv__echo", &json!({"text": "hello"}));
+                let other = (e.call)("mcp__srv__write", &json!({}));
+                format!(
+                    "tools={names:?} schema={} echo={got:?} write={other:?}",
+                    e.tools[0].parameters
+                )
+            }
+        };
+        Ok(out)
+    }
+}
+
+#[test]
+fn sv206_a_coding_task_is_offered_only_the_mcp_tools_the_owner_allowed_and_can_call_only_those() {
+    let (root, _repo) = repo_copy("mcp-coding");
+    let runner = ProbeRunner {
+        inner: CodeRunner {
+            inner: CannedRunner { confirm: true },
+            edits: vec![("src/app.py".into(), "a - b".into(), "a + b".into())],
+            create: vec![],
+            delete: vec![],
+            endpoint: "http://127.0.0.1:1".into(),
+        },
+    };
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(runner),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let proj = root.join("proj");
+    std::fs::create_dir_all(proj.join("src")).unwrap();
+    std::fs::write(
+        proj.join("src/app.py"),
+        "def add(a, b):\n    return a - b\n",
+    )
+    .unwrap();
+    let start_task = |w: &Web| {
+        let (s, v) = w.post(
+            "/api/code",
+            json!({"folder": proj.to_string_lossy(), "task": "fix add"}),
+        );
+        assert_eq!(s, 202, "{v}");
+        wait_code(w, v["id"].as_str().unwrap())
+    };
+    // nothing allowed: no outside tools
+    assert_eq!(start_task(&w)["summary"], json!("no outside tools"));
+    w.post("/api/mcp/servers", mcp_server_body("srv", "ok"));
+    w.post("/api/mcp/discover", json!({"name": "srv"}));
+    // listed but off: still none
+    assert_eq!(start_task(&w)["summary"], json!("no outside tools"));
+    let tools = w.get("/api/mcp").1["servers"][0]["tools"].clone();
+    let pin = tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "echo")
+        .unwrap()["pin"]
+        .clone();
+    w.post(
+        "/api/mcp/tools",
+        json!({"server": "srv", "tool": "echo", "mode": "allow", "pin": pin}),
+    );
+    let summary = start_task(&w)["summary"].as_str().unwrap().to_string();
+    assert!(summary.contains(r#"tools=["mcp__srv__echo"]"#), "{summary}");
+    assert!(summary.contains(r#"echo=Ok("echo: hello")"#), "{summary}");
+    assert!(
+        summary.contains(r#""properties":{"text""#),
+        "the tool's input schema reaches the model: {summary}"
+    );
+    assert!(
+        summary.contains("write=Err("),
+        "the tool that was not allowed is refused: {summary}"
     );
 }

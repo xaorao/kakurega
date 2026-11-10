@@ -56,7 +56,74 @@ fn limits() -> Limits {
     }
 }
 
+/// The input schema as stored for the model: an object of at most 4 KiB, or a bare object schema.
+fn schema_text(schema: &Value) -> String {
+    let text = schema.to_string();
+    if schema.is_object() && text.len() <= 4096 {
+        text
+    } else {
+        "{\"type\":\"object\"}".to_string()
+    }
+}
+
 impl Service {
+    /// The tools the owner allowed, as the coding loop offers and calls them. None when no tool is allowed.
+    pub(super) fn mcp_external(self: &Arc<Self>) -> Option<kk_review::code::External<'static>> {
+        let rows: Vec<(String, String, String, String)> = {
+            let store = self.store.lock().expect("lock");
+            let c = store.connection();
+            let Ok(mut st) = c.prepare("SELECT server, tool, description, schema FROM mcp_tools WHERE mode = 'allow' ORDER BY server, tool") else {
+                return None;
+            };
+            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+                .map(|it| it.flatten().collect())
+                .unwrap_or_default()
+        };
+        let mut tools = Vec::new();
+        let mut routes: BTreeMap<String, (String, String)> = BTreeMap::new();
+        for (server, tool, description, schema) in rows.into_iter().take(40) {
+            let name = format!("mcp__{server}__{tool}");
+            if name.len() > 64 {
+                continue;
+            }
+            let parameters =
+                serde_json::from_str::<Value>(&schema).unwrap_or(json!({"type": "object"}));
+            tools.push(kk_types::chat::ToolSpec {
+                name: name.clone(),
+                description: format!(
+                    "From an outside program the owner allowed ({server}): {description}"
+                ),
+                parameters,
+            });
+            routes.insert(name, (server, tool));
+        }
+        if tools.is_empty() {
+            return None;
+        }
+        let svc = self.clone();
+        Some(kk_review::code::External {
+            tools,
+            call: Box::new(move |name: &str, args: &Value| {
+                let (server, tool) = routes.get(name).ok_or("that tool is not allowed")?;
+                let out = svc.mcp_call(server, tool, args.clone())?;
+                svc.log_event(
+                    "mcp.called",
+                    &format!("{server}/{tool}"),
+                    &[
+                        ("bytes", out.text.len().into()),
+                        ("by", "coding task".into()),
+                    ],
+                );
+                if out.is_error {
+                    Err(format!("the tool reported an error: {}", out.text))
+                } else {
+                    Ok(out.text)
+                }
+            }),
+            max_calls: 8,
+        })
+    }
+
     fn mcp_config(&self, name: &str) -> Result<ServerConfig, String> {
         let store = self.store.lock().expect("lock");
         let row: Option<(String, String, String)> = store
@@ -129,8 +196,8 @@ impl Service {
                 None => "off".to_string(),
             };
             c.execute(
-                "INSERT INTO mcp_tools(server, tool, pin, description, mode) VALUES (?1, ?2, ?3, ?4, ?5)",
-                kk_vault::rusqlite::params![name, t.name, t.pin, t.description, mode],
+                "INSERT INTO mcp_tools(server, tool, pin, description, schema, mode) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                kk_vault::rusqlite::params![name, t.name, t.pin, t.description, schema_text(&t.schema), mode],
             )
             .map_err(|e| e.to_string())?;
         }

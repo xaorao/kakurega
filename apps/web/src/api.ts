@@ -85,6 +85,8 @@ export interface LogEntry { seq: number; at: number; kind: string; subject: stri
 export interface LogSummary { count: number; head: string | null; public_key: string; recent: LogEntry[] }
 export interface ChatTurn { role: "user" | "assistant"; content: string }
 export interface Method { name: string; description: string; triggers: string[]; avoid: string[]; body: string; hash: string; approved: boolean; approved_at?: number | null }
+export interface McpTool { name: string; description: string; pin: string; mode: "off" | "allow" }
+export interface McpServer { name: string; program: string; args: string[]; env_names: string[] | null; tools: McpTool[] }
 export interface ChatReply { instructions_used?: boolean; methods_used?: string[]; project?: string | null; reply: string; route: { id: string; class: string; simulated: boolean; stays_here?: boolean; host?: string | null }; notes_used: number; notes?: { id: string; text: string; why: string; untrusted: boolean; project?: string | null }[]; notes_withheld: number; notes_left_out?: number; files?: { used: number; trimmed: number; left_out: number; withheld_instructions: number; withheld_secrets: number }; web_sources_used: number; web_sources_trimmed?: number; web_sources_left_out?: number; saved?: boolean; not_saved?: "full" | "forgotten" | "error" | null; usage?: { elapsed_ms?: number; context_tokens?: number; context_window?: number | null; estimate?: boolean; context_tokens_estimate: number; reply_tokens_estimate: number; history_turns_sent: number; history_turns_dropped: number; history_turns_summarized?: number; summary_text?: string | null; compacted_now?: boolean; compaction_failed?: string | null } }
 export interface Instructions {
   global: { text: string; updated_at: number } | null;
@@ -282,6 +284,12 @@ export const api = {
   attestModel: (model: string) => request<ModelProof>("POST", "/api/route/attest", { model }),
   similarMemories: () => request<SimilarMemories>("GET", "/api/memories/similar"),
   instructions: () => request<Instructions>("GET", "/api/instructions"),
+  mcp: () => request<{ servers: McpServer[]; limits: { servers: number } }>("GET", "/api/mcp"),
+  mcpAdd: (b: { name: string; program: string; args: string[]; env: Record<string, string> }) => request<{ saved: boolean }>("POST", "/api/mcp/servers", b),
+  mcpRemove: (name: string) => request<{ removed: boolean }>("POST", "/api/mcp/servers/remove", { name }),
+  mcpDiscover: (name: string) => request<{ tools: number; changed: string[] }>("POST", "/api/mcp/discover", { name }),
+  mcpTool: (server: string, tool: string, mode: "off" | "allow", pin: string) => request<{ mode: string }>("POST", "/api/mcp/tools", { server, tool, mode, pin }),
+  mcpTest: (server: string, tool: string, args: unknown) => request<{ text: string; is_error: boolean; truncated: boolean }>("POST", "/api/mcp/test", { server, tool, args }),
   methods: () => request<{ methods: Method[]; limits: { methods: number; body_chars: number; triggers: number } }>("GET", "/api/methods"),
   saveMethod: (m: { name: string; description: string; triggers: string[]; avoid: string[]; body: string }) => request<{ name: string; hash: string; approved: boolean }>("POST", "/api/methods", m),
   approveMethod: (name: string, hash: string) => request<{ approved: boolean }>("POST", "/api/methods/approve", { name, hash }),

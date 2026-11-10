@@ -59,6 +59,6 @@
 
 ## Not built yet (owed)
 1. DONE above: the server list and the per-tool choice.
-2. Letting a coding or review task call an allowed tool (coding mode in the service first; the review sandbox is not given MCP tools), the per-call approval (`ask`), and an audit entry per call beyond the signed log lines already written.
+2. DONE for coding mode: `kk_review::code::run_task_with` offers the tools the owner allowed (`mcp__SERVER__TOOL`, schema stored with the pin and capped at 4 KiB), calls them through the service (which re-checks mode and pin at call time), frames each answer as untrusted text, cuts it at 8000 characters, and allows 8 calls per task; a call is a signed log line (`mcp.called`, size and caller, never the text). Tests lp14 to lp19 (6 mutants plus 2 more caught), sv206 (probe runner), browser test `tests/e2e/mcp_web.mjs` (10 of 10 in a real browser). NOT built: the review sandbox gets no MCP tools (a model in the sandbox must not reach host programs), the per-call approval (`ask`), a real model calling a real MCP tool end to end (NOT VERIFIED), the terminal commands.
 3. Web and terminal screens; the secret-by-name filling of variables from the vault.
 4. The goose and IronClaw lifecycle reading, and the process-group kill.
