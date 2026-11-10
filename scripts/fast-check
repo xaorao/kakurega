@@ -28,6 +28,7 @@ if printf '%s\n' "$files" | grep -q '^apps/web/'; then
 fi
 echo "== guards"
 python3 scripts/scan_secrets.py | tail -1
+python3 scripts/check_recovery.py | tail -1
 python3 scripts/check_layers.py 2>&1 | tail -1
 python3 scripts/check_error_text.py | tail -1 | cut -c1-80
 python3 scripts/docs_check.py | tail -1

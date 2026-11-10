@@ -119,7 +119,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | C-37 | Non-consequential buttons | Optional later, tightly bounded: "Mute 1 h" and "Unpair this chat" buttons whose callbacks | LATER | optional, bounded |
 | C-38 | Inbound media/voice | EXCLUDE. Files from a chat are untrusted input into the user's machine for no benefit to a | EXCLUDED | EXCLUDE. Files from a chat are untrusted input into the user's machine for no benefit to a counts-only bridge |
 | C-39 | Outbound media/files | EXCLUDE (would carry content) | EXCLUDED | EXCLUDE (would carry content) |
-| C-40 | Inbound attachments' captions, forwards | EXCLUDE | EXCLUDED | EXCLUDE |
+| C-40 | Inbound attachments' captions, forwards | EXCLUDE | EXCLUDED | The Telegram bridge accepts no inbound files, captions or forwards by design: anything a chat contact sends would otherwise enter the model's context from outside the owner's own session. |
 | C-41 | Health/status | BUILD: bridge writes `telegram-status.json` (0600) every 30 s: running, last poll ok, last | BUILT | status file alive/stale/never, no text or token (tg23) |
 | C-42 | Doctor / audit | BUILD: `kaku telegram doctor`: token file is regular, not a symlink, mode 0600; `getMe` ok | BUILT | `kaku telegram doctor` |
 | C-43 | Token handling | IMPROVE: wrap every Telegram call in one function returning an error type that never conta | BUILT | token never in error text (tg04) |
@@ -127,7 +127,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | C-45 | Test harness | BUILD: a Rust fake Bot API (axum or tiny_http, dev-dependency) with inject/drain/fail-next | BUILT | fake Bot API in the bridge tests (tg01-tg26) |
 | C-46 | Slack, Discord, Matrix, Signal, SMS, WhatsApp adapters | BUILD later behind one `Transport` trait **inside the bridge**, not a second kernel. Prior | LATER | other chat adapters |
 | C-47 | Linked personal account (MTProto) | EXCLUDE: it reads the user's private chats; the opposite of the product | EXCLUDED | EXCLUDE: it reads the user's private chats; the opposite of the product |
-| C-48 | Multi-bot / multi-account routing | EXCLUDE | EXCLUDED | EXCLUDE |
+| C-48 | Multi-bot / multi-account routing | EXCLUDE | EXCLUDED | One bot is paired to one owner; routing several bots or accounts would let a second party's messages reach the owner's data, and no use was found. |
 
 ## Matrix D: MCP and agent access
 
@@ -162,7 +162,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | D-D27 | Change notifications and subscriptions | BUILD both: a cursor feed `review_events(after, limit)` over job events (any client works) | BUILT | cursor feed plus long poll for following reviews; resource subscriptions EXCLUDED: the server publishes tools only, nothing to subscribe to (mcp.md) |
 | D-D28 | Long-running tasks | BUILD on Kakurega's own job store: a task is a view of a persisted job. Use the SDK only f | LATER | start_review returns an id; tasks protocol not used |
 | D-D29 | Elicitation, multi round-trip requests (MRTR) | EXCLUDE as an approval or consent channel. Optional later: a URL-mode elicitation that onl | EXCLUDED | not an approval channel |
-| D-D30 | Sampling | EXCLUDE. | EXCLUDED | not offered |
+| D-D30 | Sampling | EXCLUDE. | EXCLUDED | Sampling (a server asking the client's model to answer) is not offered: the MCP server never asks for the owner's model, so there is nothing to approve or bound. |
 | D-D31 | Roots | EXCLUDE as authority. Folders stay governed by the owner's allowed roots (`allowed_dir`, V | EXCLUDED | folders stay with the owner's allow list |
 | D-D32 | Authorization and transports | BUILD: (a) a scoped agent token enforced by the existing companion guard, not a second aut | BUILT | (a) the scoped agent token is the owner's lease: the service spends it atomically across every connection (sv139, 40 callers racing for 5 uses get exactly 5), tool names are the scopes. (b)-(d) HTTP/unix-socket door and OAuth EXCLUDED with reasons and a trigger: all named clients spawn stdio; a listener adds attack surface; OAuth needs hosted mode (mcp.md) |
 | D-D33 | Rate and size limits | BUILD: per-token budget (for example 60 calls per minute, 4 `start_review` per hour, respo | BUILT | per-connection limits: 60 calls a minute, 4 starts an hour, 4 created approvals an hour (taken on admission, refunded on failure), structured answers over 256 KiB refused for every tool, list_reviews limit with total and truncated, refusals in the signed log; across connections the owner's lease is the shared, service-side budget (sv139) (mcp.md) |
@@ -202,7 +202,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | E-M22 | Import / export / backup | IMPROVE: encrypted backup, carry label, validity, source and tombstones; imported text pas | BUILT | encrypted backup with recovery key, notes export and import (backup tests) |
 | E-M23 | Explainability | IMPROVE small: show matched terms and rank | BUILT | matched words and rank in the why line, marked inside each note in the web list; a match by meaning names no words and says so (me24); a similarity number deliberately not shown (memory.md) |
 | E-M24 | Procedural memory / skills | BUILD later as owner-approved "playbooks" (a skill is executable influence, so same propos | LATER | owner-approved playbooks |
-| E-M25 | Telemetry | EXCLUDE (violates the privacy goal) | EXCLUDED | none |
+| E-M25 | Telemetry | EXCLUDE (violates the privacy goal) | EXCLUDED | No telemetry or analytics of any kind: it would send facts about the owner's memory off the computer, which breaks the privacy goal; usage is counted locally and shown to the owner only. |
 | E-M26 | Evaluation sets | BUILD our own small suites: recall@k with labels, as-of correctness, forget completeness ( | BUILT | LongMemEval recall harness plus labelled as-of, correction and forget-completeness suites (ev01-ev03) plus a labelled meaning set of short fact notes with an honesty test and a live regression guard; it measured a precision gap and moved the nomic closeness cut-off to 0.55 (memory.md) |
 | E-A1 | Event-sourced state, checkpoint after every step, resume | keep | KEPT | job store resumes |
 | E-A2 | Context compaction | BUILD in the OpenHands shape (tombstone event, View) with Hermes pieces (verbatim user tex | BUILT | summaries with data labelling and a wait after failure (sv55, sv56, sv68) |
@@ -409,7 +409,7 @@ No OWED-H row remains. The medium rows below come next, in order.
 | A-A30 | Long output, collapsing, verbosity, virtual lists | see the section in matrix A | BUILT | windowed drawing, folded long cards (Ctrl-O), /quiet, bounded card memory with a marker (tu68, tu70, tu75, tu76); no per-card fold or middle level (terminal-transcript.md) TRIAGE: A per-card fold and a middle verbosity level EXCLUDED: Ctrl-O folds long cards, `/quiet` hides the rest, and a third level has no measured use. |
 | A-A31 | Transcript view, search, copy, export | see the section in matrix A | BUILT | terminal /transcript search, /copy (asks, OSC 52) and /export (service writes a new 0600 file in exports); no overlay or region selection (terminal-transcript.md) TRIAGE: An overlay transcript and region selection EXCLUDED: `/transcript` search, `/copy` and `/export` cover reading, copying and saving; region selection needs mouse capture that conflicts with the terminal's own selection. |
 | A-A32 | Scrollback model: alt screen versus inline, mouse | see the section in matrix A | BUILT | alt screen, scroll back, restore on exit (tui_pty.py 27/27) |
-| A-A33 | Keyboard model, keymap config, command palette | see the section in matrix A | LATER | keymap config |
+| A-A33 | Keyboard model, keymap config, command palette | see the section in matrix A | BUILT | The terminal answers to documented keys (`/help` lists them), has a command palette in its slash commands with Tab completion, and Esc, Ctrl-C, Ctrl-O and Shift-Up behave as stated; tu tests cover each. TRIAGE: a keymap config file EXCLUDED for the same reason as the web rebinding (B-W10): the keys are few, standard and listed, and a remap file adds a place for a misconfiguration to hide. |
 | A-A34 | Themes and colour | see the section in matrix A | BUILT | closed `theme` setting (auto, dark, light; KAKU_THEME) with colours measured by computed contrast (7:1 on pure backgrounds, 4.5:1 on common extremes), no dimming in fixed palettes, colour off beats any theme; palette probing, many themes and theme files excluded with reasons; NOT looked at in a real light/dark terminal (terminal-themes.md) |
 | A-A35 | Accessibility | see the section in matrix A | LATER | `kaku tui --linear`: append-only plain lines, no control bytes, overlays as prompts; unit and pipe end-to-end tests. Not run with VoiceOver: needs a person with a screen reader (recorded in HUMAN.md): external |
 | A-A36 | Error recovery and process lifecycle | see the section in matrix A | BUILT | terminal restored after errors and exit (tui_pty.py) |
@@ -422,4 +422,4 @@ No OWED-H row remains. The medium rows below come next, in order.
 | A-A43 | Client/daemon split and shared service | see the section in matrix A | BUILT | terminal is a client of the same service |
 | A-A44 | Safe rendering of untrusted text | see the section in matrix A | BUILT | untrusted text is cleaned before drawing (app.rs clean) |
 | A-A45 | Context compaction and token limits | see the section in matrix A | BUILT | summaries and meter come from the service (sv49-sv56) |
-| A-A46 | Terminal-hosted extension surfaces (plugins, MCP manager, skills, voic | see the section in matrix A | LATER | plugins, MCP manager, voice |
+| A-A46 | Terminal-hosted extension surfaces (plugins, MCP manager, skills, voic | see the section in matrix A | LATER | Plugins, an MCP manager and voice in the terminal wait for the plugin store, MCP governance and voice milestones (rows G-GH-58 to G-GH-67 and G-GH-22); none exists to host yet. |
