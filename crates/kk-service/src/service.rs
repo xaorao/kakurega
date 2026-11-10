@@ -370,11 +370,11 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE INDEX IF NOT EXISTS usage_ledger_at ON usage_ledger(at);
              CREATE TABLE IF NOT EXISTS pii_allow(entry TEXT PRIMARY KEY, added_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS owner_instructions(scope TEXT PRIMARY KEY, text TEXT NOT NULL, updated_at INTEGER NOT NULL);
-             CREATE TABLE IF NOT EXISTS mcp_servers(name TEXT PRIMARY KEY, program TEXT NOT NULL, args TEXT NOT NULL, env TEXT NOT NULL, created INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS mcp_servers(name TEXT PRIMARY KEY, program TEXT NOT NULL, args TEXT NOT NULL, env TEXT NOT NULL, created INTEGER NOT NULL, sha256 TEXT NOT NULL DEFAULT '');
              CREATE TABLE IF NOT EXISTS mcp_tools(server TEXT NOT NULL, tool TEXT NOT NULL, pin TEXT NOT NULL, description TEXT NOT NULL, schema TEXT NOT NULL DEFAULT '{}', effect TEXT NOT NULL DEFAULT 'unknown', mode TEXT NOT NULL, PRIMARY KEY(server, tool));
              CREATE TABLE IF NOT EXISTS method_proposals(id INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS pack_publishers(key_id TEXT PRIMARY KEY, public BLOB NOT NULL, label TEXT NOT NULL, added INTEGER NOT NULL);
-             CREATE TABLE IF NOT EXISTS pack_seen(name TEXT PRIMARY KEY, version TEXT NOT NULL, key_id TEXT NOT NULL, at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS pack_seen(name TEXT NOT NULL, key_id TEXT NOT NULL, version TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(name, key_id));
              CREATE TABLE IF NOT EXISTS methods(name TEXT PRIMARY KEY, body TEXT NOT NULL, hash TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS method_approvals(name TEXT PRIMARY KEY, hash TEXT NOT NULL, approved_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS project_settings(project TEXT PRIMARY KEY, notes_only INTEGER NOT NULL, updated_at INTEGER NOT NULL);

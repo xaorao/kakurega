@@ -44,13 +44,13 @@ impl Service {
             .unwrap_or_default()
     }
 
-    fn pack_seen_version(&self, name: &str) -> Option<Version> {
+    fn pack_seen_version(&self, name: &str, key_id: &str) -> Option<Version> {
         let store = self.store.lock().expect("lock");
         let v: String = store
             .connection()
             .query_row(
-                "SELECT version FROM pack_seen WHERE name = ?1",
-                [name],
+                "SELECT version FROM pack_seen WHERE name = ?1 AND key_id = ?2",
+                [name, key_id],
                 |r| r.get(0),
             )
             .ok()?;
@@ -160,7 +160,7 @@ pub(super) async fn packs_import(axum::Extension(svc): Svc, Json(b): Json<Import
             trusted.add(&k);
         }
     }
-    let seen = |name: &str| svc.pack_seen_version(name);
+    let seen = |name: &str, key_id: &str| svc.pack_seen_version(name, key_id);
     let cx = Context {
         trusted: &trusted,
         now: now(),
@@ -181,9 +181,13 @@ pub(super) async fn packs_import(axum::Extension(svc): Svc, Json(b): Json<Import
     let existing: Vec<String> = svc
         .methods_all()
         .into_iter()
-        .map(|(m, _, _)| m.name)
+        .map(|(m, _, _)| m.name.to_lowercase())
         .collect();
-    if let Some(clash) = checked.methods.iter().find(|m| existing.contains(&m.name)) {
+    if let Some(clash) = checked
+        .methods
+        .iter()
+        .find(|m| existing.contains(&m.name.to_lowercase()))
+    {
         return error(
             StatusCode::CONFLICT,
             "PACK_NAME_EXISTS",
@@ -216,7 +220,7 @@ pub(super) async fn packs_import(axum::Extension(svc): Svc, Json(b): Json<Import
     {
         let store = svc.store.lock().expect("lock");
         let _ = store.connection().execute(
-            "INSERT INTO pack_seen(name, version, key_id, at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(name) DO UPDATE SET version = ?2, key_id = ?3, at = ?4",
+            "INSERT INTO pack_seen(name, version, key_id, at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(name, key_id) DO UPDATE SET version = ?2, at = ?4",
             kk_vault::rusqlite::params![checked.name, checked.version.to_string(), checked.key_id.as_str(), now()],
         );
     }

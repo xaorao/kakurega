@@ -19,6 +19,8 @@ use tokio::process::{Child, Command};
 use tokio::runtime::Runtime;
 
 const STDERR_KEEP: usize = 8 * 1024;
+/// The most pages of tools read from one server; a server that keeps offering more is cut off here.
+const MAX_PAGES: usize = 20;
 const MAX_DESCRIPTION: usize = 1000;
 const FIXED_PATH: &str = "/usr/bin:/bin";
 
@@ -32,6 +34,8 @@ pub struct ServerConfig {
     /// The only variables the server gets besides a fixed PATH; the values are already filled in by the caller.
     pub env: Vec<(String, String)>,
     pub cwd: Option<PathBuf>,
+    /// SHA-256 of the program file as it was when the owner added it. When set, a program that no longer matches is refused.
+    pub expected_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -151,7 +155,17 @@ fn env_name_ok(n: &str) -> bool {
 
 fn hidden(c: char) -> bool {
     c.is_control() && c != '\n' && c != '\t'
-        || matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{feff}')
+        || matches!(
+            c,
+            '\u{ad}' | '\u{34f}' | '\u{61c}' | '\u{115f}' | '\u{1160}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}'
+                | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206f}' | '\u{2800}' | '\u{3164}' | '\u{fe00}'..='\u{fe0f}' | '\u{feff}' | '\u{ffa0}'
+                | '\u{fff9}'..='\u{fffb}' | '\u{e0000}'..='\u{e007f}'
+        )
+}
+
+/// Text with every control, invisible and direction-changing character removed. Newlines and tabs stay.
+pub fn clean_text(text: &str) -> String {
+    clean(text)
 }
 
 fn clean(text: &str) -> String {
@@ -178,6 +192,17 @@ impl ServerConfig {
     }
 }
 
+fn clean_value(v: &Value) -> Value {
+    match v {
+        Value::String(s) => Value::String(clean(s)),
+        Value::Array(a) => Value::Array(a.iter().map(clean_value).collect()),
+        Value::Object(o) => {
+            Value::Object(o.iter().map(|(k, x)| (clean(k), clean_value(x))).collect())
+        }
+        other => other.clone(),
+    }
+}
+
 fn check_config(c: &ServerConfig) -> Result<(), McpError> {
     let bad = |w: &str| Err(McpError::BadProgram(w.to_string()));
     if !plain_name(&c.name) {
@@ -196,6 +221,13 @@ fn check_config(c: &ServerConfig) -> Result<(), McpError> {
     for (k, v) in &c.env {
         if !env_name_ok(k) || k == "PATH" || v.contains('\0') || v.len() > 8192 {
             return bad("a variable name is capitals, digits and underscores, is not PATH, and its value is plain text");
+        }
+    }
+    if let Some(want) = &c.expected_sha256 {
+        let bytes = std::fs::read(&c.program)
+            .map_err(|_| McpError::BadProgram("the program cannot be read".into()))?;
+        if &sha256_hex(&bytes) != want {
+            return bad("the program is not the one that was added: its contents changed");
         }
     }
     if let Some(d) = &c.cwd {
@@ -293,9 +325,29 @@ impl Server {
         }
         let client = self.client.as_ref().ok_or(McpError::Dead)?;
         let limit = self.limits.call_timeout;
-        let got = self
-            .rt
-            .block_on(async { tokio::time::timeout(limit, client.list_all_tools()).await });
+        let max_tools = self.limits.max_tools;
+        let got = self.rt.block_on(async {
+            tokio::time::timeout(limit, async {
+                let mut all = Vec::new();
+                let mut cursor: Option<String> = None;
+                for _ in 0..MAX_PAGES {
+                    let params = Some(
+                        rmcp::model::PaginatedRequestParams::default().with_cursor(cursor.take()),
+                    );
+                    let page = client.list_tools(params).await?;
+                    all.extend(page.tools);
+                    if all.len() > max_tools {
+                        break;
+                    }
+                    match page.next_cursor {
+                        Some(c) => cursor = Some(c),
+                        None => break,
+                    }
+                }
+                Ok::<_, ServiceError>(all)
+            })
+            .await
+        });
         let tools = match got {
             Err(_) => {
                 self.die();
@@ -310,11 +362,12 @@ impl Server {
         let mut out = Vec::new();
         for t in tools {
             let name = t.name.to_string();
-            if !plain_name(&name) {
+            // two underscores in a row could make two tools share one name once server and tool are joined
+            if !plain_name(&name) || name.contains("__") {
                 continue;
             }
             let raw = t.description.as_deref().unwrap_or("").to_string();
-            let schema = serde_json::to_value(&t.input_schema).unwrap_or(Value::Null);
+            let schema = clean_value(&serde_json::to_value(&t.input_schema).unwrap_or(Value::Null));
             let effect = match t.annotations.as_ref().and_then(|a| a.read_only_hint) {
                 Some(true) => Effect::ReadOnly,
                 Some(false) => Effect::MayChange,

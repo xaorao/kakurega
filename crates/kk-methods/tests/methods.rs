@@ -414,3 +414,55 @@ fn mt18_only_the_start_of_a_very_long_message_is_read_and_a_cut_never_splits_a_c
     let near = format!("zebra {}", "é".repeat(60_000));
     assert_eq!(select(&near, &[a], Limits::default()).chosen.len(), 1);
 }
+
+#[test]
+fn mt19_every_kind_of_invisible_character_is_refused_in_every_field() {
+    for c in [
+        '\u{2028}',
+        '\u{2029}',
+        '\u{e0041}',
+        '\u{3164}',
+        '\u{2800}',
+        '\u{fe0f}',
+        '\u{ad}',
+        '\u{180e}',
+        '\u{fff9}',
+        '\u{34f}',
+        '\u{61c}',
+    ] {
+        let body = format!("ok {c} ok");
+        assert_eq!(
+            Method::new(draft("a", &["alpha"], &body)).unwrap_err(),
+            Refusal::Body,
+            "body {c:?}"
+        );
+        let mut d = draft("a", &["alpha"], "x");
+        d.description = format!("d{c}d");
+        assert_eq!(
+            Method::new(d).unwrap_err(),
+            Refusal::Description,
+            "description {c:?}"
+        );
+        let d = draft("a", &[&format!("tri{c}gger")], "x");
+        assert_eq!(
+            Method::new(d).unwrap_err(),
+            Refusal::Triggers,
+            "trigger {c:?}"
+        );
+    }
+}
+
+#[test]
+fn mt20_a_null_trigger_list_reads_as_none_and_everyday_stop_words_cannot_be_the_only_triggers() {
+    let v = json!({"name": "a", "description": "d", "triggers": null, "body": "x"});
+    assert!(Draft::from_json(&v).is_ok(), "null means none");
+    for w in [
+        "the", "and", "for", "with", "this", "that", "you", "what", "how",
+    ] {
+        assert_eq!(
+            Method::new(draft("a", &[w, "and"], "x")).unwrap_err(),
+            Refusal::Triggers,
+            "{w}"
+        );
+    }
+}

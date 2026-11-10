@@ -74,8 +74,8 @@ impl Refusal {
 pub struct Context<'a> {
     pub trusted: &'a TrustedKeys,
     pub now: i64,
-    /// The highest version of the pack with this name that was imported before, if any.
-    pub seen: &'a dyn Fn(&str) -> Option<Version>,
+    /// The highest version of the pack with this name that this publisher (by key id) had imported before, if any.
+    pub seen: &'a dyn Fn(&str, &str) -> Option<Version>,
 }
 
 #[derive(Debug, Clone)]
@@ -181,7 +181,7 @@ pub fn check_pack(bytes: &[u8], cx: &Context<'_>) -> Result<Checked, Refusal> {
     if p.not_after <= cx.now {
         return Err(Refusal::Expired);
     }
-    if (cx.seen)(&p.name).is_some_and(|seen| p.version < seen) {
+    if (cx.seen)(&p.name, verified.key_id.as_str()).is_some_and(|seen| p.version < seen) {
         return Err(Refusal::Rollback);
     }
     Ok(Checked {

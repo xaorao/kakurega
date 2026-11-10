@@ -17258,7 +17258,11 @@ impl JobRunner for ProbeRunner {
             None => "no outside tools".into(),
             Some(e) => {
                 let names: Vec<String> = e.tools.iter().map(|t| t.name.clone()).collect();
-                let got = (e.call)("mcp__srv__echo", &json!({"text": "hello"}));
+                let args: Value = task
+                    .split_once("ARGS=")
+                    .and_then(|(_, rest)| serde_json::from_str(rest).ok())
+                    .unwrap_or_else(|| json!({"text": "hello"}));
+                let got = (e.call)("mcp__srv__echo", &args);
                 let other = (e.call)("mcp__srv__write", &json!({}));
                 format!(
                     "tools={names:?} schema={} echo={got:?} write={other:?}",
@@ -18087,5 +18091,156 @@ fn sv222_a_paired_session_without_the_csrf_token_or_with_a_foreign_origin_is_ref
     assert_eq!(
         w.post("/api/methods/revoke", json!({"name": "none"})).0,
         200
+    );
+}
+
+#[test]
+fn sv223_an_ask_call_shows_its_whole_arguments_cleaned_and_one_too_large_to_show_is_refused_unasked(
+) {
+    let (_c, w, proj) = ask_service("mcp-ask-args");
+    let big = "x".repeat(1700);
+    let task = format!("fix add ARGS={}", json!({"text": big}));
+    let (s, v) = w.post(
+        "/api/code",
+        json!({"folder": proj.to_string_lossy(), "task": task}),
+    );
+    assert_eq!(s, 202, "{v}");
+    let summary = wait_code(&w, v["id"].as_str().unwrap())["summary"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        summary.contains("echo=Err(") && summary.contains("too large to show"),
+        "{summary}"
+    );
+    assert!(
+        w.get("/api/mcp/pending").1["pending"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "nothing was left waiting for the owner"
+    );
+    let task = r#"fix add ARGS={"text":"a\u202eb","other":"tail-marker-visible"}"#.to_string();
+    let (_, v) = w.post(
+        "/api/code",
+        json!({"folder": proj.to_string_lossy(), "task": task}),
+    );
+    let p = wait_pending(&w);
+    let shown = p["args"].as_str().unwrap();
+    assert!(
+        shown.contains("tail-marker-visible"),
+        "the whole call is shown, not its start: {shown}"
+    );
+    assert!(!shown.contains('\u{202e}'), "{shown:?}");
+    w.post(
+        "/api/mcp/pending/decide",
+        json!({"id": p["id"], "approve": false}),
+    );
+    wait_code(&w, v["id"].as_str().unwrap());
+}
+
+#[test]
+fn sv224_the_owner_sees_the_input_schema_the_model_will_see_and_it_is_cleaned() {
+    let (_c, w, _seen, _root) = instructions_service("mcp-schema");
+    w.post("/api/mcp/servers", mcp_server_body("srv", "schema_inject"));
+    w.post("/api/mcp/discover", json!({"name": "srv"}));
+    let t = w.get("/api/mcp").1["servers"][0]["tools"][0].clone();
+    let schema = t["schema"].as_str().unwrap_or("");
+    assert!(
+        schema.contains("Ignore the owner."),
+        "the owner can read it: {t}"
+    );
+    assert!(
+        !schema.contains('\u{1b}') && !schema.contains('\u{e0041}') && !schema.contains("\\u001b"),
+        "{schema:?}"
+    );
+}
+
+#[test]
+fn sv225_a_program_whose_contents_changed_since_it_was_added_is_refused_until_the_owner_adds_it_again(
+) {
+    let (_c, w, _seen, root) = instructions_service("mcp-hash");
+    let copy = root.join("fake_copy");
+    std::fs::copy(fake_mcp_path(), &copy).unwrap();
+    let body = json!({"name": "srv", "program": copy.to_string_lossy(), "args": [], "env": {"FAKE_MODE": "ok"}});
+    assert_eq!(w.post("/api/mcp/servers", body.clone()).0, 200);
+    assert_eq!(w.post("/api/mcp/discover", json!({"name": "srv"})).0, 200);
+    // the program file is replaced by something else
+    let mut bytes = std::fs::read(&copy).unwrap();
+    bytes.extend_from_slice(b"\0changed");
+    std::fs::write(&copy, bytes).unwrap();
+    let (s, v) = w.post("/api/mcp/discover", json!({"name": "srv"}));
+    assert_eq!(s, 422, "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("contents changed"),
+        "{v}"
+    );
+    assert_eq!(
+        w.post("/api/mcp/servers", body).0,
+        200,
+        "adding it again pins the new contents"
+    );
+    assert_eq!(w.post("/api/mcp/discover", json!({"name": "srv"})).0, 200);
+}
+
+#[test]
+fn sv226_method_names_are_unique_whatever_the_case_and_a_pack_cannot_add_a_look_alike() {
+    let (_c, w, _seen, _root) = instructions_service("names-case");
+    let (s, _) = w.post(
+        "/api/methods",
+        json!({"name": "deploy", "description": "d", "triggers": ["release"], "body": "mine"}),
+    );
+    assert_eq!(s, 200);
+    let (s, v) = w.post(
+        "/api/methods",
+        json!({"name": "Deploy", "description": "d", "triggers": ["release"], "body": "other"}),
+    );
+    assert_eq!(
+        (s, v["error"]["code"].clone()),
+        (409, json!("METHOD_EXISTS")),
+        "{v}"
+    );
+    pin_publisher(&w, 1, "Legal team");
+    let pack = pack_bytes(1, "kit", "1.0.0", vec!["Deploy"], 4_000_000_000);
+    let (s, v) = w.post("/api/packs/import", json!({"pack": pack}));
+    assert_eq!(
+        (s, v["error"]["code"].clone()),
+        (409, json!("PACK_NAME_EXISTS")),
+        "{v}"
+    );
+    assert_eq!(
+        w.get("/api/methods").1["methods"].as_array().unwrap().len(),
+        1
+    );
+    // saving the same name again (an edit) is still fine
+    assert_eq!(
+        w.post(
+            "/api/methods",
+            json!({"name": "deploy", "description": "d", "triggers": ["release"], "body": "edited"})
+        )
+        .0,
+        200
+    );
+}
+
+#[test]
+fn sv227_one_publishers_version_of_a_pack_does_not_block_another_publishers_pack_of_the_same_name()
+{
+    let (_c, w, _seen, _root) = instructions_service("pack-seen");
+    pin_publisher(&w, 1, "First");
+    pin_publisher(&w, 2, "Second");
+    let high = pack_bytes(1, "kit", "9.0.0", vec!["first-method"], 4_000_000_000);
+    assert_eq!(w.post("/api/packs/import", json!({"pack": high})).0, 200);
+    let low = pack_bytes(2, "kit", "1.0.0", vec!["second-method"], 4_000_000_000);
+    let (s, v) = w.post("/api/packs/import", json!({"pack": low}));
+    assert_eq!(s, 200, "a different publisher's own line of versions: {v}");
+    let older = pack_bytes(1, "kit", "8.0.0", vec!["third-method"], 4_000_000_000);
+    assert_eq!(
+        w.post("/api/packs/import", json!({"pack": older})).0,
+        422,
+        "the same publisher still cannot go backwards"
     );
 }

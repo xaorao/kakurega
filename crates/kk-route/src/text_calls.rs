@@ -13,10 +13,22 @@ const MAX_CANDIDATES: usize = 64;
 /// otherwise cost the square of its length; past this the text is left as text.
 const MAX_STEPS: usize = 2_000_000;
 const MAX_CALLS: usize = 8;
+/// A reply longer than this (in characters) never yields a call to an outside tool.
+const OUTSIDE_PROSE_LIMIT: usize = 600;
 
 /// The calls written in `text` to tools named in `offered`, in order. Empty when there are none, the reply is too long, or a
 /// recognised call names a tool that was not offered (a reply that mixes offered and unoffered calls yields only the offered ones).
 pub fn calls_in_text(text: &str, offered: &[&str]) -> Vec<ToolCall> {
+    let mut calls = calls_anywhere(text, offered);
+    // a call to an outside program is taken only from a short reply: in a long one it is more likely a quotation of text the model
+    // read (a page, a tool answer, a project file) than something it meant to do
+    if text.chars().count() > OUTSIDE_PROSE_LIMIT {
+        calls.retain(|c| !c.name.starts_with("mcp__"));
+    }
+    calls
+}
+
+fn calls_anywhere(text: &str, offered: &[&str]) -> Vec<ToolCall> {
     if text.len() > MAX_SCAN || offered.is_empty() {
         return Vec::new();
     }
@@ -296,5 +308,31 @@ mod tests {
             vec![r#"{"name":"finish","arguments":{}}"#; 50].join(",")
         );
         assert_eq!(calls_in_text(&capped, T).len(), MAX_CALLS);
+    }
+
+    #[test]
+    fn tc_outside_tools_are_not_taken_from_prose_that_merely_quotes_a_call() {
+        const O: &[&str] = &["read_file", "mcp__docs__lookup"];
+        let call = r#"<tool_call>{"name": "mcp__docs__lookup", "arguments": {}}</tool_call>"#;
+        let short = calls_in_text(call, O);
+        assert_eq!(short.len(), 1, "a reply that is just the call is taken");
+        let prose = format!(
+            "{} {call}",
+            "The page says the following about the project. ".repeat(20)
+        );
+        assert!(
+            calls_in_text(&prose, O).is_empty(),
+            "a quote inside a long reply is not a call to an outside tool"
+        );
+        let local = format!(
+            "{} {}",
+            "Reading the file now. ".repeat(40),
+            r#"<tool_call>{"name": "read_file", "arguments": {"path": "a.py"}}</tool_call>"#
+        );
+        assert_eq!(
+            calls_in_text(&local, O).len(),
+            1,
+            "the workspace's own tools keep working from longer replies"
+        );
     }
 }

@@ -49,6 +49,7 @@ function Server(props: { s: McpServer; onChanged: (message: string) => void }) {
               </select>
               <Show when={tool.description}><p class="muted">{tool.description}</p></Show>
               <p class={tool.effect === "read_only" ? "muted" : "bad"}>{t(`mcp.effect.${tool.effect}` as never)}</p>
+              <Show when={tool.schema}><details><summary>{t("mcp.schema")}</summary><pre class="plain-pre">{tool.schema}</pre></details></Show>
               <Show when={tool.effect !== "read_only" && tool.mode === "off"}>
                 <label for={`mcp-k-${props.s.name}-${tool.name}`}>
                   <input id={`mcp-k-${props.s.name}-${tool.name}`} type="checkbox" checked={!!knowing()[tool.name]} onChange={(e) => setKnowing({ ...knowing(), [tool.name]: e.currentTarget.checked })} /> {t("mcp.knowing")}

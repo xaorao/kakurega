@@ -10,6 +10,9 @@ use std::path::PathBuf;
 
 const MAX_SERVERS: i64 = 20;
 const MAX_WAITING: usize = 10;
+/// The most characters of a call's arguments the owner is asked to read. A longer call is refused without asking, because an
+/// approval of text the owner could not see in full would not be an approval of the call.
+const MAX_SHOWN_ARGS: usize = 1500;
 
 /// An outside-tool call that waits for the owner. `decision` is None until the owner answers.
 pub(super) struct PendingCall {
@@ -114,13 +117,20 @@ impl Service {
         if mode != "ask" {
             return self.mcp_call(server, tool, args, false);
         }
-        if !self.mcp_wait_for_owner(server, tool, &args) {
+        let shown = kk_mcpc::clean_text(&args.to_string());
+        if shown.chars().count() > MAX_SHOWN_ARGS {
+            return Err(format!(
+                "the arguments are too large to show you in full ({} characters; at most {MAX_SHOWN_ARGS}), so the call was refused without asking",
+                shown.chars().count()
+            ));
+        }
+        if !self.mcp_wait_for_owner(server, tool, &shown) {
             return Err("the owner did not approve this call".into());
         }
         self.mcp_call(server, tool, args, true)
     }
 
-    fn mcp_wait_for_owner(&self, server: &str, tool: &str, args: &Value) -> bool {
+    fn mcp_wait_for_owner(&self, server: &str, tool: &str, shown: &str) -> bool {
         let id = format!(
             "mc-{}",
             self.mcp_pending_seq
@@ -132,12 +142,7 @@ impl Service {
             if g.len() >= MAX_WAITING {
                 return false;
             }
-            let text: String = args
-                .to_string()
-                .chars()
-                .filter(|c| !c.is_control() || *c == '\n')
-                .take(1000)
-                .collect();
+            let text: String = shown.to_string();
             g.push(PendingCall {
                 id: id.clone(),
                 server: server.to_string(),
@@ -225,17 +230,24 @@ impl Service {
         })
     }
 
+    /// A folder of its own for a server to start in, under the data folder, so it does not start in the service's working folder.
+    fn mcp_work_dir(&self, name: &str) -> Option<PathBuf> {
+        let dir = self.data_dir.join("mcp-run").join(name);
+        std::fs::create_dir_all(&dir).ok()?;
+        dir.canonicalize().ok()
+    }
+
     fn mcp_config(&self, name: &str) -> Result<ServerConfig, String> {
         let store = self.store.lock().expect("lock");
-        let row: Option<(String, String, String)> = store
+        let row: Option<(String, String, String, String)> = store
             .connection()
             .query_row(
-                "SELECT program, args, env FROM mcp_servers WHERE name = ?1",
+                "SELECT program, args, env, sha256 FROM mcp_servers WHERE name = ?1",
                 [name],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .ok();
-        let (program, args, env) = row.ok_or("there is no server with that name")?;
+        let (program, args, env, sha256) = row.ok_or("there is no server with that name")?;
         let args: Vec<String> = serde_json::from_str(&args).map_err(|e| e.to_string())?;
         let env: BTreeMap<String, String> =
             serde_json::from_str(&env).map_err(|e| e.to_string())?;
@@ -244,7 +256,8 @@ impl Service {
             program: PathBuf::from(program),
             args,
             env: env.into_iter().collect(),
-            cwd: None,
+            cwd: self.mcp_work_dir(name),
+            expected_sha256: (!sha256.is_empty()).then_some(sha256),
         })
     }
 
@@ -391,10 +404,10 @@ pub(super) async fn mcp_get(axum::Extension(svc): Svc) -> Response {
         .iter()
         .map(|(name, program, args)| {
             let tools: Vec<Value> = c
-                .prepare("SELECT tool, description, pin, mode, effect FROM mcp_tools WHERE server = ?1 ORDER BY tool")
+                .prepare("SELECT tool, description, pin, mode, effect, schema FROM mcp_tools WHERE server = ?1 ORDER BY tool")
                 .ok()
                 .map(|mut st| {
-                    st.query_map([name], |r| Ok(json!({"name": r.get::<_, String>(0)?, "description": r.get::<_, String>(1)?, "pin": r.get::<_, String>(2)?, "mode": r.get::<_, String>(3)?, "effect": r.get::<_, String>(4)?})))
+                    st.query_map([name], |r| Ok(json!({"name": r.get::<_, String>(0)?, "description": r.get::<_, String>(1)?, "pin": r.get::<_, String>(2)?, "mode": r.get::<_, String>(3)?, "effect": r.get::<_, String>(4)?, "schema": r.get::<_, String>(5)?})))
                         .map(|it| it.flatten().collect())
                         .unwrap_or_default()
                 })
@@ -412,6 +425,7 @@ pub(super) async fn mcp_add(axum::Extension(svc): Svc, Json(b): Json<AddBody>) -
         args: b.args.clone(),
         env: b.env.clone().into_iter().collect(),
         cwd: None,
+        expected_sha256: None,
     };
     if let Err(e) = config.check() {
         return refuse(&e.to_string());
@@ -420,6 +434,9 @@ pub(super) async fn mcp_add(axum::Extension(svc): Svc, Json(b): Json<AddBody>) -
     if !chat_clean(&args_text) || kk_types::injection::hidden_chars(&args_text) {
         return refuse("the arguments contain control or direction-changing characters");
     }
+    let program_sha256 = std::fs::read(&b.program)
+        .map(|bytes| kk_evidence::capsule::sha256_hex(&bytes))
+        .unwrap_or_default();
     let done = {
         let store = svc.store.lock().expect("lock");
         let c = store.connection();
@@ -441,8 +458,8 @@ pub(super) async fn mcp_add(axum::Extension(svc): Svc, Json(b): Json<AddBody>) -
         // a changed program, arguments or environment is a different server: its tools must be read and allowed again
         let _ = c.execute("DELETE FROM mcp_tools WHERE server = ?1", [&b.name]);
         c.execute(
-            "INSERT INTO mcp_servers(name, program, args, env, created) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(name) DO UPDATE SET program = ?2, args = ?3, env = ?4",
-            kk_vault::rusqlite::params![b.name, b.program, args, env, now()],
+            "INSERT INTO mcp_servers(name, program, args, env, created, sha256) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(name) DO UPDATE SET program = ?2, args = ?3, env = ?4, sha256 = ?6",
+            kk_vault::rusqlite::params![b.name, b.program, args, env, now(), program_sha256],
         )
     };
     match done {

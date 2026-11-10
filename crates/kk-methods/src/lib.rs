@@ -19,10 +19,16 @@ const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 
 /// Words that fire on almost any request. A method whose triggers are all of these would apply to everything, so it is refused.
 const COMMON_WORDS: &[&str] = &[
-    "add", "build", "change", "check", "code", "create", "data", "delete", "do", "error", "file",
-    "files", "fix", "get", "go", "help", "info", "issue", "list", "make", "name", "new", "number",
-    "open", "read", "report", "run", "set", "show", "start", "stop", "table", "task", "test",
-    "time", "update", "use", "value", "work", "write",
+    "the", "and", "for", "with", "this", "that", "you", "are", "was", "from", "have", "what",
+    "when", "how", "why", "who", "can", "not", "but", "all", "any", "has", "had", "its", "our",
+    "out", "your", "about", "into", "than", "then", "them", "they", "will", "would", "could",
+    "should", "there", "their", "which", "please", "just", "some", "very", "also", "more", "most",
+    "such", "only", "over", "does", "did", "been", "being", "were", "these", "those", "here",
+    "like", "want", "need", "tell", "give", "take", "see", "look", "add", "build", "change",
+    "check", "code", "create", "data", "delete", "do", "error", "file", "files", "fix", "get",
+    "go", "help", "info", "issue", "list", "make", "name", "new", "number", "open", "read",
+    "report", "run", "set", "show", "start", "stop", "table", "task", "test", "time", "update",
+    "use", "value", "work", "write",
 ];
 
 /// Field names that would give a method power over tools, routes, secrets or the network. They are refused by name so the
@@ -111,7 +117,7 @@ impl Draft {
         };
         let list = |k: &str| -> Result<Vec<String>, Refusal> {
             match obj.get(k) {
-                None => Ok(Vec::new()),
+                None | Some(Value::Null) => Ok(Vec::new()),
                 Some(Value::Array(a)) => a
                     .iter()
                     .map(|x| x.as_str().map(str::to_string).ok_or(Refusal::Shape))
@@ -156,7 +162,12 @@ fn name_ok(n: &str) -> bool {
 
 fn hidden(c: char) -> bool {
     c.is_control() && c != '\n' && c != '\t'
-        || matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{feff}')
+        || matches!(
+            c,
+            '\u{ad}' | '\u{34f}' | '\u{61c}' | '\u{115f}' | '\u{1160}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}'
+                | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206f}' | '\u{2800}' | '\u{3164}' | '\u{fe00}'..='\u{fe0f}' | '\u{feff}' | '\u{ffa0}'
+                | '\u{fff9}'..='\u{fffb}' | '\u{e0000}'..='\u{e007f}'
+        )
 }
 
 fn plain_lines(text: &str) -> String {

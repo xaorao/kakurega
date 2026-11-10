@@ -6,7 +6,7 @@ use near_api::{AccountId, NearGas, NearToken};
 use near_sdk::serde_json::{Value, json};
 
 const NEAR: u128 = 10u128.pow(24);
-const PREFIX: &str = "kakurega-register-v1";
+const PREFIX: &str = "kakurega-register-v2";
 
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
@@ -14,9 +14,26 @@ fn hex(b: &[u8]) -> String {
 fn key(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
 }
-fn bind(k: &SigningKey, digest: &str, who: &str) -> String {
+/// The registry's digest of the receipts as presented, computed here independently of the contract.
+fn receipts_digest(receipts: &[Value]) -> String {
+    use sha2::Digest;
+    let mut text = String::new();
+    for r in receipts {
+        text.push_str(&format!(
+            "{}:{}:{}:{}:{}\n",
+            r["signer"].as_str().unwrap(),
+            r["model"].as_str().unwrap(),
+            r["request_sha256"].as_str().unwrap(),
+            r["response_sha256"].as_str().unwrap(),
+            r["signature"].as_str().unwrap()
+        ));
+    }
+    hex(&sha2::Sha256::digest(text.as_bytes()))
+}
+
+fn bind(k: &SigningKey, digest: &str, receipts: &[Value], who: &str) -> String {
     hex(&k
-        .sign(format!("{PREFIX}:{digest}:{who}").as_bytes())
+        .sign(format!("{PREFIX}:{digest}:{}:{who}", receipts_digest(receipts)).as_bytes())
         .to_bytes())
 }
 fn receipt(k: &SigningKey, model: &str, req: &str, resp: &str) -> Value {
@@ -127,7 +144,7 @@ async fn the_registry_works_on_a_real_runtime() -> testresult::TestResult {
         json!({
             "capsule_sha256": digest,
             "capsule_signer": hex(cap.verifying_key().as_bytes()),
-            "binding_signature": bind(&cap, &digest, who),
+            "binding_signature": bind(&cap, &digest, std::slice::from_ref(&rc), who),
             "receipts": [rc.clone()],
         })
     };
@@ -161,6 +178,8 @@ async fn the_registry_works_on_a_real_runtime() -> testresult::TestResult {
     // A forged receipt is refused on the real runtime.
     let mut forged = args("alice.sandbox");
     forged["receipts"][0]["response_sha256"] = json!("33".repeat(32));
+    let forged_list = forged["receipts"].as_array().unwrap().clone();
+    forged["binding_signature"] = json!(bind(&cap, &digest, &forged_list, "alice.sandbox"));
     let bad = e
         .call(&contract, &alice, "register", forged, NEAR / 10)
         .await;
@@ -181,7 +200,11 @@ async fn the_registry_works_on_a_real_runtime() -> testresult::TestResult {
         "storage should cost far less than the 1 NEAR attached, spent {spent}"
     );
     let got = e
-        .view(&contract, "get", json!({ "capsule_sha256": digest }))
+        .view(
+            &contract,
+            "get",
+            json!({ "capsule_sha256": digest, "capsule_signer": hex(cap.verifying_key().as_bytes()) }),
+        )
         .await;
     assert_eq!(got["registered_by"], "alice.sandbox");
     assert_eq!(got["receipts"].as_array().unwrap().len(), 1);
@@ -197,7 +220,55 @@ async fn the_registry_works_on_a_real_runtime() -> testresult::TestResult {
             NEAR / 10,
         )
         .await;
-    assert!(again.unwrap_err().contains("already registered"));
+    assert!(
+        again
+            .unwrap_err()
+            .contains("already registered under this signing key")
+    );
+
+    // A different key registering the same digest does not take the capsule's place: it is its own entry.
+    let squatter_key = key(7);
+    let squatter = e.account("squatter.sandbox", 10).await;
+    let sq_args = json!({
+        "capsule_sha256": digest,
+        "capsule_signer": hex(squatter_key.verifying_key().as_bytes()),
+        "binding_signature": bind(&squatter_key, &digest, &[], "squatter.sandbox"),
+        "receipts": [],
+    });
+    e.call(&contract, &squatter, "register", sq_args, NEAR / 10)
+        .await
+        .map_err(|x| x)?;
+    assert_eq!(e.view(&contract, "total", json!({})).await, json!("2"));
+    let original = e
+        .view(&contract, "get", json!({ "capsule_sha256": digest, "capsule_signer": hex(cap.verifying_key().as_bytes()) }))
+        .await;
+    assert_eq!(
+        original["registered_by"], "alice.sandbox",
+        "the owner's entry is untouched"
+    );
+
+    // Swapped receipts do not match what the capsule key signed.
+    let other_digest = "cd".repeat(32);
+    let signed_for = vec![rc.clone()];
+    let swapped = vec![receipt(
+        &model,
+        "Qwen/Qwen3.8-27B",
+        &"11".repeat(32),
+        &"33".repeat(32),
+    )];
+    let swap_args = json!({
+        "capsule_sha256": other_digest,
+        "capsule_signer": hex(cap.verifying_key().as_bytes()),
+        "binding_signature": bind(&cap, &other_digest, &signed_for, "alice.sandbox"),
+        "receipts": swapped,
+    });
+    let swap = e
+        .call(&contract, &alice, "register", swap_args, NEAR / 10)
+        .await;
+    assert!(
+        swap.unwrap_err()
+            .contains("binding signature does not verify")
+    );
 
     // The free check on the real runtime.
     let ok = e.view(&contract, "verify_receipts", json!({ "receipts": [rc, { "signer": "00".repeat(32), "model": "m", "request_sha256": "11".repeat(32), "response_sha256": "22".repeat(32), "signature": "00".repeat(64) }] })).await;

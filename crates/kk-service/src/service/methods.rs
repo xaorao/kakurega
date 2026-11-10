@@ -65,6 +65,14 @@ impl Service {
         );
     }
 
+    /// A saved method whose name differs from `name` only by letter case, if there is one.
+    pub(super) fn method_name_clash(&self, name: &str) -> Option<String> {
+        self.methods_all()
+            .into_iter()
+            .map(|(m, _, _)| m.name)
+            .find(|n| n != name && n.eq_ignore_ascii_case(name))
+    }
+
     /// Every saved method with the hash the owner approved for it, if any. A row that no longer reads as a valid method is
     /// left out; it cannot be used.
     pub(super) fn methods_all(&self) -> Vec<(Method, Option<String>, Option<i64>)> {
@@ -185,6 +193,13 @@ pub(super) async fn methods_set(axum::Extension(svc): Svc, Json(v): Json<Value>)
     if !kk_secrets::scan(&text).is_empty() || kk_secrets::looks_secret(&text).is_some() {
         return refuse(
             "this looks like a secret; methods are sent to the model, so keep secrets out of them",
+        );
+    }
+    if let Some(other) = svc.method_name_clash(&method.name) {
+        return error(
+            StatusCode::CONFLICT,
+            "METHOD_EXISTS",
+            &format!("a method named \"{other}\" already exists; names differ only by letter case"),
         );
     }
     if let Err(e) = svc.method_save(&method) {
@@ -308,7 +323,11 @@ pub(super) async fn proposals_keep(axum::Extension(svc): Svc, Json(b): Json<IdBo
             "there is no suggestion with that number",
         );
     };
-    if svc.methods_all().iter().any(|(x, _, _)| x.name == m.name) {
+    if svc
+        .methods_all()
+        .iter()
+        .any(|(x, _, _)| x.name.eq_ignore_ascii_case(&m.name))
+    {
         return error(
             StatusCode::CONFLICT,
             "METHOD_EXISTS",

@@ -60,7 +60,7 @@ fn check(args: &[String]) -> Result<(), String> {
     let cx = kk_packs::Context {
         trusted: &trusted,
         now: crate::update::now() as i64,
-        seen: &|_| None,
+        seen: &|_, _| None,
     };
     let c = kk_packs::check_pack(&bytes, &cx).map_err(|r| format!("refused: {}", r.sentence()))?;
     println!(

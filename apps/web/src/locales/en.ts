@@ -150,6 +150,7 @@ export const en = {
   "mcp.pending.approve": "Approve this call",
   "mcp.pending.deny": "Deny",
   "mcp.pending.note": "If you do not answer in two minutes, the call is refused.",
+  "mcp.schema": "What the model is told about the inputs",
   "mcp.heading": "Outside tools",
   "mcp.lead": "An outside tool is a program on this computer that speaks the Model Context Protocol, such as a documentation lookup. You add the program, see what tools it offers, and allow each tool one by one. A coding task can then call the tools you allowed.",
   "mcp.warn": "A program you add runs on this computer with your permissions, only while one check or one call takes. Its answers are treated as untrusted text. If a tool changes after you allowed it, it is turned off until you read it again.",

@@ -31,3 +31,6 @@
 - Gas cost per call was not measured. The 16-receipt cap is a judgement, not a measured limit.
 - The reproducible (Docker) build and the NEP-330 source metadata were not verified.
 - Antibody's `lib.rs` (the cross-contract call and the approved-image list) was not read.
+
+## Audit 1 change (see audit-1.md)
+- Entries are now keyed by digest plus signer and the binding message covers a digest of the receipts (`kakurega-register-v2`), closing a squatting hole an independent reviewer found: before, anyone could register a capsule's digest first with their own key and keep the owner from registering it. The registrant still proves control of A key only; whether it is the capsule's signer is the verifier's check. Unit tests rg01 to rg18 plus rg05b and rg05c, sandbox run on a real runtime including a squatting and a swapped-receipts case, 3 new mutants caught. The wasm was NOT rebuilt for a deploy (nothing is deployed).

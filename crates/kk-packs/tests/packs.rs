@@ -42,7 +42,7 @@ fn ctx<'a>(t: &'a TrustedKeys) -> Context<'a> {
     Context {
         trusted: t,
         now: 1_700_000_000,
-        seen: &|_| None,
+        seen: &|_, _| None,
     }
 }
 
@@ -270,7 +270,7 @@ fn pk08_an_expired_pack_is_refused_and_an_older_version_than_one_already_seen_is
         &payload("kit", "1.9.9", 2_000_000_000, vec![method("a-method")]),
         &s,
     );
-    let seen = |name: &str| (name == "kit").then(|| Version::parse("2.0.0")).flatten();
+    let seen = |name: &str, _key: &str| (name == "kit").then(|| Version::parse("2.0.0")).flatten();
     let c = Context {
         trusted: &t,
         now: 1_700_000_000,
