@@ -15568,27 +15568,34 @@ impl JobRunner for CodeRunner {
     ) -> Result<kk_service::coding::CodeOutcome, String> {
         let (mut ws, left) = kk_review::code::Workspace::from_imported(files);
         progress("working");
+        let mut steps: Vec<(String, bool, String)> = Vec::new();
+        let mut labels: Vec<String> = Vec::new();
         for (p, o, n) in &self.edits {
-            ws.call(
-                "edit_file",
-                &json!({"path": p, "old_text": o, "new_text": n}),
-            )
-            .map_err(|e| e.to_string())?;
+            let args = json!({"path": p, "old_text": o, "new_text": n});
+            ws.call("edit_file", &args).map_err(|e| e.to_string())?;
+            steps.push(("edit_file".into(), false, String::new()));
+            labels.push(kk_review::code::step_label("edit_file", &args));
         }
         for (p, c) in &self.create {
-            ws.call("create_file", &json!({"path": p, "content": c}))
-                .map_err(|e| e.to_string())?;
+            let args = json!({"path": p, "content": c});
+            ws.call("create_file", &args).map_err(|e| e.to_string())?;
+            steps.push(("create_file".into(), false, String::new()));
+            labels.push(kk_review::code::step_label("create_file", &args));
         }
         for p in &self.delete {
-            ws.call("delete_file", &json!({"path": p}))
-                .map_err(|e| e.to_string())?;
+            let args = json!({"path": p});
+            ws.call("delete_file", &args).map_err(|e| e.to_string())?;
+            steps.push(("delete_file".into(), false, String::new()));
+            labels.push(kk_review::code::step_label("delete_file", &args));
         }
+        steps.push(("finish".into(), false, String::new()));
         Ok(kk_service::coding::CodeOutcome {
             ending: "Finished".into(),
             summary: "done".into(),
             turns: 3,
-            steps: vec![],
+            steps,
             step_args: vec![],
+            step_labels: labels,
             test_runs: 0,
             kernel_test: None,
             test_command: None,
@@ -15701,6 +15708,25 @@ fn sv172_a_coding_task_shows_its_patch_and_applies_only_with_the_digest_that_was
         ]
     );
     assert_eq!(v["can_apply"], true);
+    // what the model did is listed in plain labels: the files and words it worked on, never the code it wrote
+    let steps = v["steps"].as_array().unwrap();
+    assert!(!steps.is_empty(), "{v}");
+    assert!(
+        steps
+            .iter()
+            .all(|s| s.get("args").is_none() && s["tool"].is_string()),
+        "{steps:?}"
+    );
+    let labels: Vec<&str> = steps.iter().filter_map(|s| s["label"].as_str()).collect();
+    assert!(
+        labels.contains(&"src/app.py") && labels.contains(&"tests/test_app.py"),
+        "{labels:?}"
+    );
+    let listed = serde_json::to_string(&v["steps"]).unwrap();
+    assert!(
+        !listed.contains("a + b") && !listed.contains("def test_"),
+        "code in the steps: {listed}"
+    );
     // nothing on disk changed yet
     assert!(std::fs::read_to_string(proj.join("src/app.py"))
         .unwrap()

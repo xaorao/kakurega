@@ -602,3 +602,68 @@ fn lp11_attack_grid_no_withheld_value_reaches_the_model_the_patch_or_the_report_
         );
     }
 }
+
+#[test]
+fn lp12_each_step_gets_a_plain_label_that_never_holds_the_code_that_was_written() {
+    let long = format!("src/{}/deep.py", "d".repeat(150));
+    let r = route(vec![
+        calls(&[
+            ("list_files", json!({"under": "src"})),
+            ("read_file", json!({"path": "src/app.py"})),
+            ("search_text", json!({"text": "return a - b\u{7}"})),
+            (
+                "edit_file",
+                json!({"path": "src/app.py", "old_text": "return a - b", "new_text": "return a + b  # the secret plan of Zorblax"}),
+            ),
+            (
+                "create_file",
+                json!({"path": "src/new.py", "content": "SECRET_BODY = 1\n"}),
+            ),
+            ("delete_file", json!({"path": long.clone()})),
+            ("read_file", json!({"path": ".env"})),
+            ("no_such_tool", json!({"path": "x"})),
+        ]),
+        calls(&[("finish", json!({"summary": "done"}))]),
+    ]);
+    let mut w = ws();
+    let rep = run_task(&r, &mut w, "Fix add", None, 20);
+    // the closing `finish` call is recorded as a step but has no label of its own
+    assert_eq!(rep.steps.len(), rep.step_labels.len() + 1);
+    let names: Vec<&str> = rep.steps.iter().map(|s| s.0.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "list_files",
+            "read_file",
+            "search_text",
+            "edit_file",
+            "create_file",
+            "delete_file",
+            "read_file",
+            "no_such_tool",
+            "finish"
+        ]
+    );
+    assert_eq!(rep.step_labels[0], "src");
+    assert_eq!(rep.step_labels[1], "src/app.py");
+    assert_eq!(
+        rep.step_labels[2], "return a - b",
+        "control characters are dropped"
+    );
+    assert_eq!(rep.step_labels[3], "src/app.py");
+    assert_eq!(rep.step_labels[4], "src/new.py");
+    assert!(
+        rep.step_labels[5].starts_with("src/ddd") && rep.step_labels[5].chars().count() <= 81,
+        "{}",
+        rep.step_labels[5]
+    );
+    assert_eq!(
+        rep.step_labels[6], ".env",
+        "a refused call is still named, so the owner sees the attempt"
+    );
+    assert_eq!(rep.step_labels[7], "", "an unknown tool has no label");
+    let all = rep.step_labels.join("\n");
+    for code in ["Zorblax", "SECRET_BODY", "return a + b"] {
+        assert!(!all.contains(code), "{code} is in a label: {all}");
+    }
+}

@@ -377,3 +377,7 @@ button.linklike:hover { color: var(--ink); }
 .tablewrap .al-center { text-align: center; }
 .code-file { margin: 12px 0 0; font-weight: 600; }
 .code-file code { font-size: 14px; }
+
+.steps ol { margin: 0.5rem 0; padding: 0; list-style: none; display: block; }
+.steps li { display: block; padding: 0.15rem 0; overflow-wrap: anywhere; }
+.steps li code { white-space: normal; }

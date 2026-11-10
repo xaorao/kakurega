@@ -508,6 +508,7 @@ impl JobRunner for ReviewRunner {
             turns: report.turns,
             steps: report.steps,
             step_args: report.step_args,
+            step_labels: report.step_labels,
             test_runs: report.test_runs,
             kernel_test,
             test_command: tester.as_ref().map(|t| t.command()),

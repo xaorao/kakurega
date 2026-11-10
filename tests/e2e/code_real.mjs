@@ -63,6 +63,13 @@ check(sha(join(proj, "pricing.py")) === before, "nothing on disk changed before 
 const passed = /Tests pass on the changed files/.test(text);
 check(passed, "the kernel's test run passes on the patch");
 check(/pricing\.py/.test(text) && /return sum\(p \* q/.test(text), "the patch is shown with the changed line");
+const stepsBox = page.locator("details.steps");
+check((await stepsBox.count()) === 1 && /What the model did \(\d+ steps\)/.test(await stepsBox.locator("summary").innerText()), "the list of what the model did is there, with its step count");
+await stepsBox.locator("summary").click();
+const stepsText = await stepsBox.innerText();
+await shot("2b-steps");
+check(/Edited\s+pricing\.py/.test(stepsText) && /Read\s+pricing\.py|Listed|Ran the tests/.test(stepsText), "it names the files the model read and edited: " + stepsText.slice(0, 200).replace(/\n/g, " | "));
+check(!/return sum\(p \* q|old_text|new_text/.test(stepsText), "and never shows the code it wrote");
 const apply = page.getByRole("button", { name: "Apply this patch" });
 if (await apply.count()) {
   await apply.click();

@@ -2,10 +2,15 @@ import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError, type CodeTask as Task } from "../api";
 import { DiffView } from "../components/DiffView";
 import { t, type Key } from "../i18n";
+import { visible } from "../visible";
 
 const STATES = ["running", "ready", "failed", "applied", "applying", "undoing", "attention"];
 const stateWord = (s: string) => (STATES.includes(s) ? t(`code.state.${s}` as Key) : s);
 const done = (s: Task["state"]) => s !== "running" && s !== "applying" && s !== "undoing";
+
+const STEP_ROWS = 60;
+const KNOWN_STEPS = ["list_files", "read_file", "search_text", "edit_file", "create_file", "delete_file", "run_tests", "finish"];
+const stepWord = (tool: string) => KNOWN_STEPS.includes(tool) ? t(`code.step.${tool}` as Key) : t("code.step.other", { tool: visible(tool).slice(0, 40) });
 
 export function CodeTask() {
   const [dir, setDir] = createSignal<string | undefined>(undefined);
@@ -113,6 +118,22 @@ export function CodeTask() {
             <Show when={c().state === "attention"}><p role="alert" class="bad">{t("code.attention", { list: c().attention.join(", ") })}</p></Show>
             <Show when={done(c().state) && c().state !== "failed"}>
               <Show when={c().ended}><p>{c().ended}</p></Show>
+              <Show when={(c().steps ?? []).length > 0}>
+                <details class="steps">
+                  <summary>{t("code.steps", { n: c().steps.length })}</summary>
+                  <ol class="plain stack">
+                    <For each={c().steps.slice(0, STEP_ROWS)}>
+                      {(s) => (
+                        <li class={s.refused ? "warn" : "muted"}>
+                          {stepWord(s.tool)}{s.label ? <> <code>{s.label}</code></> : ""}
+                          <Show when={s.refused}> <span class="chip">{t("code.step.refused")}</span> {s.said}</Show>
+                        </li>
+                      )}
+                    </For>
+                    <Show when={c().steps.length > STEP_ROWS}><li class="muted">{t("code.step.more", { n: c().steps.length - STEP_ROWS })}</li></Show>
+                  </ol>
+                </details>
+              </Show>
               <Show when={c().summary}><p class="mem-text"><strong>{t("code.saysModel")}:</strong> {c().summary}</p></Show>
               <Show when={(c().withheld_files ?? 0) > 0}><p class="muted">{t("code.withheld", { n: c().withheld_files ?? 0 })}</p></Show>
               <Show when={c().tests} fallback={<p class="warn">{t("code.testsNone")}</p>}>

@@ -546,6 +546,20 @@ pub fn secret_file_name(name: &str) -> bool {
         || name.starts_with("credentials")
 }
 
+/// What a call was about, for the owner to read: the path of a file, the folder listed, the words searched for. The text of an
+/// edit or a new file is never part of it, and a long value is cut.
+pub fn step_label(name: &str, args: &Value) -> String {
+    let text = |k: &str| args.get(k).and_then(Value::as_str).map(|s| plain(s, 80));
+    match name {
+        "read_file" | "edit_file" | "create_file" | "delete_file" => text("path"),
+        "search_text" => text("text"),
+        "list_files" => text("under"),
+        "finish" => None,
+        _ => None,
+    }
+    .unwrap_or_default()
+}
+
 pub const HINT_LINES: usize = 12;
 const HINT_LINE_SHOWN: usize = 200;
 
@@ -666,6 +680,8 @@ pub struct TaskReport {
     pub last_test: Option<TestRun>,
     /// The arguments of each call in `steps`, in the same order, shortened.
     pub step_args: Vec<String>,
+    /// What each call in `steps` was about, in plain words: the path or the text searched for, never the code written.
+    pub step_labels: Vec<String>,
     /// How many replies had their calls written as text and were read as calls.
     pub text_calls: usize,
 }
@@ -740,6 +756,7 @@ pub fn run_task(
         test_runs: 0,
         last_test: None,
         step_args: Vec::new(),
+        step_labels: Vec::new(),
         text_calls: 0,
     };
     let mut last_calls: Vec<String> = Vec::new();
@@ -842,6 +859,9 @@ pub fn run_task(
                 .steps
                 .push((call.name.clone(), refused, cut(&text, 120)));
             report.step_args.push(cut(&call.arguments.to_string(), 200));
+            report
+                .step_labels
+                .push(step_label(&call.name, &call.arguments));
             let mut reply = ChatMessage::new("tool", &text);
             reply.tool_call_id = Some(call.id.clone());
             messages.push(reply);

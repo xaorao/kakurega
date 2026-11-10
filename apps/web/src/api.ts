@@ -219,6 +219,7 @@ export type CodeTask = {
   tests: { passed: boolean; output: string } | null;
   test_command: string | null;
   withheld_files: number | null;
+  steps: { tool: string; label: string | null; refused: boolean; said: string }[];
   changes: CodeChange[];
   digest: string | null;
   concerns: string[];

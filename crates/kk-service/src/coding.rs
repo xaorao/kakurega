@@ -20,6 +20,9 @@ pub struct CodeOutcome {
     /// The arguments of each step, in the same order (kept from older tasks as empty).
     #[serde(default)]
     pub step_args: Vec<String>,
+    /// What each step was about in plain words (kept from older tasks as empty).
+    #[serde(default)]
+    pub step_labels: Vec<String>,
     pub test_runs: usize,
     /// The kernel's own run of the tests on the final files (never the model's claim), and the command used.
     pub kernel_test: Option<TestRun>,
@@ -197,7 +200,7 @@ pub fn view(t: &Task) -> Value {
         "ending": o.map(|o| o.ending.clone()),
         "summary": o.map(|o| o.summary.clone()),
         "turns": o.map(|o| o.turns),
-        "steps": o.map(|o| o.steps.iter().enumerate().map(|(i, (n, refused, said))| json!({"tool": n, "args": o.step_args.get(i), "refused": refused, "said": said})).collect::<Vec<_>>()).unwrap_or_default(),
+        "steps": o.map(|o| o.steps.iter().enumerate().map(|(i, (n, refused, said))| json!({"tool": n, "label": o.step_labels.get(i), "refused": refused, "said": said})).collect::<Vec<_>>()).unwrap_or_default(),
         "ended": o.map(|o| ended(&o.ending)),
         "model_test_runs": o.map(|o| o.test_runs),
         "tests": o.and_then(|o| o.kernel_test.as_ref()).map(|t| json!({"passed": t.passed, "output": t.output})),
