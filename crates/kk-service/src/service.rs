@@ -7376,25 +7376,36 @@ async fn away_list(axum::Extension(svc): Svc) -> Response {
             .query_row("SELECT at FROM away WHERE id = 1", [], |r| r.get(0))
             .ok()
     };
+    let finished = match since {
+        Some(since) => away_finished(svc.inner.lock().expect("lock").jobs.values(), since),
+        None => Vec::new(),
+    };
+    Json(json!({"since": since, "finished": finished})).into_response()
+}
+
+/// The most reviews the away card lists, and the most characters of a note on one.
+const AWAY_MAX: usize = 20;
+const AWAY_NOTE_CHARS: usize = 200;
+
+/// The reviews that stopped after `since`, newest first, each as who it was for and how it ended. A review still running is
+/// not news; a note is cut to its first characters and a long list to the newest.
+fn away_finished<'a>(jobs: impl Iterator<Item = &'a Job>, since: i64) -> Vec<Value> {
     let mut finished: Vec<(i64, Value)> = Vec::new();
-    if let Some(since) = since {
-        let g = svc.inner.lock().expect("lock");
-        for j in g.jobs.values() {
-            let (state, note) = match &j.state {
-                JobState::Running => continue,
-                JobState::Ready => ("ready", String::new()),
-                JobState::NothingToRelease(n) => ("nothing_to_release", n.clone()),
-                JobState::Failed(m) => ("failed", m.clone()),
-            };
-            let at = j.events.iter().map(|e| e.at).max().unwrap_or(j.created);
-            if at > since {
-                finished.push((at, json!({"id": j.id, "recipient": j.recipient, "state": state, "note": note.chars().take(200).collect::<String>(), "at": at})));
-            }
+    for j in jobs {
+        let (state, note) = match &j.state {
+            JobState::Running => continue,
+            JobState::Ready => ("ready", String::new()),
+            JobState::NothingToRelease(n) => ("nothing_to_release", n.clone()),
+            JobState::Failed(m) => ("failed", m.clone()),
+        };
+        let at = j.events.iter().map(|e| e.at).max().unwrap_or(j.created);
+        if at > since {
+            finished.push((at, json!({"id": j.id, "recipient": j.recipient, "state": state, "note": note.chars().take(AWAY_NOTE_CHARS).collect::<String>(), "at": at})));
         }
     }
     finished.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
-    finished.truncate(20);
-    Json(json!({"since": since, "finished": finished.into_iter().map(|(_, v)| v).collect::<Vec<_>>()})).into_response()
+    finished.truncate(AWAY_MAX);
+    finished.into_iter().map(|(_, v)| v).collect()
 }
 
 /// The owner has seen the list: later calls to `GET /api/away` list only what stopped after this moment.
@@ -9488,5 +9499,86 @@ mod store_tests {
             .unwrap();
         assert_eq!(flags, (0, 0, None));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod away_tests {
+    use super::*;
+
+    fn job(n: u64, state: JobState, at: i64) -> Job {
+        Job {
+            id: format!("job-{n}"),
+            repo: PathBuf::from("/x"),
+            recipient: format!("who-{n}"),
+            created: 1,
+            state,
+            events: vec![Event {
+                at,
+                stage: "done".into(),
+                detail: String::new(),
+                seq: n,
+            }],
+            approval: None,
+            delivered: None,
+        }
+    }
+
+    fn ids(v: &[Value]) -> Vec<String> {
+        v.iter()
+            .map(|j| j["id"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn aw01_only_reviews_that_stopped_after_the_mark_are_listed_newest_first_and_running_ones_are_not(
+    ) {
+        let jobs = vec![
+            job(1, JobState::Ready, 100),
+            job(2, JobState::Failed("boom".into()), 200),
+            job(3, JobState::Running, 300),
+            job(4, JobState::NothingToRelease("no findings".into()), 150),
+            job(5, JobState::Ready, 201),
+        ];
+        let out = away_finished(jobs.iter(), 100);
+        assert_eq!(ids(&out), ["job-5", "job-2", "job-4"], "{out:?}");
+        // a review that stopped exactly at the mark is not news; a running one never is
+        assert!(!ids(&out).contains(&"job-1".into()) && !ids(&out).contains(&"job-3".into()));
+        assert_eq!(out[1]["state"], "failed");
+        assert_eq!(out[1]["note"], "boom");
+        assert_eq!(out[0]["note"], "", "a ready review has no note");
+        assert_eq!(out[2]["state"], "nothing_to_release");
+        // a review with no events counts from when it was created
+        let mut bare = job(6, JobState::Ready, 0);
+        bare.events.clear();
+        bare.created = 500;
+        assert_eq!(ids(&away_finished([bare].iter(), 100)), ["job-6"]);
+        // the latest event decides, not the first
+        let mut two = job(7, JobState::Ready, 10);
+        two.events.push(Event {
+            at: 900,
+            stage: "later".into(),
+            detail: String::new(),
+            seq: 99,
+        });
+        assert_eq!(ids(&away_finished([two].iter(), 800)), ["job-7"]);
+    }
+
+    #[test]
+    fn aw02_a_long_list_is_cut_to_the_newest_twenty_and_a_note_to_two_hundred_characters() {
+        let long = "é".repeat(500);
+        let jobs: Vec<Job> = (1..=25)
+            .map(|n| job(n, JobState::Failed(long.clone()), 1000 + n as i64))
+            .collect();
+        let out = away_finished(jobs.iter(), 0);
+        assert_eq!(out.len(), 20, "{}", out.len());
+        assert_eq!(out[0]["id"], "job-25");
+        assert_eq!(out[19]["id"], "job-6", "the five oldest are left out");
+        for j in &out {
+            let note = j["note"].as_str().unwrap();
+            assert_eq!(note.chars().count(), 200, "cut by characters, not bytes");
+        }
+        // nothing at or before the mark, whatever the count
+        assert!(away_finished(jobs.iter(), 2000).is_empty());
     }
 }
