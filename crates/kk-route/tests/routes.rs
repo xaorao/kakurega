@@ -96,13 +96,127 @@ fn selection_never_falls_back_to_something_weaker() {
             .unwrap(),
         "local"
     );
-    let verified: Vec<Box<dyn Route>> = vec![Box::new(ScriptedRoute::new(
-        "tee",
-        RouteClass::VerifiedTee,
-        true,
-        vec![],
-    ))];
+    let verified: Vec<Box<dyn Route>> = vec![Box::new(
+        ScriptedRoute::new("tee", RouteClass::VerifiedTee, true, vec![]).with_reply_key_bound(),
+    )];
     assert!(RouteSet::new(verified).select(&restricted).is_ok());
+}
+
+fn tee(id: &str, verified: bool, bound: bool) -> Box<dyn Route> {
+    let r = ScriptedRoute::new(id, RouteClass::VerifiedTee, verified, vec![]);
+    Box::new(if bound { r.with_reply_key_bound() } else { r })
+}
+
+fn chosen(routes: Vec<Box<dyn Route>>, label: &Label) -> Option<String> {
+    RouteSet::new(routes)
+        .select(label)
+        .ok()
+        .map(|r| r.id().to_string())
+}
+
+#[test]
+fn rt01_a_verified_route_without_a_bound_reply_key_gets_internal_data_and_nothing_more_sensitive() {
+    // E2EE v2 (reply key not bound to the request, cloud-api#1061): internal at most
+    for level in [Level::Public, Level::Internal] {
+        assert_eq!(
+            chosen(vec![tee("v2", true, false)], &Label::new(level)).as_deref(),
+            Some("v2"),
+            "{level:?}"
+        );
+    }
+    for level in [Level::Confidential, Level::Restricted] {
+        assert_eq!(
+            chosen(vec![tee("v2", true, false)], &Label::new(level)),
+            None,
+            "{level:?}"
+        );
+    }
+    // data whose sensitivity is unknown counts as restricted, even when its level says public
+    let unknown = Label::new(Level::Public).unknown_sensitivity();
+    assert_eq!(chosen(vec![tee("v2", true, false)], &unknown), None);
+    assert_eq!(
+        chosen(vec![tee("v3", true, true)], &unknown).as_deref(),
+        Some("v3")
+    );
+    // a bound reply key never makes an unverified route eligible
+    for level in [Level::Public, Level::Internal, Level::Restricted] {
+        assert_eq!(
+            chosen(vec![tee("fake", false, true)], &Label::new(level)),
+            None,
+            "{level:?}"
+        );
+    }
+}
+
+#[test]
+fn rt02_the_owners_order_is_kept_among_eligible_routes_and_a_weaker_one_is_skipped_never_chosen() {
+    let order = || {
+        vec![
+            tee("v2", true, false),
+            tee("v3", true, true),
+            Box::new(ScriptedRoute::new(
+                "local",
+                RouteClass::DeviceOnly,
+                false,
+                vec![],
+            )) as Box<dyn Route>,
+        ]
+    };
+    assert_eq!(
+        chosen(order(), &Label::new(Level::Internal)).as_deref(),
+        Some("v2")
+    );
+    assert_eq!(
+        chosen(order(), &Label::new(Level::Confidential)).as_deref(),
+        Some("v3")
+    );
+    assert_eq!(
+        chosen(
+            order(),
+            &Label::new(Level::Restricted).with_compartment("secrets")
+        )
+        .as_deref(),
+        Some("v3")
+    );
+    let no_v3 = vec![
+        tee("v2", true, false),
+        Box::new(ScriptedRoute::new(
+            "local",
+            RouteClass::DeviceOnly,
+            false,
+            vec![],
+        )) as Box<dyn Route>,
+    ];
+    assert_eq!(
+        chosen(no_v3, &Label::new(Level::Restricted)).as_deref(),
+        Some("local")
+    );
+    // public routes are never chosen automatically, whatever the label
+    let public = || {
+        vec![Box::new(
+            ScriptedRoute::new("public", RouteClass::Public, true, vec![]).with_reply_key_bound(),
+        ) as Box<dyn Route>]
+    };
+    for level in [Level::Public, Level::Internal, Level::Restricted] {
+        assert_eq!(chosen(public(), &Label::new(level)), None, "{level:?}");
+    }
+    // the ceiling is the kernel's, read from the route's properties
+    assert_eq!(
+        kk_route::route_ceiling(tee("a", true, false).as_ref()),
+        Some(Level::Internal)
+    );
+    assert_eq!(
+        kk_route::route_ceiling(tee("b", true, true).as_ref()),
+        Some(Level::Restricted)
+    );
+    assert_eq!(
+        kk_route::route_ceiling(tee("c", false, true).as_ref()),
+        None
+    );
+    // a route that does not say otherwise has no bound reply key
+    assert!(!OllamaRoute::new("http://127.0.0.1:11434", "m")
+        .unwrap()
+        .reply_key_bound());
 }
 
 #[test]

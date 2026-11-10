@@ -1,4 +1,4 @@
-use kk_types::label::Label;
+use kk_types::label::{Label, Level};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fmt;
@@ -128,8 +128,28 @@ pub trait Route: Send + Sync {
     fn id(&self) -> &str;
     fn class(&self) -> RouteClass;
     fn tee_verified(&self) -> bool;
+    /// Whether the reply key is bound to the encrypted request (NEAR E2EE v3), so a party holding the ciphertext cannot
+    /// replay it and read the answer with a key of its own. Without it a verified route is capped below confidential data.
+    fn reply_key_bound(&self) -> bool {
+        false
+    }
     fn evidence(&self) -> RouteEvidence;
     fn complete(&self, request: &CompletionRequest) -> Result<Completion, RouteError>;
+}
+
+/// The most sensitive data a route may receive, decided by the kernel from the route's properties, never claimed by the
+/// route itself. `None` means no data at all is sent to it without a separate, explicit approval.
+pub fn route_ceiling(r: &dyn Route) -> Option<Level> {
+    match r.class() {
+        RouteClass::DeviceOnly => Some(Level::Restricted),
+        RouteClass::VerifiedTee if r.tee_verified() && r.reply_key_bound() => {
+            Some(Level::Restricted)
+        }
+        RouteClass::VerifiedTee if r.tee_verified() => Some(Level::Internal),
+        RouteClass::VerifiedTee => None,
+        // public routes take only sanitised or public artifacts the owner approved, which is not this path
+        RouteClass::Public => None,
+    }
 }
 
 /// What a non-success answer from Ollama means. A conversation larger than the window is reported as its own error, so
@@ -739,6 +759,7 @@ pub struct ScriptedRoute {
     id: String,
     class: RouteClass,
     tee_verified: bool,
+    reply_key_bound: bool,
     script: Mutex<Vec<ChatMessage>>,
     pub seen: Mutex<Vec<CompletionRequest>>,
 }
@@ -755,9 +776,18 @@ impl ScriptedRoute {
             id: id.into(),
             class,
             tee_verified,
+            reply_key_bound: false,
             script: Mutex::new(script),
             seen: Mutex::new(Vec::new()),
         }
+    }
+}
+
+impl ScriptedRoute {
+    /// A scripted stand-in for a route whose reply key is bound to the request.
+    pub fn with_reply_key_bound(mut self) -> Self {
+        self.reply_key_bound = true;
+        self
     }
 }
 
@@ -772,6 +802,10 @@ impl Route for ScriptedRoute {
 
     fn tee_verified(&self) -> bool {
         self.tee_verified
+    }
+
+    fn reply_key_bound(&self) -> bool {
+        self.reply_key_bound
     }
 
     fn evidence(&self) -> RouteEvidence {
@@ -814,15 +848,14 @@ impl RouteSet {
         RouteSet { routes }
     }
 
-    pub fn eligible_for(&self, _taint: &Label) -> Option<&dyn Route> {
+    /// The first route, in the order given, whose ceiling covers the data. Data of unknown sensitivity counts as
+    /// restricted. Nothing weaker is ever chosen when no route qualifies.
+    pub fn eligible_for(&self, taint: &Label) -> Option<&dyn Route> {
+        let level = taint.effective_level();
         self.routes
             .iter()
             .map(|r| r.as_ref())
-            .find(|r| match r.class() {
-                RouteClass::DeviceOnly => true,
-                RouteClass::VerifiedTee => r.tee_verified(),
-                RouteClass::Public => false,
-            })
+            .find(|r| route_ceiling(*r).is_some_and(|max| level <= max))
     }
 
     pub fn select(&self, taint: &Label) -> Result<&dyn Route, RouteError> {
