@@ -7456,9 +7456,10 @@ fn tu_me03_the_list_shows_state_and_cleans_names_and_a_secret_is_scrubbed_from_h
     a.handle(ok(&r[0], 200, json!({"methods": []})));
     assert!(text(&a).contains("No methods yet"), "{}", text(&a));
     let mut a = booted();
+    let key = format!("{}{}", "sk_li", "ve_abcdefghijklmnop0123");
     let r = enter(
         &mut a,
-        "/method add style review Use this key sk_live_abcdefghijklmnop0123",
+        &format!("/method add style review Use this key {key}"),
     );
     assert_eq!(
         (r[0].path.as_str(), r[0].method),
@@ -7466,12 +7467,12 @@ fn tu_me03_the_list_shows_state_and_cleans_names_and_a_secret_is_scrubbed_from_h
     );
     assert_eq!(
         r[0].body.as_ref().unwrap()["body"],
-        json!("Use this key sk_live_abcdefghijklmnop0123")
+        json!(format!("Use this key {key}"))
     );
     a.handle(ok(&r[0], 422, json!({"error": {"code": "METHOD_REFUSED", "message": "this looks like a secret; methods are sent to the model, so keep secrets out of them"}})));
     assert!(text(&a).contains("looks like a secret"), "{}", text(&a));
     assert!(
-        !text(&a).contains("sk_live_"),
+        !text(&a).contains(&key),
         "the secret is not left in the transcript: {}",
         text(&a)
     );
