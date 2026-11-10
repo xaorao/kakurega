@@ -4787,6 +4787,59 @@ async fn attachment_upload(
 #[serde(deny_unknown_fields)]
 struct AttachPathBody {
     path: String,
+    /// Only these lines of a text file, `"10"` or `"10-20"` (counted from 1, both ends included).
+    #[serde(default)]
+    lines: Option<String>,
+}
+
+/// The most lines one selection may hold.
+const ATTACH_MAX_LINES: usize = 2000;
+
+/// `"10"` or `"10-20"` as a first and last line, or why it is not one.
+fn parse_line_range(spec: &str) -> Result<(usize, usize), String> {
+    let bad = || "lines are written 10 or 10-20, counted from 1".to_string();
+    let (a, b) = match spec.split_once('-') {
+        Some((a, b)) => (a, b),
+        None => (spec, spec),
+    };
+    let num = |t: &str| {
+        (!t.is_empty() && t.len() <= 7 && t.bytes().all(|c| c.is_ascii_digit()))
+            .then(|| t.parse::<usize>().ok())
+            .flatten()
+    };
+    let (start, end) = (num(a).ok_or_else(bad)?, num(b).ok_or_else(bad)?);
+    if start == 0 || end < start {
+        return Err(bad());
+    }
+    if end - start + 1 > ATTACH_MAX_LINES {
+        return Err(format!(
+            "a selection holds at most {ATTACH_MAX_LINES} lines"
+        ));
+    }
+    Ok((start, end))
+}
+
+/// The chosen lines of a text, and the file name that says which they are (`terms.lines3-4.txt`).
+fn select_lines(
+    name: &str,
+    bytes: &[u8],
+    start: usize,
+    end: usize,
+) -> Result<(String, Vec<u8>), String> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| "lines can be chosen only in a text file".to_string())?;
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    if start > lines.len() {
+        return Err(format!("the file has {} line(s)", lines.len()));
+    }
+    let end = end.min(lines.len());
+    let picked: String = lines[start - 1..end].concat();
+    let label = format!("lines{start}-{end}");
+    let named = match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => format!("{stem}.{label}.{ext}"),
+        _ => format!("{name}.{label}"),
+    };
+    Ok((named, picked.into_bytes()))
 }
 
 /// Attaches a file the owner names from the folders this service may read (the same roots a review may use), instead of
@@ -4807,6 +4860,10 @@ async fn attachment_from_path(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let range = match b.lines.as_deref().map(parse_line_range).transpose() {
+        Ok(r) => r,
+        Err(why) => return error(StatusCode::BAD_REQUEST, "BAD_LINES", &why),
+    };
     if kk_review::code::secret_file_name(&name) {
         return refuse(
             "SECRET_FILE",
@@ -4828,7 +4885,15 @@ async fn attachment_from_path(
     })
     .await;
     match read {
-        Ok(Ok(bytes)) => attach_bytes(svc, &name, axum::body::Bytes::from(bytes)).await,
+        Ok(Ok(bytes)) => match range {
+            None => attach_bytes(svc, &name, axum::body::Bytes::from(bytes)).await,
+            Some((start, end)) => match select_lines(&name, &bytes, start, end) {
+                Ok((named, picked)) => {
+                    attach_bytes(svc, &named, axum::body::Bytes::from(picked)).await
+                }
+                Err(why) => error(StatusCode::BAD_REQUEST, "BAD_LINES", &why),
+            },
+        },
         Ok(Err(m)) => error(StatusCode::BAD_REQUEST, "READ_FAILED", &m),
         Err(_) => error(
             StatusCode::INTERNAL_SERVER_ERROR,

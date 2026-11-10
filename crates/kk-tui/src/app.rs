@@ -23,6 +23,20 @@ struct AttachFlow {
 /// The files a message names with `@path`: an `@` at the start or after a space, then the path up to the next space, with
 /// closing punctuation left off. A name that is not a file on this computer (an address, a person) is left as plain text.
 /// At most five, each once.
+/// `name#10` or `name#10-20`: the name and the lines asked for, when what follows the last `#` is a line range.
+pub fn split_lines_suffix(token: &str) -> (&str, Option<&str>) {
+    match token.rsplit_once('#') {
+        Some((base, range))
+            if !base.is_empty()
+                && range.bytes().all(|c| c.is_ascii_digit() || c == b'-')
+                && range.bytes().next().is_some_and(|c| c.is_ascii_digit()) =>
+        {
+            (base, Some(range))
+        }
+        _ => (token, None),
+    }
+}
+
 pub fn mentioned_files(message: &str, cwd: &std::path::Path) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     let mut prev: Option<char> = None;
@@ -40,13 +54,19 @@ pub fn mentioned_files(message: &str, cwd: &std::path::Path) -> Vec<(String, Str
                 tok.pop();
             }
             if !tok.is_empty() && !tok.chars().any(char::is_control) {
-                let path = if std::path::Path::new(&tok).is_absolute() {
-                    std::path::PathBuf::from(&tok)
+                let (base, range) = split_lines_suffix(&tok);
+                let path = if std::path::Path::new(base).is_absolute() {
+                    std::path::PathBuf::from(base)
                 } else {
-                    cwd.join(&tok)
+                    cwd.join(base)
                 };
                 if path.is_file() && !out.iter().any(|(t, _)| *t == tok) && out.len() < 5 {
-                    out.push((tok, path.to_string_lossy().into_owned()));
+                    let mut shown = path.to_string_lossy().into_owned();
+                    if let Some(r) = range {
+                        shown.push('#');
+                        shown.push_str(r);
+                    }
+                    out.push((tok, shown));
                 }
             }
             prev = chars.get(j.saturating_sub(1)).copied();
@@ -3098,12 +3118,17 @@ impl App {
             return self.send_chat(&flow.message, flow.ids);
         }
         let (token, path) = flow.todo.remove(0);
+        let (base, lines) = split_lines_suffix(&path);
+        let body = match lines {
+            Some(l) => json!({"path": base, "lines": l}),
+            None => json!({"path": base}),
+        };
         vec![self.req(
             Intent::AttachMention(token),
             false,
             Method::Post,
             "/api/attachments/path",
-            Some(json!({"path": path})),
+            Some(body),
         )]
     }
 

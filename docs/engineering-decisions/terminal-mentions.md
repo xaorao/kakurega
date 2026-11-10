@@ -17,7 +17,7 @@
 | File completion | ADAPT, simpler: Tab completes by prefix from the service's folder listing (`/api/fs?files=1`), as `/review` folders already do | A popup with fuzzy ranking needs the popup widget; prefix completion is the terminal's existing idiom |
 | File as a structured part, not inlined text | ADAPT: the file goes through the attachment pipeline and its id travels with the message | Labelling and secret handling already live there |
 | Reading by the model's tool | EXCLUDE | Chat has no tools by design |
-| Line ranges `path#10-20` | OWED | The attachment pipeline has no line selection yet |
+| Line ranges `path#10-20` | ADAPT, built: `@file#10` or `@file#10-20` attaches only those lines (the file is read whole by the service, the lines are cut before parsing, the attachment is named `name.lines10-20.ext`) | OpenCode puts the range in the file part's uri; here it travels as a field so the service validates it
 | Agents, skills, references in the same list | EXCLUDE | No such objects in the terminal chat |
 | Frecency boost | OWED (value unproven) | |
 | Fuzzy ranking | OWED with the popup | |
@@ -31,7 +31,10 @@
 - Terminal: tu_at01 (token rules), tu_at02 (attach first, then send the ids; queued message follows; footer lines), tu_at03 (a refusal stops the message, puts it back, drops the queue), tu_at04 and tu_at05 (Tab completion and its refusals); 8 of 8 mutants of the mention logic and 8 of 8 of the completion caught.
 - Real use: `python3 tests/e2e/tui_mentions.py` drives the real binary in a pseudo-terminal with a real qwen2.5:3b: Tab finishes `@terms.txt`, the file is attached, the answer is from it (net 45), a `.env` mention is refused with its reason and the message returns, `@/etc/hosts` is refused, and the token value never reaches the screen (9 checks; two of its first checks passed falsely by matching earlier text and were rewritten to read the outcome).
 
+## Line ranges
+- Evidence: sv182 (only the chosen lines reach the model; names; clamping; ten refused specs; secret name refused with lines; non-text refused; 7 of 7 mutants caught), tu_at06 (parsing, request body, refusal; 5 mutants caught, one redundant guard removed after a mutant of it survived), `python3 tests/e2e/tui_mentions_lines.py` 5 of 5 with a real qwen2.5:3b (mango and plum from lines 3 and 4, none of the other fruits, a line past the end refused with the real length).
+
 ## Not covered
 - The cwd of the terminal must lie inside the folders the service was started with, or Tab finds nothing and a mention is refused; the message says so.
 - The web chat attaches by upload and drop, not `@`.
-- Frecency, fuzzy order and line ranges (owed above).
+- Frecency and fuzzy order (owed above). Lines can be chosen only in text files (UTF-8); up to 2000 lines.

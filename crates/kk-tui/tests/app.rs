@@ -7186,3 +7186,68 @@ fn tu_br01_branch_pick_lists_every_message_and_choosing_one_branches_after_it() 
         .join("\n")
         .contains("Enter branches after the chosen one"));
 }
+
+#[test]
+fn tu_at06_a_file_can_be_named_with_the_lines_wanted_and_only_those_are_asked_for() {
+    use kk_tui::app::{mentioned_files, split_lines_suffix};
+    assert_eq!(split_lines_suffix("a.txt#3-5"), ("a.txt", Some("3-5")));
+    assert_eq!(split_lines_suffix("a.txt#7"), ("a.txt", Some("7")));
+    assert_eq!(split_lines_suffix("a.txt"), ("a.txt", None));
+    // not a range: left as part of the name
+    for t in [
+        "a.txt#",
+        "a.txt#x",
+        "a.txt#-3",
+        "#3",
+        "a#b#c",
+        "a.txt#3x",
+        "a.txt#3.5",
+    ] {
+        assert_eq!(split_lines_suffix(t).1, None, "{t}");
+    }
+    assert_eq!(split_lines_suffix("a#b#3").0, "a#b");
+    let dir = at_dir("lines");
+    let names = |m: &str| -> Vec<(String, String)> { mentioned_files(m, &dir) };
+    let got = names("see @a.txt#3-5 and @b.md#2");
+    assert_eq!(got[0].0, "a.txt#3-5");
+    assert!(
+        got[0].1.ends_with("a.txt#3-5") && got[1].1.ends_with("b.md#2"),
+        "{got:?}"
+    );
+    // a range on a file that is not there is not a mention; the same file with two ranges is two selections
+    assert!(names("@nothing.txt#3").is_empty());
+    assert_eq!(names("@a.txt#1-2 @a.txt#4-5").len(), 2);
+    // the request carries the file and the lines apart
+    let mut app = booted();
+    let msg = format!("read @{}#3-5 now", dir.join("a.txt").display());
+    let r = enter(&mut app, &msg);
+    assert_eq!(r[0].path, "/api/attachments/path");
+    assert_eq!(
+        r[0].body,
+        Some(json!({"path": dir.join("a.txt").to_string_lossy(), "lines": "3-5"}))
+    );
+    let r2 = app.handle(ok(
+        &r[0],
+        201,
+        json!({"id": "att-1", "name": "a.lines3-5.txt", "kind_label": "text file"}),
+    ));
+    assert_eq!(r2[0].path, "/api/chat/stream");
+    assert_eq!(
+        r2[0].body.as_ref().unwrap()["attachments"],
+        json!(["att-1"])
+    );
+    // a refused range stops the message like any refusal
+    let mut app = booted();
+    let r = enter(&mut app, &msg);
+    app.handle(ok(
+        &r[0],
+        400,
+        json!({"error": {"code": "BAD_LINES", "message": "the file has 2 line(s)"}}),
+    ));
+    assert!(
+        text(&app).contains("the file has 2 line(s)"),
+        "{}",
+        text(&app)
+    );
+    assert_eq!(app.input, msg);
+}

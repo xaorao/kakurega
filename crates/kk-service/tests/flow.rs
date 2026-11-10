@@ -16463,3 +16463,96 @@ fn sv181_the_owners_session_can_read_the_diagnostics_as_text_and_it_names_nothin
     // the text is exactly what `kaku diagnostics` prints for the same data
     assert_eq!(text, kk_service::report::render(&v["data"]));
 }
+
+#[test]
+fn sv182_a_file_can_be_attached_by_lines_and_only_those_lines_reach_the_model() {
+    let (_c, w, seen, root) = instructions_service("attach-lines");
+    let docs = root.join("docs");
+    fs::create_dir_all(&docs).unwrap();
+    let body: String = (1..=10)
+        .map(|i| format!("line {i} of the terms\n"))
+        .collect();
+    fs::write(docs.join("terms.txt"), &body).unwrap();
+    fs::write(docs.join(".env"), "API_TOKEN=tok-9f8e7d6c5b4a\n").unwrap();
+    fs::write(docs.join("blob.txt"), [0xffu8, 0xfe, 0x00, 0x01]).unwrap();
+    fs::write(docs.join("blank.txt"), "\n\n\n").unwrap();
+    let attach = |lines: Option<&str>| {
+        let mut b = json!({"path": docs.join("terms.txt").to_str().unwrap()});
+        if let Some(l) = lines {
+            b["lines"] = json!(l);
+        }
+        w.post("/api/attachments/path", b)
+    };
+    // lines 3 to 4: named for the selection, and only they are given to the model
+    let (s, a) = attach(Some("3-4"));
+    assert_eq!(s, 201, "{a}");
+    assert_eq!(a["name"], "terms.lines3-4.txt");
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "what do these lines say", "attachments": [a["id"].clone()]}),
+    );
+    assert_eq!(s, 200, "{r}");
+    let prompt: String = seen
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .iter()
+        .map(|m| m.content.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        prompt.contains("line 3 of the terms") && prompt.contains("line 4 of the terms"),
+        "{prompt}"
+    );
+    for other in ["line 1 ", "line 2 ", "line 5 ", "line 10 "] {
+        assert!(!prompt.contains(other), "{other} was given to the model");
+    }
+    // one line, a range that runs past the end (cut to it), the whole file
+    assert_eq!(attach(Some("7")).1["name"], "terms.lines7-7.txt");
+    assert_eq!(attach(Some("8-999")).1["name"], "terms.lines8-10.txt");
+    assert_eq!(attach(None).1["name"], "terms.txt");
+    // refused, with nothing attached
+    for (spec, why) in [
+        ("0", "counted from 1"),
+        ("3-2", "counted from 1"),
+        ("a", "counted from 1"),
+        ("1-", "counted from 1"),
+        ("-3", "counted from 1"),
+        ("1-2-3", "counted from 1"),
+        ("99999999", "counted from 1"),
+        ("1-5000", "at most 2000"),
+        ("", "counted from 1"),
+        ("11", "the file has 10 line(s)"),
+    ] {
+        let (s, v) = attach(Some(spec));
+        assert_eq!(
+            (s, v["error"]["code"].clone()),
+            (400, json!("BAD_LINES")),
+            "{spec}: {v}"
+        );
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains(why),
+            "{spec}: {v}"
+        );
+    }
+    // a secret-named file stays refused whatever lines are asked for; a file that is not text has no lines
+    let (s, v) = w.post(
+        "/api/attachments/path",
+        json!({"path": docs.join(".env").to_str().unwrap(), "lines": "1"}),
+    );
+    assert_eq!(
+        (s, v["error"]["code"].clone()),
+        (403, json!("SECRET_FILE")),
+        "{v}"
+    );
+    let (s, v) = w.post(
+        "/api/attachments/path",
+        json!({"path": docs.join("blob.txt").to_str().unwrap(), "lines": "1"}),
+    );
+    assert_eq!(
+        (s, v["error"]["code"].clone()),
+        (400, json!("BAD_LINES")),
+        "{v}"
+    );
+}
