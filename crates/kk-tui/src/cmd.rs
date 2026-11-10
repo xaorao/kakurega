@@ -95,6 +95,8 @@ pub enum Command {
     Model(Option<String>),
     /// Branch the open kept conversation, keeping its first N messages (all when none is given).
     Branch(Option<usize>),
+    /// `/branch pick` lists the messages of the open conversation to choose where the branch ends.
+    BranchPick,
     /// Go back to before message N of the open kept conversation: a copy that stops just before it, with that message back in the box.
     Rewind(usize),
     /// `/rewind` alone: choose which of the owner's earlier messages to go back to.
@@ -345,7 +347,7 @@ pub fn usage(name: &str) -> &'static str {
         "export" => "/export NAME",
         "usage" => "/usage [DAYS]",
         "model" => "/model [NAME]",
-        "branch" => "/branch [N]",
+        "branch" => "/branch [N | pick]",
         "rename" => "/rename ID NEW TITLE",
         "resume" => "/resume [ID]",
         "conflicts" => "/conflicts",
@@ -691,6 +693,8 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "branch" => {
             if rest.is_empty() {
                 Ok(Command::Branch(None))
+            } else if rest.eq_ignore_ascii_case("pick") {
+                Ok(Command::BranchPick)
             } else {
                 match rest.parse::<usize>() {
                     Ok(n) if n <= 100_000 => Ok(Command::Branch(Some(n))),

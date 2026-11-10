@@ -755,6 +755,50 @@ impl App {
         Vec::new()
     }
 
+    /// Opens a list of every message in the open conversation to choose where a branch ends (`/branch pick`): the copy keeps
+    /// that message and the ones before it, and the original is untouched.
+    fn branch_picker(&mut self) -> Vec<Req> {
+        if self.session.is_none() {
+            self.say(
+                Kind::Info,
+                "Only a kept conversation can be branched. /keep saves this one first.",
+            );
+            return Vec::new();
+        }
+        let mut p = crate::picker::Picker::new("Branch the conversation after one of its messages");
+        p.loading = false;
+        for (i, (role, content)) in self.chat_history.iter().enumerate() {
+            let one_line: String = content.split_whitespace().collect::<Vec<_>>().join(" ");
+            let cut: String = one_line.chars().take(80).collect();
+            p.items.push(crate::picker::Item {
+                id: (i + 1).to_string(),
+                label: format!(
+                    "{}: {cut}{}",
+                    if role == "user" { "you" } else { "assistant" },
+                    if one_line.chars().count() > 80 {
+                        "…"
+                    } else {
+                        ""
+                    }
+                ),
+                detail: format!("keeps {} message(s)", i + 1),
+                when: i as i64,
+                kind: crate::picker::ItemKind::BranchPoint,
+                project: None,
+                archived: false,
+            });
+        }
+        if p.items.is_empty() {
+            self.say(
+                Kind::Info,
+                "This conversation has no messages to branch after yet.",
+            );
+            return Vec::new();
+        }
+        self.mode = Mode::Picker(p);
+        Vec::new()
+    }
+
     /// Goes back to before the owner's message number `n` (counting from 1) by branching the kept conversation there; the message
     /// is put back in the box to change. The original conversation is untouched.
     fn rewind_to(&mut self, n: usize) -> Vec<Req> {
@@ -1481,33 +1525,37 @@ impl App {
                     None,
                 )];
             }
-            KeyCode::Char('d') if ctrl => match p.delete_press() {
-                Delete::Armed(_) => {
-                    p.error =
-                        Some("Press Ctrl-D again to forget this conversation for good.".into())
-                }
-                Delete::Confirmed(id) => {
-                    p.error = None;
-                    return vec![self.req(
-                        Intent::ForgetChat(id.clone()),
-                        false,
-                        Method::Post,
-                        &format!("/api/sessions/{id}/forget"),
-                        Some(json!({})),
-                    )];
-                }
-                Delete::NotAllowed => {
-                    p.error = Some(
-                        if p.current().is_some_and(|it| it.kind == ItemKind::Message) {
+            KeyCode::Char('d') if ctrl => {
+                match p.delete_press() {
+                    Delete::Armed(_) => {
+                        p.error =
+                            Some("Press Ctrl-D again to forget this conversation for good.".into())
+                    }
+                    Delete::Confirmed(id) => {
+                        p.error = None;
+                        return vec![self.req(
+                            Intent::ForgetChat(id.clone()),
+                            false,
+                            Method::Post,
+                            &format!("/api/sessions/{id}/forget"),
+                            Some(json!({})),
+                        )];
+                    }
+                    Delete::NotAllowed => p.error = Some(
+                        if p.current()
+                            .is_some_and(|it| it.kind == ItemKind::BranchPoint)
+                        {
+                            "Messages are not forgotten here; Enter branches after the chosen one."
+                        } else if p.current().is_some_and(|it| it.kind == ItemKind::Message) {
                             "Your messages are not forgotten here; Enter goes back to one."
                         } else {
                             "Reviews are not removed here."
                         }
                         .into(),
-                    )
+                    ),
+                    Delete::Nothing => {}
                 }
-                Delete::Nothing => {}
-            },
+            }
             KeyCode::Enter => {
                 let Some(it) = p.current().cloned() else {
                     return Vec::new();
@@ -1523,6 +1571,10 @@ impl App {
                     )],
                     ItemKind::Message => match it.id.parse::<usize>() {
                         Ok(n) => self.rewind_to(n),
+                        Err(_) => Vec::new(),
+                    },
+                    ItemKind::BranchPoint => match it.id.parse::<usize>() {
+                        Ok(n) => self.run_line(&format!("/branch {n}")),
                         Err(_) => Vec::new(),
                     },
                     ItemKind::Review => vec![self.req(
@@ -2390,6 +2442,7 @@ impl App {
                     Some(json!({"at": at})),
                 )]
             }
+            Command::BranchPick => self.branch_picker(),
             Command::Rewind(n) => self.rewind_to(n),
             Command::RewindPick => self.rewind_picker(),
             Command::Resume(id) => self.open_chat_by_id(&id),

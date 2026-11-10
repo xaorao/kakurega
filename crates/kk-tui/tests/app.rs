@@ -7112,3 +7112,77 @@ fn tu_at05_at_completion_is_asked_only_for_a_real_mention_and_hostile_listings_c
     app.handle(ok(&r, 200, listing(&[], &["terms.txt"])));
     assert_eq!(app.input, "q @tex");
 }
+
+#[test]
+fn tu_br01_branch_pick_lists_every_message_and_choosing_one_branches_after_it() {
+    assert_eq!(cmd::parse("/branch pick").unwrap(), Command::BranchPick);
+    assert_eq!(cmd::parse("/branch PICK").unwrap(), Command::BranchPick);
+    assert_eq!(cmd::parse("/branch").unwrap(), Command::Branch(None));
+    assert_eq!(cmd::parse("/branch 3").unwrap(), Command::Branch(Some(3)));
+    assert!(cmd::parse("/branch pick 3").is_err());
+    // nothing kept, or nothing written: a sentence, no list
+    let mut a = booted();
+    assert!(
+        enter(&mut a, "/branch pick").is_empty()
+            && text(&a).contains("Only a kept conversation can be branched")
+    );
+    assert!(!matches!(a.mode, Mode::Picker(_)));
+    a.session = Some("chat-1".into());
+    assert!(
+        enter(&mut a, "/branch pick").is_empty()
+            && text(&a).contains("no messages to branch after")
+    );
+    a.chat_history = vec![
+        ("user".into(), "first question".into()),
+        ("assistant".into(), "first answer".into()),
+        ("user".into(), "second question".into()),
+        (
+            "assistant".into(),
+            format!("second answer {}", "long ".repeat(40)),
+        ),
+    ];
+    enter(&mut a, "/branch pick");
+    // every message, newest first, numbered as /branch N numbers them
+    assert_eq!(picker_rows(&a), ["4", "3", "2", "1"]);
+    let (lines, _) = render(&a, 110, 24, false);
+    let screen = lines.join("\n");
+    assert!(
+        screen.contains("Branch the conversation after one of its messages")
+            && screen.contains("you: first question")
+            && screen.contains("assistant: first answer")
+            && screen.contains("…"),
+        "{screen}"
+    );
+    let row = |needle: &str| {
+        lines
+            .iter()
+            .find(|l| l.contains(needle))
+            .cloned()
+            .unwrap_or_default()
+    };
+    assert!(
+        row("assistant: first answer").contains("keeps 2 message(s)"),
+        "{screen}"
+    );
+    assert!(
+        row("you: first question").contains("keeps 1 message(s)"),
+        "{screen}"
+    );
+    // choosing the second one branches keeping the first two messages
+    a.handle(key(KeyCode::Down));
+    a.handle(key(KeyCode::Down));
+    let r = a.handle(key(KeyCode::Enter));
+    assert!(!matches!(a.mode, Mode::Picker(_)));
+    assert_eq!(
+        (r[0].method, r[0].path.as_str()),
+        (Method::Post, "/api/sessions/chat-1/fork")
+    );
+    assert_eq!(r[0].body.as_ref().unwrap(), &json!({"at": 2}));
+    // nothing is forgotten from this list
+    enter(&mut a, "/branch pick");
+    assert!(a.handle(ctrl('d')).is_empty());
+    assert!(render(&a, 110, 24, false)
+        .0
+        .join("\n")
+        .contains("Enter branches after the chosen one"));
+}

@@ -598,6 +598,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
                 crate::picker::ItemKind::Chat => crate::picker::day_label(it.when, now),
                 crate::picker::ItemKind::Review => "Reviews".to_string(),
                 crate::picker::ItemKind::Message => "Your messages, newest first".to_string(),
+                crate::picker::ItemKind::BranchPoint => "Messages, newest first".to_string(),
             };
             if group != last_group {
                 rows.push((

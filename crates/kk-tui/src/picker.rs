@@ -10,6 +10,8 @@ pub enum ItemKind {
     Review,
     /// One of the owner's own messages in the open conversation, chosen to go back to it (`/rewind`).
     Message,
+    /// Any message in the open conversation, chosen as the last one a branch keeps (`/branch pick`).
+    BranchPoint,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,7 +142,9 @@ impl Picker {
             return true;
         }
         match (&self.project, self.only_project, it.kind) {
-            (_, false, _) | (_, _, ItemKind::Review | ItemKind::Message) | (None, _, _) => true,
+            (_, false, _)
+            | (_, _, ItemKind::Review | ItemKind::Message | ItemKind::BranchPoint)
+            | (None, _, _) => true,
             (Some(p), true, ItemKind::Chat) => it.project.as_deref() == Some(p.as_str()),
         }
     }
