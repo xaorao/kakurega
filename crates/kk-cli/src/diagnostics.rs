@@ -2,7 +2,6 @@
 //! checks and how they came out, counts, and the kinds of the last events. It never holds a file name, a path, the text of
 //! a note, a conversation or a file, or a key: the service builds it that way, and the owner reads it all here first.
 
-
 pub use kk_service::report::render;
 
 pub fn run(args: &[String]) -> u8 {
