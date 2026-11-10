@@ -3251,15 +3251,15 @@ fn tu49_branch_copies_a_kept_conversation_at_a_chosen_message_and_opens_the_copy
         text(&a)
     );
     assert!(
-        enter(&mut a, "/branch soon").is_empty() && text(&a).contains("usage: /branch [N]"),
+        enter(&mut a, "/branch soon").is_empty() && text(&a).contains("usage: /branch [N | pick]"),
         "{}",
         text(&a)
     );
     assert!(enter(&mut a, "/branch -1").is_empty());
-    let shown = text(&a).matches("usage: /branch [N]").count();
+    let shown = text(&a).matches("usage: /branch [N | pick]").count();
     assert!(enter(&mut a, "/branch 100001").is_empty());
     assert_eq!(
-        text(&a).matches("usage: /branch [N]").count(),
+        text(&a).matches("usage: /branch [N | pick]").count(),
         shown + 1,
         "a number beyond any conversation is refused by the command itself"
     );
