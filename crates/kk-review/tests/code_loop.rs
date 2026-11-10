@@ -673,7 +673,7 @@ fn lp13_a_secret_in_a_plainly_named_file_is_withheld_by_what_the_importer_found_
     use kk_review::import::scan_tree;
     // fresh values per run; each is built from pieces so the repository holds no key-shaped text
     let n = fresh();
-    let stripe = format!("{}{}_{}", "sk_", "live", format!("{:0<24}", n));
+    let stripe = format!("{}{}_{:0<24}", "sk_", "live", n);
     let pem = format!(
         "-----BEGIN {}-----\nMIIE{}\n-----END {}-----\n",
         "PRIVATE KEY", n, "PRIVATE KEY"
