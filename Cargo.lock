@@ -2644,6 +2644,8 @@ dependencies = [
  "kk-evidence",
  "kk-fetch",
  "kk-memory",
+ "kk-near",
+ "kk-near-fixture",
  "kk-parse",
  "kk-review",
  "kk-route",
@@ -2753,14 +2755,24 @@ dependencies = [
 name = "kk-near"
 version = "0.0.1"
 dependencies = [
+ "kk-near-fixture",
+ "kk-route",
+ "kk-types",
+ "nearai-inference-sdk",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "kk-near-fixture"
+version = "0.0.1"
+dependencies = [
  "async-trait",
  "chacha20poly1305",
  "curve25519-dalek",
  "ed25519-dalek",
  "hex",
  "hkdf 0.12.4",
- "kk-route",
- "kk-types",
  "nearai-inference-sdk",
  "serde_json",
  "sha2 0.10.9",

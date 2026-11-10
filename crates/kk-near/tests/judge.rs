@@ -326,3 +326,45 @@ async fn live_gateway_evidence_replayed_or_pointed_at_another_connection_is_reje
         "a different TLS certificate than the one the quote binds is a man in the middle"
     );
 }
+
+#[test]
+#[ignore]
+fn live_the_route_verifies_the_real_deployment_with_no_key_at_all() {
+    use kk_near::route::{client_options, NearConfig, NearRoute};
+    use kk_route::Route;
+    // the proof of the hardware is public: it needs no account
+    let cfg = NearConfig {
+        base_url: None,
+        api_key: String::new(),
+        model: "Qwen/Qwen3.8-27B".into(),
+        policy: kk_near::NearPolicy::default(),
+    };
+    let mut o = client_options(&cfg);
+    o.api_key = None;
+    let route = NearRoute::with_options(o, "Qwen/Qwen3.8-27B").unwrap();
+    let proven = route
+        .verify_deployment()
+        .expect("the real deployment verifies under the default policy");
+    assert_eq!(proven["gateway"]["tcb_status"], "UpToDate");
+    assert_eq!(proven["gateway"]["tls_bound"], true);
+    let m = &proven["models"][0];
+    assert_eq!(m["tcb_status"], "UpToDate");
+    assert_eq!(m["gpu_verified"], true);
+    assert!(m["signer"].as_str().unwrap().len() >= 40);
+    assert!(route.tee_verified());
+    assert!(route.reply_key_bound());
+    // a completion without a key is refused by the service, named as such, and nothing is given
+    let e = route
+        .complete(&kk_route::CompletionRequest {
+            messages: vec![kk_route::ChatMessage::new("user", "hello")],
+            tools: vec![],
+            max_tokens: 8,
+            temperature: 0.0,
+        })
+        .unwrap_err();
+    println!("without a key: {e}");
+    assert!(
+        route.evidence().receipt.is_none(),
+        "a refused completion leaves no receipt"
+    );
+}

@@ -25,6 +25,7 @@
     "kk-fetch": 1,
     "kk-parse": 1,
     "kk-backup": 1,
-    "kk-update": 2
+    "kk-update": 2,
+    "kk-near-fixture": 1
   }
 }

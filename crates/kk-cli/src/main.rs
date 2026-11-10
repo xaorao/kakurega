@@ -1,4 +1,9 @@
 mod agent;
+
+/// Tests that change the process environment (proxy variables) and tests that make network calls to this computer take this lock,
+/// so they never run at the same moment.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 mod approve;
 mod approver;
 mod backup;
@@ -12,6 +17,7 @@ mod mcp_install;
 #[cfg(test)]
 mod meaning_set;
 mod memory_import;
+mod near;
 mod ocr;
 mod parse_child;
 #[cfg(test)]
@@ -33,6 +39,7 @@ Usage:
                                     --linear (or KAKU_LINEAR=1) is plain lines in and out for screen readers and pipes;
                                     the theme setting (dark or light, in config.toml or KAKU_THEME) uses fixed colours measured for that background
   kaku serve [--require-approver] [--data-dir DIR] [--ui-dir DIR] [--root DIR]... [--model NAME] [--ollama URL] [--context TOKENS]
+             [--route near --near-model NAME [--near-key-file FILE] [--near-url URL]]   answer on NEAR AI Cloud's confidential hardware (the key: NEAR_AI_API_KEY or the file)
              [--transport lima|local] [--vm NAME] [--worker-bin PATH] [--launcher PATH]
   kaku review DIR --for RECIPIENT [--json] [--timeout SECONDS]   start a review and follow it; ends at awaiting_approval (exit 0), 3 nothing to release, 4 failed
   kaku code DIR TASK... [--json]                          a local model changes the project in memory, its tests run in the sandbox; shows the patch, applies only when you say

@@ -42,7 +42,10 @@ pub struct NearConfig {
     pub policy: NearPolicy,
 }
 
-fn options(c: &NearConfig, policy: &NearPolicy) -> InferenceClientOptions {
+/// The SDK options this product uses for a configuration: end-to-end encryption on, the gateway pinned to its attested TLS key, the
+/// hardware policy applied to the gateway and the model.
+pub fn client_options(c: &NearConfig) -> InferenceClientOptions {
+    let policy = &c.policy;
     let tdx = Arc::new(DefaultTdxQuoteVerifier::default());
     let gpu = Arc::new(NrasGpuEvidenceVerifier::default());
     let mut o = InferenceClientOptions {
@@ -80,7 +83,7 @@ fn options(c: &NearConfig, policy: &NearPolicy) -> InferenceClientOptions {
 
 impl NearRoute {
     pub fn new(c: NearConfig) -> Result<NearRoute, RouteError> {
-        Self::with_options(options(&c, &c.policy), &c.model)
+        Self::with_options(client_options(&c), &c.model)
     }
 
     /// The same route over caller-built client options: the tests point it at a local fixture gateway with fixture verifiers.
@@ -112,6 +115,14 @@ impl NearRoute {
             last: Mutex::new(None),
             require_model_signature: true,
         })
+    }
+
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
     }
 
     /// Verifies the deployment now (the SDK keeps a verified session for an hour). `Ok` carries what was proven.

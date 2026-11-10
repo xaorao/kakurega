@@ -20,6 +20,7 @@ kk-service = { path = "../kk-service" }
 kk-memory = { path = "../kk-memory" }
 kk-review = { path = "../kk-review" }
 kk-route = { path = "../kk-route" }
+kk-near = { path = "../kk-near" }
 kk-sandbox = { path = "../kk-sandbox" }
 kk-types = { path = "../kk-types" }
 kk-parse = { path = "../kk-parse" }
@@ -30,6 +31,7 @@ ureq = { version = "3", default-features = false, features = ["json", "rustls", 
 qrcode = { version = "0.14.1", default-features = false }
 
 [dev-dependencies]
+kk-near-fixture = { path = "../kk-near-fixture" }
 serde = { version = "1", features = ["derive"] }
 rmcp = { version = "=3.8.0", default-features = false, features = ["client", "transport-child-process"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process"] }

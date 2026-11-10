@@ -298,6 +298,28 @@ mod proxy_tests {
 
     #[test]
     fn px04_the_admin_token_never_travels_through_an_environment_proxy() {
+        let _env = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        /// Puts the process environment back as it was, whatever the test does: other tests share it.
+        struct Restore(Vec<(&'static str, Option<std::ffi::OsString>)>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                for (k, v) in self.0.drain(..) {
+                    match v {
+                        Some(v) => std::env::set_var(k, v),
+                        None => std::env::remove_var(k),
+                    }
+                }
+            }
+        }
+        let names = [
+            "HTTP_PROXY",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "NO_PROXY",
+            "no_proxy",
+        ];
+        let _restore = Restore(names.iter().map(|k| (*k, std::env::var_os(k))).collect());
         let proxy = TcpListener::bind("127.0.0.1:0").unwrap();
         proxy.set_nonblocking(true).unwrap();
         let purl = format!("http://{}", proxy.local_addr().unwrap());

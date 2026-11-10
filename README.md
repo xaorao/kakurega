@@ -17,7 +17,7 @@ Status: working prototype on macOS and Linux. Not a finished product: see [docs/
 - Signed update announcements that can be checked offline (`kaku update check|verify-file`). Nothing downloads or installs updates yet.
 - Surfaces: browser workspace (English and Hindi), full-screen terminal workspace (`kaku`), desktop app (Electron), MCP server (`kaku mcp`: counts and statuses; the tools that start a review or ask for approval stay behind owner leases with `--leased`, see `docs/mcp.md`; every call is recorded in the signed log), a minimum-permission browser extension, a read-only Telegram bridge.
 - A page that says where your data goes (what stays on this computer, what can leave, and when), read from the running service; notes that say almost the same thing can be merged by you, with undo; what these public documents promise is checked against the code by `python3 scripts/docs_check.py`.
-- Models: a local model through Ollama. NEAR AI Cloud model attestation is verified for real; NEAR completions, encrypted inference and signed responses need an API key and are not wired yet.
+- Models: a local model through Ollama, or a model on NEAR AI Cloud's confidential hardware (`kaku serve --route near --near-model NAME`, the account key in `NEAR_AI_API_KEY` or `--near-key-file`). The hardware proof of NEAR's gateway and model is verified for real, with no key (VERIFIED by run); a real completion, its end-to-end encryption and its signed response are built and tested against a simulated gateway and are NOT yet run live, because that needs an account key. Coding tasks, embeddings and model choice stay with the local model.
 
 ## Run it (macOS)
 

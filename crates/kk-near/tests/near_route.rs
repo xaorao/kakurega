@@ -1,10 +1,8 @@
-mod support;
-
 use kk_near::route::NearRoute;
+use kk_near_fixture::{address, Faults, Gateway, GATEWAY_SEED, MODEL, MODEL_SEED};
 use kk_route::{ChatMessage, CompletionRequest, Route, RouteClass, RouteError, RouteSet, ToolSpec};
 use kk_types::label::{Label, Level};
 use serde_json::json;
-use support::{address, Faults, Gateway, GATEWAY_SEED, MODEL, MODEL_SEED};
 
 struct Rig {
     _rt: tokio::runtime::Runtime,

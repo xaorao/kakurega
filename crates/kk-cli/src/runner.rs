@@ -18,6 +18,36 @@ pub struct ReviewRunner {
     pub scripted: Option<PathBuf>,
     /// The context window asked of the local model, in tokens.
     pub context_tokens: u32,
+    /// A model on NEAR AI Cloud's confidential hardware, when the owner chose it. Answers, review jobs and summaries go to it
+    /// (verified first); coding tasks, embeddings and model choice stay with the local model.
+    pub remote: Option<std::sync::Arc<kk_near::route::NearRoute>>,
+}
+
+/// The one NEAR route, shared by everything that asks it a question.
+struct SharedNear(std::sync::Arc<kk_near::route::NearRoute>);
+
+impl Route for SharedNear {
+    fn id(&self) -> &str {
+        self.0.id()
+    }
+    fn class(&self) -> RouteClass {
+        self.0.class()
+    }
+    fn tee_verified(&self) -> bool {
+        self.0.tee_verified()
+    }
+    fn reply_key_bound(&self) -> bool {
+        self.0.reply_key_bound()
+    }
+    fn evidence(&self) -> kk_route::RouteEvidence {
+        self.0.evidence()
+    }
+    fn complete(
+        &self,
+        request: &kk_route::CompletionRequest,
+    ) -> Result<kk_route::Completion, kk_route::RouteError> {
+        self.0.complete(request)
+    }
 }
 
 impl ReviewRunner {
@@ -25,9 +55,37 @@ impl ReviewRunner {
         self.model.read().map(|m| m.clone()).unwrap_or_default()
     }
 
+    fn failure(&self, e: kk_route::RouteError) -> String {
+        if self.remote.is_some() {
+            remote_failure(e)
+        } else {
+            model_failure(e)
+        }
+    }
+
+    /// The route that answers questions: the NEAR route when the owner chose it, otherwise the local model.
+    fn answer_route(&self) -> Result<Box<dyn Route>, kk_route::RouteError> {
+        match &self.remote {
+            Some(near) => Ok(Box::new(SharedNear(near.clone()))),
+            None => Ok(Box::new(self.route()?)),
+        }
+    }
+
     fn route(&self) -> Result<OllamaRoute, kk_route::RouteError> {
         OllamaRoute::new(&self.ollama, &self.model_name())
             .map(|r| r.with_context_tokens(self.context_tokens))
+    }
+}
+
+/// What the owner is told when the NEAR model fails, or its proof does not verify. The answer is never given in that case.
+fn remote_failure(e: kk_route::RouteError) -> String {
+    match e {
+        kk_route::RouteError::NotVerified(_)
+        | kk_route::RouteError::Unauthorized(_)
+        | kk_route::RouteError::OutOfCredit
+        | kk_route::RouteError::NotFound
+        | kk_route::RouteError::ContextExceeded => e.to_string(),
+        other => format!("the NEAR model did not answer: {other}"),
     }
 }
 
@@ -94,15 +152,10 @@ impl JobRunner for ReviewRunner {
                 progress,
             );
         }
-        match self.route() {
+        match self.answer_route() {
             Ok(route) => {
                 let ev = vec![route.evidence()];
-                run_job(
-                    &cfg,
-                    RouteSet::new(vec![Box::new(route) as Box<dyn Route>]),
-                    ev,
-                    progress,
-                )
+                run_job(&cfg, RouteSet::new(vec![route]), ev, progress)
             }
             Err(e) => {
                 let mut r = run_job(&cfg, RouteSet::new(vec![]), vec![], progress);
@@ -145,7 +198,7 @@ impl JobRunner for ReviewRunner {
                 prompt_tokens: None,
             });
         }
-        let route = self.route().map_err(|e| e.to_string())?;
+        let route = self.answer_route().map_err(|e| e.to_string())?;
         let done = route
             .complete(&kk_route::CompletionRequest {
                 messages,
@@ -153,12 +206,12 @@ impl JobRunner for ReviewRunner {
                 max_tokens: 500,
                 temperature: 0.2,
             })
-            .map_err(model_failure)?;
+            .map_err(|e| self.failure(e))?;
         Ok(kk_service::ChatReply {
             prompt_tokens: (done.prompt_tokens > 0).then_some(done.prompt_tokens),
             text: done.message.content,
             route_id: route.id().to_string(),
-            class: "device_only".into(),
+            class: route.class().as_str().to_string(),
             simulated: false,
         })
     }
@@ -182,7 +235,7 @@ impl JobRunner for ReviewRunner {
             }
             return Ok("Goal: (test model summary of the earlier conversation)".into());
         }
-        let route = self.route().map_err(|e| e.to_string())?;
+        let route = self.answer_route().map_err(|e| e.to_string())?;
         route
             .complete(&kk_route::CompletionRequest {
                 messages,
@@ -191,7 +244,7 @@ impl JobRunner for ReviewRunner {
                 temperature: 0.1,
             })
             .map(|done| done.message.content)
-            .map_err(model_failure)
+            .map_err(|e| self.failure(e))
     }
 
     fn chat_stream(
@@ -219,6 +272,12 @@ impl JobRunner for ReviewRunner {
                 reply,
                 stopped: false,
             });
+        }
+        if self.remote.is_some() {
+            // an answer from the NEAR route is held until its proof verifies, so it arrives whole: shown as one piece
+            let reply = self.chat(messages)?;
+            let stopped = !on_chunk(&reply.text);
+            return Ok(kk_service::StreamedReply { reply, stopped });
         }
         let route = self.route().map_err(|e| e.to_string())?;
         let done = route
@@ -257,7 +316,7 @@ impl JobRunner for ReviewRunner {
     }
 
     fn repairable(&self) -> Vec<String> {
-        if self.scripted.is_some() {
+        if self.scripted.is_some() || self.remote.is_some() {
             Vec::new()
         } else {
             vec!["model".to_string()]
@@ -292,6 +351,24 @@ impl JobRunner for ReviewRunner {
                 "scripted test model (test mode)".into(),
                 "",
             ));
+        } else if let Some(near) = &self.remote {
+            // the proof is fetched and verified now; the answer to "is this model safe to use" is what the hardware says
+            match near.verify_deployment() {
+                Ok(_) => out.push(check(
+                    "model",
+                    "Model on NEAR AI Cloud",
+                    true,
+                    format!("{}: the gateway's and the model's hardware proof verified", near.model()),
+                    "",
+                )),
+                Err(e) => out.push(check(
+                    "model",
+                    "Model on NEAR AI Cloud",
+                    false,
+                    e.to_string().chars().take(300).collect(),
+                    "check the account key, the model name (it must be one NEAR lists as confidential) and the network",
+                )),
+            }
         } else {
             let agent: ureq::Agent = ureq::Agent::config_builder()
                 .timeout_global(Some(std::time::Duration::from_secs(2)))
@@ -572,6 +649,10 @@ impl JobRunner for ReviewRunner {
     }
 
     fn route_info(&self) -> Value {
+        if let (Some(near), None) = (&self.remote, &self.scripted) {
+            return json!({"id": near.id(), "class": "verified_tee", "model": near.model(), "simulated": false, "endpoint": near.base_url(), "context_tokens": self.context_tokens,
+               "transport": match &self.transport { Transport::Local => "local sandbox".to_string(), Transport::Lima { vm, .. } => format!("sandbox in the {vm} virtual machine") }});
+        }
         let model = self.model_name();
         json!({"id": format!("ollama:{model}"), "class": "device_only", "model": if self.scripted.is_some() { "scripted test model".to_string() } else { model.clone() }, "simulated": self.scripted.is_some(), "endpoint": self.ollama, "context_tokens": self.context_tokens,
                "transport": match &self.transport { Transport::Local => "local sandbox".to_string(), Transport::Lima { vm, .. } => format!("sandbox in the {vm} virtual machine") }})
@@ -680,6 +761,7 @@ mod live {
                 max_turns: 1,
                 scripted: None,
                 context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
+                remote: None,
             };
             for (name, turns) in &convos {
                 let turns: Vec<(String, String)> = turns
@@ -849,6 +931,7 @@ mod live {
             max_turns: 1,
             scripted: None,
             context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
+            remote: None,
         };
         let messages = vec![
             ChatMessage::new("system", "Answer in one short sentence."),
@@ -889,6 +972,7 @@ mod live {
             max_turns: 1,
             scripted: None,
             context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
+            remote: None,
         };
         let older: Vec<(String, String)> = [
             ("user", "I am planning a trip to Lisbon in March with my sister Maria. Our budget is 800 pounds in total."),
@@ -1246,6 +1330,7 @@ mod pick {
             max_turns: 1,
             scripted: scripted.then(|| PathBuf::from("/nonexistent/script.json")),
             context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
+            remote: None,
         }
     }
 
@@ -1323,5 +1408,181 @@ mod pick {
         assert!(scripted.choose_model("a").is_err());
         let junk = runner_at(&tags_server("not json".into()), false);
         assert!(junk.local_models().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod near_tests {
+    use super::*;
+    use kk_near::route::NearRoute;
+    use kk_near_fixture::{Faults, Gateway, MODEL};
+    use kk_service::JobRunner;
+
+    struct Rig {
+        _env: std::sync::MutexGuard<'static, ()>,
+        _rt: tokio::runtime::Runtime,
+        gw: Gateway,
+        runner: ReviewRunner,
+    }
+
+    fn rig(faults: Faults) -> Rig {
+        let env = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let gw = rt.block_on(Gateway::start(faults));
+        let near = NearRoute::with_options(gw.options(), MODEL).unwrap();
+        let runner = ReviewRunner {
+            model: std::sync::RwLock::new("qwen2.5:1.5b".into()),
+            ollama: "http://127.0.0.1:9".into(),
+            transport: Transport::Local,
+            worker_binary: PathBuf::new(),
+            scratch: std::env::temp_dir(),
+            commitment_key: [0; 32],
+            max_turns: 1,
+            scripted: None,
+            context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
+            remote: Some(std::sync::Arc::new(near)),
+        };
+        Rig {
+            _env: env,
+            _rt: rt,
+            gw,
+            runner,
+        }
+    }
+
+    fn msgs(text: &str) -> Vec<ChatMessage> {
+        vec![
+            ChatMessage::new("system", "Be brief."),
+            ChatMessage::new("user", text),
+        ]
+    }
+
+    #[test]
+    fn rn01_a_chat_goes_to_the_near_route_and_is_told_what_it_is() {
+        let r = rig(Faults::default());
+        let reply = r
+            .runner
+            .chat(msgs("What is the secret plan of Zorblax?"))
+            .unwrap();
+        assert_eq!(reply.text, "A private answer.");
+        assert_eq!(
+            (
+                reply.route_id.as_str(),
+                reply.class.as_str(),
+                reply.simulated
+            ),
+            ("near:vendor/model", "verified_tee", false)
+        );
+        assert_eq!(reply.prompt_tokens, Some(11));
+        let wire = r.gw.wire.lock().unwrap().join("\n");
+        assert!(
+            !wire.contains("Zorblax"),
+            "the question crossed the wire in the clear"
+        );
+        // the owner sees where it ran
+        let info = r.runner.route_info();
+        assert_eq!(
+            (
+                info["class"].as_str(),
+                info["model"].as_str(),
+                info["simulated"].as_bool()
+            ),
+            (Some("verified_tee"), Some(MODEL), Some(false))
+        );
+        assert!(
+            info["endpoint"]
+                .as_str()
+                .unwrap()
+                .starts_with("http://127.0.0.1:"),
+            "{info}"
+        );
+        assert!(info["id"].as_str().unwrap().starts_with("near:"));
+    }
+
+    #[test]
+    fn rn02_a_streamed_chat_arrives_whole_after_its_proof_and_can_be_stopped() {
+        let r = rig(Faults::default());
+        let mut pieces = Vec::new();
+        let out = r.runner.chat_stream(msgs("hello"), &mut |p| {
+            pieces.push(p.to_string());
+            true
+        });
+        let out = out.unwrap();
+        assert_eq!(pieces, ["A private answer."]);
+        assert!(!out.stopped);
+        assert_eq!(out.reply.class, "verified_tee");
+        let out = r
+            .runner
+            .chat_stream(msgs("hello again"), &mut |_| false)
+            .unwrap();
+        assert!(out.stopped);
+    }
+
+    #[test]
+    fn rn03_when_the_proof_does_not_verify_the_owner_is_told_so_and_no_request_was_sent() {
+        let r = rig(Faults {
+            bad_model_report: true,
+            ..Faults::default()
+        });
+        let e = r.runner.chat(msgs("the private question")).unwrap_err();
+        assert!(e.contains("proof did not verify"), "{e}");
+        assert!(!e.contains("local model"), "{e}");
+        assert_eq!(r.gw.chats.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let ready = r.runner.readiness();
+        let model = ready
+            .iter()
+            .find(|c| c["id"] == "model")
+            .expect("a model check");
+        assert_eq!(model["ok"], false, "{model}");
+        assert!(model["detail"].as_str().unwrap().len() <= 300);
+        assert!(model["fix"].as_str().unwrap().contains("account key"));
+        assert!(
+            r.runner.repairable().is_empty(),
+            "a remote model is not pulled"
+        );
+    }
+
+    #[test]
+    fn rn04_a_service_error_is_named_in_words_and_never_calls_the_model_local() {
+        for (status, want) in [
+            (401, "did not accept the credentials"),
+            (402, "no credit"),
+            (404, "no such model"),
+            (429, "NEAR model did not answer"),
+        ] {
+            let r = rig(Faults {
+                chat_status: Some(status),
+                ..Faults::default()
+            });
+            let e = r.runner.chat(msgs("hello")).unwrap_err();
+            assert!(e.contains(want), "{status}: {e}");
+            assert!(!e.contains("local model"), "{status}: {e}");
+        }
+    }
+
+    #[test]
+    fn rn05_a_good_proof_makes_the_model_check_pass_and_names_the_model() {
+        let r = rig(Faults::default());
+        let ready = r.runner.readiness();
+        let model = ready.iter().find(|c| c["id"] == "model").unwrap();
+        assert_eq!(model["ok"], true, "{model}");
+        assert!(model["detail"].as_str().unwrap().contains(MODEL));
+    }
+
+    #[test]
+    fn rn06_summaries_go_to_the_same_route() {
+        let r = rig(Faults {
+            reply: Some("Goal: x".into()),
+            ..Faults::default()
+        });
+        assert_eq!(
+            r.runner.summarize(msgs("long conversation")).unwrap(),
+            "Goal: x"
+        );
+        assert_eq!(r.gw.chats.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }
