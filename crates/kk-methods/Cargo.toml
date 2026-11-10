@@ -1,0 +1,14 @@
+[package]
+name = "kk-methods"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Owner-approved methods: named guidance texts that apply only after the owner approves their exact content"
+
+[dependencies]
+kk-evidence = { path = "../kk-evidence" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints]
+workspace = true

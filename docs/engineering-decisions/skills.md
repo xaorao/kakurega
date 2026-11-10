@@ -7,7 +7,7 @@
 4. Quality criteria: a forged name, version or tag cannot break the prompt frame; an edited method is inactive until re-approved; a method cannot name or enable a tool; routing metadata that fires on everything is refused; every limit is enforced and tested with hostile input.
 
 ## References and reading depth
-- IronClaw b0b999d (Apache-2.0), `crates/domains/ironclaw_skills/src/types.rs` lines 1-330 of 809 (PART: trust enum, activation criteria with caps, manifest, gating, credential specs, loaded skill with a content hash); `validation.rs` lines 1-330 of 816 (PART: name and version grammars, tag-breakout escaping, safe relative paths, line-ending normalisation before hashing, the routing-metadata lint). NOT READ: `parser.rs`, `selector.rs` (1531), `management.rs`, `learning.rs`, `scoped_management.rs`, the loop-host activation code (5021 lines), the install and URL bundle code. Also read: its `.claude/rules/skills.md` (the trust table, selection pipeline, truncation caps).
+- IronClaw b0b999d (Apache-2.0), `crates/domains/ironclaw_skills/src/types.rs` lines 1-330 of 809 (PART: trust enum, activation criteria with caps, manifest, gating, credential specs, loaded skill with a content hash); `validation.rs` lines 1-330 of 816 (PART: name and version grammars, tag-breakout escaping, safe relative paths, line-ending normalisation before hashing, the routing-metadata lint). `parser.rs` lines 1-260 of 459 (FULL for the parse path; the rest is tests); `selector.rs` lines 90-490 of 1531 (FULL for cost, selection, chain-loading, scoring, mention extraction). NOT READ: `management.rs`, `learning.rs`, `scoped_management.rs`, the loop-host activation code (5021 lines), the install and URL bundle code. Also read: its `.claude/rules/skills.md` (the trust table, selection pipeline, truncation caps).
 
 ## What the reading showed (OBSERVED in the code)
 | Finding | Decision |
@@ -20,8 +20,21 @@
 | Installed (registry) skills expose only a description, user-placed ones their body | EXCLUDE the registry tier: no remote install source. Every method is owner-placed; imported text is a draft until approved |
 | Tool access is decided elsewhere, never by the skill | Same rule here: a method carries no tool, route or credential field at all; a field of that name is a refusal |
 
+## More findings from the parser and selector
+| Finding | Decision |
+|---|---|
+| The parser silently drops unknown frontmatter fields (its own warning admits a skill author can think gating works while it is inert) | IMPROVE: unknown fields are refused, never ignored; a `tools`, `route`, `credentials` or `allow` field is a named refusal |
+| YAML frontmatter needs a YAML parser | EXCLUDE: methods are structured fields in the vault, edited by a form; text import accepts only a strict three-field header |
+| Substring keyword matches score 5; fixing the catalog beat boundary matching | ADAPT: whole-word match only, caps and minimum length |
+| Declared `max_context_tokens` can understate; the code falls back when the estimate is 2x higher | IMPROVE: cost is computed from the real text only; nothing declared is trusted |
+| `/name` mention rewrites the user's message, putting the skill's description into it | EXCLUDE: an explicit mention selects the method but never edits the owner's message |
+| Chain-loaded companions (depth 1) ride on the parent's score | EXCLUDE: no companions; one method is one text |
+| Regex activation | EXCLUDE (second failure mode, needs its own size and time bounds) |
+| Name-and-description fallback only when no criteria scored (agent-written skills had no activation block: 0 of 30) | ADAPT for methods with no trigger words |
+| Confidence factor halves the score of learned skills | ADAPT later with learned methods (proposals) |
+
 ## Owed before building
-1. Read `parser.rs` and `selector.rs` in full (the scoring and the budget).
+1. DONE: parser and selector read. NOT READ still: `management.rs`, `learning.rs`, the loop-host activation.
 2. Read Hermes `tools/skills_tool.py` and the skill manager, and the OpenCode skill loader, for the user-facing flow (list, view, edit, approve).
 3. Write the capability matrix and the behaviour spec, then tests that fail first.
 4. Decide where the store lives (the vault beside notes) and how the three surfaces (service, web, terminal) reach it.
