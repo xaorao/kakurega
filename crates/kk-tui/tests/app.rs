@@ -6764,3 +6764,108 @@ fn tu_code02_apply_needs_a_patch_read_on_this_screen_and_bad_forms_are_refused()
     );
     assert!(enter(&mut app, "/code apply code-2").is_empty());
 }
+
+#[test]
+fn tu_ns01_the_terminal_turns_a_projects_notes_only_mode_on_and_off_and_lists_it() {
+    use kk_tui::cmd::NotesOnlyAction as N;
+    assert_eq!(
+        cmd::parse("/notesonly").unwrap(),
+        Command::NotesOnly(N::Show)
+    );
+    assert_eq!(
+        cmd::parse("/notesonly on").unwrap(),
+        Command::NotesOnly(N::Set {
+            project: None,
+            on: true
+        })
+    );
+    assert_eq!(
+        cmd::parse("/notesonly off kestrel").unwrap(),
+        Command::NotesOnly(N::Set {
+            project: Some("kestrel".into()),
+            on: false
+        })
+    );
+    for bad in [
+        "/notesonly maybe",
+        "/notesonly on a/b",
+        "/notesonly on ..",
+        "/notesonly on a b",
+        "/notesonly off \u{7}",
+        "/notesonly kestrel",
+    ] {
+        assert!(cmd::parse(bad).is_err(), "{bad}");
+    }
+    // list
+    let mut a = booted();
+    let r = enter(&mut a, "/notesonly");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/project-settings", Method::Get)
+    );
+    a.handle(ok(&r[0], 200, json!({"projects": [{"project": "kestrel", "notes_only": true, "updated_at": 5}], "max": 30})));
+    assert!(text(&a).contains("kestrel"), "{}", text(&a));
+    let mut a = booted();
+    let r = enter(&mut a, "/notesonly");
+    a.handle(ok(&r[0], 200, json!({"projects": [], "max": 30})));
+    assert!(text(&a).contains("No project answers only"), "{}", text(&a));
+    // on with a name; on without one needs the conversation's project
+    let mut a = booted();
+    let r = enter(&mut a, "/notesonly on");
+    assert!(r.is_empty(), "no project named and none set");
+    assert!(text(&a).contains("Name a project"), "{}", text(&a));
+    let r = enter(&mut a, "/project kestrel");
+    assert!(r.is_empty());
+    let r = enter(&mut a, "/notesonly on");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/project-settings", Method::Post)
+    );
+    assert_eq!(
+        r[0].body,
+        Some(json!({"project": "kestrel", "notes_only": true}))
+    );
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"project": "kestrel", "notes_only": true}),
+    ));
+    assert!(text(&a).contains("On for kestrel"), "{}", text(&a));
+    let r = enter(&mut a, "/notesonly off other");
+    assert_eq!(
+        r[0].body,
+        Some(json!({"project": "other", "notes_only": false}))
+    );
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"project": "other", "notes_only": false}),
+    ));
+    assert!(text(&a).contains("Off for other"), "{}", text(&a));
+    // a refusal is shown
+    let r = enter(&mut a, "/notesonly on third");
+    a.handle(ok(&r[0], 422, json!({"error": {"code": "PROJECT_REFUSED", "message": "at most 30 projects can have their own settings"}})));
+    assert!(text(&a).contains("at most 30 projects"), "{}", text(&a));
+}
+
+#[test]
+fn tu_ns02_a_reply_where_no_model_was_asked_says_so_and_shows_no_model_figures() {
+    let mut app = booted();
+    let r = enter(&mut app, "what is the rounding rule");
+    app.handle(ok(&r[0], 200, json!({"reply": "Nothing in this project's notes or attached files answers that.", "route": {"id": "none", "class": "none", "simulated": false}, "notes_used": 0, "project": "kestrel",
+        "usage": {"context_tokens_estimate": 220, "context_tokens": 220, "estimate": true, "context_window": 16384, "reply_tokens_estimate": 49, "elapsed_ms": 23}})));
+    let t = text(&app);
+    assert!(t.contains("no model was asked"), "{t}");
+    assert!(
+        !t.contains("private, on this computer") && !t.contains("tokens of context"),
+        "{t}"
+    );
+    // an ordinary reply is unchanged
+    let r = enter(&mut app, "another question");
+    app.handle(ok(
+        &r[0],
+        200,
+        json!({"reply": "ok", "route": {"id": "local", "simulated": false}, "notes_used": 1}),
+    ));
+    assert!(text(&app).contains("private, on this computer"));
+}

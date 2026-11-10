@@ -24,6 +24,9 @@
 - Mutants 7 of 7 caught (gate never fires, fires with a note, usage counted, rule not sent, project ignored, off does not remove, files ignored).
 - Browser (`tests/e2e/notes_only.mjs`, real qwen2.5:3b): switch on in Instructions and still on after a reload, nothing saved gives the plain reply with the footer "No model was asked", a saved note gives the answer from it, switch off, zero console errors. The screenshots found three defects, all fixed: the footer said a model answered and counted tokens, the project card vanished before it could confirm turning off, and a new project showed twice.
 
+## Terminal
+- `/notesonly [on|off [PROJECT]]` (the conversation's project when none is named) lists, turns on and turns off; a reply with no model says so in its footer and leaves the context meter alone. Tests tu_ns01, tu_ns02 (4 of 4 mutants caught); `python3 tests/e2e/tui_notes_only.py` drives the real binary in a pseudo-terminal with a real qwen2.5:3b (8 checks; its first version passed a check falsely by matching its own typed line, fixed to read only the text after the question).
+
 ## Not covered
 - Web pages chosen for a message count as material (`web_used`) but no test fetches one in this mode.
-- The terminal app and `kaku` have no switch yet (the service has it); the Hindi texts are unread by a person.
+- The plain `kaku` subcommands have no switch (the terminal app and the web page have); the Hindi texts are unread by a person.

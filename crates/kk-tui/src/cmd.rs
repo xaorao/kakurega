@@ -16,6 +16,16 @@ pub enum InstructionsAction {
     Clear(Option<String>),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotesOnlyAction {
+    Show,
+    /// Turn "answer only from this project's notes and files" on or off for the named project, or for the conversation's own.
+    Set {
+        project: Option<String>,
+        on: bool,
+    },
+}
+
 fn plain_project(p: &str) -> bool {
     let p = p.trim();
     !p.is_empty()
@@ -67,6 +77,7 @@ pub enum Command {
     Forget(String),
     ForgetReview(String),
     Instructions(InstructionsAction),
+    NotesOnly(NotesOnlyAction),
     Pii(PiiAction),
     Find(String),
     Transcript(String),
@@ -158,6 +169,7 @@ pub const NAMES: &[&str] = &[
     "forget",
     "forgetreview",
     "instructions",
+    "notesonly",
     "pii",
     "find",
     "transcript",
@@ -223,6 +235,7 @@ pub fn describe(name: &str) -> &'static str {
         "forget" => "delete a saved note for good",
         "forgetreview" => "delete everything one review left in memory",
         "instructions" => "your standing orders to the assistant",
+        "notesonly" => "make a project answer only from its own notes and attached files",
         "pii" => "values you say are not personal data, left out of release notices",
         "find" => "search kept conversations by words",
         "transcript" => "search this conversation on the screen",
@@ -324,6 +337,7 @@ pub fn usage(name: &str) -> &'static str {
         "forget" => "/forget ID",
         "forgetreview" => "/forgetreview JOB",
         "instructions" => "/instructions [set [in PROJECT:] TEXT | clear [PROJECT]]",
+        "notesonly" => "/notesonly [on|off [PROJECT]]",
         "pii" => "/pii [add ENTRY | remove ENTRY]",
         "find" => "/find WORDS",
         "transcript" => "/transcript WORDS",
@@ -774,6 +788,32 @@ pub fn parse(line: &str) -> Result<Command, String> {
                     Command::Instructions(InstructionsAction::Clear(Some(tail.to_string()))),
                 ),
                 _ => bad(),
+            }
+        }
+        "notesonly" => {
+            let bad = || Err(format!("usage: {}", usage("notesonly")));
+            if rest.is_empty() {
+                return Ok(Command::NotesOnly(NotesOnlyAction::Show));
+            }
+            let (sub, tail) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+            let tail = tail.trim();
+            let on = match sub {
+                "on" => true,
+                "off" => false,
+                _ => return bad(),
+            };
+            if tail.is_empty() {
+                Ok(Command::NotesOnly(NotesOnlyAction::Set {
+                    project: None,
+                    on,
+                }))
+            } else if plain_project(tail) && !tail.contains(char::is_whitespace) {
+                Ok(Command::NotesOnly(NotesOnlyAction::Set {
+                    project: Some(tail.to_string()),
+                    on,
+                }))
+            } else {
+                bad()
             }
         }
         "forgetreview" => {

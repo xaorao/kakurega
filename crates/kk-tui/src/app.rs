@@ -170,6 +170,8 @@ enum Intent {
     ReviewFootprint(String),
     ForgetReview,
     InstructionsShow,
+    NotesOnlyShow,
+    NotesOnlySet(String, bool),
     InstructionsSet,
     ConflictsList,
     FindChats,
@@ -2731,6 +2733,31 @@ impl App {
                     }
                 }
             }
+            Command::NotesOnly(action) => {
+                use crate::cmd::NotesOnlyAction as N;
+                match action {
+                    N::Show => vec![self.req(
+                        Intent::NotesOnlyShow,
+                        false,
+                        Method::Get,
+                        "/api/project-settings",
+                        None,
+                    )],
+                    N::Set { project, on } => match project.or_else(|| self.chat_project.clone()) {
+                        Some(p) => vec![self.req(
+                            Intent::NotesOnlySet(p.clone(), on),
+                            false,
+                            Method::Post,
+                            "/api/project-settings",
+                            Some(json!({"project": p, "notes_only": on})),
+                        )],
+                        None => {
+                            self.say(Kind::Error, "Name a project (/notesonly on PROJECT) or set one for this conversation with /project NAME first.");
+                            Vec::new()
+                        }
+                    },
+                }
+            }
             Command::ForgetReview(job) => vec![self.req(
                 Intent::ReviewFootprint(job.clone()),
                 false,
@@ -4214,6 +4241,44 @@ impl App {
                 }
                 Vec::new()
             }
+            Intent::NotesOnlyShow => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let names: Vec<String> = body["projects"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|p| p["project"].as_str().map(|n| format!("  {}", clean(n))))
+                    .collect();
+                if names.is_empty() {
+                    self.say(Kind::Info, "No project answers only from its own material. /notesonly on PROJECT turns that on: a question nothing there fits gets a plain \"nothing here\" and no model is asked.");
+                } else {
+                    self.push(
+                        Kind::Info,
+                        Some("Projects that answer only from their own notes and files"),
+                        names,
+                    );
+                }
+                Vec::new()
+            }
+            Intent::NotesOnlySet(project, on) => {
+                if ok {
+                    self.say(
+                        Kind::Ok,
+                        if on {
+                            format!("On for {}: it answers only from its own notes and attached files, and no model is asked when none fit.", clean(&project))
+                        } else {
+                            format!("Off for {}.", clean(&project))
+                        },
+                    );
+                } else {
+                    self.say(Kind::Error, err_text(status, &body));
+                }
+                Vec::new()
+            }
             Intent::InstructionsSet => {
                 if ok {
                     self.say(
@@ -4717,9 +4782,12 @@ impl App {
                 }
                 let reply = body["reply"].as_str().unwrap_or("").to_string();
                 self.chat_history.push(("assistant".into(), reply.clone()));
+                let no_model = body["route"]["id"] == "none";
                 let mut foot = vec![format!(
                     "{} · {} note(s) used",
-                    if body["route"]["simulated"] == true {
+                    if no_model {
+                        "no model was asked: this project answers only from its own notes and files, and none fit"
+                    } else if body["route"]["simulated"] == true {
                         "test model"
                     } else {
                         "private, on this computer"
@@ -4729,7 +4797,10 @@ impl App {
                 if let Some(p) = body["project"].as_str() {
                     foot[0].push_str(&format!(" · project {}", clean(p)));
                 }
-                if let Some(estimated) = body["usage"]["context_tokens_estimate"].as_u64() {
+                if let Some(estimated) = body["usage"]["context_tokens_estimate"]
+                    .as_u64()
+                    .filter(|_| !no_model)
+                {
                     let u = &body["usage"];
                     // the model's own count when it gave one, otherwise the estimate; the window only if the service sent it
                     let counted = u["estimate"] == false
