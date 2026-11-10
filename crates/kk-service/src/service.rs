@@ -3115,6 +3115,13 @@ fn kk_service_crashes(data: &Path) -> Vec<Value> {
         .collect()
 }
 
+/// The same report for the owner's own session: the plain text to read, copy or save, and the data behind it. Nothing is
+/// sent anywhere; the owner decides whether to attach it to a bug report.
+async fn diagnostics_session(axum::Extension(svc): Svc) -> Json<Value> {
+    let Json(data) = diagnostics(axum::Extension(svc)).await;
+    Json(json!({"text": crate::report::render(&data), "data": data}))
+}
+
 async fn diagnostics(axum::Extension(svc): Svc) -> Json<Value> {
     let svc2 = svc.clone();
     let checks = tokio::task::spawn_blocking(move || svc2.runner.readiness())
@@ -3131,7 +3138,10 @@ async fn diagnostics(axum::Extension(svc): Svc) -> Json<Value> {
                 out = out.replace(&from, to);
             }
         }
-        out.chars().take(300).collect()
+        crate::report::scrub_home_paths(&out)
+            .chars()
+            .take(300)
+            .collect()
     };
     let checks: Vec<Value> = checks
         .iter()
@@ -9054,6 +9064,7 @@ impl Extension for Routes {
                 post(attachment_upload)
                     .layer(axum::extract::DefaultBodyLimit::max(ATTACH_BODY_MAX)),
             )
+            .route("/api/diagnostics", get(diagnostics_session))
             .route("/api/documents/index", get(doc_index_get))
             .route("/api/documents/index/forget", post(doc_index_forget))
             .route("/api/attachments/path", post(attachment_from_path))

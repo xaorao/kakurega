@@ -8,6 +8,7 @@ pub mod deliver;
 mod extraction;
 mod fixfiles;
 pub mod keys;
+pub mod report;
 pub mod service;
 pub mod snapshot;
 pub mod tenants;

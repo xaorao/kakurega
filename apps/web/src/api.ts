@@ -280,6 +280,7 @@ export const api = {
   attestModel: (model: string) => request<ModelProof>("POST", "/api/route/attest", { model }),
   similarMemories: () => request<SimilarMemories>("GET", "/api/memories/similar"),
   instructions: () => request<Instructions>("GET", "/api/instructions"),
+  diagnostics: () => request<{ text: string; data: unknown }>("GET", "/api/diagnostics"),
   docIndex: () => request<{ vectors: number; models: { model: string; vectors: number; oldest: number; newest: number }[]; max: number }>("GET", "/api/documents/index"),
   forgetDocIndex: () => request<{ removed: number }>("POST", "/api/documents/index/forget", {}),
   projectSettings: () => request<{ projects: { project: string; notes_only: boolean }[]; max: number }>("GET", "/api/project-settings"),

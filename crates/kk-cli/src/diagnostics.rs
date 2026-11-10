@@ -2,78 +2,8 @@
 //! checks and how they came out, counts, and the kinds of the last events. It never holds a file name, a path, the text of
 //! a note, a conversation or a file, or a key: the service builds it that way, and the owner reads it all here first.
 
-use serde_json::Value;
 
-/// The report as text.
-pub fn render(v: &Value) -> String {
-    let mut out = String::new();
-    let s = |x: &Value| x.as_str().unwrap_or("?").to_string();
-    out.push_str(&format!(
-        "Kakurega diagnostics\nversion {}   {} {}   {}\n",
-        s(&v["version"]),
-        s(&v["os"]),
-        s(&v["arch"]),
-        if v["test_mode"] == true {
-            "TEST MODE"
-        } else {
-            "normal mode"
-        }
-    ));
-    let r = &v["route"];
-    out.push_str(&format!(
-        "model route: {} ({}), {}\n",
-        s(&r["model"]).replace("?", "none"),
-        s(&r["class"]),
-        if r["stays_here"] == true {
-            "runs on this computer"
-        } else {
-            "does not run on this computer"
-        }
-    ));
-    out.push_str("\nChecks\n");
-    for c in v["checks"].as_array().into_iter().flatten() {
-        out.push_str(&format!(
-            "  [{}] {}{}: {}\n",
-            if c["ok"] == true { "ok" } else { "FAILED" },
-            s(&c["id"]),
-            if c["required"] == false {
-                " (optional)"
-            } else {
-                ""
-            },
-            s(&c["detail"])
-        ));
-    }
-    out.push_str(&format!(
-        "\nCounts\n  reviews {}\n  kept conversations {}\n  signed log entries {}\n",
-        v["counts"]["reviews"], v["counts"]["kept_conversations"], v["counts"]["log_entries"]
-    ));
-    out.push_str("\nKinds of the last 200 events\n");
-    if let Some(k) = v["recent_event_kinds"].as_object() {
-        for (name, n) in k {
-            out.push_str(&format!("  {name}: {n}\n"));
-        }
-    }
-    out.push_str("\nCrashes recorded on this computer\n");
-    let crashes: Vec<&Value> = v["crashes"].as_array().into_iter().flatten().collect();
-    if crashes.is_empty() {
-        out.push_str("  none\n");
-    }
-    for c in crashes {
-        out.push_str(&format!(
-            "  unix time {}, version {}, thread {}, in {}\n",
-            c["at"],
-            s(&c["version"]),
-            s(&c["thread"]),
-            s(&c["place"])
-        ));
-    }
-    if v["crashes"].as_array().is_some_and(|a| !a.is_empty()) {
-        out.push_str("  (A crash report holds no message and no personal part of a path; it is shown here and sent nowhere.)\n");
-    }
-    out.push_str("\nThis report holds no file names, paths, note, conversation or file text, keys or tokens.\n");
-    out
-}
+pub use kk_service::report::render;
 
 pub fn run(args: &[String]) -> u8 {
     let admin = match crate::approve::connect(args) {

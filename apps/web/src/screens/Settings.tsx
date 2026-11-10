@@ -129,6 +129,58 @@ function Control(props: { s: Setting }) {
   );
 }
 
+/** The plain-text report of versions, checks, counts and crashes, to read, copy or save. Nothing is sent. */
+function Report() {
+  const [text, setText] = createSignal("");
+  const [shown, setShown] = createSignal(false);
+  const [note, setNote] = createSignal("");
+  const [problem, setProblem] = createSignal("");
+  const show = async () => {
+    setProblem("");
+    setNote("");
+    try {
+      setText((await api.diagnostics()).text);
+      setShown(true);
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("diag.error"));
+    }
+  };
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text());
+      setNote(t("diag.copied"));
+    } catch {
+      setNote("");
+    }
+  };
+  const save = () => {
+    const url = URL.createObjectURL(new Blob([text()], { type: "text/plain" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "kakurega-diagnostics.txt";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  return (
+    <section class="card stack" aria-labelledby="h-diag">
+      <h2 id="h-diag">{t("diag.title")}</h2>
+      <p class="muted">{t("diag.lead")}</p>
+      <div class="actions">
+        <Show when={!shown()} fallback={<button type="button" onClick={() => setShown(false)}>{t("diag.hide")}</button>}>
+          <button type="button" onClick={() => void show()}>{t("diag.show")}</button>
+        </Show>
+        <Show when={shown()}>
+          <button type="button" onClick={() => void copy()}>{t("diag.copy")}</button>
+          <button type="button" onClick={save}>{t("diag.save")}</button>
+        </Show>
+      </div>
+      <Show when={shown()}><pre class="passage" tabindex="0" aria-label={t("diag.title")}>{text()}</pre></Show>
+      <Show when={note()}><p role="status" class="ok">{note()}</p></Show>
+      <Show when={problem()}><p role="alert" class="bad">{problem()}</p></Show>
+    </section>
+  );
+}
+
 /** Every setting in one place, searchable by name, by what it does, or by a word people use for it. */
 export function Settings() {
   const [q, setQ] = createSignal("");
@@ -160,6 +212,7 @@ export function Settings() {
           </Show>
         )}
       </For>
+      <Show when={q().trim() === ""}><Report /></Show>
     </section>
   );
 }

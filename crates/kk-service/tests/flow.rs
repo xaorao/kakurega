@@ -16382,3 +16382,58 @@ fn sv180_the_owner_sees_how_many_meaning_vectors_are_kept_and_can_forget_them_al
     let log = w.get("/api/log").1.to_string();
     assert!(log.contains("documents.index.forgotten"), "{log}");
 }
+
+#[test]
+fn sv181_the_owners_session_can_read_the_diagnostics_as_text_and_it_names_nothing_private() {
+    let runner = FileRunner::new("http://127.0.0.1:11434", 16384);
+    let note = runner.note.clone();
+    let (c, w, root) = file_service("diag-session", runner);
+    *note.lock().unwrap() = format!(
+        "data folder is {} and worker /home/alice.guest/kk-target/debug/kk-worker, /Users/Bob Smith/x",
+        root.join("data").display()
+    );
+    let anon = Web::new(c.addr);
+    assert_eq!(anon.get("/api/diagnostics").0, 401);
+    let (_, s) = w.post("/api/sessions", json!({"title": "Secret client plan"}));
+    let id = s["id"].as_str().unwrap().to_string();
+    w.post(
+        "/api/chat",
+        json!({"message": "The merger with Zorblax Corp closes Friday", "session": id}),
+    );
+    let (st, v) = w.get("/api/diagnostics");
+    assert_eq!(st, 200);
+    let text = v["text"].as_str().unwrap();
+    assert!(text.starts_with("Kakurega diagnostics\nversion "), "{text}");
+    assert!(
+        text.contains("Checks")
+            && text.contains("kept conversations 1")
+            && text.contains("chat.turn"),
+        "{text}"
+    );
+    assert!(text.contains("This report holds no file names"), "{text}");
+    assert!(
+        text.contains("worker ~/kk-target/debug/kk-worker"),
+        "{text}"
+    );
+    assert_eq!(v["data"]["version"], json!(env!("CARGO_PKG_VERSION")));
+    // nothing private is in the text or in the data behind it
+    let tok = c.security.admin_token().to_string();
+    let all = v.to_string();
+    for private in [
+        "Zorblax",
+        "Secret client plan",
+        id.as_str(),
+        &root.to_string_lossy(),
+        tok.as_str(),
+        "alice.guest",
+        "Bob",
+        "Smith",
+    ] {
+        assert!(
+            !all.contains(private),
+            "{private} is in the diagnostics: {all}"
+        );
+    }
+    // the text is exactly what `kaku diagnostics` prints for the same data
+    assert_eq!(text, kk_service::report::render(&v["data"]));
+}
