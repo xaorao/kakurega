@@ -1,4 +1,4 @@
-# MCP client behind the broker (ledger G-GH-64, G-GH-65, G-GH-67, D-D22; status: design, nothing built)
+# MCP client behind the broker (ledger G-GH-64, G-GH-65, G-GH-67, D-D22; status: the client crate is built and tested; wiring to the service, broker, web and terminal is not)
 
 ## Target experience
 1. The complete experience: the owner adds an MCP server (a program they trust enough to run) in Settings or the terminal, sees the tools it offers, and chooses per tool: off, ask each time, or allowed. A coding or review task can then call an allowed tool; every call goes through the broker like any other tool, its result is treated as untrusted text, and the owner can see what was called with what.
@@ -46,3 +46,14 @@
 ## Owed before building
 1. Read rmcp `service/client.rs`, `transport/child_process.rs`, `handler/client.rs`; goose's extension manager lifecycle (start, health, restart, shutdown); IronClaw's MCP lane (how the call is mediated).
 2. Write the capability matrix and the behaviour spec; write the hostile-server fixtures first (a fake server that hangs, floods, changes a tool, returns an injection).
+
+## Built (kk-mcpc, commit b5f42d5)
+- `kk-mcpc` (layer 2): `Server::start/list_tools/call/stop`, `ServerConfig`, `Limits`, `ToolInfo` with a pin, `Outcome`. Uses rmcp 3.8.0's `AsyncRwTransport` over a child we spawn ourselves: `env_clear()` plus a fixed PATH plus the owner's named variables, stderr piped and kept to the last 8 KiB, line cap, per-call timeout (a timeout or a protocol failure marks the server dead and kills it), result cut and cleaned, non-text parts counted and left out, only tools from the last listing can be called, arguments capped, `call_tool_once` only (a server's request for more input is an error and stops it).
+- Evidence: a scripted fake server with 12 hostile modes (hang, crash, flood, oversized line, too many tools, changed tool, injection text, non-text parts, tool error, environment dump, noisy stderr); 14 tests mc01 to mc14; 13 mutants, all caught by test failures against a green baseline (one survived until a relative path that exists was added to mc02).
+- Not covered: a server that sends endless pages of its tool list within the time limit (memory is bounded only by the call timeout); a server that writes many small lines within the time limit (no total-bytes cap); the server's own children are not killed with it (no process group); a request for more input is untested because the fake server cannot produce one (the code path stops the server).
+
+## Not built yet (owed)
+1. The owner's server list and per-tool choice (off, ask, allowed) in the service, pinned to the tool's pin; a changed pin puts the tool back to waiting.
+2. The broker tool that lets a coding or review task call an allowed tool, the lease/approval for tools that are not read-only, and an audit entry per call.
+3. Web and terminal screens; the secret-by-name filling of variables from the vault.
+4. The goose and IronClaw lifecycle reading, and the process-group kill.
