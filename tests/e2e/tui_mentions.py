@@ -54,6 +54,18 @@ def send(text):
 
 try:
     check("the workspace is ready", wait_for(r"ready", 40) is not None)
+    send("/ask do")
+    pump(0.5)
+    send("\t")
+    check("Tab finishes the folder after /ask, as it does after /review", wait_for(r"/ask docs/", 15) is not None, screen.text()[-300:])
+    send("\x7f" * 12)
+    pump(0.5)
+    send("/code do")
+    pump(0.5)
+    send("\t")
+    check("and after /code", wait_for(r"/code docs/", 15) is not None, screen.text()[-300:])
+    send("\x7f" * 12)
+    pump(0.5)
     send("what are the payment terms in @ter")
     pump(0.5)
     send("\t")

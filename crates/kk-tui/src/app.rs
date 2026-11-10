@@ -1272,8 +1272,12 @@ impl App {
     }
 
     fn folder_request(&self) -> Option<(String, String, String, String)> {
-        let rest = self.input.strip_prefix("/review ")?;
-        if rest.contains(" for ") || rest.trim_start() != rest {
+        // the commands that take a folder first, and what ends the folder: `/review FOLDER for WHO`, `/ask FOLDER : QUESTION`,
+        // `/code FOLDER : TASK`
+        let (command, rest, stop) = [("/review ", " for "), ("/ask ", " : "), ("/code ", " : ")]
+            .iter()
+            .find_map(|(c, stop)| self.input.strip_prefix(c).map(|r| (*c, r, *stop)))?;
+        if rest.contains(stop) || rest.contains(" :") || rest.trim_start() != rest {
             return None;
         }
         let root = self.roots.first()?.trim_end_matches('/').to_string();
@@ -1289,7 +1293,7 @@ impl App {
         Some((
             dir,
             self.input.clone(),
-            format!("/review {head}"),
+            format!("{command}{head}"),
             partial.to_string(),
         ))
     }

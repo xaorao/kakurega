@@ -3434,7 +3434,16 @@ fn tu52_tab_after_review_finishes_the_folder_from_the_services_listing_of_allowe
 #[test]
 fn tu53_path_completion_is_asked_only_where_it_makes_sense_and_hostile_answers_change_nothing() {
     // not after /review's folder is finished, not for other commands, not for odd spacing
-    for line in ["/review a for acme", "/ask pa", "pa", "/review  pa"] {
+    for line in [
+        "/review a for acme",
+        "/ask a : what",
+        "/code a : fix",
+        "/memory pa",
+        "/open pa",
+        "pa",
+        "/review  pa",
+        "/ask  pa",
+    ] {
         let mut app = booted();
         typed(&mut app, line);
         assert!(tab_and_ask(&mut app).is_none(), "{line:?}");
@@ -7250,4 +7259,62 @@ fn tu_at06_a_file_can_be_named_with_the_lines_wanted_and_only_those_are_asked_fo
         text(&app)
     );
     assert_eq!(app.input, msg);
+}
+
+#[test]
+fn tu_fc01_tab_finishes_the_folder_after_ask_and_code_as_it_does_after_review() {
+    for (cmd, line, head_after) in [
+        ("/ask", "/ask we", "/ask web/"),
+        ("/code", "/code we", "/code web/"),
+        ("/ask", "/ask ./payments-api/s", "/ask ./payments-api/s"),
+    ] {
+        let mut app = booted();
+        typed(&mut app, line);
+        let r =
+            tab_and_ask(&mut app).unwrap_or_else(|| panic!("{cmd}: nothing asked for {line:?}"));
+        if line.contains("payments-api") {
+            assert_eq!(r.path, "/api/fs?path=/home/u/projects/payments-api/");
+            app.handle(ok(&r, 200, dirs(&["src", "scripts"])));
+        } else {
+            assert_eq!(r.path, "/api/fs?path=/home/u/projects/", "{cmd}");
+            app.handle(ok(&r, 200, dirs(&["payments", "web"])));
+        }
+        assert_eq!(app.input, head_after, "{line:?}");
+    }
+    // a folder completion never offers files, even if the answer holds some
+    for line in ["/review pa", "/ask pa", "/code pa"] {
+        let mut app = booted();
+        typed(&mut app, line);
+        let r = tab_and_ask(&mut app).unwrap();
+        assert!(!r.path.contains("files=1"), "{line:?}: {}", r.path);
+        app.handle(ok(&r, 200, listing(&[], &["payments.txt"])));
+        assert_eq!(app.input, line, "a file was offered for a folder: {line:?}");
+        assert!(!text(&app).contains("payments.txt"), "{}", text(&app));
+    }
+    // a shared start is filled in after /code too, with the command kept
+    let mut app = booted();
+    typed(&mut app, "/code p");
+    let r = tab_and_ask(&mut app).unwrap();
+    app.handle(ok(&r, 200, dirs(&["payments-api", "payments-web"])));
+    assert_eq!(app.input, "/code payments-");
+    // once the folder is finished (a colon follows) or for /code's own subcommands' ids, nothing more is asked
+    for line in [
+        "/ask web/ : what",
+        "/ask web :",
+        "/code web/ :",
+        "/code show",
+    ] {
+        let mut app = booted();
+        typed(&mut app, line);
+        let asked = tab_and_ask(&mut app);
+        if line == "/code show" {
+            // "show" is a word that may start a folder name: asking is harmless, and a folder is only ever filled in on a match
+            if let Some(r) = asked {
+                app.handle(ok(&r, 200, dirs(&["payments"])));
+                assert_eq!(app.input, "/code show");
+            }
+        } else {
+            assert!(asked.is_none(), "{line:?}");
+        }
+    }
 }
