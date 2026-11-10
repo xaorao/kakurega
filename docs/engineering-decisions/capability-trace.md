@@ -49,6 +49,8 @@ Depth is what I read myself along the capability's path: FULL (the whole path re
 | 39 | Side conversation | Codex f2b94ef `tui/src/slash_command.rs` (`/side`, `/btw`, availability lists), `chatwidget.rs` flag only | PART | the side-conversation implementation in `chatwidget.rs`, `worktree_stack.rs` |
 | 40 | Todo list and plan mode | OpenCode `core/src/tool/plugin/todo.ts`, `tool/todowrite.txt`, `tui/src/util/todo.ts`, `core/src/plugin/plan.ts` (fe04656) | FULL | `tui/src/component/todo-item.tsx`, `feature-plugins/sidebar/todo.tsx` |
 | 41 | NEAR inference SDK client | nearai-inference-sdk 0.3.0 (MIT) ff59105 `rs/src/e2ee.rs` 1-541, `rs/src/inference.rs` 1-1049, tests/fixtures | FULL | `ohttp.rs`, `systemone.rs`, other-language SDKs, the SDK's inline unit tests |
+| 42 | Owner-approved methods (skills) with hash-pinned approval | IronClaw b0b999d (Apache-2.0) `ironclaw_skills/src/types.rs` 1-330 of 809, `validation.rs` 1-330 of 816, `parser.rs` 1-260 of 459, `selector.rs` 90-490 of 1531 | PART | `management.rs`, `learning.rs`, `scoped_management.rs`, the loop-host activation (5021 lines), the install and URL bundle code; Hermes and OpenCode skill loaders |
+| 43 | MCP client behind the owner's allow-list | rmcp d66a74d (Apache-2.0) `transport/child_process.rs` 1-260 of 418, `transport/async_rw.rs` 50-135, `service/client.rs` 2134-2209 and a function map of the file | PART | `handler/client.rs`, most of `client.rs`, goose extension manager, IronClaw MCP lane |
 
 Counts: FULL on 21 rows, PART on 20 rows, none without reading. The per-row records below keep the commits, files and line ranges.
 
