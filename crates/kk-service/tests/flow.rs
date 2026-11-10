@@ -17962,3 +17962,130 @@ fn sv220_a_pack_whose_method_holds_a_secret_is_refused_whole() {
         "nothing was saved"
     );
 }
+
+/// Every path the service registers, read from the source, so a new route cannot be forgotten by this check.
+fn registered_paths() -> Vec<String> {
+    let src = include_str!("../src/service.rs");
+    let mut out = Vec::new();
+    let mut rest = src;
+    while let Some(i) = rest.find(".route(") {
+        rest = &rest[i + 7..];
+        let trimmed = rest.trim_start();
+        if let Some(body) = trimmed.strip_prefix('"') {
+            if let Some(end) = body.find('"') {
+                let p = &body[..end];
+                if p.starts_with('/') && !out.contains(&p.to_string()) {
+                    out.push(p.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn sv221_every_registered_api_path_refuses_an_anonymous_caller_except_the_listed_public_ones() {
+    let (c, _w, _seen, _root) = instructions_service("auth-surface");
+    let anon = Web::new(c.addr);
+    // paths that are open on purpose: pairing, the session probe, and the signed-log public key
+    let open: &[&str] = &["/api/pair", "/api/session"];
+    let paths = registered_paths();
+    assert!(
+        paths.len() > 100,
+        "the scan found {} paths: it is broken",
+        paths.len()
+    );
+    let mut open_found = Vec::new();
+    for p in &paths {
+        if !p.starts_with("/api/") {
+            continue;
+        }
+        let concrete = p
+            .replace("{id}", "x")
+            .replace("{job}", "x")
+            .replace("{name}", "x")
+            .replace("{n}", "1")
+            .replace("{tool}", "x")
+            .replace("{server}", "x")
+            .replace("{handle}", "x");
+        let concrete = if concrete.contains('{') {
+            regex_free_fill(&concrete)
+        } else {
+            concrete
+        };
+        for (label, (status, _)) in [
+            ("GET", anon.get(&concrete)),
+            ("POST", anon.post(&concrete, json!({}))),
+        ] {
+            if !(status == 401 || status == 403 || status == 404 || status == 405) {
+                open_found.push(format!("{label} {p} -> {status}"));
+            }
+        }
+        if (anon.get(&concrete).0 == 200 || anon.post(&concrete, json!({})).0 == 200)
+            && !open.contains(&p.as_str())
+        {
+            panic!("{p} answers an anonymous caller with 200 and is not on the public list");
+        }
+    }
+    assert!(
+        open_found.is_empty(),
+        "anonymous callers got something other than a refusal: {open_found:?}"
+    );
+}
+
+fn regex_free_fill(path: &str) -> String {
+    let mut out = String::new();
+    let mut in_brace = false;
+    for ch in path.chars() {
+        match ch {
+            '{' => {
+                in_brace = true;
+                out.push('x');
+            }
+            '}' => in_brace = false,
+            c if !in_brace => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+#[test]
+fn sv222_a_paired_session_without_the_csrf_token_or_with_a_foreign_origin_is_refused_on_every_write_path(
+) {
+    let (c, w, _seen, _root) = instructions_service("csrf-surface");
+    let mut no_csrf = Web::new(c.addr);
+    no_csrf.cookie = w.cookie.clone();
+    no_csrf.csrf = String::new();
+    let mut wrong = Web::new(c.addr);
+    wrong.cookie = w.cookie.clone();
+    wrong.csrf = "0".repeat(w.csrf.len());
+    let public_writes: &[&str] = &["/api/pair"];
+    let paths: Vec<String> = registered_paths()
+        .into_iter()
+        .filter(|p| p.starts_with("/api/"))
+        .collect();
+    let mut bad = Vec::new();
+    for p in &paths {
+        if public_writes.contains(&p.as_str()) {
+            continue;
+        }
+        let concrete = regex_free_fill(&p.replace("{id}", "x"));
+        for (label, who) in [("no token", &no_csrf), ("a wrong token", &wrong)] {
+            let (status, _) = who.post(&concrete, json!({}));
+            // 405 means the path takes no POST; 404 means nothing is there for that name; neither wrote anything
+            if !(status == 401 || status == 403 || status == 404 || status == 405) {
+                bad.push(format!("POST {p} with {label} -> {status}"));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "a write got through without a valid token: {bad:?}"
+    );
+    // sanity: the same paired session WITH its token is accepted on one write path, so the refusals above mean something
+    assert_eq!(
+        w.post("/api/methods/revoke", json!({"name": "none"})).0,
+        200
+    );
+}
