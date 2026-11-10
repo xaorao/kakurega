@@ -366,6 +366,8 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE INDEX IF NOT EXISTS usage_ledger_at ON usage_ledger(at);
              CREATE TABLE IF NOT EXISTS pii_allow(entry TEXT PRIMARY KEY, added_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS owner_instructions(scope TEXT PRIMARY KEY, text TEXT NOT NULL, updated_at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS methods(name TEXT PRIMARY KEY, body TEXT NOT NULL, hash TEXT NOT NULL, updated_at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS method_approvals(name TEXT PRIMARY KEY, hash TEXT NOT NULL, approved_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS project_settings(project TEXT PRIMARY KEY, notes_only INTEGER NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS secrets(name TEXT PRIMARY KEY, value BLOB NOT NULL, stored_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);
@@ -1128,6 +1130,8 @@ struct PathQuery {
     /// Also list the files of the folder (names that say they hold secrets are left out).
     files: Option<u8>,
 }
+
+mod methods;
 
 type Svc = axum::Extension<Arc<Service>>;
 
@@ -3573,6 +3577,8 @@ struct ChatContext {
     excluded_notes: Vec<Value>,
     /// Whether the owner's standing instructions went to the model with this question.
     instructions_used: bool,
+    /// The names of the approved methods that applied to this question.
+    methods_used: Vec<String>,
     web_used: usize,
     files_used: usize,
     files_trimmed: usize,
@@ -3717,6 +3723,11 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
     if let Some(block) = instructions {
         messages.push(kk_types::chat::ChatMessage::new("system", &block));
     }
+    let mut methods_used: Vec<String> = Vec::new();
+    if let Some((block, names)) = svc.methods_block(&b.message) {
+        messages.push(kk_types::chat::ChatMessage::new("system", &block));
+        methods_used = names;
+    }
     if !notes.is_empty() {
         messages.push(kk_types::chat::ChatMessage::new(
             "system",
@@ -3766,7 +3777,7 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
     let files_fitted = crate::budget::fit_pages(&file_pages, files_budget);
     if !files_fitted.text.is_empty() {
         messages.insert(
-            1 + usize::from(instructions_used),
+            1 + usize::from(instructions_used) + usize::from(!methods_used.is_empty()),
             kk_types::chat::ChatMessage::new(
                 "system",
                 &format!("{FILES_INTRO}\n{}", files_fitted.text),
@@ -3786,7 +3797,7 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
     let fitted = crate::budget::fit_pages(&pages, budget);
     if !fitted.text.is_empty() {
         messages.insert(
-            1 + usize::from(instructions_used),
+            1 + usize::from(instructions_used) + usize::from(!methods_used.is_empty()),
             kk_types::chat::ChatMessage::new("system", &format!("{WEB_INTRO}\n{}", fitted.text)),
         );
     }
@@ -3796,6 +3807,7 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
         messages,
         history_sent,
         instructions_used,
+        methods_used,
         notes_used: used,
         notes_list,
         untrusted_notes: untrusted_used,
@@ -3858,7 +3870,7 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
         );
     }
     let usage = json!({"elapsed_ms": elapsed_ms, "context_tokens": measured.unwrap_or(estimated), "context_tokens_estimate": estimated, "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "history_turns_summarized": run.summarized, "summary_text": run.summary, "compacted_now": run.compacted_now, "compaction_failed": run.compaction_failed, "estimate": measured.is_none()});
-    json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated, "stays_here": svc.route_for_owner()["stays_here"], "host": svc.route_for_owner()["host"]}, "instructions_used": ctx.instructions_used, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "files": {"used": ctx.files_used, "trimmed": ctx.files_trimmed, "left_out": ctx.files_left_out, "withheld_instructions": ctx.files_withheld_instructions, "withheld_secrets": ctx.files_withheld_secrets}, "saved": saved, "not_saved": not_saved, "project": run.body.project})
+    json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated, "stays_here": svc.route_for_owner()["stays_here"], "host": svc.route_for_owner()["host"]}, "instructions_used": ctx.instructions_used, "methods_used": ctx.methods_used, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "files": {"used": ctx.files_used, "trimmed": ctx.files_trimmed, "left_out": ctx.files_left_out, "withheld_instructions": ctx.files_withheld_instructions, "withheld_secrets": ctx.files_withheld_secrets}, "saved": saved, "not_saved": not_saved, "project": run.body.project})
 }
 
 async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
@@ -9221,6 +9233,13 @@ impl Extension for Routes {
                 "/api/instructions",
                 get(instructions_get).post(instructions_set),
             )
+            .route(
+                "/api/methods",
+                get(methods::methods_get).post(methods::methods_set),
+            )
+            .route("/api/methods/approve", post(methods::methods_approve))
+            .route("/api/methods/revoke", post(methods::methods_revoke))
+            .route("/api/methods/remove", post(methods::methods_remove))
             .route(
                 "/api/project-settings",
                 get(project_settings_get).post(project_settings_set),
