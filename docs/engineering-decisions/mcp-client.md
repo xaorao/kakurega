@@ -15,9 +15,12 @@
 |---|---|
 | The child inherits the whole environment of the parent (the builder only sets stdio) | IMPROVE: the service builds the command with `env_clear()` and passes only the owner's named variables and a fixed safe PATH |
 | stderr is inherited by default, so a server writes into our terminal | IMPROVE: stderr is piped, read with a size cap and kept for the owner's "why did it fail" view, never shown raw to a model |
-| No limit on a line or on total output in the transport | IMPROVE: our wrapper caps each result's bytes and the number of tools listed; a message over the cap ends the call as an error (to be proven against a flooding fake server) |
+| CORRECTION (read `transport/async_rw.rs` 50-135): one incoming line IS capped (default 16 MiB, `with_max_line_length`; an oversized line is dropped and the connection stays open), but total output over many lines is not | IMPROVE: spawn the child ourselves and build `AsyncRwTransport` with a small line cap; cap each result's bytes, the number of tools listed and the time per call (proven against a flooding fake server) |
 | Shutdown is polite then SIGTERM then kill, 3 s each; the child is killed on drop through a spawned task (needs a running runtime) | REUSE the sequence; our service shuts servers down explicitly and tests that no process is left |
 | `which_command` resolves a name through PATH | EXCLUDE: the owner gives an absolute path to the program; a bare name is refused so PATH cannot choose a program |
+
+## What the client call path showed (VERIFIED, `service/client.rs` 2134-2209)
+- `call_tool` drives "input_required" rounds by itself through the local handler (a server can ask the client for more input and the client answers, up to a round cap), and `call_tool_once` does not. Decision: use `call_tool_once` only and treat anything but a complete result (an input request or a task) as an error, so a server can never pull the model or the owner into its own loop.
 
 ## Threat model (what the design must hold against)
 | Threat | Required property |

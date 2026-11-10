@@ -2740,6 +2740,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kk-mcpc"
+version = "0.0.1"
+dependencies = [
+ "kk-evidence",
+ "rmcp",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "kk-memory"
 version = "0.0.1"
 dependencies = [
