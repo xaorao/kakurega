@@ -36,8 +36,41 @@ function Editor(props: { id: string; label: string; initial: string; project?: s
   );
 }
 
+/** The switch that makes one project answer only from its own notes and attached files. */
+function NotesOnly(props: { project: string; on: boolean; onChanged: (message: string) => void }) {
+  const [problem, setProblem] = createSignal("");
+  const id = () => `ins-no-${props.project}`;
+  const change = async (on: boolean) => {
+    setProblem("");
+    try {
+      await api.setNotesOnly(props.project, on);
+      props.onChanged(t(on ? "ins.notesOnly.on" : "ins.notesOnly.off", { name: props.project }));
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("ins.error"));
+    }
+  };
+  return (
+    <div class="stack">
+      <label for={id()}>
+        <input id={id()} type="checkbox" checked={props.on} onChange={(e) => void change(e.currentTarget.checked)} /> {t("ins.notesOnly.label")}
+      </label>
+      <p class="muted">{t("ins.notesOnly.hint")}</p>
+      <Show when={problem()}><span role="alert" class="bad">{problem()}</span></Show>
+    </div>
+  );
+}
+
 export function Instructions() {
   const [data, { refetch }] = createResource(() => api.instructions());
+  const [settings, { refetch: refetchSettings }] = createResource(() => api.projectSettings());
+  const notesOnly = () => new Set((settings()?.projects ?? []).map((p) => p.project));
+  // a project stays listed after its switch is turned off, so the confirmation is not removed from under the person
+  const [touched, setTouched] = createSignal<string[]>([]);
+  const [changed, setChanged] = createSignal("");
+  const names = () => {
+    const all = new Set<string>([...(data()?.projects ?? []).map((p) => p.project), ...notesOnly(), ...touched()]);
+    return [...all].sort();
+  };
   const [newProject, setNewProject] = createSignal("");
   return (
     <section class="stack wide" aria-labelledby="h-ins">
@@ -54,11 +87,13 @@ export function Instructions() {
             <div class="card stack">
               <h2>{t("ins.projects.heading")}</h2>
               <p class="muted">{t("ins.projects.lead")}</p>
+              <Show when={changed()}><p role="status" class="ok">{changed()}</p></Show>
               <ul class="plain stack">
-                <For each={d().projects}>
-                  {(p) => (
+                <For each={names()}>
+                  {(name) => (
                     <li class="card stack">
-                      <Editor id={`ins-p-${p.project}`} label={t("ins.project.label", { name: p.project })} initial={p.text} project={p.project} max={d().max_chars} onSaved={() => void refetch()} />
+                      <Editor id={`ins-p-${name}`} label={t("ins.project.label", { name })} initial={d().projects.find((p) => p.project === name)?.text ?? ""} project={name} max={d().max_chars} onSaved={() => void refetch()} />
+                      <NotesOnly project={name} on={notesOnly().has(name)} onChanged={(m) => { setTouched([...touched(), name]); setChanged(m); void refetchSettings(); }} />
                     </li>
                   )}
                 </For>
@@ -66,6 +101,7 @@ export function Instructions() {
               <label for="ins-new">{t("ins.project.new")}</label>
               <input id="ins-new" value={newProject()} maxlength="80" placeholder={t("mem.add.projectHint")} onInput={(e) => setNewProject(e.currentTarget.value)} />
               <Show when={newProject().trim() !== ""}>
+                <NotesOnly project={newProject().trim()} on={notesOnly().has(newProject().trim())} onChanged={(m) => { setTouched([...touched(), newProject().trim()]); setNewProject(""); setChanged(m); void refetchSettings(); }} />
                 <Editor id="ins-new-text" label={t("ins.project.label", { name: newProject().trim() })} initial="" project={newProject().trim()} max={d().max_chars} onSaved={() => { setNewProject(""); void refetch(); }} />
               </Show>
             </div>

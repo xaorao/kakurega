@@ -16026,3 +16026,181 @@ fn sv177_coding_tasks_survive_a_restart_and_a_stop_part_way_through_applying_is_
     assert_eq!(v4["state"], "failed", "{v4}");
     assert!(v4["error"].as_str().unwrap().contains("stopped"));
 }
+
+#[test]
+fn sv178_a_project_set_to_answer_only_from_its_material_asks_no_model_when_it_holds_nothing_relevant(
+) {
+    use std::io::BufRead;
+    let (c, w, seen, _root) = instructions_service("notes-only");
+    let anon = Web::new(c.addr);
+    assert_eq!(anon.get("/api/project-settings").0, 401);
+    assert_eq!(
+        anon.post(
+            "/api/project-settings",
+            json!({"project": "kestrel", "notes_only": true})
+        )
+        .0,
+        401
+    );
+    assert_eq!(w.get("/api/project-settings").1["projects"], json!([]));
+    // refused, and changes nothing
+    for bad in [
+        json!({"project": "", "notes_only": true}),
+        json!({"project": "..", "notes_only": true}),
+        json!({"project": "a/b", "notes_only": true}),
+        json!({"project": "x\u{202e}y", "notes_only": true}),
+        json!({"project": "kestrel", "notes_only": "yes"}),
+        json!({"project": "kestrel", "notes_only": true, "extra": 1}),
+    ] {
+        let (s, _) = w.post("/api/project-settings", bad.clone());
+        assert!(s == 422 || s == 400, "{bad}: {s}");
+    }
+    assert_eq!(w.get("/api/project-settings").1["projects"], json!([]));
+    let ask = |project: Option<&str>, message: &str| {
+        let mut body = json!({"message": message});
+        if let Some(p) = project {
+            body["project"] = json!(p);
+        }
+        let (s, r) = w.post("/api/chat", body);
+        assert_eq!(s, 200, "{r}");
+        r
+    };
+    let calls = || seen.lock().unwrap().len();
+    // off by default: the model is asked even though the project holds nothing
+    let before = calls();
+    let r = ask(Some("kestrel"), "what is the rounding rule");
+    assert_eq!(calls(), before + 1);
+    assert_ne!(r["route"]["id"], "none");
+    // on: nothing relevant means no model call, a fixed reply, no usage recorded
+    let used = |w: &Web| w.get("/api/usage").1.to_string();
+    let usage_before = used(&w);
+    let (s, v) = w.post(
+        "/api/project-settings",
+        json!({"project": "kestrel", "notes_only": true}),
+    );
+    assert_eq!((s, v["notes_only"].clone()), (200, json!(true)), "{v}");
+    assert_eq!(
+        w.get("/api/project-settings").1["projects"][0]["project"],
+        "kestrel"
+    );
+    let n = calls();
+    let r = ask(Some("kestrel"), "what is the rounding rule");
+    assert_eq!(calls(), n, "the model was asked with nothing to read");
+    assert_eq!(
+        (r["route"]["id"].clone(), r["route"]["class"].clone()),
+        (json!("none"), json!("none"))
+    );
+    assert!(
+        r["reply"]
+            .as_str()
+            .unwrap()
+            .contains("Nothing in this project"),
+        "{r}"
+    );
+    assert_eq!(
+        (r["notes_used"].clone(), r["web_sources_used"].clone()),
+        (json!(0), json!(0))
+    );
+    assert_eq!(
+        used(&w),
+        usage_before,
+        "a reply with no model call was counted as usage"
+    );
+    // other projects and chats with no project are unchanged
+    let n = calls();
+    ask(Some("other"), "what is the rounding rule");
+    ask(None, "what is the rounding rule");
+    assert_eq!(calls(), n + 2);
+    // a standing instruction is not material to answer from
+    w.post(
+        "/api/instructions",
+        json!({"project": "kestrel", "text": "Prices are in euros."}),
+    );
+    let n = calls();
+    ask(Some("kestrel"), "what is the rounding rule");
+    assert_eq!(calls(), n);
+    // with a relevant note the model is asked, with the rule that it may use nothing else, and the note is shown as used
+    let (s, _) = w.post(
+        "/api/memories",
+        json!({"text": "The rounding rule is banker's rounding to two decimals.", "project": "kestrel"}),
+    );
+    assert_eq!(s, 201);
+    let r = ask(Some("kestrel"), "what is the rounding rule");
+    assert_eq!(calls(), n + 1);
+    assert_ne!(r["route"]["id"], "none");
+    assert_eq!(r["notes_used"], 1);
+    let msgs = seen.lock().unwrap().last().unwrap().clone();
+    let rule: Vec<_> = msgs
+        .iter()
+        .filter(|m| m.content.contains("answers only from the owner's notes"))
+        .collect();
+    assert_eq!(rule.len(), 1);
+    assert_eq!(rule[0].role, "system");
+    assert!(msgs.iter().any(|m| m.content.contains("banker's rounding")));
+    // an attached file is material too: the model is asked and is given it
+    let (st, up) = w.post_raw(
+        "/api/attachments?name=terms.txt",
+        b"Payment terms: net 30 days from invoice.",
+    );
+    assert_eq!(st, 201, "{up}");
+    let n = calls();
+    let (st, r) = w.post(
+        "/api/chat",
+        json!({"message": "who won the 1998 world cup", "project": "kestrel", "attachments": [up["id"].clone()]}),
+    );
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(
+        calls(),
+        n + 1,
+        "an attached file was not counted as material"
+    );
+    assert_ne!(r["route"]["id"], "none");
+    // an unrelated question in that project has nothing to read again
+    let n = calls();
+    let r = ask(Some("kestrel"), "who won the 1998 world cup");
+    assert_eq!(calls(), n, "{r}");
+    // a kept conversation records the fixed reply as the answer
+    let (_, s) = w.post("/api/sessions", json!({"title": ""}));
+    let id = s["id"].as_str().unwrap().to_string();
+    let (st, r) = w.post(
+        "/api/chat",
+        json!({"message": "who won the 1998 world cup", "project": "kestrel", "session": id}),
+    );
+    assert_eq!((st, r["saved"].clone()), (200, json!(true)), "{r}");
+    let turns = w.get(&format!("/api/sessions/{id}")).1["turns"].clone();
+    assert!(turns[1]["content"]
+        .as_str()
+        .unwrap()
+        .contains("Nothing in this project"));
+    // the streamed chat takes the same path
+    let n = calls();
+    let mut resp = w
+        .agent
+        .post(&format!("{}/api/chat/stream", w.base))
+        .header("Cookie", &w.cookie)
+        .header("Origin", &w.base)
+        .header("Sec-Fetch-Site", "same-origin")
+        .header("x-kk-csrf", &w.csrf)
+        .send_json(json!({"message": "who won the 1998 world cup", "project": "kestrel"}))
+        .unwrap();
+    let lines: Vec<Value> = std::io::BufReader::new(resp.body_mut().as_reader())
+        .lines()
+        .map(|l| serde_json::from_str(&l.unwrap()).unwrap())
+        .collect();
+    assert_eq!(calls(), n, "the stream asked the model");
+    let last = lines.last().unwrap();
+    assert_eq!(
+        (last["done"].clone(), last["route"]["id"].clone()),
+        (json!(true), json!("none"))
+    );
+    // off again: the model is asked
+    let (s, _) = w.post(
+        "/api/project-settings",
+        json!({"project": "kestrel", "notes_only": false}),
+    );
+    assert_eq!(s, 200);
+    assert_eq!(w.get("/api/project-settings").1["projects"], json!([]));
+    let n = calls();
+    ask(Some("kestrel"), "who won the 1998 world cup");
+    assert_eq!(calls(), n + 1);
+}
