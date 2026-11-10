@@ -318,6 +318,33 @@ pub fn run_local_tool(link: &mut dyn Link, call: &ToolCall) -> Result<Value, Wor
     }
 }
 
+/// The start of the one message sent to a model that ends a review having looked at almost nothing.
+const EARLY_FINISH_NOTICE: &str = "You stopped after reading only ";
+/// A model that ends with fewer tool calls than this and has reported nothing is asked once to look further.
+const MIN_LOOKS: usize = 4;
+
+/// The message that asks a model to look further, or nothing: it applies once, only when the model reported no finding or fix
+/// and made fewer than `MIN_LOOKS` tool calls, and never again once it was sent (also across a restart from a saved state).
+fn early_finish_nudge(messages: &[ChatMessage]) -> Option<String> {
+    if messages
+        .iter()
+        .any(|m| m.role == "user" && m.content.starts_with(EARLY_FINISH_NOTICE))
+    {
+        return None;
+    }
+    let acted = messages
+        .iter()
+        .flat_map(|m| m.tool_calls.iter())
+        .any(|c| matches!(c.name.as_str(), "report_finding" | "propose_fix"));
+    let looks = messages.iter().filter(|m| m.role == "tool").count();
+    if acted || looks >= MIN_LOOKS {
+        return None;
+    }
+    Some(format!(
+        "{EARLY_FINISH_NOTICE}{looks} tool results and reported nothing. Use list_files and read_file to read the source files that handle input, logins, tokens, files or money before you answer, and report every defect you can confirm with report_finding."
+    ))
+}
+
 pub fn run(
     link: &mut dyn Link,
     mut state: AgentState,
@@ -389,6 +416,11 @@ pub fn run(
         state.turn += 1;
         save(link, &state)?;
         if finished {
+            if let Some(notice) = early_finish_nudge(&state.messages) {
+                state.messages.push(ChatMessage::new("user", &notice));
+                save(link, &state)?;
+                continue;
+            }
             return Ok(Outcome::Finished(text));
         }
     }
