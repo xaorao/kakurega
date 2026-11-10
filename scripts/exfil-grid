@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""The exfiltration grid: every surface a secret could leave through, graded by planted values that are fresh on every run.
+
+Each row runs the tests that plant a fresh canary (a random value, so no lucky match with a fixed string) in a file, a note, an
+attachment or a folder, then attack through that surface and look for the value in everything that could carry it: the prompt
+the model was given, its answer, the log, the exports, the patch, the data folder. A row passes only when every one of its tests
+passes. The table is printed; nothing is written to disk.
+
+  scripts/exfil-grid            run every row
+  scripts/exfil-grid --list     print the rows and what each one attacks
+"""
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+# surface, what is attacked, what is planted, where it is looked for, the cargo test selectors
+ROWS = [
+    ("review", "a review of two projects, five attack shapes", "keys and tokens in .env and source files",
+     "prompt, release, record", ["-p", "kk-review", "--test", "job", "--", "--ignored", "j13_"]),
+    ("notes in chat", "restricted notes asked about", "fresh value in a restricted note",
+     "prompt, answer, log, exports", ["-p", "kk-service", "--test", "flow", "--", "sv117_", "sv118_"]),
+    ("attached files", "files attached to a chat message", "fresh keys and key blocks in attachments",
+     "prompt, log, exports", ["-p", "kk-service", "--test", "flow", "--", "sv126_"]),
+    ("encoded keys", "a key written in hex or base64", "encoded forms of a fresh key",
+     "prompt, with the known limits listed", ["-p", "kk-service", "--test", "flow", "--", "sv167_"]),
+    ("ask your documents", "a folder asked about by words and by meaning", "fresh keys in files, restricted files",
+     "prompt, vectors", ["-p", "kk-service", "--test", "flow", "--", "sv127_", "sv155_"]),
+    ("coding: by name", "40 path shapes through six tools", "values in restricted files, one with an ordinary name",
+     "every tool answer, the patch, the report", ["-p", "kk-review", "--test", "code_loop", "--", "lp11_"]),
+    ("coding: by content", "files withheld by what the importer found and by .kakuignore", "stripe, AWS and key-block shapes, plain words",
+     "every tool answer", ["-p", "kk-review", "--test", "code_loop", "--", "lp13_"]),
+    ("coding: patches", "a patch that adds a secret", "a key in a new or changed file",
+     "apply is refused", ["-p", "kk-service", "--test", "flow", "--", "sv175_"]),
+    ("attach by path", "paths outside the folders, links, secret names", "a token in .env, a link out of the folders",
+     "attachments, the model", ["-p", "kk-service", "--test", "flow", "--", "sv179_"]),
+    ("secret shapes", "every shape the detector knows and every look-alike", "~1,200 generated values per shape",
+     "the detector's verdict", ["-p", "kk-secrets", "--test", "secret_grid"]),
+]
+
+
+def vm_home():
+    """The sandbox machine's home folder, for the tests that need the sandbox; None when the machine is not running."""
+    try:
+        p = subprocess.run(["limactl", "shell", os.environ.get("KK_VM", "kak"), "--", "bash", "-lc", "echo $HOME"], capture_output=True, text=True, timeout=60)
+        return p.stdout.strip().splitlines()[-1] if p.returncode == 0 and p.stdout.strip() else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def run(args):
+    t = time.time()
+    env = dict(os.environ)
+    if "--ignored" in args:
+        home = vm_home()
+        if home is None:
+            return False, 0, 0, time.time() - t, "BLOCKED: the sandbox machine is not running (limactl start kak); this row needs it"
+        env["KK_VM_HOME"] = home
+    p = subprocess.run(["cargo", "test", "-q", *args], cwd=ROOT, capture_output=True, text=True, env=env)
+    out = p.stdout + p.stderr
+    passed = sum(int(n) for n in re.findall(r"(\d+) passed", out))
+    failed = sum(int(n) for n in re.findall(r"(\d+) failed", out))
+    return p.returncode == 0 and passed > 0 and failed == 0, passed, failed, time.time() - t, out
+
+
+def main():
+    if "--list" in sys.argv:
+        for name, attack, planted, looked, _ in ROWS:
+            print(f"{name}: attacks {attack}; plants {planted}; looks in {looked}")
+        return 0
+    rows = []
+    for name, attack, planted, looked, args in ROWS:
+        ok, passed, failed, secs, out = run(args)
+        rows.append((name, ok, passed, failed, secs))
+        print(f"{'PASS' if ok else 'FAIL'}  {name:<22} {passed:>3} test(s)  {secs:5.1f}s  attacks {attack}", flush=True)
+        if not ok:
+            print("      " + "\n      ".join(out.strip().splitlines()[-12:]))
+    bad = [r for r in rows if not r[1]]
+    print()
+    print(f"{len(rows) - len(bad)}/{len(rows)} surfaces held; {sum(r[2] for r in rows)} tests ran")
+    print("Not covered: web pages as a source, secrets split over two strings or lines, reversed or spaced-out keys (known limits, see docs/engineering-decisions/secret-detection.md).")
+    return 1 if bad else 0
+
+
+sys.exit(main())
