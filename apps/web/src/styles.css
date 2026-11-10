@@ -375,3 +375,5 @@ button.linklike:hover { color: var(--ink); }
 .tablewrap tr:last-child td { border-bottom: 0; }
 .tablewrap .al-right { text-align: right; }
 .tablewrap .al-center { text-align: center; }
+.code-file { margin: 12px 0 0; font-weight: 600; }
+.code-file code { font-size: 14px; }

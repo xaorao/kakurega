@@ -1806,7 +1806,7 @@ fn line_ops<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<(Op, &'a str)> {
     ops
 }
 
-fn diff_text(file: &str, before: &str, after: &str) -> String {
+pub(crate) fn diff_text(file: &str, before: &str, after: &str) -> String {
     const CONTEXT: usize = 3;
     let (a, b) = (split_lines(before), split_lines(after));
     let ops = line_ops(&a, &b);

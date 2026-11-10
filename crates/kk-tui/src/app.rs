@@ -186,6 +186,11 @@ enum Intent {
     SearchRun,
     ReadPropose,
     ReadFetch,
+    CodeStart,
+    CodePoll(String),
+    CodeShow,
+    CodeApply(String),
+    CodeUndo(String),
 }
 
 #[derive(Debug, Clone)]
@@ -218,6 +223,8 @@ pub struct ConfirmView {
     pub undo: bool,
     /// A web request waiting for a yes: ("search" or "read", request id, digest of exactly what was shown).
     pub web: Option<(String, String, String)>,
+    /// A coding task's patch waiting for a yes: (task id, digest of the patch that was shown, undo instead of apply).
+    pub code: Option<(String, String, bool)>,
 }
 
 #[derive(Debug, Clone)]
@@ -257,6 +264,10 @@ pub struct App {
     pending: BTreeMap<u64, Intent>,
     watching: BTreeMap<String, usize>,
     inflight_polls: BTreeSet<String>,
+    /// The coding task being followed, whether a read of it is in flight, and how many progress lines were shown.
+    code_watch: Option<(String, bool, usize)>,
+    /// The last coding task whose patch was shown, with the digest shown.
+    code_shown: Option<(String, String)>,
     approval_watch_inflight: bool,
     pub chat_history: Vec<(String, String)>,
     pub session: Option<String>,
@@ -397,6 +408,8 @@ impl App {
             pending: BTreeMap::new(),
             watching: BTreeMap::new(),
             inflight_polls: BTreeSet::new(),
+            code_watch: None,
+            code_shown: None,
             approval_watch_inflight: false,
             chat_history: Vec::new(),
             session: None,
@@ -505,6 +518,89 @@ impl App {
         } else {
             self.cards.insert(0, marker);
         }
+    }
+
+    /// A coding task's result: how it ended, the kernel's own test run, concerns, and the patch, file by file.
+    fn show_code(&mut self, v: &Value) {
+        let id = clean(v["id"].as_str().unwrap_or(""));
+        let state = v["state"].as_str().unwrap_or("");
+        let mut lines = Vec::new();
+        if let Some(e) = v["error"].as_str() {
+            lines.extend(text_lines(&clean(e)));
+        }
+        if let Some(e) = v["ended"].as_str() {
+            lines.push(clean(e));
+        }
+        if let Some(sm) = v["summary"].as_str().filter(|s| !s.is_empty()) {
+            lines.extend(text_lines(&format!("The model says: {}", clean(sm))));
+        }
+        let tests_pass = v["tests"]["passed"] == true;
+        lines.push(match &v["tests"] {
+            Value::Null => {
+                "Tests: none found that can run here, so nothing was checked by running it.".into()
+            }
+            _ if tests_pass => format!(
+                "Tests pass on the changed files ({}), run by the kernel.",
+                clean(v["test_command"].as_str().unwrap_or(""))
+            ),
+            _ => format!(
+                "Tests do NOT pass on the changed files ({}).",
+                clean(v["test_command"].as_str().unwrap_or(""))
+            ),
+        });
+        for c in v["concerns"].as_array().into_iter().flatten() {
+            lines.push(format!("! {}", clean(c.as_str().unwrap_or(""))));
+        }
+        let changes = v["changes"].as_array().cloned().unwrap_or_default();
+        if changes.is_empty() {
+            lines.push("The task changed no file.".into());
+        }
+        for c in &changes {
+            lines.push(String::new());
+            lines.push(format!(
+                "{} {} (+{} -{})",
+                clean(c["kind"].as_str().unwrap_or("")),
+                clean(c["path"].as_str().unwrap_or("")),
+                c["added"],
+                c["removed"]
+            ));
+            let diff: Vec<String> = c["diff"]
+                .as_str()
+                .unwrap_or("")
+                .lines()
+                .map(clean)
+                .collect();
+            lines.extend(crate::diff::number(&diff).into_iter().take(80));
+        }
+        lines.push(String::new());
+        let can_apply = v["can_apply"] == true;
+        lines.push(match state {
+            "ready" if can_apply => {
+                self.code_shown = Some((id.clone(), clean(v["digest"].as_str().unwrap_or(""))));
+                "Nothing on disk has changed. /code apply to apply exactly this patch.".to_string()
+            }
+            "ready" => "This patch cannot be applied.".into(),
+            "applied" => {
+                self.code_shown = Some((id.clone(), clean(v["digest"].as_str().unwrap_or(""))));
+                "Applied. /code undo puts every file back.".into()
+            }
+            "attention" => format!(
+                "Needs your attention: a write stopped part way. Look at {} before running anything else.",
+                v["attention"].as_array().into_iter().flatten().filter_map(|f| f.as_str()).map(clean).collect::<Vec<_>>().join(", ")
+            ),
+            _ => String::new(),
+        });
+        self.push(
+            if state == "ready" && can_apply && tests_pass {
+                Kind::Ok
+            } else if state == "failed" {
+                Kind::Error
+            } else {
+                Kind::Warn
+            },
+            Some(&format!("Code {id}")),
+            lines,
+        );
     }
 
     fn say(&mut self, kind: Kind, line: impl AsRef<str>) {
@@ -1122,6 +1218,14 @@ impl App {
                         ));
                     }
                 }
+                if let Some((id, inflight, _)) = &mut self.code_watch {
+                    if !*inflight {
+                        *inflight = true;
+                        let path = format!("/api/code/{id}");
+                        let id = id.clone();
+                        out.push(self.req(Intent::CodePoll(id), false, Method::Get, &path, None));
+                    }
+                }
                 for id in ids {
                     self.inflight_polls.insert(id.clone());
                     out.push(self.req(
@@ -1492,6 +1596,7 @@ impl App {
                 let apply = c.apply.clone();
                 let undo = c.undo;
                 let web = c.web.clone();
+                let code = c.code.clone();
                 let review = c.review.clone();
                 let choose = c.choose.clone();
                 let copy = c.copy.clone();
@@ -1515,6 +1620,32 @@ impl App {
                     _ if web.is_some() => {
                         self.mode = Mode::Normal;
                         self.say(Kind::Info, "Cancelled. Nothing was sent.");
+                        Vec::new()
+                    }
+                    KeyCode::Char('y') | KeyCode::Char('Y') if !ctrl && code.is_some() => {
+                        self.mode = Mode::Normal;
+                        let (id, digest, undo) = code.expect("checked");
+                        if undo {
+                            vec![self.req(
+                                Intent::CodeUndo(id.clone()),
+                                false,
+                                Method::Post,
+                                &format!("/api/code/{id}/undo"),
+                                Some(json!({})),
+                            )]
+                        } else {
+                            vec![self.req(
+                                Intent::CodeApply(id.clone()),
+                                false,
+                                Method::Post,
+                                &format!("/api/code/{id}/apply"),
+                                Some(json!({"digest": digest})),
+                            )]
+                        }
+                    }
+                    _ if code.is_some() => {
+                        self.mode = Mode::Normal;
+                        self.say(Kind::Info, "Cancelled. Nothing on disk was changed.");
                         Vec::new()
                     }
                     KeyCode::Char('y') | KeyCode::Char('Y') if !ctrl && apply.is_some() => {
@@ -2200,6 +2331,7 @@ impl App {
                     apply: Some((j, n, file)),
                     undo: false,
                     web: None,
+                    code: None,
                 });
                 Vec::new()
             }
@@ -2227,6 +2359,7 @@ impl App {
                     apply: Some((j, n, file)),
                     undo: true,
                     web: None,
+                    code: None,
                 });
                 Vec::new()
             }
@@ -2322,6 +2455,82 @@ impl App {
                 &format!("/api/memories/{id}/{action}"),
                 Some(json!({})),
             )],
+            Command::Code { folder, task } => {
+                if self.code_watch.is_some() {
+                    self.say(
+                        Kind::Warn,
+                        "A coding task is still running; it is shown here when it finishes.",
+                    );
+                    return Vec::new();
+                }
+                vec![self.req(
+                    Intent::CodeStart,
+                    false,
+                    Method::Post,
+                    "/api/code",
+                    Some(json!({"folder": folder, "task": task})),
+                )]
+            }
+            Command::CodeAct(act, id) => {
+                let Some(id) = id.or_else(|| self.code_shown.as_ref().map(|(i, _)| i.clone()))
+                else {
+                    self.say(
+                        Kind::Warn,
+                        "No coding task yet. Start one with /code FOLDER : TASK.",
+                    );
+                    return Vec::new();
+                };
+                match act {
+                    "show" => vec![self.req(
+                        Intent::CodeShow,
+                        false,
+                        Method::Get,
+                        &format!("/api/code/{id}"),
+                        None,
+                    )],
+                    "apply" => {
+                        // only the patch shown on this screen can be applied, with the digest it had when shown
+                        let Some(digest) = self
+                            .code_shown
+                            .as_ref()
+                            .filter(|(i, _)| *i == id)
+                            .map(|(_, d)| d.clone())
+                        else {
+                            self.say(
+                                Kind::Warn,
+                                format!("Read the patch first: /code show {id}, then /code apply."),
+                            );
+                            return Vec::new();
+                        };
+                        self.mode = Mode::Confirm(ConfirmView {
+                            prompt: format!("Apply the patch of {id} to your files now? It changes your own project. [y/N]"),
+                            forget_id: String::new(),
+                            review: None,
+                            choose: None,
+                            copy: None,
+                            apply: None,
+                            undo: false,
+                            web: None,
+                            code: Some((id, digest, false)),
+                        });
+                        Vec::new()
+                    }
+                    _ => {
+                        self.mode = Mode::Confirm(ConfirmView {
+                            prompt: format!("Put every file {id} changed back as it was? [y/N]"),
+                            forget_id: String::new(),
+                            review: None,
+                            choose: None,
+                            copy: None,
+                            apply: None,
+                            undo: false,
+                            web: None,
+                            code: Some((id, String::new(), true)),
+                        });
+                        Vec::new()
+                    }
+                }
+            }
             Command::Ask { folder, question } => {
                 if self.chat_waiting {
                     self.say(Kind::Warn, "Still waiting for the last answer.");
@@ -2415,6 +2624,7 @@ impl App {
                             apply: None,
                             undo: false,
                             web: None,
+                            code: None,
                         });
                     }
                 }
@@ -2472,6 +2682,7 @@ impl App {
                     apply: None,
                     undo: false,
                     web: None,
+                    code: None,
                 });
                 Vec::new()
             }
@@ -2528,7 +2739,7 @@ impl App {
                 None,
             )],
             Command::Forget(id) => {
-                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id, review: None, choose: None, copy: None, apply: None, undo: false, web: None });
+                self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id, review: None, choose: None, copy: None, apply: None, undo: false, web: None, code: None });
                 Vec::new()
             }
             Command::Pii(a) => {
@@ -3667,6 +3878,76 @@ impl App {
                 }
                 Vec::new()
             }
+            Intent::CodeStart => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let id = clean(body["id"].as_str().unwrap_or(""));
+                self.say(Kind::Info, format!("{id} started. A local model works on a copy; nothing on disk changes until you apply it."));
+                self.code_watch = Some((id, false, 0));
+                Vec::new()
+            }
+            Intent::CodePoll(id) => {
+                if !ok {
+                    self.code_watch = None;
+                    self.say(
+                        Kind::Error,
+                        format!("{}: {}", clean(&id), err_text(status, &body)),
+                    );
+                    return Vec::new();
+                }
+                let shown = self.code_watch.as_ref().map(|w| w.2).unwrap_or(0);
+                let progress = body["progress"].as_array().cloned().unwrap_or_default();
+                if !self.quiet {
+                    for p in progress.iter().skip(shown) {
+                        self.say(
+                            Kind::Info,
+                            format!("{}: {}", clean(&id), clean(p.as_str().unwrap_or(""))),
+                        );
+                    }
+                }
+                if body["state"] == "running" {
+                    self.code_watch = Some((id, false, progress.len()));
+                } else {
+                    self.code_watch = None;
+                    self.show_code(&body);
+                }
+                Vec::new()
+            }
+            Intent::CodeShow => {
+                if ok {
+                    self.show_code(&body);
+                } else {
+                    self.say(Kind::Error, err_text(status, &body));
+                }
+                Vec::new()
+            }
+            Intent::CodeApply(id) => {
+                if ok {
+                    self.say(
+                        Kind::Ok,
+                        format!(
+                            "Applied {id} to {} file(s). /code undo puts them back.",
+                            body["files"]
+                        ),
+                    );
+                } else {
+                    self.say(Kind::Error, err_text(status, &body));
+                }
+                Vec::new()
+            }
+            Intent::CodeUndo(id) => {
+                if ok {
+                    self.say(
+                        Kind::Ok,
+                        format!("Every file {id} changed is back as it was."),
+                    );
+                } else {
+                    self.say(Kind::Error, err_text(status, &body));
+                }
+                Vec::new()
+            }
             Intent::UndoFix(file) => {
                 self.say(
                     if ok { Kind::Ok } else { Kind::Error },
@@ -3974,6 +4255,7 @@ impl App {
                     apply: None,
                     undo: false,
                     web: None,
+                    code: None,
                 });
                 Vec::new()
             }
@@ -4246,6 +4528,7 @@ impl App {
                         id.to_string(),
                         digest.to_string(),
                     )),
+                    code: None,
                 });
                 Vec::new()
             }

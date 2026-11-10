@@ -6656,3 +6656,111 @@ fn tu111_an_empty_model_reply_to_a_document_question_is_said_in_words_and_never_
         "{text}"
     );
 }
+
+fn code_ready(digest: &str) -> Value {
+    json!({
+        "id": "code-1", "state": "ready", "progress": ["the model works on 2 files"],
+        "ended": "the model said it was done", "summary": "fixed the discount",
+        "tests": {"passed": true, "output": "2 passed, 0 failed"}, "test_command": "python3",
+        "concerns": [], "can_apply": true, "digest": digest,
+        "changes": [{"path": "pricing.py", "kind": "modified", "added": 1, "removed": 1,
+            "diff": "--- a/pricing.py\n+++ b/pricing.py\n@@ -1,2 +1,2 @@\n def f(p, x):\n-    return p - x\n+    return p * (100 - x) / 100\n"}]
+    })
+}
+
+#[test]
+fn tu_code01_a_task_is_followed_to_its_patch_and_applied_only_after_yes_with_the_digest_shown() {
+    let mut app = booted();
+    let r = enter(&mut app, "/code /home/u/projects/shop : fix the discount");
+    assert_eq!(
+        (r.len(), r[0].path.as_str(), r[0].method),
+        (1, "/api/code", Method::Post)
+    );
+    assert_eq!(r[0].body.as_ref().unwrap()["task"], "fix the discount");
+    app.handle(ok(&r[0], 202, json!({"id": "code-1"})));
+    let poll = app.handle(Event::Tick);
+    let p = poll
+        .iter()
+        .find(|q| q.path == "/api/code/code-1")
+        .expect("the task is polled");
+    app.handle(ok(
+        p,
+        200,
+        json!({"id": "code-1", "state": "running", "progress": ["the model works on 2 files"]}),
+    ));
+    assert!(text(&app).contains("the model works on 2 files"));
+    let poll = app.handle(Event::Tick);
+    let p = poll.iter().find(|q| q.path == "/api/code/code-1").unwrap();
+    app.handle(ok(p, 200, code_ready(&"a".repeat(64))));
+    let t = text(&app);
+    assert!(
+        t.contains("Tests pass on the changed files")
+            && t.contains("return p * (100 - x) / 100")
+            && t.contains("/code apply"),
+        "{t}"
+    );
+    assert_eq!(
+        t.matches("the model works on 2 files").count(),
+        1,
+        "a progress line is shown once"
+    );
+    assert!(
+        app.handle(Event::Tick)
+            .iter()
+            .all(|q| !q.path.starts_with("/api/code")),
+        "a finished task is not polled again"
+    );
+    // no is the default: anything but y changes nothing
+    assert!(enter(&mut app, "/code apply").is_empty());
+    assert!(app.handle(key(KeyCode::Char('n'))).is_empty());
+    assert!(text(&app).contains("Nothing on disk was changed"));
+    enter(&mut app, "/code apply");
+    let a = app.handle(key(KeyCode::Char('y')));
+    assert_eq!(
+        (
+            a[0].path.as_str(),
+            a[0].body.as_ref().unwrap()["digest"].as_str().unwrap()
+        ),
+        ("/api/code/code-1/apply", "a".repeat(64).as_str())
+    );
+    app.handle(ok(&a[0], 200, json!({"applied": true, "files": 1})));
+    assert!(text(&app).contains("Applied code-1"));
+    enter(&mut app, "/code undo");
+    let u = app.handle(key(KeyCode::Char('y')));
+    assert_eq!(u[0].path, "/api/code/code-1/undo");
+}
+
+#[test]
+fn tu_code02_apply_needs_a_patch_read_on_this_screen_and_bad_forms_are_refused() {
+    let mut app = booted();
+    assert!(enter(&mut app, "/code apply").is_empty());
+    assert!(text(&app).contains("No coding task yet"));
+    assert!(
+        enter(&mut app, "/code apply code-7").is_empty(),
+        "a task whose patch was not shown here cannot be applied"
+    );
+    assert!(text(&app).contains("Read the patch first"));
+    for bad in [
+        "/code",
+        "/code fix it",
+        "/code apply code-x",
+        "/code show 7",
+        "/code : task",
+        "/code apply code-1 extra",
+    ] {
+        assert!(cmd::parse(bad).is_err(), "{bad}");
+    }
+    assert!(matches!(
+        cmd::parse("/code show code-3"),
+        Ok(Command::CodeAct("show", Some(_)))
+    ));
+    // a patch that cannot be applied gives no way to apply it
+    let r = enter(&mut app, "/code show code-2");
+    app.handle(ok(&r[0], 200, json!({"id": "code-2", "state": "ready", "can_apply": false, "changes": [], "concerns": ["pricing.py adds what looks like a secret; this patch will not be applied"], "tests": null})));
+    let t = text(&app);
+    assert!(
+        t.contains("cannot be applied") && t.contains("looks like a secret"),
+        "{t}"
+    );
+    assert!(enter(&mut app, "/code apply code-2").is_empty());
+}

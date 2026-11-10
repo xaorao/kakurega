@@ -461,6 +461,62 @@ impl JobRunner for ReviewRunner {
         out
     }
 
+    fn code_task(
+        &self,
+        files: &[kk_review::import::ImportedFile],
+        task: &str,
+        progress: &dyn Fn(&str),
+    ) -> Result<kk_service::coding::CodeOutcome, String> {
+        use kk_review::code::{
+            detect_runner, run_task, Runner, SandboxTester, Tester, Workspace, MAX_TURNS,
+        };
+        if self.scripted.is_some() {
+            return Err(
+                "coding tasks need a real model; the scripted test model has no coding script"
+                    .into(),
+            );
+        }
+        let route = self.route().map_err(model_failure)?;
+        let (mut ws, left) = Workspace::from_imported(files);
+        let runner = detect_runner(ws.files());
+        let tester = runner.map(|r| SandboxTester {
+            transport: &self.transport,
+            scratch: &self.scratch,
+            runner: r,
+            interpreter: match r {
+                Runner::Python => "/usr/bin/python3".into(),
+                Runner::Node => "/usr/bin/node".into(),
+            },
+        });
+        progress(&match left.restricted {
+            0 => format!("the model works on {} files", ws.files().len()),
+            1 => format!("the model works on {} files; 1 is withheld because it holds secrets or private data", ws.files().len()),
+            n => format!("the model works on {} files; {n} are withheld because they hold secrets or private data", ws.files().len()),
+        });
+        let report = run_task(
+            &route,
+            &mut ws,
+            task,
+            tester.as_ref().map(|t| t as &dyn Tester),
+            MAX_TURNS,
+        );
+        progress("the tests run again on the final files, by the kernel");
+        let kernel_test = tester.as_ref().map(|t| t.run(ws.files()));
+        Ok(kk_service::coding::CodeOutcome {
+            ending: format!("{:?}", report.ending),
+            summary: report.summary,
+            turns: report.turns,
+            steps: report.steps,
+            step_args: report.step_args,
+            test_runs: report.test_runs,
+            kernel_test,
+            test_command: tester.as_ref().map(|t| t.command()),
+            changes: ws.changes(),
+            left_restricted: left.restricted,
+            route: format!("ollama:{}", self.model_name()),
+        })
+    }
+
     fn local_models(&self) -> Vec<String> {
         if self.scripted.is_some() {
             return Vec::new();

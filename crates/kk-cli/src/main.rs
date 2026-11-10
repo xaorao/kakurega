@@ -35,6 +35,8 @@ Usage:
   kaku serve [--require-approver] [--data-dir DIR] [--ui-dir DIR] [--root DIR]... [--model NAME] [--ollama URL] [--context TOKENS]
              [--transport lima|local] [--vm NAME] [--worker-bin PATH] [--launcher PATH]
   kaku review DIR --for RECIPIENT [--json] [--timeout SECONDS]   start a review and follow it; ends at awaiting_approval (exit 0), 3 nothing to release, 4 failed
+  kaku code DIR TASK... [--json]                          a local model changes the project in memory, its tests run in the sandbox; shows the patch, applies only when you say
+  kaku code show|apply|undo ID, kaku code list              read, apply (--digest from the patch) or undo a coding task
   kaku jobs [--json] | kaku findings JOB [--json] | kaku follow JOB [--timeout S]   list reviews, read what one found, watch one until it ends
   kaku ask QUESTION --folder DIR [--json]   ask about the documents in a folder; every quote is checked (exit 3 if any is not found)
   kaku chat MESSAGE|- [--json] [--keep | --session ID]   one message to the private assistant; nothing is kept unless --keep starts a kept conversation or --session continues one
@@ -97,6 +99,7 @@ fn main() -> ExitCode {
         Some("findings") => script::findings(&args),
         Some("follow") => script::follow(&args),
         Some("ask") => script::ask(&args),
+        Some("code") => script::code(&args),
         Some("chat") => script::chat(&args),
         Some("sessions") => script::sessions(&args[1..]),
         Some("update") => update::run(&args[1..]),

@@ -1,6 +1,7 @@
 pub mod align;
 pub mod ask;
 pub mod check;
+pub mod code;
 pub mod feedback;
 pub mod import;
 pub mod job;

@@ -205,6 +205,26 @@ async function attachFile(file: File): Promise<AttachmentSummary> {
   return data as AttachmentSummary;
 }
 
+export type CodeChange = { path: string; kind: "added" | "modified" | "deleted"; diff: string; added: number; removed: number };
+export type CodeTask = {
+  id: string;
+  task: string;
+  folder: string;
+  state: "running" | "ready" | "failed" | "applied" | "applying" | "undoing" | "attention";
+  error: string | null;
+  attention: string[];
+  progress: string[];
+  ended: string | null;
+  summary: string | null;
+  tests: { passed: boolean; output: string } | null;
+  test_command: string | null;
+  withheld_files: number | null;
+  changes: CodeChange[];
+  digest: string | null;
+  concerns: string[];
+  can_apply: boolean;
+};
+
 export const api = {
   health: () => request<{ ok: boolean }>("GET", "/api/health"),
   pair: (code: string) => request<{ csrf: string }>("POST", "/api/pair", { code }),
@@ -303,6 +323,11 @@ export const api = {
   researchPropose: (urls: string[]) => request<ResearchProposal>("POST", "/api/research/propose", { urls }),
   researchFetch: (id: string, digest: string) => request<{ pages: ResearchPage[]; note: string }>("POST", `/api/research/${id}/fetch`, { approve: true, digest }),
   ask: (folder: string, question: string) => request<AskReply>("POST", "/api/ask", { folder, question }),
+  codeStart: (folder: string, task: string) => request<{ id: string }>("POST", "/api/code", { folder, task }),
+  codeList: () => request<{ tasks: { id: string; task: string; state: string; created: number }[] }>("GET", "/api/code"),
+  codeGet: (id: string) => request<CodeTask>("GET", `/api/code/${id}`),
+  codeApply: (id: string, digest: string) => request<{ applied: boolean; files: number }>("POST", `/api/code/${id}/apply`, { digest }),
+  codeUndo: (id: string) => request<{ undone: boolean }>("POST", `/api/code/${id}/undo`, {}),
   readiness: () => request<Readiness>("GET", "/api/readiness"),
   fs: (path?: string) => request<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>("GET", `/api/fs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   startJob: (repo: string, recipient: string) => request<{ id: string }>("POST", "/api/jobs", { repo, recipient }),

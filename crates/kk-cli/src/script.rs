@@ -683,6 +683,325 @@ fn session_export(args: &[String]) -> u8 {
     })
 }
 
+/// The words of a command that are not flags or flag values, after the command name.
+fn plain_words(args: &[String], with_value: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 1;
+    while i < args.len() {
+        let a = &args[i];
+        if with_value.contains(&a.as_str()) {
+            i += 2;
+            continue;
+        }
+        if !a.starts_with("--") {
+            out.push(a.clone());
+        }
+        i += 1;
+    }
+    out
+}
+
+const CODE_USAGE: &str = "usage: kaku code DIR TASK... [--json] [--timeout SECONDS]\n       kaku code show ID | apply ID --digest DIGEST | undo ID | list";
+
+fn code_id_ok(id: &str) -> bool {
+    id.strip_prefix("code-")
+        .is_some_and(|n| !n.is_empty() && n.len() <= 18 && n.chars().all(|c| c.is_ascii_digit()))
+}
+
+fn print_code(v: &Value) {
+    let id = clean(v["id"].as_str().unwrap_or(""));
+    println!("{id}  {}", clean(v["state"].as_str().unwrap_or("")));
+    if let Some(e) = v["error"].as_str() {
+        println!("  {}", clean(e));
+    }
+    if let Some(e) = v["ended"].as_str() {
+        println!("  {}", clean(e));
+    }
+    if let Some(sm) = v["summary"].as_str().filter(|s| !s.is_empty()) {
+        println!("  the model says: {}", clean(sm));
+    }
+    if let Some(n) = v["withheld_files"].as_u64().filter(|n| *n > 0) {
+        println!(
+            "  {n} {} withheld from the model",
+            crate::script::plural(n, "file was", "files were")
+        );
+    }
+    match &v["tests"] {
+        Value::Null => println!(
+            "  tests: none were found that can run here, so nothing was checked by running it"
+        ),
+        t => println!(
+            "  tests ({}): {}",
+            clean(v["test_command"].as_str().unwrap_or("")),
+            if t["passed"] == true {
+                "pass on the changed files, run by the kernel"
+            } else {
+                "do NOT pass on the changed files"
+            }
+        ),
+    }
+    for c in v["concerns"].as_array().into_iter().flatten() {
+        println!("  ! {}", clean(c.as_str().unwrap_or("")));
+    }
+    for c in v["changes"].as_array().into_iter().flatten() {
+        println!(
+            "\n{} {}  (+{} -{})",
+            clean(c["kind"].as_str().unwrap_or("")),
+            clean(c["path"].as_str().unwrap_or("")),
+            c["added"],
+            c["removed"]
+        );
+        for line in c["diff"].as_str().unwrap_or("").lines() {
+            println!("  {}", clean(line));
+        }
+    }
+    if v["changes"].as_array().is_some_and(|a| a.is_empty()) && v["state"] == "ready" {
+        println!("  the task changed no file");
+    }
+}
+
+fn plural(n: u64, one: &str, many: &str) -> String {
+    if n == 1 {
+        one.to_string()
+    } else {
+        many.to_string()
+    }
+}
+
+fn confirm(question: &str) -> bool {
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        return false;
+    }
+    print!("{question} [y/N] ");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line).is_ok() && matches!(line.trim(), "y" | "Y" | "yes")
+}
+
+/// `kaku code`: a model changes the project in memory, the tests run in the sandbox, and the patch is shown. Nothing on disk
+/// changes until a person applies it with the digest that was shown; in a terminal that is one question after the patch.
+pub fn code(args: &[String]) -> u8 {
+    let json_mode = args.iter().any(|a| a == "--json");
+    let words = plain_words(
+        args,
+        &[
+            "--data-dir",
+            "--timeout",
+            "--digest",
+            "--model",
+            "--ollama",
+            "--root",
+            "--scripted",
+            "--ui-dir",
+            "--context",
+            "--transport",
+            "--vm",
+            "--worker-bin",
+            "--launcher",
+        ],
+    );
+    let Some(first) = words.first().cloned() else {
+        return fail(json_mode, USAGE, CODE_USAGE);
+    };
+    let timeout = crate::flag(args, "--timeout")
+        .and_then(|t| t.parse::<u64>().ok())
+        .unwrap_or(3600)
+        .clamp(10, 86_400);
+    crate::tui::with_service(&serve_args(args), |data| {
+        let http = match connect(data, json_mode) {
+            Ok(h) => h,
+            Err(c) => return c,
+        };
+        let get = |id: &str| call(&http, Method::Get, &format!("/api/code/{id}"), None);
+        let answer = |r: Result<(u16, Value), String>, ok: u16| -> Result<Value, u8> {
+            match r {
+                Ok((s, v)) if s == ok => Ok(v),
+                Ok((s, v)) => {
+                    let (m, c) = refusal(s, &v);
+                    Err(fail(json_mode, c, &m))
+                }
+                Err(e) => Err(fail(json_mode, UNAVAILABLE, &e)),
+            }
+        };
+        match first.as_str() {
+            "list" => match answer(call(&http, Method::Get, "/api/code", None), 200) {
+                Ok(v) => {
+                    for t in v["tasks"].as_array().into_iter().flatten() {
+                        say(json_mode, t, || {
+                            format!(
+                                "{}  {}  {}",
+                                clean(t["id"].as_str().unwrap_or("")),
+                                clean(t["state"].as_str().unwrap_or("")),
+                                clean(t["task"].as_str().unwrap_or(""))
+                            )
+                        });
+                    }
+                    OK
+                }
+                Err(c) => c,
+            },
+            "show" | "apply" | "undo" => {
+                let Some(id) = words.get(1).filter(|i| code_id_ok(i)) else {
+                    return fail(json_mode, USAGE, "a coding task is named like code-3");
+                };
+                if first == "show" {
+                    return match answer(get(id), 200) {
+                        Ok(v) => {
+                            if json_mode {
+                                println!("{v}")
+                            } else {
+                                print_code(&v)
+                            }
+                            OK
+                        }
+                        Err(c) => c,
+                    };
+                }
+                if first == "undo" {
+                    return match answer(
+                        call(
+                            &http,
+                            Method::Post,
+                            &format!("/api/code/{id}/undo"),
+                            Some(json!({})),
+                        ),
+                        200,
+                    ) {
+                        Ok(v) => {
+                            say(json_mode, &v, || {
+                                format!("{id}: every file is back as it was before the patch")
+                            });
+                            OK
+                        }
+                        Err(c) => c,
+                    };
+                }
+                let Some(digest) = crate::flag(args, "--digest") else {
+                    return fail(
+                        json_mode,
+                        USAGE,
+                        "apply needs --digest, the digest printed under the patch you read",
+                    );
+                };
+                match answer(
+                    call(
+                        &http,
+                        Method::Post,
+                        &format!("/api/code/{id}/apply"),
+                        Some(json!({"digest": digest})),
+                    ),
+                    200,
+                ) {
+                    Ok(v) => {
+                        say(json_mode, &v, || {
+                            format!(
+                                "{id}: applied to {} {}. Undo with: kaku code undo {id}",
+                                v["files"],
+                                plural(v["files"].as_u64().unwrap_or(0), "file", "files")
+                            )
+                        });
+                        OK
+                    }
+                    Err(c) => c,
+                }
+            }
+            _ => {
+                let Ok(repo) = std::path::Path::new(&first).canonicalize() else {
+                    return fail(
+                        json_mode,
+                        USAGE,
+                        &format!("that folder does not exist\n{CODE_USAGE}"),
+                    );
+                };
+                let task = words[1..].join(" ");
+                if task.trim().is_empty() {
+                    return fail(json_mode, USAGE, CODE_USAGE);
+                }
+                let id = match answer(
+                    call(
+                        &http,
+                        Method::Post,
+                        "/api/code",
+                        Some(json!({"folder": repo.to_string_lossy(), "task": task})),
+                    ),
+                    202,
+                ) {
+                    Ok(v) => clean(v["id"].as_str().unwrap_or("")),
+                    Err(c) => return c,
+                };
+                say(json_mode, &json!({"event": "started", "task": id}), || {
+                    format!("{id} started; nothing on disk changes until you apply it")
+                });
+                let started = Instant::now();
+                let mut shown = 0usize;
+                let v = loop {
+                    let v = match answer(get(&id), 200) {
+                        Ok(v) => v,
+                        Err(c) => return c,
+                    };
+                    let progress = v["progress"].as_array().cloned().unwrap_or_default();
+                    for p in progress.iter().skip(shown) {
+                        let line = clean(p.as_str().unwrap_or(""));
+                        say(
+                            json_mode,
+                            &json!({"event": "progress", "task": id, "detail": line}),
+                            || format!("{id}  {line}"),
+                        );
+                    }
+                    shown = progress.len();
+                    if v["state"] != "running" {
+                        break v;
+                    }
+                    if started.elapsed() > Duration::from_secs(timeout) {
+                        return fail(json_mode, UNAVAILABLE, &format!("{id} did not finish within {timeout} seconds; it is still running, see it with kaku code show {id}"));
+                    }
+                    std::thread::sleep(Duration::from_millis(700));
+                };
+                if json_mode {
+                    println!("{}", json!({"event": "finished", "task": v}));
+                } else {
+                    print_code(&v);
+                }
+                if v["state"] != "ready" {
+                    return FAILED;
+                }
+                if v["can_apply"] != true {
+                    if !json_mode {
+                        println!("\nThis patch cannot be applied.");
+                    }
+                    return NOTHING;
+                }
+                let digest = clean(v["digest"].as_str().unwrap_or(""));
+                if !json_mode && confirm(&format!("\nApply these changes to {}?", repo.display())) {
+                    return match answer(
+                        call(
+                            &http,
+                            Method::Post,
+                            &format!("/api/code/{id}/apply"),
+                            Some(json!({"digest": digest})),
+                        ),
+                        200,
+                    ) {
+                        Ok(_) => {
+                            println!("Applied. Undo with: kaku code undo {id}");
+                            OK
+                        }
+                        Err(c) => c,
+                    };
+                }
+                say(
+                    json_mode,
+                    &json!({"event": "awaiting_apply", "task": id, "digest": digest, "next": format!("kaku code apply {id} --digest {digest}")}),
+                    || {
+                        format!("\nNothing was changed. To apply exactly this patch: kaku code apply {id} --digest {digest}")
+                    },
+                );
+                OK
+            }
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

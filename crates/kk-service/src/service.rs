@@ -50,6 +50,16 @@ pub trait JobRunner: Send + Sync {
     ) -> Result<kk_parse::Parsed, kk_parse::ParseError> {
         kk_parse::parse(name, bytes, &kk_parse::Limits::default())
     }
+    /// Does a coding task on the project's files: the model changes a copy in memory and the tests run in the sandbox. Nothing
+    /// on disk changes here. A runner without a model that can do this says so.
+    fn code_task(
+        &self,
+        _files: &[kk_review::import::ImportedFile],
+        _task: &str,
+        _progress: &dyn Fn(&str),
+    ) -> Result<crate::coding::CodeOutcome, String> {
+        Err("coding tasks are not available in this configuration".into())
+    }
     /// The models this runner could answer with, installed on this computer. Empty when the choice is fixed.
     fn local_models(&self) -> Vec<String> {
         Vec::new()
@@ -235,6 +245,7 @@ pub struct Service {
     research: Mutex<Research>,
     attachments: Mutex<crate::attachments::Store>,
     fix_locks: fixfiles::JobLocks,
+    coding: Mutex<crate::coding::Tasks>,
     /// Seconds added to the clock when leases are judged; only tests move it.
     lease_skew: std::sync::atomic::AtomicI64,
     /// Kept conversations whose last summary failed, with how many turns they had then. See `COMPACTION_WAIT_TURNS`.
@@ -339,6 +350,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, meta TEXT NOT NULL, snap TEXT);
              CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY, body TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS code_tasks(id TEXT PRIMARY KEY, body TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS fix_files(job TEXT NOT NULL, n INTEGER NOT NULL, file TEXT NOT NULL, orig BLOB NOT NULL, sha_after TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (job, n, file));
              CREATE TABLE IF NOT EXISTS fix_snapshots(job TEXT NOT NULL, n INTEGER NOT NULL, file TEXT NOT NULL, orig BLOB NOT NULL, sha_after TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (job, n));
              CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, title TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL, project TEXT);
@@ -763,6 +775,7 @@ impl Service {
             "kakurega",
             &[("version", env!("CARGO_PKG_VERSION").into())],
         );
+        let coding = crate::coding::Tasks::load(store.connection());
         let svc = Arc::new(Service {
             data_dir: data_dir.to_path_buf(),
             roots,
@@ -792,6 +805,7 @@ impl Service {
             research: Mutex::new(Research::default()),
             attachments: Mutex::new(crate::attachments::Store::default()),
             fix_locks: fixfiles::JobLocks::default(),
+            coding: Mutex::new(coding),
             lease_skew: std::sync::atomic::AtomicI64::new(0),
             compaction_wait: Mutex::new(std::collections::HashMap::new()),
             call_window: Mutex::new((0, 0, 0)),
@@ -919,6 +933,14 @@ impl Service {
                 "INSERT INTO approvals(id, body) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET body = excluded.body",
                 (id, &body),
             );
+        }
+    }
+
+    /// Keeps a coding task in the store; false when it could not be written.
+    fn keep_code(&self, t: &crate::coding::Task) -> bool {
+        match self.store.lock() {
+            Ok(v) => crate::coding::save(v.connection(), t),
+            Err(_) => false,
         }
     }
 
@@ -4881,6 +4903,269 @@ struct AttestBody {
     model: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodeBody {
+    folder: String,
+    task: String,
+}
+
+/// Starts a coding task. Only one runs at a time, only on a model that runs on this computer (the whole project is read by it),
+/// and only on a folder the service may read.
+async fn code_start(axum::Extension(svc): Svc, Json(b): Json<CodeBody>) -> Response {
+    let task = b.task.trim().to_string();
+    if task.is_empty() || task.chars().count() > 2000 || !chat_clean(&task) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_TASK",
+            "describe the task in 1 to 2000 characters without control characters",
+        );
+    }
+    if !kk_secrets::scan(&task).is_empty() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "SECRET_IN_TASK",
+            "the task holds what looks like a secret; leave it out",
+        );
+    }
+    let Some(repo) = svc.allowed_dir(&b.folder) else {
+        return error(
+            StatusCode::FORBIDDEN,
+            "NOT_ALLOWED",
+            "that folder is not available",
+        );
+    };
+    if svc.route_for_owner()["stays_here"] != true {
+        return error(
+            StatusCode::FORBIDDEN,
+            "NOT_LOCAL",
+            "a coding task reads the whole project, so it runs only on a model on this computer",
+        );
+    }
+    let id = {
+        let mut g = svc.coding.lock().expect("lock");
+        if g.list.values().any(|t| {
+            matches!(
+                t.state,
+                crate::coding::State::Running
+                    | crate::coding::State::Applying
+                    | crate::coding::State::Undoing
+            )
+        }) {
+            return error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "BUSY",
+                "a coding task is already running; wait for it to finish",
+            );
+        }
+        g.next += 1;
+        let id = format!("code-{}", g.next);
+        let t = crate::coding::Task {
+            id: id.clone(),
+            repo: repo.clone(),
+            task: task.clone(),
+            created: now(),
+            state: crate::coding::State::Running,
+            outcome: None,
+            progress: Vec::new(),
+        };
+        if !svc.keep_code(&t) {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "STORE_FAILED",
+                "the task could not be kept, so it was not started",
+            );
+        }
+        g.list.insert(id.clone(), t);
+        id
+    };
+    svc.log_event("code.started", &id, &[]);
+    let svc2 = svc.clone();
+    let id2 = id.clone();
+    std::thread::spawn(move || {
+        let imported = kk_review::import::scan_tree(&repo, kk_types::label::Level::Internal);
+        let progress = |line: &str| {
+            if let Some(t) = svc2.coding.lock().expect("lock").list.get_mut(&id2) {
+                if t.progress.len() < 200 {
+                    t.progress.push(line.chars().take(200).collect());
+                }
+            }
+        };
+        let result = svc2.runner.code_task(&imported.files, &task, &progress);
+        let mut g = svc2.coding.lock().expect("lock");
+        if let Some(t) = g.list.get_mut(&id2) {
+            match result {
+                Ok(o) => {
+                    t.state = crate::coding::State::Ready;
+                    t.outcome = Some(o);
+                }
+                Err(m) => t.state = crate::coding::State::Failed(m.chars().take(500).collect()),
+            }
+            svc2.keep_code(t);
+        }
+        drop(g);
+        svc2.log_event("code.finished", &id2, &[]);
+    });
+    (StatusCode::ACCEPTED, Json(json!({"id": id}))).into_response()
+}
+
+async fn code_list(axum::Extension(svc): Svc) -> Json<Value> {
+    let g = svc.coding.lock().expect("lock");
+    let list: Vec<Value> = g
+        .list
+        .values()
+        .rev()
+        .take(50)
+        .map(|t| {
+            let v = crate::coding::view(t);
+            json!({"id": v["id"], "task": v["task"], "state": v["state"], "created": v["created"]})
+        })
+        .collect();
+    Json(json!({"tasks": list}))
+}
+
+async fn code_get(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    let g = svc.coding.lock().expect("lock");
+    match g.list.get(&id) {
+        Some(t) => Json(crate::coding::view(t)).into_response(),
+        None => error(StatusCode::NOT_FOUND, "NO_TASK", "no such coding task"),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodeApplyBody {
+    digest: String,
+}
+
+/// Applies the patch the owner read: the digest must be the one shown, and every file must still be as the task found it. The
+/// intent is written down before any file is touched, so a stop part way is found and settled at the next start.
+async fn code_apply(
+    axum::Extension(svc): Svc,
+    UrlPath(id): UrlPath<String>,
+    Json(b): Json<CodeApplyBody>,
+) -> Response {
+    use crate::coding::State;
+    let mut g = svc.coding.lock().expect("lock");
+    let Some(t) = g.list.get_mut(&id) else {
+        return error(StatusCode::NOT_FOUND, "NO_TASK", "no such coding task");
+    };
+    let v = crate::coding::view(t);
+    if t.state != State::Ready {
+        return error(
+            StatusCode::CONFLICT,
+            "NOT_READY",
+            "only a finished task that was not applied yet can be applied",
+        );
+    }
+    if v["can_apply"] != true {
+        return error(StatusCode::CONFLICT, "CANNOT_APPLY", "this patch cannot be applied (it changes nothing, or it adds what looks like a secret)");
+    }
+    if v["digest"] != json!(b.digest) {
+        return error(
+            StatusCode::CONFLICT,
+            "DIGEST_MISMATCH",
+            "the digest is not the one of this patch; read the patch again",
+        );
+    }
+    if svc.allowed_dir(&t.repo.to_string_lossy()).is_none() {
+        return error(
+            StatusCode::FORBIDDEN,
+            "NOT_ALLOWED",
+            "the project folder is no longer available",
+        );
+    }
+    let changes = t
+        .outcome
+        .as_ref()
+        .map(|o| o.changes.clone())
+        .unwrap_or_default();
+    t.state = State::Applying;
+    if !svc.keep_code(t) {
+        t.state = State::Ready;
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "JOURNAL_FAILED",
+            "could not write down the change before making it, so nothing was changed",
+        );
+    }
+    let result = crate::coding::apply(&t.repo, &changes);
+    t.state = match &result {
+        Ok(()) => State::Applied,
+        Err(State::Failed(_)) => State::Ready,
+        Err(other) => other.clone(),
+    };
+    svc.keep_code(t);
+    drop(g);
+    match result {
+        Ok(()) => {
+            svc.log_event("code.applied", &id, &[("files", changes.len().into())]);
+            Json(json!({"applied": true, "files": changes.len()})).into_response()
+        }
+        Err(State::Failed(m)) => error(StatusCode::CONFLICT, "NOT_APPLIED", &m),
+        Err(other) => {
+            let files = match &other {
+                State::Attention(f) => f.join(", "),
+                _ => String::new(),
+            };
+            error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "NEEDS_ATTENTION",
+                &format!("a write did not complete; look at these files: {files}"),
+            )
+        }
+    }
+}
+
+async fn code_undo(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    use crate::coding::State;
+    let mut g = svc.coding.lock().expect("lock");
+    let Some(t) = g.list.get_mut(&id) else {
+        return error(StatusCode::NOT_FOUND, "NO_TASK", "no such coding task");
+    };
+    if t.state != State::Applied {
+        return error(
+            StatusCode::CONFLICT,
+            "NOT_APPLIED",
+            "only an applied patch can be undone",
+        );
+    }
+    let changes = t
+        .outcome
+        .as_ref()
+        .map(|o| o.changes.clone())
+        .unwrap_or_default();
+    t.state = State::Undoing;
+    if !svc.keep_code(t) {
+        t.state = State::Applied;
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "JOURNAL_FAILED",
+            "could not write down the change before making it, so nothing was changed",
+        );
+    }
+    let result = crate::coding::undo(&t.repo, &changes);
+    t.state = match &result {
+        Ok(()) => State::Ready,
+        Err(State::Failed(_)) => State::Applied,
+        Err(other) => other.clone(),
+    };
+    svc.keep_code(t);
+    drop(g);
+    match result {
+        Ok(()) => {
+            svc.log_event("code.undone", &id, &[]);
+            Json(json!({"undone": true})).into_response()
+        }
+        Err(State::Failed(m)) => error(StatusCode::CONFLICT, "NOT_UNDONE", &m),
+        Err(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "NEEDS_ATTENTION",
+            "a file could not be put back; look at the project",
+        ),
+    }
+}
+
 /// The local model in use and the others installed on this computer. Only a model that runs on this computer is ever offered:
 /// when the route is not local, nothing can be chosen here.
 async fn models_list(axum::Extension(svc): Svc) -> Response {
@@ -8521,6 +8806,10 @@ impl Extension for Routes {
                 "/api/sessions/{id}/suggested-notes/{sid}/dismiss",
                 post(suggestion_dismiss),
             )
+            .route("/api/code", get(code_list).post(code_start))
+            .route("/api/code/{id}", get(code_get))
+            .route("/api/code/{id}/apply", post(code_apply))
+            .route("/api/code/{id}/undo", post(code_undo))
             .route("/api/models", get(models_list))
             .route("/api/model", post(model_choose))
             .route("/api/route/attest", post(route_attest))

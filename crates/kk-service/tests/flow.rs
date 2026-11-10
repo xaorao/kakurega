@@ -15535,3 +15535,494 @@ fn sv171_suggested_notes_in_the_assistants_voice_or_with_a_date_relative_to_toda
         "{texts}"
     );
 }
+
+/// A runner whose coding task makes fixed edits through the real workspace, as a model would.
+struct CodeRunner {
+    inner: CannedRunner,
+    edits: Vec<(String, String, String)>,
+    create: Vec<(String, String)>,
+    delete: Vec<String>,
+    endpoint: String,
+}
+
+impl JobRunner for CodeRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        self.inner.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        json!({"id": "ollama:x", "class": "device_only", "model": "x", "simulated": false, "endpoint": self.endpoint})
+    }
+    fn code_task(
+        &self,
+        files: &[kk_review::import::ImportedFile],
+        _task: &str,
+        progress: &dyn Fn(&str),
+    ) -> Result<kk_service::coding::CodeOutcome, String> {
+        let (mut ws, left) = kk_review::code::Workspace::from_imported(files);
+        progress("working");
+        for (p, o, n) in &self.edits {
+            ws.call(
+                "edit_file",
+                &json!({"path": p, "old_text": o, "new_text": n}),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        for (p, c) in &self.create {
+            ws.call("create_file", &json!({"path": p, "content": c}))
+                .map_err(|e| e.to_string())?;
+        }
+        for p in &self.delete {
+            ws.call("delete_file", &json!({"path": p}))
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(kk_service::coding::CodeOutcome {
+            ending: "Finished".into(),
+            summary: "done".into(),
+            turns: 3,
+            steps: vec![],
+            step_args: vec![],
+            test_runs: 0,
+            kernel_test: None,
+            test_command: None,
+            changes: ws.changes(),
+            left_restricted: left.restricted,
+            route: "ollama:x".into(),
+        })
+    }
+}
+
+fn code_service(tag: &str, runner: CodeRunner) -> (kk_companion::Companion, Web, PathBuf) {
+    let (root, _repo) = repo_copy(tag);
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(runner),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let proj = root.join("proj");
+    std::fs::create_dir_all(proj.join("src")).unwrap();
+    std::fs::write(
+        proj.join("src/app.py"),
+        "def add(a, b):\n    return a - b\n",
+    )
+    .unwrap();
+    std::fs::write(proj.join("README.md"), "# proj\n").unwrap();
+    std::fs::write(
+        proj.join(".env"),
+        format!("API_TOKEN={}{}\n", "sk_li", "ve_abcdefghijklmnop0123"),
+    )
+    .unwrap();
+    (c, w, proj)
+}
+
+fn wait_code(w: &Web, id: &str) -> Value {
+    for _ in 0..200 {
+        let (_, v) = w.get(&format!("/api/code/{id}"));
+        if v["state"] != "running" {
+            return v;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    panic!("the task did not finish");
+}
+
+fn standard_runner() -> CodeRunner {
+    CodeRunner {
+        inner: CannedRunner { confirm: true },
+        edits: vec![("src/app.py".into(), "a - b".into(), "a + b".into())],
+        create: vec![(
+            "tests/test_app.py".into(),
+            "from src.app import add\n\ndef test_add():\n    assert add(1, 2) == 3\n".into(),
+        )],
+        delete: vec!["README.md".into()],
+        endpoint: "http://127.0.0.1:11434".into(),
+    }
+}
+
+#[test]
+fn sv172_a_coding_task_shows_its_patch_and_applies_only_with_the_digest_that_was_shown_then_undoes()
+{
+    let (c, w, proj) = code_service("code-ok", standard_runner());
+    assert_eq!(
+        Web::new(c.addr)
+            .post(
+                "/api/code",
+                json!({"folder": proj.to_string_lossy(), "task": "fix add"})
+            )
+            .0,
+        401
+    );
+    let (st, r) = w.post(
+        "/api/code",
+        json!({"folder": proj.to_string_lossy(), "task": "Fix add and add a test"}),
+    );
+    assert_eq!(st, 202, "{r}");
+    let id = r["id"].as_str().unwrap().to_string();
+    let v = wait_code(&w, &id);
+    assert_eq!(v["state"], "ready", "{v}");
+    assert_eq!(
+        v["withheld_files"], 1,
+        "the .env file was not given to the task"
+    );
+    let kinds: Vec<String> = v["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            format!(
+                "{} {}",
+                c["kind"].as_str().unwrap(),
+                c["path"].as_str().unwrap()
+            )
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "deleted README.md",
+            "modified src/app.py",
+            "added tests/test_app.py"
+        ]
+    );
+    assert_eq!(v["can_apply"], true);
+    // nothing on disk changed yet
+    assert!(std::fs::read_to_string(proj.join("src/app.py"))
+        .unwrap()
+        .contains("a - b"));
+    let digest = v["digest"].as_str().unwrap().to_string();
+    assert_eq!(
+        w.post(
+            &format!("/api/code/{id}/apply"),
+            json!({"digest": "0".repeat(64)})
+        )
+        .0,
+        409,
+        "another digest is refused"
+    );
+    let (st, a) = w.post(&format!("/api/code/{id}/apply"), json!({"digest": digest}));
+    assert_eq!(st, 200, "{a}");
+    assert!(std::fs::read_to_string(proj.join("src/app.py"))
+        .unwrap()
+        .contains("a + b"));
+    assert!(proj.join("tests/test_app.py").exists() && !proj.join("README.md").exists());
+    assert_eq!(
+        w.post(&format!("/api/code/{id}/apply"), json!({"digest": digest}))
+            .0,
+        409,
+        "applied once only"
+    );
+    let (st, u) = w.post(&format!("/api/code/{id}/undo"), json!({}));
+    assert_eq!(st, 200, "{u}");
+    assert!(std::fs::read_to_string(proj.join("src/app.py"))
+        .unwrap()
+        .contains("a - b"));
+    assert!(!proj.join("tests/test_app.py").exists() && proj.join("README.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(proj.join("README.md")).unwrap(),
+        "# proj\n"
+    );
+}
+
+#[test]
+fn sv173_a_file_changed_after_the_task_read_it_stops_the_whole_apply_and_nothing_changes() {
+    let (_c, w, proj) = code_service("code-changed", standard_runner());
+    let (_, r) = w.post(
+        "/api/code",
+        json!({"folder": proj.to_string_lossy(), "task": "Fix add"}),
+    );
+    let id = r["id"].as_str().unwrap().to_string();
+    let v = wait_code(&w, &id);
+    std::fs::write(
+        proj.join("src/app.py"),
+        "def add(a, b):\n    return b - a  # edited by the owner\n",
+    )
+    .unwrap();
+    let (st, a) = w.post(
+        &format!("/api/code/{id}/apply"),
+        json!({"digest": v["digest"]}),
+    );
+    assert_eq!(st, 409, "{a}");
+    assert!(
+        a.to_string().contains("changed since the task read it"),
+        "{a}"
+    );
+    assert!(
+        proj.join("README.md").exists() && !proj.join("tests/test_app.py").exists(),
+        "nothing at all was written"
+    );
+    assert!(std::fs::read_to_string(proj.join("src/app.py"))
+        .unwrap()
+        .contains("edited by the owner"));
+}
+
+#[test]
+fn sv174_a_new_file_where_one_now_exists_and_a_link_out_of_the_project_are_refused() {
+    let (_c, w, proj) = code_service("code-exists", standard_runner());
+    let (_, r) = w.post(
+        "/api/code",
+        json!({"folder": proj.to_string_lossy(), "task": "Add a test"}),
+    );
+    let id = r["id"].as_str().unwrap().to_string();
+    let v = wait_code(&w, &id);
+    std::fs::create_dir_all(proj.join("tests")).unwrap();
+    std::fs::write(proj.join("tests/test_app.py"), "mine\n").unwrap();
+    let (st, a) = w.post(
+        &format!("/api/code/{id}/apply"),
+        json!({"digest": v["digest"]}),
+    );
+    assert_eq!(st, 409, "{a}");
+    assert_eq!(
+        std::fs::read_to_string(proj.join("tests/test_app.py")).unwrap(),
+        "mine\n",
+        "the owner's file was not overwritten"
+    );
+    assert!(std::fs::read_to_string(proj.join("src/app.py"))
+        .unwrap()
+        .contains("a - b"));
+    // the folder of a new file replaced by a link that leads out of the project
+    let outside = proj.parent().unwrap().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::remove_dir_all(proj.join("tests")).unwrap();
+    std::os::unix::fs::symlink(&outside, proj.join("tests")).unwrap();
+    let (st, a) = w.post(
+        &format!("/api/code/{id}/apply"),
+        json!({"digest": v["digest"]}),
+    );
+    assert_eq!(st, 409, "{a}");
+    assert!(
+        !outside.join("test_app.py").exists(),
+        "nothing was written outside the project"
+    );
+}
+
+#[test]
+fn sv175_a_patch_adding_a_secret_is_never_applied_and_a_remote_route_or_odd_task_is_refused() {
+    let mut runner = standard_runner();
+    runner.edits = vec![(
+        "src/app.py".into(),
+        "return a - b".into(),
+        format!(
+            "KEY = '{}{}'\n    return a + b",
+            "sk_li", "ve_4eC39HqLyjWDarjtT1zdp7dQ"
+        ),
+    )];
+    runner.create.clear();
+    runner.delete.clear();
+    let (_c, w, proj) = code_service("code-secret", runner);
+    let (_, r) = w.post(
+        "/api/code",
+        json!({"folder": proj.to_string_lossy(), "task": "Fix add"}),
+    );
+    let v = wait_code(&w, r["id"].as_str().unwrap());
+    assert_eq!(v["can_apply"], false, "{v}");
+    assert!(v["concerns"].to_string().contains("secret"), "{v}");
+    assert_eq!(
+        w.post(
+            &format!("/api/code/{}/apply", v["id"].as_str().unwrap()),
+            json!({"digest": v["digest"]})
+        )
+        .0,
+        409
+    );
+    assert!(std::fs::read_to_string(proj.join("src/app.py"))
+        .unwrap()
+        .contains("a - b"));
+    for bad in [
+        json!({"folder": proj.to_string_lossy(), "task": ""}),
+        json!({"folder": proj.to_string_lossy(), "task": format!("use {}{}", "sk_li", "ve_abcdefghijklmnop0123")}),
+        json!({"folder": "/etc", "task": "x"}),
+        json!({"folder": proj.to_string_lossy(), "task": "x", "extra": 1}),
+    ] {
+        let st = w.post("/api/code", bad.clone()).0;
+        assert!(st == 400 || st == 403 || st == 422, "{bad} -> {st}");
+    }
+    let mut remote = standard_runner();
+    remote.endpoint = "https://cloud-api.near.ai".into();
+    let (_c2, w2, proj2) = code_service("code-remote", remote);
+    assert_eq!(
+        w2.post(
+            "/api/code",
+            json!({"folder": proj2.to_string_lossy(), "task": "Fix add"})
+        )
+        .0,
+        403
+    );
+}
+
+#[test]
+fn sv176_undo_refuses_when_the_owner_edited_a_file_after_the_patch_and_touches_nothing() {
+    let (_c, w, proj) = code_service("code-undo-edit", standard_runner());
+    let (_, r) = w.post(
+        "/api/code",
+        json!({"folder": proj.to_string_lossy(), "task": "Fix add"}),
+    );
+    let id = r["id"].as_str().unwrap().to_string();
+    let v = wait_code(&w, &id);
+    assert_eq!(
+        w.post(
+            &format!("/api/code/{id}/apply"),
+            json!({"digest": v["digest"]})
+        )
+        .0,
+        200
+    );
+    std::fs::write(
+        proj.join("src/app.py"),
+        "def add(a, b):\n    return a + b  # owner kept working\n",
+    )
+    .unwrap();
+    let (st, u) = w.post(&format!("/api/code/{id}/undo"), json!({}));
+    assert_eq!(st, 409, "{u}");
+    assert!(u.to_string().contains("src/app.py"), "{u}");
+    assert!(std::fs::read_to_string(proj.join("src/app.py"))
+        .unwrap()
+        .contains("owner kept working"));
+    assert!(
+        proj.join("tests/test_app.py").exists() && !proj.join("README.md").exists(),
+        "no other file was put back"
+    );
+}
+
+fn reopen_code(root: &Path) -> (kk_companion::Companion, Web) {
+    let data = root.join("data");
+    let started = std::time::Instant::now();
+    let svc = loop {
+        match Service::new(
+            &data,
+            vec![root.to_path_buf()],
+            Arc::new(standard_runner()),
+            true,
+        ) {
+            Ok(s) => break s,
+            Err(e) if started.elapsed() > Duration::from_secs(5) => panic!("{e}"),
+            Err(_) => std::thread::sleep(Duration::from_millis(100)),
+        }
+    };
+    let c = start(Options {
+        extension: Arc::new(Routes(svc)),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    (c, w)
+}
+
+fn set_code_state(root: &Path, id: &str, state: Value) {
+    let store = kk_service::keys::open_vault(&root.join("data"), "jobs.db").unwrap();
+    let body: String = store
+        .connection()
+        .query_row("SELECT body FROM code_tasks WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    let mut v: Value = serde_json::from_str(&body).unwrap();
+    v["state"] = state;
+    store
+        .connection()
+        .execute(
+            "UPDATE code_tasks SET body = ?2 WHERE id = ?1",
+            (id, v.to_string()),
+        )
+        .unwrap();
+}
+
+#[test]
+fn sv177_coding_tasks_survive_a_restart_and_a_stop_part_way_through_applying_is_settled_from_the_files(
+) {
+    let (c, w, proj) = code_service("code-restart", standard_runner());
+    let root = proj.parent().unwrap().to_path_buf();
+    let (_, r) = w.post(
+        "/api/code",
+        json!({"folder": proj.to_string_lossy(), "task": "Fix add"}),
+    );
+    let id = r["id"].as_str().unwrap().to_string();
+    let v = wait_code(&w, &id);
+    assert_eq!(
+        w.post(
+            &format!("/api/code/{id}/apply"),
+            json!({"digest": v["digest"]})
+        )
+        .0,
+        200
+    );
+    drop(w);
+    drop(c);
+
+    // a plain restart keeps the applied task, and undo still works from it
+    let (c, w) = reopen_code(&root);
+    let (_, v2) = w.get(&format!("/api/code/{id}"));
+    assert_eq!(v2["state"], "applied", "{v2}");
+    assert_eq!(v2["digest"], v["digest"]);
+    drop(w);
+    drop(c);
+
+    // stopped while applying, with every file already written: settled as applied
+    set_code_state(&root, &id, json!("Applying"));
+    let (c, w) = reopen_code(&root);
+    assert_eq!(w.get(&format!("/api/code/{id}")).1["state"], "applied");
+    drop(w);
+    drop(c);
+
+    // stopped while applying with only part written: named for a person, and neither apply nor undo runs
+    std::fs::write(
+        proj.join("src/app.py"),
+        "def add(a, b):\n    return a - b\n",
+    )
+    .unwrap();
+    set_code_state(&root, &id, json!("Applying"));
+    let (c, w) = reopen_code(&root);
+    let (_, v3) = w.get(&format!("/api/code/{id}"));
+    assert_eq!(v3["state"], "attention", "{v3}");
+    assert_eq!(w.post(&format!("/api/code/{id}/undo"), json!({})).0, 409);
+    assert_eq!(
+        w.post(
+            &format!("/api/code/{id}/apply"),
+            json!({"digest": v["digest"]})
+        )
+        .0,
+        409
+    );
+    drop(w);
+    drop(c);
+
+    // stopped while applying with nothing written yet: ready again, and the patch can be applied
+    std::fs::write(proj.join("README.md"), "# proj\n").unwrap();
+    std::fs::remove_file(proj.join("tests/test_app.py")).unwrap();
+    set_code_state(&root, &id, json!("Applying"));
+    let (c, w) = reopen_code(&root);
+    assert_eq!(w.get(&format!("/api/code/{id}")).1["state"], "ready");
+    assert_eq!(
+        w.post(
+            &format!("/api/code/{id}/apply"),
+            json!({"digest": v["digest"]})
+        )
+        .0,
+        200
+    );
+    drop(w);
+    drop(c);
+
+    // a task that was running when the service stopped is failed, never left running
+    set_code_state(&root, &id, json!("Running"));
+    let (_c, w) = reopen_code(&root);
+    let (_, v4) = w.get(&format!("/api/code/{id}"));
+    assert_eq!(v4["state"], "failed", "{v4}");
+    assert!(v4["error"].as_str().unwrap().contains("stopped"));
+}

@@ -25,6 +25,7 @@ impl RouteClass {
 pub use kk_types::chat::{ChatMessage, ToolCall, ToolSpec};
 
 pub mod retry;
+pub mod text_calls;
 pub mod tokens;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

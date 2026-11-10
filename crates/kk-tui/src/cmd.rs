@@ -73,6 +73,13 @@ pub enum Command {
     Copy(bool),
     Export(String),
     Usage(u32),
+    /// `/code FOLDER : TASK`: a local model changes a copy of the folder and its tests run in the sandbox; nothing on disk changes.
+    Code {
+        folder: String,
+        task: String,
+    },
+    /// `/code show|apply|undo [ID]`: read the last (or named) coding task's patch, apply it after a yes, or put it back.
+    CodeAct(&'static str, Option<String>),
     /// `/model`: the models installed on this computer; `/model NAME`: answer with that one from now on.
     Model(Option<String>),
     /// Branch the open kept conversation, keeping its first N messages (all when none is given).
@@ -144,6 +151,7 @@ pub const NAMES: &[&str] = &[
     "deliver",
     "memory",
     "ask",
+    "code",
     "aside",
     "remember",
     "correct",
@@ -208,6 +216,7 @@ pub fn describe(name: &str) -> &'static str {
         "deliver" => "sign and deliver an approved release",
         "memory" => "list or search saved notes",
         "ask" => "ask about documents; every quote is checked",
+        "code" => "have a local model change a project; you read the patch before anything changes",
         "aside" => "ask something that stays out of the conversation and is not saved",
         "remember" => "save a note",
         "correct" => "change a saved note",
@@ -309,6 +318,7 @@ pub fn usage(name: &str) -> &'static str {
         "unpin" => "/unpin ID",
         "stilltrue" => "/stilltrue ID",
         "ask" => "/ask FOLDER : QUESTION",
+        "code" => "/code FOLDER : TASK | /code show|apply|undo [ID]",
         "aside" => "/aside QUESTION",
         "correct" => "/correct ID NEW TEXT",
         "forget" => "/forget ID",
@@ -373,6 +383,40 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "keep" => Ok(Command::Keep),
         "stash" => Ok(Command::Stash(true)),
         "quiet" => Ok(Command::Quiet),
+        "code" => {
+            let mut words = rest.split_whitespace();
+            match (words.next(), words.next(), words.next()) {
+                (Some(act @ ("show" | "apply" | "undo")), id, None) => {
+                    let act: &'static str = match act {
+                        "show" => "show",
+                        "apply" => "apply",
+                        _ => "undo",
+                    };
+                    match id {
+                        None => Ok(Command::CodeAct(act, None)),
+                        Some(i)
+                            if i.strip_prefix("code-").is_some_and(|n| {
+                                !n.is_empty()
+                                    && n.len() <= 18
+                                    && n.chars().all(|c| c.is_ascii_digit())
+                            }) =>
+                        {
+                            Ok(Command::CodeAct(act, Some(i.to_string())))
+                        }
+                        Some(_) => Err("a coding task is named like code-3".into()),
+                    }
+                }
+                _ => match rest.split_once(" : ") {
+                    Some((f, t)) if !f.trim().is_empty() && !t.trim().is_empty() => {
+                        Ok(Command::Code {
+                            folder: f.trim().to_string(),
+                            task: t.trim().to_string(),
+                        })
+                    }
+                    _ => Err(format!("usage: {}", usage("code"))),
+                },
+            }
+        }
         "model" if rest.is_empty() => Ok(Command::Model(None)),
         "model" => {
             // one plain model name: the same characters the service accepts, so nothing else is ever sent
