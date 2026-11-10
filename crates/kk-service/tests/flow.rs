@@ -262,6 +262,7 @@ impl JobRunner for CannedRunner {
                 endpoint: "in-process".into(),
                 tee_verified: false,
                 simulated: true,
+                receipt: None,
             }],
             final_taint: Some(Label::new(Level::Internal).untrusted()),
             error: None,

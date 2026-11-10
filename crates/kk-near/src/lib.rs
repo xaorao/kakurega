@@ -6,6 +6,8 @@ use nearai_inference_sdk::{
 };
 use std::fmt;
 
+pub mod route;
+
 pub use nearai_inference_sdk as sdk;
 
 #[derive(Debug, Clone)]

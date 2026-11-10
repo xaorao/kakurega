@@ -7,7 +7,21 @@ description = "NEAR AI Cloud verification: attestation of model deployments thro
 
 [dependencies]
 kk-types = { path = "../kk-types" }
-nearai-inference-sdk = "=0.2.1"
+kk-route = { path = "../kk-route" }
+serde_json = "1"
+nearai-inference-sdk = "=0.3.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+
+[dev-dependencies]
+wiremock = "0.6"
+async-trait = "0.1"
+ed25519-dalek = "2"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+curve25519-dalek = "4"
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+hex = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 
 [lints]

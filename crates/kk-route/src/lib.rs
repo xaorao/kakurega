@@ -52,6 +52,10 @@ pub struct RouteEvidence {
     pub endpoint: String,
     pub tee_verified: bool,
     pub simulated: bool,
+    /// What a verified route can show about the last answer it gave: who signed it, the hardware proof behind it, the checks it
+    /// passed. `None` for a route that has nothing to show (a local model, a scripted one, or no answer yet).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -79,6 +83,8 @@ pub enum RouteError {
     OutOfCredit,
     /// 404: no such model or address at the model service.
     NotFound,
+    /// The model's hardware proof, or the proof of one answer, did not verify. The answer is not given to anyone.
+    NotVerified(String),
 }
 
 impl fmt::Display for RouteError {
@@ -112,11 +118,20 @@ impl fmt::Display for RouteError {
             RouteError::NotFound => f.write_str(
                 "the model service has no such model or address (status 404): check the model name",
             ),
+            RouteError::NotVerified(why) => write!(
+                f,
+                "the answer was held back because its proof did not verify: {why}"
+            ),
         }
     }
 }
 
 impl std::error::Error for RouteError {}
+
+/// The text of a message as it is sent to any model: the tokens a chat template reserves for its own structure are replaced.
+pub fn neutralised(content: &str) -> std::borrow::Cow<'_, str> {
+    outgoing(content)
+}
 
 /// What of a message is sent to a model. The tokens a chat template reserves for its own structure are replaced, because a
 /// document, web page or note must never be able to write a system turn into the conversation.
@@ -454,6 +469,7 @@ impl Route for OllamaRoute {
             endpoint: self.base.clone(),
             tee_verified: false,
             simulated: false,
+            receipt: None,
         }
     }
 
@@ -817,6 +833,7 @@ impl Route for ScriptedRoute {
             endpoint: "in-process".into(),
             tee_verified: self.tee_verified,
             simulated: true,
+            receipt: None,
         }
     }
 
