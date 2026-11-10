@@ -9533,7 +9533,7 @@ mod away_tests {
     #[test]
     fn aw01_only_reviews_that_stopped_after_the_mark_are_listed_newest_first_and_running_ones_are_not(
     ) {
-        let jobs = vec![
+        let jobs = [
             job(1, JobState::Ready, 100),
             job(2, JobState::Failed("boom".into()), 200),
             job(3, JobState::Running, 300),
