@@ -492,7 +492,8 @@ impl Broker {
                 return fail(ErrorCode::BudgetExceeded, "model token budget used up");
             }
         }
-        let completion = route
+        let offered: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
+        let mut completion = route
             .complete(&CompletionRequest {
                 messages,
                 tools,
@@ -503,6 +504,17 @@ impl Broker {
                 code: ErrorCode::ToolError,
                 detail: format!("model route failed: {e}"),
             })?;
+        // some local models write a tool call as plain text; only calls to tools offered in this request are taken from it, and
+        // each one still goes through the policy when the worker makes it
+        if completion.message.tool_calls.is_empty() {
+            let names: Vec<&str> = offered.iter().map(String::as_str).collect();
+            let recovered =
+                kk_route::text_calls::calls_in_text(&completion.message.content, &names);
+            if !recovered.is_empty() {
+                completion.message.tool_calls = recovered;
+                completion.message.content.clear();
+            }
+        }
         // a verified route leaves a receipt for each answer; a local one has none and is never asked for it
         if route.class() == kk_route::RouteClass::VerifiedTee && self.receipts.len() < 64 {
             if let Some(r) = route.evidence().receipt {

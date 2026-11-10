@@ -22,6 +22,8 @@ importers:
 
   apps/extension: {}
 
+  apps/verifier-page: {}
+
   apps/web:
     dependencies:
       '@kakurega/verifier':
