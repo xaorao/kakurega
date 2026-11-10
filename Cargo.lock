@@ -2801,6 +2801,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kk-packs"
+version = "0.0.1"
+dependencies = [
+ "kk-evidence",
+ "kk-methods",
+ "serde_json",
+]
+
+[[package]]
 name = "kk-parse"
 version = "0.0.1"
 dependencies = [
