@@ -4,12 +4,19 @@ use super::*;
 use kk_methods::{Approval, Approved, Draft, Limits, Method, Refusal};
 
 pub(super) const MAX_METHODS: i64 = 100;
+const MAX_PROPOSALS: i64 = 20;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ApproveBody {
     name: String,
     hash: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct IdBody {
+    id: i64,
 }
 
 #[derive(Deserialize)]
@@ -29,6 +36,35 @@ fn method_from_row(body: &str, hash: &str) -> Option<Method> {
 }
 
 impl Service {
+    /// Keeps a method a review suggested, as a proposal the owner can read. It must read as a valid method and hold no secret, or it
+    /// is dropped; at most twenty wait at once. It is never a method until the owner keeps it, and never approved until they approve it.
+    pub(super) fn method_propose(&self, job: &str, suggestion: &Value) {
+        let Ok(draft) = Draft::from_json(suggestion) else {
+            return;
+        };
+        let Ok(m) = Method::new(draft) else { return };
+        let text = format!("{}\n{}", m.description, m.body);
+        if !kk_secrets::scan(&text).is_empty() || kk_secrets::looks_secret(&text).is_some() {
+            return;
+        }
+        let mut body = kk_methods::to_json(&m);
+        if let Some(o) = body.as_object_mut() {
+            o.remove("hash");
+        }
+        let store = self.store.lock().expect("lock");
+        let c = store.connection();
+        let waiting: i64 = c
+            .query_row("SELECT count(*) FROM method_proposals", [], |r| r.get(0))
+            .unwrap_or(0);
+        if waiting >= MAX_PROPOSALS {
+            return;
+        }
+        let _ = c.execute(
+            "INSERT INTO method_proposals(job, body, created) VALUES (?1, ?2, ?3)",
+            kk_vault::rusqlite::params![job, body.to_string(), now()],
+        );
+    }
+
     /// Every saved method with the hash the owner approved for it, if any. A row that no longer reads as a valid method is
     /// left out; it cannot be used.
     pub(super) fn methods_all(&self) -> Vec<(Method, Option<String>, Option<i64>)> {
@@ -227,4 +263,89 @@ pub(super) async fn methods_remove(axum::Extension(svc): Svc, Json(b): Json<Name
     };
     svc.log_event("method.removed", &b.name, &[]);
     Json(json!({"name": b.name, "removed": n > 0})).into_response()
+}
+
+fn proposal_rows(svc: &Service) -> Vec<(i64, String, Method)> {
+    let store = svc.store.lock().expect("lock");
+    let c = store.connection();
+    let Ok(mut st) = c.prepare("SELECT id, job, body FROM method_proposals ORDER BY id") else {
+        return vec![];
+    };
+    let rows: Vec<(i64, String, String)> = st
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .map(|it| it.flatten().collect())
+        .unwrap_or_default();
+    rows.into_iter()
+        .filter_map(|(id, job, body)| {
+            let v: Value = serde_json::from_str(&body).ok()?;
+            Some((id, job, Method::new(Draft::from_json(&v).ok()?).ok()?))
+        })
+        .collect()
+}
+
+pub(super) async fn proposals_get(axum::Extension(svc): Svc) -> Response {
+    let list: Vec<Value> = proposal_rows(&svc)
+        .into_iter()
+        .map(|(id, job, m)| {
+            let mut v = kk_methods::to_json(&m);
+            v["id"] = json!(id);
+            v["job"] = json!(job);
+            v
+        })
+        .collect();
+    Json(json!({"proposals": list})).into_response()
+}
+
+/// Turns a proposal into a saved method that still waits for the owner's approval. A name already in use is not replaced.
+pub(super) async fn proposals_keep(axum::Extension(svc): Svc, Json(b): Json<IdBody>) -> Response {
+    let Some((id, _, m)) = proposal_rows(&svc)
+        .into_iter()
+        .find(|(id, _, _)| *id == b.id)
+    else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "PROPOSAL_NOT_FOUND",
+            "there is no suggestion with that number",
+        );
+    };
+    if svc.methods_all().iter().any(|(x, _, _)| x.name == m.name) {
+        return error(
+            StatusCode::CONFLICT,
+            "METHOD_EXISTS",
+            "a method with that name already exists; dismiss this suggestion or remove the old method first",
+        );
+    }
+    if let Err(e) = svc.method_save(&m) {
+        return refuse(&e);
+    }
+    {
+        let store = svc.store.lock().expect("lock");
+        let _ = store
+            .connection()
+            .execute("DELETE FROM method_proposals WHERE id = ?1", [id]);
+    }
+    svc.log_event("method.kept_from_suggestion", &m.name, &[]);
+    Json(json!({"name": m.name, "hash": m.hash, "approved": false})).into_response()
+}
+
+pub(super) async fn proposals_dismiss(
+    axum::Extension(svc): Svc,
+    Json(b): Json<IdBody>,
+) -> Response {
+    let n = {
+        let store = svc.store.lock().expect("lock");
+        store
+            .connection()
+            .execute("DELETE FROM method_proposals WHERE id = ?1", [b.id])
+            .unwrap_or(0)
+    };
+    if n == 0 {
+        return error(
+            StatusCode::NOT_FOUND,
+            "PROPOSAL_NOT_FOUND",
+            "there is no suggestion with that number",
+        );
+    }
+    svc.log_event("method.suggestion_dismissed", &b.id.to_string(), &[]);
+    Json(json!({"dismissed": true})).into_response()
 }

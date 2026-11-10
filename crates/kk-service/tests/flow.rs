@@ -193,6 +193,25 @@ impl JobRunner for CannedRunner {
         };
         JobReport {
             fixes,
+            method_suggestions: if recipient == "method-suggester" {
+                let l = kk_types::label::Label::new(kk_types::label::Level::Internal).untrusted();
+                vec![
+                    kk_review::job::MethodSuggestion {
+                        json: json!({"name": "contract-check", "description": "How to read a contract", "triggers": ["contract"], "body": "Quote clause numbers."}),
+                        label: l.clone(),
+                    },
+                    kk_review::job::MethodSuggestion {
+                        json: json!({"name": "bad name!", "description": "d", "triggers": ["contract"], "body": "x"}),
+                        label: l.clone(),
+                    },
+                    kk_review::job::MethodSuggestion {
+                        json: json!({"name": "leaky", "description": "d", "triggers": ["contract"], "body": format!("Use this key {}{}", "sk_li", "ve_abcdefghijklmnop0123")}),
+                        label: l,
+                    },
+                ]
+            } else {
+                Vec::new()
+            },
             memory_suggestions: if recipient == "suggester" {
                 let l = kk_types::label::Label::new(kk_types::label::Level::Internal).untrusted();
                 vec![
@@ -17573,5 +17592,143 @@ fn sv211_choosing_ask_for_a_tool_that_may_change_things_needs_the_confirmation_t
         (s, v["error"]["code"].clone()),
         (409, json!("MCP_MAY_CHANGE")),
         "{v}"
+    );
+}
+
+#[test]
+fn sv213_methods_suggested_by_a_review_wait_as_proposals_and_become_unapproved_methods_only_when_the_owner_keeps_them(
+) {
+    let (c, w, _seen, root) = instructions_service("method-proposals");
+    let anon = Web::new(c.addr);
+    assert_eq!(anon.get("/api/method-proposals").0, 401);
+    assert_eq!(
+        anon.post("/api/method-proposals/keep", json!({"id": 1})).0,
+        401
+    );
+    assert_eq!(
+        anon.post("/api/method-proposals/dismiss", json!({"id": 1}))
+            .0,
+        401
+    );
+    let proj = root.join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::write(proj.join("a.py"), "x = 1\n").unwrap();
+    let (s, v) = w.post(
+        "/api/jobs",
+        json!({"repo": proj.to_string_lossy(), "recipient": "method-suggester"}),
+    );
+    assert!(s == 200 || s == 202, "{s} {v}");
+    let list = {
+        let mut out = Value::Null;
+        for _ in 0..200 {
+            out = w.get("/api/method-proposals").1;
+            if !out["proposals"].as_array().is_none_or(|a| a.is_empty()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        out
+    };
+    let props = list["proposals"].as_array().unwrap();
+    assert_eq!(
+        props.len(),
+        1,
+        "only the valid, secret-free suggestion is kept: {list}"
+    );
+    assert_eq!(props[0]["name"], "contract-check");
+    assert_eq!(props[0]["body"], "Quote clause numbers.");
+    assert_eq!(
+        w.get("/api/methods").1["methods"],
+        json!([]),
+        "a suggestion is not a method"
+    );
+    let id = props[0]["id"].clone();
+    assert_eq!(
+        w.post("/api/method-proposals/keep", json!({"id": 999})).0,
+        404
+    );
+    let (s, v) = w.post("/api/method-proposals/keep", json!({"id": id}));
+    assert_eq!((s, v["approved"].clone()), (200, json!(false)), "{v}");
+    let methods = w.get("/api/methods").1["methods"].clone();
+    assert_eq!(methods[0]["name"], "contract-check");
+    assert_eq!(
+        methods[0]["approved"],
+        json!(false),
+        "keeping it does not approve it"
+    );
+    assert!(w.get("/api/method-proposals").1["proposals"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        w.post("/api/method-proposals/keep", json!({"id": id})).0,
+        404,
+        "a proposal is kept once"
+    );
+}
+
+fn run_suggesting_review(w: &Web, root: &Path, n: usize) {
+    let proj = root.join(format!("proj{n}"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::write(proj.join("a.py"), "x = 1\n").unwrap();
+    let (_, v) = w.post(
+        "/api/jobs",
+        json!({"repo": proj.to_string_lossy(), "recipient": "method-suggester"}),
+    );
+    wait_for(
+        w,
+        v["id"].as_str().unwrap(),
+        &["ready", "nothing_to_release"],
+    );
+}
+
+#[test]
+fn sv214_a_suggestion_never_replaces_an_existing_method_and_can_be_dismissed() {
+    let (_c, w, _seen, root) = instructions_service("method-proposals-2");
+    let (_, saved) = w.post("/api/methods", json!({"name": "contract-check", "description": "mine", "triggers": ["contract"], "body": "My own text."}));
+    w.post(
+        "/api/methods/approve",
+        json!({"name": "contract-check", "hash": saved["hash"]}),
+    );
+    run_suggesting_review(&w, &root, 1);
+    let id = w.get("/api/method-proposals").1["proposals"][0]["id"].clone();
+    let (s, v) = w.post("/api/method-proposals/keep", json!({"id": id}));
+    assert_eq!(
+        (s, v["error"]["code"].clone()),
+        (409, json!("METHOD_EXISTS")),
+        "{v}"
+    );
+    let m = w.get("/api/methods").1["methods"][0].clone();
+    assert_eq!(
+        (m["body"].clone(), m["approved"].clone()),
+        (json!("My own text."), json!(true)),
+        "the owner's own method is untouched and still approved"
+    );
+    assert_eq!(
+        w.post("/api/method-proposals/dismiss", json!({"id": id})).0,
+        200
+    );
+    assert_eq!(
+        w.post("/api/method-proposals/dismiss", json!({"id": id})).0,
+        404
+    );
+    assert!(w.get("/api/method-proposals").1["proposals"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn sv215_at_most_twenty_suggestions_wait_at_once() {
+    let (_c, w, _seen, root) = instructions_service("method-proposals-3");
+    for n in 0..22 {
+        run_suggesting_review(&w, &root, n);
+    }
+    assert_eq!(
+        w.get("/api/method-proposals").1["proposals"]
+            .as_array()
+            .unwrap()
+            .len(),
+        20
     );
 }

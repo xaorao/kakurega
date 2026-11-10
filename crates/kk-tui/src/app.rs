@@ -253,6 +253,7 @@ enum Intent {
     McpChecked(String),
     McpDone(&'static str),
     MethodList,
+    MethodSuggestions,
     MethodShow(String),
     MethodDone(&'static str),
     MethodAdd,
@@ -3096,6 +3097,27 @@ impl App {
                         "/api/methods",
                         None,
                     )],
+                    M::Suggestions => vec![self.req(
+                        Intent::MethodSuggestions,
+                        false,
+                        Method::Get,
+                        "/api/method-proposals",
+                        None,
+                    )],
+                    M::Keep(id) => vec![self.req(
+                        Intent::MethodDone("Kept as a method. Read it with /method show NAME, then /method approve NAME."),
+                        false,
+                        Method::Post,
+                        "/api/method-proposals/keep",
+                        Some(json!({"id": id})),
+                    )],
+                    M::Dismiss(id) => vec![self.req(
+                        Intent::MethodDone("Dismissed."),
+                        false,
+                        Method::Post,
+                        "/api/method-proposals/dismiss",
+                        Some(json!({"id": id})),
+                    )],
                     M::Approve(name) => match self.shown_methods.get(&name).cloned() {
                         Some(hash) => vec![self.req(
                             Intent::MethodDone("Approved: it is used from now on."),
@@ -4815,6 +4837,32 @@ impl App {
                     );
                 } else {
                     self.say(Kind::Error, err_text(status, &body));
+                }
+                Vec::new()
+            }
+            Intent::MethodSuggestions => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let mut lines: Vec<String> = Vec::new();
+                for p in body["proposals"].as_array().cloned().unwrap_or_default() {
+                    lines.push(format!(
+                        "  {}  {}  {}",
+                        p["id"],
+                        clean(p["name"].as_str().unwrap_or("")),
+                        clean(p["description"].as_str().unwrap_or(""))
+                    ));
+                    for l in clean(p["body"].as_str().unwrap_or("")).lines() {
+                        lines.push(format!("      {l}"));
+                    }
+                }
+                if lines.is_empty() {
+                    self.say(Kind::Info, "No review has suggested a method.");
+                } else {
+                    lines.push(String::new());
+                    lines.push("These came from a model that read project files: read them with care. /method keep NUMBER saves one (it still waits for your approval); /method dismiss NUMBER removes it.".to_string());
+                    self.push(Kind::Info, Some("Methods suggested by a review"), lines);
                 }
                 Vec::new()
             }

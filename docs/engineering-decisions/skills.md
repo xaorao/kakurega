@@ -1,4 +1,4 @@
-# Skills and methods: owner-approved instruction packages (ledger G-GH-54 to G-GH-56, G-GH-59 to G-GH-62, E-A9, E-M24; status: reading, nothing built yet)
+# Skills and methods: owner-approved instruction packages (ledger G-GH-54 to G-GH-56, G-GH-59 to G-GH-62, E-A9, E-M24; status: methods built on service, web and terminal; suggestions from reviews built; plugins, signed catalog and bundled skills not built)
 
 ## Target experience
 1. The complete experience: the owner keeps small named instruction texts ("methods": how I want a review written, a checklist for contracts, a house style) that the assistant can use in a conversation or a review. Nothing becomes active until the owner approves that exact text. Editing a method makes the old approval void. A method can only narrow what the assistant does or add guidance; it never grants a tool, a route or a secret.
@@ -38,3 +38,8 @@
 2. Read Hermes `tools/skills_tool.py` and the skill manager, and the OpenCode skill loader, for the user-facing flow (list, view, edit, approve).
 3. Write the capability matrix and the behaviour spec, then tests that fail first.
 4. Decide where the store lives (the vault beside notes) and how the three surfaces (service, web, terminal) reach it.
+
+## Built
+- `kk-methods` (hash-pinned approval, whole-word selection, a frame the text cannot close, bounds), service endpoints, chat use, web and terminal screens. Evidence: mt01 to mt18 (16 of 16 mutants), sv190 to sv193 (7 mutants, 2 equivalent), tu_me01 to tu_me03, `tests/e2e/methods_web.mjs` (a real model followed an approved method once, observed).
+- Suggestions from reviews (G-GH-54 as proposals): a review may call `suggest_method` (at most 2); the suggestion arrives as a proposal (label untrusted), is dropped if invalid or holding a secret, at most 20 wait, keeping one saves an UNAPPROVED method and never replaces an existing name. Evidence: wf10, j27 (VM), sv213 to sv215 (6 of 6 mutants), tu_me04 (4 of 4). NOT verified: a real model proposing a good method (the review prompt names the tool; no real run was made).
+- Not built: bundled skills (G-GH-55), plugin packages and the signed catalog (G-GH-58, G-GH-59, G-GH-62), declarative hooks (G-GH-61), methods in the review sandbox (excluded on purpose), methods in coding tasks.

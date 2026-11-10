@@ -7699,3 +7699,60 @@ fn tu_mc04_ask_pending_approve_and_deny_work_and_a_waiting_list_is_cleaned() {
         (json!("ask"), json!("ab".repeat(32)))
     );
 }
+
+#[test]
+fn tu_me04_suggested_methods_can_be_listed_kept_and_dismissed_and_the_text_is_cleaned() {
+    use kk_tui::cmd::MethodAction as M;
+    assert_eq!(
+        cmd::parse("/method suggestions").unwrap(),
+        Command::Method(M::Suggestions)
+    );
+    assert_eq!(
+        cmd::parse("/method keep 3").unwrap(),
+        Command::Method(M::Keep(3))
+    );
+    assert_eq!(
+        cmd::parse("/method dismiss 12").unwrap(),
+        Command::Method(M::Dismiss(12))
+    );
+    for bad in [
+        "/method keep",
+        "/method keep x",
+        "/method keep 0",
+        "/method keep -1",
+        "/method dismiss 1 2",
+        "/method suggestions now",
+    ] {
+        assert!(cmd::parse(bad).is_err(), "{bad}");
+    }
+    let mut a = booted();
+    let r = enter(&mut a, "/method suggestions");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/method-proposals", Method::Get)
+    );
+    a.handle(ok(&r[0], 200, json!({"proposals": []})));
+    assert!(
+        text(&a).contains("No review has suggested a method."),
+        "{}",
+        text(&a)
+    );
+    let r = enter(&mut a, "/method suggestions");
+    a.handle(ok(&r[0], 200, json!({"proposals": [{"id": 4, "name": "contract\u{1b}[2Jcheck", "description": "d", "triggers": ["contract"], "body": "Quote clause numbers.\nBe brief\u{1b}[31m."}]})));
+    let t = text(&a);
+    assert!(
+        t.contains("Quote clause numbers.") && t.contains("read them with care"),
+        "{t}"
+    );
+    assert!(!t.contains('\u{1b}'), "{t}");
+    let r = enter(&mut a, "/method keep 4");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/method-proposals/keep", Method::Post)
+    );
+    assert_eq!(r[0].body.as_ref().unwrap(), &json!({"id": 4}));
+    a.handle(ok(&r[0], 200, json!({"name": "x", "approved": false})));
+    assert!(text(&a).contains("Kept as a method."), "{}", text(&a));
+    let r = enter(&mut a, "/method dismiss 5");
+    assert_eq!(r[0].body.as_ref().unwrap(), &json!({"id": 5}));
+}

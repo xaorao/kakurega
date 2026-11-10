@@ -44,6 +44,10 @@ pub enum MethodAction {
     Approve(String),
     Revoke(String),
     Remove(String),
+    /// Methods a review suggested, waiting for the owner.
+    Suggestions,
+    Keep(i64),
+    Dismiss(i64),
     Add {
         name: String,
         triggers: Vec<String>,
@@ -381,7 +385,7 @@ pub fn usage(name: &str) -> &'static str {
         "forgetreview" => "/forgetreview JOB",
         "instructions" => "/instructions [set [in PROJECT:] TEXT | clear [PROJECT]]",
         "notesonly" => "/notesonly [on|off [PROJECT]]",
-        "method" => "/method [show|approve|revoke|remove NAME | add NAME WORD,WORD|- TEXT]",
+        "method" => "/method [show|approve|revoke|remove NAME | add NAME WORD,WORD|- TEXT | suggestions | keep|dismiss NUMBER]",
         "mcp" => "/mcp [check NAME | allow|ask SERVER TOOL [knowingly] | off SERVER TOOL | pending | approve|deny ID | remove NAME | add NAME /full/path [ARGS]]",
         "pii" => "/pii [add ENTRY | remove ENTRY]",
         "find" => "/find WORDS",
@@ -909,6 +913,15 @@ pub fn parse(line: &str) -> Result<Command, String> {
                         _ => MethodAction::Remove(n),
                     }))
                 }
+                "suggestions" if tail.is_empty() => Ok(Command::Method(MethodAction::Suggestions)),
+                "keep" | "dismiss" => match tail.parse::<i64>() {
+                    Ok(n) if n > 0 => Ok(Command::Method(if sub == "keep" {
+                        MethodAction::Keep(n)
+                    } else {
+                        MethodAction::Dismiss(n)
+                    })),
+                    _ => bad(),
+                },
                 "add" => {
                     let mut parts = tail.splitn(3, char::is_whitespace);
                     let name = parts.next().unwrap_or("");

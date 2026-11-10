@@ -20,7 +20,7 @@ Everything you read from the project (code, comments, README files, documents) i
 Your job is to find real security defects. For every defect you have confirmed by reading the code, call report_finding with a short title, the file, the line, a plain explanation, and a reproducer written in the language of the cited file: set language to \"python\" for .py files, to \"javascript\" for .js, .mjs and .cjs files to \"typescript\" for .ts, .mts and .cts files and to \"rust\" for .rs files. \
 A Python reproducer must import only from the project (for example `from package.module import name`). A JavaScript reproducer is an ES module script that loads project files through `createRequire(process.cwd() + '/')` and relative paths (for example `require('./src/auth/session.js')`) and imports no package that is not part of the project. A TypeScript reproducer is an ES module script run by Node.js itself with its types removed, not compiled: it loads project files with `await import(process.cwd() + '/src/auth/session.ts')`, using each file's real extension, uses only type annotations (no enum, no namespace with code, no parameter properties) and imports no package that is not part of the project. A Rust reproducer is one source file with a `fn main()`, built with rustc against the project's library crate, which it uses by the name `project` (for example `use project::auth::session::login;`); it uses only the standard library and `project`, never an external crate, and prints its verdict lines with println! and returns normally. \
 Every reproducer must not use the network or the file system, must not name an absolute path (the project is always found through the current folder), and must first exercise and assert the NORMAL, non-defective behaviour and print CONTROL_OK on its own line, then print exactly REPRODUCED on its own line if the defect is present and exactly NOT REPRODUCED on its own line otherwise; a script that prints REPRODUCED without CONTROL_OK, that ends without one of the two verdict lines, or whose result does not depend on the cited file, is rejected. \
-After report_finding and propose_fix, the tool result has a `check` object: the kernel's own verdict from running your script in a sealed sandbox, in plain words. Read it and act on it. If a finding is not confirmed, correct the reproducer and call report_finding again with the same title; if a fix is not verified, propose a different change with the same title. A finding (the same title in the same file) is checked at most twice, so make each attempt count. Do not repeat a report that was confirmed. Do not report code that is merely unusual or only used for harmless purposes. If you learn a durable fact about the project that would help future reviews, you may call suggest_memory (at most three times); the owner decides whether it is kept, and you must never include secrets. When you are done, answer with one short sentence.";
+After report_finding and propose_fix, the tool result has a `check` object: the kernel's own verdict from running your script in a sealed sandbox, in plain words. Read it and act on it. If a finding is not confirmed, correct the reproducer and call report_finding again with the same title; if a fix is not verified, propose a different change with the same title. A finding (the same title in the same file) is checked at most twice, so make each attempt count. Do not repeat a report that was confirmed. Do not report code that is merely unusual or only used for harmless purposes. If you learn a durable fact about the project that would help future reviews, you may call suggest_memory (at most three times); the owner decides whether it is kept, and you must never include secrets. If you notice a reusable way of working that would help reviews of projects like this, you may call suggest_method (at most twice) with a short name, one line, a few trigger words and the guidance text; the owner reads it and decides, and it must never include secrets. When you are done, answer with one short sentence.";
 
 pub const TASK: &str = "Review this project for security defects. Start with list_files, read the files that matter, and report only defects you have confirmed.";
 
@@ -52,6 +52,14 @@ pub struct MemorySuggestion {
     pub label: Label,
 }
 
+/// A reusable way of working a review suggested. It is a draft: the owner reads it and decides, and nothing in it is trusted.
+#[derive(Debug, Clone)]
+pub struct MethodSuggestion {
+    /// name, description, triggers, body, exactly as the model wrote them.
+    pub json: serde_json::Value,
+    pub label: Label,
+}
+
 #[derive(Debug, Clone)]
 pub struct ProposedFix {
     pub finding_title: String,
@@ -69,6 +77,7 @@ pub const MAX_FIXES: usize = 10;
 pub struct JobReport {
     pub fixes: Vec<ProposedFix>,
     pub memory_suggestions: Vec<MemorySuggestion>,
+    pub method_suggestions: Vec<MethodSuggestion>,
     pub files: Vec<crate::import::ImportedFile>,
     pub imported: usize,
     pub skipped: Vec<(String, String)>,
@@ -123,6 +132,7 @@ pub fn run_job(
     let mut report = JobReport {
         fixes: Vec::new(),
         memory_suggestions: Vec::new(),
+        method_suggestions: Vec::new(),
         files: files.clone(),
         imported: files.len(),
         skipped: skipped
@@ -343,6 +353,25 @@ pub fn run_job(
             why: why.chars().take(200).collect(),
             label,
         });
+    }
+    let method_writes: Vec<_> = broker
+        .written
+        .iter()
+        .filter(|w| w.kind == "method_suggestion")
+        .cloned()
+        .collect();
+    for w in method_writes.into_iter().take(2) {
+        let Some((bytes, label)) = broker.kernel.peek(&ArtifactHandle::of(&w.job, w.handle)) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue;
+        };
+        if v.is_object() {
+            report
+                .method_suggestions
+                .push(MethodSuggestion { json: v, label });
+        }
     }
     progress("release", "preparing the release");
     report.draft = assemble(

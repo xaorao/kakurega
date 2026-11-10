@@ -193,6 +193,23 @@ pub fn memory_tool() -> ToolSpec {
     }
 }
 
+pub fn method_tool() -> ToolSpec {
+    ToolSpec {
+        name: "suggest_method".into(),
+        description: "Suggest one reusable way of working that would help future reviews of projects like this one: a short name, one line on what it is for, a few trigger words, and the text of the guidance. The owner reads it and decides whether it is kept; at most two suggestions. Never include secrets.".into(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "description": {"type": "string"},
+                "triggers": {"type": "array", "items": {"type": "string"}},
+                "text": {"type": "string"}
+            },
+            "required": ["name", "text"]
+        }),
+    }
+}
+
 fn save(link: &mut dyn Link, state: &AgentState) -> Result<(), WorkerError> {
     let bytes = serde_json::to_vec(state).map_err(|e| WorkerError::Link(e.to_string()))?;
     ok_result(link.call(json!({"op": "checkpoint", "state_b64": b64::encode(&bytes)}))?)?;
@@ -314,6 +331,21 @@ pub fn run_local_tool(link: &mut dyn Link, call: &ToolCall) -> Result<Value, Wor
             let bytes = serde_json::to_vec(&json!({"text": text, "why": why}))
                 .map_err(|e| WorkerError::Link(e.to_string()))?;
             let r = ok_result(link.call(json!({"op": "write.artifact", "bytes_b64": b64::encode(&bytes), "kind": "memory_suggestion"}))?)?;
+            Ok(json!({"suggested": true, "handle": r["handle"]}))
+        }
+        "suggest_method" => {
+            let a = &call.arguments;
+            let (Some(name), Some(text)) = (a["name"].as_str(), a["text"].as_str()) else {
+                return Ok(json!({"error": "suggest_method needs a name and text"}));
+            };
+            let bytes = serde_json::to_vec(&json!({
+                "name": name,
+                "description": a["description"].as_str().unwrap_or(""),
+                "triggers": a["triggers"].clone(),
+                "body": text,
+            }))
+            .map_err(|e| WorkerError::Link(e.to_string()))?;
+            let r = ok_result(link.call(json!({"op": "write.artifact", "bytes_b64": b64::encode(&bytes), "kind": "method_suggestion"}))?)?;
             Ok(json!({"suggested": true, "handle": r["handle"]}))
         }
         other => Ok(json!({"error": format!("no such tool: {other}")})),

@@ -72,3 +72,28 @@ fn wf03_an_incomplete_call_is_refused_before_anything_is_written_and_gets_no_ver
     assert!(r["error"].is_string() && r.get("check").is_none(), "{r}");
     assert!(link.1.is_empty(), "nothing was sent to the broker");
 }
+
+#[test]
+fn wf10_suggest_method_writes_one_suggestion_and_refuses_an_incomplete_one_without_writing() {
+    let mut link = Canned(json!({"handle": 4}), vec![]);
+    let ok = call(
+        "suggest_method",
+        json!({"name": "contract-check", "description": "How to read a contract", "triggers": ["contract", "clause"], "text": "Quote clause numbers."}),
+    );
+    let r = run_local_tool(&mut link, &ok).unwrap();
+    assert_eq!(r, json!({"suggested": true, "handle": 4}));
+    assert_eq!(link.1[0]["op"], "write.artifact");
+    assert_eq!(link.1[0]["kind"], "method_suggestion");
+    let bytes = kk_evidence::b64::decode(link.1[0]["bytes_b64"].as_str().unwrap()).unwrap();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["name"], "contract-check");
+    assert_eq!(v["triggers"], json!(["contract", "clause"]));
+    assert_eq!(v["body"], "Quote clause numbers.");
+    let mut empty = Canned(json!({"handle": 1}), vec![]);
+    let r = run_local_tool(&mut empty, &call("suggest_method", json!({"name": "x"}))).unwrap();
+    assert!(r["error"].is_string(), "{r}");
+    assert!(
+        empty.1.is_empty(),
+        "nothing is written for an incomplete call"
+    );
+}

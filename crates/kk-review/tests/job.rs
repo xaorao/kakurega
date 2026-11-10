@@ -1879,3 +1879,38 @@ fn j26_four_full_reviews_at_once_through_the_shared_sandbox_all_finish_correctly
         assert!(report.draft.is_ok(), "review {i}: a release draft");
     }
 }
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn j27_suggested_methods_are_capped_carry_the_untrusted_label_and_release_nothing() {
+    let cfg = config("j09");
+    let m = |n: &str| json!({"name": n, "description": "d", "triggers": ["contract"], "text": "Quote clause numbers."});
+    let (routes, ev) = scripted(vec![
+        calls(vec![("read_file", json!({"path": "README.md"}))]),
+        calls(vec![
+            ("suggest_method", m("one-method")),
+            ("suggest_method", m("two-method")),
+            ("suggest_method", m("three-dropped")),
+        ]),
+        ChatMessage::new("assistant", "done"),
+    ]);
+    let report = run_job(&cfg, routes, ev, &|_, _| {});
+    assert_eq!(report.error, None);
+    assert_eq!(
+        report.method_suggestions.len(),
+        2,
+        "at most two suggestions are taken"
+    );
+    for s in &report.method_suggestions {
+        assert_eq!(
+            s.label.integrity,
+            Integrity::Untrusted,
+            "a review that read untrusted files cannot suggest trusted guidance"
+        );
+    }
+    assert_eq!(report.method_suggestions[0].json["name"], "one-method");
+    assert!(
+        report.draft.is_err(),
+        "suggesting a method releases nothing"
+    );
+}

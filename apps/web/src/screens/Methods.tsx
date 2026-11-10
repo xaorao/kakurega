@@ -84,6 +84,46 @@ function Row(props: { m: Method; onChanged: (message: string) => void }) {
   );
 }
 
+function Proposals(props: { onChanged: (message: string) => void }) {
+  const [data, { refetch }] = createResource(() => api.methodProposals());
+  const [problem, setProblem] = createSignal("");
+  const act = async (fn: () => Promise<unknown>, message: string) => {
+    setProblem("");
+    try {
+      await fn();
+      await refetch();
+      props.onChanged(message);
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("met.error"));
+    }
+  };
+  return (
+    <Show when={(data()?.proposals ?? []).length > 0}>
+      <section class="card stack" aria-labelledby="h-met-prop">
+        <h3 id="h-met-prop">{t("met.prop.heading")}</h3>
+        <p class="muted">{t("met.prop.lead")}</p>
+        <ul class="plain stack">
+          <For each={data()?.proposals ?? []}>
+            {(p) => (
+              <li class="card stack">
+                <h4>{p.name}</h4>
+                <Show when={p.description}><p>{p.description}</p></Show>
+                <Show when={p.triggers.length}><p class="muted">{t("met.triggers", { list: p.triggers.join(", ") })}</p></Show>
+                <pre class="plain-pre">{p.body}</pre>
+                <div class="actions">
+                  <button class="primary" type="button" onClick={() => void act(() => api.keepProposal(p.id), t("met.prop.kept"))}>{t("met.prop.keep")}</button>
+                  <button type="button" onClick={() => void act(() => api.dismissProposal(p.id), t("met.prop.dismissed"))}>{t("met.prop.dismiss")}</button>
+                </div>
+              </li>
+            )}
+          </For>
+        </ul>
+        <Show when={problem()}><span role="alert" class="bad">{problem()}</span></Show>
+      </section>
+    </Show>
+  );
+}
+
 export function Methods() {
   const [data, { refetch }] = createResource(() => api.methods());
   const [status, setStatus] = createSignal("");
@@ -94,6 +134,7 @@ export function Methods() {
       <p class="muted">{t("met.lead")}</p>
       <p class="muted">{t("met.limits")}</p>
       <Show when={status()}><p role="status" class="ok">{status()}</p></Show>
+      <Proposals onChanged={changed} />
       <Show when={data()} fallback={<p class="muted">{t("review.loading")}</p>}>
         {(d) => (
           <>

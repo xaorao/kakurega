@@ -372,6 +372,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS owner_instructions(scope TEXT PRIMARY KEY, text TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS mcp_servers(name TEXT PRIMARY KEY, program TEXT NOT NULL, args TEXT NOT NULL, env TEXT NOT NULL, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS mcp_tools(server TEXT NOT NULL, tool TEXT NOT NULL, pin TEXT NOT NULL, description TEXT NOT NULL, schema TEXT NOT NULL DEFAULT '{}', effect TEXT NOT NULL DEFAULT 'unknown', mode TEXT NOT NULL, PRIMARY KEY(server, tool));
+             CREATE TABLE IF NOT EXISTS method_proposals(id INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS methods(name TEXT PRIMARY KEY, body TEXT NOT NULL, hash TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS method_approvals(name TEXT PRIMARY KEY, hash TEXT NOT NULL, approved_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS project_settings(project TEXT PRIMARY KEY, notes_only INTEGER NOT NULL, updated_at INTEGER NOT NULL);
@@ -1057,6 +1058,9 @@ impl Service {
                             for sg in &r.memory_suggestions {
                                 let _ = mem.propose(now(), &jid, &sg.text, &sg.why, &sg.label);
                             }
+                        }
+                        for sg in &r.method_suggestions {
+                            svc.method_propose(&jid, &sg.json);
                         }
                         let snap = Snapshot::from_report(&r);
                         job.state = match (&snap.error, &snap.draft) {
@@ -9256,6 +9260,12 @@ impl Extension for Routes {
             .route(
                 "/api/methods",
                 get(methods::methods_get).post(methods::methods_set),
+            )
+            .route("/api/method-proposals", get(methods::proposals_get))
+            .route("/api/method-proposals/keep", post(methods::proposals_keep))
+            .route(
+                "/api/method-proposals/dismiss",
+                post(methods::proposals_dismiss),
             )
             .route("/api/methods/approve", post(methods::methods_approve))
             .route("/api/methods/revoke", post(methods::methods_revoke))
