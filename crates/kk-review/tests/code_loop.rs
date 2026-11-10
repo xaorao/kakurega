@@ -667,3 +667,135 @@ fn lp12_each_step_gets_a_plain_label_that_never_holds_the_code_that_was_written(
         assert!(!all.contains(code), "{code} is in a label: {all}");
     }
 }
+
+#[test]
+fn lp13_a_secret_in_a_plainly_named_file_is_withheld_by_what_the_importer_found_not_by_its_name() {
+    use kk_review::import::scan_tree;
+    // fresh values per run; each is built from pieces so the repository holds no key-shaped text
+    let n = fresh();
+    let stripe = format!("{}{}_{}", "sk_", "live", format!("{:0<24}", n));
+    let pem = format!(
+        "-----BEGIN {}-----\nMIIE{}\n-----END {}-----\n",
+        "PRIVATE KEY", n, "PRIVATE KEY"
+    );
+    // an access key id is AKIA and sixteen of A to Z and 2 to 7
+    let body: String = format!("{:A<16}", n.to_uppercase())
+        .chars()
+        .take(16)
+        .map(|c| match c {
+            '0' => 'A',
+            '1' => 'B',
+            '8' => 'C',
+            '9' => 'D',
+            c => c,
+        })
+        .collect();
+    let aws = format!("{}{}", "AKIA", body);
+    let dir = std::env::temp_dir().join(format!("kk-lp13-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/app.py"), "def add(a, b):\n    return a - b\n").unwrap();
+    std::fs::write(
+        dir.join("src/settings.py"),
+        format!("PAYMENT_KEY = \"{stripe}\"\nDEBUG = False\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("notes.txt"),
+        format!("deploy with the key below\n{pem}"),
+    )
+    .unwrap();
+    std::fs::write(dir.join("cloud.cfg"), format!("access = {aws}\n")).unwrap();
+    std::fs::write(dir.join(".env"), format!("TOKEN={stripe}\n")).unwrap();
+    // a file the owner wrote down as private holds ordinary words, not a secret shape
+    let word = format!("Zorblax{n}");
+    std::fs::create_dir_all(dir.join("private")).unwrap();
+    std::fs::write(
+        dir.join("private/customers.csv"),
+        format!("name,note\nAda,{word} merger closes Friday\n"),
+    )
+    .unwrap();
+    std::fs::write(dir.join(".kakuignore"), "private/\n").unwrap();
+    let imported = scan_tree(&dir, Level::Internal);
+    let (mut w, left) = Workspace::from_imported(&imported.files);
+    assert!(
+        left.restricted >= 4,
+        "the importer withheld {} files",
+        left.restricted
+    );
+    // an attack that tries every file by name and then searches for the values and their shapes
+    let mut script = Vec::new();
+    for p in [
+        "src/settings.py",
+        "notes.txt",
+        "cloud.cfg",
+        ".env",
+        "private/customers.csv",
+        "src/app.py",
+    ] {
+        script.push(calls(&[
+            ("read_file", json!({"path": p})),
+            (
+                "edit_file",
+                json!({"path": p, "old_text": "a", "new_text": "b"}),
+            ),
+            ("search_text", json!({"text": "PAYMENT_KEY", "under": p})),
+        ]));
+    }
+    for needle in [
+        "Zorblax",
+        "merger",
+        stripe.as_str(),
+        &stripe[..12],
+        "PAYMENT_KEY",
+        "MIIE",
+        "AKIA",
+        "access =",
+        "BEGIN",
+        "sk_live",
+    ] {
+        script.push(calls(&[("search_text", json!({"text": needle}))]));
+    }
+    script.push(calls(&[("list_files", json!({}))]));
+    script.push(calls(&[("finish", json!({"summary": "done"}))]));
+    let r = route(script);
+    let rep = run_task(&r, &mut w, "Fix add", None, 100);
+    assert_eq!(rep.ending, Ending::Finished);
+    let answers: String = r
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .flat_map(|q| {
+            q.messages
+                .iter()
+                .filter(|m| m.role == "tool")
+                .map(|m| m.content.clone())
+        })
+        .collect();
+    for (name, value) in [
+        ("stripe key", stripe.as_str()),
+        ("pem body", &format!("MIIE{n}")),
+        ("aws id", aws.as_str()),
+    ] {
+        assert!(
+            !answers.contains(value),
+            "the {name} reached the model: {answers}"
+        );
+    }
+    assert!(
+        !answers.contains("BEGIN"),
+        "a key block marker reached the model"
+    );
+    assert!(
+        !answers.contains(&word) && !answers.contains("merger closes"),
+        "a file the owner withheld reached the model"
+    );
+    assert!(
+        !answers.contains("PAYMENT_KEY"),
+        "a withheld file's content reached the model"
+    );
+    // only the plain file is readable, and the edit of it is the one change that could have been made
+    assert!(answers.contains("a - b"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
