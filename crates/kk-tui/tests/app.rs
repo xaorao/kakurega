@@ -7477,3 +7477,125 @@ fn tu_me03_the_list_shows_state_and_cleans_names_and_a_secret_is_scrubbed_from_h
     );
     assert!(text(&a).contains("[text hidden"), "{}", text(&a));
 }
+
+#[test]
+fn tu_mc01_mcp_commands_parse_and_bad_forms_are_refused() {
+    use kk_tui::cmd::McpAction as M;
+    assert_eq!(cmd::parse("/mcp").unwrap(), Command::Mcp(M::List));
+    assert_eq!(
+        cmd::parse("/mcp check docs").unwrap(),
+        Command::Mcp(M::Check("docs".into()))
+    );
+    assert_eq!(
+        cmd::parse("/mcp allow docs lookup").unwrap(),
+        Command::Mcp(M::Allow("docs".into(), "lookup".into()))
+    );
+    assert_eq!(
+        cmd::parse("/mcp off docs lookup").unwrap(),
+        Command::Mcp(M::Off("docs".into(), "lookup".into()))
+    );
+    assert_eq!(
+        cmd::parse("/mcp remove docs").unwrap(),
+        Command::Mcp(M::Remove("docs".into()))
+    );
+    assert_eq!(
+        cmd::parse("/mcp add docs /usr/bin/node server.js --flag").unwrap(),
+        Command::Mcp(M::Add {
+            name: "docs".into(),
+            program: "/usr/bin/node".into(),
+            args: vec!["server.js".into(), "--flag".into()]
+        })
+    );
+    for bad in [
+        "/mcp check",
+        "/mcp allow docs",
+        "/mcp allow a/b t",
+        "/mcp add docs node",
+        "/mcp add docs",
+        "/mcp add a b/c /x",
+        "/mcp frob x",
+        "/mcp remove a b",
+        "/mcp check \u{7}x",
+    ] {
+        assert!(cmd::parse(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn tu_mc02_a_tool_is_allowed_only_with_the_pin_the_list_showed() {
+    let mut a = booted();
+    let r = enter(&mut a, "/mcp allow docs lookup");
+    assert!(r.is_empty());
+    assert!(text(&a).contains("Look at the list first"), "{}", text(&a));
+    let r = enter(&mut a, "/mcp");
+    assert_eq!((r[0].path.as_str(), r[0].method), ("/api/mcp", Method::Get));
+    a.handle(ok(&r[0], 200, json!({"servers": [{"name": "docs", "program": "/usr/bin/x\u{1b}[2J", "args": [], "tools": [
+        {"name": "lookup", "description": "Looks up a term\u{1b}[31m", "pin": "cd".repeat(32), "mode": "off"}]}]})));
+    let t = text(&a);
+    assert!(
+        t.contains("docs") && t.contains("lookup") && t.contains("off") && !t.contains('\u{1b}'),
+        "{t}"
+    );
+    let r = enter(&mut a, "/mcp allow docs lookup");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/mcp/tools", Method::Post)
+    );
+    let body = r[0].body.as_ref().unwrap();
+    assert_eq!(
+        (body["mode"].clone(), body["pin"].clone()),
+        (json!("allow"), json!("cd".repeat(32)))
+    );
+    a.handle(ok(&r[0], 200, json!({"mode": "allow"})));
+    assert!(
+        text(&a).contains("Allowed: a coding task may call it."),
+        "{}",
+        text(&a)
+    );
+    let r = enter(&mut a, "/mcp allow docs lookup");
+    a.handle(ok(
+        &r[0],
+        409,
+        json!({"error": {"code": "MCP_TOOL_CHANGED", "message": "x"}}),
+    ));
+    assert!(
+        text(&a).contains("changed after you read it"),
+        "{}",
+        text(&a)
+    );
+    let r = enter(&mut a, "/mcp off docs lookup");
+    assert_eq!(r[0].body.as_ref().unwrap()["mode"], json!("off"));
+}
+
+#[test]
+fn tu_mc03_check_add_remove_say_what_happened_and_an_empty_list_explains_itself() {
+    let mut a = booted();
+    let r = enter(&mut a, "/mcp");
+    a.handle(ok(&r[0], 200, json!({"servers": []})));
+    assert!(text(&a).contains("No outside tools yet"), "{}", text(&a));
+    let r = enter(&mut a, "/mcp check docs");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/mcp/discover", Method::Post)
+    );
+    a.handle(ok(&r[0], 200, json!({"tools": 3, "changed": ["lookup"]})));
+    let t = text(&a);
+    assert!(
+        t.contains("3 tools") && t.contains("Changed since you allowed them, now off: lookup"),
+        "{t}"
+    );
+    let r = enter(&mut a, "/mcp add docs /usr/bin/node a.js");
+    assert_eq!(
+        r[0].body.as_ref().unwrap()["program"],
+        json!("/usr/bin/node")
+    );
+    assert_eq!(
+        r[0].body.as_ref().unwrap()["env"],
+        json!({}),
+        "settings with values are added in the web page, never typed here"
+    );
+    a.handle(ok(&r[0], 422, json!({"error": {"code": "MCP_REFUSED", "message": "the program is not a file that exists"}})));
+    assert!(text(&a).contains("not a file that exists"), "{}", text(&a));
+    let r = enter(&mut a, "/mcp remove docs");
+    assert_eq!(r[0].path.as_str(), "/api/mcp/servers/remove");
+}

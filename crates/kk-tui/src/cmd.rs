@@ -17,6 +17,21 @@ pub enum InstructionsAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum McpAction {
+    List,
+    Check(String),
+    /// Allow or turn off one tool, with the pin the list showed in this session.
+    Allow(String, String),
+    Off(String, String),
+    Remove(String),
+    Add {
+        name: String,
+        program: String,
+        args: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MethodAction {
     List,
     Show(String),
@@ -94,6 +109,7 @@ pub enum Command {
     Instructions(InstructionsAction),
     NotesOnly(NotesOnlyAction),
     Method(MethodAction),
+    Mcp(McpAction),
     Pii(PiiAction),
     Find(String),
     Transcript(String),
@@ -189,6 +205,7 @@ pub const NAMES: &[&str] = &[
     "instructions",
     "notesonly",
     "method",
+    "mcp",
     "pii",
     "find",
     "transcript",
@@ -256,6 +273,7 @@ pub fn describe(name: &str) -> &'static str {
         "instructions" => "your standing orders to the assistant",
         "notesonly" => "make a project answer only from its own notes and attached files",
         "method" => "your saved methods: guidance that applies only after you approve its text",
+        "mcp" => "outside tools: programs whose tools a coding task may call once you allow them",
         "pii" => "values you say are not personal data, left out of release notices",
         "find" => "search kept conversations by words",
         "transcript" => "search this conversation on the screen",
@@ -359,6 +377,7 @@ pub fn usage(name: &str) -> &'static str {
         "instructions" => "/instructions [set [in PROJECT:] TEXT | clear [PROJECT]]",
         "notesonly" => "/notesonly [on|off [PROJECT]]",
         "method" => "/method [show|approve|revoke|remove NAME | add NAME WORD,WORD|- TEXT]",
+        "mcp" => "/mcp [check NAME | allow|off SERVER TOOL | remove NAME | add NAME /full/path [ARGS]]",
         "pii" => "/pii [add ENTRY | remove ENTRY]",
         "find" => "/find WORDS",
         "transcript" => "/transcript WORDS",
@@ -810,6 +829,39 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 "clear" if plain_project(tail) && !tail.contains(char::is_whitespace) => Ok(
                     Command::Instructions(InstructionsAction::Clear(Some(tail.to_string()))),
                 ),
+                _ => bad(),
+            }
+        }
+        "mcp" => {
+            let bad = || Err(format!("usage: {}", usage("mcp")));
+            if rest.is_empty() {
+                return Ok(Command::Mcp(McpAction::List));
+            }
+            let plain = |n: &str| {
+                !n.is_empty()
+                    && n.len() <= 64
+                    && n.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+            };
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            match parts.as_slice() {
+                ["check", n] if plain(n) => Ok(Command::Mcp(McpAction::Check((*n).into()))),
+                ["remove", n] if plain(n) => Ok(Command::Mcp(McpAction::Remove((*n).into()))),
+                ["allow", srv, tool] if plain(srv) && plain(tool) => Ok(Command::Mcp(
+                    McpAction::Allow((*srv).into(), (*tool).into()),
+                )),
+                ["off", srv, tool] if plain(srv) && plain(tool) => {
+                    Ok(Command::Mcp(McpAction::Off((*srv).into(), (*tool).into())))
+                }
+                ["add", n, program, args @ ..]
+                    if plain(n) && program.starts_with('/') && args.len() <= 32 =>
+                {
+                    Ok(Command::Mcp(McpAction::Add {
+                        name: (*n).into(),
+                        program: (*program).into(),
+                        args: args.iter().map(|a| a.to_string()).collect(),
+                    }))
+                }
                 _ => bad(),
             }
         }

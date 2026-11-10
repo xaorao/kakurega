@@ -248,6 +248,9 @@ enum Intent {
     InstructionsShow,
     NotesOnlyShow,
     NotesOnlySet(String, bool),
+    McpList,
+    McpChecked(String),
+    McpDone(&'static str),
     MethodList,
     MethodShow(String),
     MethodDone(&'static str),
@@ -358,6 +361,8 @@ pub struct App {
     pub chat_project: Option<String>,
     /// The text of each method as `/method show` displayed it: approving sends that hash, so the owner approves what they read.
     pub shown_methods: std::collections::HashMap<String, String>,
+    /// The pin of each outside tool as the last `/mcp` list showed it: allowing sends that pin, so the owner allows what they read.
+    pub shown_mcp: std::collections::HashMap<(String, String), String>,
     /// How much of the model's window the last answer's question took, for the status line; empty until an answer comes.
     context_meter: Option<String>,
     /// Long pastes shown as a short placeholder in the composer and expanded when a chat message is sent.
@@ -502,6 +507,7 @@ impl App {
             session: None,
             chat_project: None,
             shown_methods: std::collections::HashMap::new(),
+            shown_mcp: std::collections::HashMap::new(),
             context_meter: None,
             pasted: Vec::new(),
             queued: Vec::new(),
@@ -3002,6 +3008,59 @@ impl App {
                     }
                 }
             }
+            Command::Mcp(action) => {
+                use crate::cmd::McpAction as M;
+                match action {
+                    M::List => vec![self.req(Intent::McpList, false, Method::Get, "/api/mcp", None)],
+                    M::Check(name) => vec![self.req(
+                        Intent::McpChecked(name.clone()),
+                        false,
+                        Method::Post,
+                        "/api/mcp/discover",
+                        Some(json!({"name": name})),
+                    )],
+                    M::Allow(server, tool) => match self.shown_mcp.get(&(server.clone(), tool.clone())).cloned() {
+                        Some(pin) => vec![self.req(
+                            Intent::McpDone("Allowed: a coding task may call it."),
+                            false,
+                            Method::Post,
+                            "/api/mcp/tools",
+                            Some(json!({"server": server, "tool": tool, "mode": "allow", "pin": pin})),
+                        )],
+                        None => {
+                            self.say(Kind::Error, "Look at the list first with /mcp, so you allow the tool as you read it.");
+                            Vec::new()
+                        }
+                    },
+                    M::Off(server, tool) => match self.shown_mcp.get(&(server.clone(), tool.clone())).cloned() {
+                        Some(pin) => vec![self.req(
+                            Intent::McpDone("Off."),
+                            false,
+                            Method::Post,
+                            "/api/mcp/tools",
+                            Some(json!({"server": server, "tool": tool, "mode": "off", "pin": pin})),
+                        )],
+                        None => {
+                            self.say(Kind::Error, "Look at the list first with /mcp.");
+                            Vec::new()
+                        }
+                    },
+                    M::Remove(name) => vec![self.req(
+                        Intent::McpDone("Removed."),
+                        false,
+                        Method::Post,
+                        "/api/mcp/servers/remove",
+                        Some(json!({"name": name})),
+                    )],
+                    M::Add { name, program, args } => vec![self.req(
+                        Intent::McpDone("Added. /mcp check NAME lists its tools; they start off."),
+                        false,
+                        Method::Post,
+                        "/api/mcp/servers",
+                        Some(json!({"name": name, "program": program, "args": args, "env": {}})),
+                    )],
+                }
+            }
             Command::Method(action) => {
                 use crate::cmd::MethodAction as M;
                 match action {
@@ -4620,6 +4679,84 @@ impl App {
                     ),
                 );
                 self.next_attachment()
+            }
+            Intent::McpList => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let mut rows: Vec<String> = Vec::new();
+                for sv in body["servers"].as_array().cloned().unwrap_or_default() {
+                    let name = sv["name"].as_str().unwrap_or("").to_string();
+                    rows.push(format!(
+                        "  {}  {}",
+                        clean(&name),
+                        clean(sv["program"].as_str().unwrap_or(""))
+                    ));
+                    let tools = sv["tools"].as_array().cloned().unwrap_or_default();
+                    if tools.is_empty() {
+                        rows.push("    (no tools listed: /mcp check NAME)".to_string());
+                    }
+                    for t in tools {
+                        let tool = t["name"].as_str().unwrap_or("").to_string();
+                        if let Some(pin) = t["pin"].as_str() {
+                            self.shown_mcp
+                                .insert((name.clone(), tool.clone()), pin.to_string());
+                        }
+                        rows.push(format!(
+                            "    {}  {}  {}",
+                            clean(&tool),
+                            if t["mode"] == "allow" {
+                                "allowed"
+                            } else {
+                                "off"
+                            },
+                            clean(t["description"].as_str().unwrap_or(""))
+                        ));
+                    }
+                }
+                if rows.is_empty() {
+                    self.say(Kind::Info, "No outside tools yet. /mcp add NAME /full/path/to/program adds a program; its tools start off and a coding task can call only the ones you allow.");
+                } else {
+                    self.push(Kind::Info, Some("Outside tools"), rows);
+                }
+                Vec::new()
+            }
+            Intent::McpChecked(name) => {
+                if ok {
+                    let changed: Vec<String> = body["changed"]
+                        .as_array()
+                        .map(|a| a.iter().filter_map(|c| c.as_str().map(clean)).collect())
+                        .unwrap_or_default();
+                    let mut line = format!(
+                        "Checked {}: {} tools. /mcp shows them.",
+                        clean(&name),
+                        body["tools"]
+                    );
+                    if !changed.is_empty() {
+                        line.push_str(&format!(
+                            " Changed since you allowed them, now off: {}",
+                            changed.join(", ")
+                        ));
+                    }
+                    self.say(Kind::Ok, line);
+                } else {
+                    self.say(Kind::Error, err_text(status, &body));
+                }
+                Vec::new()
+            }
+            Intent::McpDone(done) => {
+                if ok {
+                    self.say(Kind::Ok, done);
+                } else if body["error"]["code"] == "MCP_TOOL_CHANGED" {
+                    self.say(
+                        Kind::Error,
+                        "The tool changed after you read it. Run /mcp check NAME and look again.",
+                    );
+                } else {
+                    self.say(Kind::Error, err_text(status, &body));
+                }
+                Vec::new()
             }
             Intent::MethodList => {
                 if !ok {
