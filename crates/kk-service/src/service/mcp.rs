@@ -34,6 +34,9 @@ pub(super) struct ToolBody {
     tool: String,
     mode: String,
     pin: String,
+    /// The owner confirms they know a tool that is not read-only may change things.
+    #[serde(default)]
+    knowing: bool,
 }
 
 #[derive(Deserialize)]
@@ -196,8 +199,8 @@ impl Service {
                 None => "off".to_string(),
             };
             c.execute(
-                "INSERT INTO mcp_tools(server, tool, pin, description, schema, mode) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                kk_vault::rusqlite::params![name, t.name, t.pin, t.description, schema_text(&t.schema), mode],
+                "INSERT INTO mcp_tools(server, tool, pin, description, schema, effect, mode) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                kk_vault::rusqlite::params![name, t.name, t.pin, t.description, schema_text(&t.schema), t.effect.as_str(), mode],
             )
             .map_err(|e| e.to_string())?;
         }
@@ -288,10 +291,10 @@ pub(super) async fn mcp_get(axum::Extension(svc): Svc) -> Response {
         .iter()
         .map(|(name, program, args)| {
             let tools: Vec<Value> = c
-                .prepare("SELECT tool, description, pin, mode FROM mcp_tools WHERE server = ?1 ORDER BY tool")
+                .prepare("SELECT tool, description, pin, mode, effect FROM mcp_tools WHERE server = ?1 ORDER BY tool")
                 .ok()
                 .map(|mut st| {
-                    st.query_map([name], |r| Ok(json!({"name": r.get::<_, String>(0)?, "description": r.get::<_, String>(1)?, "pin": r.get::<_, String>(2)?, "mode": r.get::<_, String>(3)?})))
+                    st.query_map([name], |r| Ok(json!({"name": r.get::<_, String>(0)?, "description": r.get::<_, String>(1)?, "pin": r.get::<_, String>(2)?, "mode": r.get::<_, String>(3)?, "effect": r.get::<_, String>(4)?})))
                         .map(|it| it.flatten().collect())
                         .unwrap_or_default()
                 })
@@ -384,18 +387,18 @@ pub(super) async fn mcp_tool_set(axum::Extension(svc): Svc, Json(b): Json<ToolBo
     if b.mode != "off" && b.mode != "allow" {
         return refuse("a tool is either off or allowed");
     }
-    let stored: Option<String> = {
+    let stored: Option<(String, String)> = {
         let store = svc.store.lock().expect("lock");
         store
             .connection()
             .query_row(
-                "SELECT pin FROM mcp_tools WHERE server = ?1 AND tool = ?2",
+                "SELECT pin, effect FROM mcp_tools WHERE server = ?1 AND tool = ?2",
                 [&b.server, &b.tool],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .ok()
     };
-    let Some(pin) = stored else {
+    let Some((pin, effect)) = stored else {
         return error(
             StatusCode::NOT_FOUND,
             "MCP_TOOL_NOT_FOUND",
@@ -407,6 +410,13 @@ pub(super) async fn mcp_tool_set(axum::Extension(svc): Svc, Json(b): Json<ToolBo
             StatusCode::CONFLICT,
             "MCP_TOOL_CHANGED",
             "the tool changed after you read it; read it again before allowing it",
+        );
+    }
+    if b.mode == "allow" && effect != "read_only" && !b.knowing {
+        return error(
+            StatusCode::CONFLICT,
+            "MCP_MAY_CHANGE",
+            "the server does not say this tool only reads; allowing it lets a coding task change things through it. Confirm that you know.",
         );
     }
     {

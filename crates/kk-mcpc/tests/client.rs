@@ -264,3 +264,28 @@ fn mc14_arguments_are_bounded() {
     let big = serde_json::json!({"text": "x".repeat(2_000_000)});
     assert!(matches!(s.call("echo", big), Err(McpError::Failed(_))));
 }
+
+#[test]
+fn mc15_the_servers_own_read_only_hint_is_reported_and_a_missing_hint_is_unknown() {
+    let mut s = Server::start(cfg("annot"), quick()).unwrap();
+    let tools = s.list_tools().unwrap();
+    let effect = |n: &str| tools.iter().find(|t| t.name == n).unwrap().effect;
+    assert_eq!(effect("echo"), Effect::ReadOnly);
+    assert_eq!(effect("write"), Effect::MayChange);
+    assert_eq!(effect("plain"), Effect::Unknown, "no hint is not a promise");
+}
+
+#[test]
+fn mc16_a_tool_whose_hint_flips_gets_a_new_pin_even_when_nothing_else_changed() {
+    let ro = Server::start(cfg("annot_ro"), quick())
+        .unwrap()
+        .list_tools()
+        .unwrap();
+    let rw = Server::start(cfg("annot_rw"), quick())
+        .unwrap()
+        .list_tools()
+        .unwrap();
+    assert_eq!(ro[0].name, rw[0].name);
+    assert_eq!(ro[0].description, rw[0].description);
+    assert_ne!(ro[0].pin, rw[0].pin);
+}

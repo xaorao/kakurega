@@ -15,6 +15,7 @@ function envFrom(text: string): Record<string, string> {
 
 function Server(props: { s: McpServer; onChanged: (message: string) => void }) {
   const [problem, setProblem] = createSignal("");
+  const [knowing, setKnowing] = createSignal<Record<string, boolean>>({});
   const run = async (fn: () => Promise<string | void>) => {
     setProblem("");
     try {
@@ -39,11 +40,18 @@ function Server(props: { s: McpServer; onChanged: (message: string) => void }) {
                   id={`mcp-${props.s.name}-${tool.name}`}
                   type="checkbox"
                   checked={tool.mode === "allow"}
-                  onChange={(e) => void run(async () => { await api.mcpTool(props.s.name, tool.name, e.currentTarget.checked ? "allow" : "off", tool.pin); })}
+                  disabled={tool.mode !== "allow" && tool.effect !== "read_only" && !knowing()[tool.name]}
+                  onChange={(e) => void run(async () => { await api.mcpTool(props.s.name, tool.name, e.currentTarget.checked ? "allow" : "off", tool.pin, !!knowing()[tool.name]); })}
                 />{" "}
                 <strong>{tool.name}</strong> {tool.mode === "allow" ? t("mcp.allowed") : t("mcp.off")}
               </label>
               <Show when={tool.description}><p class="muted">{tool.description}</p></Show>
+              <p class={tool.effect === "read_only" ? "muted" : "bad"}>{t(`mcp.effect.${tool.effect}` as never)}</p>
+              <Show when={tool.effect !== "read_only" && tool.mode !== "allow"}>
+                <label for={`mcp-k-${props.s.name}-${tool.name}`}>
+                  <input id={`mcp-k-${props.s.name}-${tool.name}`} type="checkbox" checked={!!knowing()[tool.name]} onChange={(e) => setKnowing({ ...knowing(), [tool.name]: e.currentTarget.checked })} /> {t("mcp.knowing")}
+                </label>
+              </Show>
             </li>
           )}
         </For>

@@ -3019,13 +3019,13 @@ impl App {
                         "/api/mcp/discover",
                         Some(json!({"name": name})),
                     )],
-                    M::Allow(server, tool) => match self.shown_mcp.get(&(server.clone(), tool.clone())).cloned() {
+                    M::Allow(server, tool, knowing) => match self.shown_mcp.get(&(server.clone(), tool.clone())).cloned() {
                         Some(pin) => vec![self.req(
                             Intent::McpDone("Allowed: a coding task may call it."),
                             false,
                             Method::Post,
                             "/api/mcp/tools",
-                            Some(json!({"server": server, "tool": tool, "mode": "allow", "pin": pin})),
+                            Some(json!({"server": server, "tool": tool, "mode": "allow", "pin": pin, "knowing": knowing})),
                         )],
                         None => {
                             self.say(Kind::Error, "Look at the list first with /mcp, so you allow the tool as you read it.");
@@ -4704,12 +4704,17 @@ impl App {
                                 .insert((name.clone(), tool.clone()), pin.to_string());
                         }
                         rows.push(format!(
-                            "    {}  {}  {}",
+                            "    {}  {}  [{}]  {}",
                             clean(&tool),
                             if t["mode"] == "allow" {
                                 "allowed"
                             } else {
                                 "off"
+                            },
+                            match t["effect"].as_str() {
+                                Some("read_only") => "server says: only reads",
+                                Some("may_change") => "server says: can change things",
+                                _ => "server does not say if it changes things",
                             },
                             clean(t["description"].as_str().unwrap_or(""))
                         ));
@@ -4748,6 +4753,8 @@ impl App {
             Intent::McpDone(done) => {
                 if ok {
                     self.say(Kind::Ok, done);
+                } else if body["error"]["code"] == "MCP_MAY_CHANGE" {
+                    self.say(Kind::Error, "The server does not say this tool only reads, so allowing it lets a coding task change things through it. If you know that, write: /mcp allow SERVER TOOL knowingly");
                 } else if body["error"]["code"] == "MCP_TOOL_CHANGED" {
                     self.say(
                         Kind::Error,

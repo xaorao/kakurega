@@ -3,6 +3,10 @@
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 
+fn annotated(name: &str, desc: &str, read_only: bool) -> Value {
+    json!({"name": name, "description": desc, "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": read_only}})
+}
+
 fn tool(name: &str, desc: &str) -> Value {
     json!({"name": name, "description": desc, "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}}})
 }
@@ -35,6 +39,13 @@ fn main() {
             "tools/list" => {
                 lists += 1;
                 match mode.as_str() {
+                    "annot" => {
+                        json!({"tools": [annotated("echo", "Echo the text back", true), annotated("write", "Writes", false), tool("plain", "No hint")]})
+                    }
+                    "annot_rw" => {
+                        json!({"tools": [annotated("echo", "Echo the text back", false)]})
+                    }
+                    "annot_ro" => json!({"tools": [annotated("echo", "Echo the text back", true)]}),
                     "many" => {
                         json!({"tools": (0..500).map(|i| tool(&format!("t{i}"), "x")).collect::<Vec<_>>()})
                     }

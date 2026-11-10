@@ -16874,7 +16874,7 @@ fn sv200_mcp_servers_are_added_checked_listed_without_their_secrets_and_removed_
     assert_eq!(
         anon.post(
             "/api/mcp/tools",
-            json!({"server": "a", "tool": "t", "mode": "allow", "pin": "x"})
+            json!({"server": "a", "tool": "t", "mode": "allow", "knowing": true, "pin": "x"})
         )
         .0,
         401
@@ -16970,7 +16970,7 @@ fn sv201_tools_are_off_until_the_owner_allows_them_with_the_pin_they_read_and_on
     // allowing needs the pin that was read
     let (s, v) = w.post(
         "/api/mcp/tools",
-        json!({"server": "srv", "tool": "echo", "mode": "allow", "pin": "0".repeat(64)}),
+        json!({"server": "srv", "tool": "echo", "mode": "allow", "knowing": true, "pin": "0".repeat(64)}),
     );
     assert_eq!(
         (s, v["error"]["code"].clone()),
@@ -16980,7 +16980,7 @@ fn sv201_tools_are_off_until_the_owner_allows_them_with_the_pin_they_read_and_on
     assert_eq!(
         w.post(
             "/api/mcp/tools",
-            json!({"server": "srv", "tool": "nope", "mode": "allow", "pin": echo_pin})
+            json!({"server": "srv", "tool": "nope", "mode": "allow", "knowing": true, "pin": echo_pin})
         )
         .0,
         404
@@ -16996,7 +16996,7 @@ fn sv201_tools_are_off_until_the_owner_allows_them_with_the_pin_they_read_and_on
     );
     let (s, _) = w.post(
         "/api/mcp/tools",
-        json!({"server": "srv", "tool": "echo", "mode": "allow", "pin": echo_pin}),
+        json!({"server": "srv", "tool": "echo", "mode": "allow", "knowing": true, "pin": echo_pin}),
     );
     assert_eq!(s, 200);
     let (s, v) = w.post(
@@ -17055,7 +17055,7 @@ fn sv202_a_tool_that_changes_after_it_was_allowed_is_not_called_and_goes_back_to
         .clone();
     w.post(
         "/api/mcp/tools",
-        json!({"server": "srv", "tool": "echo", "mode": "allow", "pin": pin}),
+        json!({"server": "srv", "tool": "echo", "mode": "allow", "knowing": true, "pin": pin}),
     );
     assert_eq!(
         w.post(
@@ -17105,7 +17105,7 @@ fn sv202_a_tool_that_changes_after_it_was_allowed_is_not_called_and_goes_back_to
     assert_eq!(
         w.post(
             "/api/mcp/tools",
-            json!({"server": "srv", "tool": "echo", "mode": "allow", "pin": pin})
+            json!({"server": "srv", "tool": "echo", "mode": "allow", "knowing": true, "pin": pin})
         )
         .0,
         409,
@@ -17163,11 +17163,11 @@ fn sv204_a_new_listing_puts_an_allowed_tool_that_changed_back_to_off_and_names_i
         .clone();
     w.post(
         "/api/mcp/tools",
-        json!({"server": "srv", "tool": "echo", "mode": "allow", "pin": echo["pin"]}),
+        json!({"server": "srv", "tool": "echo", "mode": "allow", "knowing": true, "pin": echo["pin"]}),
     );
     w.post(
         "/api/mcp/tools",
-        json!({"server": "srv", "tool": "write", "mode": "allow", "pin": write["pin"]}),
+        json!({"server": "srv", "tool": "write", "mode": "allow", "knowing": true, "pin": write["pin"]}),
     );
     std::fs::write(&flag, "1").unwrap();
     let (_, v) = w.post("/api/mcp/discover", json!({"name": "srv"}));
@@ -17308,7 +17308,7 @@ fn sv206_a_coding_task_is_offered_only_the_mcp_tools_the_owner_allowed_and_can_c
         .clone();
     w.post(
         "/api/mcp/tools",
-        json!({"server": "srv", "tool": "echo", "mode": "allow", "pin": pin}),
+        json!({"server": "srv", "tool": "echo", "mode": "allow", "knowing": true, "pin": pin}),
     );
     let summary = start_task(&w)["summary"].as_str().unwrap().to_string();
     assert!(summary.contains(r#"tools=["mcp__srv__echo"]"#), "{summary}");
@@ -17321,4 +17321,57 @@ fn sv206_a_coding_task_is_offered_only_the_mcp_tools_the_owner_allowed_and_can_c
         summary.contains("write=Err("),
         "the tool that was not allowed is refused: {summary}"
     );
+}
+
+#[test]
+fn sv207_a_tool_the_server_does_not_call_read_only_needs_the_owner_to_confirm_knowingly_before_it_is_allowed(
+) {
+    let (_c, w, _seen, _root) = instructions_service("mcp-effect");
+    w.post("/api/mcp/servers", mcp_server_body("srv", "annot"));
+    w.post("/api/mcp/discover", json!({"name": "srv"}));
+    let tools = w.get("/api/mcp").1["servers"][0]["tools"].clone();
+    let get = |n: &str| {
+        tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == n)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(get("echo")["effect"], json!("read_only"));
+    assert_eq!(get("write")["effect"], json!("may_change"));
+    assert_eq!(get("plain")["effect"], json!("unknown"));
+    let allow = |tool: &str, knowing: Option<bool>| {
+        let mut b =
+            json!({"server": "srv", "tool": tool, "mode": "allow", "pin": get(tool)["pin"]});
+        if let Some(k) = knowing {
+            b["knowing"] = json!(k);
+        }
+        w.post("/api/mcp/tools", b)
+    };
+    assert_eq!(
+        allow("echo", None).0,
+        200,
+        "a tool the server calls read-only needs no confirmation"
+    );
+    for tool in ["write", "plain"] {
+        let (s, v) = allow(tool, None);
+        assert_eq!(
+            (s, v["error"]["code"].clone()),
+            (409, json!("MCP_MAY_CHANGE")),
+            "{tool}: {v}"
+        );
+        assert_eq!(
+            allow(tool, Some(false)).0,
+            409,
+            "{tool}: knowing false is not a confirmation"
+        );
+        assert_eq!(allow(tool, Some(true)).0, 200, "{tool}");
+    }
+    let (s, v) = w.post(
+        "/api/mcp/tools",
+        json!({"server": "srv", "tool": "write", "mode": "off", "pin": get("write")["pin"]}),
+    );
+    assert_eq!(s, 200, "turning a tool off never needs a confirmation: {v}");
 }

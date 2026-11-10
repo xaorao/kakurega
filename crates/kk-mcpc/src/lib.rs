@@ -84,13 +84,33 @@ impl std::fmt::Display for McpError {
 
 impl std::error::Error for McpError {}
 
+/// What the server SAYS about whether a tool changes anything. It is the server's claim, never a promise: a server can claim
+/// read-only and still write, so it only decides how much the owner is asked to confirm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Effect {
+    ReadOnly,
+    MayChange,
+    Unknown,
+}
+
+impl Effect {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Effect::ReadOnly => "read_only",
+            Effect::MayChange => "may_change",
+            Effect::Unknown => "unknown",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolInfo {
     pub name: String,
     /// Cleaned and cut for showing.
     pub description: String,
     pub schema: Value,
-    /// Hash of the name, the description exactly as the server sent it, and the input schema. A change of any of them changes it.
+    pub effect: Effect,
+    /// Hash of the name, the description exactly as the server sent it, the input schema and the server's effect claim. A change of any of them changes it.
     pub pin: String,
 }
 
@@ -295,8 +315,13 @@ impl Server {
             }
             let raw = t.description.as_deref().unwrap_or("").to_string();
             let schema = serde_json::to_value(&t.input_schema).unwrap_or(Value::Null);
+            let effect = match t.annotations.as_ref().and_then(|a| a.read_only_hint) {
+                Some(true) => Effect::ReadOnly,
+                Some(false) => Effect::MayChange,
+                None => Effect::Unknown,
+            };
             let pin = sha256_hex(
-                json!({"name": name, "description": raw, "schema": schema})
+                json!({"name": name, "description": raw, "schema": schema, "effect": effect.as_str()})
                     .to_string()
                     .as_bytes(),
             );
@@ -305,6 +330,7 @@ impl Server {
                 name,
                 description,
                 schema,
+                effect,
                 pin,
             });
         }

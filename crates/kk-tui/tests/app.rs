@@ -7489,8 +7489,13 @@ fn tu_mc01_mcp_commands_parse_and_bad_forms_are_refused() {
     );
     assert_eq!(
         cmd::parse("/mcp allow docs lookup").unwrap(),
-        Command::Mcp(M::Allow("docs".into(), "lookup".into()))
+        Command::Mcp(M::Allow("docs".into(), "lookup".into(), false))
     );
+    assert_eq!(
+        cmd::parse("/mcp allow docs lookup knowingly").unwrap(),
+        Command::Mcp(M::Allow("docs".into(), "lookup".into(), true))
+    );
+    assert!(cmd::parse("/mcp allow docs lookup sure").is_err());
     assert_eq!(
         cmd::parse("/mcp off docs lookup").unwrap(),
         Command::Mcp(M::Off("docs".into(), "lookup".into()))
@@ -7531,12 +7536,13 @@ fn tu_mc02_a_tool_is_allowed_only_with_the_pin_the_list_showed() {
     let r = enter(&mut a, "/mcp");
     assert_eq!((r[0].path.as_str(), r[0].method), ("/api/mcp", Method::Get));
     a.handle(ok(&r[0], 200, json!({"servers": [{"name": "docs", "program": "/usr/bin/x\u{1b}[2J", "args": [], "tools": [
-        {"name": "lookup", "description": "Looks up a term\u{1b}[31m", "pin": "cd".repeat(32), "mode": "off"}]}]})));
+        {"name": "lookup", "description": "Looks up a term\u{1b}[31m", "pin": "cd".repeat(32), "mode": "off", "effect": "may_change"}]}]})));
     let t = text(&a);
     assert!(
         t.contains("docs") && t.contains("lookup") && t.contains("off") && !t.contains('\u{1b}'),
         "{t}"
     );
+    assert!(t.contains("server says: can change things"), "{t}");
     let r = enter(&mut a, "/mcp allow docs lookup");
     assert_eq!(
         (r[0].path.as_str(), r[0].method),
@@ -7547,6 +7553,7 @@ fn tu_mc02_a_tool_is_allowed_only_with_the_pin_the_list_showed() {
         (body["mode"].clone(), body["pin"].clone()),
         (json!("allow"), json!("cd".repeat(32)))
     );
+    assert_eq!(body["knowing"], json!(false), "knowingly was not written");
     a.handle(ok(&r[0], 200, json!({"mode": "allow"})));
     assert!(
         text(&a).contains("Allowed: a coding task may call it."),
@@ -7564,6 +7571,19 @@ fn tu_mc02_a_tool_is_allowed_only_with_the_pin_the_list_showed() {
         "{}",
         text(&a)
     );
+    let r = enter(&mut a, "/mcp allow docs lookup");
+    a.handle(ok(
+        &r[0],
+        409,
+        json!({"error": {"code": "MCP_MAY_CHANGE", "message": "x"}}),
+    ));
+    assert!(
+        text(&a).contains("/mcp allow SERVER TOOL knowingly"),
+        "{}",
+        text(&a)
+    );
+    let r = enter(&mut a, "/mcp allow docs lookup knowingly");
+    assert_eq!(r[0].body.as_ref().unwrap()["knowing"], json!(true));
     let r = enter(&mut a, "/mcp off docs lookup");
     assert_eq!(r[0].body.as_ref().unwrap()["mode"], json!("off"));
 }

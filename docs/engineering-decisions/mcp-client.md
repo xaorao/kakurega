@@ -65,3 +65,7 @@
 
 ## Real-model run (OBSERVED, this Mac)
 - qwen2.5-coder:7b through the real service (`kaku serve`, HTTP with a paired session): the owner added the scripted fake MCP server, checked it, allowed `echo` with its pin, and started a coding task telling the model to call `mcp__docs__echo` with "ping". The model made the call, the service started the server, called it, stopped it, and the model reported the answer `echo: ping` (VERIFIED by run). The same task also asked it to fix a bug and it did not (small-model limit; the summary said no change was made). A third-party MCP server (not our fake) was NOT tested. Terminal commands: tu_mc01 to tu_mc03, 7 mutants caught.
+
+## Effect claim and the owner's confirmation (built after the first wiring)
+- `kk_mcpc::Effect` (`read_only`, `may_change`, `unknown`) comes from the server's own `readOnlyHint` and is part of the pin, so a flip changes the pin. It is the server's CLAIM and is shown as such ("the server says"); it never grants anything. Allowing a tool that is not `read_only` needs `knowing: true` in the request (web: a second checkbox; terminal: `/mcp allow SERVER TOOL knowingly`), else 409 `MCP_MAY_CHANGE`. Turning a tool off never needs it. This is a confirmation, not the per-call approval (`ask`), which is still not built.
+- Evidence: mc15, mc16 (4 mutants), sv207 (4 mutants), tu_mc01 to tu_mc03 (3 mutants), browser `tests/e2e/mcp_web.mjs` 14 of 14 including the disabled-until-confirmed checkbox.

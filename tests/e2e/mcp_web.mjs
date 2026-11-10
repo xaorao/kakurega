@@ -49,7 +49,7 @@ await page.getByRole("alert").first().waitFor();
 check(/absolute path/.test(await page.getByRole("alert").first().innerText()), "a bare program name is refused in words");
 
 await page.getByLabel("Full path of the program").fill(fake);
-await page.getByLabel(/^Settings it needs/).fill("FAKE_MODE=ok\nAPI_KEY=hunter2-not-for-display");
+await page.getByLabel(/^Settings it needs/).fill("FAKE_MODE=annot\nAPI_KEY=hunter2-not-for-display");
 await page.getByRole("button", { name: "Add program" }).click();
 await page.getByText("Added. Check its tools next.").waitFor();
 await shot("1-added");
@@ -57,7 +57,7 @@ check(await page.getByText("Settings: API_KEY, FAKE_MODE").isVisible(), "the pro
 check(!(await page.locator("main").innerText()).includes("hunter2-not-for-display"), "a setting's value is never shown");
 
 await page.getByRole("button", { name: "Check its tools" }).click();
-await page.getByText("Checked: 2 tools.").waitFor();
+await page.getByText("Checked: 3 tools.").waitFor();
 await shot("2-checked");
 const echo = page.getByLabel(/echo/);
 check(!(await echo.isChecked()), "a listed tool starts off");
@@ -69,6 +69,12 @@ await page.goto(origin + "/#/instructions");
 await page.getByRole("heading", { name: "Outside tools" }).waitFor();
 check(await page.getByLabel(/echo/).isChecked(), "the choice is still there after a reload");
 check(!(await page.getByLabel(/write/).isChecked()), "the other tool is still off");
+check(await page.getByText("The server says it can change things.").isVisible(), "a tool the server says can change things is labelled so");
+check(await page.getByText("The server does not say whether it changes things.").isVisible(), "a tool with no hint is labelled as not said");
+const write = page.getByLabel(/write/).first();
+check(await write.isDisabled(), "a tool that may change things cannot be allowed until the owner confirms they know");
+await page.locator("#mcp-k-docs-write").check();
+check(await write.isEnabled(), "after the confirmation it can be allowed");
 await shot("3-allowed");
 
 await page.getByRole("button", { name: "Remove" }).last().click();

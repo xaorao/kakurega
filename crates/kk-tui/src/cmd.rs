@@ -21,7 +21,8 @@ pub enum McpAction {
     List,
     Check(String),
     /// Allow or turn off one tool, with the pin the list showed in this session.
-    Allow(String, String),
+    /// The third is true when the owner wrote `knowingly`: they confirm a tool that may change things.
+    Allow(String, String, bool),
     Off(String, String),
     Remove(String),
     Add {
@@ -377,7 +378,7 @@ pub fn usage(name: &str) -> &'static str {
         "instructions" => "/instructions [set [in PROJECT:] TEXT | clear [PROJECT]]",
         "notesonly" => "/notesonly [on|off [PROJECT]]",
         "method" => "/method [show|approve|revoke|remove NAME | add NAME WORD,WORD|- TEXT]",
-        "mcp" => "/mcp [check NAME | allow|off SERVER TOOL | remove NAME | add NAME /full/path [ARGS]]",
+        "mcp" => "/mcp [check NAME | allow SERVER TOOL [knowingly] | off SERVER TOOL | remove NAME | add NAME /full/path [ARGS]]",
         "pii" => "/pii [add ENTRY | remove ENTRY]",
         "find" => "/find WORDS",
         "transcript" => "/transcript WORDS",
@@ -848,7 +849,10 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 ["check", n] if plain(n) => Ok(Command::Mcp(McpAction::Check((*n).into()))),
                 ["remove", n] if plain(n) => Ok(Command::Mcp(McpAction::Remove((*n).into()))),
                 ["allow", srv, tool] if plain(srv) && plain(tool) => Ok(Command::Mcp(
-                    McpAction::Allow((*srv).into(), (*tool).into()),
+                    McpAction::Allow((*srv).into(), (*tool).into(), false),
+                )),
+                ["allow", srv, tool, "knowingly"] if plain(srv) && plain(tool) => Ok(Command::Mcp(
+                    McpAction::Allow((*srv).into(), (*tool).into(), true),
                 )),
                 ["off", srv, tool] if plain(srv) && plain(tool) => {
                     Ok(Command::Mcp(McpAction::Off((*srv).into(), (*tool).into())))
