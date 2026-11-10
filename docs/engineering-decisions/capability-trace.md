@@ -45,8 +45,10 @@ Depth is what I read myself along the capability's path: FULL (the whole path re
 | 35 | Project settings: answer only from the project's material | AnythingLLM `server/models/workspace.js` (eda0eb5) | FULL | `server/utils/chats` (where query mode refuses); `workspaceThread.js` |
 | 36 | Terminal @file references | OpenCode `packages/tui/src/component/prompt/autocomplete.tsx` (fe04656) | PART | lines 1-90, 720-820, 870-1023; `prompt/frecency`; the server's file search |
 | 37 | Tool-call display (coding steps) | OpenCode `packages/session-ui/src/components/basic-tool.tsx` (fe04656) | FULL | `basic-tool.css`; per-tool visualizers |
+| 38 | Fork and message actions (terminal) | OpenCode `routes/session/dialog-fork.tsx` (87 lines) and `dialog-message.tsx` (90 lines), fe04656 | FULL | `prompt/restore.ts` |
+| 39 | Side conversation | Codex f2b94ef `tui/src/slash_command.rs` (`/side`, `/btw`, availability lists), `chatwidget.rs` flag only | PART | the side-conversation implementation in `chatwidget.rs`, `worktree_stack.rs` |
 
-Counts: FULL on 18 rows, PART on 19 rows, none without reading. The per-row records below keep the commits, files and line ranges.
+Counts: FULL on 19 rows, PART on 20 rows, none without reading. The per-row records below keep the commits, files and line ranges.
 
 | Upstream and revision | Files examined (depth) | Capability | Decision | Kakurega location | Verification | Outstanding gap |
 |---|---|---|---|---|---|---|
