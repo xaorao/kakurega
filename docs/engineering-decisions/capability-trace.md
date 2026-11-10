@@ -51,8 +51,9 @@ Depth is what I read myself along the capability's path: FULL (the whole path re
 | 41 | NEAR inference SDK client | nearai-inference-sdk 0.3.0 (MIT) ff59105 `rs/src/e2ee.rs` 1-541, `rs/src/inference.rs` 1-1049, tests/fixtures | FULL | `ohttp.rs`, `systemone.rs`, other-language SDKs, the SDK's inline unit tests |
 | 42 | Owner-approved methods (skills) with hash-pinned approval | IronClaw b0b999d (Apache-2.0) `ironclaw_skills/src/types.rs` 1-330 of 809, `validation.rs` 1-330 of 816, `parser.rs` 1-260 of 459, `selector.rs` 90-490 of 1531 | PART | `management.rs`, `learning.rs`, `scoped_management.rs`, the loop-host activation (5021 lines), the install and URL bundle code; Hermes and OpenCode skill loaders |
 | 43 | MCP client behind the owner's allow-list | rmcp d66a74d (Apache-2.0) `transport/child_process.rs` 1-260 of 418, `transport/async_rw.rs` 50-135, `service/client.rs` 2134-2209 and a function map of the file | PART | `handler/client.rs`, most of `client.rs`, goose extension manager, IronClaw MCP lane |
+| 44 | Signed method packs (bounded bundle, pinned publisher key) | IronClaw b0b999d (Apache-2.0) `ironclaw_skills/src/management/install_bundle.rs` 1-140 of 672; our own `kk-update` check and `kk-evidence` DSSE read earlier | PART | the rest of `install_bundle.rs`, the URL and GitHub bundle sources, Ghast's catalog format (closed docs) |
 
-Counts: FULL on 21 rows, PART on 22 rows, none without reading. The per-row records below keep the commits, files and line ranges.
+Counts: FULL on 21 rows, PART on 23 rows, none without reading. The per-row records below keep the commits, files and line ranges.
 
 | Upstream and revision | Files examined (depth) | Capability | Decision | Kakurega location | Verification | Outstanding gap |
 |---|---|---|---|---|---|---|
