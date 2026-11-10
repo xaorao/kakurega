@@ -20,6 +20,8 @@ node tests/e2e/readiness.mjs
 node tests/e2e/long_lists.mjs
 node tests/e2e/extension.mjs
 node tests/e2e/verifier_page.mjs
+node tests/e2e/mcp_web.mjs
+node tests/e2e/packs_web.mjs
 node tests/e2e/desktop.mjs
 node tests/e2e/desktop_attack.mjs
 node tests/e2e/desktop_recovery.mjs
