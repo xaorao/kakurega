@@ -171,6 +171,13 @@ pre.cmd { font-size: 15px; }
 .tree .row { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
 .tree .fname { overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 12.5px; }
 .viewer { min-width: 0; }
+.tree details > ul { padding-left: 12px; margin: 0; }
+.tree summary.dir { cursor: pointer; padding: 6px 10px; display: flex; justify-content: space-between; gap: 8px; }
+.codeview { display: flex; align-items: flex-start; border: 1px solid var(--line); border-radius: var(--radius-s); overflow: auto; max-height: 640px; }
+.codeview pre { margin: 0; padding: 10px 12px; border: 0; white-space: pre; }
+.codeview pre:not(.gutter) { flex: 1 0 auto; }
+.codeview .gutter { flex: none; min-width: 4ch; }
+.codeview .gutter { color: var(--graphite); text-align: right; user-select: none; border-right: 1px solid var(--line); position: sticky; left: 0; background: var(--paper); }
 
 .verify { margin: 0 auto; padding: 40px 20px 80px; }
 

@@ -351,10 +351,35 @@ try {
   await page.getByText("This file is labelled restricted").waitFor();
   const srcText = await page.locator(".viewer").innerText();
   check("withheld file is shown as withheld, never its content", /Withheld/.test(srcText) && !/hunter2|sk_live/.test(srcText));
-  await page.getByRole("button", { name: /payments\/auth\/session\.py/ }).click();
+  await page.getByTitle("payments/auth/session.py").click();
   await page.getByText("def logout").waitFor();
+  check("the source view numbers its lines in a gutter and colours the code without changing it", (await page.locator(".codeview .gutter").innerText()).startsWith("1\n2\n3") && (await page.locator(".codeview [class^='tok-']").count()) > 0 && (await page.locator(".codeview code").innerText()).includes("def logout"));
+  check("files are grouped under their folders and a file shows its own name, with the whole path as its title", (await page.locator(".tree summary.dir").count()) >= 2 && (await page.getByTitle("payments/auth/session.py").innerText()).startsWith("session.py"));
+  const beforeFilter = await page.locator(".tree button.row").count();
+  await page.getByLabel("Filter files").fill("SESSION");
+  const afterFilter = await page.locator(".tree button.row").count();
+  check("typing in the filter keeps the files whose path has the word, in any case, and says how many", (await page.getByTitle("payments/auth/session.py").count()) === 1 && afterFilter >= 1 && afterFilter < beforeFilter && /^\d+ file\(s\)$/.test(await page.locator("[role=status]", { hasText: "file(s)" }).first().innerText()), `before ${beforeFilter} after ${afterFilter}`);
+  await page.getByLabel("Filter files").fill("zzz-no-such-file");
+  await page.getByText("No file has all of those words in its path.").waitFor();
+  check("a filter that matches nothing says so", (await page.locator(".tree button.row").count()) === 0);
+  await page.getByLabel("Filter files").fill("");
   await page.screenshot({ path: join(shots, "03-source.png") });
   await axeCheck(page, "source");
+  {
+    // a project with thousands of files: only the first few hundred are drawn and the page says so
+    const many = Array.from({ length: 1200 }, (_, i) => ({ path: `pkg${i % 40}/mod${i}.py`, withheld: false, level: "internal" }));
+    await page.route("**/api/jobs/*/files", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ files: many }) }));
+    await page.getByRole("tab", { name: "Findings" }).click();
+    await page.getByRole("tab", { name: "Source" }).click();
+    await page.getByText("Showing the first 400 of 1200 files; type to narrow them down.").waitFor();
+    check("a very long file list is cut to what can be drawn and the page says how many there are", (await page.locator(".tree button.row").count()) === 400);
+    await page.getByLabel("Filter files").fill("mod1199");
+    await page.getByTitle("pkg39/mod1199.py").waitFor();
+    check("typing finds a file beyond the first few hundred", (await page.locator(".tree button.row").count()) === 1);
+    await axeCheck(page, "source with a long list");
+    await page.unroute("**/api/jobs/*/files");
+    await page.getByRole("tab", { name: "Findings" }).click();
+  }
 
   await page.getByRole("tab", { name: "Findings" }).click();
   await page.getByRole("tab", { name: "Findings" }).press("ArrowRight");

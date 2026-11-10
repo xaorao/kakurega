@@ -1,4 +1,5 @@
 import { Code } from "../components/Code";
+import { baseName, filterFiles, groupByDir, languageOf, lineCount, MAX_SHOWN } from "../filetree";
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { clockOffset, formatSpan, timeLeft } from "../expiry";
 import { DiffView } from "../components/DiffView";
@@ -115,27 +116,55 @@ function Protected(props: { job: Job }) {
 function Source(props: { job: Job }) {
   const [files] = createResource(() => props.job.id, (id) => api.files(id).then((r) => r.files));
   const [selected, setSelected] = createSignal<string | null>(null);
+  const [query, setQuery] = createSignal("");
   const [content] = createResource(selected, (p) => (p ? api.file(props.job.id, p) : Promise.resolve(null)));
+  const matching = createMemo(() => filterFiles(files() ?? [], query()));
+  const groups = createMemo(() => groupByDir(matching().slice(0, MAX_SHOWN)));
   return (
     <div class="split">
-      <ul class="tree" aria-label={t("src.files")}>
-        <For each={files()}>
-          {(f) => (
-            <li>
-              <button class={selected() === f.path ? "row active" : "row"} onClick={() => setSelected(f.path)}>
-                <span class="fname">{f.path}</span>
-                <span class={`chip ${f.withheld ? "bad" : f.level === "internal" ? "" : "warn"}`}>{f.withheld ? t("prot.withheld") : f.level}</span>
-              </button>
-            </li>
-          )}
-        </For>
-      </ul>
+      <div class="stack">
+        <label class="sr" for="src-filter">{t("src.filter")}</label>
+        <input id="src-filter" type="search" maxlength="200" placeholder={t("src.filter")} value={query()} onInput={(e) => setQuery(e.currentTarget.value)} />
+        <p class="muted" role="status">
+          {matching().length === 0 && query() !== ""
+            ? t("src.none")
+            : matching().length > MAX_SHOWN
+              ? t("src.cut", { shown: MAX_SHOWN, n: matching().length })
+              : t("src.count", { n: matching().length })}
+        </p>
+        <ul class="tree" aria-label={t("src.files")}>
+          <For each={groups()}>
+            {(g) => (
+              <li>
+                <details open={query() !== "" || groups().length <= 8}>
+                  <summary class="dir"><span class="fname">{g.dir === "" ? t("src.top") : g.dir + "/"}</span> <span class="muted">{g.files.length}</span></summary>
+                  <ul class="plain">
+                    <For each={g.files}>
+                      {(f) => (
+                        <li>
+                          <button class={selected() === f.path ? "row active" : "row"} title={f.path} onClick={() => setSelected(f.path)}>
+                            <span class="fname">{baseName(f.path)}</span>
+                            <span class={`chip ${f.withheld ? "bad" : f.level === "internal" ? "" : "warn"}`}>{f.withheld ? t("prot.withheld") : f.level}</span>
+                          </button>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </details>
+              </li>
+            )}
+          </For>
+        </ul>
+      </div>
       <div class="viewer" aria-live="polite">
         <Show when={selected()} fallback={<p class="muted">{rich("src.choose")}</p>}>
           <Show when={content()}>
             {(c) => (
               <Show when={!c().withheld} fallback={<div class="redacted">{rich("src.withheld")}</div>}>
-                <pre tabindex="0"><code>{c().text}</code></pre>
+                <div class="codeview">
+                  <pre class="gutter" aria-hidden="true">{Array.from({ length: lineCount(c().text ?? "") }, (_, i) => i + 1).join("\n")}</pre>
+                  <pre tabindex="0" aria-label={t("src.fileLabel", { file: selected() ?? "" })}><Code lang={languageOf(selected() ?? "")} text={c().text ?? ""} /></pre>
+                </div>
               </Show>
             )}
           </Show>
