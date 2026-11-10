@@ -7,8 +7,17 @@
 4. Quality criteria: a server that hangs, floods, crashes or lies cannot hang the service, fill memory or widen its own permissions; a tool's description and result can never act as an instruction; nothing is called that the owner did not allow; secrets reach a server only by name from the vault, never through a model.
 
 ## Reading depth (honest)
-- rmcp d66a74d: `transport/async_rw.rs` 240-340 and `service.rs` 1370-1780 read earlier (the serve loop, cancellation by id). `service/client.rs` (2942 lines), `transport/child_process.rs` (418), `handler/client.rs` (464): NOT READ yet. kk-cli's existing use of the client in tests: read earlier.
+- rmcp d66a74d: `transport/async_rw.rs` 240-340 and `service.rs` 1370-1780 read earlier (the serve loop, cancellation by id). `transport/child_process.rs` lines 1-260 of 418 (FULL for the spawn, the builder, graceful shutdown and kill-on-drop; the rest is tests and a `which` helper); `service/client.rs` (2942 lines): the function map only (NOT READ in depth); `handler/client.rs` (464): NOT READ yet. kk-cli's existing use of the client in tests: read earlier.
 - goose and IronClaw MCP lanes: NOT READ for this component.
+
+## What the transport reading showed (VERIFIED in the code)
+| Finding | Decision |
+|---|---|
+| The child inherits the whole environment of the parent (the builder only sets stdio) | IMPROVE: the service builds the command with `env_clear()` and passes only the owner's named variables and a fixed safe PATH |
+| stderr is inherited by default, so a server writes into our terminal | IMPROVE: stderr is piped, read with a size cap and kept for the owner's "why did it fail" view, never shown raw to a model |
+| No limit on a line or on total output in the transport | IMPROVE: our wrapper caps each result's bytes and the number of tools listed; a message over the cap ends the call as an error (to be proven against a flooding fake server) |
+| Shutdown is polite then SIGTERM then kill, 3 s each; the child is killed on drop through a spawned task (needs a running runtime) | REUSE the sequence; our service shuts servers down explicitly and tests that no process is left |
+| `which_command` resolves a name through PATH | EXCLUDE: the owner gives an absolute path to the program; a bare name is refused so PATH cannot choose a program |
 
 ## Threat model (what the design must hold against)
 | Threat | Required property |
