@@ -8,7 +8,7 @@ const doc = parseStrict(readFileSync(new URL("../../../fixtures/capsule/vectors.
 const vectors = doc.get("vectors");
 
 test("the vector file has the expected breadth", () => {
-  assert.ok(vectors.length >= 30, `only ${vectors.length} vectors`);
+  assert.ok(vectors.length >= 45, `only ${vectors.length} vectors`);
 });
 
 for (const v of vectors) {
@@ -24,5 +24,6 @@ for (const v of vectors) {
     assert.equal(result.valid, v.get("valid"), `${name}: ${JSON.stringify(result)}`);
     assert.equal(result.reason, v.get("reason"), name);
     if (v.get("valid")) assert.equal(result.signer, v.get("signer"));
+    assert.equal((result.receipts ?? []).length, Number(v.get("receipts")), `${name}: receipts`);
   });
 }

@@ -21,6 +21,7 @@ serde_json = "1"
 kk-route = { path = "../kk-route" }
 
 [dev-dependencies]
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "zeroize"] }
 
 [lints]
 workspace = true

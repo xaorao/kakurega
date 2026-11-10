@@ -19,3 +19,6 @@ Treeship `packages/core/src/attestation/` (Apache-2.0, commit da7f8ac): `pae.rs`
 
 ## Not covered
 WASM build of the Rust verifier and the browser UI around the JS one; the keyed source commitment itself (its creation and the B1 binding claim are built with the release pipeline); Merkle inclusion proofs and transparency anchoring; key rotation and revocation; signing key custody in the vault; a very large capsule performance test; fuzzing the capsule parser with mutated bytes; second-signature (co-signer) policy.
+
+## Model receipts (NEAR loop step 3)
+- The release's `assurance` may carry `route_receipts`; both verifiers check them (shape, kind, key, signature, duplicates, cap) in the same order and agree on 45 shared vectors, 14 of them new. See `near-route.md`.

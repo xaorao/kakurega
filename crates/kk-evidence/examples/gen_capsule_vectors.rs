@@ -1,7 +1,7 @@
 use kk_evidence::b64;
 use kk_evidence::canon::{self, Value};
 use kk_evidence::capsule::{
-    self, sha256_hex, ClaimSpec, ReleaseSpec, VerifyOptions, CLAIM_TYPE, RELEASE_TYPE,
+    self, sha256_hex, ClaimSpec, ReceiptSpec, ReleaseSpec, VerifyOptions, CLAIM_TYPE, RELEASE_TYPE,
 };
 use kk_evidence::dsse;
 use kk_evidence::keys::Signer;
@@ -67,6 +67,38 @@ fn spec() -> ReleaseSpec {
         source_commitment_scheme: "hmac-sha256-keyed".into(),
         source_commitment_digest: sha256_hex(b"manifest"),
         source_manifest_files: 38,
+        route_receipts: vec![],
+    }
+}
+
+/// What a model's enclave signs for one exchange, with the key of `seed`.
+fn receipt(seed: u8, id: &str, model: &str, request: &[u8], answer: &[u8]) -> ReceiptSpec {
+    use ed25519_dalek::Signer as _;
+    let key = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+    let text = format!("{model}:{}:{}", sha256_hex(request), sha256_hex(answer));
+    ReceiptSpec {
+        completion_id: id.into(),
+        signer: key
+            .verifying_key()
+            .to_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+        signature: key
+            .sign(text.as_bytes())
+            .to_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+        signed_text: text,
+    }
+}
+
+fn spec_with(receipts: Vec<ReceiptSpec>) -> ReleaseSpec {
+    ReleaseSpec {
+        route: "verified_tee".into(),
+        route_receipts: receipts,
+        ..spec()
     }
 }
 
@@ -126,6 +158,7 @@ fn main() {
             ("options", opts_json(pinned, now, recipient)),
             ("valid", Value::Bool(expect_valid)),
             ("reason", reason.map(s).unwrap_or(Value::Null)),
+            ("receipts", Value::Int(report.receipts.len() as i64)),
             (
                 "signer",
                 report
@@ -586,6 +619,254 @@ fn main() {
         None,
         false,
         Some("capsule_not_canonical"),
+    );
+
+    // ---- model receipts in the release ----
+    let r1 = receipt(7, "chat-1", "vendor/model", b"request one", b"answer one");
+    let r2 = receipt(8, "chat-2", "vendor/model", b"request two", b"answer two");
+    let with = |receipts: Vec<ReceiptSpec>| {
+        capsule::build(&spec_with(receipts), &[claim()], &base_files(), &signer)
+    };
+    add(
+        "one model receipt",
+        with(vec![r1.clone()]),
+        None,
+        NOW,
+        None,
+        true,
+        None,
+    );
+    add(
+        "two model receipts from two enclave keys",
+        with(vec![r1.clone(), r2.clone()]),
+        None,
+        NOW,
+        None,
+        true,
+        None,
+    );
+    let release_with = |receipts: Vec<ReceiptSpec>, mutate: &dyn Fn(&mut Value)| -> Vec<u8> {
+        let base = with(receipts);
+        let mut c = parse(&base);
+        let envs = arr_mut(get_mut(&mut c, "envelopes"));
+        let payload = match get_mut(&mut envs[0], "payload") {
+            Value::Str(t) => b64::decode(t).unwrap(),
+            _ => unreachable!(),
+        };
+        let mut r = parse(&payload);
+        mutate(&mut r);
+        envs[0] = dsse::to_value(&dsse::sign(RELEASE_TYPE, &emit(&r), &signer));
+        let new_digest = sha256_hex(&emit(&r));
+        let claim_payload = match get_mut(&mut envs[1], "payload") {
+            Value::Str(t) => b64::decode(t).unwrap(),
+            _ => unreachable!(),
+        };
+        let mut cl = parse(&claim_payload);
+        *get_mut(&mut cl, "release_payload_sha256") = Value::Str(new_digest);
+        envs[1] = dsse::to_value(&dsse::sign(CLAIM_TYPE, &emit(&cl), &signer));
+        emit(&c)
+    };
+    let edit_first = |f: &dyn Fn(&mut Value)| {
+        release_with(vec![r1.clone(), r2.clone()], &|r| {
+            f(&mut arr_mut(get_mut(get_mut(r, "assurance"), "route_receipts"))[0])
+        })
+    };
+    let flip = |t: &str| -> String {
+        let mut b = t.as_bytes().to_vec();
+        b[0] = if b[0] == b'0' { b'1' } else { b'0' };
+        String::from_utf8(b).unwrap()
+    };
+    add(
+        "receipt signature bit flipped (signed release)",
+        edit_first(&|r| {
+            let Value::Str(t) = get_mut(r, "signature") else {
+                unreachable!()
+            };
+            *t = flip(t);
+        }),
+        None,
+        NOW,
+        None,
+        false,
+        Some("receipt_signature"),
+    );
+    add(
+        "receipt signed text changed after signing",
+        edit_first(&|r| {
+            let Value::Str(t) = get_mut(r, "signed_text") else {
+                unreachable!()
+            };
+            *t = t.replacen("vendor/model", "other/model", 1);
+        }),
+        None,
+        NOW,
+        None,
+        false,
+        Some("receipt_signature"),
+    );
+    add(
+        "receipt signed by the gateway, not the model",
+        edit_first(&|r| *get_mut(r, "signature_kind") = s("gateway")),
+        None,
+        NOW,
+        None,
+        false,
+        Some("receipt_kind"),
+    );
+    add(
+        "receipt signer is a weak key",
+        edit_first(&|r| *get_mut(r, "signer") = Value::Str("00".repeat(32))),
+        None,
+        NOW,
+        None,
+        false,
+        Some("receipt_key"),
+    );
+    add(
+        "receipt signer is another key (valid point, wrong key)",
+        edit_first(&|r| {
+            let other = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32])
+                .verifying_key()
+                .to_bytes();
+            *get_mut(r, "signer") = Value::Str(other.iter().map(|b| format!("{b:02x}")).collect());
+        }),
+        None,
+        NOW,
+        None,
+        false,
+        Some("receipt_signature"),
+    );
+    add(
+        "receipt with an extra member",
+        edit_first(&|r| {
+            if let Value::Object(m) = r {
+                m.push(("extra".to_string(), Value::Int(1)));
+            }
+        }),
+        None,
+        NOW,
+        None,
+        false,
+        Some("receipt_shape"),
+    );
+    add(
+        "receipt signer not hex",
+        edit_first(&|r| *get_mut(r, "signer") = s("not hex")),
+        None,
+        NOW,
+        None,
+        false,
+        Some("receipt_shape"),
+    );
+    add(
+        "receipt signed text without hashes",
+        {
+            use ed25519_dalek::Signer as _;
+            let key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+            let text = "vendor/model:request:answer";
+            let sig: String = key
+                .sign(text.as_bytes())
+                .to_bytes()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            edit_first(&|r| {
+                *get_mut(r, "signed_text") = s(text);
+                *get_mut(r, "signature") = Value::Str(sig.clone());
+            })
+        },
+        None,
+        NOW,
+        None,
+        false,
+        Some("receipt_shape"),
+    );
+    add(
+        "receipt signed text with an empty model name",
+        {
+            use ed25519_dalek::Signer as _;
+            let key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+            let text = format!(":{}:{}", sha256_hex(b"q"), sha256_hex(b"a"));
+            let sig: String = key
+                .sign(text.as_bytes())
+                .to_bytes()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            edit_first(&|r| {
+                *get_mut(r, "signed_text") = s(&text);
+                *get_mut(r, "signature") = Value::Str(sig.clone());
+            })
+        },
+        None,
+        NOW,
+        None,
+        false,
+        Some("receipt_shape"),
+    );
+    add(
+        "two receipts for one answer",
+        release_with(vec![r1.clone(), r2.clone()], &|r| {
+            let list = arr_mut(get_mut(get_mut(r, "assurance"), "route_receipts"));
+            let first = list[0].clone();
+            list[1] = first;
+        }),
+        None,
+        NOW,
+        None,
+        false,
+        Some("receipt_shape"),
+    );
+    add(
+        "an empty list of receipts",
+        release_with(vec![r1.clone()], &|r| {
+            *get_mut(get_mut(r, "assurance"), "route_receipts") = Value::Array(vec![])
+        }),
+        None,
+        NOW,
+        None,
+        false,
+        Some("receipt_shape"),
+    );
+    add(
+        "receipts that are not a list",
+        release_with(vec![r1.clone()], &|r| {
+            *get_mut(get_mut(r, "assurance"), "route_receipts") = s("x")
+        }),
+        None,
+        NOW,
+        None,
+        false,
+        Some("release_shape"),
+    );
+    add(
+        "sixty-five receipts",
+        release_with(vec![r1.clone()], &|r| {
+            let many: Vec<Value> = (0..65)
+                .map(|i| {
+                    let rc = receipt(
+                        7,
+                        &format!("chat-{i}"),
+                        "vendor/model",
+                        format!("q{i}").as_bytes(),
+                        b"a",
+                    );
+                    obj(vec![
+                        ("completion_id", s(&rc.completion_id)),
+                        ("signature_kind", s("provider_tee")),
+                        ("signer", s(&rc.signer)),
+                        ("signed_text", s(&rc.signed_text)),
+                        ("signature", s(&rc.signature)),
+                    ])
+                })
+                .collect();
+            *get_mut(get_mut(r, "assurance"), "route_receipts") = Value::Array(many);
+        }),
+        None,
+        NOW,
+        None,
+        false,
+        Some("receipt_shape"),
     );
 
     let doc = obj(vec![("vectors", Value::Array(out)), ("note", s("generated by crates/kk-evidence/examples/gen_capsule_vectors.rs; seed keys 0x01.. and 0x02.."))]);

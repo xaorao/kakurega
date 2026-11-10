@@ -5,6 +5,7 @@ const RELEASE_TYPE = "application/vnd.kakurega.release.v1+json";
 const CLAIM_TYPE = "application/vnd.kakurega.claim.v1+json";
 const MAX_FILES = 256;
 const MAX_TOTAL = 64 * 1024 * 1024;
+const MAX_RECEIPTS = 64;
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 const enc = new TextEncoder();
 
@@ -174,7 +175,19 @@ async function run(bytes, pinned, now, expectedRecipient) {
   if (capsuleId === "" || recipient === "" || policyVersion === "" || expires <= created) stop("release_shape");
   const assurance = rel.get("assurance");
   const commit = rel.get("source_commitment");
-  if (!exactKeys(assurance, ["binding_level", "route", "not_established"]) || !exactKeys(commit, ["scheme", "digest", "manifest_files"])) stop("release_shape");
+  const withReceipts = isMap(assurance) && assurance.has("route_receipts");
+  if (!(exactKeys(assurance, ["binding_level", "route", "not_established"]) || exactKeys(assurance, ["binding_level", "route", "not_established", "route_receipts"])) || !exactKeys(commit, ["scheme", "digest", "manifest_files"])) stop("release_shape");
+  const receipts = [];
+  if (withReceipts) {
+    const list = assurance.get("route_receipts");
+    if (!Array.isArray(list)) stop("release_shape");
+    if (list.length === 0 || list.length > MAX_RECEIPTS) stop("receipt_shape");
+    for (const r of list) {
+      const done = await checkReceipt(r);
+      if (receipts.some((x) => x.completionId === done.completionId)) stop("receipt_shape");
+      receipts.push(done);
+    }
+  }
   const level = assurance.get("binding_level");
   const route = assurance.get("route");
   const notEst = assurance.get("not_established");
@@ -237,11 +250,46 @@ async function run(bytes, pinned, now, expectedRecipient) {
     signerPinned: isPinned,
     fileCount: names.size,
     claimCount: claims.length,
+    receipts,
     created: Number(created),
     expires: Number(expires),
     policyVersion,
     capsuleId,
   };
+}
+
+const hexToBytes = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)));
+
+/** `MODEL:REQUEST:ANSWER` where the last two parts are 64 hex digits each and the model name is not empty. */
+function parseSignedText(text) {
+  const last = text.lastIndexOf(":");
+  if (last < 0) return null;
+  const rest = text.slice(0, last);
+  const mid = rest.lastIndexOf(":");
+  if (mid < 0) return null;
+  const model = rest.slice(0, mid);
+  const request = rest.slice(mid + 1);
+  const response = text.slice(last + 1);
+  return model !== "" && model.length <= 200 && isHex64(request) && isHex64(response) ? { model, request, response } : null;
+}
+
+/** One model receipt: its shape, that the model signed the text, with a key that is not weak. Same order of checks as the Rust verifier. */
+async function checkReceipt(r) {
+  if (!exactKeys(r, ["completion_id", "signature_kind", "signer", "signed_text", "signature"])) stop("receipt_shape");
+  const id = r.get("completion_id");
+  const kind = r.get("signature_kind");
+  const signer = r.get("signer");
+  const text = r.get("signed_text");
+  const sig = r.get("signature");
+  if (![id, kind, signer, text, sig].every(isStr)) stop("receipt_shape");
+  if (id === "" || id.length > 200 || !/^[\x21-\x7e]+$/.test(id)) stop("receipt_shape");
+  if (kind !== "provider_tee") stop("receipt_kind");
+  const parsed = parseSignedText(text);
+  if (parsed === null || !/^[0-9a-f]{64}$/.test(signer) || !/^[0-9a-f]{128}$/.test(sig)) stop("receipt_shape");
+  const keyBytes = hexToBytes(signer);
+  if (classifyPublicKey(keyBytes) !== "ok") stop("receipt_key");
+  if (!(await verifySignature(keyBytes, enc.encode(text), hexToBytes(sig)))) stop("receipt_signature");
+  return { completionId: id, signer, model: parsed.model, requestSha256: parsed.request, responseSha256: parsed.response };
 }
 
 function decodeEnvelope(v) {

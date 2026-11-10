@@ -101,6 +101,8 @@ pub struct Broker {
     sessions: HashMap<SessionId, Session>,
     next_session: u64,
     pub audit: Vec<AuditEvent>,
+    /// The receipts of the model answers given by a verified route, in order, at most `MAX_RECEIPTS`.
+    pub receipts: Vec<Value>,
     pub release_drafts: Vec<ReleaseDraft>,
     pub written: Vec<WrittenArtifact>,
     write_hook: Option<WriteHook>,
@@ -162,6 +164,7 @@ impl Broker {
             sessions: HashMap::new(),
             next_session: 1,
             audit: Vec::new(),
+            receipts: Vec::new(),
             release_drafts: Vec::new(),
             written: Vec::new(),
             write_hook: None,
@@ -500,6 +503,12 @@ impl Broker {
                 code: ErrorCode::ToolError,
                 detail: format!("model route failed: {e}"),
             })?;
+        // a verified route leaves a receipt for each answer; a local one has none and is never asked for it
+        if route.class() == kk_route::RouteClass::VerifiedTee && self.receipts.len() < 64 {
+            if let Some(r) = route.evidence().receipt {
+                self.receipts.push(r);
+            }
+        }
         let used = completion.prompt_tokens + completion.completion_tokens;
         self.sessions.get_mut(&id).expect("session").model_tokens += used;
         let _ = self

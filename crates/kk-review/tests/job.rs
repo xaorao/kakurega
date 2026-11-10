@@ -203,6 +203,7 @@ fn j01_a_full_review_finds_checks_releases_and_signs_the_real_defect() {
         report.manifest.file_count as i64,
         "device_only",
         &[claim],
+        &[],
     );
     let verdict = capsule::verify(
         &bytes,

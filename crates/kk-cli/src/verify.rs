@@ -55,6 +55,22 @@ pub fn run(args: &[String]) -> u8 {
             report.binding_level.as_deref().unwrap_or("?"),
             report.route.as_deref().unwrap_or("?")
         );
+        if !report.receipts.is_empty() {
+            println!(
+                "\nModel answers signed by their model ({}):",
+                report.receipts.len()
+            );
+            for r in &report.receipts {
+                println!(
+                    "  {} answer {}: request {}, answer {}, signer {}",
+                    r.model,
+                    r.completion_id,
+                    &r.request_sha256[..12],
+                    &r.response_sha256[..12],
+                    &r.signer[..12]
+                );
+            }
+        }
         println!("\nEstablished:");
         for e in &report.established {
             println!("  + {e}");
@@ -91,6 +107,10 @@ pub fn check_bytes(bytes: &[u8]) -> Result<serde_json::Value, String> {
             "recipient": report.recipient,
             "assurance": report.binding_level,
             "route": report.route,
+            "receipts": report.receipts.iter().map(|r| serde_json::json!({
+                "completion_id": r.completion_id, "model": r.model, "signer": r.signer,
+                "request_sha256": r.request_sha256, "response_sha256": r.response_sha256,
+            })).collect::<Vec<_>>(),
             "established": report.established,
             "not_established": report.not_established,
         }))

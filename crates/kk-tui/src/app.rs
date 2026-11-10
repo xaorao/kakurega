@@ -3309,6 +3309,16 @@ impl App {
                 "Established:".into(),
             ];
             lines.extend(r.established.iter().map(|e| format!("  + {}", clean(e))));
+            for x in &r.receipts {
+                lines.push(format!(
+                    "    {} answer {}: request {}, answer {}, signer {}",
+                    clean(&x.model),
+                    clean(&x.completion_id),
+                    &x.request_sha256[..12],
+                    &x.response_sha256[..12],
+                    &x.signer[..12]
+                ));
+            }
             lines.push("Not established:".into());
             lines.extend(
                 r.not_established

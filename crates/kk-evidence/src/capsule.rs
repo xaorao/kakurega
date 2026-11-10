@@ -27,9 +27,34 @@ pub struct ReleaseSpec {
     pub binding_level: String,
     pub route: String,
     pub not_established: Vec<String>,
+    /// Receipts of the model answers that produced this release, when a verified model route answered. Empty otherwise.
+    pub route_receipts: Vec<ReceiptSpec>,
     pub source_commitment_scheme: String,
     pub source_commitment_digest: String,
     pub source_manifest_files: i64,
+}
+
+/// A model's own signature over one exchange: what a recipient can check offline. The text signed is
+/// `MODEL:SHA256(request):SHA256(answer)`; the signer is the Ed25519 public key of the model's enclave, in hex.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceiptSpec {
+    pub completion_id: String,
+    pub signer: String,
+    pub signed_text: String,
+    pub signature: String,
+}
+
+/// The most answers one capsule carries receipts for.
+pub const MAX_RECEIPTS: usize = 64;
+
+/// What a verified receipt says, in the parts a reader needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceiptReport {
+    pub completion_id: String,
+    pub signer: String,
+    pub model: String,
+    pub request_sha256: String,
+    pub response_sha256: String,
 }
 
 #[derive(Debug, Clone)]
@@ -82,17 +107,37 @@ pub fn build(
         ("recipient", s(&release.recipient)),
         ("policy_version", s(&release.policy_version)),
         ("files", Value::Array(release_files)),
-        (
-            "assurance",
-            obj(vec![
+        ("assurance", {
+            let mut a = vec![
                 ("binding_level", s(&release.binding_level)),
                 ("route", s(&release.route)),
                 (
                     "not_established",
                     Value::Array(release.not_established.iter().map(|x| s(x)).collect()),
                 ),
-            ]),
-        ),
+            ];
+            if !release.route_receipts.is_empty() {
+                a.push((
+                    "route_receipts",
+                    Value::Array(
+                        release
+                            .route_receipts
+                            .iter()
+                            .map(|r| {
+                                obj(vec![
+                                    ("completion_id", s(&r.completion_id)),
+                                    ("signature_kind", s("provider_tee")),
+                                    ("signer", s(&r.signer)),
+                                    ("signed_text", s(&r.signed_text)),
+                                    ("signature", s(&r.signature)),
+                                ])
+                            })
+                            .collect(),
+                    ),
+                ));
+            }
+            obj(a)
+        }),
         (
             "source_commitment",
             obj(vec![
@@ -159,6 +204,8 @@ pub struct Report {
     pub recipient: Option<String>,
     pub binding_level: Option<String>,
     pub route: Option<String>,
+    /// The model signatures in the release that verified.
+    pub receipts: Vec<ReceiptReport>,
     pub established: Vec<String>,
     pub not_established: Vec<String>,
 }
@@ -172,9 +219,92 @@ fn fail(reason: &'static str) -> Report {
         recipient: None,
         binding_level: None,
         route: None,
+        receipts: Vec::new(),
         established: Vec::new(),
         not_established: Vec::new(),
     }
+}
+
+/// `MODEL:REQUEST:ANSWER` where the last two parts are 64 hex digits each and the model name is not empty.
+fn parse_signed_text(text: &str) -> Option<(&str, &str, &str)> {
+    let (rest, response) = text.rsplit_once(':')?;
+    let (model, request) = rest.rsplit_once(':')?;
+    (!model.is_empty() && model.len() <= 200 && is_hex64(request) && is_hex64(response))
+        .then_some((model, request, response))
+}
+
+/// Checks one receipt: its shape, that the model signed the text, with a key that is not weak.
+fn check_receipt(r: &Value) -> Result<ReceiptReport, &'static str> {
+    if !exact_keys(
+        r,
+        &[
+            "completion_id",
+            "signature_kind",
+            "signer",
+            "signed_text",
+            "signature",
+        ],
+    ) {
+        return Err("receipt_shape");
+    }
+    let (Some(id), Some(kind), Some(signer), Some(text), Some(sig)) = (
+        str_of(member(r, "completion_id")),
+        str_of(member(r, "signature_kind")),
+        str_of(member(r, "signer")),
+        str_of(member(r, "signed_text")),
+        str_of(member(r, "signature")),
+    ) else {
+        return Err("receipt_shape");
+    };
+    if id.is_empty() || id.len() > 200 || !id.bytes().all(|c| c.is_ascii_graphic()) {
+        return Err("receipt_shape");
+    }
+    // a receipt signed by the gateway is not the model's own word
+    if kind != "provider_tee" {
+        return Err("receipt_kind");
+    }
+    let (Some((model, request, response)), true, true) = (
+        parse_signed_text(text),
+        signer.len() == 64
+            && signer
+                .bytes()
+                .all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f')),
+        sig.len() == 128 && sig.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f')),
+    ) else {
+        return Err("receipt_shape");
+    };
+    let key_bytes: [u8; 32] = hex_decode(signer)
+        .and_then(|v| v.try_into().ok())
+        .ok_or("receipt_shape")?;
+    let sig_bytes: [u8; 64] = hex_decode(sig)
+        .and_then(|v| v.try_into().ok())
+        .ok_or("receipt_shape")?;
+    let key = ed25519_dalek::VerifyingKey::from_bytes(&key_bytes).map_err(|_| "receipt_key")?;
+    if key.is_weak() {
+        return Err("receipt_key");
+    }
+    key.verify_strict(
+        text.as_bytes(),
+        &ed25519_dalek::Signature::from_bytes(&sig_bytes),
+    )
+    .map_err(|_| "receipt_signature")?;
+    Ok(ReceiptReport {
+        completion_id: id.to_string(),
+        signer: signer.to_string(),
+        model: model.to_string(),
+        request_sha256: request.to_string(),
+        response_sha256: response.to_string(),
+    })
+}
+
+fn hex_decode(h: &str) -> Option<Vec<u8>> {
+    if !h.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..h.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&h[i..i + 2], 16).ok())
+        .collect()
 }
 
 fn member<'a>(v: &'a Value, name: &str) -> Option<&'a Value> {
@@ -357,10 +487,42 @@ pub fn verify(bytes: &[u8], opts: &VerifyOptions) -> Report {
     let Some(commit) = member(&rel, "source_commitment") else {
         return fail("release_shape");
     };
-    if !exact_keys(assurance, &["binding_level", "route", "not_established"])
+    let with_receipts = member(assurance, "route_receipts").is_some();
+    if !(exact_keys(assurance, &["binding_level", "route", "not_established"])
+        || exact_keys(
+            assurance,
+            &[
+                "binding_level",
+                "route",
+                "not_established",
+                "route_receipts",
+            ],
+        ))
         || !exact_keys(commit, &["scheme", "digest", "manifest_files"])
     {
         return fail("release_shape");
+    }
+    let mut receipts: Vec<ReceiptReport> = Vec::new();
+    if with_receipts {
+        let Some(Value::Array(list)) = member(assurance, "route_receipts") else {
+            return fail("release_shape");
+        };
+        if list.is_empty() || list.len() > MAX_RECEIPTS {
+            return fail("receipt_shape");
+        }
+        for r in list {
+            match check_receipt(r) {
+                Ok(done)
+                    if receipts
+                        .iter()
+                        .all(|x| x.completion_id != done.completion_id) =>
+                {
+                    receipts.push(done)
+                }
+                Ok(_) => return fail("receipt_shape"),
+                Err(reason) => return fail(reason),
+            }
+        }
     }
     let (Some(level), Some(route), Some(Value::Array(not_est))) = (
         str_of(member(assurance, "binding_level")),
@@ -483,7 +645,20 @@ pub fn verify(bytes: &[u8], opts: &VerifyOptions) -> Report {
     if pinned {
         established.push("The signing key is one you pinned.".to_string());
     }
+    if !receipts.is_empty() {
+        let signers: std::collections::BTreeSet<&str> =
+            receipts.iter().map(|r| r.signer.as_str()).collect();
+        established.push(format!(
+            "{} model answer(s) carry the model's own signature over a request and an answer, from {} signer key(s); the signatures verify.",
+            receipts.len(),
+            signers.len()
+        ));
+    }
     let mut not_established_all = not_established;
+    if !receipts.is_empty() {
+        not_established_all.push("That a signer key belongs to attested confidential hardware: that needs the hardware quote, which is checked online (the terminal's /proof, or the hardware proof panel in Chat).".to_string());
+        not_established_all.push("That a signed answer is the text behind any claim: a receipt names hashes, not the claims.".to_string());
+    }
     not_established_all.push("That any claim is true; only that it was signed and that its evidence files are as signed.".to_string());
     if !pinned {
         not_established_all.push("Who holds the signing key: no key was pinned, so the key shown comes from the capsule itself.".to_string());
@@ -496,6 +671,7 @@ pub fn verify(bytes: &[u8], opts: &VerifyOptions) -> Report {
         recipient: Some(recipient.to_string()),
         binding_level: Some(level.to_string()),
         route: Some(route.to_string()),
+        receipts,
         established,
         not_established: not_established_all,
     }

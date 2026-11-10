@@ -8364,6 +8364,15 @@ async fn do_deliver(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> 
         s.manifest_files,
         &s.route_class,
         &claims,
+        &s.route_receipts
+            .iter()
+            .map(|r| kk_evidence::capsule::ReceiptSpec {
+                completion_id: r.completion_id.clone(),
+                signer: r.signer.clone(),
+                signed_text: r.signed_text.clone(),
+                signature: r.signature.clone(),
+            })
+            .collect::<Vec<_>>(),
     );
     let dir = match capsule_dir(&svc.data_dir) {
         Ok(d) => d,

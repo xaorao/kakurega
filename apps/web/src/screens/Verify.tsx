@@ -62,9 +62,19 @@ export function Verify() {
                 <li>{rich("ver.est3", { recipient: r().recipient, expires: new Date(r().expires * 1000).toLocaleString() })}</li>
                 <Show when={r().signerPinned}><li>{t("ver.est4")}</li></Show>
               </ul>
+              <Show when={(r().receipts ?? []).length > 0}>
+                <h2>{t("ver.receipts")}</h2>
+                <p class="muted">{t("ver.receiptsLead")}</p>
+                <ul class="plain">
+                  <For each={r().receipts}>
+                    {(x) => <li><code>{t("ver.receipt", { model: x.model, id: x.completionId, request: x.requestSha256.slice(0, 12), answer: x.responseSha256.slice(0, 12), signer: x.signer.slice(0, 12) })}</code></li>}
+                  </For>
+                </ul>
+              </Show>
               <h2>{t("ver.notEstablished")}</h2>
               <ul class="plain">
                 <For each={r().notEstablished}>{(n) => <li>{n}</li>}</For>
+                <Show when={(r().receipts ?? []).length > 0}><li>{t("ver.notHardware")}</li><li>{t("ver.notReceiptClaims")}</li></Show>
                 <li>{t("ver.not1")}</li>
                 <Show when={!r().signerPinned}><li>{t("ver.not2")}</li></Show>
               </ul>

@@ -264,6 +264,7 @@ impl JobRunner for CannedRunner {
                 simulated: true,
                 receipt: None,
             }],
+            route_receipts: vec![],
             final_taint: Some(Label::new(Level::Internal).untrusted()),
             error: None,
             files: imp.files,

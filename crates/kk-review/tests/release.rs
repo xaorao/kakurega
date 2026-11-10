@@ -366,6 +366,7 @@ fn rs07_a_released_draft_becomes_a_capsule_that_both_verifiers_accept_and_that_t
         38,
         "device_only",
         &[claim],
+        &[],
     );
     let opts = VerifyOptions {
         pinned_keys: Some(vec![signer.public()]),
@@ -1267,4 +1268,117 @@ fn rj08_a_confirmed_finding_whose_check_used_a_file_the_project_does_not_hold_is
         "{:?}",
         draft.not_confirmed
     );
+}
+
+fn model_receipt(
+    seed: u8,
+    id: &str,
+    model: &str,
+    request: &[u8],
+    answer: &[u8],
+) -> kk_evidence::capsule::ReceiptSpec {
+    use ed25519_dalek::Signer as _;
+    let key = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+    let text = format!(
+        "{model}:{}:{}",
+        capsule::sha256_hex(request),
+        capsule::sha256_hex(answer)
+    );
+    let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    kk_evidence::capsule::ReceiptSpec {
+        completion_id: id.into(),
+        signer: hex(&key.verifying_key().to_bytes()),
+        signature: hex(&key.sign(text.as_bytes()).to_bytes()),
+        signed_text: text,
+    }
+}
+
+#[test]
+fn rs08_a_capsule_built_from_a_review_that_used_a_verified_model_carries_the_models_signatures_and_a_forged_one_breaks_it(
+) {
+    let f = files();
+    let idx = index(&f);
+    let draft = assemble(
+        &[(finding(), confirmed())],
+        &idx,
+        "acme-audit",
+        "policy-1",
+        1_700_000_000,
+        86_400,
+    )
+    .unwrap();
+    let signer = Signer::from_seed([5u8; 32]);
+    let receipts = vec![
+        model_receipt(7, "chat-1", "vendor/model", b"request one", b"answer one"),
+        model_receipt(7, "chat-2", "vendor/model", b"request two", b"answer two"),
+    ];
+    let opts = VerifyOptions {
+        pinned_keys: Some(vec![signer.public()]),
+        now: 1_700_000_100,
+        expected_recipient: Some("acme-audit".into()),
+    };
+    let bytes = build_capsule(
+        &draft,
+        &signer,
+        &"ab".repeat(32),
+        38,
+        "verified_tee",
+        &[],
+        &receipts,
+    );
+    let report = capsule::verify(&bytes, &opts);
+    assert!(report.valid, "{report:?}");
+    assert_eq!(report.route.as_deref(), Some("verified_tee"));
+    assert_eq!(report.receipts.len(), 2);
+    assert_eq!(report.receipts[0].completion_id, "chat-1");
+    assert_eq!(report.receipts[0].model, "vendor/model");
+    assert_eq!(
+        report.receipts[0].request_sha256,
+        capsule::sha256_hex(b"request one")
+    );
+    assert!(
+        report
+            .established
+            .iter()
+            .any(|e| e.contains("2 model answer(s)")),
+        "{:?}",
+        report.established
+    );
+    assert!(
+        report
+            .not_established
+            .iter()
+            .any(|n| n.contains("attested confidential hardware")),
+        "{:?}",
+        report.not_established
+    );
+    // without receipts the capsule says nothing about a model's signature
+    let plain = build_capsule(
+        &draft,
+        &signer,
+        &"ab".repeat(32),
+        38,
+        "device_only",
+        &[],
+        &[],
+    );
+    let r = capsule::verify(&plain, &opts);
+    assert!(r.valid && r.receipts.is_empty());
+    assert!(!r.established.iter().any(|e| e.contains("model answer")));
+    // a receipt whose signature was made for other text is refused, however the release is signed
+    let mut forged = receipts.clone();
+    forged[1].signed_text =
+        model_receipt(7, "chat-2", "vendor/model", b"other request", b"answer two").signed_text;
+    let bad = build_capsule(
+        &draft,
+        &signer,
+        &"ab".repeat(32),
+        38,
+        "verified_tee",
+        &[],
+        &forged,
+    );
+    let r = capsule::verify(&bad, &opts);
+    assert!(!r.valid);
+    assert_eq!(r.reason, Some("receipt_signature"));
 }

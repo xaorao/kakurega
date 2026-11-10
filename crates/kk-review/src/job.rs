@@ -85,6 +85,8 @@ pub struct JobReport {
     pub draft: Result<ReleaseDraft, Rejection>,
     pub audit: Vec<AuditEvent>,
     pub route_evidence: Vec<RouteEvidence>,
+    /// The receipts of the answers a verified model route gave during this job.
+    pub route_receipts: Vec<serde_json::Value>,
     pub final_taint: Option<Label>,
     pub error: Option<String>,
 }
@@ -139,6 +141,7 @@ pub fn run_job(
         draft: Err(Rejection::NothingConfirmed),
         audit: Vec::new(),
         route_evidence,
+        route_receipts: Vec::new(),
         final_taint: None,
         error: None,
     };
@@ -205,6 +208,7 @@ pub fn run_job(
         Err(e) => report.error = Some(e.to_string()),
     }
     report.audit = broker.audit.clone();
+    report.route_receipts = broker.receipts.clone();
     report.final_taint = broker.final_taint(session);
 
     let index: BTreeMap<String, &crate::import::ImportedFile> =

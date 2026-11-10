@@ -107,6 +107,9 @@ pub struct Snapshot {
     pub commitment: String,
     pub manifest_files: i64,
     pub route_class: String,
+    /// The model signatures of a verified route's answers, to go into the release capsule.
+    #[serde(default)]
+    pub route_receipts: Vec<SnapReceipt>,
     pub error: Option<String>,
 }
 
@@ -275,6 +278,7 @@ impl Snapshot {
                 .first()
                 .map(|e| e.class.clone())
                 .unwrap_or_else(|| "device_only".into()),
+            route_receipts: receipts_of(&r.route_receipts),
             error: r.error.clone(),
         }
     }
@@ -302,5 +306,88 @@ impl Snapshot {
             not_confirmed: d.not_confirmed.clone(),
             digest: d.digest.clone(),
         })
+    }
+}
+
+/// One model signature as kept with a review.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapReceipt {
+    pub completion_id: String,
+    pub signer: String,
+    pub signed_text: String,
+    pub signature: String,
+}
+
+/// The receipts that can go into a capsule: only the model's own signatures, well formed, each answer once, at most 64.
+fn receipts_of(all: &[Value]) -> Vec<SnapReceipt> {
+    let mut out: Vec<SnapReceipt> = Vec::new();
+    for r in all {
+        let text = |k: &str| r[k].as_str().map(String::from);
+        let (Some(id), Some(signer), Some(signed), Some(sig)) = (
+            text("completion_id"),
+            text("signer"),
+            text("signed_text"),
+            text("signature"),
+        ) else {
+            continue;
+        };
+        if r["signature_kind"] != "provider_tee"
+            || out.len() >= 64
+            || out.iter().any(|x| x.completion_id == id)
+        {
+            continue;
+        }
+        out.push(SnapReceipt {
+            completion_id: id,
+            signer,
+            signed_text: signed,
+            signature: sig,
+        });
+    }
+    out
+}
+
+#[cfg(test)]
+mod receipt_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn rc(id: &str, kind: &str) -> Value {
+        json!({"completion_id": id, "signature_kind": kind, "signer": "aa", "signed_text": "t", "signature": "ss", "e2ee": true})
+    }
+
+    #[test]
+    fn sn01_only_the_models_own_well_formed_receipts_each_answer_once_and_at_most_sixty_four_go_to_the_capsule(
+    ) {
+        let all = vec![
+            rc("a", "provider_tee"),
+            rc("b", "gateway"),
+            rc("a", "provider_tee"),
+            json!({"completion_id": "c", "signature_kind": "provider_tee"}),
+            json!({"completion_id": 5, "signature_kind": "provider_tee", "signer": "x", "signed_text": "t", "signature": "s"}),
+            json!("not an object"),
+            rc("d", "provider_tee"),
+        ];
+        let out = receipts_of(&all);
+        assert_eq!(
+            out.iter()
+                .map(|r| r.completion_id.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "d"]
+        );
+        assert_eq!(
+            out[0],
+            SnapReceipt {
+                completion_id: "a".into(),
+                signer: "aa".into(),
+                signed_text: "t".into(),
+                signature: "ss".into()
+            }
+        );
+        let many: Vec<Value> = (0..100)
+            .map(|i| rc(&format!("id-{i}"), "provider_tee"))
+            .collect();
+        assert_eq!(receipts_of(&many).len(), 64);
+        assert!(receipts_of(&[]).is_empty());
     }
 }

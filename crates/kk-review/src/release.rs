@@ -523,6 +523,7 @@ pub fn build_capsule(
     manifest_files: i64,
     route: &str,
     claims: &[kk_evidence::capsule::ClaimSpec],
+    receipts: &[kk_evidence::capsule::ReceiptSpec],
 ) -> Vec<u8> {
     let spec = kk_evidence::capsule::ReleaseSpec {
         capsule_id: draft.digest[..32].to_string(),
@@ -533,6 +534,7 @@ pub fn build_capsule(
         binding_level: "B1".into(),
         route: route.into(),
         not_established: standard_not_established(),
+        route_receipts: receipts.to_vec(),
         source_commitment_scheme: "hmac-sha256-keyed-manifest".into(),
         source_commitment_digest: source_commitment.into(),
         source_manifest_files: manifest_files,

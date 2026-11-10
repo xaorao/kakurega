@@ -31,7 +31,7 @@ fn every_shared_vector_gets_the_same_verdict_and_reason_in_rust() {
     let Value::Array(vectors) = get(&doc, "vectors") else {
         panic!("vectors")
     };
-    assert!(vectors.len() >= 30);
+    assert!(vectors.len() >= 45);
     for v in vectors {
         let name = text(get(v, "name"));
         let opts = get(v, "options");
@@ -72,6 +72,14 @@ fn every_shared_vector_gets_the_same_verdict_and_reason_in_rust() {
             _ => panic!("reason"),
         };
         assert_eq!(report.reason, expect_reason, "{name}");
+        let Value::Int(expected_receipts) = get(v, "receipts") else {
+            panic!("receipts")
+        };
+        assert_eq!(
+            report.receipts.len() as i64,
+            *expected_receipts,
+            "{name}: receipts"
+        );
         if expect_valid {
             assert_eq!(
                 report.signer.as_ref().map(|k| k.as_str()),
