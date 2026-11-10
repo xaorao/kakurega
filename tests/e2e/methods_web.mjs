@@ -56,7 +56,8 @@ const ask = async (text) => {
   await page.getByLabel(/Message|Ask/i).first().fill(text);
   await page.getByRole("button", { name: "Send" }).click();
   await page.waitForFunction(() => /answered on this computer|tokens of context used|No model was asked/.test(document.querySelector("main")?.innerText ?? ""), null, { timeout: 240000 });
-  return await page.locator("main").innerText();
+  const all = await page.locator("main").innerText();
+  return all.split(text).pop();
 };
 let body = await ask("Tell me about a pineapple orchard in one sentence.");
 await shot("2-chat-before-approval");
@@ -74,9 +75,8 @@ body = await ask("Tell me about a pineapple orchard in one sentence.");
 await shot("4-chat-after-approval");
 check(/Methods used: fruit-first/.test(body), "an approved, matching method is used and the answer says so");
 console.log("OBSERVED reply starts with PINEAPPLE:", /PINEAPPLE/i.test(body), "(a small model may ignore guidance; not asserted)");
-const before = (body.match(/Methods used/g) ?? []).length;
 body = await ask("What is two plus two?");
-check((body.match(/Methods used/g) ?? []).length === before, "a question with none of its words does not use it (no new line saying so)");
+check(!/Methods used/.test(body), "a question with none of its words does not use it");
 
 await page.goto(origin + "/#/instructions");
 await page.getByRole("heading", { name: "Methods" }).waitFor();
@@ -86,9 +86,8 @@ await page.getByRole("button", { name: /^Save \(it will wait/ }).first().click()
 await page.getByText("Waiting for your approval: not in use").waitFor();
 check(true, "editing the text takes the approval away");
 await shot("5-edited-waiting");
-const beforeEdit = (body.match(/Methods used/g) ?? []).length;
 body = await ask("Tell me about a pineapple orchard in one sentence.");
-check((body.match(/Methods used/g) ?? []).length === beforeEdit, "the edited method is not used until approved again"); console.log("COUNTS before/after edit:", beforeEdit, (body.match(/Methods used[^\n]*/g) ?? []));
+check(!/Methods used/.test(body), "the edited method is not used until approved again");
 
 const refused = await page.evaluate(async () => {
   const csrf = (await (await fetch("/api/session", { credentials: "same-origin" })).json()).csrf;

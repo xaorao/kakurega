@@ -9,6 +9,7 @@
 use crate::align::align_edit;
 use crate::check::{diff_text, occurrences, Edit};
 use crate::import::ImportedFile;
+use crate::rust;
 use kk_types::chat::ToolSpec;
 use kk_types::label::Level;
 use serde_json::{json, Value};
@@ -916,7 +917,7 @@ pub fn concerns(changes: &[Change]) -> Vec<String> {
             out.push(format!("{}: this file runs when the project is built, installed or tested; read the change before applying it", c.path));
         }
         // a passing run proves less when the task itself wrote the tests: a model can make tests pass by weakening them
-        if is_test_file(&c.path) {
+        if is_test_file(&c.path, &c.before) || is_test_file(&c.path, &c.after) {
             out.push(match c.kind {
                 Kind::Added => format!("{}: this test file is new, written by the model; its passing is the model checking its own work", c.path),
                 Kind::Deleted => format!("{}: the patch deletes this test file, so its tests no longer run", c.path),
@@ -934,6 +935,8 @@ pub enum Runner {
     Python,
     /// Files Node's own runner finds (`*.test.js`, `*.test.mjs`, `test/`), run with `node --test`.
     Node,
+    /// A dependency-free crate whose own tests (`#[test]`) are built with `rustc --test` and run, as in the review checks.
+    Rust,
 }
 
 fn python_test(path: &str) -> bool {
@@ -950,9 +953,33 @@ fn node_test(path: &str) -> bool {
             && (n.ends_with(".js") || n.ends_with(".mjs")))
 }
 
-/// Whether a runner here would run this file as a test: the same rule that chooses the runner.
-pub fn is_test_file(path: &str) -> bool {
-    python_test(path) || node_test(path)
+/// Whether a runner here would run this file as a test: the same rule that chooses the runner. A Rust file is a test file when
+/// it holds tests of its own, so its text is needed.
+pub fn is_test_file(path: &str, text: &str) -> bool {
+    python_test(path) || node_test(path) || (path.ends_with(".rs") && rust::has_inline_tests(text))
+}
+
+/// The crate of a project whose own tests the Rust runner can build, or nothing: a dependency-free crate with a root file, and
+/// at least one `#[test]` in a file the compiler loads from that root.
+fn rust_plan(files: &BTreeMap<String, String>) -> Option<rust::RustCrate> {
+    let (_, root) = rust::project_root(files)?;
+    let imported: Vec<ImportedFile> = files
+        .iter()
+        .map(|(p, t)| ImportedFile {
+            path: p.clone(),
+            bytes: t.as_bytes().to_vec(),
+            sha256: String::new(),
+            label: kk_types::label::Label::new(Level::Public),
+            notes: vec![],
+        })
+        .collect();
+    let by_path: BTreeMap<String, &ImportedFile> =
+        imported.iter().map(|f| (f.path.clone(), f)).collect();
+    let plan = rust::rust_test_crate(&root, &by_path).ok()?;
+    plan.sample
+        .iter()
+        .any(|p| p.ends_with(".rs") && files.get(p).is_some_and(|t| rust::has_inline_tests(t)))
+        .then_some(plan)
 }
 
 /// The runner a project's files call for, or `None` when it has no tests a runner here can find.
@@ -962,6 +989,9 @@ pub fn detect_runner(files: &BTreeMap<String, String>) -> Option<Runner> {
     }
     if files.keys().any(|p| node_test(p)) {
         return Some(Runner::Node);
+    }
+    if rust_plan(files).is_some() {
+        return Some(Runner::Rust);
     }
     None
 }
@@ -1014,13 +1044,47 @@ print('%d passed, %d failed, %d skipped' % (passed, failed, skipped))
 sys.exit(0 if failed == 0 and passed > 0 else 1)
 "#;
 
+/// Reads a finished Rust run with the strict reading the review checks use (`rust::parse_rust_tests`): the runner's own summary
+/// must be there and agree with everything else, a build that failed is a failure shown with the compiler's words, and a run
+/// of no test is a failure.
+fn rust_verdict(exit: &kk_sandbox::Exit, stdout: &str, stderr: &str, tail: String) -> TestRun {
+    if let Some((_, rest)) = rust::build_failure(stderr) {
+        let chars: Vec<char> = rest.chars().collect();
+        let shown: String = chars[chars.len().saturating_sub(6000)..].iter().collect();
+        return TestRun {
+            passed: false,
+            output: format!("the crate or its tests did not build\n{shown}"),
+        };
+    }
+    if *exit == kk_sandbox::Exit::TimedOut {
+        return TestRun {
+            passed: false,
+            output: format!("the tests took longer than two minutes and were stopped\n{tail}"),
+        };
+    }
+    match rust::parse_rust_tests(exit, stdout) {
+        crate::check::TestRun::Passed(_) => TestRun {
+            passed: true,
+            output: tail,
+        },
+        crate::check::TestRun::NoTests => TestRun {
+            passed: false,
+            output: format!("no test was found\n{tail}"),
+        },
+        crate::check::TestRun::Failed(why) | crate::check::TestRun::Unavailable(why) => TestRun {
+            passed: false,
+            output: format!("{why}\n{tail}"),
+        },
+    }
+}
+
 /// Runs the project's tests in the sandbox: the files are written to a fresh folder, the sandbox copies them into its own
 /// writable `/tmp` (it can write nowhere else, and has no network), and the runner's exit status decides.
 pub struct SandboxTester<'a> {
     pub transport: &'a kk_sandbox::Transport,
     pub scratch: &'a std::path::Path,
     pub runner: Runner,
-    /// The interpreter as seen inside the sandbox (`python3` or `node`).
+    /// The interpreter as seen inside the sandbox (`python3`, `node` or `rustc`).
     pub interpreter: String,
 }
 
@@ -1029,6 +1093,7 @@ impl Tester for SandboxTester<'_> {
         match self.runner {
             Runner::Python => "python3, test_*.py".into(),
             Runner::Node => "node --test".into(),
+            Runner::Rust => "rustc --test".into(),
         }
     }
 
@@ -1045,6 +1110,18 @@ impl Tester for SandboxTester<'_> {
             passed: false,
             output: why.to_string(),
         };
+        let plan = if self.runner == Runner::Rust {
+            match rust_plan(files) {
+                Some(p) => Some(p),
+                None => {
+                    return failed(
+                        "no test was found: the crate has none that its root loads, or it needs packages",
+                    )
+                }
+            }
+        } else {
+            None
+        };
         for (p, text) in files {
             let dest = project.join(p);
             if dest
@@ -1059,6 +1136,7 @@ impl Tester for SandboxTester<'_> {
             }
         }
         let script = match self.runner {
+            Runner::Rust => crate::check::RUST_BUILD_AND_TEST,
             Runner::Python => {
                 "set -u; cp -R /project /tmp/w && cd /tmp/w && exec \"$1\" -B -c \"$2\""
             }
@@ -1075,9 +1153,22 @@ impl Tester for SandboxTester<'_> {
             spec.args.push(PY_RUNNER.into());
             spec.env = vec![("PYTHONDONTWRITEBYTECODE".into(), "1".into())];
         }
+        if let Some(plan) = &plan {
+            spec.args.extend([
+                plan.edition.clone().into(),
+                plan.root.clone().into(),
+                plan.crate_name.clone().into(),
+            ]);
+            spec.chdir = Some("/sample".into());
+        }
         spec.binds.push(Bind {
             host: project.clone(),
-            inside: "/project".into(),
+            inside: if plan.is_some() {
+                "/sample"
+            } else {
+                "/project"
+            }
+            .into(),
             writable: false,
         });
         spec.limits = Limits {
@@ -1096,6 +1187,14 @@ impl Tester for SandboxTester<'_> {
                 );
                 let chars: Vec<char> = text.chars().collect();
                 let tail: String = chars[chars.len().saturating_sub(6000)..].iter().collect();
+                if self.runner == Runner::Rust {
+                    return rust_verdict(
+                        &o.exit,
+                        &String::from_utf8_lossy(&o.stdout),
+                        &String::from_utf8_lossy(&o.stderr),
+                        tail,
+                    );
+                }
                 // Node's runner exits 0 when it finds no test; that proves nothing
                 let none_found = self.runner == Runner::Node
                     && (text.contains("tests 0") || text.contains("# tests 0"));

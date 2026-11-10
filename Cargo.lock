@@ -2752,6 +2752,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kk-methods"
+version = "0.0.1"
+dependencies = [
+ "kk-evidence",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "kk-near"
 version = "0.0.1"
 dependencies = [
@@ -2877,6 +2886,7 @@ dependencies = [
  "kk-evidence",
  "kk-fetch",
  "kk-memory",
+ "kk-methods",
  "kk-near",
  "kk-parse",
  "kk-review",

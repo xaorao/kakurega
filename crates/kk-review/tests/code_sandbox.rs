@@ -234,3 +234,84 @@ fn cs06_the_runner_is_chosen_from_the_projects_own_files() {
         "a name that only contains 'test' is not a test file"
     );
 }
+
+const RUST_MANIFEST: &str = "[package]\nname = \"calc\"\nversion = \"0.1.0\"\nedition = \"2021\"\n";
+const RUST_BAD: &str = "pub fn add(a: i32, b: i32) -> i32 {\n    a - b\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn adds() {\n        assert_eq!(add(1, 2), 3);\n    }\n}\n";
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn cs07_rust_tests_fail_on_the_bug_and_pass_on_the_fix_in_the_sandbox() {
+    let t = transport();
+    let s = scratch();
+    let tester = SandboxTester {
+        transport: &t,
+        scratch: &s,
+        runner: Runner::Rust,
+        interpreter: "/usr/bin/rustc".into(),
+    };
+    let bad = tester.run(&map(&[
+        ("Cargo.toml", RUST_MANIFEST),
+        ("src/lib.rs", RUST_BAD),
+    ]));
+    assert!(!bad.passed, "{}", bad.output);
+    assert!(bad.output.contains("adds"), "{}", bad.output);
+    let good = tester.run(&map(&[
+        ("Cargo.toml", RUST_MANIFEST),
+        ("src/lib.rs", &RUST_BAD.replace("a - b", "a + b")),
+    ]));
+    assert!(good.passed, "{}", good.output);
+    assert!(good.output.contains("1 passed"), "{}", good.output);
+    // a program root is a crate root too
+    let prog = tester.run(&map(&[
+        ("Cargo.toml", RUST_MANIFEST),
+        (
+            "src/main.rs",
+            &format!("fn main() {{}}\n{}", RUST_BAD.replace("a - b", "a + b")),
+        ),
+    ]));
+    assert!(prog.passed, "{}", prog.output);
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn cs08_rust_build_errors_ignored_tests_and_no_tests_never_count_as_passing() {
+    let t = transport();
+    let s = scratch();
+    let tester = SandboxTester {
+        transport: &t,
+        scratch: &s,
+        runner: Runner::Rust,
+        interpreter: "/usr/bin/rustc".into(),
+    };
+    let broken = tester.run(&map(&[
+        ("Cargo.toml", RUST_MANIFEST),
+        ("src/lib.rs", &RUST_BAD.replace("a - b", "a +")),
+    ]));
+    assert!(
+        !broken.passed && broken.output.contains("did not build"),
+        "{}",
+        broken.output
+    );
+    let ignored = tester.run(&map(&[
+        ("Cargo.toml", RUST_MANIFEST),
+        ("src/lib.rs", "#[test]\n#[ignore]\nfn t() {}\n"),
+    ]));
+    assert!(!ignored.passed, "{}", ignored.output);
+    let none = tester.run(&map(&[
+        ("Cargo.toml", RUST_MANIFEST),
+        ("src/lib.rs", "pub fn f() {}\n"),
+    ]));
+    assert!(
+        !none.passed && none.output.contains("no test was found"),
+        "{}",
+        none.output
+    );
+    let net = tester.run(&map(&[
+        ("Cargo.toml", RUST_MANIFEST),
+        (
+            "src/lib.rs",
+            "#[test]\nfn t() {\n    std::net::TcpStream::connect(\"1.1.1.1:80\").unwrap();\n}\n",
+        ),
+    ]));
+    assert!(!net.passed, "{}", net.output);
+}

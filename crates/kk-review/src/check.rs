@@ -350,7 +350,7 @@ exec /tmp/repro
 "#;
 
 /// The same builds for the crate's own tests: the crate with its test harness, then the harness with one thread.
-const RUST_BUILD_AND_TEST: &str = r#"set -u
+pub(crate) const RUST_BUILD_AND_TEST: &str = r#"set -u
 rustc="$1"; edition="$2"; root="$3"; name="$4"
 "$rustc" -C linker=/usr/bin/gcc --edition "$edition" --test --crate-name "$name" --cap-lints allow -C opt-level=0 -C debuginfo=0 -o /tmp/tests "/sample/$root" 2>/tmp/e1 || { echo "KK_BUILD_FAILED crate" >&2; head -c 4000 /tmp/e1 >&2; exit 97; }
 exec /tmp/tests --test-threads=1

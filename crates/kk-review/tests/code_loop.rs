@@ -401,7 +401,7 @@ fn lp10_a_patch_that_changes_adds_or_deletes_tests_says_so_beside_the_verdict() 
         ("test/readme.md", false),
         ("latest/a.js", false),
     ] {
-        assert_eq!(is_test_file(p), yes, "{p}");
+        assert_eq!(is_test_file(p, ""), yes, "{p}");
     }
     // an honest fix that leaves the tests alone raises no concern
     let mut h = Workspace::from_imported(&[

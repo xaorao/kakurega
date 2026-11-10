@@ -563,6 +563,7 @@ impl JobRunner for ReviewRunner {
             interpreter: match r {
                 Runner::Python => "/usr/bin/python3".into(),
                 Runner::Node => "/usr/bin/node".into(),
+                Runner::Rust => "/usr/bin/rustc".into(),
             },
         });
         progress(&match left.restricted {

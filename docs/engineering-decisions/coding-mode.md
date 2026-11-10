@@ -40,7 +40,7 @@
 - One task and one model family is not a quality measurement. Task success across a set of tasks and models is NOT VERIFIED.
 
 ## Limits
-- Test runners: Python (pytest) and Node only. In any other project the patch comes without a test verdict and the page says "No tests were found that can run here, so nothing was checked by running it."
+- Test runners: Python (pytest), Node, and dependency-free Rust crates (built with `rustc --test` in the sandbox, the same strict reading of the summary as the review checks; a crate with dependencies, a workspace or tests only in a `tests` folder is not run). Rust was added by a subagent and checked by me: cr01 to cr07, VM tests cs07 and cs08, 6 mutants caught. In any other project the patch comes without a test verdict and the page says "No tests were found that can run here, so nothing was checked by running it."
 - The verdict is the kernel's own run on the final files, never the model's report. Found while writing this record and fixed: a model could make that run pass by weakening, deleting or adding tests, and nothing beside the verdict said so. Now a patch that changes, adds or deletes a file the runner treats as a test carries a warning for that file on every surface (`is_test_file`, `concerns`; lp10; 3 mutants caught). The verdict line itself still does not count old tests apart from new ones (owed).
 - Local route only. A cloud route for coding waits for NEAR AI Cloud (BLOCKED on credits).
 - The hint and the close-name suggestion were not measured for how much they raise a small model's success rate.
@@ -48,7 +48,7 @@
 ## Owed
 1. DONE: grep.ts read; `SAME_CALL_LIMIT` is 3, the same threshold OpenCode documents, and ours refuses the call and tells the model, where OpenCode asks the owner.
 2. A task set (10 or more real fixes, 3 runs each, worst reported) for the 7b model, with and without the miss hint.
-3. More runners (Rust, Go) through the sandbox; a verdict line that runs the tests as they were before the task as well as after.
+3. More runners (Go; Rust crates with dependencies need a vendored package source); a verdict line that runs the tests as they were before the task as well as after.
 4. Canonical-name retry for a path, if a real failure shows it is needed.
 5. Text tool-call recovery in the other agent loops (chat tools, research), decided per loop.
 

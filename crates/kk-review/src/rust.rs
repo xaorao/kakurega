@@ -638,6 +638,39 @@ pub fn rust_crate(
     entry: &str,
     files: &BTreeMap<String, &ImportedFile>,
 ) -> Result<RustCrate, Problem> {
+    crate_of(entry, files, false)
+}
+
+/// The same for building a crate's own tests, where a program (`src/main.rs`) is a crate root too.
+pub fn rust_test_crate(
+    entry: &str,
+    files: &BTreeMap<String, &ImportedFile>,
+) -> Result<RustCrate, Problem> {
+    crate_of(entry, files, true)
+}
+
+/// The root file of a project whose `Cargo.toml` is at the top, and what the manifest says, when the project is one the Rust
+/// runner of coding mode can build: no dependencies of any kind, no build script, a crate root that exists. A program root is
+/// taken only when there is no library.
+pub fn project_root(files: &BTreeMap<String, String>) -> Option<(Manifest, String)> {
+    let manifest = parse_manifest(files.get("Cargo.toml")?).ok()?;
+    if manifest.dev_dependencies || files.contains_key("build.rs") {
+        return None;
+    }
+    let root = match &manifest.lib_path {
+        Some(p) if !p.starts_with('/') && !p.split('/').any(|s| s == "..") => normal(p)?,
+        Some(_) => return None,
+        None if files.contains_key("src/lib.rs") => "src/lib.rs".to_string(),
+        None => "src/main.rs".to_string(),
+    };
+    files.contains_key(&root).then_some((manifest, root))
+}
+
+fn crate_of(
+    entry: &str,
+    files: &BTreeMap<String, &ImportedFile>,
+    allow_program: bool,
+) -> Result<RustCrate, Problem> {
     if !files.contains_key(entry) {
         return Err(Problem::EntryMissing);
     }
@@ -659,7 +692,15 @@ pub fn rust_crate(
             }
             normal(&join(&dir, p)).ok_or(Problem::Unavailable(Why::Complex))?
         }
-        None => join(&dir, "src/lib.rs"),
+        None => {
+            let lib = join(&dir, "src/lib.rs");
+            let program = join(&dir, "src/main.rs");
+            if allow_program && !files.contains_key(&lib) && files.contains_key(&program) {
+                program
+            } else {
+                lib
+            }
+        }
     };
     if !files.contains_key(&root) {
         return Err(Problem::Unavailable(Why::NoLibrary));
