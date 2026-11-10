@@ -174,7 +174,7 @@ impl Workspace {
         vec![
             spec("list_files", "List the project's files (paths and sizes), optionally only under a folder.", json!({"type":"object","properties":{"under":{"type":"string"}},"additionalProperties":false})),
             spec("read_file", "Read a file with line numbers. Give start and end lines for a long file.", json!({"type":"object","properties":{"path":{"type":"string"},"start":{"type":"integer","minimum":1},"end":{"type":"integer","minimum":1}},"required":["path"],"additionalProperties":false})),
-            spec("search_text", "Find a piece of text in every file; answers path:line: text.", json!({"type":"object","properties":{"text":{"type":"string"},"under":{"type":"string"}},"required":["text"],"additionalProperties":false})),
+            spec("search_text", "Find a piece of text in every file; answers path:line: text.", json!({"type":"object","properties":{"text":{"type":"string"},"under":{"type":"string"},"ignore_case":{"type":"boolean"}},"required":["text"],"additionalProperties":false})),
             spec("edit_file", "Replace old_text with new_text in a file. old_text must be copied exactly from the file, without the line numbers, and appear in exactly one place; include enough lines to make it unique. Set replace_all to true to change every place it appears, such as when renaming.", json!({"type":"object","properties":{"path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},"replace_all":{"type":"boolean"}},"required":["path","old_text","new_text"],"additionalProperties":false})),
             spec("create_file", "Create a new file with the given content. Fails if the file exists; use edit_file to change one.", json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":false})),
             spec("delete_file", "Delete a file of the project.", json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})),
@@ -188,7 +188,7 @@ impl Workspace {
         let allowed: &[&str] = match name {
             "list_files" => &["under"],
             "read_file" => &["path", "start", "end"],
-            "search_text" => &["text", "under"],
+            "search_text" => &["text", "under", "ignore_case"],
             "edit_file" => &["path", "old_text", "new_text", "replace_all"],
             "create_file" => &["path", "content"],
             "delete_file" => &["path"],
@@ -220,6 +220,7 @@ impl Workspace {
             "search_text" => Ok(self.search(
                 s("text").ok_or("give the text to find")?,
                 s("under").unwrap_or(""),
+                args.get("ignore_case").and_then(Value::as_bool) == Some(true),
             )),
             "edit_file" => self.edit(
                 s("path").ok_or("give the path")?,
@@ -304,11 +305,16 @@ impl Workspace {
         Ok(out)
     }
 
-    fn search(&self, text: &str, under: &str) -> String {
+    fn search(&self, text: &str, under: &str, ignore_case: bool) -> String {
         if text.is_empty() {
             return "give some text to find".into();
         }
         let under = under.trim_matches('/');
+        let needle = if ignore_case {
+            text.to_lowercase()
+        } else {
+            text.to_string()
+        };
         let mut hits = Vec::new();
         let mut more = 0usize;
         for (p, t) in &self.files {
@@ -316,7 +322,12 @@ impl Workspace {
                 continue;
             }
             for (i, l) in t.lines().enumerate() {
-                if l.contains(text) {
+                let found = if ignore_case {
+                    l.to_lowercase().contains(&needle)
+                } else {
+                    l.contains(&needle)
+                };
+                if found {
                     if hits.len() < MAX_HITS {
                         hits.push(format!("{p}:{}: {}", i + 1, cut(l.trim(), 200)));
                     } else {

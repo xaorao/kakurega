@@ -567,3 +567,45 @@ fn cw12_a_missing_path_suggests_close_names_and_never_a_withheld_file() {
     let e = m.call("read_file", &json!({"path": "py"})).unwrap_err();
     assert!(e.contains("list_files shows the paths"), "{e}");
 }
+
+#[test]
+fn cw13_search_can_ignore_case_and_never_reads_a_withheld_file() {
+    let mut w = project();
+    let exact = w.call("search_text", &json!({"text": "GREET"})).unwrap();
+    assert_eq!(exact, "not found");
+    let loose = w
+        .call(
+            "search_text",
+            &json!({"text": "GREET", "ignore_case": true}),
+        )
+        .unwrap();
+    assert!(loose.contains("src/app.py:5: def greet(name):"), "{loose}");
+    let off = w
+        .call(
+            "search_text",
+            &json!({"text": "GREET", "ignore_case": false}),
+        )
+        .unwrap();
+    assert_eq!(off, "not found");
+    let scoped = w
+        .call(
+            "search_text",
+            &json!({"text": "X = 1", "under": "src", "ignore_case": true}),
+        )
+        .unwrap();
+    assert!(scoped.contains("src/util.py:1"), "{scoped}");
+    let secret = w
+        .call(
+            "search_text",
+            &json!({"text": "api_token", "ignore_case": true}),
+        )
+        .unwrap();
+    assert_eq!(secret, "not found");
+    let none = w
+        .call(
+            "search_text",
+            &json!({"text": "x = 1", "under": "README.md/none", "ignore_case": true}),
+        )
+        .unwrap();
+    assert_eq!(none, "not found");
+}

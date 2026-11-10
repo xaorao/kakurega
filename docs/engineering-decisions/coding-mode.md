@@ -8,7 +8,7 @@
 
 ## References and reading depth
 - goose (Apache-2.0, commit 71dd9a9) `crates/goose-local-inference/src/native_tool_parsing.rs`: READ IN FULL. Tool calls written as text (bare JSON, fenced JSON, `<tool_call>` tags).
-- OpenCode (MIT, commit fe04656) `packages/core/src/tool/plugin/read.ts` (294 lines) and `edit.ts` (368 lines): READ IN FULL, after the first build and before the commit. `grep.ts` (151 lines): NOT READ. The code behind the `doom_loop` permission: NOT READ (only the key in `packages/core/src/v1/config/permission.ts` line 27 and its description were seen).
+- OpenCode (MIT, commit fe04656) `packages/core/src/tool/plugin/read.ts` (294 lines) and `edit.ts` (368 lines): READ IN FULL, after the first build and before the commit. `grep.ts` (151 lines): READ IN FULL. `doom_loop`: searched every package at fe04656; it exists only as a permission key (`core/src/v1/config/permission.ts` 27-38), docs ("the same tool call repeats 3 times with identical input", default ask) and a prompt label (`tui/src/util/permission.ts` 131); no enforcing code was found in this checkout (VERIFIED by search, not by running the product).
 - Ollama (MIT, e9fde36): NOT READ; behaviour observed by running it.
 - Capability matrix E rows C1 to C12 are an investigator's reading (MATRIX depth) and justify nothing here on their own.
 
@@ -46,11 +46,21 @@
 - The hint and the close-name suggestion were not measured for how much they raise a small model's success rate.
 
 ## Owed
-1. Read OpenCode `grep.ts` and the repeated-call (doom loop) code; compare with `search_text` and `SAME_CALL_LIMIT`.
+1. DONE: grep.ts read; `SAME_CALL_LIMIT` is 3, the same threshold OpenCode documents, and ours refuses the call and tells the model, where OpenCode asks the owner.
 2. A task set (10 or more real fixes, 3 runs each, worst reported) for the 7b model, with and without the miss hint.
 3. More runners (Rust, Go) through the sandbox; a verdict line that runs the tests as they were before the task as well as after.
 4. Canonical-name retry for a path, if a real failure shows it is needed.
 5. Text tool-call recovery in the other agent loops (chat tools, research), decided per loop.
+
+## Search tool against OpenCode grep.ts
+| Capability | Decision |
+|---|---|
+| Case-insensitive match (`caseSensitive`) | ADAPT: `ignore_case`, boolean, default off; withheld files are never in the searched set (cw13, 3 of 3 mutants caught) |
+| Regular expressions, `literal` flag | EXCLUDE: a literal match is what a small model uses correctly; a bad pattern is another way to fail |
+| `include` glob | EXCLUDE for now: `under` narrows by folder; an extension filter is owed if a task shows the need |
+| Truncation notice with advice | Already equal (`... and N more; search for something longer`) |
+| Hits grouped by file | EXCLUDE: one `path:line: text` per hit is shorter for the model |
+| Permission before search | Not applicable: nothing leaves the in-memory copy |
 
 ## Attack grid (found a real gap)
 - `lp11` runs 40 path shapes (case variants, `./`, `..`, absolute, trailing slash or space or dot, leading space, non-breaking and zero-width characters) through all six tools against a project with a restricted `.env`, a mixed-case `.ENV.local`, a key file and an ordinary-named restricted `Private/Customers.CSV`, with fresh random values per run, and eight search probes (names, prefixes, key-block markers). Pass means no value or marker reaches the model, the report or the patch, the patch stays empty and no listing names a withheld file.
