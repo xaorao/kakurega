@@ -132,6 +132,8 @@ pub struct AgentConfig {
     pub local_tools: Vec<ToolSpec>,
     pub max_turns: u32,
     pub max_tokens: u32,
+    /// A model that ends with fewer tool results than this and has reported nothing is asked once to look further. 0 turns it off.
+    pub min_looks: usize,
 }
 
 pub fn finding_tool() -> ToolSpec {
@@ -320,12 +322,9 @@ pub fn run_local_tool(link: &mut dyn Link, call: &ToolCall) -> Result<Value, Wor
 
 /// The start of the one message sent to a model that ends a review having looked at almost nothing.
 const EARLY_FINISH_NOTICE: &str = "You stopped after reading only ";
-/// A model that ends with fewer tool calls than this and has reported nothing is asked once to look further.
-const MIN_LOOKS: usize = 4;
-
 /// The message that asks a model to look further, or nothing: it applies once, only when the model reported no finding or fix
-/// and made fewer than `MIN_LOOKS` tool calls, and never again once it was sent (also across a restart from a saved state).
-fn early_finish_nudge(messages: &[ChatMessage]) -> Option<String> {
+/// and made fewer than `min_looks` tool calls, and never again once it was sent (also across a restart from a saved state).
+fn early_finish_nudge(messages: &[ChatMessage], min_looks: usize) -> Option<String> {
     if messages
         .iter()
         .any(|m| m.role == "user" && m.content.starts_with(EARLY_FINISH_NOTICE))
@@ -337,7 +336,7 @@ fn early_finish_nudge(messages: &[ChatMessage]) -> Option<String> {
         .flat_map(|m| m.tool_calls.iter())
         .any(|c| matches!(c.name.as_str(), "report_finding" | "propose_fix"));
     let looks = messages.iter().filter(|m| m.role == "tool").count();
-    if acted || looks >= MIN_LOOKS {
+    if acted || looks >= min_looks {
         return None;
     }
     Some(format!(
@@ -416,7 +415,7 @@ pub fn run(
         state.turn += 1;
         save(link, &state)?;
         if finished {
-            if let Some(notice) = early_finish_nudge(&state.messages) {
+            if let Some(notice) = early_finish_nudge(&state.messages, config.min_looks) {
                 state.messages.push(ChatMessage::new("user", &notice));
                 save(link, &state)?;
                 continue;

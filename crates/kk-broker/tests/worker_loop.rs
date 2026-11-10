@@ -127,6 +127,7 @@ fn config(max_turns: u32) -> AgentConfig {
         local_tools: vec![finding_tool()],
         max_turns,
         max_tokens: 256,
+        min_looks: 0,
     }
 }
 

@@ -31,6 +31,7 @@ fn config() -> AgentConfig {
         local_tools: vec![kk_worker::finding_tool()],
         max_turns: 12,
         max_tokens: 64,
+        min_looks: 4,
     }
 }
 
@@ -144,5 +145,18 @@ fn ef04_the_nudge_is_not_repeated_after_a_restart_from_a_saved_state() {
     };
     let r = run(&mut link, state, &config(), &|| false).unwrap();
     assert_eq!(r, Outcome::Finished("Really none.".into()));
+    assert_eq!(link.seen.len(), 1);
+}
+
+#[test]
+fn ef05_with_the_policy_off_a_short_run_ends_as_it_always_did() {
+    let mut link = Script {
+        replies: vec![say("None.")],
+        seen: vec![],
+    };
+    let mut off = config();
+    off.min_looks = 0;
+    let r = run(&mut link, AgentState::new("sys", "review"), &off, &|| false).unwrap();
+    assert_eq!(r, Outcome::Finished("None.".into()));
     assert_eq!(link.seen.len(), 1);
 }

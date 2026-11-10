@@ -32,6 +32,7 @@ fn real_main() -> i32 {
         local_tools: vec![finding_tool(), fix_tool(), memory_tool()],
         max_turns,
         max_tokens: 1024,
+        min_looks: 4,
     };
     match run(&mut link, state, &config, &|| false) {
         Ok(Outcome::Finished(text)) => {
