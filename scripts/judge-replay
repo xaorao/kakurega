@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Replays the recipient side of a Kakurega proof capsule with no account, no key and no network:
+# builds the standalone check page, makes a good capsule and a forged one, and checks both with the command line.
+# Needs Rust and Node. Usage: scripts/judge-replay
+set -euo pipefail
+cd "$(dirname "$0")/.."
+out=target/judge-replay
+rm -rf "$out" && mkdir -p "$out"
+cargo build -q -p kk-cli
+cargo run -q -p kk-evidence --example make_receipt_capsules -- "$out"
+(cd apps/verifier-page && node build.mjs)
+kaku=target/debug/kaku
+echo "== a good capsule with two model signatures"
+"$kaku" verify "$out/two.kkg"
+echo
+echo "== the same capsule with one model receipt altered after signing (must be refused)"
+if "$kaku" verify "$out/forged.kkg"; then
+  echo "FAILED: the forged capsule was accepted" >&2
+  exit 1
+fi
+echo
+echo "Both results are as expected."
+echo "Open this page in any browser and drop either capsule on it: $PWD/apps/verifier-page/dist/kakurega-verify.html"
+echo "Capsules: $PWD/$out/two.kkg and $PWD/$out/forged.kkg"

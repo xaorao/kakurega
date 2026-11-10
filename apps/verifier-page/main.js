@@ -1,0 +1,130 @@
+import { b64urlDecode, verifyCapsule } from "@kakurega/verifier";
+
+const $ = (id) => document.getElementById(id);
+const out = $("out");
+
+const REASONS = {
+  capsule_not_json: "The file is not a capsule.",
+  capsule_not_canonical: "The file was changed after it was signed (its bytes are not in the one allowed form).",
+  capsule_shape: "The file does not have the shape of a capsule.",
+  unsupported_version: "This capsule is from a version this page does not know.",
+  bad_key: "A key in the capsule is not usable.",
+  no_keys: "The capsule carries no key.",
+  signature_count: "An envelope does not have exactly one signature.",
+  bad_signature: "A signature does not match its content.",
+  receipt_signature: "A model receipt's signature does not match: the receipt was altered or forged.",
+  receipt_key: "A model receipt names a key that cannot be trusted.",
+  receipt_kind: "A model receipt is not a hardware-enclave signature.",
+  receipt_shape: "A model receipt is malformed, repeated, or there are too many.",
+  expired: "The capsule has expired.",
+  capsule_too_large: "The file is too large to be a capsule.",
+};
+
+function el(tag, text, cls) {
+  const e = document.createElement(tag);
+  if (text !== undefined) e.textContent = text;
+  if (cls) e.className = cls;
+  return e;
+}
+
+function list(title, items) {
+  const wrap = document.createDocumentFragment();
+  wrap.append(el("h2", title));
+  const ul = el("ul");
+  for (const i of items) ul.append(el("li", i));
+  wrap.append(ul);
+  return wrap;
+}
+
+function show(r) {
+  out.replaceChildren();
+  const v = el("div", r.valid ? "Valid: the signatures check out" : "Not valid", "verdict " + (r.valid ? "ok" : "bad"));
+  v.setAttribute("role", "status");
+  out.append(v);
+  if (!r.valid) {
+    out.append(el("p", REASONS[r.reason] || `Refused (${r.reason}).`));
+    out.append(el("p", `Code: ${r.reason}`, "note"));
+    return;
+  }
+  const dl = el("dl");
+  const row = (k, val, code) => {
+    dl.append(el("dt", k), el("dd", String(val), code ? "code" : ""));
+  };
+  row("Signer", r.signer, true);
+  row("Signer pinned", r.signerPinned ? "yes, matches the key you pasted" : "no, this is only the key the capsule carries");
+  if (r.recipient) row("Recipient", r.recipient);
+  row("Files", r.fileCount);
+  row("Claims", r.claimCount);
+  if (r.created) row("Created", new Date(r.created * 1000).toISOString().replace("T", " ").slice(0, 19) + " UTC");
+  if (r.expires) row("Expires", new Date(r.expires * 1000).toISOString().replace("T", " ").slice(0, 19) + " UTC");
+  row("Capsule id", r.capsuleId, true);
+  out.append(dl);
+  const rs = r.receipts || [];
+  if (rs.length) {
+    out.append(
+      list(
+        `Model signatures checked (${rs.length})`,
+        rs.map((x) => `${x.model}: signature by ${x.signer.slice(0, 16)}… over request ${x.requestSha256.slice(0, 12)}… and answer ${x.responseSha256.slice(0, 12)}…`),
+      ),
+    );
+  } else {
+    out.append(el("p", "This capsule carries no model signatures.", "note"));
+  }
+  const not = [...(r.notEstablished || [])];
+  if (rs.length) {
+    not.push(
+      "That a model signer key belongs to attested confidential hardware (this page cannot check a hardware quote).",
+      "That a model's answer is true; only that the model's key signed exactly that request and answer.",
+    );
+  }
+  if (not.length) out.append(list("What this check does not establish", not));
+}
+
+let last = null;
+
+async function check(file) {
+  last = file;
+  const pin = $("pin").value.trim();
+  let pinned = null;
+  if (pin) {
+    const raw = b64urlDecode(pin);
+    if (!raw || raw.length !== 32) {
+      out.replaceChildren(el("div", "The key you pasted is not 43 base64url characters.", "verdict bad"));
+      return;
+    }
+    pinned = [raw];
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  try {
+    show(await verifyCapsule(bytes, { pinned, now: Math.floor(Date.now() / 1000) }));
+  } catch (e) {
+    out.replaceChildren(el("div", "The check could not run on this file.", "verdict bad"));
+  }
+}
+
+const drop = $("drop");
+const input = $("file");
+drop.addEventListener("click", () => input.click());
+drop.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    input.click();
+  }
+});
+input.addEventListener("change", () => {
+  const f = input.files[0];
+  input.value = "";
+  if (f) check(f);
+});
+$("pin").addEventListener("input", () => last && check(last));
+drop.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  drop.classList.add("over");
+});
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => {
+  e.preventDefault();
+  drop.classList.remove("over");
+  const f = e.dataTransfer.files[0];
+  if (f) check(f);
+});

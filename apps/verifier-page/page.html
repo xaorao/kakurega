@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kakurega capsule check</title>
+<style>
+:root{--bg:#fff;--ink:#111;--mute:#5f5f5f;--line:#e4e4e4;--ok:#0a7a3d;--bad:#b3261e;--card:#fafafa;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e0e0e;--ink:#eee;--mute:#a0a0a0;--line:#2a2a2a;--ok:#4cc582;--bad:#ff8a80;--card:#161616}}
+:root[data-theme="dark"]{--bg:#0e0e0e;--ink:#eee;--mute:#a0a0a0;--line:#2a2a2a;--ok:#4cc582;--bad:#ff8a80;--card:#161616}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:46rem;margin:0 auto;padding:2rem 1rem 4rem}
+h1{font-size:1.5rem;margin:0 0 .25rem}
+p.lead{color:var(--mute);margin:0 0 1.5rem}
+#drop{border:1.5px dashed var(--line);border-radius:10px;padding:2rem 1rem;text-align:center;background:var(--card);cursor:pointer}
+#drop.over{border-color:var(--ink)}
+#drop:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+label{display:block;margin:1.25rem 0 .25rem;font-weight:600}
+input[type=text]{width:100%;padding:.55rem .65rem;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:14px var(--mono)}
+small{color:var(--mute)}
+#out{margin-top:1.75rem}
+.verdict{display:flex;gap:.6rem;align-items:center;font-size:1.25rem;font-weight:700;padding:.9rem 1rem;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+.verdict.ok{color:var(--ok)}.verdict.bad{color:var(--bad)}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:.35rem 1rem;margin:1.25rem 0}
+dt{color:var(--mute)}dd{margin:0;overflow-wrap:anywhere}
+dd.code{font-family:var(--mono);font-size:.85rem}
+h2{font-size:1rem;margin:1.5rem 0 .4rem}
+ul{margin:.2rem 0;padding-left:1.2rem}
+li{margin:.25rem 0}
+code{font-family:var(--mono);font-size:.85rem;word-break:break-all}
+.note{color:var(--mute)}
+@media (max-width:30rem){dl{grid-template-columns:1fr}dt{margin-top:.4rem}}
+</style>
+</head>
+<body>
+<main>
+<h1>Kakurega capsule check</h1>
+<p class="lead">Drop a proof capsule (<code>.kkg</code>). It is checked in this page, on this device. Nothing is uploaded and no network is used.</p>
+<div id="drop" tabindex="0" role="button" aria-label="Choose a capsule file">Drop a capsule here, or press to choose a file<input id="file" type="file" hidden></div>
+<label for="pin">Signer key you expect (optional)</label>
+<input id="pin" type="text" autocomplete="off" spellcheck="false" placeholder="base64url, 43 characters">
+<small>Without it, the page only shows that the capsule matches the key it carries. Paste the key you got from the sender by another route to check who signed it.</small>
+<section id="out" aria-live="polite"></section>
+</main>
+<script>/*BUNDLE*/</script>
+</body>
+</html>

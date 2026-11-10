@@ -46,10 +46,19 @@ python3 scripts/verify_program.py I  # the acceptance gate for a milestone (also
 
 `program/ACCEPTANCE_MANIFEST.json` lists every acceptance row with the command that proves it; rows that need a person or an external key say so. `TESTING.md`, `PROGRESS.md` and `HUMAN.md` (one level up in the working tree) record evidence, state and what only the owner can do.
 
+## Check a capsule as a recipient
+
+```
+scripts/judge-replay                 # builds the check page, makes a good and a forged capsule, checks both from the command line
+```
+
+The page `apps/verifier-page/dist/kakurega-verify.html` is one file with no network use: open it from disk in any browser, drop a capsule on it, and optionally paste the signer key you expect. It lists each model signature in the capsule and says what the check does not establish, including that a model's key is not shown to belong to attested hardware.
+
 ## Layout
 
 - `crates/` Rust crates (trusted core). The layer rule in `scripts/layers.json` is checked by `scripts/check_layers.py`.
-- `apps/` web workspace, desktop app, browser extension.
+- `apps/` web workspace, desktop app, browser extension, the standalone capsule check page.
+- `contracts/` the NEAR capsule registry contract (testnet only; a separate Cargo project built with `cargo near`).
 - `packages/` shared TypeScript packages (canonical JSON, capsule verifier).
 - `fixtures/`, `tests/` test inputs and cross-component tests.
 - `docs/engineering-decisions/` one record per component: target experience, what was read, decision, evidence, what is not covered.

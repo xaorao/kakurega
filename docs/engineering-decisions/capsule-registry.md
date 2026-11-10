@@ -2,7 +2,7 @@
 
 ## Target experience
 1. A judge or recipient holding a capsule can ask the chain three things: who registered this digest and when, does that account control the key that signed it, and did a model enclave sign each receipt in it.
-2. References: SealedBounty `contracts/sealed-bounty/src/tee.rs` (MIT, 7a60122, READ IN FULL: signed-text rebuild and `env::ed25519_verify`; also reads the `eth` and `gateway` kinds and a verdict parser, none of which apply here). Antibody `contracts/near-antibody/src/tee.rs`: NOT READ in this step. NEAR docs `smart-contracts/anatomy/environment` (host functions), `testing/integration-test`.
+2. References: SealedBounty `contracts/sealed-bounty/src/tee.rs` (MIT, 7a60122, READ IN FULL: signed-text rebuild and `env::ed25519_verify`; also reads the `eth` and `gateway` kinds and a verdict parser, none of which apply here). Antibody (MIT, e155d3d) `contracts/near-antibody/src/tee.rs` (266 lines): READ IN FULL; its `lib.rs` (1382 lines) NOT READ. NEAR docs `smart-contracts/anatomy/environment` (host functions), `testing/integration-test`.
 3. Approach: no owner, no admin, no upgrade; first registration wins; the binding signature names the calling account; storage is billed to the caller and the surplus returned.
 4. Criteria: replay by another account fails; a forged or altered receipt fails on the real runtime; a weak key cannot forge.
 
@@ -13,6 +13,7 @@
 | `eth` (ecdsa) and `gateway` kinds | EXCLUDE: our route refuses anything but a provider-TEE Ed25519 signature | |
 | Verdict parsing, bounty escrow, allowlist of signers, admin | EXCLUDE: not part of a capsule registry; a signer allowlist would need an owner | |
 | Capsule-to-account binding | BUILD: Ed25519 over `kakurega-register-v1:<digest>:<account>` | `register` |
+| Hardware quote verified on chain (Antibody: rebuilds the quote's `report_data` hash from its own record of the run, has NEAR's DCAP verifier contract check the TDX quote, accepts only pinned worker images by MRTD and RTMRs) | EXCLUDE for now, OWED: it proves the receipt signer runs on approved hardware without trusting the verifier's machine. It needs NEAR AI's quote and collateral in a form the DCAP verifier accepts and an image allowlist that needs an owner; neither was checked. Revisit after the live key shows the real attestation layout | |
 | Pay-on-verified-result | NOT BUILT here (parked experiment) | |
 
 ## Found by running it on a real runtime
@@ -29,4 +30,4 @@
 - A real NEAR AI receipt has not been registered (needs the account key). The signer key's link to attested hardware is checked off chain, not here.
 - Gas cost per call was not measured. The 16-receipt cap is a judgement, not a measured limit.
 - The reproducible (Docker) build and the NEP-330 source metadata were not verified.
-- Antibody's contract was not read; re-check it before claiming parity.
+- Antibody's `lib.rs` (the cross-contract call and the approved-image list) was not read.
