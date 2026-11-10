@@ -77,9 +77,10 @@
         },
         {
           "id": "RCR-I",
-          "text": "Retrospective capability recovery for the Foundation components: high-value applicable capabilities found in source review are implemented and verified, or carry a written justified exclusion; the capability trace is current (KAKUREGA_MASTER_GOAL.md 8c). Matrices alone are not PASS.",
-          "kind": "pending",
-          "evidence_needed": "for each component, every high-value matrix row implemented with test evidence or excluded with a reason; docs/engineering-decisions/capability-trace.md rows with FULL reading depth"
+          "text": "Retrospective capability recovery for the Foundation components: high-value applicable capabilities found in source review are implemented and verified, or carry a written justified exclusion; the capability trace is current (KAKUREGA_MASTER_GOAL.md 8c). Matrices alone are not PASS. Checked by scripts/check_recovery.py (no partial row, reasons for what waits or is excluded, every cited test exists, trace depths and counts) and by the independent audit in docs/engineering-decisions/recovery-audit.md.",
+          "kind": "machine",
+          "command": "python3 scripts/check_recovery.py",
+          "expect": "RECOVERY RECORDS OK"
         }
       ]
     },
@@ -359,9 +360,10 @@
         },
         {
           "id": "RCR-II",
-          "text": "Retrospective capability recovery for the Web, desktop and workflow components: high-value applicable capabilities found in source review are implemented and verified, or carry a written justified exclusion; the capability trace is current (KAKUREGA_MASTER_GOAL.md 8c). Matrices alone are not PASS.",
-          "kind": "pending",
-          "evidence_needed": "for each component, every high-value matrix row implemented with test evidence or excluded with a reason; docs/engineering-decisions/capability-trace.md rows with FULL reading depth"
+          "text": "Retrospective capability recovery for the Web, desktop and workflow components: high-value applicable capabilities found in source review are implemented and verified, or carry a written justified exclusion; the capability trace is current (KAKUREGA_MASTER_GOAL.md 8c). Matrices alone are not PASS. Checked by scripts/check_recovery.py (no partial row, reasons for what waits or is excluded, every cited test exists, trace depths and counts) and by the independent audit in docs/engineering-decisions/recovery-audit.md.",
+          "kind": "machine",
+          "command": "python3 scripts/check_recovery.py",
+          "expect": "RECOVERY RECORDS OK"
         },
         {
           "id": "II-09k",
@@ -500,9 +502,10 @@
         },
         {
           "id": "RCR-III",
-          "text": "Retrospective capability recovery for the Terminal, MCP, Telegram, extension and launch components: high-value applicable capabilities found in source review are implemented and verified, or carry a written justified exclusion; the capability trace is current (KAKUREGA_MASTER_GOAL.md 8c). Matrices alone are not PASS.",
-          "kind": "pending",
-          "evidence_needed": "for each component, every high-value matrix row implemented with test evidence or excluded with a reason; docs/engineering-decisions/capability-trace.md rows with FULL reading depth"
+          "text": "Retrospective capability recovery for the Terminal, MCP, Telegram, extension and launch components: high-value applicable capabilities found in source review are implemented and verified, or carry a written justified exclusion; the capability trace is current (KAKUREGA_MASTER_GOAL.md 8c). Matrices alone are not PASS. Checked by scripts/check_recovery.py (no partial row, reasons for what waits or is excluded, every cited test exists, trace depths and counts) and by the independent audit in docs/engineering-decisions/recovery-audit.md.",
+          "kind": "machine",
+          "command": "python3 scripts/check_recovery.py",
+          "expect": "RECOVERY RECORDS OK"
         }
       ]
     }
