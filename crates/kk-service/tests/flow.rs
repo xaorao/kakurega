@@ -16988,11 +16988,11 @@ fn sv201_tools_are_off_until_the_owner_allows_them_with_the_pin_they_read_and_on
     assert_eq!(
         w.post(
             "/api/mcp/tools",
-            json!({"server": "srv", "tool": "echo", "mode": "ask", "pin": echo_pin})
+            json!({"server": "srv", "tool": "echo", "mode": "sometimes", "pin": echo_pin})
         )
         .0,
         422,
-        "only off and allow exist"
+        "only off, allow and ask exist"
     );
     let (s, _) = w.post(
         "/api/mcp/tools",
@@ -17374,4 +17374,204 @@ fn sv207_a_tool_the_server_does_not_call_read_only_needs_the_owner_to_confirm_kn
         json!({"server": "srv", "tool": "write", "mode": "off", "pin": get("write")["pin"]}),
     );
     assert_eq!(s, 200, "turning a tool off never needs a confirmation: {v}");
+}
+
+/// Starts the probe coding task (it calls the outside tool `echo` once) and returns the running task id.
+fn start_probe_task(w: &Web, proj: &Path) -> String {
+    let (s, v) = w.post(
+        "/api/code",
+        json!({"folder": proj.to_string_lossy(), "task": "fix add"}),
+    );
+    assert_eq!(s, 202, "{v}");
+    v["id"].as_str().unwrap().to_string()
+}
+
+fn ask_service(tag: &str) -> (kk_companion::Companion, Web, PathBuf) {
+    let (root, _repo) = repo_copy(tag);
+    let runner = ProbeRunner {
+        inner: CodeRunner {
+            inner: CannedRunner { confirm: true },
+            edits: vec![("src/app.py".into(), "a - b".into(), "a + b".into())],
+            create: vec![],
+            delete: vec![],
+            endpoint: "http://127.0.0.1:1".into(),
+        },
+    };
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(runner),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let proj = root.join("proj");
+    std::fs::create_dir_all(proj.join("src")).unwrap();
+    std::fs::write(
+        proj.join("src/app.py"),
+        "def add(a, b):\n    return a - b\n",
+    )
+    .unwrap();
+    w.post("/api/mcp/servers", mcp_server_body("srv", "ok"));
+    w.post("/api/mcp/discover", json!({"name": "srv"}));
+    let tools = w.get("/api/mcp").1["servers"][0]["tools"].clone();
+    let pin = tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "echo")
+        .unwrap()["pin"]
+        .clone();
+    let (s, v) = w.post(
+        "/api/mcp/tools",
+        json!({"server": "srv", "tool": "echo", "mode": "ask", "knowing": true, "pin": pin}),
+    );
+    assert_eq!(s, 200, "ask is a mode: {v}");
+    (c, w, proj)
+}
+
+fn wait_pending(w: &Web) -> Value {
+    for _ in 0..200 {
+        let (_, v) = w.get("/api/mcp/pending");
+        if !v["pending"].as_array().unwrap().is_empty() {
+            return v["pending"][0].clone();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    panic!("no call is waiting for the owner");
+}
+
+#[test]
+fn sv208_a_tool_set_to_ask_waits_for_the_owner_and_runs_only_after_an_approval_of_that_exact_call()
+{
+    let (c, w, proj) = ask_service("mcp-ask-yes");
+    let anon = Web::new(c.addr);
+    assert_eq!(anon.get("/api/mcp/pending").0, 401);
+    assert_eq!(
+        anon.post(
+            "/api/mcp/pending/decide",
+            json!({"id": "x", "approve": true})
+        )
+        .0,
+        401
+    );
+    let id = start_probe_task(&w, &proj);
+    let p = wait_pending(&w);
+    assert_eq!(
+        (p["server"].clone(), p["tool"].clone()),
+        (json!("srv"), json!("echo"))
+    );
+    assert!(
+        p["args"].as_str().unwrap().contains("hello"),
+        "the owner sees the arguments: {p}"
+    );
+    assert_eq!(
+        w.post(
+            "/api/mcp/pending/decide",
+            json!({"id": "no-such", "approve": true})
+        )
+        .0,
+        404
+    );
+    let (s, _) = w.post(
+        "/api/mcp/pending/decide",
+        json!({"id": p["id"], "approve": true}),
+    );
+    assert_eq!(s, 200);
+    let done = wait_code(&w, &id);
+    let summary = done["summary"].as_str().unwrap().to_string();
+    assert!(summary.contains(r#"echo=Ok("echo: hello")"#), "{summary}");
+    assert_eq!(
+        w.post(
+            "/api/mcp/pending/decide",
+            json!({"id": p["id"], "approve": true})
+        )
+        .0,
+        404,
+        "a decision is used once"
+    );
+    assert!(w.get("/api/mcp/pending").1["pending"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn sv209_a_denied_call_never_reaches_the_tool_and_an_unanswered_one_is_a_denial() {
+    let (_c, w, proj) = ask_service("mcp-ask-no");
+    let id = start_probe_task(&w, &proj);
+    let p = wait_pending(&w);
+    w.post(
+        "/api/mcp/pending/decide",
+        json!({"id": p["id"], "approve": false}),
+    );
+    let summary = wait_code(&w, &id)["summary"].as_str().unwrap().to_string();
+    assert!(
+        summary.contains("echo=Err(") && summary.contains("did not approve"),
+        "{summary}"
+    );
+    // nobody answers: the call times out as a denial and leaves nothing waiting
+    let id2 = start_probe_task(&w, &proj);
+    let summary2 = wait_code(&w, &id2)["summary"].as_str().unwrap().to_string();
+    assert!(
+        summary2.contains("echo=Err(") && summary2.contains("did not approve"),
+        "{summary2}"
+    );
+    assert!(w.get("/api/mcp/pending").1["pending"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn sv210_an_ask_tool_changed_since_it_was_chosen_goes_back_to_off_and_the_owners_own_test_call_needs_no_approval(
+) {
+    let (_c, w, _proj) = ask_service("mcp-ask-test");
+    let (s, v) = w.post(
+        "/api/mcp/test",
+        json!({"server": "srv", "tool": "echo", "args": {"text": "me"}}),
+    );
+    assert_eq!(
+        (s, v["text"].clone()),
+        (200, json!("echo: me")),
+        "the owner calling it themselves is the approval: {v}"
+    );
+    let (s, v) = w.post("/api/mcp/tools", json!({"server": "srv", "tool": "echo", "mode": "ask", "pin": "0".repeat(64), "knowing": true}));
+    assert_eq!(
+        (s, v["error"]["code"].clone()),
+        (409, json!("MCP_TOOL_CHANGED")),
+        "{v}"
+    );
+}
+
+#[test]
+fn sv211_choosing_ask_for_a_tool_that_may_change_things_needs_the_confirmation_too() {
+    let (_c, w, _proj) = ask_service("mcp-ask-gate");
+    let tools = w.get("/api/mcp").1["servers"][0]["tools"].clone();
+    let pin = tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "echo")
+        .unwrap()["pin"]
+        .clone();
+    w.post(
+        "/api/mcp/tools",
+        json!({"server": "srv", "tool": "echo", "mode": "off", "pin": pin}),
+    );
+    let (s, v) = w.post(
+        "/api/mcp/tools",
+        json!({"server": "srv", "tool": "echo", "mode": "ask", "pin": pin}),
+    );
+    assert_eq!(
+        (s, v["error"]["code"].clone()),
+        (409, json!("MCP_MAY_CHANGE")),
+        "{v}"
+    );
 }

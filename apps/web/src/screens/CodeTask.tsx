@@ -3,6 +3,7 @@ import { api, ApiError, type CodeTask as Task } from "../api";
 import { DiffView } from "../components/DiffView";
 import { t, type Key } from "../i18n";
 import { visible } from "../visible";
+import { McpPending } from "./Mcp";
 
 const STATES = ["running", "ready", "failed", "applied", "applying", "undoing", "attention"];
 const stateWord = (s: string) => (STATES.includes(s) ? t(`code.state.${s}` as Key) : s);
@@ -86,6 +87,7 @@ export function CodeTask() {
   return (
     <section class="stack wide" aria-labelledby="h-code">
       <h1 id="h-code">{t("code.title")}</h1>
+      <McpPending />
       <p class="lead">{t("code.lead")}</p>
       <div class="card stack">
         <h2>{t("code.step1")}</h2>

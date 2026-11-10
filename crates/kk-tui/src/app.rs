@@ -249,6 +249,7 @@ enum Intent {
     NotesOnlyShow,
     NotesOnlySet(String, bool),
     McpList,
+    McpPending,
     McpChecked(String),
     McpDone(&'static str),
     MethodList,
@@ -3032,6 +3033,27 @@ impl App {
                             Vec::new()
                         }
                     },
+                    M::Ask(server, tool, knowing) => match self.shown_mcp.get(&(server.clone(), tool.clone())).cloned() {
+                        Some(pin) => vec![self.req(
+                            Intent::McpDone("It asks you before each call. /mcp pending shows waiting calls."),
+                            false,
+                            Method::Post,
+                            "/api/mcp/tools",
+                            Some(json!({"server": server, "tool": tool, "mode": "ask", "pin": pin, "knowing": knowing})),
+                        )],
+                        None => {
+                            self.say(Kind::Error, "Look at the list first with /mcp, so you choose the tool as you read it.");
+                            Vec::new()
+                        }
+                    },
+                    M::Pending => vec![self.req(Intent::McpPending, false, Method::Get, "/api/mcp/pending", None)],
+                    M::Decide(id, approve) => vec![self.req(
+                        Intent::McpDone(if approve { "Approved: the call goes ahead." } else { "Denied: the call is refused." }),
+                        false,
+                        Method::Post,
+                        "/api/mcp/pending/decide",
+                        Some(json!({"id": id, "approve": approve})),
+                    )],
                     M::Off(server, tool) => match self.shown_mcp.get(&(server.clone(), tool.clone())).cloned() {
                         Some(pin) => vec![self.req(
                             Intent::McpDone("Off."),
@@ -4706,10 +4728,10 @@ impl App {
                         rows.push(format!(
                             "    {}  {}  [{}]  {}",
                             clean(&tool),
-                            if t["mode"] == "allow" {
-                                "allowed"
-                            } else {
-                                "off"
+                            match t["mode"].as_str() {
+                                Some("allow") => "allowed",
+                                Some("ask") => "asks you",
+                                _ => "off",
                             },
                             match t["effect"].as_str() {
                                 Some("read_only") => "server says: only reads",
@@ -4724,6 +4746,37 @@ impl App {
                     self.say(Kind::Info, "No outside tools yet. /mcp add NAME /full/path/to/program adds a program; its tools start off and a coding task can call only the ones you allow.");
                 } else {
                     self.push(Kind::Info, Some("Outside tools"), rows);
+                }
+                Vec::new()
+            }
+            Intent::McpPending => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let rows: Vec<String> = body["pending"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|p| {
+                        format!(
+                            "  {}  {} / {}  {}",
+                            clean(p["id"].as_str().unwrap_or("")),
+                            clean(p["server"].as_str().unwrap_or("")),
+                            clean(p["tool"].as_str().unwrap_or("")),
+                            clean(p["args"].as_str().unwrap_or(""))
+                        )
+                    })
+                    .collect();
+                if rows.is_empty() {
+                    self.say(Kind::Info, "No call is waiting for you.");
+                } else {
+                    self.push(
+                        Kind::Info,
+                        Some("Calls waiting for you (/mcp approve ID or /mcp deny ID)"),
+                        rows,
+                    );
                 }
                 Vec::new()
             }

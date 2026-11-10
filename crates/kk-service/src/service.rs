@@ -247,6 +247,9 @@ pub struct Service {
     attachments: Mutex<crate::attachments::Store>,
     fix_locks: fixfiles::JobLocks,
     coding: Mutex<crate::coding::Tasks>,
+    /// Outside-tool calls waiting for the owner's yes or no (tools set to ask).
+    mcp_pending: Mutex<Vec<mcp::PendingCall>>,
+    mcp_pending_seq: std::sync::atomic::AtomicU64,
     /// Seconds added to the clock when leases are judged; only tests move it.
     lease_skew: std::sync::atomic::AtomicI64,
     /// Kept conversations whose last summary failed, with how many turns they had then. See `COMPACTION_WAIT_TURNS`.
@@ -812,6 +815,8 @@ impl Service {
             attachments: Mutex::new(crate::attachments::Store::default()),
             fix_locks: fixfiles::JobLocks::default(),
             coding: Mutex::new(coding),
+            mcp_pending: Mutex::new(Vec::new()),
+            mcp_pending_seq: std::sync::atomic::AtomicU64::new(0),
             lease_skew: std::sync::atomic::AtomicI64::new(0),
             compaction_wait: Mutex::new(std::collections::HashMap::new()),
             call_window: Mutex::new((0, 0, 0)),
@@ -9246,6 +9251,8 @@ impl Extension for Routes {
             .route("/api/mcp/discover", post(mcp::mcp_discover_route))
             .route("/api/mcp/tools", post(mcp::mcp_tool_set))
             .route("/api/mcp/test", post(mcp::mcp_test))
+            .route("/api/mcp/pending", get(mcp::mcp_pending_get))
+            .route("/api/mcp/pending/decide", post(mcp::mcp_pending_decide))
             .route(
                 "/api/methods",
                 get(methods::methods_get).post(methods::methods_set),

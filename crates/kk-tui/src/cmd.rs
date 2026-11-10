@@ -24,6 +24,10 @@ pub enum McpAction {
     /// The third is true when the owner wrote `knowingly`: they confirm a tool that may change things.
     Allow(String, String, bool),
     Off(String, String),
+    /// Make a tool ask the owner before each call (the bool is `knowingly`).
+    Ask(String, String, bool),
+    Pending,
+    Decide(String, bool),
     Remove(String),
     Add {
         name: String,
@@ -378,7 +382,7 @@ pub fn usage(name: &str) -> &'static str {
         "instructions" => "/instructions [set [in PROJECT:] TEXT | clear [PROJECT]]",
         "notesonly" => "/notesonly [on|off [PROJECT]]",
         "method" => "/method [show|approve|revoke|remove NAME | add NAME WORD,WORD|- TEXT]",
-        "mcp" => "/mcp [check NAME | allow SERVER TOOL [knowingly] | off SERVER TOOL | remove NAME | add NAME /full/path [ARGS]]",
+        "mcp" => "/mcp [check NAME | allow|ask SERVER TOOL [knowingly] | off SERVER TOOL | pending | approve|deny ID | remove NAME | add NAME /full/path [ARGS]]",
         "pii" => "/pii [add ENTRY | remove ENTRY]",
         "find" => "/find WORDS",
         "transcript" => "/transcript WORDS",
@@ -854,6 +858,19 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 ["allow", srv, tool, "knowingly"] if plain(srv) && plain(tool) => Ok(Command::Mcp(
                     McpAction::Allow((*srv).into(), (*tool).into(), true),
                 )),
+                ["ask", srv, tool] if plain(srv) && plain(tool) => Ok(Command::Mcp(
+                    McpAction::Ask((*srv).into(), (*tool).into(), false),
+                )),
+                ["ask", srv, tool, "knowingly"] if plain(srv) && plain(tool) => Ok(Command::Mcp(
+                    McpAction::Ask((*srv).into(), (*tool).into(), true),
+                )),
+                ["pending"] => Ok(Command::Mcp(McpAction::Pending)),
+                ["approve", id] if plain(id) => {
+                    Ok(Command::Mcp(McpAction::Decide((*id).into(), true)))
+                }
+                ["deny", id] if plain(id) => {
+                    Ok(Command::Mcp(McpAction::Decide((*id).into(), false)))
+                }
                 ["off", srv, tool] if plain(srv) && plain(tool) => {
                     Ok(Command::Mcp(McpAction::Off((*srv).into(), (*tool).into())))
                 }

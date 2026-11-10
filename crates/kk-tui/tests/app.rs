@@ -7620,3 +7620,82 @@ fn tu_mc03_check_add_remove_say_what_happened_and_an_empty_list_explains_itself(
     let r = enter(&mut a, "/mcp remove docs");
     assert_eq!(r[0].path.as_str(), "/api/mcp/servers/remove");
 }
+
+#[test]
+fn tu_mc04_ask_pending_approve_and_deny_work_and_a_waiting_list_is_cleaned() {
+    use kk_tui::cmd::McpAction as M;
+    assert_eq!(
+        cmd::parse("/mcp pending").unwrap(),
+        Command::Mcp(M::Pending)
+    );
+    assert_eq!(
+        cmd::parse("/mcp approve mc-3").unwrap(),
+        Command::Mcp(M::Decide("mc-3".into(), true))
+    );
+    assert_eq!(
+        cmd::parse("/mcp deny mc-3").unwrap(),
+        Command::Mcp(M::Decide("mc-3".into(), false))
+    );
+    assert_eq!(
+        cmd::parse("/mcp ask docs lookup").unwrap(),
+        Command::Mcp(M::Ask("docs".into(), "lookup".into(), false))
+    );
+    assert_eq!(
+        cmd::parse("/mcp ask docs lookup knowingly").unwrap(),
+        Command::Mcp(M::Ask("docs".into(), "lookup".into(), true))
+    );
+    for bad in [
+        "/mcp approve",
+        "/mcp deny a b",
+        "/mcp ask docs",
+        "/mcp pending now",
+    ] {
+        assert!(cmd::parse(bad).is_err(), "{bad}");
+    }
+    let mut a = booted();
+    let r = enter(&mut a, "/mcp pending");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/mcp/pending", Method::Get)
+    );
+    a.handle(ok(&r[0], 200, json!({"pending": [{"id": "mc-1\u{1b}[2J", "server": "docs", "tool": "look\u{1b}[2Jup", "args": "{\"term\":\"x\u{1b}[31m\"}", "age_secs": 2}]})));
+    let t = text(&a);
+    assert!(
+        t.contains("mc-1") && t.contains("docs") && t.contains("term") && !t.contains('\u{1b}'),
+        "{t}"
+    );
+    let r = enter(&mut a, "/mcp pending");
+    a.handle(ok(&r[0], 200, json!({"pending": []})));
+    assert!(
+        text(&a).contains("No call is waiting for you."),
+        "{}",
+        text(&a)
+    );
+    let r = enter(&mut a, "/mcp approve mc-1");
+    assert_eq!(
+        r[0].body.as_ref().unwrap(),
+        &json!({"id": "mc-1", "approve": true})
+    );
+    a.handle(ok(&r[0], 200, json!({"approved": true})));
+    assert!(
+        text(&a).contains("Approved: the call goes ahead."),
+        "{}",
+        text(&a)
+    );
+    let r = enter(&mut a, "/mcp deny mc-2");
+    assert_eq!(
+        r[0].body.as_ref().unwrap(),
+        &json!({"id": "mc-2", "approve": false})
+    );
+    let r = enter(&mut a, "/mcp ask docs lookup");
+    assert!(r.is_empty(), "choose from the list first");
+    let r = enter(&mut a, "/mcp");
+    a.handle(ok(&r[0], 200, json!({"servers": [{"name": "docs", "program": "/x", "args": [], "tools": [{"name": "lookup", "description": "d", "pin": "ab".repeat(32), "mode": "ask", "effect": "read_only"}]}]})));
+    assert!(text(&a).contains("asks you"), "{}", text(&a));
+    let r = enter(&mut a, "/mcp ask docs lookup");
+    let b = r[0].body.as_ref().unwrap();
+    assert_eq!(
+        (b["mode"].clone(), b["pin"].clone()),
+        (json!("ask"), json!("ab".repeat(32)))
+    );
+}

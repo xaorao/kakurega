@@ -9,6 +9,24 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 const MAX_SERVERS: i64 = 20;
+const MAX_WAITING: usize = 10;
+
+/// An outside-tool call that waits for the owner. `decision` is None until the owner answers.
+pub(super) struct PendingCall {
+    id: String,
+    server: String,
+    tool: String,
+    args: String,
+    created: i64,
+    decision: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DecideBody {
+    id: String,
+    approve: bool,
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -70,12 +88,92 @@ fn schema_text(schema: &Value) -> String {
 }
 
 impl Service {
+    /// How long a call waits for the owner before it counts as refused.
+    fn mcp_ask_wait(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(if self.test_mode { 3 } else { 120 })
+    }
+
+    /// A call a coding task makes: a tool set to ask waits for the owner's answer first; one set to allow does not.
+    pub(super) fn mcp_call_for_task(
+        &self,
+        server: &str,
+        tool: &str,
+        args: Value,
+    ) -> Result<kk_mcpc::Outcome, String> {
+        let mode: String = {
+            let store = self.store.lock().expect("lock");
+            store
+                .connection()
+                .query_row(
+                    "SELECT mode FROM mcp_tools WHERE server = ?1 AND tool = ?2",
+                    [server, tool],
+                    |r| r.get(0),
+                )
+                .map_err(|_| "that tool is not one the owner has allowed".to_string())?
+        };
+        if mode != "ask" {
+            return self.mcp_call(server, tool, args, false);
+        }
+        if !self.mcp_wait_for_owner(server, tool, &args) {
+            return Err("the owner did not approve this call".into());
+        }
+        self.mcp_call(server, tool, args, true)
+    }
+
+    fn mcp_wait_for_owner(&self, server: &str, tool: &str, args: &Value) -> bool {
+        let id = format!(
+            "mc-{}",
+            self.mcp_pending_seq
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                + 1
+        );
+        {
+            let mut g = self.mcp_pending.lock().expect("lock");
+            if g.len() >= MAX_WAITING {
+                return false;
+            }
+            let text: String = args
+                .to_string()
+                .chars()
+                .filter(|c| !c.is_control() || *c == '\n')
+                .take(1000)
+                .collect();
+            g.push(PendingCall {
+                id: id.clone(),
+                server: server.to_string(),
+                tool: tool.to_string(),
+                args: text,
+                created: now(),
+                decision: None,
+            });
+        }
+        let until = std::time::Instant::now() + self.mcp_ask_wait();
+        let mut answer = false;
+        while std::time::Instant::now() < until {
+            {
+                let g = self.mcp_pending.lock().expect("lock");
+                if let Some(p) = g.iter().find(|p| p.id == id) {
+                    if let Some(d) = p.decision {
+                        answer = d;
+                        break;
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        self.mcp_pending
+            .lock()
+            .expect("lock")
+            .retain(|p| p.id != id);
+        answer
+    }
+
     /// The tools the owner allowed, as the coding loop offers and calls them. None when no tool is allowed.
     pub(super) fn mcp_external(self: &Arc<Self>) -> Option<kk_review::code::External<'static>> {
         let rows: Vec<(String, String, String, String)> = {
             let store = self.store.lock().expect("lock");
             let c = store.connection();
-            let Ok(mut st) = c.prepare("SELECT server, tool, description, schema FROM mcp_tools WHERE mode = 'allow' ORDER BY server, tool") else {
+            let Ok(mut st) = c.prepare("SELECT server, tool, description, schema FROM mcp_tools WHERE mode IN ('allow', 'ask') ORDER BY server, tool") else {
                 return None;
             };
             st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
@@ -108,7 +206,7 @@ impl Service {
             tools,
             call: Box::new(move |name: &str, args: &Value| {
                 let (server, tool) = routes.get(name).ok_or("that tool is not allowed")?;
-                let out = svc.mcp_call(server, tool, args.clone())?;
+                let out = svc.mcp_call_for_task(server, tool, args.clone())?;
                 svc.log_event(
                     "mcp.called",
                     &format!("{server}/{tool}"),
@@ -213,6 +311,7 @@ impl Service {
         server: &str,
         tool: &str,
         args: Value,
+        approved: bool,
     ) -> Result<kk_mcpc::Outcome, String> {
         let (pin, mode): (String, String) = {
             let store = self.store.lock().expect("lock");
@@ -225,7 +324,8 @@ impl Service {
                 )
                 .map_err(|_| "that tool is not one the owner has allowed".to_string())?
         };
-        if mode != "allow" {
+        // `ask` needs an approval of this very call; `allow` does not; anything else is off
+        if !(mode == "allow" || (mode == "ask" && approved)) {
             return Err("that tool is not one the owner has allowed".into());
         }
         let config = self.mcp_config(server)?;
@@ -384,8 +484,8 @@ pub(super) async fn mcp_discover_route(
 
 /// Sets one tool off or allowed. Allowing needs the pin the owner read, so a tool that changed in between stays off.
 pub(super) async fn mcp_tool_set(axum::Extension(svc): Svc, Json(b): Json<ToolBody>) -> Response {
-    if b.mode != "off" && b.mode != "allow" {
-        return refuse("a tool is either off or allowed");
+    if b.mode != "off" && b.mode != "allow" && b.mode != "ask" {
+        return refuse("a tool is off, allowed, or asks you each time");
     }
     let stored: Option<(String, String)> = {
         let store = svc.store.lock().expect("lock");
@@ -412,7 +512,7 @@ pub(super) async fn mcp_tool_set(axum::Extension(svc): Svc, Json(b): Json<ToolBo
             "the tool changed after you read it; read it again before allowing it",
         );
     }
-    if b.mode == "allow" && effect != "read_only" && !b.knowing {
+    if b.mode != "off" && effect != "read_only" && !b.knowing {
         return error(
             StatusCode::CONFLICT,
             "MCP_MAY_CHANGE",
@@ -438,7 +538,7 @@ pub(super) async fn mcp_tool_set(axum::Extension(svc): Svc, Json(b): Json<ToolBo
 pub(super) async fn mcp_test(axum::Extension(svc): Svc, Json(b): Json<TestBody>) -> Response {
     let svc2 = svc.clone();
     let (server, tool, args) = (b.server.clone(), b.tool.clone(), b.args.clone());
-    match tokio::task::spawn_blocking(move || svc2.mcp_call(&server, &tool, args)).await {
+    match tokio::task::spawn_blocking(move || svc2.mcp_call(&server, &tool, args, true)).await {
         Ok(Ok(out)) => {
             svc.log_event(
                 "mcp.called",
@@ -449,5 +549,52 @@ pub(super) async fn mcp_test(axum::Extension(svc): Svc, Json(b): Json<TestBody>)
         }
         Ok(Err(e)) => refuse(&e),
         Err(_) => refuse("the call could not run"),
+    }
+}
+
+pub(super) async fn mcp_pending_get(axum::Extension(svc): Svc) -> Response {
+    let g = svc.mcp_pending.lock().expect("lock");
+    let t = now();
+    Json(
+        json!({"pending": g.iter().filter(|p| p.decision.is_none()).map(|p| json!({
+        "id": p.id, "server": p.server, "tool": p.tool, "args": p.args, "age_secs": t - p.created
+    })).collect::<Vec<_>>()}),
+    )
+    .into_response()
+}
+
+/// The owner's yes or no for one waiting call. A decision is used once.
+pub(super) async fn mcp_pending_decide(
+    axum::Extension(svc): Svc,
+    Json(b): Json<DecideBody>,
+) -> Response {
+    let found = {
+        let mut g = svc.mcp_pending.lock().expect("lock");
+        match g.iter_mut().find(|p| p.id == b.id && p.decision.is_none()) {
+            Some(p) => {
+                p.decision = Some(b.approve);
+                Some((p.server.clone(), p.tool.clone()))
+            }
+            None => None,
+        }
+    };
+    match found {
+        Some((server, tool)) => {
+            svc.log_event(
+                if b.approve {
+                    "mcp.call_approved"
+                } else {
+                    "mcp.call_denied"
+                },
+                &format!("{server}/{tool}"),
+                &[],
+            );
+            Json(json!({"id": b.id, "approved": b.approve})).into_response()
+        }
+        None => error(
+            StatusCode::NOT_FOUND,
+            "MCP_NOTHING_WAITING",
+            "no call is waiting with that id",
+        ),
     }
 }
