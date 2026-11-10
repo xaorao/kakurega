@@ -52,8 +52,13 @@
 - Evidence: a scripted fake server with 12 hostile modes (hang, crash, flood, oversized line, too many tools, changed tool, injection text, non-text parts, tool error, environment dump, noisy stderr); 14 tests mc01 to mc14; 13 mutants, all caught by test failures against a green baseline (one survived until a relative path that exists was added to mc02).
 - Not covered: a server that sends endless pages of its tool list within the time limit (memory is bounded only by the call timeout); a server that writes many small lines within the time limit (no total-bytes cap); the server's own children are not killed with it (no process group); a request for more input is untested because the fake server cannot produce one (the code path stops the server).
 
+## Built (service wiring)
+- `crates/kk-service/src/service/mcp.rs`: owner-only endpoints `/api/mcp` (list), `/api/mcp/servers` (add, with the program and environment checked), `/api/mcp/servers/remove`, `/api/mcp/discover`, `/api/mcp/tools` (off or allow, needs the pin the owner read, else 409), `/api/mcp/test` (the owner's own call). A server runs only for one listing or one call and is stopped again. Environment values live in the encrypted store and are never returned. A tool whose pin changed between allowing and calling is not called and goes back to off; a new listing does the same and names it. Changing a server's program, arguments or environment clears its tool choices.
+- Evidence: sv200 to sv205 (7 tests incl. a real fake server process); 8 service mutants, all caught against a green baseline (a first run was invalid: one mutant hung and two survived; tests sv204 and sv205 were added).
+- Mode `ask` (approval per call) is NOT built; only off and allow exist, and the API refuses `ask`.
+
 ## Not built yet (owed)
-1. The owner's server list and per-tool choice (off, ask, allowed) in the service, pinned to the tool's pin; a changed pin puts the tool back to waiting.
-2. The broker tool that lets a coding or review task call an allowed tool, the lease/approval for tools that are not read-only, and an audit entry per call.
+1. DONE above: the server list and the per-tool choice.
+2. Letting a coding or review task call an allowed tool (coding mode in the service first; the review sandbox is not given MCP tools), the per-call approval (`ask`), and an audit entry per call beyond the signed log lines already written.
 3. Web and terminal screens; the secret-by-name filling of variables from the vault.
 4. The goose and IronClaw lifecycle reading, and the process-group kill.

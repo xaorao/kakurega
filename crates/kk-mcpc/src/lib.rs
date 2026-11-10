@@ -151,6 +151,13 @@ fn clip(mut text: String, max: usize) -> (String, bool) {
     (text, true)
 }
 
+impl ServerConfig {
+    /// Whether this configuration may be run at all; the same check `Server::start` makes.
+    pub fn check(&self) -> Result<(), McpError> {
+        check_config(self)
+    }
+}
+
 fn check_config(c: &ServerConfig) -> Result<(), McpError> {
     let bad = |w: &str| Err(McpError::BadProgram(w.to_string()));
     if !plain_name(&c.name) {

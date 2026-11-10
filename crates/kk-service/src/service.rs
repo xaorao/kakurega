@@ -366,6 +366,8 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE INDEX IF NOT EXISTS usage_ledger_at ON usage_ledger(at);
              CREATE TABLE IF NOT EXISTS pii_allow(entry TEXT PRIMARY KEY, added_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS owner_instructions(scope TEXT PRIMARY KEY, text TEXT NOT NULL, updated_at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS mcp_servers(name TEXT PRIMARY KEY, program TEXT NOT NULL, args TEXT NOT NULL, env TEXT NOT NULL, created INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS mcp_tools(server TEXT NOT NULL, tool TEXT NOT NULL, pin TEXT NOT NULL, description TEXT NOT NULL, mode TEXT NOT NULL, PRIMARY KEY(server, tool));
              CREATE TABLE IF NOT EXISTS methods(name TEXT PRIMARY KEY, body TEXT NOT NULL, hash TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS method_approvals(name TEXT PRIMARY KEY, hash TEXT NOT NULL, approved_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS project_settings(project TEXT PRIMARY KEY, notes_only INTEGER NOT NULL, updated_at INTEGER NOT NULL);
@@ -1131,6 +1133,7 @@ struct PathQuery {
     files: Option<u8>,
 }
 
+mod mcp;
 mod methods;
 
 type Svc = axum::Extension<Arc<Service>>;
@@ -9233,6 +9236,12 @@ impl Extension for Routes {
                 "/api/instructions",
                 get(instructions_get).post(instructions_set),
             )
+            .route("/api/mcp", get(mcp::mcp_get))
+            .route("/api/mcp/servers", post(mcp::mcp_add))
+            .route("/api/mcp/servers/remove", post(mcp::mcp_remove))
+            .route("/api/mcp/discover", post(mcp::mcp_discover_route))
+            .route("/api/mcp/tools", post(mcp::mcp_tool_set))
+            .route("/api/mcp/test", post(mcp::mcp_test))
             .route(
                 "/api/methods",
                 get(methods::methods_get).post(methods::methods_set),

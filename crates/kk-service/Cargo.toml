@@ -10,6 +10,7 @@ kk-types = { path = "../kk-types" }
 kk-evidence = { path = "../kk-evidence" }
 kk-vault = { path = "../kk-vault" }
 kk-memory = { path = "../kk-memory" }
+kk-mcpc = { path = "../kk-mcpc" }
 kk-methods = { path = "../kk-methods" }
 kk-disclosure = { path = "../kk-disclosure" }
 kk-eventlog = { path = "../kk-eventlog" }

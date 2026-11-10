@@ -2895,6 +2895,7 @@ dependencies = [
  "kk-eventlog",
  "kk-evidence",
  "kk-fetch",
+ "kk-mcpc",
  "kk-memory",
  "kk-methods",
  "kk-near",

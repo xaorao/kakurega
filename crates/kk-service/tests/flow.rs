@@ -16840,3 +16840,368 @@ fn sv193_a_hostile_method_text_cannot_close_the_frame_and_the_message_is_never_e
         "the owner's message is passed on as typed"
     );
 }
+
+fn fake_mcp_path() -> String {
+    static BUILT: std::sync::Once = std::sync::Once::new();
+    BUILT.call_once(|| {
+        let ok = std::process::Command::new("cargo")
+            .args(["build", "-q", "-p", "kk-mcpc", "--bins"])
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "the fake MCP server could not be built");
+    });
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/fake_mcp");
+    p.canonicalize().unwrap().to_string_lossy().to_string()
+}
+
+fn mcp_server_body(name: &str, mode: &str) -> Value {
+    json!({"name": name, "program": fake_mcp_path(), "args": [], "env": {"FAKE_MODE": mode}})
+}
+
+#[test]
+fn sv200_mcp_servers_are_added_checked_listed_without_their_secrets_and_removed_only_by_the_owner()
+{
+    let (c, w, _seen, _root) = instructions_service("mcp-crud");
+    let anon = Web::new(c.addr);
+    assert_eq!(anon.get("/api/mcp").0, 401);
+    assert_eq!(
+        anon.post("/api/mcp/servers", mcp_server_body("a", "ok")).0,
+        401
+    );
+    assert_eq!(anon.post("/api/mcp/discover", json!({"name": "a"})).0, 401);
+    assert_eq!(
+        anon.post(
+            "/api/mcp/tools",
+            json!({"server": "a", "tool": "t", "mode": "allow", "pin": "x"})
+        )
+        .0,
+        401
+    );
+    assert_eq!(
+        anon.post("/api/mcp/test", json!({"server": "a", "tool": "t"}))
+            .0,
+        401
+    );
+    let mut body = mcp_server_body("files-helper", "ok");
+    body["env"]["API_KEY"] = json!("super-secret-value-123");
+    let (s, v) = w.post("/api/mcp/servers", body);
+    assert_eq!((s, v["saved"].clone()), (200, json!(true)), "{v}");
+    let (_, list) = w.get("/api/mcp");
+    assert_eq!(list["servers"][0]["name"], "files-helper");
+    assert_eq!(
+        list["servers"][0]["env_names"],
+        json!(["API_KEY", "FAKE_MODE"])
+    );
+    assert!(
+        !list.to_string().contains("super-secret-value-123"),
+        "an environment value is never returned"
+    );
+    let bad: Vec<(&str, Value)> = vec![
+        (
+            "a bare program name",
+            json!({"name": "a", "program": "node", "args": []}),
+        ),
+        (
+            "a missing program",
+            json!({"name": "a", "program": "/no/such/program"}),
+        ),
+        (
+            "a bad name",
+            json!({"name": "a b", "program": fake_mcp_path()}),
+        ),
+        (
+            "a lower-case variable",
+            json!({"name": "a", "program": fake_mcp_path(), "env": {"lower": "x"}}),
+        ),
+        (
+            "PATH",
+            json!({"name": "a", "program": fake_mcp_path(), "env": {"PATH": "/tmp"}}),
+        ),
+        (
+            "an unknown field",
+            json!({"name": "a", "program": fake_mcp_path(), "trust": "full"}),
+        ),
+        (
+            "hidden text in an argument",
+            json!({"name": "a", "program": fake_mcp_path(), "args": ["x\u{202e}y"]}),
+        ),
+    ];
+    for (label, b) in bad {
+        let (s, v) = w.post("/api/mcp/servers", b);
+        assert!(s == 422 || s == 400, "{label}: {s} {v}");
+    }
+    assert_eq!(
+        w.get("/api/mcp").1["servers"].as_array().unwrap().len(),
+        1,
+        "a refused request changes nothing"
+    );
+    let (_, r) = w.post("/api/mcp/servers/remove", json!({"name": "files-helper"}));
+    assert_eq!(r["removed"], json!(true));
+    assert_eq!(w.get("/api/mcp").1["servers"], json!([]));
+}
+
+#[test]
+fn sv201_tools_are_off_until_the_owner_allows_them_with_the_pin_they_read_and_only_allowed_ones_run(
+) {
+    let (_c, w, _seen, _root) = instructions_service("mcp-tools");
+    w.post("/api/mcp/servers", mcp_server_body("srv", "ok"));
+    let (s, v) = w.post("/api/mcp/discover", json!({"name": "srv"}));
+    assert_eq!((s, v["tools"].clone()), (200, json!(2)), "{v}");
+    let tools = w.get("/api/mcp").1["servers"][0]["tools"].clone();
+    assert!(
+        tools.as_array().unwrap().iter().all(|t| t["mode"] == "off"),
+        "{tools}"
+    );
+    let echo_pin = tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "echo")
+        .unwrap()["pin"]
+        .clone();
+    // an off tool cannot be called
+    let (s, v) = w.post(
+        "/api/mcp/test",
+        json!({"server": "srv", "tool": "echo", "args": {"text": "hi"}}),
+    );
+    assert_eq!(s, 422, "{v}");
+    // allowing needs the pin that was read
+    let (s, v) = w.post(
+        "/api/mcp/tools",
+        json!({"server": "srv", "tool": "echo", "mode": "allow", "pin": "0".repeat(64)}),
+    );
+    assert_eq!(
+        (s, v["error"]["code"].clone()),
+        (409, json!("MCP_TOOL_CHANGED")),
+        "{v}"
+    );
+    assert_eq!(
+        w.post(
+            "/api/mcp/tools",
+            json!({"server": "srv", "tool": "nope", "mode": "allow", "pin": echo_pin})
+        )
+        .0,
+        404
+    );
+    assert_eq!(
+        w.post(
+            "/api/mcp/tools",
+            json!({"server": "srv", "tool": "echo", "mode": "ask", "pin": echo_pin})
+        )
+        .0,
+        422,
+        "only off and allow exist"
+    );
+    let (s, _) = w.post(
+        "/api/mcp/tools",
+        json!({"server": "srv", "tool": "echo", "mode": "allow", "pin": echo_pin}),
+    );
+    assert_eq!(s, 200);
+    let (s, v) = w.post(
+        "/api/mcp/test",
+        json!({"server": "srv", "tool": "echo", "args": {"text": "hi"}}),
+    );
+    assert_eq!((s, v["text"].clone()), (200, json!("echo: hi")), "{v}");
+    // the other tool stays off
+    assert_eq!(
+        w.post(
+            "/api/mcp/test",
+            json!({"server": "srv", "tool": "write", "args": {}})
+        )
+        .0,
+        422
+    );
+    // turning it off stops calls
+    w.post(
+        "/api/mcp/tools",
+        json!({"server": "srv", "tool": "echo", "mode": "off", "pin": echo_pin}),
+    );
+    assert_eq!(
+        w.post(
+            "/api/mcp/test",
+            json!({"server": "srv", "tool": "echo", "args": {}})
+        )
+        .0,
+        422
+    );
+    // a tool the server does not list cannot be called even if someone names it
+    assert_eq!(
+        w.post(
+            "/api/mcp/test",
+            json!({"server": "srv", "tool": "delete_all", "args": {}})
+        )
+        .0,
+        422
+    );
+}
+
+#[test]
+fn sv202_a_tool_that_changes_after_it_was_allowed_is_not_called_and_goes_back_to_off() {
+    let (_c, w, _seen, root) = instructions_service("mcp-flip");
+    let flag = root.join("flip-flag");
+    let mut body = mcp_server_body("srv", "flip");
+    body["env"]["FAKE_FLIP"] = json!(flag.to_string_lossy());
+    w.post("/api/mcp/servers", body);
+    w.post("/api/mcp/discover", json!({"name": "srv"}));
+    let tools = w.get("/api/mcp").1["servers"][0]["tools"].clone();
+    let pin = tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "echo")
+        .unwrap()["pin"]
+        .clone();
+    w.post(
+        "/api/mcp/tools",
+        json!({"server": "srv", "tool": "echo", "mode": "allow", "pin": pin}),
+    );
+    assert_eq!(
+        w.post(
+            "/api/mcp/test",
+            json!({"server": "srv", "tool": "echo", "args": {"text": "x"}})
+        )
+        .0,
+        200
+    );
+    std::fs::write(&flag, "1").unwrap();
+    let (s, v) = w.post(
+        "/api/mcp/test",
+        json!({"server": "srv", "tool": "echo", "args": {"text": "x"}}),
+    );
+    assert_eq!(s, 422, "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("changed since you allowed it"),
+        "{v}"
+    );
+    let mode = w.get("/api/mcp").1["servers"][0]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "echo")
+        .unwrap()["mode"]
+        .clone();
+    assert_eq!(mode, json!("off"), "the tool is back to waiting");
+    // a new discovery keeps it off and names it
+    let (_, v) = w.post("/api/mcp/discover", json!({"name": "srv"}));
+    assert_eq!(
+        v["changed"],
+        json!(["echo"]),
+        "the owner is told which tool changed: {v}"
+    );
+    let tools = w.get("/api/mcp").1["servers"][0]["tools"].clone();
+    let new_pin = tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "echo")
+        .unwrap()["pin"]
+        .clone();
+    assert_ne!(new_pin, pin);
+    assert_eq!(
+        w.post(
+            "/api/mcp/tools",
+            json!({"server": "srv", "tool": "echo", "mode": "allow", "pin": pin})
+        )
+        .0,
+        409,
+        "the old pin no longer allows it"
+    );
+}
+
+#[test]
+fn sv203_changing_a_server_removes_its_tools_choices_and_a_broken_server_is_an_error_not_a_hang() {
+    let (_c, w, _seen, _root) = instructions_service("mcp-change");
+    w.post("/api/mcp/servers", mcp_server_body("srv", "ok"));
+    w.post("/api/mcp/discover", json!({"name": "srv"}));
+    assert!(!w.get("/api/mcp").1["servers"][0]["tools"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    w.post("/api/mcp/servers", mcp_server_body("srv", "many"));
+    assert!(
+        w.get("/api/mcp").1["servers"][0]["tools"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "a changed server starts over"
+    );
+    let (s, v) = w.post("/api/mcp/discover", json!({"name": "srv"}));
+    assert_eq!(s, 422, "a server that lists too many tools is refused: {v}");
+    assert_eq!(
+        w.post("/api/mcp/discover", json!({"name": "unknown"})).0,
+        422
+    );
+}
+
+#[test]
+fn sv204_a_new_listing_puts_an_allowed_tool_that_changed_back_to_off_and_names_it() {
+    let (_c, w, _seen, root) = instructions_service("mcp-relist");
+    let flag = root.join("flip-flag");
+    let mut body = mcp_server_body("srv", "flip");
+    body["env"]["FAKE_FLIP"] = json!(flag.to_string_lossy());
+    w.post("/api/mcp/servers", body);
+    w.post("/api/mcp/discover", json!({"name": "srv"}));
+    let tools = w.get("/api/mcp").1["servers"][0]["tools"].clone();
+    let echo = tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "echo")
+        .unwrap()
+        .clone();
+    let write = tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "write")
+        .unwrap()
+        .clone();
+    w.post(
+        "/api/mcp/tools",
+        json!({"server": "srv", "tool": "echo", "mode": "allow", "pin": echo["pin"]}),
+    );
+    w.post(
+        "/api/mcp/tools",
+        json!({"server": "srv", "tool": "write", "mode": "allow", "pin": write["pin"]}),
+    );
+    std::fs::write(&flag, "1").unwrap();
+    let (_, v) = w.post("/api/mcp/discover", json!({"name": "srv"}));
+    assert_eq!(v["changed"], json!(["echo"]), "{v}");
+    let now = w.get("/api/mcp").1["servers"][0]["tools"].clone();
+    let mode = |n: &str| {
+        now.as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == n)
+            .unwrap()["mode"]
+            .clone()
+    };
+    assert_eq!(mode("echo"), json!("off"), "the changed tool is off");
+    assert_eq!(
+        mode("write"),
+        json!("allow"),
+        "an unchanged tool keeps the owner's choice"
+    );
+}
+
+#[test]
+fn sv205_at_most_twenty_servers_can_be_saved_and_changing_one_at_the_limit_is_allowed() {
+    let (_c, w, _seen, _root) = instructions_service("mcp-limit");
+    for i in 0..20 {
+        let (s, v) = w.post("/api/mcp/servers", mcp_server_body(&format!("s{i}"), "ok"));
+        assert_eq!(s, 200, "{i}: {v}");
+    }
+    assert_eq!(
+        w.post("/api/mcp/servers", mcp_server_body("one-too-many", "ok"))
+            .0,
+        422
+    );
+    assert_eq!(
+        w.post("/api/mcp/servers", mcp_server_body("s3", "many")).0,
+        200
+    );
+}
