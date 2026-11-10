@@ -16329,3 +16329,56 @@ fn sv179_a_file_in_the_allowed_folders_is_attached_by_path_and_nothing_outside_t
         403
     );
 }
+
+#[test]
+fn sv180_the_owner_sees_how_many_meaning_vectors_are_kept_and_can_forget_them_all() {
+    let (c, w, _seen, root, emb) = meaning_service("index-forget", false);
+    let anon = Web::new(c.addr);
+    assert_eq!(anon.get("/api/documents/index").0, 401);
+    assert_eq!(anon.post("/api/documents/index/forget", json!({})).0, 401);
+    let (s, v) = w.get("/api/documents/index");
+    assert_eq!(
+        (s, v["vectors"].clone(), v["models"].clone()),
+        (200, json!(0), json!([]))
+    );
+    let docs = meaning_folder(&root);
+    let ask = || {
+        w.post(
+            "/api/ask",
+            json!({"folder": docs.to_string_lossy(), "question": "How can the contract be cancelled early?"}),
+        )
+    };
+    assert_eq!(ask().0, 200);
+    let embedded = emb.embedded.lock().unwrap().len();
+    let (_, v) = w.get("/api/documents/index");
+    let kept = v["vectors"].as_i64().unwrap();
+    assert!(kept > 100 && kept as usize == embedded, "{v} vs {embedded}");
+    assert_eq!(v["models"][0]["model"], "stub-senses");
+    assert_eq!(v["models"][0]["vectors"], json!(kept));
+    assert!(
+        v["models"][0]["newest"].as_i64().unwrap() >= v["models"][0]["oldest"].as_i64().unwrap()
+    );
+    // forgetting removes every vector, says how many, and the files are untouched
+    let before = std::fs::read(docs.join("zz_agreement.txt")).unwrap();
+    let (s, f) = w.post("/api/documents/index/forget", json!({}));
+    assert_eq!((s, f["removed"].clone()), (200, json!(kept)), "{f}");
+    assert_eq!(w.get("/api/documents/index").1["vectors"], json!(0));
+    assert_eq!(
+        std::fs::read(docs.join("zz_agreement.txt")).unwrap(),
+        before
+    );
+    // forgetting again removes nothing; the next question computes what it needs again
+    assert_eq!(
+        w.post("/api/documents/index/forget", json!({})).1["removed"],
+        json!(0)
+    );
+    assert_eq!(ask().0, 200);
+    assert_eq!(
+        emb.embedded.lock().unwrap().len(),
+        embedded * 2,
+        "the vectors were computed again"
+    );
+    // the log says that vectors were forgotten, and how many, never what they were
+    let log = w.get("/api/log").1.to_string();
+    assert!(log.contains("documents.index.forgotten"), "{log}");
+}

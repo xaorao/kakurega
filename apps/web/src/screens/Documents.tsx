@@ -4,11 +4,58 @@ import { api, ApiError, type AskReply, type Passage } from "../api";
 import { editorLocation } from "../cite";
 import { t, type Key } from "../i18n";
 
+/** What the meaning index keeps on this computer, and a way to forget all of it. */
+function MeaningIndex(props: { tick: number }) {
+  const [info, { refetch }] = createResource(() => props.tick, () => api.docIndex());
+  const [confirming, setConfirming] = createSignal(false);
+  const [done, setDone] = createSignal("");
+  const [problem, setProblem] = createSignal("");
+  const forget = async () => {
+    setProblem("");
+    try {
+      const r = await api.forgetDocIndex();
+      setConfirming(false);
+      setDone(t("docs.index.done", { n: r.removed }));
+      void refetch();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : String(e));
+    }
+  };
+  return (
+    <section class="card stack" aria-labelledby="h-index">
+      <h2 id="h-index">{t("docs.index.title")}</h2>
+      <p class="muted">{t("docs.index.lead")}</p>
+      <Show when={info()}>
+        {(i) => (
+          <>
+            <p>{i().vectors > 0 ? t("docs.index.count", { n: i().vectors, models: i().models.map((m) => m.model).join(", ") }) : t("docs.index.none")}</p>
+            <Show when={i().vectors > 0 && !confirming()}>
+              <div class="actions"><button type="button" onClick={() => { setDone(""); setConfirming(true); }}>{t("docs.index.forget")}</button></div>
+            </Show>
+            <Show when={confirming()}>
+              <div role="alertdialog" aria-labelledby="index-confirm" class="stack">
+                <p id="index-confirm"><strong>{t("docs.index.confirm", { n: i().vectors })}</strong></p>
+                <div class="actions">
+                  <button class="primary" type="button" onClick={() => void forget()}>{t("docs.index.yes")}</button>
+                  <button type="button" onClick={() => setConfirming(false)}>{t("docs.index.no")}</button>
+                </div>
+              </div>
+            </Show>
+          </>
+        )}
+      </Show>
+      <Show when={done()}><p role="status" class="ok">{done()}</p></Show>
+      <Show when={problem()}><p role="alert" class="bad">{problem()}</p></Show>
+    </section>
+  );
+}
+
 export function Documents() {
   const [dir, setDir] = createSignal<string | undefined>(undefined);
   const [listing] = createResource(() => dir() ?? "", (d) => api.fs(d || undefined));
   const [question, setQuestion] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  const [asked, setAsked] = createSignal(0);
   const [error, setError] = createSignal("");
   const [reply, setReply] = createSignal<AskReply | null>(null);
   const chosen = () => listing()?.path ?? "";
@@ -23,6 +70,7 @@ export function Documents() {
       setError(err instanceof ApiError ? err.message : t("docs.error"));
     } finally {
       setBusy(false);
+      setAsked(asked() + 1);
     }
   };
   const [passages, setPassages] = createSignal<Record<string, Passage | string>>({});
@@ -122,6 +170,7 @@ export function Documents() {
           </section>
         )}
       </Show>
+      <MeaningIndex tick={asked()} />
     </section>
   );
 }

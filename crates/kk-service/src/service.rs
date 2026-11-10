@@ -6772,6 +6772,41 @@ struct CachedMeaning {
     embedder: Arc<dyn kk_memory::Embedder>,
 }
 
+/// How many meaning vectors this computer keeps for the owner's files, by model: what Documents learned and can forget.
+async fn doc_index_get(axum::Extension(svc): Svc) -> Response {
+    let store = svc.store.lock().expect("lock");
+    let c = store.connection();
+    let rows: Vec<Value> = c
+        .prepare("SELECT model, count(*), min(at), max(at) FROM doc_vectors GROUP BY model ORDER BY model")
+        .and_then(|mut st| {
+            st.query_map([], |r| {
+                Ok(json!({"model": r.get::<_, String>(0)?, "vectors": r.get::<_, i64>(1)?, "oldest": r.get::<_, i64>(2)?, "newest": r.get::<_, i64>(3)?}))
+            })
+            .map(|it| it.flatten().collect())
+        })
+        .unwrap_or_default();
+    let total: i64 = rows.iter().filter_map(|r| r["vectors"].as_i64()).sum();
+    Json(json!({"vectors": total, "models": rows, "max": MEANING_ROWS})).into_response()
+}
+
+/// Deletes every meaning vector kept for the owner's files. The files themselves are untouched, and the next question
+/// computes what it needs again. Only the owner's own session reaches this.
+async fn doc_index_forget(axum::Extension(svc): Svc) -> Response {
+    let removed = {
+        let store = svc.store.lock().expect("lock");
+        store
+            .connection()
+            .execute("DELETE FROM doc_vectors", [])
+            .unwrap_or(0)
+    };
+    svc.log_event(
+        "documents.index.forgotten",
+        "documents",
+        &[("vectors", removed.into())],
+    );
+    Json(json!({"removed": removed})).into_response()
+}
+
 /// The most passages embedded for one question, one request's worth of vectors, and the most vectors kept.
 const MEANING_NEW_LIMIT: usize = 1500;
 const MEANING_BATCH: usize = 32;
@@ -9019,6 +9054,8 @@ impl Extension for Routes {
                 post(attachment_upload)
                     .layer(axum::extract::DefaultBodyLimit::max(ATTACH_BODY_MAX)),
             )
+            .route("/api/documents/index", get(doc_index_get))
+            .route("/api/documents/index/forget", post(doc_index_forget))
             .route("/api/attachments/path", post(attachment_from_path))
             .route("/api/attachments/{id}", get(attachment_get))
             .route("/api/attachments/{id}/remove", post(attachment_remove))
