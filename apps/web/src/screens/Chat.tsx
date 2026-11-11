@@ -39,7 +39,8 @@ export function Chat() {
   };
   const [session, setSession] = createSignal<string | null>(null);
   // the project this conversation is about; its notes are offered, and no other project's
-  const [project, setProject] = createSignal("");
+  // the Projects screen may have asked this chat to open in one of its projects
+  const [project, setProject] = createSignal((() => { try { const v = sessionStorage.getItem("kk-chat-project"); if (v !== null) sessionStorage.removeItem("kk-chat-project"); return v ?? ""; } catch { return ""; } })());
   const [confirmForget, setConfirmForget] = createSignal<string | null>(null);
   // The box holds the draft of the conversation on screen. Each conversation keeps its own while the page is open.
   const setText = (v: string) => {

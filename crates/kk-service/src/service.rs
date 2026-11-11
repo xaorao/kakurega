@@ -431,6 +431,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS methods(name TEXT PRIMARY KEY, body TEXT NOT NULL, hash TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS method_approvals(name TEXT PRIMARY KEY, hash TEXT NOT NULL, approved_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS hidden_names(name TEXT PRIMARY KEY, added INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS projects(name TEXT PRIMARY KEY, folder TEXT, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS handoffs(id TEXT PRIMARY KEY, text TEXT NOT NULL, at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS saved_prompts(name TEXT PRIMARY KEY, text TEXT NOT NULL, added INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS break_counter(id INTEGER PRIMARY KEY CHECK (id = 1), attempts INTEGER NOT NULL, leaks INTEGER NOT NULL);
@@ -1239,6 +1240,7 @@ mod meeting;
 mod methods;
 mod outbound;
 mod packs;
+mod projects;
 mod prompts;
 mod sample;
 mod share;
@@ -9957,6 +9959,7 @@ impl Extension for Routes {
                 get(swap::names_get).post(swap::names_set),
             )
             .route("/api/outbound", get(outbound::list))
+            .route("/api/projects", get(projects::list).post(projects::change))
             .route("/api/sample", get(sample::status).post(sample::load))
             .route("/api/sample/remove", post(sample::remove))
             .route("/api/handoff", get(handoff::status).post(handoff::propose))

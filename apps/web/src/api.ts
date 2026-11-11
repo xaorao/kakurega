@@ -146,6 +146,7 @@ export interface McpServer { name: string; program: string; args: string[]; env_
 export interface BreakResult { planted: { key: string; password: string }; asked: string; sent: { role: string; content: string }[]; reply: string; reached_model: number; in_reply: number; leaked: boolean; attack_was_sent: boolean; attempts: number; leaks: number; route: { stays_here: boolean; host: string | null }; limits: string }
 export interface HandoffProposal { id: string; text: string; sha256: string; chars: number; personal: string; tool: string; notice: string }
 export interface SampleState { possible: boolean; loaded: boolean; folder?: string; project?: string; documents?: string; transcript?: string | null; note?: string }
+export interface ProjectRow { name: string; folder: string | null; folder_available: boolean; conversations: number; notes_only: boolean; created: number; listed: boolean }
 export interface OutboundRow { at: number; seq: number; what: "model" | "search" | "pages" | "tool" | "release" | "telegram" | "held"; to: string; detail: Record<string, number | string> }
 export interface RouteOptions { changeable: boolean; current?: "local" | "near" | "outside" | "test"; local?: { model: string }; near?: { model: string | null; key_saved: boolean }; outside?: { in_use: boolean }; route: { stays_here: boolean; host: string | null; model?: string }; note: string }
 export interface MeetingPoint { kind: "decision" | "action" | "question"; text: string; owner: string; due: string; quote: string; line: number | null }
@@ -334,6 +335,8 @@ export const api = {
   sample: () => request<SampleState>("GET", "/api/sample"),
   sampleLoad: () => request<SampleState>("POST", "/api/sample", {}),
   sampleRemove: () => request<SampleState>("POST", "/api/sample/remove", {}),
+  projects: () => request<{ projects: ProjectRow[] }>("GET", "/api/projects"),
+  projectChange: (b: { name?: string; folder?: string; remove?: string }) => request<{ changed: boolean; projects: ProjectRow[]; kept?: string }>("POST", "/api/projects", b),
   outbound: () => request<{ rows: OutboundRow[]; totals: Record<string, number>; looked_at: number; note: string }>("GET", "/api/outbound"),
   routeOptions: () => request<RouteOptions>("GET", "/api/route/options"),
   routeChoose: (b: { route?: "local" | "near"; model?: string; key?: string; forget_key?: boolean }) => request<RouteOptions>("POST", "/api/route/choose", b),

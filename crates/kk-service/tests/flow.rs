@@ -21786,3 +21786,146 @@ fn sv257_the_sample_is_written_into_its_own_folder_works_through_the_real_doors_
         "years of work"
     );
 }
+
+#[test]
+fn sv258_a_project_is_a_listed_thing_with_a_folder_and_its_conversations_and_removing_it_deletes_nothing_of_the_owners(
+) {
+    let (_c, w, root) = file_service("projects", FileRunner::new("http://127.0.0.1:11434", 16384));
+    assert_eq!(w.get("/api/projects").1["projects"], json!([]));
+    for (bad, why) in [
+        (json!({"name": "../x"}), "folder name"),
+        (json!({"name": ""}), "folder name"),
+        (
+            json!({"name": "kestrel", "folder": "/etc"}),
+            "not inside a folder",
+        ),
+        (
+            json!({"name": "kestrel", "folder": root.join("nope").to_string_lossy()}),
+            "not inside a folder",
+        ),
+        (json!({}), "give a name"),
+        (json!({"name": "a", "remove": "a"}), "give a name"),
+    ] {
+        let (s, r) = w.post("/api/projects", bad.clone());
+        assert_eq!(
+            (s, r["error"]["code"].as_str()),
+            (422, Some("PROJECT_REFUSED")),
+            "{bad}: {r}"
+        );
+        assert!(r["error"]["message"].as_str().unwrap().contains(why), "{r}");
+    }
+    assert_eq!(
+        w.get("/api/projects").1["projects"],
+        json!([]),
+        "a refused change makes nothing"
+    );
+
+    let docs = root.join("repo");
+    let (s, r) = w.post(
+        "/api/projects",
+        json!({"name": "kestrel", "folder": docs.to_string_lossy()}),
+    );
+    assert_eq!(s, 200, "{r}");
+    let p = &r["projects"][0];
+    assert_eq!(
+        (
+            p["name"].clone(),
+            p["folder_available"].clone(),
+            p["conversations"].clone(),
+            p["listed"].clone()
+        ),
+        (json!("kestrel"), json!(true), json!(0), json!(true)),
+        "{p}"
+    );
+    assert_eq!(
+        fs::canonicalize(p["folder"].as_str().unwrap()).unwrap(),
+        fs::canonicalize(&docs).unwrap()
+    );
+
+    // a conversation kept for it is counted; a project only ever named on a conversation is listed too
+    assert_eq!(
+        w.post(
+            "/api/sessions",
+            json!({"title": "Pricing", "project": "kestrel"})
+        )
+        .0,
+        201
+    );
+    assert_eq!(
+        w.post(
+            "/api/sessions",
+            json!({"title": "Other", "project": "osprey"})
+        )
+        .0,
+        201
+    );
+    let (_, l) = w.get("/api/projects");
+    let by_name = |n: &str| {
+        l["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == n)
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(by_name("kestrel")["conversations"], json!(1));
+    assert_eq!(
+        (
+            by_name("osprey")["listed"].clone(),
+            by_name("osprey")["folder"].clone()
+        ),
+        (json!(false), Value::Null)
+    );
+
+    // the folder can be taken away, and one that has gone is said to be gone
+    let gone = root.join("later-gone");
+    fs::create_dir_all(&gone).unwrap();
+    w.post(
+        "/api/projects",
+        json!({"name": "kestrel", "folder": gone.to_string_lossy()}),
+    );
+    fs::remove_dir_all(&gone).unwrap();
+    assert_eq!(by_name("kestrel")["folder_available"], json!(true));
+    let (_, l2) = w.get("/api/projects");
+    assert_eq!(
+        l2["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "kestrel")
+            .unwrap()["folder_available"],
+        json!(false)
+    );
+    w.post("/api/projects", json!({"name": "kestrel", "folder": ""}));
+    assert_eq!(
+        w.get("/api/projects").1["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "kestrel")
+            .unwrap()["folder"],
+        Value::Null
+    );
+
+    // removing takes it off the list; its conversation stays, so it is still known by that
+    let (_, r) = w.post("/api/projects", json!({"remove": "kestrel"}));
+    assert_eq!(r["changed"], json!(true));
+    assert!(r["kept"].as_str().unwrap().contains("were not deleted"));
+    let k = r["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "kestrel")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (k["listed"].clone(), k["conversations"].clone()),
+        (json!(false), json!(1))
+    );
+    let log = w.get("/api/log").1.to_string();
+    assert!(
+        log.contains("project.saved") && !log.contains("kestrel"),
+        "{log}"
+    );
+}
