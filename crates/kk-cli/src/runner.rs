@@ -831,6 +831,14 @@ cut_short: false,
         Ok(())
     }
 
+    fn handoff_tool(&self) -> Option<String> {
+        crate::handoff::tool()
+    }
+
+    fn handoff_run(&self, text: &str) -> Result<String, String> {
+        crate::handoff::run(text)
+    }
+
     fn route_options(&self) -> Value {
         let current = if self.scripted.is_some() {
             "test"

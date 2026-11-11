@@ -39,6 +39,7 @@ node tests/e2e/meeting_web.mjs
 node tests/e2e/break_web.mjs
 node tests/e2e/route_web.mjs
 node tests/e2e/prompts_web.mjs
+node tests/e2e/handoff_web.mjs
 node tests/e2e/hide_web.mjs
 node tests/e2e/desktop.mjs
 node tests/e2e/desktop_attack.mjs

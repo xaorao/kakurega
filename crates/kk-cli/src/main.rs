@@ -13,6 +13,7 @@ mod config;
 mod diagnostics;
 mod doctor;
 mod extension;
+mod handoff;
 mod log;
 mod mcp;
 mod mcp_install;

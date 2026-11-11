@@ -99,6 +99,14 @@ pub trait JobRunner: Send + Sync {
     fn choose_model(&self, _name: &str) -> Result<(), String> {
         Err("this configuration has one fixed model".into())
     }
+    /// The outside coding agent installed on this computer that text can be handed to, by name and version.
+    fn handoff_tool(&self) -> Option<String> {
+        None
+    }
+    /// Hands exactly this text to that agent, with all of its tools off, and returns its answer.
+    fn handoff_run(&self, _text: &str) -> Result<String, String> {
+        Err("no outside coding agent is installed on this computer".into())
+    }
     /// The routes the owner can choose between while the service runs, and which one is in use. No key is ever in it.
     fn route_options(&self) -> Value {
         json!({"changeable": false})
@@ -423,6 +431,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS methods(name TEXT PRIMARY KEY, body TEXT NOT NULL, hash TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS method_approvals(name TEXT PRIMARY KEY, hash TEXT NOT NULL, approved_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS hidden_names(name TEXT PRIMARY KEY, added INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS handoffs(id TEXT PRIMARY KEY, text TEXT NOT NULL, at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS saved_prompts(name TEXT PRIMARY KEY, text TEXT NOT NULL, added INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS break_counter(id INTEGER PRIMARY KEY CHECK (id = 1), attempts INTEGER NOT NULL, leaks INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS team_runs(id TEXT PRIMARY KEY, goal TEXT NOT NULL, project TEXT, status TEXT NOT NULL, final TEXT, final_note TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL, updated INTEGER NOT NULL);
@@ -1224,6 +1233,7 @@ struct PathQuery {
 }
 
 mod breakit;
+mod handoff;
 mod mcp;
 mod meeting;
 mod methods;
@@ -9946,6 +9956,9 @@ impl Extension for Routes {
                 get(swap::names_get).post(swap::names_set),
             )
             .route("/api/outbound", get(outbound::list))
+            .route("/api/handoff", get(handoff::status).post(handoff::propose))
+            .route("/api/handoff/{id}/run", post(handoff::run))
+            .route("/api/handoff/{id}/cancel", post(handoff::cancel))
             .route("/api/prompts", get(prompts::list).post(prompts::change))
             .route("/api/route/options", get(swap::route_options))
             .route("/api/route/choose", post(swap::route_choose))

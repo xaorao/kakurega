@@ -21491,3 +21491,201 @@ fn sv255_saved_prompts_are_kept_replaced_by_name_removed_and_never_hold_a_secret
         "{log}"
     );
 }
+
+/// A runner with a coding agent installed: it remembers the text it was handed and answers with its length.
+#[derive(Clone)]
+struct AgentRunner {
+    inner: FileRunner,
+    installed: bool,
+    handed: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl JobRunner for AgentRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        self.inner.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        self.inner.route_info()
+    }
+    fn handoff_tool(&self) -> Option<String> {
+        self.installed.then(|| "Claude Code 9.9".to_string())
+    }
+    fn handoff_run(&self, text: &str) -> Result<String, String> {
+        self.handed.lock().unwrap().push(text.to_string());
+        if text.contains("please fail") {
+            return Err("Claude Code gave no answer".into());
+        }
+        Ok(format!("I read {} characters.", text.chars().count()))
+    }
+}
+
+#[test]
+fn sv256_text_is_handed_to_the_coding_agent_only_after_it_was_shown_back_and_a_second_yes_and_only_once(
+) {
+    let serve = |installed: bool, tag: &str| {
+        let runner = AgentRunner {
+            inner: FileRunner::new("http://127.0.0.1:11434", 16384),
+            installed,
+            handed: Default::default(),
+        };
+        let (root, _repo) = repo_copy(tag);
+        let svc = Service::new(
+            &root.join("data"),
+            vec![root.clone()],
+            Arc::new(runner.clone()),
+            true,
+        )
+        .unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        (c, w, runner)
+    };
+    let (_c, w, agent) = serve(true, "handoff");
+    let (_, st) = w.get("/api/handoff");
+    assert_eq!(
+        (st["available"].clone(), st["tool"].clone()),
+        (json!(true), json!("Claude Code 9.9"))
+    );
+    assert!(st["notice"]
+        .as_str()
+        .unwrap()
+        .starts_with("This is not private."));
+
+    let key = format!(
+        "{}-{}",
+        "sk-ant", "api03-abcdefghijklmnopqrstuvwxyz0123456789"
+    );
+    for (bad, why) in [
+        (json!({"text": "  "}), "write what you want"),
+        (json!({"text": "x".repeat(20_001)}), "longer than"),
+        (
+            json!({"text": format!("fix this, the key is {key}")}),
+            "key or a password",
+        ),
+        (
+            json!({"text": "the staging password is hunter2, fix the login"}),
+            "key or a password",
+        ),
+    ] {
+        let (s, r) = w.post("/api/handoff", bad.clone());
+        assert_eq!(
+            (s, r["error"]["code"].as_str()),
+            (422, Some("HANDOFF_REFUSED")),
+            "{r}"
+        );
+        assert!(r["error"]["message"].as_str().unwrap().contains(why), "{r}");
+    }
+    assert_ne!(
+        w.post(
+            "/api/handoff",
+            json!({"text": "x", "files": ["/etc/passwd"]})
+        )
+        .0,
+        200
+    );
+
+    // step one sends nothing
+    let text = "Why does this Rust function deadlock?\nfn f() { let a = m.lock(); let b = m.lock(); }\nWrite to asha@meridian.example when done.";
+    let (s, p) = w.post("/api/handoff", json!({"text": format!("  {text}\n")}));
+    assert_eq!(s, 200, "{p}");
+    assert_eq!(p["text"], json!(text));
+    assert_eq!(p["chars"], json!(text.chars().count()));
+    assert_eq!(p["sha256"].as_str().unwrap().len(), 64);
+    assert!(
+        p["personal"].as_str().unwrap().contains("email address"),
+        "{p}"
+    );
+    assert!(
+        agent.handed.lock().unwrap().is_empty(),
+        "showing the text back hands nothing over"
+    );
+    let id = p["id"].as_str().unwrap().to_string();
+
+    // step two sends exactly what was shown, once
+    let (s, r) = w.post(&format!("/api/handoff/{id}/run"), json!({}));
+    assert_eq!(s, 200, "{r}");
+    assert_eq!(
+        r["reply"],
+        json!(format!("I read {} characters.", text.chars().count()))
+    );
+    assert_eq!(*agent.handed.lock().unwrap(), vec![text.to_string()]);
+    let (s, r) = w.post(&format!("/api/handoff/{id}/run"), json!({}));
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (404, Some("NO_HANDOFF")),
+        "{r}"
+    );
+    assert_eq!(agent.handed.lock().unwrap().len(), 1);
+    for bad_id in [
+        "ho-0000000000000000",
+        "ho-zz",
+        "../admin",
+        "ho-00000000000000001",
+    ] {
+        assert_eq!(
+            w.post(
+                &format!("/api/handoff/{}/run", bad_id.replace('/', "%2F")),
+                json!({})
+            )
+            .0,
+            404
+        );
+    }
+
+    // a cancelled one is never sent; a failed run says why and is not sent again by itself
+    let (_, p) = w.post("/api/handoff", json!({"text": "second thoughts"}));
+    let id2 = p["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        w.post(&format!("/api/handoff/{id2}/cancel"), json!({})).1["cancelled"],
+        json!(true)
+    );
+    assert_eq!(w.post(&format!("/api/handoff/{id2}/run"), json!({})).0, 404);
+    let (_, p) = w.post("/api/handoff", json!({"text": "please fail"}));
+    let (s, r) = w.post(
+        &format!("/api/handoff/{}/run", p["id"].as_str().unwrap()),
+        json!({}),
+    );
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (502, Some("HANDOFF_FAILED")),
+        "{r}"
+    );
+    assert_eq!(agent.handed.lock().unwrap().len(), 2);
+
+    // it is listed among what left this computer, and the log holds sizes only
+    let (_, o) = w.get("/api/outbound");
+    assert_eq!(o["totals"]["model"], json!(2), "{o}");
+    assert!(
+        o["rows"][0]["to"].as_str().unwrap().contains("Claude Code"),
+        "{o}"
+    );
+    let log = w.get("/api/log").1.to_string();
+    assert!(
+        log.contains("handoff.proposed") && !log.contains("deadlock") && !log.contains("meridian"),
+        "{log}"
+    );
+
+    // with no such agent installed nothing can be handed over
+    let (_c2, w2, none) = serve(false, "handoff-none");
+    assert_eq!(w2.get("/api/handoff").1["available"], json!(false));
+    let (s, r) = w2.post("/api/handoff", json!({"text": "hello"}));
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (409, Some("NO_AGENT")),
+        "{r}"
+    );
+    assert!(none.handed.lock().unwrap().is_empty());
+}
