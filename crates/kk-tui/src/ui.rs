@@ -236,7 +236,7 @@ fn card_lines(c: &Card, width: usize, th: &Theme) -> Vec<Line<'static>> {
     if matches!(c.title.as_deref(), Some("Assistant") | Some("Aside"))
         || c.title
             .as_deref()
-            .is_some_and(|t| t.starts_with(crate::app::TABLE_TITLE))
+            .is_some_and(|t| t.starts_with(crate::app::TABLE_TITLE) || t.starts_with("Team: "))
     {
         for body in crate::markdown::render(&c.lines.join("\n"), width.saturating_sub(2), th) {
             let lead = if first {

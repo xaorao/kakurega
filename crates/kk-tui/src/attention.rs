@@ -13,6 +13,8 @@ pub enum Attention {
     ReviewStopped,
     /// The service the workspace talks to stopped answering.
     ServiceDown,
+    /// An expert on a team run stopped to ask the owner something.
+    TeamAsks,
 }
 
 impl Attention {
@@ -22,6 +24,7 @@ impl Attention {
             Attention::ReviewReady => "a review is ready",
             Attention::ReviewStopped => "a review stopped",
             Attention::ServiceDown => "the service is not answering",
+            Attention::TeamAsks => "an expert has a question for you",
         }
     }
 }

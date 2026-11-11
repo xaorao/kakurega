@@ -130,6 +130,9 @@ pub const ASIDE_TITLE: &str = "Aside";
 /// Every card of a roundtable has a title that starts with this. Like an aside, a roundtable asked in the terminal is not
 /// part of the conversation and is not saved.
 pub const TABLE_TITLE: &str = "Roundtable";
+/// Every card of a team run has a title that starts with this. A team run is kept by the service under its own id; its
+/// cards are not part of the conversation.
+pub const TEAM_TITLE: &str = "Team";
 
 /// The title of the card that lists what `/transcript` found.
 const SEARCH_TITLE: &str = "Search in this conversation";
@@ -184,6 +187,12 @@ enum Intent {
     Aside,
     Experts,
     Roundtable,
+    TeamList,
+    /// A plan, a look, a start or an answer: the reply is the run, shown and then watched while it works.
+    TeamRun,
+    TeamStop(String),
+    TeamDelete,
+    TeamPoll,
     PiiShow,
     PiiEdit,
     HistoryClear,
@@ -423,6 +432,10 @@ pub struct App {
     pub chat_waiting: bool,
     /// The names of the experts at the running roundtable, by id.
     pub table_names: std::collections::BTreeMap<String, String>,
+    /// The team run this terminal showed last; `/team start`, `stop`, `show` and `answer` mean this one.
+    pub team_last: Option<String>,
+    /// The run being followed while it works: its id, whether a look is on its way, and each task's state when last seen.
+    pub team_watch: Option<(String, bool, Vec<String>)>,
     pub approver: Option<kk_evidence::approval::ApproverKey>,
     pub fixes_seen: Vec<(String, usize, String, bool)>,
     /// Addresses suggested by the last search, numbered from 1 for /read.
@@ -536,6 +549,8 @@ impl App {
             live: None,
             chat_waiting: false,
             table_names: Default::default(),
+            team_last: None,
+            team_watch: None,
             approver: None,
             editor_request: None,
             clipboard_request: None,
@@ -1503,6 +1518,13 @@ impl App {
                             "/admin/approvals",
                             None,
                         ));
+                    }
+                }
+                if let Some((id, inflight, _)) = &mut self.team_watch {
+                    if !*inflight {
+                        *inflight = true;
+                        let path = format!("/api/team/{id}");
+                        out.push(self.req(Intent::TeamPoll, false, Method::Get, &path, None));
                     }
                 }
                 if let Some((id, inflight, _)) = &mut self.code_watch {
@@ -3241,6 +3263,93 @@ impl App {
                     )],
                 }
             }
+            Command::Team(action) => {
+                use crate::cmd::TeamAction;
+                let known =
+                    |given: Option<String>, last: &Option<String>| given.or_else(|| last.clone());
+                match action {
+                    TeamAction::List => {
+                        vec![self.req(Intent::TeamList, false, Method::Get, "/api/team", None)]
+                    }
+                    TeamAction::Plan(goal) => {
+                        if goal.chars().count() > 4000 {
+                            self.say(Kind::Warn, "That goal is over 4000 characters; shorten it.");
+                            return Vec::new();
+                        }
+                        self.say(
+                            Kind::Info,
+                            "The lead is writing a plan. Nothing runs until you start it.",
+                        );
+                        let mut body = json!({"goal": goal});
+                        if let Some(p) = &self.chat_project {
+                            body["project"] = json!(p);
+                        }
+                        vec![self.req(
+                            Intent::TeamRun,
+                            false,
+                            Method::Post,
+                            "/api/team",
+                            Some(body),
+                        )]
+                    }
+                    TeamAction::Show(ref id)
+                    | TeamAction::Start(ref id)
+                    | TeamAction::Stop(ref id) => {
+                        let Some(id) = known(id.clone(), &self.team_last) else {
+                            self.say(Kind::Warn, "No team run has been shown here yet. /team lists your runs; /team plan GOAL makes one.");
+                            return Vec::new();
+                        };
+                        match action {
+                            TeamAction::Show(_) => vec![self.req(
+                                Intent::TeamRun,
+                                false,
+                                Method::Get,
+                                &format!("/api/team/{id}"),
+                                None,
+                            )],
+                            TeamAction::Start(_) => vec![self.req(
+                                Intent::TeamRun,
+                                false,
+                                Method::Post,
+                                &format!("/api/team/{id}/start"),
+                                Some(json!({})),
+                            )],
+                            _ => vec![self.req(
+                                Intent::TeamStop(id.clone()),
+                                false,
+                                Method::Post,
+                                &format!("/api/team/{id}/stop"),
+                                Some(json!({})),
+                            )],
+                        }
+                    }
+                    TeamAction::Answer { task, text } => {
+                        let Some(id) = self.team_last.clone() else {
+                            self.say(
+                                Kind::Warn,
+                                "No team run has been shown here yet. /team show ID opens one.",
+                            );
+                            return Vec::new();
+                        };
+                        vec![self.req(
+                            Intent::TeamRun,
+                            false,
+                            Method::Post,
+                            &format!("/api/team/{id}/answer"),
+                            Some(json!({"task": task, "answer": text})),
+                        )]
+                    }
+                    TeamAction::Delete(id) => {
+                        vec![self.req(
+                            Intent::TeamDelete,
+                            false,
+                            Method::Post,
+                            &format!("/api/team/{id}/delete"),
+                            Some(json!({})),
+                        )]
+                    }
+                }
+            }
             Command::Roundtable(None) => {
                 vec![self.req(Intent::Experts, false, Method::Get, "/api/experts", None)]
             }
@@ -3414,7 +3523,10 @@ impl App {
                 }
                 // what a search found is about the conversation, not part of it
                 (_, Some(t))
-                    if t == SEARCH_TITLE || t == ASIDE_TITLE || t.starts_with(TABLE_TITLE) => {}
+                    if t == SEARCH_TITLE
+                        || t == ASIDE_TITLE
+                        || t.starts_with(TABLE_TITLE)
+                        || t.starts_with(TEAM_TITLE) => {}
                 (_, Some(t)) => blocks.push(format!("{t}:\n{}", c.lines.join("\n"))),
                 (_, None) => blocks.push(c.lines.join("\n")),
             }
@@ -3556,6 +3668,94 @@ impl App {
                 Some("INVALID capsule"),
                 vec![format!("Reason: {}", r.reason.unwrap_or("unknown"))],
             );
+        }
+    }
+
+    /// Shows a team run: the plan with each task's state, the questions waiting for the owner, and once it has ended the
+    /// lead's result and each task's own result.
+    fn show_team(&mut self, v: &Value) {
+        let id = clean(v["id"].as_str().unwrap_or(""));
+        let status = v["status"].as_str().unwrap_or("");
+        let mut lines = vec![clean(v["goal"].as_str().unwrap_or("")), String::new()];
+        let mut asks: Vec<(u64, String)> = Vec::new();
+        for t in v["tasks"].as_array().into_iter().flatten() {
+            let after: Vec<String> = t["after"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|n| n.as_u64())
+                .map(|n| n.to_string())
+                .collect();
+            lines.push(format!(
+                "{}. [{}] {}{}: {}",
+                t["n"],
+                match t["state"].as_str().unwrap_or("") {
+                    "needs_input" => "asks you",
+                    "running" => "being asked",
+                    "failed" => "not done",
+                    other => other,
+                },
+                clean(t["expert_name"].as_str().unwrap_or("")),
+                if after.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (after {})", after.join(", "))
+                },
+                clean(t["task"].as_str().unwrap_or(""))
+            ));
+            if let Some(n) = t["note"].as_str().filter(|n| !n.is_empty()) {
+                lines.push(format!("   {}", clean(n)));
+            }
+            if let Some(q) = t["question"].as_str().filter(|q| !q.is_empty()) {
+                asks.push((t["n"].as_u64().unwrap_or(0), clean(q)));
+            }
+        }
+        lines.push(String::new());
+        lines.push(match status {
+            "planned" => "Nothing has run. /team start runs this plan; /team delete ID removes it.".to_string(),
+            "running" => "Working: one task is asked at a time. /team stop stops it.".to_string(),
+            "waiting" => "Waiting for you.".to_string(),
+            "stopped" => "Stopped. Finished tasks are kept; /team start carries on.".to_string(),
+            "interrupted" => "The service stopped while this was running. Finished tasks are kept; /team start carries on.".to_string(),
+            _ => "Every task has ended.".to_string(),
+        });
+        for (n, q) in &asks {
+            lines.push(format!("Task {n} asks: {q}"));
+            lines.push(format!("  Answer with: /team answer {n} YOUR ANSWER"));
+        }
+        self.push(
+            if asks.is_empty() {
+                Kind::Info
+            } else {
+                Kind::Warn
+            },
+            Some(&format!("{TEAM_TITLE} run {id}")),
+            lines,
+        );
+        if status == "done" {
+            for t in v["tasks"].as_array().into_iter().flatten() {
+                if let Some(r) = t["result"].as_str().filter(|r| !r.is_empty()) {
+                    let title = format!(
+                        "{TEAM_TITLE}: task {} · {}",
+                        t["n"],
+                        clean(t["expert_name"].as_str().unwrap_or(""))
+                    );
+                    self.push(Kind::Info, Some(&title), text_lines(r));
+                }
+            }
+            let mut last = match v["final"].as_str() {
+                Some(f) => text_lines(f),
+                None => vec![format!(
+                    "No result from the lead: {}.",
+                    clean(v["final_note"].as_str().unwrap_or("it gave none"))
+                )],
+            };
+            last.push(String::new());
+            last.push(
+                "The lead and the experts are the same model: treat this as advice, not a check."
+                    .into(),
+            );
+            self.push(Kind::Info, Some(&format!("{TEAM_TITLE}: result")), last);
         }
     }
 
@@ -5615,6 +5815,131 @@ impl App {
                         Kind::Info,
                         "No change: that entry was already there, or was not on the list.",
                     );
+                }
+                Vec::new()
+            }
+            Intent::TeamList => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let mut lines: Vec<String> = body["runs"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|r| {
+                        format!(
+                            "{}  {:11}  {} of {} done  {}",
+                            clean(r["id"].as_str().unwrap_or("")),
+                            clean(r["status"].as_str().unwrap_or("")),
+                            r["done"],
+                            r["tasks"],
+                            clean(r["goal"].as_str().unwrap_or(""))
+                                .chars()
+                                .take(60)
+                                .collect::<String>()
+                        )
+                    })
+                    .collect();
+                if lines.is_empty() {
+                    lines.push("No team runs yet. /team plan GOAL asks a lead for a plan.".into());
+                } else {
+                    lines.push(String::new());
+                    lines.push("/team show ID opens one.".into());
+                }
+                self.push(Kind::Info, Some("Team runs"), lines);
+                Vec::new()
+            }
+            Intent::TeamRun | Intent::TeamPoll => {
+                let polled = matches!(intent, Intent::TeamPoll);
+                if let Some(w) = &mut self.team_watch {
+                    w.1 = false;
+                }
+                if !ok {
+                    if polled {
+                        self.team_watch = None;
+                    }
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let id = body["id"].as_str().unwrap_or("").to_string();
+                let states: Vec<String> = body["tasks"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|t| t["state"].as_str().unwrap_or("").to_string())
+                    .collect();
+                let moving = body["status"] == "running" || body["working"] == true;
+                if polled {
+                    // a look that comes back for a run no longer followed changes nothing
+                    let Some((watched, _, seen)) = self.team_watch.clone() else {
+                        return Vec::new();
+                    };
+                    if watched != id {
+                        return Vec::new();
+                    }
+                    if !self.quiet {
+                        for (i, (was, is)) in seen.iter().zip(&states).enumerate() {
+                            if was != is
+                                && matches!(is.as_str(), "running" | "done" | "failed" | "skipped")
+                            {
+                                let t = &body["tasks"][i];
+                                let word = match is.as_str() {
+                                    "running" => "is being asked",
+                                    "done" => "is done",
+                                    "failed" => "was not done",
+                                    _ => "was skipped",
+                                };
+                                self.say(
+                                    Kind::Info,
+                                    format!(
+                                        "Task {} ({}) {word}.",
+                                        t["n"],
+                                        clean(t["expert_name"].as_str().unwrap_or(""))
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    if moving {
+                        self.team_watch = Some((id, false, states));
+                        return Vec::new();
+                    }
+                    self.team_watch = None;
+                    if body["status"] == "waiting" {
+                        self.attention = Some(crate::attention::Attention::TeamAsks);
+                    }
+                    self.show_team(&body);
+                    return Vec::new();
+                }
+                self.team_last = Some(id.clone());
+                self.show_team(&body);
+                self.team_watch = moving.then_some((id, false, states));
+                Vec::new()
+            }
+            Intent::TeamStop(id) => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                } else if body["stopping"] == true {
+                    self.say(Kind::Warn, "Stopping: the answer being written is cut off and no further task is asked.");
+                    // keep following until the service says it has stopped
+                    if self.team_watch.is_none() {
+                        self.team_watch = Some((id, false, Vec::new()));
+                    }
+                } else {
+                    self.say(Kind::Info, "Stopped.");
+                }
+                Vec::new()
+            }
+            Intent::TeamDelete => {
+                if ok {
+                    let gone = body["deleted"].as_str().unwrap_or("").to_string();
+                    if self.team_last.as_deref() == Some(gone.as_str()) {
+                        self.team_last = None;
+                    }
+                    self.say(Kind::Ok, "Deleted.");
+                } else {
+                    self.say(Kind::Error, err_text(status, &body));
                 }
                 Vec::new()
             }

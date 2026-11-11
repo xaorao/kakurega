@@ -55,6 +55,26 @@ pub enum MethodAction {
     },
 }
 
+/// What `/team` was asked to do. A run id left out means the run this terminal showed last.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TeamAction {
+    List,
+    Plan(String),
+    Show(Option<String>),
+    Start(Option<String>),
+    Stop(Option<String>),
+    Answer { task: usize, text: String },
+    Delete(String),
+}
+
+pub fn team_id_ok(id: &str) -> bool {
+    id.len() == 17
+        && id.starts_with("team-")
+        && id[5..]
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotesOnlyAction {
     Show,
@@ -111,6 +131,7 @@ pub enum Command {
     Aside(String),
     /// One question to several experts, each alone, then a lead's resolution. With no experts: list who can be asked.
     Roundtable(Option<(Vec<String>, String)>),
+    Team(TeamAction),
     Correct {
         id: String,
         text: String,
@@ -210,6 +231,7 @@ pub const NAMES: &[&str] = &[
     "code",
     "aside",
     "roundtable",
+    "team",
     "remember",
     "correct",
     "forget",
@@ -279,6 +301,9 @@ pub fn describe(name: &str) -> &'static str {
         "code" => "have a local model change a project; you read the patch before anything changes",
         "aside" => "ask something that stays out of the conversation and is not saved",
         "roundtable" => "ask 2 to 5 experts one question, each alone; a lead says what to do",
+        "team" => {
+            "a lead splits a goal into tasks for experts; nothing runs until you start the plan"
+        }
         "remember" => "save a note",
         "correct" => "change a saved note",
         "forget" => "delete a saved note for good",
@@ -385,6 +410,7 @@ pub fn usage(name: &str) -> &'static str {
         "code" => "/code FOLDER : TASK | /code show|apply|undo [ID]",
         "aside" => "/aside QUESTION",
         "roundtable" => "/roundtable EXPERT,EXPERT[,EXPERT] : QUESTION   (alone, it lists the experts)",
+        "team" => "/team plan GOAL | /team start|stop|show [ID] | /team answer TASK TEXT | /team delete ID   (alone, it lists your runs)",
         "correct" => "/correct ID NEW TEXT",
         "forget" => "/forget ID",
         "forgetreview" => "/forgetreview JOB",
@@ -680,6 +706,49 @@ pub fn parse(line: &str) -> Result<Command, String> {
             }
             _ => Err(format!("usage: {}", usage("pii"))),
         },
+        "team" => {
+            let usage_err = || Err(format!("usage: {}", usage("team")));
+            let (word, tail) = match rest.split_once(char::is_whitespace) {
+                Some((w, t)) => (w, t.trim()),
+                None => (rest, ""),
+            };
+            let id = |t: &str| -> Result<Option<String>, ()> {
+                if t.is_empty() {
+                    Ok(None)
+                } else if team_id_ok(t) {
+                    Ok(Some(t.to_string()))
+                } else {
+                    Err(())
+                }
+            };
+            match word {
+                "" | "list" if tail.is_empty() => Ok(Command::Team(TeamAction::List)),
+                "plan" if !tail.is_empty() => Ok(Command::Team(TeamAction::Plan(tail.to_string()))),
+                "show" => id(tail)
+                    .map(|i| Command::Team(TeamAction::Show(i)))
+                    .or_else(|_| usage_err()),
+                "start" => id(tail)
+                    .map(|i| Command::Team(TeamAction::Start(i)))
+                    .or_else(|_| usage_err()),
+                "stop" => id(tail)
+                    .map(|i| Command::Team(TeamAction::Stop(i)))
+                    .or_else(|_| usage_err()),
+                "delete" if team_id_ok(tail) => {
+                    Ok(Command::Team(TeamAction::Delete(tail.to_string())))
+                }
+                "answer" => match tail.split_once(char::is_whitespace) {
+                    Some((n, text)) if !text.trim().is_empty() => match n.parse::<usize>() {
+                        Ok(task) if task > 0 => Ok(Command::Team(TeamAction::Answer {
+                            task,
+                            text: text.trim().to_string(),
+                        })),
+                        _ => usage_err(),
+                    },
+                    _ => usage_err(),
+                },
+                _ => usage_err(),
+            }
+        }
         "roundtable" => {
             if rest.is_empty() {
                 return Ok(Command::Roundtable(None));

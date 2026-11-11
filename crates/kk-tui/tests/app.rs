@@ -7941,3 +7941,220 @@ fn tu113_a_chat_answer_that_reached_the_models_length_limit_says_so_first() {
     b.handle(ok(&r[0], 200, json!({"done": true, "reply": "Done.", "cut_short": false, "route": {"class": "device_only", "simulated": false}})));
     assert!(!text(&b).contains("length limit"));
 }
+
+fn team_body(status: &str, working: bool, states: [&str; 2], question: &str) -> Value {
+    json!({
+        "id": "team-0123456789ab", "goal": "Decide where the key lives.", "status": status, "working": working,
+        "final": if status == "done" { json!("**Use the vault.**") } else { Value::Null }, "final_note": "",
+        "tasks": [
+            {"n": 1, "expert": "security-reviewer", "expert_name": "Security reviewer", "after": [], "task": "List leaks.", "state": states[0], "result": if states[0] == "done" { "1. logs\u{1b}[2J" } else { "" }, "note": "", "question": question, "asked": [], "attempts": 1},
+            {"n": 2, "expert": "plain-writer", "expert_name": "Plain-language writer", "after": [1], "task": "Write it up.", "state": states[1], "result": if states[1] == "done" { "Moved." } else { "" }, "note": "", "question": "", "asked": [], "attempts": 0},
+        ],
+    })
+}
+
+#[test]
+fn tu114_a_team_run_is_planned_started_followed_answered_and_shown_in_the_terminal() {
+    use kk_tui::attention::Attention;
+    let mut app = booted();
+    // nothing shown yet: the short forms have nothing to mean
+    for line in [
+        "/team start",
+        "/team stop",
+        "/team show",
+        "/team answer 1 x",
+    ] {
+        assert!(enter(&mut app, line).is_empty(), "{line}");
+    }
+    assert!(text(&app).contains("No team run has been shown here yet"));
+    for bad in [
+        "/team plan",
+        "/team show nope",
+        "/team start team-XYZ",
+        "/team answer",
+        "/team answer x y",
+        "/team answer 0 y",
+        "/team answer 2",
+        "/team delete",
+        "/team delete nope",
+        "/team fly",
+    ] {
+        assert!(enter(&mut app, bad).is_empty(), "{bad}");
+    }
+    assert!(text(&app).contains("usage: /team plan GOAL"));
+    let r = enter(&mut app, "/team");
+    assert_eq!((r[0].path.as_str(), r.len()), ("/api/team", 1));
+    app.handle(ok(&r[0], 200, json!({"runs": []})));
+    assert!(text(&app).contains("No team runs yet. /team plan GOAL"));
+
+    let r = enter(&mut app, "/team plan Decide where the key lives.");
+    assert_eq!(r[0].path, "/api/team");
+    assert_eq!(
+        r[0].body.as_ref().unwrap()["goal"],
+        "Decide where the key lives."
+    );
+    app.handle(ok(
+        &r[0],
+        201,
+        team_body("planned", false, ["waiting", "waiting"], ""),
+    ));
+    let all = text(&app);
+    assert!(
+        all.contains("Team run team-0123456789ab")
+            && all.contains("1. [waiting] Security reviewer: List leaks.")
+            && all.contains("2. [waiting] Plain-language writer (after 1): Write it up.")
+            && all.contains("Nothing has run. /team start runs this plan"),
+        "{all}"
+    );
+    assert!(
+        app.team_watch.is_none(),
+        "a plan is not followed: nothing is running"
+    );
+    assert!(app
+        .handle(Event::Tick)
+        .iter()
+        .all(|q| !q.path.starts_with("/api/team")));
+
+    // start: the short form means the run just shown; while it works it is looked at on the tick, one look at a time
+    let r = enter(&mut app, "/team start");
+    assert_eq!(r[0].path, "/api/team/team-0123456789ab/start");
+    app.handle(ok(
+        &r[0],
+        200,
+        team_body("running", true, ["running", "waiting"], ""),
+    ));
+    let looks: Vec<Req> = app
+        .handle(Event::Tick)
+        .into_iter()
+        .filter(|q| q.path == "/api/team/team-0123456789ab")
+        .collect();
+    assert_eq!(looks.len(), 1);
+    assert!(
+        app.handle(Event::Tick)
+            .iter()
+            .all(|q| q.path != "/api/team/team-0123456789ab"),
+        "no second look while one is on its way"
+    );
+    app.handle(ok(
+        &looks[0],
+        200,
+        team_body("running", true, ["done", "running"], ""),
+    ));
+    let all = text(&app);
+    assert!(
+        all.contains("Task 1 (Security reviewer) is done.")
+            && all.contains("Task 2 (Plain-language writer) is being asked."),
+        "{all}"
+    );
+    // it stops to ask: the owner is told how to answer, and the terminal asks for attention
+    let look = app
+        .handle(Event::Tick)
+        .into_iter()
+        .find(|q| q.path == "/api/team/team-0123456789ab")
+        .unwrap();
+    app.handle(ok(
+        &look,
+        200,
+        team_body(
+            "waiting",
+            false,
+            ["needs_input", "waiting"],
+            "Which vault\u{1b}[2J?",
+        ),
+    ));
+    let all = text(&app);
+    assert!(
+        all.contains("Task 1 asks: Which vault\u{fffd}[2J?")
+            && all.contains("Answer with: /team answer 1 YOUR ANSWER")
+            && !all.contains('\u{1b}'),
+        "{all}"
+    );
+    assert_eq!(app.attention.take(), Some(Attention::TeamAsks));
+    assert!(
+        app.team_watch.is_none()
+            && app
+                .handle(Event::Tick)
+                .iter()
+                .all(|q| !q.path.starts_with("/api/team")),
+        "a run that waits for the owner is not polled"
+    );
+    let r = enter(&mut app, "/team answer 1 The company one.");
+    assert_eq!(r[0].path, "/api/team/team-0123456789ab/answer");
+    assert_eq!(
+        r[0].body.as_ref().unwrap(),
+        &json!({"task": 1, "answer": "The company one."})
+    );
+    app.handle(ok(
+        &r[0],
+        200,
+        team_body("running", true, ["running", "waiting"], ""),
+    ));
+    let look = app
+        .handle(Event::Tick)
+        .into_iter()
+        .find(|q| q.path == "/api/team/team-0123456789ab")
+        .unwrap();
+    app.handle(ok(
+        &look,
+        200,
+        team_body("done", false, ["done", "done"], ""),
+    ));
+    let all = text(&app);
+    assert!(
+        all.contains("Team: task 1 · Security reviewer")
+            && all.contains("Team: result")
+            && all.contains("**Use the vault.**")
+            && all.contains("advice, not a check")
+            && !all.contains('\u{1b}'),
+        "{all}"
+    );
+    assert!(app.team_watch.is_none());
+    assert!(
+        !app.transcript_text().contains("Use the vault"),
+        "a team run is not part of the conversation"
+    );
+
+    // stop: followed until the service says it stopped; a refusal and a lost look end the following
+    let r = enter(&mut app, "/team start");
+    app.handle(ok(
+        &r[0],
+        200,
+        team_body("running", true, ["running", "waiting"], ""),
+    ));
+    let r = enter(&mut app, "/team stop");
+    assert_eq!(r[0].path, "/api/team/team-0123456789ab/stop");
+    app.handle(ok(
+        &r[0],
+        200,
+        json!({"id": "team-0123456789ab", "stopping": true}),
+    ));
+    assert!(text(&app).contains("Stopping: the answer being written is cut off"));
+    let look = app
+        .handle(Event::Tick)
+        .into_iter()
+        .find(|q| q.path == "/api/team/team-0123456789ab")
+        .unwrap();
+    app.handle(ok(
+        &look,
+        200,
+        team_body("stopped", false, ["waiting", "waiting"], ""),
+    ));
+    assert!(
+        text(&app).contains("Stopped. Finished tasks are kept; /team start carries on.")
+            && app.team_watch.is_none()
+    );
+    let r = enter(&mut app, "/team start");
+    app.handle(ok(
+        &r[0],
+        409,
+        json!({"error": {"code": "RUN_ENDED", "message": "this run has ended; plan a new one"}}),
+    ));
+    assert!(text(&app).contains("this run has ended"));
+    let r = enter(&mut app, "/team delete team-0123456789ab");
+    assert_eq!(r[0].path, "/api/team/team-0123456789ab/delete");
+    app.handle(ok(&r[0], 200, json!({"deleted": "team-0123456789ab"})));
+    assert!(
+        app.team_last.is_none() && enter(&mut app, "/team show").is_empty(),
+        "the deleted run is no longer what the short forms mean"
+    );
+}
