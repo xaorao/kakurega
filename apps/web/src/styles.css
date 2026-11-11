@@ -438,3 +438,5 @@ pre.wrap, code.wrap { white-space: pre-wrap; overflow-wrap: anywhere; word-break
 .chat-tab.active { border-color: var(--ink); }
 .chat-tab .chat-tab-open { border: 0; background: none; padding: 6px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
 .chat-tab .linklike { text-decoration: none; padding: 0 8px 0 0; font-size: 16px; }
+/* a link that is a whole line of its own is tall enough to press with a finger */
+.line-link { display: inline-block; padding: 4px 0; min-height: 24px; }

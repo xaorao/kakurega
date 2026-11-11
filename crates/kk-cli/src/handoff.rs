@@ -43,7 +43,23 @@ fn find() -> Option<PathBuf> {
 }
 
 /// "Claude Code" and its version as it reports it, or nothing when it is not installed.
+/// The installed coding agent, as `tool_now` finds it, remembered for a minute: several screens ask, and asking starts
+/// the agent's own program each time.
 pub fn tool() -> Option<String> {
+    static SEEN: std::sync::Mutex<Option<(std::time::Instant, Option<String>)>> =
+        std::sync::Mutex::new(None);
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, found)) = seen.as_ref() {
+        if at.elapsed() < std::time::Duration::from_secs(60) {
+            return found.clone();
+        }
+    }
+    let found = tool_now();
+    *seen = Some((std::time::Instant::now(), found.clone()));
+    found
+}
+
+fn tool_now() -> Option<String> {
     let program = find()?;
     let out = Command::new(program)
         .arg("--version")

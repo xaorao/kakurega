@@ -81,6 +81,12 @@ export function Privacy() {
             <Card id="telegram" title="privacy.tg.title">
               <p>{t(f().telegram.on ? "privacy.tg.on" : "privacy.tg.off")}</p>
             </Card>
+            <Card id="github" title="privacy.gh.title">
+              <p>{t(f().github?.connected ? "privacy.gh.on" : "privacy.gh.off")}</p>
+            </Card>
+            <Card id="coding-agent" title="privacy.ca.title">
+              <p>{f().coding_agent?.installed ? t("privacy.ca.on", { tool: f().coding_agent?.installed ?? "" }) : t("privacy.ca.off")}</p>
+            </Card>
             <Card id="extension" title="privacy.ext.title">
               <p>{t(f().extension.on ? "privacy.ext.on" : "privacy.ext.off")}</p>
             </Card>

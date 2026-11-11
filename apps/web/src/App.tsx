@@ -113,6 +113,14 @@ function Pair(props: { onDone: () => void }) {
   );
 }
 
+/** The service names the sandbox in English; the page says it in the owner's language. A wording it does not know is shown as it came. */
+function sandboxWords(transport: string | undefined): string {
+  if (!transport) return t("badge.sandbox.local");
+  if (transport === "local sandbox") return t("badge.sandbox.local");
+  const vm = /^sandbox in the (.+) virtual machine$/.exec(transport)?.[1];
+  return vm ? t("badge.sandbox.vm", { vm }) : transport;
+}
+
 function Badge(props: { config: Config }) {
   const r = () => props.config.route;
   return (
@@ -130,14 +138,14 @@ function Badge(props: { config: Config }) {
         </span>
       </Show>
       <span class="badge" title={t("badge.sandbox.title")}>
-        {r().transport ?? "sandbox"}
+        {sandboxWords(r().transport)}
       </span>
       <Show when={props.config.approvals?.asks_every_release}>
         <span class="badge" title={t(props.config.approvals?.signing_key_enrolled ? "badge.approvals.signed.title" : "badge.approvals.title")}>
           {t(props.config.approvals?.signing_key_enrolled ? "badge.approvals.signed" : "badge.approvals")}
         </span>
       </Show>
-      <span class="badge">{r().model ?? r().id}</span>
+      <span class="badge">{r().model === "scripted test model" ? t("badge.model.scripted") : (r().model ?? r().id)}</span>
       <Show when={props.config.profile}>
         <span class="badge">{t("head.profile", { name: props.config.profile ?? "" })}</span>
       </Show>

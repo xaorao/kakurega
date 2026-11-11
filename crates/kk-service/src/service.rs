@@ -7095,6 +7095,9 @@ async fn privacy_facts(axum::Extension(svc): Svc) -> Response {
         "search": {"on": search_host.is_some(), "host": search_host},
         "extension": {"on": svc.ext_token_row().is_some()},
         "telegram": {"on": telegram_on},
+        // outside help the owner can ask for: read from what is set up now, nothing is contacted to answer this
+        "github": {"connected": svc.runner.github_status()["connected"] == true},
+        "coding_agent": {"installed": svc.runner.handoff_tool()},
         "agents": {"tools_open": tools_open, "calls_are_logged": true},
         "notes": {"count": notes, "encrypted_at_rest": true},
         "approvals": {"signing_key_enrolled": svc.approvers_enrolled(), "signing_key_required": svc.require_approver.load(std::sync::atomic::Ordering::SeqCst)},

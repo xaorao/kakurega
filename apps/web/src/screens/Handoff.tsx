@@ -53,7 +53,7 @@ export function Handoff() {
       <Show when={status()} fallback={<p class="muted" role="status">{status.loading ? t("review.loading") : t("hand.error")}</p>}>
         {(s) => (
           <Show when={s().available} fallback={<p class="card" id="hand-none">{t("hand.none")}</p>}>
-            <p class="banner-note" id="hand-notice">{s().notice}</p>
+            <p class="banner-note" id="hand-notice">{t("hand.notice")}</p>
             <Show when={!shown()}>
               <form class="card stack" onSubmit={(e) => void show(e)}>
                 <label for="hand-text">{t("hand.text", { tool: s().tool ?? "" })}</label>

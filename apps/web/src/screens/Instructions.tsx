@@ -111,7 +111,7 @@ export function Instructions() {
                 <Editor id="ins-new-text" label={t("ins.project.label", { name: newProject().trim() })} initial="" project={newProject().trim()} max={d().max_chars} onSaved={() => { setNewProject(""); void refetch(); }} />
               </Show>
             </div>
-            <p class="muted"><a href="#/skills">{t("skills.moved")}</a></p>
+            <p class="muted"><a class="line-link" href="#/skills">{t("skills.moved")}</a></p>
           </>
         )}
       </Show>
