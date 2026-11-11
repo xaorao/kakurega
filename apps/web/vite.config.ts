@@ -10,6 +10,6 @@ export default defineConfig({
     sourcemap: false,
     assetsInlineLimit: 0,
     cssCodeSplit: false,
-    rollupOptions: { output: { entryFileNames: "assets/app.js", assetFileNames: "assets/[name][extname]" } },
+    rollupOptions: { output: { entryFileNames: "assets/app.js", chunkFileNames: "assets/[name]-[hash].js", assetFileNames: "assets/[name][extname]" } },
   },
 });

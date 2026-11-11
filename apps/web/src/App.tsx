@@ -1,23 +1,24 @@
-import { createEffect, createMemo, createSignal, ErrorBoundary, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, ErrorBoundary, For, lazy, onCleanup, onMount, Show, Suspense } from "solid-js";
 import { api, ApiError, setCsrf, type Config, type Job } from "./api";
 void ApiError;
 import { NewReview } from "./screens/NewReview";
 import { ReviewView } from "./screens/ReviewView";
-import { Verify } from "./screens/Verify";
-import { Memory } from "./screens/Memory";
-import { Instructions } from "./screens/Instructions";
-import { Settings } from "./screens/Settings";
-import { Activity } from "./screens/Activity";
-import { AgentAccess } from "./screens/AgentAccess";
-import { Privacy } from "./screens/Privacy";
-import { Chat } from "./screens/Chat";
-import { Roundtable } from "./screens/Roundtable";
-import { Team } from "./screens/Team";
-import { Documents } from "./screens/Documents";
-import { Meeting } from "./screens/Meeting";
-import { BreakIt } from "./screens/BreakIt";
-import { CodeTask } from "./screens/CodeTask";
-import { Inbox } from "./screens/Inbox";
+// every screen but the first one is loaded when it is first opened, from this program only
+const Verify = lazy(() => import("./screens/Verify").then((m) => ({ default: m.Verify })));
+const Memory = lazy(() => import("./screens/Memory").then((m) => ({ default: m.Memory })));
+const Instructions = lazy(() => import("./screens/Instructions").then((m) => ({ default: m.Instructions })));
+const Settings = lazy(() => import("./screens/Settings").then((m) => ({ default: m.Settings })));
+const Activity = lazy(() => import("./screens/Activity").then((m) => ({ default: m.Activity })));
+const AgentAccess = lazy(() => import("./screens/AgentAccess").then((m) => ({ default: m.AgentAccess })));
+const Privacy = lazy(() => import("./screens/Privacy").then((m) => ({ default: m.Privacy })));
+const Chat = lazy(() => import("./screens/Chat").then((m) => ({ default: m.Chat })));
+const Roundtable = lazy(() => import("./screens/Roundtable").then((m) => ({ default: m.Roundtable })));
+const Team = lazy(() => import("./screens/Team").then((m) => ({ default: m.Team })));
+const Documents = lazy(() => import("./screens/Documents").then((m) => ({ default: m.Documents })));
+const Meeting = lazy(() => import("./screens/Meeting").then((m) => ({ default: m.Meeting })));
+const BreakIt = lazy(() => import("./screens/BreakIt").then((m) => ({ default: m.BreakIt })));
+const CodeTask = lazy(() => import("./screens/CodeTask").then((m) => ({ default: m.CodeTask })));
+const Inbox = lazy(() => import("./screens/Inbox").then((m) => ({ default: m.Inbox })));
 import { notifier } from "./notifier";
 import { Palette, type PaletteItem } from "./components/Palette";
 import { Welcome } from "./components/Welcome";
@@ -137,7 +138,7 @@ function Badge(props: { config: Config }) {
 }
 
 export function App() {
-  if (location.pathname === "/verify") return <Verify />;
+  if (location.pathname === "/verify") return <Suspense fallback={<p class="muted" role="status">{t("review.loading")}</p>}><Verify /></Suspense>;
   const hash = useHash();
   const [paired, setPaired] = createSignal<boolean | null>(null);
   const [config, setConfig] = createSignal<Config | null>(null);
@@ -370,6 +371,7 @@ export function App() {
                 <Welcome onDone={() => setWelcome(false)} />
               </Show>
               <ErrorBoundary fallback={(_err, reset) => <section class="card stack" role="alert"><p>{t("app.crashed")}</p><button onClick={reset}>{t("app.reload")}</button></section>}>
+              <Suspense fallback={<p class="muted" role="status">{t("review.loading")}</p>}>
               <Show when={config()}>
                 {(c) => (
                   <Show when={hash() !== "#/memory" && hash() !== "#/instructions" && hash() !== "#/settings" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/roundtable" && !hash().startsWith("#/team") && hash() !== "#/docs" && hash() !== "#/meeting" && hash() !== "#/break" && hash() !== "#/code" && hash() !== "#/inbox" && hash() !== "#/agent" && hash() !== "#/privacy"} fallback={hash() === "#/settings" ? <Settings /> : hash() === "#/instructions" ? <Instructions /> : hash() === "#/privacy" ? <Privacy /> : hash() === "#/agent" ? <AgentAccess /> : hash() === "#/inbox" ? <Inbox /> : hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/roundtable" ? <Roundtable /> : hash().startsWith("#/team") ? <Team id={hash().slice(7)} /> : hash() === "#/docs" ? <Documents /> : hash() === "#/meeting" ? <Meeting /> : hash() === "#/break" ? <BreakIt /> : hash() === "#/code" ? <CodeTask /> : <Memory />}>
@@ -379,6 +381,7 @@ export function App() {
                   </Show>
                 )}
               </Show>
+              </Suspense>
               </ErrorBoundary>
             </main>
           </div>
