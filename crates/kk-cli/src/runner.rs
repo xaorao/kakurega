@@ -202,6 +202,11 @@ impl ReviewRunner {
         }
     }
 
+    /// The data folder the GitHub connector keeps its files in: the one the route choice is kept in.
+    fn github_dir(&self) -> Result<&Path, Value> {
+        self.route_dir.as_deref().ok_or_else(|| json!({"code": "NOT_AVAILABLE", "message": "the GitHub connector is not available in this configuration"}))
+    }
+
     fn route(&self) -> Result<OllamaRoute, kk_route::RouteError> {
         OllamaRoute::new(&self.ollama, &self.model_name())
             .map(|r| r.with_context_tokens(self.context_tokens))
@@ -837,6 +842,33 @@ cut_short: false,
 
     fn handoff_run(&self, text: &str) -> Result<String, String> {
         crate::handoff::run(text)
+    }
+
+    fn github_status(&self) -> Value {
+        match self.route_dir.as_deref() {
+            Some(dir) => crate::github::status(dir),
+            None => json!({"available": false, "connected": false, "client_set": false}),
+        }
+    }
+
+    fn github_set_client(&self, client_id: &str) -> Result<Value, Value> {
+        crate::github::set_client(self.github_dir()?, client_id)
+    }
+
+    fn github_start(&self) -> Result<Value, Value> {
+        crate::github::start(self.github_dir()?)
+    }
+
+    fn github_poll(&self) -> Result<Value, Value> {
+        crate::github::poll(self.github_dir()?)
+    }
+
+    fn github_sign_out(&self) -> Result<Value, Value> {
+        crate::github::sign_out(self.github_dir()?)
+    }
+
+    fn github_read(&self, action: &str, params: &Value) -> Result<Value, Value> {
+        crate::github::read(self.github_dir()?, action, params)
     }
 
     fn route_options(&self) -> Value {
