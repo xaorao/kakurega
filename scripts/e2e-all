@@ -33,6 +33,7 @@ node tests/e2e/bundled_web.mjs
 python3 tests/e2e/share_finding.py
 node tests/e2e/share_web.mjs
 python3 tests/e2e/notes_cli.py
+python3 tests/e2e/github_cli.py
 python3 tests/e2e/bench_cli.py
 python3 scripts/bench-leak.py --out target/bench-leak-gate.json
 node tests/e2e/meeting_web.mjs
