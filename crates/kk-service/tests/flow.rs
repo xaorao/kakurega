@@ -21319,3 +21319,69 @@ fn sv252_what_a_review_used_of_the_model_is_in_the_usage_record_as_counts_only()
         "counts only, nothing of the project: {u}"
     );
 }
+
+#[test]
+fn sv254_what_left_this_computer_lists_questions_to_a_model_elsewhere_and_what_was_held_back_and_nothing_for_a_model_here(
+) {
+    let key = format!(
+        "{}-{}",
+        "sk-ant", "api03-abcdefghijklmnopqrstuvwxyz0123456789"
+    );
+    let away = FileRunner::new("https://api.example.com", 16384);
+    let (_c, w, _root) = file_service("outbound-remote", away.clone());
+    assert_eq!(w.get("/api/outbound").1["rows"], json!([]));
+    let (_, v) = w.post_raw(
+        "/api/attachments?name=notes.txt",
+        format!("Pricing is flat.\n\nAPI_KEY={key}\n").as_bytes(),
+    );
+    let id = v["id"].as_str().unwrap().to_string();
+    let (s, _) = w.post(
+        "/api/chat",
+        json!({"message": "Summarise the quarterly pricing notes", "attachments": [id]}),
+    );
+    assert_eq!(s, 200);
+    let (_, o) = w.get("/api/outbound");
+    let rows = o["rows"].as_array().unwrap();
+    let model = rows
+        .iter()
+        .find(|r| r["what"] == "model")
+        .unwrap_or_else(|| panic!("{o}"));
+    assert_eq!(model["to"], json!("api.example.com"));
+    assert!(model["detail"]["chars"].as_i64().unwrap() > 50, "{model}");
+    let held = rows
+        .iter()
+        .find(|r| r["what"] == "held")
+        .unwrap_or_else(|| panic!("{o}"));
+    assert_eq!(
+        (held["to"].clone(), held["detail"]["secrets"].clone()),
+        (json!("chat"), json!(1))
+    );
+    assert_eq!(
+        (o["totals"]["model"].clone(), o["totals"]["held"].clone()),
+        (json!(1), json!(1))
+    );
+    let text = o.to_string();
+    assert!(
+        !text.contains("quarterly") && !text.contains("sk-ant") && !text.contains("notes.txt"),
+        "counts and places only: {text}"
+    );
+
+    // a model on this computer: the question does not leave, so it is not listed; what was held back still is
+    let here = FileRunner::new("http://127.0.0.1:11434", 16384);
+    let (_c2, w2, _root2) = file_service("outbound-local", here);
+    let (_, v) = w2.post_raw(
+        "/api/attachments?name=notes.txt",
+        format!("Pricing is flat.\n\nAPI_KEY={key}\n").as_bytes(),
+    );
+    let id = v["id"].as_str().unwrap().to_string();
+    w2.post(
+        "/api/chat",
+        json!({"message": "Summarise", "attachments": [id]}),
+    );
+    let (_, o) = w2.get("/api/outbound");
+    assert_eq!(
+        (o["totals"]["model"].clone(), o["totals"]["held"].clone()),
+        (json!(0), json!(1)),
+        "{o}"
+    );
+}

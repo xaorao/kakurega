@@ -1,5 +1,5 @@
-import { createResource, For, Show } from "solid-js";
-import { api } from "../api";
+import { For, Show, createResource, onCleanup } from "solid-js";
+import { api, type OutboundRow } from "../api";
 import { t, type Key } from "../i18n";
 import { modelKey } from "../privacy";
 
@@ -8,6 +8,44 @@ function Card(props: { id: string; title: Key; children: unknown }) {
     <section class="card stack" aria-labelledby={`pv-${props.id}`}>
       <h2 id={`pv-${props.id}`}>{t(props.title)}</h2>
       {props.children as never}
+    </section>
+  );
+}
+
+/** What left this computer and what was held back, newest first, refreshed while the page is open. */
+function Outbound() {
+  const [list, { refetch }] = createResource(() => api.outbound().catch(() => null));
+  const timer = setInterval(() => void refetch(), 4000);
+  const changed = () => void refetch();
+  window.addEventListener("kk-changed", changed);
+  onCleanup(() => { clearInterval(timer); window.removeEventListener("kk-changed", changed); });
+  const line = (r: OutboundRow) => {
+    const d = r.detail;
+    switch (r.what) {
+      case "model": return t("out.model", { to: r.to, chars: Number(d.chars ?? 0), n: Number(d.placeholders ?? 0) });
+      case "search": return t("out.search", { n: Number(d.results ?? 0) });
+      case "pages": return t("out.pages", { n: Number(d.pages ?? 0) });
+      case "tool": return t("out.tool", { to: r.to });
+      case "release": return t("out.release", { to: r.to });
+      case "telegram": return t("out.telegram");
+      default: return t("out.held", { where: r.to, secrets: Number(d.secrets ?? 0), orders: Number(d.instructions ?? 0) });
+    }
+  };
+  return (
+    <section class="card stack" id="outbound" aria-labelledby="h-outbound">
+      <h2 id="h-outbound">{t("out.title")}</h2>
+      <Show when={list()} fallback={<p class="muted" role="status">{list.loading ? t("inbox.loading") : t("privacy.unavailable")}</p>}>
+        {(o) => (
+          <>
+            <p class="muted">{o().note}</p>
+            <ul class="plain stack" aria-live="polite">
+              <For each={o().rows} fallback={<li class="muted">{t("out.none")}</li>}>
+                {(r) => <li class={r.what === "held" ? "out-row held" : "out-row"}><time class="muted">{new Date(r.at * 1000).toLocaleTimeString()}</time> <span class={r.what === "held" ? "chip ok" : "chip"}>{t(`out.kind.${r.what}`)}</span> {line(r)}</li>}
+              </For>
+            </ul>
+          </>
+        )}
+      </Show>
     </section>
   );
 }
@@ -21,6 +59,7 @@ export function Privacy() {
       <Show when={facts()} fallback={<p class="muted" role="status">{facts.loading ? t("inbox.loading") : t("privacy.unavailable")}</p>}>
         {(f) => (
           <>
+            <Outbound />
             <Card id="break" title="break.title">
               <p>{t("break.card")}</p>
               <p><a class="button" href="#/break">{t("break.open")}</a></p>

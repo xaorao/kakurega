@@ -1,0 +1,132 @@
+//! What left this computer, and what was held back, read from the signed log: one list the owner can watch.
+//! It holds counts, kinds and destinations. It never holds words: the log it is read from has none.
+
+use super::*;
+
+/// How far back in the log the list looks.
+const WINDOW: usize = 1000;
+const MAX_ROWS: usize = 200;
+
+/// The row an entry of the log gives in the list, or nothing when the entry is not about something leaving or being held.
+pub(super) fn row_of(e: &Value) -> Option<Value> {
+    let d = &e["data"];
+    let n = |k: &str| d[k].as_i64().unwrap_or(0);
+    let subject = e["subject"].as_str().unwrap_or("");
+    let (what, to, detail) = match e["kind"].as_str()? {
+        "outbound.model" => (
+            "model",
+            subject.to_string(),
+            json!({"chars": n("chars"), "placeholders": n("swapped")}),
+        ),
+        "search.run" => ("search", String::new(), json!({"results": n("results")})),
+        "research.fetched" => ("pages", String::new(), json!({"pages": n("addresses")})),
+        "mcp.call" => ("tool", subject.to_string(), json!({})),
+        "release.delivery_finished" => {
+            ("release", subject.to_string(), json!({"state": d["state"]}))
+        }
+        "telegram.sent" => ("telegram", String::new(), json!({})),
+        "held.back" => (
+            "held",
+            subject.to_string(),
+            json!({"secrets": n("secrets"), "instructions": n("instructions")}),
+        ),
+        _ => return None,
+    };
+    Some(json!({"at": e["at"], "seq": e["seq"], "what": what, "to": to, "detail": detail}))
+}
+
+impl Service {
+    /// Written when something was kept from a model: how many parts held a secret and how many read like orders.
+    pub(super) fn log_held_back(&self, door: &str, secrets: usize, instructions: usize) {
+        if secrets + instructions > 0 {
+            self.log_event(
+                "held.back",
+                door,
+                &[
+                    ("secrets", secrets.into()),
+                    ("instructions", instructions.into()),
+                ],
+            );
+        }
+    }
+}
+
+pub(super) async fn list(axum::Extension(svc): Svc) -> Response {
+    let entries: Vec<Value> = svc
+        .log
+        .recent(WINDOW)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|e| serde_json::from_str::<Value>(e).ok())
+        .collect();
+    let rows: Vec<Value> = entries.iter().filter_map(row_of).collect();
+    let mut totals = serde_json::Map::new();
+    for what in [
+        "model", "search", "pages", "tool", "release", "telegram", "held",
+    ] {
+        totals.insert(
+            what.into(),
+            json!(rows.iter().filter(|r| r["what"] == what).count()),
+        );
+    }
+    Json(json!({
+        "rows": rows.iter().take(MAX_ROWS).collect::<Vec<_>>(),
+        "totals": totals,
+        "looked_at": entries.len(),
+        "route": svc.route_for_owner(),
+        "note": "Read from the signed log of this program. A question to a model on this computer is not listed: it does not leave. Counts and destinations only; the log holds no words.",
+    }))
+    .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ob01_only_entries_about_leaving_or_holding_back_become_rows_and_no_row_holds_more_than_the_log_did(
+    ) {
+        let e = |kind: &str, subject: &str, data: Value| json!({"at": 5, "seq": 9, "kind": kind, "subject": subject, "data": data, "prev": "x", "v": 1});
+        assert_eq!(
+            row_of(&e(
+                "outbound.model",
+                "cloud-api.near.ai",
+                json!({"chars": 1200, "swapped": 3})
+            ))
+            .unwrap(),
+            json!({"at": 5, "seq": 9, "what": "model", "to": "cloud-api.near.ai", "detail": {"chars": 1200, "placeholders": 3}})
+        );
+        assert_eq!(
+            row_of(&e(
+                "held.back",
+                "chat",
+                json!({"secrets": 2, "instructions": 1})
+            ))
+            .unwrap()["detail"],
+            json!({"secrets": 2, "instructions": 1})
+        );
+        assert_eq!(
+            row_of(&e("mcp.call", "search_issues", json!({}))).unwrap()["to"],
+            json!("search_issues")
+        );
+        assert_eq!(
+            row_of(&e(
+                "release.delivery_finished",
+                "job-3",
+                json!({"state": "delivered"})
+            ))
+            .unwrap()["what"],
+            json!("release")
+        );
+        for other in [
+            "chat.turn",
+            "memory.remembered",
+            "route.chosen",
+            "break.attempt",
+            "",
+        ] {
+            assert!(row_of(&e(other, "s", json!({}))).is_none(), "{other}");
+        }
+        assert!(row_of(&json!({"no": "kind"})).is_none());
+    }
+}

@@ -76,6 +76,7 @@ pub(super) async fn notes(axum::Extension(svc): Svc, Json(b): Json<MeetingBody>)
         );
     }
     let notes = meeting::assemble(&transcript, &replies);
+    svc.log_held_back("meeting notes", withheld, 0);
     svc.log_event(
         "meeting.notes",
         "owner",

@@ -144,6 +144,7 @@ export interface MethodProposal { id: number; job: string; name: string; descrip
 export interface McpTool { name: string; description: string; pin: string; mode: "off" | "allow" | "ask"; effect: "read_only" | "may_change" | "unknown"; schema?: string }
 export interface McpServer { name: string; program: string; args: string[]; env_names: string[] | null; tools: McpTool[] }
 export interface BreakResult { planted: { key: string; password: string }; asked: string; sent: { role: string; content: string }[]; reply: string; reached_model: number; in_reply: number; leaked: boolean; attack_was_sent: boolean; attempts: number; leaks: number; route: { stays_here: boolean; host: string | null }; limits: string }
+export interface OutboundRow { at: number; seq: number; what: "model" | "search" | "pages" | "tool" | "release" | "telegram" | "held"; to: string; detail: Record<string, number | string> }
 export interface RouteOptions { changeable: boolean; current?: "local" | "near" | "outside" | "test"; local?: { model: string }; near?: { model: string | null; key_saved: boolean }; outside?: { in_use: boolean }; route: { stays_here: boolean; host: string | null; model?: string }; note: string }
 export interface MeetingPoint { kind: "decision" | "action" | "question"; text: string; owner: string; due: string; quote: string; line: number | null }
 export interface MeetingNotes { title: string; summary: string[]; checked: MeetingPoint[]; unchecked: MeetingPoint[]; parts: number; unreadable_parts: number; markdown: string; withheld_lines: number; swapped: number; elapsed_ms: number; route: { stays_here: boolean; host: string | null }; limits: string }
@@ -322,6 +323,7 @@ export const api = {
   breakStats: () => request<{ attempts: number; leaks: number; max_chars: number }>("GET", "/api/break"),
   breakAttempt: (attack: string, ask?: string) => request<BreakResult>("POST", "/api/break", ask ? { attack, ask } : { attack }),
   meetingNotes: (text: string, title?: string) => request<MeetingNotes>("POST", "/api/meeting-notes", title ? { text, title } : { text }),
+  outbound: () => request<{ rows: OutboundRow[]; totals: Record<string, number>; looked_at: number; note: string }>("GET", "/api/outbound"),
   routeOptions: () => request<RouteOptions>("GET", "/api/route/options"),
   routeChoose: (b: { route?: "local" | "near"; model?: string; key?: string; forget_key?: boolean }) => request<RouteOptions>("POST", "/api/route/choose", b),
   hiddenNames: () => request<{ names: { name: string; added_at: number }[]; max: number; applies: boolean; note: string }>("GET", "/api/hidden-names"),

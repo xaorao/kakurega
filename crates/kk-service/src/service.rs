@@ -1226,6 +1226,7 @@ mod breakit;
 mod mcp;
 mod meeting;
 mod methods;
+mod outbound;
 mod packs;
 mod share;
 mod swap;
@@ -3931,6 +3932,11 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
 
 /// Records a finished reply and builds the response body shared by both chat endpoints.
 fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -> Value {
+    svc.log_held_back(
+        "chat",
+        ctx.files_withheld_secrets,
+        ctx.files_withheld_instructions,
+    );
     svc.log_event(
         "chat.turn",
         "chat",
@@ -7541,10 +7547,9 @@ async fn ask(axum::Extension(svc): Svc, Json(b): Json<AskBody>) -> Response {
     let base = json!({"files_used": ctx.used, "files_withheld": ctx.withheld, "files_skipped": ctx.skipped_too_large, "files_partial": ctx.partial, "searched": ctx.searched, "by_meaning": ctx.by_meaning, "narrowed_to": narrowed_to, "injection_suspects": suspects, "route": route});
     let mut body = base.as_object().cloned().unwrap_or_default();
     // lines that read like a password or code said in a sentence were not sent; the owner is told how many
-    body.insert(
-        "lines_withheld".into(),
-        json!(meeting::hide_spoken(&ctx.text).1),
-    );
+    let lines_withheld = meeting::hide_spoken(&ctx.text).1;
+    svc.log_held_back("documents", lines_withheld, 0);
+    body.insert("lines_withheld".into(), json!(lines_withheld));
     match kk_review::ask::parse_answer(&reply.text) {
         Some(a) => {
             let checked = kk_review::ask::verify(&a, &files, &ctx.used);
@@ -9938,6 +9943,7 @@ impl Extension for Routes {
                 "/api/hidden-names",
                 get(swap::names_get).post(swap::names_set),
             )
+            .route("/api/outbound", get(outbound::list))
             .route("/api/route/options", get(swap::route_options))
             .route("/api/route/choose", post(swap::route_choose))
             .route("/api/meeting-notes", post(meeting::notes))

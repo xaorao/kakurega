@@ -24,3 +24,11 @@
 - The page describes this service's own view. It cannot see what the operating system, the browser, Ollama or another program on this computer does with the data.
 - Updates and telemetry are stated, not measured by the service: the browser suite proves only that the web page itself contacts no address but this computer.
 - When a second route (NEAR AI Cloud) exists, whether a prompt really goes only to the attested enclave is NOT VERIFIED until credits allow a live run; the page then reports what the route says, with the host.
+
+## What left this computer, as a list that updates (plan item 7)
+- Target: one place where the owner sees, as it happens, each thing that left this computer and each thing that was kept from a model.
+- Source: the signed log, and nothing else. `GET /api/outbound` reads the last 1,000 entries and turns the ones about leaving or holding back into rows: a question to a model that is not on this computer (host, characters, values sent as placeholders), an approved search, fetched pages, an approved tool call, a delivered release, and parts kept from a model (how many held a secret, how many read like orders, and at which door). Two entries were added to the log for this: `outbound.model`, written where every question to a model elsewhere passes, and `held.back`.
+- A question to a model on this computer is not listed, because it does not leave.
+- The privacy page shows the list, refreshed every few seconds and on the service's change signal.
+- Evidence: kk-service ob01 (which entries become rows; a row holds no more than the log did) and sv254 (a model elsewhere: the row with its host and size, the held-back secret; a model here: no row for the question; no word of the question, the file or the key in the list); `tests/e2e/break_web.mjs` (the page lists what each attempt held back and nothing as having left).
+- Limits: the list is as complete as the log entries behind it. Reviews are not in it yet: a review on a NEAR route is recorded in the usage record, not here. The Telegram bridge's messages are not logged as entries yet, so that row never appears.

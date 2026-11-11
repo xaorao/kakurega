@@ -48,6 +48,17 @@ impl Service {
         for m in messages.iter_mut() {
             m.content = swap.hide(&m.content);
         }
+        // the record of something leaving: where to and how much, never what
+        let host = self.route_for_owner()["host"]
+            .as_str()
+            .unwrap_or("another computer")
+            .to_string();
+        let chars: usize = messages.iter().map(|m| m.content.chars().count()).sum();
+        self.log_event(
+            "outbound.model",
+            &host,
+            &[("chars", chars.into()), ("swapped", swap.total().into())],
+        );
         if swap.total() > 0 {
             // told once, after the product's own instruction, so the model keeps the placeholders as they are
             let at = usize::from(messages.first().is_some_and(|m| m.role == "system"));

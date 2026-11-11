@@ -117,6 +117,11 @@ pub(super) async fn attempt(axum::Extension(svc): Svc, Json(b): Json<BreakBody>)
         };
         let mut ctx = chat_context(&svc2, &body, None);
         svc2.attachments.lock().expect("lock").remove(&id);
+        svc2.log_held_back(
+            "try to break it",
+            ctx.files_withheld_secrets,
+            ctx.files_withheld_instructions,
+        );
         let swap = svc2.hide_messages(&mut ctx.messages);
         let sent = ctx.messages.clone();
         let reply = svc2.runner.chat(ctx.messages.clone()).map(|mut r| {
