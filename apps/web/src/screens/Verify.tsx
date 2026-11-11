@@ -9,22 +9,6 @@ function reasonText(code: string): string {
   return text === key ? code : text;
 }
 
-// The refusals only a share can have, in the standalone page's words, until they have keys of their own in every language.
-const SHARE_REASONS: Record<string, string> = {
-  share_not_json: "The file is not a share.",
-  share_not_canonical: "The file was changed after it was made (its bytes are not in the one allowed form).",
-  share_shape: "The file does not have the shape of a share.",
-  share_too_large: "The file is too large to be a share.",
-  not_in_release: "A file in this share is not part of the signed release: it was changed, or was never in it.",
-  leaf_shape: "A file entry in this share is malformed.",
-  leaf_place: "A file entry in this share claims a place it cannot have.",
-  leaf_order: "The file entries of this share are not in their one allowed order, or one is repeated.",
-  leaf_count: "This share carries no file, or too many.",
-  disclosure_shape: "The signed statement in this share does not have the shape it must have.",
-};
-
-const NOT_SHOWN = "Not shown here: it is not plain text, or it is long.";
-
 /** A shared file's text when it is plain text of a readable size; otherwise null and only its size is shown. */
 function readable(bytes: Uint8Array): string | null {
   if (bytes.length > 20000) return null;
@@ -147,7 +131,7 @@ export function Verify() {
       <Show when={result()?.kind === "share" ? result()!.r : null}>
         {(r) => (
           <section class="card stack" id="share-result" aria-live="polite">
-            <Show when={r().valid} fallback={<><h2 class="bad">{t("ver.notValid")}</h2><p>{SHARE_REASONS[r().reason] ?? reasonText(r().reason)}</p><p class="muted">{rich("ver.code", { code: r().reason })}</p></>}>
+            <Show when={r().valid} fallback={<><h2 class="bad">{t("ver.notValid")}</h2><p>{reasonText(r().reason)}</p><p class="muted">{rich("ver.code", { code: r().reason })}</p></>}>
               <h2 class="ok">{t("ver.valid")}</h2>
               <p class="muted">{name()}</p>
               <h2>{t("ver.established")}</h2>
@@ -156,7 +140,7 @@ export function Verify() {
                 <For each={r().established}>{(n: string) => <li>{n}</li>}</For>
                 <Show when={r().signerPinned}><li>{t("ver.est4")}</li></Show>
               </ul>
-              <h2>{t("src.files")}</h2>
+              <h2>{t("ver.sharedFiles")}</h2>
               <For each={r().files}>
                 {(f: { name: string; bytes: Uint8Array }) => {
                   const text = readable(f.bytes);
@@ -165,7 +149,7 @@ export function Verify() {
                       {/* a file name keeps its own letters: not a heading, whose style changes them to capitals */}
                       <p class="shared-name"><strong><code class="wrap">{visible(f.name)}</code></strong> <span class="muted">{t("rel.bytes", { n: f.bytes.length })}</span></p>
                       {/* shown as text only: nothing in a shared file is ever treated as markup */}
-                      <Show when={text !== null} fallback={<p class="muted">{NOT_SHOWN}</p>}>
+                      <Show when={text !== null} fallback={<p class="muted">{t("ver.notShown")}</p>}>
                         <pre tabindex="0">{visible(text ?? "")}</pre>
                       </Show>
                     </section>
