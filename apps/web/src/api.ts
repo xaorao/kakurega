@@ -437,6 +437,7 @@ export const api = {
   attachment: (id: string) => request<AttachmentRead>("GET", `/api/attachments/${id}`),
   removeAttachment: (id: string) => request<{ removed: boolean }>("POST", `/api/attachments/${id}/remove`, {}),
   keptChat: (id: string) => request<{ id: string; project?: string | null; parent?: string | null; fork_at?: number | null; branches?: { id: string; title: string; fork_at: number | null; turns: number }[]; turns: ChatTurn[]; summary?: { covered: number; text: string } | null }>("GET", `/api/sessions/${id}`),
+  suggestSkill: (id: string) => request<{ added: number; name?: string; why?: string }>("POST", `/api/sessions/${encodeURIComponent(id)}/suggest-skill`, {}),
   suggestNotes: (id: string) => request<{ added: number; already_known: number; dropped: { instruction_like: number; secret: number; invalid: number; over_limit: number; assistant_voice?: number; relative_date?: number } }>("POST", `/api/sessions/${id}/suggest-notes`, {}),
   suggestedNotes: (id: string) => request<{ suggestions: { id: string; text: string; why: string; untrusted: boolean }[] }>("GET", `/api/sessions/${id}/suggested-notes`),
   acceptSuggestedNote: (id: string, sid: string) => request<{ id: string; added: boolean }>("POST", `/api/sessions/${id}/suggested-notes/${sid}/accept`, {}),

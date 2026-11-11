@@ -22193,3 +22193,81 @@ fn sv261_a_task_for_the_coding_agent_waits_for_the_owners_yes_on_the_exact_text_
         "a plan that uses the coding agent without the owner naming it is not usable: {v}"
     );
 }
+
+#[test]
+fn sv262_a_kept_conversation_can_suggest_a_skill_that_waits_unapproved_and_a_bad_one_is_dropped() {
+    let good = json!({"name": "weekly-report", "description": "Write the weekly report the way the owner wants it.", "triggers": ["weekly report", "a whole sentence that is far too long to be a trigger phrase for anything"], "avoid": ["this is also a full sentence and not a short phrase at all, so it is left out"], "body": "1. Start with the three numbers.\n2. Then risks.\n3. End with asks."});
+    let runner = SummaryRunner::new(Ok(format!("```json\n{good}\n```")));
+    let (c, w, id, _data, _root) = kept_chat("suggest-skill", runner.clone());
+    assert_eq!(
+        Web::new(c.addr)
+            .post(&format!("/api/sessions/{id}/suggest-skill"), json!({}))
+            .0,
+        401
+    );
+    assert_eq!(
+        w.post("/api/sessions/chat-nope/suggest-skill", json!({})).0,
+        404
+    );
+    say(&w, &id, 0);
+    let (s, v) = w.post(&format!("/api/sessions/{id}/suggest-skill"), json!({}));
+    assert_eq!(
+        (s, v["added"].as_u64(), v["name"].as_str()),
+        (200, Some(1), Some("weekly-report")),
+        "{v}"
+    );
+    // it waits as a suggestion that names the conversation; it is not a skill and nothing is approved
+    let p = w.get("/api/method-proposals").1;
+    let row = &p["proposals"][0];
+    assert_eq!(
+        (row["name"].as_str(), row["job"].as_str()),
+        (Some("weekly-report"), Some(format!("chat:{id}").as_str())),
+        "{p}"
+    );
+    assert_eq!(
+        (row["triggers"].clone(), row["avoid"].clone()),
+        (json!(["weekly report"]), json!([])),
+        "phrases that do not fit are left out: {p}"
+    );
+    let m = w.get("/api/methods").1;
+    assert!(!m.to_string().contains("weekly-report"), "{m}");
+
+    // one that gives itself a power, one that holds a password, an empty answer and prose are all dropped in words
+    for (answer, part) in [
+        (
+            json!({"name": "x-tools", "body": "do it", "tools": ["shell"]}).to_string(),
+            "dropped",
+        ),
+        (
+            json!({"name": "login-way", "body": "Log in, the password is hunter2x9, then export."})
+                .to_string(),
+            "key or a password",
+        ),
+        ("{}".to_string(), "no reusable way"),
+    ] {
+        let runner = SummaryRunner::new(Ok(answer));
+        let (_c, w, id, _d, _r) = kept_chat("suggest-skill-bad", runner);
+        say(&w, &id, 0);
+        say(&w, &id, 0);
+        let (s, v) = w.post(&format!("/api/sessions/{id}/suggest-skill"), json!({}));
+        assert_eq!((s, v["added"].as_u64()), (200, Some(0)), "{v}");
+        assert!(v["why"].as_str().unwrap().contains(part), "{v}");
+        assert_eq!(
+            w.get("/api/method-proposals").1["proposals"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+    }
+    let runner = SummaryRunner::new(Ok("I could not find one, sorry.".into()));
+    let (_c, w, id, _d, _r) = kept_chat("suggest-skill-prose", runner);
+    say(&w, &id, 0);
+    say(&w, &id, 0);
+    let (s, v) = w.post(&format!("/api/sessions/{id}/suggest-skill"), json!({}));
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (502, Some("NOT_A_METHOD")),
+        "{v}"
+    );
+}

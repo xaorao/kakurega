@@ -307,6 +307,21 @@ export function Chat() {
       setNotesBusy(false);
     }
   };
+  // a way of working the owner taught in this conversation, offered as a skill suggestion that waits under Skills
+  const findSkill = async () => {
+    const id = session();
+    if (!id || notesBusy()) return;
+    setNotesBusy(true);
+    setNotesInfo("");
+    try {
+      const r = await api.suggestSkill(id);
+      setNotesInfo(r.added > 0 ? t("chat.skillFound", { name: r.name ?? "" }) : (r.why ?? t("chat.skillNone")));
+    } catch (err) {
+      setNotesInfo(err instanceof ApiError ? err.message : t("chat.notesError"));
+    } finally {
+      setNotesBusy(false);
+    }
+  };
   const decideNote = async (sid: string, keepIt: boolean) => {
     const id = session();
     if (!id) return;
@@ -845,6 +860,7 @@ export function Chat() {
             <p class="muted">{t("chat.notesHelp")}</p>
             <div class="actions">
               <button type="button" disabled={notesBusy() || busy() || turns().length === 0} onClick={() => void findNotes()}>{notesBusy() ? t("chat.notesFinding") : t("chat.notesFind")}</button>
+              <button type="button" disabled={notesBusy() || busy() || turns().length === 0} onClick={() => void findSkill()}>{t("chat.skillFind")}</button>
               <Show when={notesInfo()}><span role="status" class="muted">{notesInfo()}</span></Show>
             </div>
             <Show when={suggested().length > 0}>

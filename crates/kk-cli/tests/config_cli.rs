@@ -185,6 +185,16 @@ fn ee03_init_writes_an_owner_only_template_and_refuses_to_overwrite_and_path_and
         out(&kaku(&home, &["config", "path", "--data-dir", &d], &[])).trim(),
         file.to_str().unwrap()
     );
+    // a help flag after a command prints the usage and runs nothing: `serve --help` must not start a service
+    for cmd in [
+        &["serve", "--help"][..],
+        &["verify", "-h"],
+        &["backup", "--help"],
+    ] {
+        let h = kaku(&home, cmd, &[]);
+        assert_eq!(h.status.code(), Some(0), "{cmd:?}");
+        assert!(out(&h).starts_with("kaku: "), "{cmd:?}");
+    }
     // a command that does not exist, and options before the command
     let bad = kaku(&home, &["config", "frobnicate"], &[]);
     assert_eq!(bad.status.code(), Some(2));

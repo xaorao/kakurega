@@ -164,6 +164,7 @@ function Proposals(props: { onChanged: (message: string) => void }) {
             {(p) => (
               <li class="card stack">
                 <h4>{p.name}</h4>
+                <p><span class="chip">{p.job.startsWith("chat:") ? t("met.prop.fromChat") : t("met.prop.fromReview")}</span></p>
                 <Show when={p.description}><p>{p.description}</p></Show>
                 <Show when={p.triggers.length}><p class="muted">{t("met.triggers", { list: p.triggers.join(", ") })}</p></Show>
                 <pre class="plain-pre">{p.body}</pre>

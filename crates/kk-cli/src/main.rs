@@ -90,7 +90,20 @@ Options for every command: --data-dir DIR (default ~/.kakurega)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let code = match args.first().map(String::as_str) {
+    // a help flag after a command asks for help, never for the command to run (`kaku serve --help` must not start a service).
+    // Commands that take free text or run another program keep their arguments as they are.
+    let wants_help = args.len() > 1
+        && !matches!(
+            args[0].as_str(),
+            "parse-attachment" | "crash-probe" | "ask" | "code" | "notes" | "mcp"
+        )
+        && args[1..].iter().any(|a| a == "--help" || a == "-h");
+    let first = if wants_help {
+        Some("--help")
+    } else {
+        args.first().map(String::as_str)
+    };
+    let code = match first {
         Some("serve") => serve::run(&args[1..]),
         // started by the service to read one attached file; not for people to run
         Some("parse-attachment") => return parse_child::child(&args[1..]),

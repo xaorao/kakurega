@@ -9905,6 +9905,10 @@ impl Extension for Routes {
             .route("/api/attachments/{id}", get(attachment_get))
             .route("/api/attachments/{id}/remove", post(attachment_remove))
             .route(
+                "/api/sessions/{id}/suggest-skill",
+                post(methods::session_suggest_method),
+            )
+            .route(
                 "/api/sessions/{id}/suggest-notes",
                 post(session_suggest_notes),
             )
