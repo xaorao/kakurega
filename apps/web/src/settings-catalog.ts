@@ -2,7 +2,7 @@
 // cannot exist on one and be missing from the other. Labels and help are keys of the language files; the words a person might
 // type for a setting are written next to it.
 
-export type SettingKind = "theme" | "language" | "notify" | "link" | "info" | "shortcuts" | "piiallow" | "singlekeys" | "model";
+export type SettingKind = "theme" | "language" | "notify" | "link" | "info" | "shortcuts" | "piiallow" | "hiddennames" | "singlekeys" | "model";
 export type SettingSection = "appearance" | "notifications" | "privacy" | "keyboard" | "data";
 
 export interface Setting {
@@ -28,6 +28,7 @@ export const SETTINGS: readonly Setting[] = [
   { id: "where-data-goes", section: "privacy", kind: "link", label: "set.where.label", help: "set.where.help", keywords: ["privacy", "route", "model", "leaves", "network", "policy", "private"], target: "#/privacy" },
   { id: "instructions", section: "privacy", kind: "link", label: "set.instr.label", help: "set.instr.help", keywords: ["orders", "prompt", "style", "tone", "language of answers", "agents"], target: "#/instructions" },
   { id: "agent-access", section: "privacy", kind: "link", label: "set.agent.label", help: "set.agent.help", keywords: ["mcp", "lease", "tools", "agent", "permission"], target: "#/agent" },
+  { id: "hidden-names", section: "privacy", kind: "hiddennames", label: "set.hide.label", help: "set.hide.help", keywords: ["names", "hide", "placeholder", "anonymise", "anonymize", "redact", "swap", "personal data", "client", "pseudonym"] },
   { id: "pii-allow", section: "privacy", kind: "piiallow", label: "set.pii.label", help: "set.pii.help", keywords: ["personal data", "pii", "email", "phone", "allowlist", "allow list", "false positive", "notice", "release", "ignore"] },
   { id: "telemetry", section: "privacy", kind: "info", label: "set.telemetry.label", help: "set.telemetry.help", keywords: ["analytics", "tracking", "usage data", "phone home", "none"] },
   { id: "single-keys", section: "keyboard", kind: "singlekeys", label: "set.single.label", help: "set.single.help", keywords: ["screen reader", "voice control", "dictation", "character key", "accessibility", "question mark", "turn off", "disable", "remap"] },

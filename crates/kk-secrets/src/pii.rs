@@ -92,12 +92,28 @@ pub struct Scan {
 pub fn scan_with(text: &str, allow: &Allow) -> Scan {
     let mut out: BTreeMap<Kind, usize> = BTreeMap::new();
     let mut allowed = 0usize;
-    let mut add = |k: Kind, value: &str| {
-        if allow.permits(k, value) {
+    for (k, s, e) in spans(text) {
+        if allow.permits(k, &text[s..e]) {
             allowed += 1;
         } else {
             *out.entry(k).or_insert(0) += 1;
         }
+    }
+    Scan {
+        found: out,
+        allowed,
+    }
+}
+
+/// Every place the text seems to hold personal data: what kind, and the byte range. In the order found; the ranges of
+/// one kind never overlap, and a caller that needs no overlap at all takes them in order of start and skips what overlaps.
+pub fn spans(text: &str) -> Vec<(Kind, usize, usize)> {
+    let mut out: Vec<(Kind, usize, usize)> = Vec::new();
+    let base = text.as_ptr() as usize;
+    // every value handed to `add` is a slice of `text`, so its place is where it starts in it
+    let mut add = |k: Kind, value: &str| {
+        let s = value.as_ptr() as usize - base;
+        out.push((k, s, s + value.len()));
     };
     for (s, e) in emails(text) {
         add(Kind::Email, &text[s..e]);
@@ -157,10 +173,7 @@ pub fn scan_with(text: &str, allow: &Allow) -> Scan {
         }
         i += 1;
     }
-    Scan {
-        found: out,
-        allowed,
-    }
+    out
 }
 
 /// The most entries an allowlist may hold, and the longest entry.

@@ -699,6 +699,7 @@ export function Chat() {
       const foot = noModel ? [t("chat.noModel"), t("chat.notesUsed", { n: r.notes_used })] : [r.route.simulated ? t("chat.test") : r.route.stays_here === false ? (r.route.host ? t("chat.remote", { host: r.route.host }) : t("chat.unknownPlace")) : t("chat.private"), t("chat.notesUsed", { n: r.notes_used })];
       // said first: the text above stops before the model had finished
       if (r.cut_short) foot.unshift(t("chat.cutShort"));
+      if (r.swapped) foot.push(t(r.swapped === 1 ? "chat.swappedOne" : "chat.swapped", { n: r.swapped }));
       if (r.project) foot.push(t("chat.projectUsed", { name: r.project }));
       if (r.instructions_used) foot.push(t("chat.instructionsUsed"));
       if (r.methods_used?.length) foot.push(t("chat.methods", { list: r.methods_used.join(", ") }));

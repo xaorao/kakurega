@@ -20613,3 +20613,158 @@ fn sv248_one_finding_of_a_delivered_review_is_shared_with_a_proof_and_nothing_of
         "{e}"
     );
 }
+
+/// A model elsewhere that repeats the last thing it was told, and remembers everything it was sent.
+#[derive(Clone)]
+struct EchoRunner {
+    inner: FileRunner,
+}
+
+impl JobRunner for EchoRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        self.inner.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        self.inner.route_info()
+    }
+    fn chat(&self, m: Vec<kk_types::chat::ChatMessage>) -> Result<kk_service::ChatReply, String> {
+        let last = m.last().map(|x| x.content.clone()).unwrap_or_default();
+        let mut r = self.inner.chat(m)?;
+        r.text = format!("You said: {last} Also [[NAME_9]] and [[EMAIL_1]].");
+        Ok(r)
+    }
+}
+
+#[test]
+fn sv249_a_model_elsewhere_gets_placeholders_for_names_and_personal_values_and_the_owner_gets_them_back(
+) {
+    let serve = |endpoint: &'static str, tag: &str| {
+        let inner = FileRunner::new(endpoint, 16384);
+        let (root, _repo) = repo_copy(tag);
+        let svc = Service::new(
+            &root.join("data"),
+            vec![root.clone()],
+            Arc::new(EchoRunner {
+                inner: inner.clone(),
+            }),
+            true,
+        )
+        .unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        (c, w, inner)
+    };
+    let question = "Draft a note to Asha Rao (asha.rao@meridian.example, +91 98765 43210) about Meridian Capital.";
+
+    let (_c, w, runner) = serve("https://api.example.com", "swap-remote");
+    // the list: bad entries are refused in words, a good one is kept once whatever its case
+    for bad in [
+        json!({"add": "A"}),
+        json!({"add": "12345"}),
+        json!({"add": "a[b]"}),
+        json!({}),
+        json!({"add": "x y", "remove": "x y"}),
+    ] {
+        let (s, r) = w.post("/api/hidden-names", bad.clone());
+        assert_eq!(
+            (s, r["error"]["code"].as_str()),
+            (422, Some("NAME_REFUSED")),
+            "{bad}: {r}"
+        );
+    }
+    assert_eq!(
+        w.post("/api/hidden-names", json!({"add": "  Asha   Rao "}))
+            .1["changed"],
+        json!(true)
+    );
+    assert_eq!(
+        w.post("/api/hidden-names", json!({"add": "asha rao"})).1["changed"],
+        json!(false)
+    );
+    assert_eq!(
+        w.post("/api/hidden-names", json!({"add": "Meridian Capital"}))
+            .1["names"],
+        json!(2)
+    );
+    let (_, list) = w.get("/api/hidden-names");
+    assert_eq!(list["applies"], json!(true), "{list}");
+    assert_eq!(list["names"][0]["name"], json!("Asha Rao"), "{list}");
+
+    let (s, r) = w.post("/api/chat", json!({"message": question}));
+    assert_eq!(s, 200, "{r}");
+    let sent = runner.sent();
+    for secret in ["Asha", "Rao", "meridian", "Meridian", "98765"] {
+        assert!(!sent.contains(secret), "{secret} reached the model: {sent}");
+    }
+    assert!(
+        sent.contains("[[NAME_1]]")
+            && sent.contains("[[EMAIL_1]]")
+            && sent.contains("[[PHONE_1]]")
+            && sent.contains("[[NAME_2]]"),
+        "{sent}"
+    );
+    assert!(
+        sent.contains("replaced by placeholders"),
+        "the model is told what a placeholder is: {sent}"
+    );
+    // the owner reads the real values; a placeholder that was never issued stays as the model wrote it
+    let reply = r["reply"].as_str().unwrap();
+    assert!(
+        reply.contains(
+            "Asha Rao (asha.rao@meridian.example, +91 98765 43210) about Meridian Capital."
+        ),
+        "{reply}"
+    );
+    assert!(
+        reply.contains("[[NAME_9]]") && reply.ends_with("and asha.rao@meridian.example."),
+        "{reply}"
+    );
+    assert_eq!(r["swapped"], json!(4), "{r}");
+    // "what was sent" shows what was sent, not what was typed
+    let (_, shown) = w.get("/api/chat/sent");
+    let shown = shown.to_string();
+    assert!(
+        shown.contains("[[NAME_1]]") && !shown.contains("Asha"),
+        "{shown}"
+    );
+    // the signed log holds a count, never a name
+    let (_, log) = w.get("/api/events");
+    assert!(!log.to_string().contains("Asha"), "{log}");
+
+    // removing a name sends it as written again; the address is still hidden
+    assert_eq!(
+        w.post("/api/hidden-names", json!({"remove": "ASHA RAO"})).1["changed"],
+        json!(true)
+    );
+    w.post("/api/chat", json!({"message": question}));
+    let sent = runner.sent();
+    assert!(
+        sent.contains("Asha Rao") && !sent.contains("asha.rao@"),
+        "{sent}"
+    );
+
+    // a model on this computer is sent the text as written
+    let (_c2, w2, here) = serve("http://127.0.0.1:11434", "swap-local");
+    w2.post("/api/hidden-names", json!({"add": "Asha Rao"}));
+    assert_eq!(w2.get("/api/hidden-names").1["applies"], json!(false));
+    let (_, r) = w2.post("/api/chat", json!({"message": question}));
+    assert!(
+        here.sent().contains("Asha Rao (asha.rao@meridian.example"),
+        "{}",
+        here.sent()
+    );
+    assert_eq!(r["swapped"], json!(0), "{r}");
+}

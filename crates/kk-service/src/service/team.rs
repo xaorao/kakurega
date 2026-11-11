@@ -519,9 +519,7 @@ impl Service {
             }
             let started = std::time::Instant::now();
             let estimated = kk_route::tokens::estimate_messages(&messages);
-            let result = self
-                .runner
-                .chat_stream(messages, &mut |_| !self.team_stop_asked(id));
+            let result = self.ask_stream(messages, &mut |_| !self.team_stop_asked(id));
             let attempts = t.attempts + 1;
             let mut cut_short = false;
             let text = match result {
@@ -629,7 +627,7 @@ impl Service {
                 &team::final_question(goal, &results, &missing),
             ),
         ];
-        match self.runner.chat(messages) {
+        match self.ask(messages) {
             Ok(r) if !r.text.trim().is_empty() => self.team_set_final(id, Some(r.text.trim()), ""),
             Ok(_) => self.team_set_final(
                 id,
@@ -729,12 +727,11 @@ pub(super) async fn team_plan(axum::Extension(svc): Svc, Json(b): Json<PlanBody>
             let valid: Vec<String> = roster2.iter().map(|(id, _)| id.clone()).collect();
             let question = team::plan_question(&goal2, &roster2);
             let ask = |q: &str| {
-                svc2.runner
-                    .chat(vec![
-                        kk_types::chat::ChatMessage::new("system", team::PLAN_INSTRUCTION),
-                        kk_types::chat::ChatMessage::new("user", q),
-                    ])
-                    .map_err(|e| (true, e))
+                svc2.ask(vec![
+                    kk_types::chat::ChatMessage::new("system", team::PLAN_INSTRUCTION),
+                    kk_types::chat::ChatMessage::new("user", q),
+                ])
+                .map_err(|e| (true, e))
             };
             let first = ask(&question)?;
             match team::parse_plan(&first.text, &valid) {

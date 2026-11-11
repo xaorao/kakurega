@@ -6,6 +6,52 @@ import { SECTIONS, SETTINGS, searchSettings, type Setting } from "../settings-ca
 import { chooseTheme, theme, type Theme } from "../theme";
 import { chooseSingleKeys, singleKeys } from "../single-keys";
 
+/** The names that are swapped for placeholders before a question goes to a model that is not on this computer. */
+function HiddenNames() {
+  const [list, { refetch }] = createResource(() => api.hiddenNames());
+  const [name, setName] = createSignal("");
+  const [error, setError] = createSignal("");
+  const [done, setDone] = createSignal("");
+  const edit = async (fn: () => Promise<{ changed: boolean }>, said: string) => {
+    setError("");
+    setDone("");
+    try {
+      const r = await fn();
+      setDone(r.changed ? said : t("set.pii.same"));
+      setName("");
+      await refetch();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : t("set.hide.error"));
+    }
+  };
+  return (
+    <div class="stack">
+      <Show when={list()}>{(l) => <p class="muted" id="hide-applies">{l().applies ? t("set.hide.on") : t("set.hide.off")}</p>}</Show>
+      <form class="actions" onSubmit={(e) => { e.preventDefault(); void edit(() => api.hiddenNameAdd(name()), t("set.hide.added")); }}>
+        <label class="sr" for="hide-name">{t("set.hide.entry")}</label>
+        <input id="hide-name" value={name()} maxlength="80" placeholder={t("set.hide.hint")} onInput={(e) => setName(e.currentTarget.value)} />
+        <button class="primary" type="submit" disabled={name().trim().length < 2}>{t("set.hide.add")}</button>
+      </form>
+      <Show when={done()}><p role="status" class="ok">{done()}</p></Show>
+      <Show when={error()}><p role="alert" class="bad">{error()}</p></Show>
+      <Show when={list()} fallback={<p class="muted">{list.error ? t("set.hide.error") : t("review.loading")}</p>}>
+        {(l) => (
+          <ul class="plain stack" aria-label={t("set.hide.entries")}>
+            <For each={l().names} fallback={<li class="muted">{t("set.hide.none")}</li>}>
+              {(n) => (
+                <li class="actions">
+                  <span>{n.name}</span>
+                  <button type="button" onClick={() => void edit(() => api.hiddenNameRemove(n.name), t("set.hide.removed"))}>{t("set.pii.remove")} <span class="sr">{n.name}</span></button>
+                </li>
+              )}
+            </For>
+          </ul>
+        )}
+      </Show>
+    </div>
+  );
+}
+
 /** The values the owner said are not personal data. They change only the release notice, which counts what they leave out. */
 function PiiAllow() {
   const [list, { refetch }] = createResource(() => api.piiAllow());
@@ -116,6 +162,7 @@ function Control(props: { s: Setting }) {
         </Show>
       )}
       {props.s.kind === "piiallow" && <PiiAllow />}
+      {props.s.kind === "hiddennames" && <HiddenNames />}
       {props.s.kind === "model" && <ModelChoice id={props.s.id} />}
       {props.s.kind === "singlekeys" && (
         <label class="row">

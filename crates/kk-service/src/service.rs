@@ -413,6 +413,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS pack_seen(name TEXT NOT NULL, key_id TEXT NOT NULL, version TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(name, key_id));
              CREATE TABLE IF NOT EXISTS methods(name TEXT PRIMARY KEY, body TEXT NOT NULL, hash TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS method_approvals(name TEXT PRIMARY KEY, hash TEXT NOT NULL, approved_at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS hidden_names(name TEXT PRIMARY KEY, added INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS team_runs(id TEXT PRIMARY KEY, goal TEXT NOT NULL, project TEXT, status TEXT NOT NULL, final TEXT, final_note TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL, updated INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS team_tasks(run TEXT NOT NULL, n INTEGER NOT NULL, expert TEXT NOT NULL, expert_name TEXT NOT NULL, after TEXT NOT NULL, task TEXT NOT NULL, state TEXT NOT NULL, result TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', question TEXT NOT NULL DEFAULT '', asked TEXT NOT NULL DEFAULT '[]', attempts INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(run, n));
              CREATE TABLE IF NOT EXISTS project_settings(project TEXT PRIMARY KEY, notes_only INTEGER NOT NULL, updated_at INTEGER NOT NULL);
@@ -1202,6 +1203,7 @@ mod mcp;
 mod methods;
 mod packs;
 mod share;
+mod swap;
 mod team;
 
 type Svc = axum::Extension<Arc<Service>>;
@@ -3597,8 +3599,7 @@ fn prepare_history(svc: &Service, run: &mut ChatRun) {
     };
     let request = crate::compaction::summary_request(plan.previous.as_deref(), &plan.older);
     let written = svc
-        .runner
-        .summarize(request)
+        .ask_summary(request)
         .map_err(|_| "unavailable")
         .and_then(|text| crate::compaction::accept(&text).map_err(|r| r.as_str()));
     let wait_for = plan.turns_now;
@@ -3638,6 +3639,8 @@ fn prepare_history(svc: &Service, run: &mut ChatRun) {
 
 struct ChatContext {
     messages: Vec<kk_types::chat::ChatMessage>,
+    /// How many different personal values were swapped for placeholders before the messages were sent.
+    swapped: usize,
     notes_used: usize,
     /// Which notes went to the model, so the owner can see exactly what shaped an answer.
     notes_list: Vec<Value>,
@@ -3882,6 +3885,7 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
     ChatContext {
         notes_only,
         messages,
+        swapped: 0,
         history_sent,
         instructions_used,
         methods_used,
@@ -3947,7 +3951,7 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
         );
     }
     let usage = json!({"elapsed_ms": elapsed_ms, "context_tokens": measured.unwrap_or(estimated), "context_tokens_estimate": estimated, "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "history_turns_summarized": run.summarized, "summary_text": run.summary, "compacted_now": run.compacted_now, "compaction_failed": run.compaction_failed, "estimate": measured.is_none()});
-    json!({"usage": usage, "reply": r.text, "cut_short": r.cut_short, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated, "stays_here": svc.route_for_owner()["stays_here"], "host": svc.route_for_owner()["host"]}, "instructions_used": ctx.instructions_used, "methods_used": ctx.methods_used, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "files": {"used": ctx.files_used, "trimmed": ctx.files_trimmed, "left_out": ctx.files_left_out, "withheld_instructions": ctx.files_withheld_instructions, "withheld_secrets": ctx.files_withheld_secrets}, "saved": saved, "not_saved": not_saved, "project": run.body.project})
+    json!({"usage": usage, "reply": r.text, "cut_short": r.cut_short, "swapped": ctx.swapped, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated, "stays_here": svc.route_for_owner()["stays_here"], "host": svc.route_for_owner()["host"]}, "instructions_used": ctx.instructions_used, "methods_used": ctx.methods_used, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "files": {"used": ctx.files_used, "trimmed": ctx.files_trimmed, "left_out": ctx.files_left_out, "withheld_instructions": ctx.files_withheld_instructions, "withheld_secrets": ctx.files_withheld_secrets}, "saved": saved, "not_saved": not_saved, "project": run.body.project})
 }
 
 async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
@@ -3959,12 +3963,20 @@ async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
     let out = tokio::task::spawn_blocking(move || {
         let mut run = run;
         prepare_history(&svc2, &mut run);
-        let ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
+        let mut ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
+        // what is shown as "sent" is what was sent: with personal values hidden when the model is elsewhere
+        let swap = svc2.hide_messages(&mut ctx.messages);
+        ctx.swapped = swap.as_ref().map_or(0, |s| s.total());
         svc2.remember_sent(&ctx.messages, &ctx.excluded_notes);
         let reply = if ctx.nothing_to_read() {
             Ok(no_model_reply())
         } else {
-            svc2.runner.chat(ctx.messages.clone())
+            svc2.runner.chat(ctx.messages.clone()).map(|mut r| {
+                if let Some(s) = &swap {
+                    r.text = s.show(&r.text);
+                }
+                r
+            })
         };
         (run, ctx, reply)
     })
@@ -4000,8 +4012,15 @@ async fn chat_stream(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Resp
         };
         let mut run = run;
         prepare_history(&svc2, &mut run);
-        let ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
+        let mut ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
+        let swap = svc2.hide_messages(&mut ctx.messages);
+        ctx.swapped = swap.as_ref().map_or(0, |s| s.total());
         svc2.remember_sent(&ctx.messages, &ctx.excluded_notes);
+        // a model that is elsewhere answers in one piece, so restoring each piece restores the answer
+        let shown = |piece: &str| {
+            swap.as_ref()
+                .map_or_else(|| piece.to_string(), |s| s.show(piece))
+        };
         if ctx.nothing_to_read() {
             let r = no_model_reply();
             let _ = tx.send(line(json!({"delta": r.text})));
@@ -4013,13 +4032,19 @@ async fn chat_stream(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Resp
             return;
         }
         let mut gone = false;
-        let result = svc2.runner.chat_stream(ctx.messages.clone(), &mut |piece| {
-            if tx.send(line(json!({"delta": piece}))).is_err() {
-                gone = true;
-                return false;
-            }
-            true
-        });
+        let result = svc2
+            .runner
+            .chat_stream(ctx.messages.clone(), &mut |piece| {
+                if tx.send(line(json!({"delta": shown(piece)}))).is_err() {
+                    gone = true;
+                    return false;
+                }
+                true
+            })
+            .map(|mut s| {
+                s.reply.text = shown(&s.reply.text);
+                s
+            });
         match result {
             Ok(s) if s.stopped || gone => {
                 svc2.log_event(
@@ -4170,8 +4195,14 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
         };
         let mut run = run;
         prepare_history(&svc2, &mut run);
-        let ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
+        let mut ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
+        let swap = svc2.hide_messages(&mut ctx.messages);
+        ctx.swapped = swap.as_ref().map_or(0, |s| s.total());
         svc2.remember_sent(&ctx.messages, &ctx.excluded_notes);
+        let shown = |piece: &str| {
+            swap.as_ref()
+                .map_or_else(|| piece.to_string(), |s| s.show(piece))
+        };
         if ctx.nothing_to_read() {
             let r = no_model_reply();
             let _ = tx.send(line(json!({"resolution": null, "reason": r.text})));
@@ -4206,16 +4237,22 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
             );
             let started = std::time::Instant::now();
             let estimated = kk_route::tokens::estimate_messages(&messages);
-            let result = svc2.runner.chat_stream(messages, &mut |piece| {
-                if tx
-                    .send(line(json!({"expert": e.id, "delta": piece})))
-                    .is_err()
-                {
-                    gone = true;
-                    return false;
-                }
-                true
-            });
+            let result = svc2
+                .runner
+                .chat_stream(messages, &mut |piece| {
+                    if tx
+                        .send(line(json!({"expert": e.id, "delta": shown(piece)})))
+                        .is_err()
+                    {
+                        gone = true;
+                        return false;
+                    }
+                    true
+                })
+                .map(|mut s| {
+                    s.reply.text = shown(&s.reply.text);
+                    s
+                });
             match result {
                 Ok(s) if s.stopped || gone => {
                     gone = true;
@@ -4287,7 +4324,7 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
             ),
         ];
         let names: Vec<&str> = chosen.iter().map(|e| e.name.as_str()).collect();
-        match svc2.runner.chat(lead) {
+        match svc2.ask(lead) {
             Ok(mut r) => {
                 let text = r.text.trim().to_string();
                 let parts = experts::read_resolution(&text);
@@ -5010,7 +5047,7 @@ async fn session_suggest_notes(
     }
     let request = crate::extraction::request(&turns, &crate::extraction::iso_date(now()));
     let svc2 = svc.clone();
-    let answer = tokio::task::spawn_blocking(move || svc2.runner.summarize(request)).await;
+    let answer = tokio::task::spawn_blocking(move || svc2.ask_summary(request)).await;
     let text = match answer {
         Ok(Ok(t)) => t,
         _ => {
@@ -7423,7 +7460,7 @@ async fn ask(axum::Extension(svc): Svc, Json(b): Json<AskBody>) -> Response {
             kk_types::chat::ChatMessage::new("system", kk_review::ask::SYSTEM),
             kk_types::chat::ChatMessage::new("user", &format!("{}\nQuestion: {q}", ctx.text)),
         ];
-        let mut reply = svc2.runner.chat(messages)?;
+        let mut reply = svc2.ask(messages)?;
         let mut ctx = ctx;
         let mut narrowed_to: Option<usize> = None;
         // a model that is given a window of passages and answers with nothing usable (an empty answer, the wrong shape) is
@@ -7450,7 +7487,7 @@ async fn ask(axum::Extension(svc): Svc, Json(b): Json<AskBody>) -> Response {
                         &format!("{}\nQuestion: {q}", tight.text),
                     ),
                 ];
-                if let Ok(second) = svc2.runner.chat(again) {
+                if let Ok(second) = svc2.ask(again) {
                     if kk_review::ask::parse_answer(&second.text).is_some() {
                         reply = second;
                         ctx = tight;
@@ -9866,6 +9903,10 @@ impl Extension for Routes {
                 get(project_settings_get).post(project_settings_set),
             )
             .route("/api/pii-allow", get(pii_allow_get).post(pii_allow_set))
+            .route(
+                "/api/hidden-names",
+                get(swap::names_get).post(swap::names_set),
+            )
             .route("/api/usage", get(usage_summary))
             .route("/api/usage/prices", get(prices_get).post(prices_set))
             .route("/api/exports/transcript", post(transcript_export))
