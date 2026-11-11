@@ -127,6 +127,7 @@ fn serve(args: &[String]) -> Result<(), String> {
         max_turns: 20,
         scripted: crate::flag(args, "--scripted").map(PathBuf::from),
         remote: crate::near::remote_from_flags(args)?,
+        outside: crate::outside::from_flags(args)?,
         context_tokens: match crate::flag(args, "--context") {
             Some(v) => v
                 .parse::<u32>()

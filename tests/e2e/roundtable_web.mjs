@@ -19,7 +19,8 @@ rmSync(work, { recursive: true, force: true });
 const root = join(work, "root");
 mkdirSync(root, { recursive: true });
 const chrome = join(homedir(), "Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing");
-const how = model ? ["--model", model] : ["--scripted", join(repo, "tests/e2e/script.json")];
+// "anthropic:MODEL" is the outside test model: the key comes from the environment (ANTHROPIC_API_KEY), never from an argument
+const how = model?.startsWith("anthropic:") ? ["--route", "outside", "--outside-model", model] : model ? ["--model", model] : ["--scripted", join(repo, "tests/e2e/script.json")];
 const server = spawn(join(repo, "target/debug/kaku"), ["serve", "--data-dir", join(work, "data"), "--root", root, ...how, "--ui-dir", join(repo, "apps/web/dist")], { stdio: ["ignore", "pipe", "pipe"] });
 let log = "";
 server.stdout.on("data", (d) => (log += d));

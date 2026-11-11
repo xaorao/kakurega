@@ -768,6 +768,7 @@ fn readiness_limited(args: &[String], limit: Duration) -> Result<Vec<Value>, Str
         scripted: None,
         context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
         remote: crate::near::remote_from_flags(args).ok().flatten(),
+        outside: None,
     };
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {

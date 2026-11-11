@@ -20,6 +20,7 @@ mod meaning_set;
 mod memory_import;
 mod near;
 mod ocr;
+mod outside;
 mod pack;
 mod parse_child;
 #[cfg(test)]
@@ -42,6 +43,7 @@ Usage:
                                     the theme setting (dark or light, in config.toml or KAKU_THEME) uses fixed colours measured for that background
   kaku serve [--require-approver] [--data-dir DIR] [--ui-dir DIR] [--root DIR]... [--model NAME] [--ollama URL] [--context TOKENS]
              [--route near --near-model NAME [--near-key-file FILE] [--near-url URL]]   answer on NEAR AI Cloud's confidential hardware (the key: NEAR_AI_API_KEY or the file)
+             [--route outside --outside-model anthropic:MODEL]   for testing only: answer chat, roundtable and team questions with a hosted model that is NOT private (the key: ANTHROPIC_API_KEY); reviews stay on the local model
              [--transport lima|local] [--vm NAME] [--worker-bin PATH] [--launcher PATH]
   kaku review DIR --for RECIPIENT [--json] [--timeout SECONDS]   start a review and follow it; ends at awaiting_approval (exit 0), 3 nothing to release, 4 failed
   kaku code DIR TASK... [--json]                          a local model changes the project in memory, its tests run in the sandbox; shows the patch, applies only when you say

@@ -68,9 +68,9 @@ fn plain_url(u: &str) -> bool {
 /// the service never starts on a different route than the one that was chosen.
 pub fn remote_from_flags(args: &[String]) -> Result<Option<Arc<NearRoute>>, String> {
     match crate::flag(args, "--route").as_deref() {
-        None | Some("local") => return Ok(None),
+        None | Some("local") | Some("outside") => return Ok(None),
         Some("near") => {}
-        Some(other) => return Err(format!("--route is local or near, not {other:?}")),
+        Some(other) => return Err(format!("--route is local, near or outside, not {other:?}")),
     }
     let model = crate::flag(args, "--near-model")
         .ok_or("--route near needs --near-model NAME, a model NEAR AI Cloud lists as confidential (full TEE)")?;
@@ -173,7 +173,7 @@ mod tests {
         let e = remote_from_flags(&args(&["--route", "other"]))
             .err()
             .unwrap();
-        assert!(e.contains("local or near"), "{e}");
+        assert!(e.contains("local, near or outside"), "{e}");
         let e = remote_from_flags(&args(&["--route", "near"]))
             .err()
             .unwrap();

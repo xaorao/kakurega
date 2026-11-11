@@ -24,7 +24,10 @@ const port = 18000 + (process.pid % 1000);
 const procs = [];
 process.on("exit", () => { for (const p of procs) { try { p.kill(); } catch {} } });
 let how;
-if (real) {
+if (real?.startsWith("anthropic:")) {
+  // the outside test model: the key comes from the environment (ANTHROPIC_API_KEY), never from an argument
+  how = ["--route", "outside", "--outside-model", real];
+} else if (real) {
   how = ["--model", real];
 } else {
   procs.push(spawn("python3", [join(repo, "tests/e2e/team_script.py"), String(port)], { stdio: "ignore" }));

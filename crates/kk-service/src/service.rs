@@ -3679,13 +3679,18 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
         let mut clearance = mem
             .owner_clearance()
             .unwrap_or_else(|_| kk_types::label::Label::new(kk_types::label::Level::Internal));
-        // Restricted means it never leaves this computer: a model that runs anywhere else is not given such notes
-        if !svc.route_for_owner()["stays_here"]
-            .as_bool()
-            .unwrap_or(false)
-            && clearance.level > kk_types::label::Level::Confidential
-        {
-            clearance.level = kk_types::label::Level::Confidential;
+        // Restricted means it never leaves this computer: a model that runs anywhere else is not given such notes.
+        // A model on a public route (a hosted model with no hardware proof) is given public notes only.
+        let route = svc.route_for_owner();
+        if !route["stays_here"].as_bool().unwrap_or(false) {
+            let most = if route["class"] == "public" {
+                kk_types::label::Level::Public
+            } else {
+                kk_types::label::Level::Confidential
+            };
+            if clearance.level > most {
+                clearance.level = most;
+            }
         }
         let scope = match b.project.as_deref() {
             Some(p) => kk_memory::Scope::Project(p),

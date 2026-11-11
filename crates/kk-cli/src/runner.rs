@@ -21,6 +21,33 @@ pub struct ReviewRunner {
     /// A model on NEAR AI Cloud's confidential hardware, when the owner chose it. Answers, review jobs and summaries go to it
     /// (verified first); coding tasks, embeddings and model choice stay with the local model.
     pub remote: Option<std::sync::Arc<kk_near::route::NearRoute>>,
+    /// An outside model for testing (not private), when the owner switched it on. It answers chat, roundtable and team
+    /// questions only; reviews, coding tasks, embeddings and model choice stay with the local model.
+    pub outside: Option<std::sync::Arc<crate::outside::OutsideRoute>>,
+}
+
+/// The one outside test route, shared by everything that asks it a question.
+struct SharedOutside(std::sync::Arc<crate::outside::OutsideRoute>);
+
+impl Route for SharedOutside {
+    fn id(&self) -> &str {
+        self.0.id()
+    }
+    fn class(&self) -> RouteClass {
+        self.0.class()
+    }
+    fn tee_verified(&self) -> bool {
+        self.0.tee_verified()
+    }
+    fn evidence(&self) -> kk_route::RouteEvidence {
+        self.0.evidence()
+    }
+    fn complete(
+        &self,
+        request: &kk_route::CompletionRequest,
+    ) -> Result<kk_route::Completion, kk_route::RouteError> {
+        self.0.complete(request)
+    }
 }
 
 /// A route that stops answering once the owner has asked for the work to stop. Everything else about it is the route inside.
@@ -105,6 +132,11 @@ impl ReviewRunner {
     fn failure(&self, e: kk_route::RouteError) -> String {
         if self.remote.is_some() {
             remote_failure(e)
+        } else if self.outside.is_some() {
+            match e {
+                kk_route::RouteError::BadResponse(m) => m,
+                other => format!("the outside model did not answer: {other}"),
+            }
         } else {
             model_failure(e)
         }
@@ -113,11 +145,30 @@ impl ReviewRunner {
     /// The most tokens one chat answer may be: the room the service keeps free in the window for the reply (so a prompt
     /// that fills its share still leaves the answer its own), never less than 500 and never more than 4,096.
     fn reply_room(&self) -> u32 {
-        reply_room(self.context_tokens)
+        reply_room(self.answer_window())
     }
 
-    /// The route that answers questions: the NEAR route when the owner chose it, otherwise the local model.
+    /// The window of the model that answers questions.
+    fn answer_window(&self) -> u32 {
+        match (&self.remote, &self.outside) {
+            (None, Some(_)) => crate::outside::CONTEXT_TOKENS,
+            _ => self.context_tokens,
+        }
+    }
+
+    /// The route that answers questions: the NEAR route when the owner chose it, else the outside test model when that
+    /// was switched on, otherwise the local model.
     fn answer_route(&self) -> Result<Box<dyn Route>, kk_route::RouteError> {
+        match (&self.remote, &self.outside) {
+            (Some(near), _) => Ok(Box::new(SharedNear(near.clone()))),
+            (None, Some(out)) => Ok(Box::new(SharedOutside(out.clone()))),
+            (None, None) => Ok(Box::new(self.route()?)),
+        }
+    }
+
+    /// The route a review's agent works on. Never the outside test model: a review reads the owner's files, and a route
+    /// that is not private is given none of them.
+    fn review_route(&self) -> Result<Box<dyn Route>, kk_route::RouteError> {
         match &self.remote {
             Some(near) => Ok(Box::new(SharedNear(near.clone()))),
             None => Ok(Box::new(self.route()?)),
@@ -228,7 +279,7 @@ impl JobRunner for ReviewRunner {
                 progress,
             );
         }
-        match self.answer_route() {
+        match self.review_route() {
             Ok(route) => {
                 let ev = vec![route.evidence()];
                 run_job(
@@ -357,8 +408,8 @@ cut_short: false,
                 stopped: false,
             });
         }
-        if self.remote.is_some() {
-            // an answer from the NEAR route is held until its proof verifies, so it arrives whole: shown as one piece
+        if self.remote.is_some() || self.outside.is_some() {
+            // an answer from the NEAR route is held until its proof verifies (and the outside test model is asked for a whole answer), so it arrives whole: shown as one piece
             let reply = self.chat(messages)?;
             let stopped = !on_chunk(&reply.text);
             return Ok(kk_service::StreamedReply { reply, stopped });
@@ -757,6 +808,11 @@ cut_short: false,
             return json!({"id": near.id(), "class": "verified_tee", "model": near.model(), "simulated": false, "endpoint": near.base_url(), "context_tokens": self.context_tokens,
                "transport": match &self.transport { Transport::Local => "local sandbox".to_string(), Transport::Lima { vm, .. } => format!("sandbox in the {vm} virtual machine") }});
         }
+        if let (Some(out), None) = (&self.outside, &self.scripted) {
+            // said as it is: a hosted model that is not private, switched on by the owner for testing
+            return json!({"id": out.id(), "class": "public", "model": out.model(), "simulated": false, "endpoint": out.base_url(), "context_tokens": crate::outside::CONTEXT_TOKENS, "test_route": true,
+               "transport": match &self.transport { Transport::Local => "local sandbox".to_string(), Transport::Lima { vm, .. } => format!("sandbox in the {vm} virtual machine") }});
+        }
         let model = self.model_name();
         json!({"id": format!("ollama:{model}"), "class": "device_only", "model": if self.scripted.is_some() { "scripted test model".to_string() } else { model.clone() }, "simulated": self.scripted.is_some(), "endpoint": self.ollama, "context_tokens": self.context_tokens,
                "transport": match &self.transport { Transport::Local => "local sandbox".to_string(), Transport::Lima { vm, .. } => format!("sandbox in the {vm} virtual machine") }})
@@ -829,6 +885,80 @@ impl kk_memory::Embedder for OllamaEmbedder {
         } else {
             0.6
         }
+    }
+}
+
+#[cfg(test)]
+mod outside_route {
+    use super::ReviewRunner;
+    use kk_route::RouteClass;
+    use kk_service::JobRunner;
+
+    fn runner(outside: bool) -> ReviewRunner {
+        ReviewRunner {
+            model: std::sync::RwLock::new("local-model".into()),
+            ollama: "http://127.0.0.1:11434".into(),
+            transport: kk_sandbox::Transport::Local,
+            worker_binary: "/nonexistent".into(),
+            scratch: std::env::temp_dir(),
+            commitment_key: [0u8; 32],
+            max_turns: 1,
+            scripted: None,
+            context_tokens: 4096,
+            remote: None,
+            outside: outside.then(|| {
+                std::sync::Arc::new(
+                    crate::outside::OutsideRoute::new(
+                        "anthropic:claude-sonnet-5-5",
+                        "test-key-0123456789abcdefghij",
+                        crate::outside::HOST,
+                    )
+                    .unwrap(),
+                )
+            }),
+        }
+    }
+
+    #[test]
+    fn rn_the_outside_model_answers_questions_and_is_never_the_route_of_a_review() {
+        let r = runner(true);
+        assert_eq!(r.answer_route().unwrap().class(), RouteClass::Public);
+        let review = r.review_route().unwrap();
+        assert_eq!(
+            review.class(),
+            RouteClass::DeviceOnly,
+            "a review's agent stays on the local model"
+        );
+        assert_eq!(review.id(), "ollama:local-model");
+        // the owner is told what it is and where it is
+        let info = r.route_info();
+        assert_eq!(
+            (
+                info["class"].as_str(),
+                info["endpoint"].as_str(),
+                info["test_route"].as_bool(),
+                info["id"].as_str()
+            ),
+            (
+                Some("public"),
+                Some("https://api.anthropic.com"),
+                Some(true),
+                Some("anthropic:claude-sonnet-5-5")
+            )
+        );
+        assert!(
+            !info.to_string().contains("test-key-"),
+            "the key is not part of what is shown"
+        );
+        assert_eq!(r.reply_room(), 4096);
+        // without it nothing changes
+        let plain = runner(false);
+        assert_eq!(
+            plain.answer_route().unwrap().class(),
+            RouteClass::DeviceOnly
+        );
+        assert_eq!(plain.route_info()["class"], "device_only");
+        assert!(plain.route_info().get("test_route").is_none());
     }
 }
 
@@ -931,6 +1061,7 @@ mod live {
                 scripted: None,
                 context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
                 remote: None,
+                outside: None,
             };
             for (name, turns) in &convos {
                 let turns: Vec<(String, String)> = turns
@@ -1101,6 +1232,7 @@ mod live {
             scripted: None,
             context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
             remote: None,
+            outside: None,
         };
         let messages = vec![
             ChatMessage::new("system", "Answer in one short sentence."),
@@ -1142,6 +1274,7 @@ mod live {
             scripted: None,
             context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
             remote: None,
+            outside: None,
         };
         let older: Vec<(String, String)> = [
             ("user", "I am planning a trip to Lisbon in March with my sister Maria. Our budget is 800 pounds in total."),
@@ -1500,6 +1633,7 @@ mod pick {
             scripted: scripted.then(|| PathBuf::from("/nonexistent/script.json")),
             context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
             remote: None,
+            outside: None,
         }
     }
 
@@ -1614,6 +1748,7 @@ mod near_tests {
             scripted: None,
             context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
             remote: Some(std::sync::Arc::new(near)),
+            outside: None,
         };
         Rig {
             _env: env,

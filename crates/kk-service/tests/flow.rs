@@ -20279,3 +20279,56 @@ fn sv245_a_coding_task_stopped_on_a_runner_that_cannot_stop_part_way_offers_no_p
     let v = wait_code(&w, &id2);
     assert_eq!(v["state"], "ready", "{v}");
 }
+
+#[test]
+fn sv246_a_public_route_is_given_public_notes_only_whatever_its_address_says() {
+    // a hosted model with no hardware proof, and a "public" route that claims to be on this computer
+    for endpoint in ["https://api.anthropic.com", "http://10.0.0.5:8080"] {
+        let (_c, w, _svc, _root) = privacy_with(
+            json!({"id": "anthropic:x", "class": "public", "model": "x", "endpoint": endpoint, "test_route": true}),
+        );
+        for (text, level) in [
+            (
+                "Layoff list for Q3 is planted-restricted-value",
+                "restricted",
+            ),
+            (
+                "Layoff budget for Q3 is planted-confidential-value",
+                "confidential",
+            ),
+            (
+                "Layoff process for Q3 is planted-internal-value",
+                "internal",
+            ),
+            ("Layoff press line for Q3 is planted-public-value", "public"),
+        ] {
+            let (st, r) = w.post("/api/memories", json!({"text": text, "level": level}));
+            assert!(st < 300, "{r}");
+        }
+        let (st, r) = w.post(
+            "/api/chat",
+            json!({"message": "What is the layoff list, budget, process and press line for Q3?"}),
+        );
+        assert_eq!(st, 200, "{endpoint}: {r}");
+        let notes = r["notes"].to_string();
+        assert!(notes.contains("planted-public-value"), "{endpoint}: {r}");
+        for kept in [
+            "planted-restricted-value",
+            "planted-confidential-value",
+            "planted-internal-value",
+        ] {
+            assert!(
+                !notes.contains(kept),
+                "{endpoint}: {kept} must stay on this computer: {r}"
+            );
+        }
+        assert_eq!(r["notes_used"], 1, "{endpoint}: {r}");
+        // the owner is told the route is not on this computer
+        let route = w.get("/api/config").1["route"].clone();
+        assert_eq!(
+            (route["class"].as_str(), route["stays_here"].as_bool()),
+            (Some("public"), Some(false)),
+            "{route}"
+        );
+    }
+}
