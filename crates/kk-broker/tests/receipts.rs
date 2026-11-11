@@ -197,3 +197,21 @@ fn rc04_the_broker_never_asks_a_local_route_for_its_evidence_after_an_answer() {
     }
     assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
+
+#[test]
+fn rc05_each_answer_adds_to_the_use_of_its_route_as_counts_and_time_only() {
+    let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (mut b, s) = session(RouteSet::new(vec![
+        Box::new(CountingLocal(asked.clone())) as Box<dyn Route>
+    ]));
+    assert!(b.usage.is_empty());
+    for i in 1..=3 {
+        assert_eq!(ask(&mut b, s, i)["ok"], true);
+    }
+    assert_eq!(b.usage.len(), 1);
+    let u = b.usage.values().next().unwrap();
+    assert_eq!((u.calls, u.prompt_tokens, u.completion_tokens), (3, 3, 3));
+    assert_eq!(u.class, "device_only");
+    // still without asking the route about itself
+    assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0);
+}

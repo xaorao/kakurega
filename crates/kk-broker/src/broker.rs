@@ -90,6 +90,16 @@ struct StoredCheckpoint {
     taint: kk_types::label::Label,
 }
 
+/// The use of one model route over a broker's life.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RouteUsage {
+    pub class: String,
+    pub calls: u64,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub elapsed_ms: u64,
+}
+
 pub struct Broker {
     pub kernel: Kernel,
     checkpoints: HashMap<JobKey, StoredCheckpoint>,
@@ -103,6 +113,8 @@ pub struct Broker {
     pub audit: Vec<AuditEvent>,
     /// The receipts of the model answers given by a verified route, in order, at most `MAX_RECEIPTS`.
     pub receipts: Vec<Value>,
+    /// What the model routes were used for, summed per route: counts and times only, never words.
+    pub usage: BTreeMap<String, RouteUsage>,
     pub release_drafts: Vec<ReleaseDraft>,
     pub written: Vec<WrittenArtifact>,
     write_hook: Option<WriteHook>,
@@ -165,6 +177,7 @@ impl Broker {
             next_session: 1,
             audit: Vec::new(),
             receipts: Vec::new(),
+            usage: BTreeMap::new(),
             release_drafts: Vec::new(),
             written: Vec::new(),
             write_hook: None,
@@ -493,6 +506,7 @@ impl Broker {
             }
         }
         let offered: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
+        let asked_at = std::time::Instant::now();
         let mut completion = route
             .complete(&CompletionRequest {
                 messages,
@@ -523,6 +537,12 @@ impl Broker {
         }
         let used = completion.prompt_tokens + completion.completion_tokens;
         self.sessions.get_mut(&id).expect("session").model_tokens += used;
+        let u = self.usage.entry(route.id().to_string()).or_default();
+        u.class = route.class().as_str().to_string();
+        u.calls += 1;
+        u.prompt_tokens += completion.prompt_tokens;
+        u.completion_tokens += completion.completion_tokens;
+        u.elapsed_ms += asked_at.elapsed().as_millis() as u64;
         let _ = self
             .kernel
             .absorb(step, &kk_types::label::Label::bottom().untrusted());

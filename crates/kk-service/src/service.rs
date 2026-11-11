@@ -1114,6 +1114,19 @@ impl Service {
                         for sg in &r.method_suggestions {
                             svc.method_propose(&jid, &sg.json);
                         }
+                        // a review's use of the model goes into the same usage record as chat, one line per route
+                        for u in &r.model_usage {
+                            let n = |k: &str| u[k].as_u64().unwrap_or(0);
+                            svc.record_usage(
+                                u["route"].as_str().unwrap_or("?"),
+                                u["class"].as_str().unwrap_or("?"),
+                                u["simulated"].as_bool().unwrap_or(false),
+                                n("prompt_tokens"),
+                                n("prompt_tokens") + n("completion_tokens") > 0,
+                                n("completion_tokens"),
+                                n("elapsed_ms") as i64,
+                            );
+                        }
                         let mut snap = Snapshot::from_report(&r);
                         if stopped {
                             // the owner stopped it: nothing it found is offered, whether or not the runner could end early

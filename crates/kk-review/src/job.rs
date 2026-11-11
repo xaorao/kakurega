@@ -109,6 +109,8 @@ pub struct JobReport {
     pub route_evidence: Vec<RouteEvidence>,
     /// The receipts of the answers a verified model route gave during this job.
     pub route_receipts: Vec<serde_json::Value>,
+    /// What the model routes were used for in this review, per route: calls, tokens in and out, and time. No words.
+    pub model_usage: Vec<serde_json::Value>,
     pub final_taint: Option<Label>,
     pub error: Option<String>,
 }
@@ -165,6 +167,7 @@ pub fn run_job(
         audit: Vec::new(),
         route_evidence,
         route_receipts: Vec::new(),
+        model_usage: Vec::new(),
         final_taint: None,
         error: None,
     };
@@ -238,6 +241,18 @@ pub fn run_job(
     }
     report.audit = broker.audit.clone();
     report.route_receipts = broker.receipts.clone();
+    report.model_usage = broker
+        .usage
+        .iter()
+        .map(|(route, u)| {
+            // whether a route only pretends to be a model is known from what it said of itself before the review
+            let simulated = report
+                .route_evidence
+                .iter()
+                .any(|e| &e.route_id == route && e.simulated);
+            serde_json::json!({"route": route, "class": u.class, "simulated": simulated, "calls": u.calls, "prompt_tokens": u.prompt_tokens, "completion_tokens": u.completion_tokens, "elapsed_ms": u.elapsed_ms})
+        })
+        .collect();
     report.final_taint = broker.final_taint(session);
     if stop_asked(cfg) {
         // whatever the worker had found is not checked and not offered: a stopped review releases nothing

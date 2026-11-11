@@ -284,6 +284,13 @@ impl JobRunner for CannedRunner {
                 receipt: None,
             }],
             route_receipts: vec![],
+            model_usage: if recipient == "usage-counter" {
+                vec![
+                    json!({"route": "ollama:review-model", "class": "device_only", "simulated": false, "calls": 7, "prompt_tokens": 12000, "completion_tokens": 900, "elapsed_ms": 41000}),
+                ]
+            } else {
+                vec![]
+            },
             final_taint: Some(Label::new(Level::Internal).untrusted()),
             error: None,
             files: imp.files,
@@ -21271,5 +21278,44 @@ fn sv251_try_to_break_it_plants_fresh_secrets_runs_the_real_file_path_and_counts
     assert!(
         log.contains("break.attempt") && !log.contains(&key) && !log.contains("churn"),
         "{log}"
+    );
+}
+
+#[test]
+fn sv252_what_a_review_used_of_the_model_is_in_the_usage_record_as_counts_only() {
+    let (_c, w, root) = file_service("usage", FileRunner::new("http://127.0.0.1:11434", 16384));
+    let before = w.get("/api/usage").1;
+    assert_eq!(before["total"]["turns"], json!(0), "{before}");
+    let repo = root.join("repo");
+    let (s, v) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "usage-counter"}),
+    );
+    assert_eq!(s, 202, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    for _ in 0..200 {
+        let (_, j) = w.get(&format!("/api/jobs/{id}"));
+        if j["state"] != "running" && j["state"] != "queued" {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let (_, u) = w.get("/api/usage");
+    let row = u["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["route"] == "ollama:review-model")
+        .unwrap_or_else(|| panic!("{u}"))
+        .clone();
+    assert_eq!(
+        (row["prompt_tokens"].clone(), row["reply_tokens"].clone()),
+        (json!(12000), json!(900)),
+        "{row}"
+    );
+    assert_eq!(u["total"]["prompt_tokens"], json!(12000), "{u}");
+    assert!(
+        !u.to_string().contains("payments"),
+        "counts only, nothing of the project: {u}"
     );
 }
