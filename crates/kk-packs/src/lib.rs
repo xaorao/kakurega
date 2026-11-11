@@ -3,6 +3,8 @@
 //! A pack is one signed JSON file. It holds methods and nothing else: no tool, route, credential or permission field exists in a
 //! method, and a pack that tries to carry one is refused whole. Every method that comes out is still unapproved.
 
+pub mod catalog;
+
 use kk_evidence::dsse;
 use kk_evidence::keys::{KeyId, Signer, TrustedKeys};
 use kk_methods::{Draft, Method};

@@ -24,6 +24,16 @@ pub(super) struct KeyBody {
 #[serde(deny_unknown_fields)]
 pub(super) struct ImportBody {
     pack: String,
+    /// The publisher's signed catalog this pack was chosen from, when it was: the pack must then be exactly a file the
+    /// catalog lists, under the name and version it lists.
+    #[serde(default)]
+    catalog: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CatalogBody {
+    catalog: String,
 }
 
 fn refuse(why: &str) -> Response {
@@ -42,6 +52,45 @@ impl Service {
         st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
             .map(|it| it.flatten().collect())
             .unwrap_or_default()
+    }
+
+    fn pack_trusted(&self) -> TrustedKeys {
+        let mut trusted = TrustedKeys::new();
+        for (_, public, _, _) in self.pack_publishers() {
+            if let Ok(k) = <[u8; 32]>::try_from(public.as_slice()) {
+                trusted.add(&k);
+            }
+        }
+        trusted
+    }
+
+    /// Checks a catalog against the pinned publishers and the newest list already seen from the same one, and remembers
+    /// its issue time, so an earlier list from that publisher is refused from then on.
+    fn catalog_checked(&self, text: &str) -> Result<kk_packs::catalog::Catalog, String> {
+        let seen = |key_id: &str| -> Option<i64> {
+            let store = self.store.lock().expect("lock");
+            store
+                .connection()
+                .query_row(
+                    "SELECT issued FROM catalog_seen WHERE key_id = ?1",
+                    [key_id],
+                    |r| r.get(0),
+                )
+                .ok()
+        };
+        let c =
+            kk_packs::catalog::check_catalog(text.as_bytes(), &self.pack_trusted(), now(), &seen)
+                .map_err(|r| {
+                r.sentence()
+                    .replace("the pack", "the catalog")
+                    .replace("one you already imported", "one you already opened")
+            })?;
+        let store = self.store.lock().expect("lock");
+        let _ = store.connection().execute(
+            "INSERT INTO catalog_seen(key_id, issued, at) VALUES (?1, ?2, ?3) ON CONFLICT(key_id) DO UPDATE SET issued = max(issued, ?2), at = ?3",
+            kk_vault::rusqlite::params![c.key_id.as_str(), c.issued, now()],
+        );
+        Ok(c)
     }
 
     fn pack_seen_version(&self, name: &str, key_id: &str) -> Option<Version> {
@@ -154,12 +203,7 @@ pub(super) async fn packs_publisher_remove(
 
 /// Imports a pack: every method is saved unapproved, or none is. A name already in use stops the whole import.
 pub(super) async fn packs_import(axum::Extension(svc): Svc, Json(b): Json<ImportBody>) -> Response {
-    let mut trusted = TrustedKeys::new();
-    for (_, public, _, _) in svc.pack_publishers() {
-        if let Ok(k) = <[u8; 32]>::try_from(public.as_slice()) {
-            trusted.add(&k);
-        }
-    }
+    let trusted = svc.pack_trusted();
     let seen = |name: &str, key_id: &str| svc.pack_seen_version(name, key_id);
     let cx = Context {
         trusted: &trusted,
@@ -170,6 +214,17 @@ pub(super) async fn packs_import(axum::Extension(svc): Svc, Json(b): Json<Import
         Ok(c) => c,
         Err(r) => return refuse(&r.sentence()),
     };
+    if let Some(text) = &b.catalog {
+        let catalog = match svc.catalog_checked(text) {
+            Ok(c) => c,
+            Err(why) => return refuse(&why),
+        };
+        match kk_packs::catalog::entry_for(&catalog, b.pack.as_bytes()) {
+            Some(e) if e.name == checked.name && e.version == checked.version && catalog.key_id == checked.key_id => {}
+            Some(_) => return refuse("the catalog lists this file under another name, version or publisher; nothing was imported"),
+            None => return refuse("this file is not one the catalog lists (its SHA-256 differs); nothing was imported"),
+        }
+    }
     let text_all: String = checked
         .methods
         .iter()
@@ -236,4 +291,45 @@ pub(super) async fn packs_import(axum::Extension(svc): Svc, Json(b): Json<Import
         "imported": checked.methods.iter().map(|m| m.name.clone()).collect::<Vec<_>>(),
     }))
     .into_response()
+}
+
+/// Reads a publisher's signed catalog and says, for each pack it lists, what the owner already has. Nothing is imported
+/// and nothing is fetched: the owner then chooses the pack files themselves, and each must be the exact file listed.
+pub(super) async fn catalog_read(
+    axum::Extension(svc): Svc,
+    Json(b): Json<CatalogBody>,
+) -> Response {
+    let catalog = match svc.catalog_checked(&b.catalog) {
+        Ok(c) => c,
+        Err(why) => return refuse(&why),
+    };
+    let publisher = svc
+        .pack_publishers()
+        .into_iter()
+        .find(|(id, _, _, _)| id == catalog.key_id.as_str())
+        .map(|(_, _, label, _)| label)
+        .unwrap_or_default();
+    let entries: Vec<Value> = catalog
+        .entries
+        .iter()
+        .map(|e| {
+            let have = svc.pack_seen_version(&e.name, catalog.key_id.as_str());
+            let state = match have {
+                Some(v) if v == e.version => "imported",
+                Some(v) if v < e.version => "update_available",
+                Some(_) => "older_listed",
+                None => "new",
+            };
+            json!({
+                "name": e.name, "version": e.version.to_string(), "description": e.description, "file": e.file,
+                "sha256": e.sha256, "methods": e.methods, "state": state, "have": have.map(|v| v.to_string()),
+            })
+        })
+        .collect();
+    svc.log_event(
+        "pack.catalog_opened",
+        catalog.key_id.as_str(),
+        &[("packs", entries.len().into())],
+    );
+    Json(json!({"publisher": publisher, "key_id": catalog.key_id.as_str(), "issued": catalog.issued, "not_after": catalog.not_after, "packs": entries})).into_response()
 }

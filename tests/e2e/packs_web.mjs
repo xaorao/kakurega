@@ -79,6 +79,39 @@ check((await page.getByText("Waiting for your approval: not in use").count()) >=
 await importPack(good);
 await page.getByRole("alert").filter({ hasText: /already exists; nothing was imported/ }).waitFor();
 check(true, "importing the same pack again is refused and replaces nothing");
+// ---- the publisher's signed catalog ----
+{
+  const shelf = join(work, "shelf");
+  mkdirSync(shelf, { recursive: true });
+  writeFileSync(join(shelf, "legal-kit-1.0.0.kkp"), good);
+  const notes = makePack("notes", join(work, "pub.key"), "notes-kit", "2.1.0", ["meeting-minutes"]);
+  writeFileSync(join(shelf, "notes-kit-2.1.0.kkp"), notes);
+  run("pack", "catalog", "--key", join(work, "pub.key"), "--dir", shelf, "--out", join(work, "catalog.kkc"));
+  const checked = run("pack", "check-catalog", "--catalog", join(work, "catalog.kkc"), "--trusted", publicKey, "--dir", shelf);
+  check(/catalog of 2 pack\(s\)/.test(checked) && (checked.match(/file matches/g) ?? []).length === 2, "a publisher makes a signed catalog of a folder of packs, and anyone with the key can check it against the files");
+  writeFileSync(join(shelf, "notes-kit-2.1.0.kkp"), notes + " ");
+  const wrong = spawnSync(kaku, ["pack", "check-catalog", "--catalog", join(work, "catalog.kkc"), "--trusted", publicKey, "--dir", shelf], { encoding: "utf8" });
+  check(wrong.status !== 0 && /FILE DOES NOT MATCH/.test(wrong.stdout), "a file changed after the catalog was made is called out");
+  writeFileSync(join(shelf, "notes-kit-2.1.0.kkp"), notes);
+
+  await page.locator("#pack-catalog").setInputFiles(join(work, "catalog.kkc"));
+  const list = page.locator("#pack-catalog-list");
+  await list.waitFor();
+  const rows = await list.locator("li").evaluateAll((els) => els.map((e) => e.innerText.replace(/\s+/g, " ")));
+  check(rows.length === 2 && /legal-kit 1\.0\.0 Added/.test(rows[0]) && /notes-kit 2\.1\.0 Not added/.test(rows[1]) && /Signed by Legal team/.test(await list.innerText()), "opening the catalog lists the publisher's packs and says which one is already added", rows.join(" | "));
+  check((await page.locator("#pack-cat-legal-kit").count()) === 0 && (await page.locator("#pack-cat-notes-kit").count()) === 1, "only a pack that is not added offers to be added");
+  // a different file than the one listed: signed by the same publisher, but not these bytes
+  const other = makePack("notes-other", join(work, "pub.key"), "notes-kit", "2.1.1", ["meeting-minutes"]);
+  await page.locator("#pack-cat-notes-kit").setInputFiles({ name: "notes-kit-2.1.0.kkp", mimeType: "application/octet-stream", buffer: Buffer.from(other) });
+  await page.getByRole("alert").filter({ hasText: /not one the catalog lists/ }).waitFor();
+  check((await page.getByText("meeting-minutes", { exact: true }).count()) === 0, "a file that is not the one the catalog lists is refused, even from the same publisher");
+  await page.locator("#pack-cat-notes-kit").setInputFiles(join(shelf, "notes-kit-2.1.0.kkp"));
+  await page.getByText(/Imported 1 methods? from notes-kit 2.1.0/).waitFor();
+  await list.locator("li").nth(1).getByText("Added", { exact: true }).waitFor();
+  const after = await list.locator("li").evaluateAll((els) => els.map((e) => e.innerText.replace(/\s+/g, " ")));
+  check(/notes-kit 2\.1\.0 Added/.test(after[1]), "the exact file is added, and the catalog then says so", after.join(" | "));
+  await shot("2-catalog");
+}
 await page.getByRole("button", { name: "Stop trusting" }).click();
 await page.getByText("Publisher removed.").waitFor();
 check(await page.getByText("No publisher is pinned yet, so no pack can be imported.").isVisible(), "removing the publisher stops trusting it");

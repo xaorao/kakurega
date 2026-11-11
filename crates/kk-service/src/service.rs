@@ -457,6 +457,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS method_proposals(id INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS pack_publishers(key_id TEXT PRIMARY KEY, public BLOB NOT NULL, label TEXT NOT NULL, added INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS pack_seen(name TEXT NOT NULL, key_id TEXT NOT NULL, version TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(name, key_id));
+             CREATE TABLE IF NOT EXISTS catalog_seen(key_id TEXT PRIMARY KEY, issued INTEGER NOT NULL, at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS methods(name TEXT PRIMARY KEY, body TEXT NOT NULL, hash TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS method_approvals(name TEXT PRIMARY KEY, hash TEXT NOT NULL, approved_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS hidden_names(name TEXT PRIMARY KEY, added INTEGER NOT NULL);
@@ -10019,6 +10020,7 @@ impl Extension for Routes {
                 post(packs::packs_publisher_remove),
             )
             .route("/api/packs/import", post(packs::packs_import))
+            .route("/api/packs/catalog", post(packs::catalog_read))
             .route("/api/method-proposals", get(methods::proposals_get))
             .route("/api/method-proposals/keep", post(methods::proposals_keep))
             .route(

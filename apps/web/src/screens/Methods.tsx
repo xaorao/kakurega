@@ -1,7 +1,7 @@
 import { LoadState } from "../components/LoadState";
 import { createResource, createSignal, For, Show } from "solid-js";
-import { api, ApiError, type Method, type BundledMethod } from "../api";
-import { t } from "../i18n";
+import { api, ApiError, type Method, type BundledMethod, type PackCatalog, type PackCatalogEntry } from "../api";
+import { t, type Key } from "../i18n";
 
 const words = (text: string) => text.split(",").map((w) => w.trim()).filter(Boolean);
 
@@ -104,6 +104,32 @@ function Packs(props: { onChanged: (message: string) => void }) {
   const choose = async (file: File | undefined) => {
     if (file && file.size <= 300_000) setPack(await file.text());
   };
+  // a publisher's signed catalog: read here, and each pack is then added from the exact file it lists
+  const [catalogText, setCatalogText] = createSignal("");
+  const [catalog, setCatalog] = createSignal<PackCatalog | null>(null);
+  const openCatalog = async (file: File | undefined) => {
+    if (!file) return;
+    setProblem("");
+    setCatalog(null);
+    if (file.size > 300_000) { setProblem(t("pack.cat.tooLarge")); return; }
+    const text = await file.text();
+    try {
+      setCatalog(await api.packCatalog(text));
+      setCatalogText(text);
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("pack.error"));
+    }
+  };
+  const addFromCatalog = (entry: PackCatalogEntry, file: File | undefined) => {
+    if (!file) return;
+    void act(async () => {
+      if (file.size > 300_000) throw new ApiError(0, "PACK_REFUSED", t("pack.cat.tooLarge"));
+      // the file's text exactly as it is: the catalog lists its SHA-256
+      const r = await api.packImport(await file.text(), catalogText());
+      setCatalog(await api.packCatalog(catalogText()));
+      return t("pack.imported", { n: r.imported.length, name: r.pack, version: r.version });
+    });
+  };
   return (
     <section class="card stack" aria-labelledby="h-pack">
       <h3 id="h-pack">{t("pack.heading")}</h3>
@@ -133,6 +159,32 @@ function Packs(props: { onChanged: (message: string) => void }) {
       <div class="actions">
         <button class="primary" type="button" disabled={!pack().trim()} onClick={() => void act(async () => { const r = await api.packImport(pack().trim()); setPack(""); return t("pack.imported", { n: r.imported.length, name: r.pack, version: r.version }); })}>{t("pack.import")}</button>
       </div>
+      <h4>{t("pack.cat.heading")}</h4>
+      <p class="muted">{t("pack.cat.lead")}</p>
+      <input id="pack-catalog" type="file" aria-label={t("pack.cat.open")} onChange={(e) => { void openCatalog(e.currentTarget.files?.[0]); e.currentTarget.value = ""; }} />
+      <Show when={catalog()}>
+        {(c) => (
+          <div class="stack" id="pack-catalog-list">
+            <p>{t("pack.cat.from", { publisher: c().publisher || c().key_id.slice(0, 20), date: new Date(c().not_after * 1000).toLocaleDateString() })}</p>
+            <ul class="plain stack" aria-label={t("pack.cat.heading")}>
+              <For each={c().packs}>
+                {(e) => (
+                  <li class="card stack">
+                    <p><strong>{e.name}</strong> {e.version} <span class="chip">{t(`pack.cat.state.${e.state}` as Key, { have: e.have ?? "" })}</span></p>
+                    <Show when={e.description}><p>{e.description}</p></Show>
+                    <p class="muted">{t("pack.cat.holds", { list: e.methods.join(", ") })}</p>
+                    <p class="muted">{t("pack.cat.file", { file: e.file })} <code>{e.sha256.slice(0, 16)}</code></p>
+                    <Show when={e.state === "new" || e.state === "update_available"}>
+                      <label class="muted" for={`pack-cat-${e.name}`}>{t("pack.cat.choose", { file: e.file })}</label>
+                      <input id={`pack-cat-${e.name}`} type="file" onChange={(ev) => { addFromCatalog(e, ev.currentTarget.files?.[0]); ev.currentTarget.value = ""; }} />
+                    </Show>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </div>
+        )}
+      </Show>
       <Show when={(data()?.imported ?? []).length > 0}>
         <p class="muted">{t("pack.imported.list")}: {(data()?.imported ?? []).map((i) => `${i.name} ${i.version}`).join(", ")}</p>
       </Show>

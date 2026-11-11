@@ -142,6 +142,8 @@ export interface LogSummary { count: number; head: string | null; public_key: st
 export interface ChatTurn { role: "user" | "assistant"; content: string }
 export interface Method { name: string; description: string; triggers: string[]; avoid: string[]; body: string; hash: string; approved: boolean; approved_at?: number | null }
 export interface BundledMethod { name: string; group: string; description: string; hash: string; added: boolean }
+export interface PackCatalogEntry { name: string; version: string; description: string; file: string; sha256: string; methods: string[]; state: "new" | "imported" | "update_available" | "older_listed"; have: string | null }
+export interface PackCatalog { publisher: string; key_id: string; issued: number; not_after: number; packs: PackCatalogEntry[] }
 export interface MethodProposal { id: number; job: string; name: string; description: string; triggers: string[]; body: string }
 export interface McpTool { name: string; description: string; pin: string; mode: "off" | "allow" | "ask"; effect: "read_only" | "may_change" | "unknown"; schema?: string }
 export interface McpServer { name: string; program: string; args: string[]; env_names: string[] | null; tools: McpTool[] }
@@ -390,7 +392,8 @@ export const api = {
   packs: () => request<{ publishers: { key_id: string; public: string | null; label: string; added: number }[]; imported: { name: string; version: string; at: number }[]; limits: { publishers: number } }>("GET", "/api/packs"),
   packPin: (publicKey: string, label: string) => request<{ key_id: string }>("POST", "/api/packs/publishers", { public: publicKey, label }),
   packUnpin: (key_id: string) => request<{ removed: boolean }>("POST", "/api/packs/publishers/remove", { key_id }),
-  packImport: (pack: string) => request<{ pack: string; version: string; imported: string[] }>("POST", "/api/packs/import", { pack }),
+  packImport: (pack: string, catalog?: string) => request<{ pack: string; version: string; imported: string[] }>("POST", "/api/packs/import", catalog ? { pack, catalog } : { pack }),
+  packCatalog: (catalog: string) => request<PackCatalog>("POST", "/api/packs/catalog", { catalog }),
   methodProposals: () => request<{ proposals: MethodProposal[] }>("GET", "/api/method-proposals"),
   keepProposal: (id: number) => request<{ name: string; approved: boolean }>("POST", "/api/method-proposals/keep", { id }),
   dismissProposal: (id: number) => request<{ dismissed: boolean }>("POST", "/api/method-proposals/dismiss", { id }),

@@ -22406,3 +22406,165 @@ fn sv264_files_attached_to_a_team_run_reach_every_expert_as_checked_data_and_nev
         "{q}"
     );
 }
+
+fn catalog_bytes(seed: u8, issued: i64, not_after: i64, packs: &[(&str, &str, &str)]) -> String {
+    let signer = kk_evidence::keys::Signer::from_seed([seed; 32]);
+    let list: Vec<Value> = packs
+        .iter()
+        .map(|(name, version, pack)| json!({"name": name, "pack_version": version, "description": format!("The {name} pack."), "file": format!("{name}-{version}.kkp"), "sha256": kk_evidence::capsule::sha256_hex(pack.as_bytes()), "methods": ["m-one"]}))
+        .collect();
+    let draft = json!({"format": "kakurega-catalog", "version": 1, "issued": issued, "not_after": not_after, "packs": list});
+    kk_packs::catalog::sign_catalog(&draft, &signer, 1_000).unwrap()
+}
+
+#[test]
+fn sv265_a_signed_catalog_lists_a_publishers_packs_and_only_the_exact_listed_file_imports_through_it(
+) {
+    let (c, w, _seen, _root) = instructions_service("packs-catalog");
+    let far = 4_000_000_000;
+    let legal = pack_bytes(1, "legal-kit", "1.0.0", vec!["contract-check"], far);
+    let notes = pack_bytes(1, "notes-kit", "2.1.0", vec!["meeting-notes"], far);
+    let catalog = catalog_bytes(
+        1,
+        2_000,
+        far,
+        &[
+            ("legal-kit", "1.0.0", &legal),
+            ("notes-kit", "2.1.0", &notes),
+        ],
+    );
+    assert_eq!(
+        Web::new(c.addr)
+            .post("/api/packs/catalog", json!({"catalog": catalog}))
+            .0,
+        401
+    );
+    // before the publisher is pinned the catalog is nobody's
+    let (s, v) = w.post("/api/packs/catalog", json!({"catalog": catalog}));
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("PACK_REFUSED")),
+        "{v}"
+    );
+    assert!(
+        v["error"]["message"].as_str().unwrap().contains("catalog"),
+        "{v}"
+    );
+    pin_publisher(&w, 1, "Legal team");
+    let (s, v) = w.post("/api/packs/catalog", json!({"catalog": catalog}));
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["publisher"], "Legal team");
+    let states: Vec<(String, String)> = v["packs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            (
+                p["name"].as_str().unwrap().to_string(),
+                p["state"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        states,
+        [
+            ("legal-kit".to_string(), "new".to_string()),
+            ("notes-kit".to_string(), "new".to_string())
+        ]
+    );
+    assert!(
+        w.get("/api/methods").1["methods"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "reading a catalog imports nothing"
+    );
+
+    // a pack the same publisher signed but the catalog does not list (another version) is refused through the catalog
+    let other = pack_bytes(1, "legal-kit", "1.0.1", vec!["contract-check"], far);
+    let (s, v) = w.post(
+        "/api/packs/import",
+        json!({"pack": other, "catalog": catalog}),
+    );
+    assert_eq!(s, 422, "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not one the catalog lists"),
+        "{v}"
+    );
+    // a catalog entry whose digest is the file of ANOTHER pack: the name must agree too
+    let crossed = catalog_bytes(1, 2_001, far, &[("legal-kit", "1.0.0", &notes)]);
+    let (s, v) = w.post(
+        "/api/packs/import",
+        json!({"pack": notes, "catalog": crossed}),
+    );
+    assert_eq!(s, 422, "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("another name"),
+        "{v}"
+    );
+    assert!(w.get("/api/methods").1["methods"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
+    // the exact listed file imports, unapproved, and the catalog then says so
+    let newer = catalog_bytes(
+        1,
+        2_002,
+        far,
+        &[
+            ("legal-kit", "1.0.0", &legal),
+            ("notes-kit", "2.1.0", &notes),
+        ],
+    );
+    let (s, v) = w.post(
+        "/api/packs/import",
+        json!({"pack": legal, "catalog": newer}),
+    );
+    assert_eq!(
+        (s, v["imported"].clone()),
+        (200, json!(["contract-check"])),
+        "{v}"
+    );
+    let m = w.get("/api/methods").1["methods"].clone();
+    assert_eq!(m[0]["approved"], json!(false), "{m}");
+    let v = w.post("/api/packs/catalog", json!({"catalog": newer})).1;
+    assert_eq!(v["packs"][0]["state"], "imported", "{v}");
+    assert_eq!(v["packs"][1]["state"], "new", "{v}");
+
+    // an earlier list from the same publisher is refused from now on, an expired one always, another publisher's too
+    let (s, v) = w.post("/api/packs/catalog", json!({"catalog": catalog}));
+    assert_eq!(s, 422, "{v}");
+    assert!(
+        v["error"]["message"].as_str().unwrap().contains("older"),
+        "{v}"
+    );
+    let expired = catalog_bytes(1, 2_003, 2_004, &[("legal-kit", "1.0.0", &legal)]);
+    assert_eq!(
+        w.post("/api/packs/catalog", json!({"catalog": expired})).0,
+        422
+    );
+    let foreign = catalog_bytes(9, 9_000, far, &[("legal-kit", "1.0.0", &legal)]);
+    assert_eq!(
+        w.post("/api/packs/catalog", json!({"catalog": foreign})).0,
+        422
+    );
+    // a catalog with a higher version of what is imported says so
+    let legal2 = pack_bytes(1, "legal-kit", "1.1.0", vec!["contract-check-2"], far);
+    let update = catalog_bytes(1, 2_010, far, &[("legal-kit", "1.1.0", &legal2)]);
+    let v = w.post("/api/packs/catalog", json!({"catalog": update})).1;
+    assert_eq!(
+        (
+            v["packs"][0]["state"].as_str(),
+            v["packs"][0]["have"].as_str()
+        ),
+        (Some("update_available"), Some("1.0.0")),
+        "{v}"
+    );
+}
