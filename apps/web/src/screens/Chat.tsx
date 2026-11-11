@@ -813,19 +813,20 @@ export function Chat() {
     <section class="stack wide" aria-labelledby="h-chat">
       <h1 id="h-chat">{t("chat.title")}</h1>
       <Show when={tabs().length > 0}>
-        <div class="chat-tabs" role="tablist" aria-label={t("chat.tabs")}>
+        {/* a row of buttons, not a tab list: each has a close button beside it, which a tab list may not hold */}
+        <nav class="chat-tabs" aria-label={t("chat.tabs")}>
           <For each={tabs()}>
             {(id) => (
               <span class={session() === id ? "chat-tab active" : "chat-tab"}>
-                <button type="button" role="tab" aria-selected={session() === id} disabled={busy()} onClick={() => { if (session() !== id) void openKept(id); }}>{tabTitle(id)}</button>
+                <button type="button" class="chat-tab-open" aria-current={session() === id ? "true" : undefined} disabled={busy()} onClick={() => { if (session() !== id) void openKept(id); }}>{tabTitle(id)}</button>
                 <button type="button" class="linklike" disabled={busy()} aria-label={t("chat.tabClose", { title: tabTitle(id) })} onClick={() => closeTab(id)}>×</button>
               </span>
             )}
           </For>
           <span class={session() === null ? "chat-tab active" : "chat-tab"}>
-            <button type="button" role="tab" aria-selected={session() === null} disabled={busy()} onClick={() => { if (session() !== null) show(null, []); }}>{t("chat.newChat")}</button>
+            <button type="button" class="chat-tab-open" aria-current={session() === null ? "true" : undefined} disabled={busy()} onClick={() => { if (session() !== null) show(null, []); }}>{t("chat.newChat")}</button>
           </span>
-        </div>
+        </nav>
       </Show>
       <p class="lead">{t("chat.lead")}</p>
       <p class="muted">{session() ? t("chat.noteKept") : t("chat.note")}</p>

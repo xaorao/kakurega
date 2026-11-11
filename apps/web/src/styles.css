@@ -436,5 +436,5 @@ pre.wrap, code.wrap { white-space: pre-wrap; overflow-wrap: anywhere; word-break
 .chat-tabs { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
 .chat-tab { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--paper); max-width: 240px; }
 .chat-tab.active { border-color: var(--ink); }
-.chat-tab button[role="tab"] { border: 0; background: none; padding: 6px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+.chat-tab .chat-tab-open { border: 0; background: none; padding: 6px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
 .chat-tab .linklike { text-decoration: none; padding: 0 8px 0 0; font-size: 16px; }
