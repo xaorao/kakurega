@@ -6,6 +6,7 @@ use nearai_inference_sdk::{
 };
 use std::fmt;
 
+pub mod release;
 pub mod route;
 
 pub use nearai_inference_sdk as sdk;
@@ -16,6 +17,8 @@ pub struct NearPolicy {
     pub require_gpu: bool,
     pub allowed_compose_hashes: Option<Vec<String>>,
     pub allowed_os_image_hashes: Option<Vec<String>>,
+    /// What to do with the check that the deployment's images were built by NEAR's public workflows.
+    pub release: release::ReleaseRule,
 }
 
 impl Default for NearPolicy {
@@ -25,6 +28,7 @@ impl Default for NearPolicy {
             require_gpu: true,
             allowed_compose_hashes: None,
             allowed_os_image_hashes: None,
+            release: release::ReleaseRule::default(),
         }
     }
 }
@@ -39,6 +43,8 @@ pub struct RouteAttestation {
     pub compose_hash: Option<String>,
     pub os_image_hash: Option<String>,
     pub nonce: String,
+    /// Whether the images were built by NEAR's public workflows; `None` when the check is off.
+    pub release: Option<release::ReleaseCheck>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,6 +120,7 @@ pub fn judge(
         compose_hash: m.compose_hash.clone(),
         os_image_hash: m.os_image_hash.clone(),
         nonce: nonce.to_string(),
+        release: None,
     })
 }
 
@@ -142,6 +149,13 @@ pub async fn attest_model(
     };
     let mut out = Vec::new();
     for att in &fetched.attestations {
+        let (verifier, outcomes) =
+            release::ReleaseVerifier::new(release::Part::Model, policy.release);
+        let deployment: Option<&dyn nearai_inference_sdk::DeploymentVerifier> = match policy.release
+        {
+            release::ReleaseRule::Off => None,
+            _ => Some(&*verifier),
+        };
         let v = verify_model_attestation(
             att,
             &fetched.client_binding,
@@ -149,14 +163,15 @@ pub async fn attest_model(
             ModelAttestationVerifiers {
                 tdx_quote: Some(&tdx),
                 gpu_evidence: Some(&gpu),
-                ..Default::default()
+                deployment,
             },
         )
         .await
         .map_err(|e| NearError::Verification(format!("{e:?}")))?;
-        out.push(
-            judge(model, &fetched.client_binding.nonce, &v, policy).map_err(NearError::Policy)?,
-        );
+        let mut judged =
+            judge(model, &fetched.client_binding.nonce, &v, policy).map_err(NearError::Policy)?;
+        judged.release = release::latest(&outcomes);
+        out.push(judged);
     }
     Ok(out)
 }
@@ -174,6 +189,8 @@ pub struct GatewayProof {
     pub tls_bound: bool,
     pub tls_fingerprint: Option<String>,
     pub nonce: String,
+    /// Whether the gateway's images were built by NEAR's public workflows; `None` when the check is off.
+    pub release: Option<release::ReleaseCheck>,
 }
 
 /// Fetches fresh Gateway evidence with a random challenge, records the TLS peer of that request, verifies the Intel
@@ -185,6 +202,12 @@ pub async fn attest_gateway(policy: &NearPolicy) -> Result<GatewayProof, NearErr
         .await
         .map_err(|e| NearError::Fetch(format!("{e:?}")))?;
     let tdx = DefaultTdxQuoteVerifier::default();
+    let (verifier, outcomes) =
+        release::ReleaseVerifier::new(release::Part::Gateway, policy.release);
+    let deployment: Option<&dyn nearai_inference_sdk::DeploymentVerifier> = match policy.release {
+        release::ReleaseRule::Off => None,
+        _ => Some(&*verifier),
+    };
     let v = verify_gateway_attestation(
         &fetched.attestation,
         &fetched.client_binding,
@@ -193,7 +216,7 @@ pub async fn attest_gateway(policy: &NearPolicy) -> Result<GatewayProof, NearErr
         }),
         AttestationVerifiers {
             tdx_quote: Some(&tdx),
-            deployment: None,
+            deployment,
         },
     )
     .await
@@ -218,5 +241,6 @@ pub async fn attest_gateway(policy: &NearPolicy) -> Result<GatewayProof, NearErr
         tls_bound,
         tls_fingerprint: fp,
         nonce: fetched.client_binding.nonce.clone(),
+        release: release::latest(&outcomes),
     })
 }

@@ -864,6 +864,7 @@ export function Chat() {
                   <ul class="plain">
                     <li>{t("proof.tcb", { v: d().tcb })}</li>
                     <li>{d().tls_bound ? t("proof.tlsYes") : t("proof.tlsNo")}</li>
+                    <Show when={d().release}>{(r) => <li>{r().result === "verified" ? t("proof.releaseYes") : t("proof.releaseOpen", { why: r().reason ?? "" })}</li>}</Show>
                     <li>{t("proof.signer")} <code>{d().signer}</code></li>
                     <li>{t("proof.nonce")} <code>{d().nonce}</code></li>
                   </ul>
@@ -885,6 +886,7 @@ export function Chat() {
                   <ul class="plain">
                     <li>{t("proof.tcb", { v: d.tcb })}</li>
                     <li>{d.gpu_verified ? t("proof.gpuYes") : t("proof.gpuNo")}</li>
+                    <Show when={d.release}>{(r) => <li>{r().result === "verified" ? t("proof.releaseYes") : t("proof.releaseOpen", { why: r().reason ?? "" })}</li>}</Show>
                     <li>{t("proof.signer")} <code>{d.signer}</code></li>
                     <Show when={d.compose_hash}><li>{t("proof.compose")} <code>{d.compose_hash}</code></li></Show>
                     <li>{t("proof.nonce")} <code>{d.nonce}</code></li>

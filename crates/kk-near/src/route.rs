@@ -4,6 +4,7 @@
 //! must be the model's own, not the gateway's). The request is encrypted to the attested model key (end to end, with the reply
 //! key bound to the request); every answer leaves a receipt that a recipient can read.
 
+use crate::release::{self, Outcomes, Part, ReleaseRule, ReleaseVerifier};
 use crate::NearPolicy;
 use kk_route::{
     neutralised, ChatMessage, Completion, CompletionRequest, Route, RouteClass, RouteError,
@@ -31,6 +32,8 @@ pub struct NearRoute {
     /// Whether an answer signed by the gateway (and not by the model's hardware) may be given. Never for data this route is
     /// allowed to carry above internal.
     require_model_signature: bool,
+    /// What the build-record check found for the gateway and for the model, when the check is on.
+    release: Option<(Outcomes, Outcomes)>,
 }
 
 /// What a verified route needs to start: where it is, the account's key (read from the environment by the caller, never stored
@@ -45,7 +48,26 @@ pub struct NearConfig {
 /// The SDK options this product uses for a configuration: end-to-end encryption on, the gateway pinned to its attested TLS key, the
 /// hardware policy applied to the gateway and the model.
 pub fn client_options(c: &NearConfig) -> InferenceClientOptions {
+    client_options_with_release(c).0
+}
+
+/// The same options, with the handles that say what the build-record check found.
+pub fn client_options_with_release(
+    c: &NearConfig,
+) -> (InferenceClientOptions, Option<(Outcomes, Outcomes)>) {
     let policy = &c.policy;
+    let (gateway_release, model_release, outcomes) = match policy.release {
+        ReleaseRule::Off => (None, None, None),
+        rule => {
+            let (g, go) = ReleaseVerifier::new(Part::Gateway, rule);
+            let (m, mo) = ReleaseVerifier::new(Part::Model, rule);
+            (
+                Some(g as Arc<dyn nearai_inference_sdk::DeploymentVerifier>),
+                Some(m as Arc<dyn nearai_inference_sdk::DeploymentVerifier>),
+                Some((go, mo)),
+            )
+        }
+    };
     let tdx = Arc::new(DefaultTdxQuoteVerifier::default());
     let gpu = Arc::new(NrasGpuEvidenceVerifier::default());
     let mut o = InferenceClientOptions {
@@ -58,7 +80,7 @@ pub fn client_options(c: &NearConfig) -> InferenceClientOptions {
                 accepted_tcb_statuses: Some(policy.accepted_tcb.clone()),
             }),
             tdx_quote: Some(tdx.clone()),
-            deployment: None,
+            deployment: gateway_release,
         },
         model_verification: ModelVerificationOptions {
             policy: Some(ModelAttestationPolicy {
@@ -71,19 +93,22 @@ pub fn client_options(c: &NearConfig) -> InferenceClientOptions {
             }),
             tdx_quote: Some(tdx),
             gpu_evidence: Some(gpu),
-            deployment: None,
+            deployment: model_release,
         },
         ..Default::default()
     };
     if let Some(u) = &c.base_url {
         o.base_url = u.clone();
     }
-    o
+    (o, outcomes)
 }
 
 impl NearRoute {
     pub fn new(c: NearConfig) -> Result<NearRoute, RouteError> {
-        Self::with_options(client_options(&c), &c.model)
+        let (options, outcomes) = client_options_with_release(&c);
+        let mut route = Self::with_options(options, &c.model)?;
+        route.release = outcomes;
+        Ok(route)
     }
 
     /// The same route over caller-built client options: the tests point it at a local fixture gateway with fixture verifiers.
@@ -114,6 +139,7 @@ impl NearRoute {
             rt,
             last: Mutex::new(None),
             require_model_signature: true,
+            release: None,
         })
     }
 
@@ -131,7 +157,22 @@ impl NearRoute {
             .rt
             .block_on(self.client.verify(&self.model))
             .map_err(|e| RouteError::NotVerified(describe(&e)))?;
-        Ok(deployment_json(&r))
+        let mut proven = deployment_json(&r);
+        if let Some((gateway, model)) = &self.release {
+            proven["release"] = json!({
+                "gateway": release_json(release::latest(gateway)),
+                "model": release_json(release::latest(model)),
+            });
+        }
+        Ok(proven)
+    }
+}
+
+/// How a build-record result is written into a receipt: the word, and the reason when there is one.
+pub fn release_json(found: Option<release::ReleaseCheck>) -> Value {
+    match found {
+        None => Value::Null,
+        Some(c) => json!({"result": c.word(), "reason": c.reason()}),
     }
 }
 

@@ -2775,6 +2775,7 @@ dependencies = [
 name = "kk-near"
 version = "0.0.1"
 dependencies = [
+ "async-trait",
  "kk-near-fixture",
  "kk-route",
  "kk-types",

@@ -5584,6 +5584,7 @@ async fn route_attest(axum::Extension(svc): Svc, Json(b): Json<AttestBody>) -> R
                 "deployments": list.iter().map(|a| json!({
                     "signer": a.signer_address, "tcb": a.tcb_status, "advisories": a.advisories, "gpu_verified": a.gpu_verified,
                     "compose_hash": a.compose_hash, "os_image_hash": a.os_image_hash, "nonce": a.nonce,
+                    "release": kk_near::route::release_json(a.release.clone()),
                 })).collect::<Vec<_>>()
             }))
             .into_response()
@@ -5630,13 +5631,15 @@ async fn route_gateway(axum::Extension(svc): Svc) -> Response {
             );
             Json(json!({
                 "verified": true, "checked_at": now(),
-                "gateway": {"signer": g.signer_address, "tcb": g.tcb_status, "advisories": g.advisories, "compose_hash": g.compose_hash, "os_image_hash": g.os_image_hash, "tls_bound": g.tls_bound, "tls_fingerprint": g.tls_fingerprint, "nonce": g.nonce},
+                "gateway": {"signer": g.signer_address, "tcb": g.tcb_status, "advisories": g.advisories, "compose_hash": g.compose_hash, "os_image_hash": g.os_image_hash, "tls_bound": g.tls_bound, "tls_fingerprint": g.tls_fingerprint, "nonce": g.nonce, "release": kk_near::route::release_json(g.release.clone())},
                 "means": [
+                    if matches!(g.release, Some(kk_near::release::ReleaseCheck::Verified)) { "The gateway's own images carry signed build records from NEAR's public repositories and build workflows." } else { "Whether the gateway's images came from NEAR's public build was not established this time; nothing was shown to be wrong." },
                     "A fresh random challenge was answered by the gateway, so this is not a replay.",
                     "Intel TDX hardware vouched for the software the gateway runs, at an up-to-date patch level.",
                     if g.tls_bound { "The certificate used by this very connection is the one the verified software vouched for, so the encrypted channel ends inside it and not at a proxy in front of it." } else { "The report did not include a certificate binding, so only the software identity was checked, not where the encrypted channel ends." }
                 ],
                 "does_not_mean": [
+                    "A build record says where an image was built, not that the build can be reproduced or that every image is covered.",
                     "It does not prove what the gateway did with a particular request; signed answers do, and that check needs a NEAR API key.",
                     "It does not prove anything about the model servers behind the gateway; the model check does."
                 ]

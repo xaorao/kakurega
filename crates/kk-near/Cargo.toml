@@ -9,6 +9,7 @@ description = "NEAR AI Cloud verification: attestation of model deployments thro
 kk-types = { path = "../kk-types" }
 kk-route = { path = "../kk-route" }
 serde_json = "1"
+async-trait = "0.1"
 nearai-inference-sdk = "=0.3.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 

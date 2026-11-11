@@ -624,6 +624,8 @@ export const hi: Record<keyof typeof en, string> = {
   "proof.gateway": "NEAR AI Cloud गेटवे",
   "proof.tlsYes": "इस कनेक्शन का एन्क्रिप्शन सत्यापित सॉफ़्टवेयर के भीतर समाप्त होता है",
   "proof.tlsNo": "इस कनेक्शन का एन्क्रिप्शन कहाँ समाप्त होता है, यह जाँचा नहीं गया",
+  "proof.releaseYes": "इमेज NEAR के सार्वजनिक बिल्ड से बनी हैं: सत्यापित (हस्ताक्षरित बिल्ड रिकॉर्ड)",
+  "proof.releaseOpen": "इमेज NEAR के सार्वजनिक बिल्ड से बनी हैं: स्थापित नहीं ({why})",
   "setup.fixNow": "अभी ठीक करें",
   "setup.fixNote": "आपके स्थानीय Ollama से मॉडल डाउनलोड होता है। केवल मॉडल का नाम भेजा जाता है।",
   "setup.fixRunning": "काम चल रहा है: {d}",

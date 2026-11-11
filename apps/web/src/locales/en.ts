@@ -622,6 +622,8 @@ export const en = {
   "proof.gateway": "NEAR AI Cloud gateway",
   "proof.tlsYes": "This connection's encryption ends inside the verified software",
   "proof.tlsNo": "Where this connection's encryption ends was not checked",
+  "proof.releaseYes": "Images built by NEAR's public build: verified (signed build records)",
+  "proof.releaseOpen": "Images built by NEAR's public build: not established ({why})",
   "setup.fixNow": "Fix this now",
   "setup.fixNote": "Downloads the model through your local Ollama. Only the model name is sent.",
   "setup.fixRunning": "Working: {d}",

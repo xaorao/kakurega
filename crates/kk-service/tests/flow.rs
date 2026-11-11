@@ -3933,12 +3933,13 @@ impl kk_service::service::Attester for FakeAttester {
             tls_bound: true,
             tls_fingerprint: Some("fp".into()),
             nonce: "gwnonceM3".into(),
+            release: Some(kk_near::release::ReleaseCheck::Verified),
         })
     }
 
     fn attest(&self, model: &str) -> Result<Vec<kk_near::RouteAttestation>, String> {
         match model {
-            "good/model" => Ok(vec![kk_near::RouteAttestation { model: model.into(), signer_address: "0xsignerQ7".into(), tcb_status: "UpToDate".into(), advisories: vec![], gpu_verified: true, compose_hash: Some("c0".into()), os_image_hash: None, nonce: "nonceZ9".into() }]),
+            "good/model" => Ok(vec![kk_near::RouteAttestation { model: model.into(), signer_address: "0xsignerQ7".into(), tcb_status: "UpToDate".into(), advisories: vec![], gpu_verified: true, compose_hash: Some("c0".into()), os_image_hash: None, nonce: "nonceZ9".into(), release: Some(kk_near::release::ReleaseCheck::NotEstablished("the last recorded deployment action did not include nearaidev/vllm-proxy-rs".into())) }]),
             "old/model" => Err("attestation verified but the route policy refuses it: TcbNotAccepted(\"OutOfDate\")".into()),
             _ => Err("could not fetch the attestation: network unreachable".into()),
         }
@@ -3992,6 +3993,25 @@ fn sv30_the_model_proof_check_reports_what_was_verified_what_it_does_not_mean_an
         ok["means"].as_array().unwrap().len() == 4
             && ok["does_not_mean"].to_string().contains("API key"),
         "the limits are stated next to the result"
+    );
+    assert_eq!(
+        (
+            ok["deployments"][0]["release"]["result"].as_str(),
+            ok["deployments"][0]["release"]["reason"]
+                .as_str()
+                .map(|r| r.contains("vllm-proxy-rs"))
+        ),
+        (Some("not_established"), Some(true)),
+        "an open build-record question is shown as open, with its reason, never as verified"
+    );
+    let (st, gw) = w.post("/api/route/gateway", json!({}));
+    assert_eq!(st, 200, "{gw}");
+    assert!(
+        gw["gateway"]["release"]["result"] == "verified"
+            && gw["gateway"]["release"]["reason"].is_null()
+            && gw["means"].to_string().contains("signed build records")
+            && gw["does_not_mean"].to_string().contains("reproduced"),
+        "the gateway's build-record result is shown with what it does and does not establish: {gw}"
     );
     svc.set_attest_cooldown(std::time::Duration::from_secs(60));
     let (st, again) = w.post("/api/route/attest", json!({"model": "good/model"}));
@@ -4056,6 +4076,13 @@ fn sv31_live_the_real_model_proof_check_verifies_a_real_confidential_model_throu
     assert!(
         g["gateway"]["tls_bound"] == true && g["gateway"]["tcb"] == "UpToDate",
         "{g}"
+    );
+    assert!(
+        g["gateway"]["release"]["result"] == "verified"
+            && g["gateway"]["release"]["reason"].is_null()
+            && g["means"].to_string().contains("signed build records")
+            && g["does_not_mean"].to_string().contains("reproduced"),
+        "the build-record result is shown with what it does and does not establish: {g}"
     );
     let (st, bad) = w.post("/api/route/attest", json!({"model": "no/such-model-9f3a"}));
     assert_eq!((st, bad["verified"].clone()), (422, json!(false)), "{bad}");

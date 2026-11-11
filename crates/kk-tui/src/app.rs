@@ -5717,6 +5717,17 @@ impl App {
                         "Fresh challenge: {}",
                         clean(d["nonce"].as_str().unwrap_or("?"))
                     ));
+                    match d["release"]["result"].as_str() {
+                        Some("verified") => lines.push(
+                            "Images built by NEAR's public build: verified (signed build records)"
+                                .into(),
+                        ),
+                        Some(_) => lines.push(format!(
+                            "Images built by NEAR's public build: not established ({})",
+                            clean(d["release"]["reason"].as_str().unwrap_or("no reason given"))
+                        )),
+                        None => {}
+                    }
                 }
                 lines.push(String::new());
                 lines.push("What this shows:".into());
