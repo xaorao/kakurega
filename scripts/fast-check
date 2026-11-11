@@ -3,7 +3,7 @@
 #   scripts/fast-check            checks the working tree against HEAD
 #   scripts/fast-check --staged   checks what is staged
 # Format, then lint and tests of only the crates that changed, the web checks when the web app changed, and the guards that are
-# cheap (secrets, layers, error text, documentation claims). A change in a high-risk crate stops here and asks for the full gate.
+# cheap (secrets, layers, error text, documentation claims). A change in a high-risk crate stops here until its deep suites, hostile cases and mutation checks have passed (DEEP_DONE=1); the full gate runs once per batch and before every push.
 set -eu
 cd "$(dirname "$0")/.."
 if [ "${1:-}" = "--staged" ]; then files=$(git diff --cached --name-only); else files=$(git diff --name-only HEAD; git ls-files --others --exclude-standard); fi
@@ -14,8 +14,9 @@ risky=""
 for c in $crates; do for h in $HIGH; do [ "$c" = "$h" ] && risky="$risky $c"; done; done
 if [ -n "$risky" ]; then
   echo "HIGH-RISK change in:$risky"
-  echo "Run the deep suites for these crates and their hostile cases now, then the full gate before committing."
-  [ "${FULL_GATE_DONE:-}" = "1" ] || { echo "FAST STOP: set FULL_GATE_DONE=1 only after the full gate passed on this revision"; exit 3; }
+  echo "Batch rhythm: this commit needs these crates' deep suites, their hostile cases and mutation checks of the new safeguards now."
+  echo "The full gate runs once for the batch, and always before a push."
+  [ "${DEEP_DONE:-}" = "1" ] || [ "${FULL_GATE_DONE:-}" = "1" ] || { echo "FAST STOP: set DEEP_DONE=1 once the deep suites, hostile cases and mutation checks for these crates passed"; exit 3; }
 fi
 echo "== format"; cargo fmt --all -- --check
 # every test's output is kept, so a failure that does not come back on the next run can still be named
