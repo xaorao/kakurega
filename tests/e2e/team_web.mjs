@@ -209,7 +209,7 @@ if (!real) {
   await page.locator("#team-files").setInputFiles(notes);
   const list = page.getByRole("list", { name: "Files for this run" });
   await list.getByText("billing-notes.txt").waitFor({ timeout: long });
-  check(/1 line\(s\) with a key withheld/.test(await list.innerText()), "a file attached for the run is listed, and says a line with a key is withheld");
+  check(/1 line with a key withheld/.test(await list.innerText()), "a file attached for the run is listed, and says a line with a key is withheld");
   await list.getByRole("button", { name: "Remove" }).click();
   check((await list.count()) === 0, "it can be removed again before planning");
   await page.locator("#team-files").setInputFiles(notes);

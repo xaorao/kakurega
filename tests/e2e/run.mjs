@@ -362,7 +362,7 @@ try {
   const beforeFilter = await page.locator(".tree button.row").count();
   await page.getByLabel("Filter files").fill("SESSION");
   const afterFilter = await page.locator(".tree button.row").count();
-  check("typing in the filter keeps the files whose path has the word, in any case, and says how many", (await page.getByTitle("payments/auth/session.py").count()) === 1 && afterFilter >= 1 && afterFilter < beforeFilter && /^\d+ file\(s\)$/.test(await page.locator("[role=status]", { hasText: "file(s)" }).first().innerText()), `before ${beforeFilter} after ${afterFilter}`);
+  check("typing in the filter keeps the files whose path has the word, in any case, and says how many", (await page.getByTitle("payments/auth/session.py").count()) === 1 && afterFilter >= 1 && afterFilter < beforeFilter && /^\d+ files?$/.test(await page.locator("[role=status]", { hasText: /^\d+ files?$/ }).first().innerText()), `before ${beforeFilter} after ${afterFilter}`);
   await page.getByLabel("Filter files").fill("zzz-no-such-file");
   await page.getByText("No file has all of those words in its path.").waitFor();
   check("a filter that matches nothing says so", (await page.locator(".tree button.row").count()) === 0);
@@ -516,7 +516,7 @@ try {
     await page.route("**/api/memories/mem-held-1/release-hold", (r) => { calls.push("release"); held = []; r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ released: true }) }); });
     await page.route("**/api/memories/mem-held-1/forget", (r) => { calls.push("forget"); held = []; r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ forgotten: true, copies_known: { reviews: [], exports: [], conversations: [{ id: "chat-held-copy", why: "text" }], conversations_more: 0, prompt_history: 0, search_complete: true } }) }); });
     await page.reload();
-    const heldBox = page.getByRole("region", { name: "1 note(s) held back" });
+    const heldBox = page.getByRole("region", { name: "1 note held back" });
     await heldBox.waitFor();
     check("notes a newer check held back are listed apart, with the kind of secret and what the owner can do", (await heldBox.innerText()).includes("looks like: github token") && (await heldBox.getByRole("button", { name: "This is not a secret" }).count()) === 1 && (await heldBox.innerText()).includes("kept out of every answer"));
     await axeCheck(page, "memory with a held note");
@@ -526,7 +526,7 @@ try {
     check("saying it is not a secret offers it again and the section goes away", calls.join() === "release");
     held = [{ id: "mem-held-1", text: "Deploy notes, token abc (held for the test)", kind: "github token", project: null, created_at: 1700000000 }];
     await page.reload();
-    const again = page.getByRole("region", { name: "1 note(s) held back" });
+    const again = page.getByRole("region", { name: "1 note held back" });
     await again.waitFor();
     await again.getByRole("button", { name: "Forget" }).click();
     check("forgetting asks first and sends nothing until it is confirmed", calls.join() === "release" && (await again.getByText("Forget this for good?").count()) === 1);
@@ -888,7 +888,7 @@ try {
   const privacyText = await page.locator("main").innerText();
   const wanted = ["Test mode: replies are scripted", "No tool that acts is open", "stored encrypted on this computer"];
   const missing = wanted.filter((w) => !privacyText.includes(w));
-  check("the page reads the real service: test mode, the acting tools closed, notes counted and stored encrypted", missing.length === 0 && /\d+ note\(s\), stored encrypted/.test(privacyText), `missing: ${JSON.stringify(missing)}; text: ${privacyText.replace(/\s+/g, " ").slice(0, 700)}`);
+  check("the page reads the real service: test mode, the acting tools closed, notes counted and stored encrypted", missing.length === 0 && /\d+ notes?, stored encrypted/.test(privacyText), `missing: ${JSON.stringify(missing)}; text: ${privacyText.replace(/\s+/g, " ").slice(0, 700)}`);
   check("each door says whether it is open (search, Telegram, extension) in one of its two plain forms", (privacyText.includes("Search is off") || privacyText.includes("Search is on")) && (privacyText.includes("No chat is paired") || privacyText.includes("A chat is paired")) && (privacyText.includes("No extension is paired") || privacyText.includes("An extension is paired")));
   const live = await page.evaluate(async () => (await fetch("/api/privacy")).json());
   check("every card agrees with what the service reports right now", privacyText.includes(live.search.on ? "Search is on" : "Search is off") && privacyText.includes(live.telegram.on ? "A chat is paired" : "No chat is paired") && privacyText.includes(live.extension.on ? "An extension is paired" : "No extension is paired") && privacyText.includes(live.approvals.signing_key_enrolled ? "signed with a key" : "No signing key is enrolled") && privacyText.includes(live.agents.tools_open.length ? "open to agents right now: " : "No tool that acts is open") && (!live.search.on || privacyText.includes(live.search.host)), JSON.stringify(live));
@@ -1117,10 +1117,10 @@ try {
   await page.waitForTimeout(300);
   check("Enter that confirms an input-method composition does not send the message", (await page.locator(".msg").count()) === 0);
   await page.getByLabel("Your message").press("Enter");
-  await page.getByText("note(s) used").first().waitFor();
+  await page.getByText(/notes? used/).first().waitFor();
   await page.waitForLoadState("load");
   const reply = await page.locator(".msg.assistant").innerText();
-  check("Enter sends and an answer appears marked as a test model with the notes used", reply.includes("[test model]") && reply.includes("Test model") && /1 note\(s\) used/.test(reply), reply.replace(/\n/g, " | ").slice(0, 500));
+  check("Enter sends and an answer appears marked as a test model with the notes used", reply.includes("[test model]") && reply.includes("Test model") && /1 note used/.test(reply), reply.replace(/\n/g, " | ").slice(0, 500));
   check("the footer shows how much of the model's window the conversation used, as an estimate for the test model", /about \d+ of 16384 tokens of context used \(\d+%\)/.test(reply), reply.replace(/\n/g, " | ").slice(0, 400));
   check("the footer says about how long the answer is and how long it took", /answer: about \d+ tokens in \d+(\.\d)? (ms|s)/.test(reply), reply.replace(/\n/g, " | ").slice(0, 400));
   await page.locator(".msg.assistant").getByText("Notes used for this answer (1)").click();
@@ -1205,7 +1205,7 @@ try {
   const similar = page.locator("details", { hasText: "Notes that say almost the same thing" });
   await similar.getByRole("button", { name: /^Keep / }).first().click();
   await page.getByText("No notes say almost the same thing.").waitFor();
-  check("merging keeps one copy and the group is gone", (await page.getByText("1 note(s) merged", { exact: false }).count()) >= 1 && (await page.locator(".mem", { hasText: "Quibblex invoices are rounded half up" }).count()) === 1);
+  check("merging keeps one copy and the group is gone", (await page.getByText("1 note merged", { exact: false }).count()) >= 1 && (await page.locator(".mem", { hasText: "Quibblex invoices are rounded half up" }).count()) === 1);
   await page.getByText("Merged notes", { exact: true }).click();
   await page.getByRole("button", { name: "Bring back" }).waitFor();
   check("the merged copy is listed under Merged notes with its words intact", (await page.getByRole("button", { name: "Bring back" }).count()) === 1 && (await page.getByText("Quibblex invoices are rounded half up in all reports").count()) >= 2);
@@ -1268,16 +1268,16 @@ try {
   check("the chat says what the project field does", await page.getByText("Notes you saved for this project are offered in this conversation").isVisible());
   await page.getByLabel("Your message").fill("Zorblax rounding");
   await page.getByLabel("Your message").press("Enter");
-  await page.getByText("0 note(s) used").first().waitFor();
+  await page.getByText("0 notes used").first().waitFor();
   const withoutProject = await page.locator(".msg.assistant").first().innerText();
-  check("a conversation with no project does not get a project's note", /0 note\(s\) used/.test(withoutProject) && !withoutProject.includes("project kestrel"), withoutProject.replace(/\n/g, " | ").slice(0, 300));
+  check("a conversation with no project does not get a project's note", /0 notes used/.test(withoutProject) && !withoutProject.includes("project kestrel"), withoutProject.replace(/\n/g, " | ").slice(0, 300));
   await page.getByLabel("Project (optional)").fill("kestrel");
   await page.getByLabel("Your message").fill("Zorblax rounding");
   await page.getByLabel("Your message").press("Enter");
   await page.locator(".msg.assistant").nth(1).waitFor();
-  await page.getByText("1 note(s) used").last().waitFor();
+  await page.getByText("1 note used").last().waitFor();
   const withProject = await page.locator(".msg.assistant").nth(1).innerText();
-  check("naming the project brings its note and the answer says which project it used", /1 note\(s\) used/.test(withProject) && withProject.includes("project kestrel"), withProject.replace(/\n/g, " | ").slice(0, 300));
+  check("naming the project brings its note and the answer says which project it used", /1 note used/.test(withProject) && withProject.includes("project kestrel"), withProject.replace(/\n/g, " | ").slice(0, 300));
   await page.getByLabel("Project (optional)").scrollIntoViewIfNeeded();
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: join(shots, "13b-chat-project.png") });
@@ -1293,7 +1293,7 @@ try {
   await page.getByText("notes.txt", { exact: true }).waitFor();
   await page.getByText("locked.pdf could not be read: the file is protected by a password").waitFor();
   check("a Word file and a text file are read and listed with what they are; the locked PDF is refused with its reason", (await page.getByText("Word document", { exact: true }).count()) === 1 && (await page.getByText("text file", { exact: true }).count()) === 1 && (await page.locator(".file-chip").count()) === 2);
-  check("a line that reads like an instruction is flagged before anything is sent", (await page.getByText("1 passage(s) hold lines that read like instructions; those lines will not be given to the assistant.").count()) === 1);
+  check("a line that reads like an instruction is flagged before anything is sent", (await page.getByText("1 passage holds lines that read like instructions; those lines will not be given to the assistant.").count()) === 1);
   await page.locator(".file-chip", { hasText: "contract.docx" }).getByRole("button", { name: "What was read" }).click();
   await page.getByText("table 1, row 2, column 1").waitFor();
   check("What was read shows the passages with their places, as the assistant will get them", (await page.locator(".read-passages").getByText("Acme Corp", { exact: true }).count()) === 1);
@@ -1307,7 +1307,7 @@ try {
   await page.getByLabel("Your message").press("Enter");
   await page.locator(".msg.assistant").nth(answersBefore).getByRole("button", { name: "Copy", exact: true }).waitFor();
   const answer = await page.locator(".msg.assistant").nth(answersBefore).innerText();
-  check("the answer says how many files were read and that instruction-like lines were left out", /2 file\(s\) read/.test(answer) && /1 part\(s\) of the files left out because they read like instructions/.test(answer), answer.replace(/\n/g, " | ").slice(0, 300));
+  check("the answer says how many files were read and that instruction-like lines were left out", /2 files read/.test(answer) && /1 part of the files left out because it reads like instructions/.test(answer), answer.replace(/\n/g, " | ").slice(0, 300));
   check("your message shows which files went with it, and the files are not carried to the next message", (await page.getByText("Attached: contract.docx, notes.txt").count()) === 1 && (await page.locator(".file-chip").count()) === 0);
   // drop a file onto the message box, then remove it
   await page.evaluate(async () => {
@@ -1470,7 +1470,7 @@ try {
   check("Escape stops the reply being written and puts the message back in the box", (await page.locator(".msg").count()) === 0 && (await page.getByLabel("Your message").inputValue()) === "draftcanary unsent words");
   // sending with the button moves the cursor away; when the reply is done it is back in the box
   await page.getByRole("button", { name: "Send" }).click();
-  await page.getByText("note(s) used").first().waitFor();
+  await page.getByText(/notes? used/).first().waitFor();
   await page.getByRole("button", { name: "Stop" }).waitFor({ state: "detached" });
   check("after a reply the cursor is back in the message box", await page.evaluate(() => document.activeElement?.id === "chat-input"));
   // Up in an empty box brings back the last message sent from this page; Down returns to the empty box
@@ -1911,8 +1911,8 @@ try {
     await page.locator(".file-chip", { hasText: "scan.jpg" }).getByRole("button", { name: "What was read" }).click();
     await page.locator(".read-passages").getByText("Invoice 4471 total 1,280.00 EUR").waitFor();
     check("a picture of a document is read on this computer and its text is shown with where it came from", (await page.locator(".file-chip", { hasText: "scan.jpg" }).getByText("recognised from a picture by this computer and may contain mistakes").count()) === 1 && (await page.locator(".read-passages code", { hasText: "recognised text" }).count()) >= 1);
-    check("a picture that gives the assistant orders is flagged before anything is sent", (await page.locator(".file-chip", { hasText: "inject.png" }).getByText("hold lines that read like instructions").count()) === 1);
-    check("a picture holding a secret is flagged as one", (await page.locator(".file-chip", { hasText: "secret.png" }).getByText("hold what looks like a secret").count()) === 1);
+    check("a picture that gives the assistant orders is flagged before anything is sent", (await page.locator(".file-chip", { hasText: "inject.png" }).getByText(/holds? lines that read like instructions/).count()) === 1);
+    check("a picture holding a secret is flagged as one", (await page.locator(".file-chip", { hasText: "secret.png" }).getByText(/holds? what looks like a secret/).count()) === 1);
     await page.locator(".file-chip", { hasText: "mixed.pdf" }).getByRole("button", { name: "What was read" }).click();
     await page.locator(".read-passages code", { hasText: "page 2 (recognised)" }).waitFor();
     check("a PDF with a text page and a scanned page keeps both, the scanned one marked as recognised", (await page.locator(".read-passages code", { hasText: "page 1" }).count()) >= 1 && (await page.locator(".read-passages").getByText("Delivery on 14 March").count()) >= 1);
@@ -2212,7 +2212,7 @@ try {
   await page.getByRole("link", { name: "Chat" }).click();
   await page.getByLabel("Your message").fill("What is the rounding rule?");
   await page.getByLabel("Your message").press("Enter");
-  await page.getByText("note(s) used").first().waitFor();
+  await page.getByText(/notes? used/).first().waitFor();
   check("after removing them the answer no longer says so", !(await page.locator(".msg.assistant").innerText()).includes("your instructions applied"));
   await page.getByRole("button", { name: "Clear" }).click();
   await page.getByRole("link", { name: "Activity" }).click();
@@ -2421,7 +2421,7 @@ try {
   await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
   await page.getByText("Bring notes from another assistant").click();
   await page.getByLabel("Note files").setInputFiles([join(notesDir, "coffee.md"), join(notesDir, "order.txt"), join(notesDir, "key.md"), join(notesDir, "image.png"), join(notesDir, "USER.md"), join(notesDir, "style.mdc")]);
-  await page.getByText("6 note(s) will be saved:").waitFor();
+  await page.getByText("6 notes will be saved:").waitFor();
   const importPanel = await page.locator("#mem-import").innerText();
   check("the import card lists exactly the files that will be saved and says the others were skipped", importPanel.includes("coffee.md") && importPanel.includes("order.txt") && importPanel.includes("key.md") && importPanel.includes("image.png") && importPanel.includes("Skipped") && importPanel.includes("USER entry 2"));
   const requestsBeforeImport = requestOrigins.size;

@@ -199,6 +199,10 @@ fn serve(args: &[String]) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
     let code = companion.security.issue_pairing_code();
+    // looked up once now, on the side, so the first page that names the coding agent does not wait for its program to start
+    std::thread::spawn(|| {
+        crate::handoff::tool();
+    });
     println!("Kakurega is running.");
     println!(
         "  Open (valid 5 minutes, works once):  http://127.0.0.1:{}/#pair={}",

@@ -48,15 +48,30 @@ fn find() -> Option<PathBuf> {
 pub fn tool() -> Option<String> {
     static SEEN: std::sync::Mutex<Option<(std::time::Instant, Option<String>)>> =
         std::sync::Mutex::new(None);
-    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((at, found)) = seen.as_ref() {
-        if at.elapsed() < std::time::Duration::from_secs(60) {
-            return found.clone();
+    static REFRESHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let known = SEEN.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    match known {
+        Some((at, found)) => {
+            // an answer older than a minute is given as it is and looked up again on the side, so no page waits for it
+            if at.elapsed() >= std::time::Duration::from_secs(60)
+                && !REFRESHING.swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                std::thread::spawn(|| {
+                    let found = tool_now();
+                    *SEEN.lock().unwrap_or_else(|e| e.into_inner()) =
+                        Some((std::time::Instant::now(), found));
+                    REFRESHING.store(false, std::sync::atomic::Ordering::SeqCst);
+                });
+            }
+            found
+        }
+        None => {
+            let found = tool_now();
+            *SEEN.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some((std::time::Instant::now(), found.clone()));
+            found
         }
     }
-    let found = tool_now();
-    *seen = Some((std::time::Instant::now(), found.clone()));
-    found
 }
 
 fn tool_now() -> Option<String> {
