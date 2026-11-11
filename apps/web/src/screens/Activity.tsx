@@ -1,5 +1,6 @@
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError, type RoutePrice, type WorkItem } from "../api";
+import { LoadState } from "../components/LoadState";
 import { rich, t, type Key } from "../i18n";
 
 function label(kind: string): string {
@@ -13,7 +14,7 @@ const day = (secs: number) => new Date(secs * 1000).toISOString().slice(0, 10);
 
 /** The prices the owner typed for a million tokens read and written, per model route. This program knows no provider's prices. */
 function Prices(props: { routes: string[]; onChange: () => void }) {
-  const [list, { refetch }] = createResource(() => api.prices().then((r) => r.prices).catch(() => [] as RoutePrice[]));
+  const [list, { refetch }] = createResource(() => api.prices().then((r): RoutePrice[] | null => r.prices).catch(() => null));
   const [route, setRoute] = createSignal("");
   const [inp, setInp] = createSignal("");
   const [out, setOut] = createSignal("");
@@ -55,6 +56,7 @@ function Prices(props: { routes: string[]; onChange: () => void }) {
       </form>
       <Show when={msg()}><p role="status" class="ok">{msg()}</p></Show>
       <Show when={err()}><p role="alert" class="bad">{err()}</p></Show>
+      <Show when={list()} fallback={<LoadState loading={list.loading} retry={() => void refetch()} />}>
       <ul class="plain stack" aria-label={t("use.price.entered")}>
         <For each={list()} fallback={<li class="muted">{t("use.price.none")}</li>}>
           {(p) => (
@@ -66,6 +68,7 @@ function Prices(props: { routes: string[]; onChange: () => void }) {
           )}
         </For>
       </ul>
+      </Show>
     </details>
   );
 }
@@ -160,7 +163,7 @@ function WorkingNow() {
   return (
     <section class="card stack" id="working" aria-labelledby="h-work">
       <h2 id="h-work">{t("work.title")}</h2>
-      <Show when={work()} fallback={<p class="muted" role="status">{t("review.loading")}</p>}>
+      <Show when={work()} fallback={<LoadState loading={work.loading} retry={() => void refetch()} />}>
         {(w) => (
           <Show when={w().items.length > 0} fallback={<p class="muted" role="status">{t("work.none")}</p>}>
             <Show when={w().quiet > 0}><p role="status" class="chip warn">{t("work.quietCount", { n: w().quiet })}</p></Show>
@@ -187,14 +190,14 @@ function WorkingNow() {
 }
 
 export function Activity() {
-  const [log] = createResource(() => api.log());
+  const [log, { refetch }] = createResource(() => api.log().catch(() => null));
   return (
     <section class="stack wide" aria-labelledby="h-act">
       <h1 id="h-act">{t("act.title")}</h1>
       <p class="lead">{t("act.lead")}</p>
       <WorkingNow />
       <UsageCard />
-      <Show when={log()} fallback={<p class="muted">{t("review.loading")}</p>}>
+      <Show when={log()} fallback={<LoadState loading={log.loading} retry={() => void refetch()} />}>
         {(l) => (
           <>
             <div class="card stack">

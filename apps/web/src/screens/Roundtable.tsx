@@ -1,5 +1,6 @@
 import { createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError, streamRoundtable, type ExpertInfo, type RoundtableResolution } from "../api";
+import { LoadState } from "../components/LoadState";
 import { Markdown } from "../components/Markdown";
 import { t } from "../i18n";
 
@@ -18,7 +19,8 @@ function remembered(): string[] {
 
 /** One question to several experts, each answering alone, then a lead's resolution in four parts. */
 export function Roundtable() {
-  const [roster] = createResource(() => api.experts().catch(() => ({ experts: [] as ExpertInfo[], yours: [], min: 2, max: 5 })));
+  // a roster that could not be read is said so with a way to try again, not shown as an empty list
+  const [roster, { refetch: refetchRoster }] = createResource(() => api.experts().catch(() => null));
   // the built-in experts, then the owner's own approved methods, which can be asked as experts
   const everyone = createMemo<ExpertInfo[]>(() => [...(roster()?.experts ?? []), ...(roster()?.yours ?? []).map((y) => ({ ...y, group: t("rt.yours") }))]);
   const [picked, setPicked] = createSignal<string[]>(remembered());
@@ -110,7 +112,9 @@ export function Roundtable() {
       <form class="card stack" onSubmit={ask}>
         <fieldset class="rt-experts">
           <legend>{t("rt.choose", { min: min(), max: max() })}</legend>
-          <Show when={!roster.loading && groups().length === 0}><p role="alert" class="bad">{t("rt.noRoster")}</p></Show>
+          <Show when={roster()} fallback={<LoadState loading={roster.loading} retry={() => void refetchRoster()} />}>
+            <Show when={groups().length === 0}><p role="alert" class="bad">{t("rt.noRoster")}</p></Show>
+          </Show>
           <For each={groups()}>
             {(g) => (
               <div class="rt-group">

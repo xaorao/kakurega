@@ -1,3 +1,4 @@
+import { LoadState } from "../components/LoadState";
 import { takeHint } from "../components/SampleCard";
 import { visible } from "../visible";
 import { createResource, createSignal, For, Show } from "solid-js";
@@ -7,7 +8,7 @@ import { t, type Key } from "../i18n";
 
 /** What the meaning index keeps on this computer, and a way to forget all of it. */
 function MeaningIndex(props: { tick: number }) {
-  const [info, { refetch }] = createResource(() => props.tick, () => api.docIndex());
+  const [info, { refetch }] = createResource(() => props.tick, () => api.docIndex().catch(() => null));
   const [confirming, setConfirming] = createSignal(false);
   const [done, setDone] = createSignal("");
   const [problem, setProblem] = createSignal("");
@@ -26,7 +27,7 @@ function MeaningIndex(props: { tick: number }) {
     <section class="card stack" aria-labelledby="h-index">
       <h2 id="h-index">{t("docs.index.title")}</h2>
       <p class="muted">{t("docs.index.lead")}</p>
-      <Show when={info()}>
+      <Show when={info()} fallback={<LoadState loading={info.loading} retry={() => void refetch()} />}>
         {(i) => (
           <>
             <p>{i().vectors > 0 ? t("docs.index.count", { n: i().vectors, models: i().models.map((m) => m.model).join(", ") }) : t("docs.index.none")}</p>
@@ -53,7 +54,7 @@ function MeaningIndex(props: { tick: number }) {
 
 export function Documents() {
   const [dir, setDir] = createSignal<string | undefined>(takeHint("kk-docs-folder") ?? undefined);
-  const [listing] = createResource(() => dir() ?? "", (d) => api.fs(d || undefined));
+  const [listing, { refetch: refetchListing }] = createResource(() => dir() ?? "", (d) => api.fs(d || undefined).catch(() => null));
   const [question, setQuestion] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [asked, setAsked] = createSignal(0);
@@ -104,12 +105,18 @@ export function Documents() {
       <p class="lead">{t("docs.lead")}</p>
       <div class="card stack">
         <h2>{t("docs.step1")}</h2>
-        <p class="path" aria-live="polite">{chosen() || t("new.loading")}</p>
+        <p class="path" aria-live="polite">{chosen() || (listing.loading ? t("new.loading") : "")}</p>
         <div class="browser" role="group" aria-label={t("new.folders")}>
-          <Show when={listing()?.parent}>{(p) => <button class="row" onClick={() => setDir(p())}>{t("new.up")}</button>}</Show>
-          <For each={listing()?.dirs} fallback={<p class="muted">{listing.loading ? t("new.loadingFolders") : t("new.noFolders")}</p>}>
-            {(d) => <button class="row" onClick={() => setDir(d.path)}>{d.name}</button>}
-          </For>
+          <Show when={listing()} fallback={<LoadState loading={listing.loading} retry={() => void refetchListing()} />}>
+            {(l) => (
+              <>
+                <Show when={l().parent}>{(p) => <button class="row" onClick={() => setDir(p())}>{t("new.up")}</button>}</Show>
+                <For each={l().dirs} fallback={<p class="muted">{listing.loading ? t("new.loadingFolders") : t("new.noFolders")}</p>}>
+                  {(d) => <button class="row" onClick={() => setDir(d.path)}>{d.name}</button>}
+                </For>
+              </>
+            )}
+          </Show>
         </div>
       </div>
       <form class="card stack" onSubmit={ask}>

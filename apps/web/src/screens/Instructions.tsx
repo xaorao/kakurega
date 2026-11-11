@@ -1,5 +1,6 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError } from "../api";
+import { LoadState } from "../components/LoadState";
 import { t } from "../i18n";
 
 /** One box: the text, how much room is left, save and remove. An empty text removes the instruction. */
@@ -61,8 +62,13 @@ function NotesOnly(props: { project: string; on: boolean; onChanged: (message: s
 }
 
 export function Instructions() {
-  const [data, { refetch }] = createResource(() => api.instructions());
-  const [settings, { refetch: refetchSettings }] = createResource(() => api.projectSettings());
+  const [data, { refetch }] = createResource(() => api.instructions().catch(() => null));
+  // the switches are shown only once their state is known: a setting that could not be read must not look like "off"
+  const [settings, { refetch: refetchSettings }] = createResource(() => api.projectSettings().catch(() => null));
+  const retry = () => {
+    if (!data()) void refetch();
+    if (!settings()) void refetchSettings();
+  };
   const notesOnly = () => new Set((settings()?.projects ?? []).map((p) => p.project));
   // a project stays listed after its switch is turned off, so the confirmation is not removed from under the person
   const [touched, setTouched] = createSignal<string[]>([]);
@@ -77,7 +83,7 @@ export function Instructions() {
       <h1 id="h-ins">{t("ins.title")}</h1>
       <p class="lead">{t("ins.lead")}</p>
       <p class="muted">{t("ins.limits")}</p>
-      <Show when={data()} fallback={<p class="muted">{t("review.loading")}</p>}>
+      <Show when={settings() ? data() : null} fallback={<LoadState loading={data.loading || settings.loading} retry={retry} />}>
         {(d) => (
           <>
             <div class="card stack">

@@ -1,6 +1,7 @@
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError, type CodeTask as Task } from "../api";
 import { DiffView } from "../components/DiffView";
+import { LoadState } from "../components/LoadState";
 import { t, type Key } from "../i18n";
 import { visible } from "../visible";
 import { McpPending } from "./Mcp";
@@ -15,8 +16,9 @@ const stepWord = (tool: string) => KNOWN_STEPS.includes(tool) ? t(`code.step.${t
 
 export function CodeTask() {
   const [dir, setDir] = createSignal<string | undefined>(undefined);
-  const [listing] = createResource(() => dir() ?? "", (d) => api.fs(d || undefined));
-  const [earlier, { refetch }] = createResource(() => api.codeList().catch(() => ({ tasks: [] })));
+  const [listing, { refetch: refetchListing }] = createResource(() => dir() ?? "", (d) => api.fs(d || undefined).catch(() => null));
+  // a list that could not be read is said so, never shown as "no earlier tasks"
+  const [earlier, { refetch }] = createResource(() => api.codeList().catch(() => null));
   const [task, setTask] = createSignal("");
   const [current, setCurrent] = createSignal<Task | null>(null);
   const [error, setError] = createSignal("");
@@ -93,12 +95,18 @@ export function CodeTask() {
       <p class="lead">{t("code.lead")}</p>
       <div class="card stack">
         <h2>{t("code.step1")}</h2>
-        <p class="path" aria-live="polite">{chosen() || t("new.loading")}</p>
+        <p class="path" aria-live="polite">{chosen() || (listing.loading ? t("new.loading") : "")}</p>
         <div class="browser" role="group" aria-label={t("new.folders")}>
-          <Show when={listing()?.parent}>{(p) => <button class="row" onClick={() => setDir(p())}>{t("new.up")}</button>}</Show>
-          <For each={listing()?.dirs} fallback={<p class="muted">{listing.loading ? t("new.loadingFolders") : t("new.noFolders")}</p>}>
-            {(d) => <button class="row" onClick={() => setDir(d.path)}>{d.name}</button>}
-          </For>
+          <Show when={listing()} fallback={<LoadState loading={listing.loading} retry={() => void refetchListing()} />}>
+            {(l) => (
+              <>
+                <Show when={l().parent}>{(p) => <button class="row" onClick={() => setDir(p())}>{t("new.up")}</button>}</Show>
+                <For each={l().dirs} fallback={<p class="muted">{listing.loading ? t("new.loadingFolders") : t("new.noFolders")}</p>}>
+                  {(d) => <button class="row" onClick={() => setDir(d.path)}>{d.name}</button>}
+                </For>
+              </>
+            )}
+          </Show>
         </div>
       </div>
       <form class="card stack" onSubmit={start}>
@@ -189,9 +197,10 @@ export function CodeTask() {
           </section>
         )}
       </Show>
-      <Show when={(earlier()?.tasks ?? []).length > 0}>
+      <Show when={(earlier()?.tasks ?? []).length > 0 || (!earlier() && !earlier.loading)}>
         <section class="card stack" aria-labelledby="h-code-earlier">
           <h2 id="h-code-earlier">{t("code.earlier")}</h2>
+          <Show when={!earlier()}><LoadState loading={false} retry={() => void refetch()} /></Show>
           <ul class="plain stack">
             <For each={earlier()?.tasks}>
               {(x) => (

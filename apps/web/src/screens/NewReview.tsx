@@ -1,3 +1,4 @@
+import { LoadState } from "../components/LoadState";
 import { SampleCard } from "../components/SampleCard";
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError, type Config, type Readiness } from "../api";
@@ -5,7 +6,7 @@ import { rich, t } from "../i18n";
 
 export function NewReview(props: { config: Config; onStarted: (id: string) => void }) {
   const [dir, setDir] = createSignal<string | undefined>(undefined);
-  const [listing] = createResource(() => dir() ?? "", (d) => api.fs(d || undefined));
+  const [listing, { refetch: refetchListing }] = createResource(() => dir() ?? "", (d) => api.fs(d || undefined).catch(() => null));
   const [recipient, setRecipient] = createSignal("");
   const [error, setError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
@@ -94,14 +95,20 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
       </Show>
       <div class="card stack">
         <h2>{t("new.step1")}</h2>
-        <p class="path" aria-live="polite">{chosen() || t("new.loading")}</p>
+        <p class="path" aria-live="polite">{chosen() || (listing.loading ? t("new.loading") : "")}</p>
         <div class="browser" role="group" aria-label={t("new.folders")}>
-          <Show when={listing()?.parent}>
-            {(p) => <button class="row" onClick={() => setDir(p())}>{t("new.up")}</button>}
+          <Show when={listing()} fallback={<LoadState loading={listing.loading} retry={() => void refetchListing()} />}>
+            {(l) => (
+              <>
+                <Show when={l().parent}>
+                  {(p) => <button class="row" onClick={() => setDir(p())}>{t("new.up")}</button>}
+                </Show>
+                <For each={l().dirs} fallback={<p class="muted">{listing.loading ? t("new.loadingFolders") : t("new.noFolders")}</p>}>
+                  {(d) => <button class="row" onClick={() => setDir(d.path)}>{d.name}</button>}
+                </For>
+              </>
+            )}
           </Show>
-          <For each={listing()?.dirs} fallback={<p class="muted">{listing.loading ? t("new.loadingFolders") : t("new.noFolders")}</p>}>
-            {(d) => <button class="row" onClick={() => setDir(d.path)}>{d.name}</button>}
-          </For>
         </div>
       </div>
       <div class="card stack">
@@ -128,7 +135,8 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
           <button type="button" disabled={!chosen() || recipient().trim().length === 0} onClick={addSched}>{t("sched.add")}</button>
           <Show when={schedError()}><span role="alert" class="bad">{schedError()}</span></Show>
         </div>
-        <Show when={(sched()?.schedules ?? []).length > 0} fallback={<p class="muted">{t("sched.none")}</p>}>
+        <Show when={!sched() && !sched.loading}><LoadState loading={false} retry={() => void refetchSched()} /></Show>
+        <Show when={(sched()?.schedules ?? []).length > 0} fallback={<Show when={sched()}><p class="muted">{t("sched.none")}</p></Show>}>
           <ul class="plain stack">
             <For each={sched()?.schedules}>
               {(x) => (
