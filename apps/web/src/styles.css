@@ -405,3 +405,7 @@ ol.team-tasks { list-style: none; padding: 0; margin: 0; }
 .team-runs .row { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: space-between; align-items: baseline; }
 .team-runs .row[aria-current="true"] { background: var(--veil); }
 .team-run-goal { overflow-wrap: anywhere; min-width: 0; flex: 1 1 240px; }
+.work-list { gap: 0; }
+.work-item { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.work-item:last-child { border-bottom: 0; }
+.work-what { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }

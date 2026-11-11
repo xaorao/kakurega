@@ -1,5 +1,5 @@
-import { createResource, createSignal, For, Show } from "solid-js";
-import { api, ApiError, type RoutePrice } from "../api";
+import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { api, ApiError, type RoutePrice, type WorkItem } from "../api";
 import { rich, t, type Key } from "../i18n";
 
 function label(kind: string): string {
@@ -139,12 +139,59 @@ function UsageCard() {
   );
 }
 
+/** Everything that is working now, with a warning on what has shown no progress for a while. */
+function WorkingNow() {
+  const [work, { refetch }] = createResource(() => api.work().catch(() => null));
+  const [err, setErr] = createSignal("");
+  const timer = setInterval(() => void refetch(), 5000);
+  onCleanup(() => clearInterval(timer));
+  const link = (i: WorkItem) => (i.kind === "review" ? `#/job/${i.id}` : i.kind === "team" ? `#/team/${i.id}` : "#/code");
+  const minutes = (secs: number) => Math.max(1, Math.round(secs / 60));
+  const stop = async (i: WorkItem) => {
+    setErr("");
+    try {
+      await api.teamStop(i.id);
+      await refetch();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : t("work.stopError"));
+    }
+  };
+  return (
+    <section class="card stack" id="working" aria-labelledby="h-work">
+      <h2 id="h-work">{t("work.title")}</h2>
+      <Show when={work()} fallback={<p class="muted" role="status">{t("review.loading")}</p>}>
+        {(w) => (
+          <Show when={w().items.length > 0} fallback={<p class="muted" role="status">{t("work.none")}</p>}>
+            <Show when={w().quiet > 0}><p role="status" class="chip warn">{t("work.quietCount", { n: w().quiet })}</p></Show>
+            <ul class="plain stack work-list">
+              <For each={w().items}>
+                {(i) => (
+                  <li class="work-item" data-kind={i.kind} data-quiet={i.quiet ? "yes" : "no"}>
+                    <span class="work-what"><span class="chip">{t(`work.kind.${i.kind}`)}</span> <strong>{i.title}</strong></span>
+                    <span class={i.quiet ? "chip warn" : "muted"}>{i.quiet ? t("work.quiet", { n: minutes(i.quiet_for) }) : t("work.alive", { n: minutes(i.quiet_for) })}</span>
+                    <span class="actions">
+                      <a class="button" href={link(i)}>{t("inbox.open")}</a>
+                      <Show when={i.can_stop} fallback={<span class="muted">{t("work.noStop")}</span>}><button type="button" onClick={() => void stop(i)}>{t("team.stop")}</button></Show>
+                    </span>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </Show>
+        )}
+      </Show>
+      <Show when={err()}><p role="alert" class="bad">{err()}</p></Show>
+    </section>
+  );
+}
+
 export function Activity() {
   const [log] = createResource(() => api.log());
   return (
     <section class="stack wide" aria-labelledby="h-act">
       <h1 id="h-act">{t("act.title")}</h1>
       <p class="lead">{t("act.lead")}</p>
+      <WorkingNow />
       <UsageCard />
       <Show when={log()} fallback={<p class="muted">{t("review.loading")}</p>}>
         {(l) => (

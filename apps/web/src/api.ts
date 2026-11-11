@@ -46,6 +46,7 @@ export type TeamTask = {
   asked: { question: string; answer: string }[];
   attempts: number;
 };
+export type WorkItem = { kind: "review" | "code" | "team"; id: string; title: string; state: string; since: number; last: number; quiet_for: number; quiet: boolean; can_stop: boolean };
 export type TeamStatus = "planned" | "running" | "waiting" | "done" | "stopped" | "interrupted";
 export type TeamRun = { id: string; goal: string; project: string | null; status: TeamStatus; working: boolean; final: string | null; final_note: string; created: number; updated: number; tasks: TeamTask[] };
 export type TeamRunSummary = { id: string; goal: string; status: TeamStatus; created: number; updated: number; tasks: number; done: number; needs_input: number; not_done: number };
@@ -291,6 +292,7 @@ export const api = {
   logout: () => request<void>("POST", "/api/logout"),
   config: () => request<Config>("GET", "/api/config"),
   experts: () => request<{ experts: ExpertInfo[]; yours?: { id: string; name: string; summary: string }[]; min: number; max: number }>("GET", "/api/experts"),
+  work: () => request<{ items: WorkItem[]; count: number; quiet: number; quiet_after: number }>("GET", "/api/work"),
   teamRuns: () => request<{ runs: TeamRunSummary[] }>("GET", "/api/team"),
   teamRun: (id: string) => request<TeamRun>("GET", `/api/team/${encodeURIComponent(id)}`),
   teamPlan: (goal: string, experts: string[]) => request<TeamRun>("POST", "/api/team", experts.length > 0 ? { goal, experts } : { goal }),

@@ -267,9 +267,15 @@ impl Service {
 
     fn team_begin_task(&self, id: &str, n: usize) {
         let store = self.store.lock().expect("lock");
-        let _ = store.connection().execute(
+        let c = store.connection();
+        let _ = c.execute(
             "UPDATE team_tasks SET state = 'running', attempts = attempts + 1 WHERE run = ?1 AND n = ?2",
             kk_vault::rusqlite::params![id, n as i64],
+        );
+        // a task beginning is a sign of life
+        let _ = c.execute(
+            "UPDATE team_runs SET updated = ?2 WHERE id = ?1",
+            kk_vault::rusqlite::params![id, now()],
         );
     }
 
@@ -329,6 +335,18 @@ impl Service {
             }
         }
         items
+    }
+
+    /// The runs that are working now: id, goal, when planned, when a task last began or ended.
+    pub(super) fn team_working(&self) -> Vec<(String, String, i64, i64)> {
+        let store = self.store.lock().expect("lock");
+        let c = store.connection();
+        c.prepare("SELECT id, goal, created, updated FROM team_runs WHERE status = 'running' ORDER BY updated DESC")
+            .and_then(|mut st| {
+                st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+                    .map(|rows| rows.flatten().collect())
+            })
+            .unwrap_or_default()
     }
 
     fn team_stop_asked(&self, id: &str) -> bool {

@@ -45,6 +45,8 @@ try:
     check("without words it prints the usage, exit 2", rc == 2 and "usage: kaku team plan GOAL" in err, f"{rc} {err}")
     rc, out, err = k("show", "team-nope")
     check("an id that is not a run id is a usage error, and nothing is asked of the service", rc == 2, f"{rc} {err}")
+    w = subprocess.run([str(kaku), "work", *common], capture_output=True, text=True, timeout=60)
+    check("kaku work says when nothing is working", w.returncode == 0 and w.stdout.strip() == "Nothing is working right now.", f"{w.returncode} {w.stdout} {w.stderr}")
     rc, out, err = k("list")
     check("an empty list says so", rc == 0 and out.strip() == "No team runs yet.", f"{rc} {out} {err}")
     rc, out, err = k("plan", "refuse-this-plan please")
@@ -58,8 +60,17 @@ try:
     rc, out, err = k("show", rid, "--json")
     shown = json.loads(out)
     check("show --json is one object with the tasks", rc == 0 and shown["status"] == "planned" and [t["state"] for t in shown["tasks"]] == ["waiting"] * 3, out[:200])
-    rc, out, err = k("start", rid, "--wait")
-    check("start --wait follows the run until an expert asks the owner, exit 3", rc == 3 and "2. [needs_input] Software architect" in out and "asks you: Which cloud do you deploy to?" in out and "1. [done] Security reviewer" in out, f"{rc} {out} {err}")
+    rc, out, err = k("start", rid)
+    w = subprocess.run([str(kaku), "work", "--json", *common], capture_output=True, text=True, timeout=60)
+    items = json.loads(w.stdout)["items"] if w.stdout.strip().startswith("{") else []
+    check("kaku work lists the run while its first task is being asked", w.returncode == 0 and len(items) == 1 and items[0]["kind"] == "team" and items[0]["id"] == rid and items[0]["quiet"] is False, f"{w.returncode} {w.stdout[:200]} {w.stderr}")
+    rc, out, err = k("show", rid)
+    deadline = time.time() + 30
+    while "[needs_input]" not in out and time.time() < deadline:
+        time.sleep(0.3)
+        rc, out, err = k("show", rid)
+    rc = 3 if "[needs_input]" in out else rc
+    check("the run goes on until an expert asks the owner", rc == 3 and "2. [needs_input] Software architect" in out and "asks you: Which cloud do you deploy to?" in out and "1. [done] Security reviewer" in out, f"{rc} {out} {err}")
     check("a result's lines are printed under its task, without control characters", "   1. It leaks through logs." in out and "\x1b" not in out)
     rc, out, err = k("answer", rid, "3", "x")
     check("answering a task that did not ask is refused", rc == 6 and "not waiting for an answer" in err, f"{rc} {err}")
@@ -76,6 +87,10 @@ try:
     rc, out, err = k("delete", rid2)
     rc2, out2, _ = k("show", rid2)
     check("delete removes it", rc == 0 and out.strip() == "Deleted." and rc2 == 6, f"{rc} {out} {rc2}")
+    rc, out, err = k("plan", "Decide a third time.")
+    rid3 = re.search(r"^(team-[0-9a-f]{12})  planned$", out, re.M).group(1)
+    rc, out, err = k("start", rid3, "--wait")
+    check("start --wait follows a run to its end and prints the result", rc == 0 and re.search(rf"^{rid3}  done$", out, re.M) is not None and "Result:" in out, f"{rc} {out[:300]} {err}")
 finally:
     server.kill()
     model.kill()

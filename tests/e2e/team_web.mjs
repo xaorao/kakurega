@@ -80,6 +80,13 @@ if (!real) {
   await page.locator('.team-tasks > li[data-task="1"][data-state="running"]').waitFor({ timeout: 10000 });
   check((await status()) === "running" && (await page.getByRole("button", { name: "Stop" }).count()) === 1 && (await page.getByRole("button", { name: "Delete" }).count()) === 0, "while it works it can be stopped and cannot be deleted");
   await shot(page, "2-working");
+  // the Activity screen lists it as working, and it can be opened from there
+  const side = await ctx.newPage();
+  await side.goto(new URL(link).origin + "/#/activity");
+  const working = side.locator("#working .work-item");
+  await working.first().waitFor({ timeout: 10000 });
+  check((await working.count()) === 1 && /Team run/.test(await working.first().innerText()) && /Decide where our payment key/.test(await working.first().innerText()) && (await working.first().getByRole("button", { name: "Stop" }).count()) === 1 && (await working.first().getAttribute("data-quiet")) === "no", "the Activity screen lists the run as working, with a stop, and not as gone quiet");
+  await side.close();
   await page.locator("#team-run [data-status='waiting']").waitFor({ timeout: long });
   check(JSON.stringify(await states()) === JSON.stringify(["done", "needs_input", "waiting"]), "an expert's question holds back only what builds on it");
   const one = page.locator('.team-tasks > li[data-task="1"]');
@@ -176,6 +183,13 @@ if (!real) {
   await page.getByRole("button", { name: "Yes, delete" }).click();
   await page.getByRole("heading", { name: /This run/ }).waitFor({ state: "detached" });
   check((await page.locator(".team-runs li").count()) === 1, "after a yes the run is gone from the list");
+}
+if (!real) {
+  await page.getByRole("link", { name: "Activity" }).click();
+  await page.locator("#working").waitFor();
+  await page.waitForFunction(() => /Nothing is working right now/.test(document.querySelector("#working")?.textContent ?? ""), null, { timeout: 10000 });
+  check(true, "when nothing runs, the Activity screen says nothing is working");
+  await shot(page, "7-activity");
 }
 check(problems.length === 0, "no console errors or failed requests: " + problems.join(" | "));
 

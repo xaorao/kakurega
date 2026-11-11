@@ -1153,6 +1153,63 @@ pub fn roundtable(args: &[String]) -> u8 {
     })
 }
 
+/// `kaku work [--json]`: everything that is working now (reviews, coding tasks, team runs), with a mark on what has shown
+/// no progress for a while. Exit 0 when nothing has gone quiet, 3 when something has.
+pub fn work(args: &[String]) -> u8 {
+    let json_mode = args.iter().any(|a| a == "--json");
+    crate::tui::with_service(&serve_args(args), |dir| {
+        let http = match connect(dir, json_mode) {
+            Ok(h) => h,
+            Err(c) => return c,
+        };
+        match call(&http, Method::Get, "/api/work", None) {
+            Ok((200, v)) => {
+                say(json_mode, &v, || {
+                    let rows: Vec<String> = v["items"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|i| {
+                            let mins = (i["quiet_for"].as_i64().unwrap_or(0) / 60).max(1);
+                            format!(
+                                "{:6}  {:17}  {}  {}{}",
+                                clean(i["kind"].as_str().unwrap_or("")),
+                                clean(i["id"].as_str().unwrap_or("")),
+                                if i["quiet"] == true {
+                                    format!("QUIET for {mins} min")
+                                } else {
+                                    format!("progress {mins} min ago")
+                                },
+                                clean(i["title"].as_str().unwrap_or("")),
+                                if i["can_stop"] == true {
+                                    ""
+                                } else {
+                                    "  (ends by itself)"
+                                }
+                            )
+                        })
+                        .collect();
+                    if rows.is_empty() {
+                        "Nothing is working right now.".into()
+                    } else {
+                        rows.join("\n")
+                    }
+                });
+                if v["quiet"].as_u64().unwrap_or(0) > 0 {
+                    3
+                } else {
+                    OK
+                }
+            }
+            Ok((s, v)) => {
+                let (m, c) = refusal(s, &v);
+                fail(json_mode, c, &m)
+            }
+            Err(e) => fail(json_mode, UNAVAILABLE, &e),
+        }
+    })
+}
+
 fn team_words(v: &Value) -> String {
     let mut out = format!(
         "{}  {}\n{}\n",

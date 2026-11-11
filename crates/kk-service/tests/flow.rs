@@ -19842,3 +19842,132 @@ fn sv240_an_answer_that_reached_the_models_length_limit_is_marked_in_chat_roundt
         "the text that did arrive is kept"
     );
 }
+
+#[test]
+fn sv241_one_list_shows_what_is_working_now_and_marks_what_has_gone_quiet() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (root, _repo) = repo_copy("work-view");
+    let runner = team_runner("1 | plain-writer | - | A.");
+    let svc = Service::new(&root.join("data"), vec![root.clone()], runner.clone(), true).unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    assert_eq!(Web::new(c.addr).get("/api/work").0, 401);
+    w.pair(&c.security.issue_pairing_code());
+    let empty = w.get("/api/work").1;
+    assert_eq!(
+        (
+            empty["count"].as_u64(),
+            empty["quiet"].as_u64(),
+            empty["quiet_after"].as_i64()
+        ),
+        (Some(0), Some(0), Some(600))
+    );
+    let goal = format!("Decide where the key lives. {}", "x".repeat(200));
+    let id = w.post("/api/team", json!({"goal": goal})).1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        w.get("/api/work").1["count"],
+        0,
+        "a plan that was not started is not working"
+    );
+    runner.hold.store(true, SeqCst);
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = w.get("/api/work").1;
+    assert_eq!(v["count"], 1, "{v}");
+    let it = &v["items"][0];
+    assert_eq!(
+        (
+            it["kind"].as_str(),
+            it["id"].as_str(),
+            it["state"].as_str(),
+            it["can_stop"].as_bool(),
+            it["quiet"].as_bool()
+        ),
+        (
+            Some("team"),
+            Some(id.as_str()),
+            Some("running"),
+            Some(true),
+            Some(false)
+        ),
+        "{it}"
+    );
+    assert_eq!(
+        it["title"].as_str().unwrap().chars().count(),
+        80,
+        "a long goal is shown by its first words"
+    );
+    assert!(it["quiet_for"].as_i64().unwrap() < 30);
+    // ten minutes with no task beginning or ending: it has gone quiet, and the list says so
+    svc.advance_clock_for_tests(599);
+    assert_eq!(w.get("/api/work").1["items"][0]["quiet"], false);
+    svc.advance_clock_for_tests(5);
+    let v = w.get("/api/work").1;
+    assert_eq!(
+        (v["quiet"].as_u64(), v["items"][0]["quiet"].as_bool()),
+        (Some(1), Some(true)),
+        "{v}"
+    );
+    assert!(v["items"][0]["quiet_for"].as_i64().unwrap() >= 600);
+    // stopped: nothing is working
+    w.post(&format!("/api/team/{id}/stop"), json!({}));
+    team_wait(&w, &id, &["stopped"]);
+    assert_eq!(w.get("/api/work").1["count"], 0);
+}
+
+#[test]
+fn sv242_a_running_review_is_in_the_working_list_until_it_ends_and_cannot_be_stopped_from_there() {
+    let (root, repo) = repo_copy("work-view-review");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(SleepyRunner(CannedRunner { confirm: true })),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (_, started) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "acme-audit"}),
+    );
+    let id = started["id"].as_str().unwrap().to_string();
+    let v = w.get("/api/work").1;
+    let it = &v["items"][0];
+    assert_eq!(
+        (
+            v["count"].as_u64(),
+            it["kind"].as_str(),
+            it["id"].as_str(),
+            it["title"].as_str(),
+            it["can_stop"].as_bool(),
+            it["quiet"].as_bool()
+        ),
+        (
+            Some(1),
+            Some("review"),
+            Some(id.as_str()),
+            Some("acme-audit"),
+            Some(false),
+            Some(false)
+        ),
+        "{v}"
+    );
+    wait_for(&w, &id, &["ready"]);
+    assert_eq!(
+        w.get("/api/work").1["count"],
+        0,
+        "a finished review is not working"
+    );
+}

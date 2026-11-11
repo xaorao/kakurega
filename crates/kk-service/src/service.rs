@@ -6400,7 +6400,7 @@ impl Service {
         now() + self.lease_skew.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// Moves the clock leases are judged by. For tests of expiry; nothing else reads it.
+    /// Moves the clock that leases, and how long work has been quiet, are judged by. For tests; nothing else reads it.
     #[doc(hidden)]
     pub fn advance_clock_for_tests(&self, secs: i64) {
         self.lease_skew
@@ -7630,6 +7630,72 @@ type InboxJob = (
     Option<(String, bool)>,
     bool,
 );
+
+/// A piece of work that has shown no sign of progress for this long is marked as gone quiet.
+pub const QUIET_AFTER_SECS: i64 = 600;
+
+/// Everything that is working now, in one list: reviews, coding tasks and team runs, newest sign of life first. Each says
+/// when it last showed progress, whether it has gone quiet, and whether it can be stopped from here. Names only what the
+/// owner typed (a recipient, the first words of a task or goal); never a file's content.
+async fn work(axum::Extension(svc): Svc) -> Json<Value> {
+    let at = svc.lease_now();
+    let mut items: Vec<Value> = Vec::new();
+    let item = |kind: &str,
+                id: &str,
+                title: &str,
+                state: &str,
+                since: i64,
+                last: i64,
+                can_stop: bool| {
+        json!({
+            "kind": kind, "id": id, "title": title.chars().take(80).collect::<String>(), "state": state,
+            "since": since, "last": last, "quiet_for": (at - last).max(0), "quiet": at - last > QUIET_AFTER_SECS, "can_stop": can_stop,
+        })
+    };
+    {
+        let g = svc.inner.lock().expect("lock");
+        for j in g
+            .jobs
+            .values()
+            .filter(|j| matches!(j.state, JobState::Running))
+        {
+            let last = j.events.last().map_or(j.created, |e| e.at).max(j.created);
+            items.push(item(
+                "review",
+                &j.id,
+                &j.recipient,
+                "running",
+                j.created,
+                last,
+                false,
+            ));
+        }
+    }
+    {
+        let g = svc.coding.lock().expect("lock");
+        for t in g.list.values() {
+            let v = crate::coding::view(t);
+            let state = v["state"].as_str().unwrap_or("");
+            if matches!(state, "running" | "applying" | "undoing") {
+                items.push(item(
+                    "code", &t.id, &t.task, state, t.created, t.created, false,
+                ));
+            }
+        }
+    }
+    items.extend(
+        svc.team_working()
+            .into_iter()
+            .map(|(id, goal, created, updated)| {
+                item("team", &id, &goal, "running", created, updated, true)
+            }),
+    );
+    items.sort_by(|a, b| b["last"].as_i64().cmp(&a["last"].as_i64()));
+    let quiet = items.iter().filter(|i| i["quiet"] == true).count();
+    Json(
+        json!({"items": items, "count": items.len(), "quiet": quiet, "quiet_after": QUIET_AFTER_SECS}),
+    )
+}
 
 /// Everything waiting on the owner, newest first. Each item names what to do and where; none contains file text.
 async fn inbox(axum::Extension(svc): Svc) -> Json<Value> {
@@ -9708,6 +9774,7 @@ impl Extension for Routes {
             .route("/api/schedules/{id}/delete", post(schedule_delete))
             .route("/api/events", get(events))
             .route("/api/inbox", get(inbox))
+            .route("/api/work", get(work))
             .route("/api/experts", get(experts_list))
             .route("/api/chat/roundtable", post(chat_roundtable))
             .route("/api/team", get(team::team_list).post(team::team_plan))
