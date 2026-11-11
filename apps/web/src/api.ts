@@ -28,6 +28,42 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return data as T;
 }
 
+export interface ExpertInfo { id: string; name: string; group: string; summary: string }
+export interface RoundtableResolution { structured: boolean; agreed: string | null; disputed: string | null; decision: string | null; open_questions: string | null; text: string }
+/** One line of a roundtable's stream: an expert's state, a piece of its answer, its whole answer or its failure; then the resolution. */
+export type RoundtableEvent = Record<string, unknown> & { expert?: string; state?: string; delta?: string; answer?: string; failed?: string; stopped?: boolean; done?: boolean };
+
+/** Streams a roundtable. `onEvent` receives each line; aborting `signal` closes the connection, which stops the model. */
+export async function streamRoundtable(body: unknown, onEvent: (e: RoundtableEvent) => void, signal: AbortSignal): Promise<void> {
+  const res = await fetch("/api/chat/roundtable", { method: "POST", headers: { "content-type": "application/json", "x-kk-csrf": csrf }, credentials: "same-origin", body: JSON.stringify(body), signal });
+  if (!res.ok || !res.body) {
+    let data: any = null;
+    try {
+      data = JSON.parse(await res.text());
+    } catch {
+      data = null;
+    }
+    throw new ApiError(res.status, data?.error?.code ?? "ERROR", data?.error?.message ?? `request failed (${res.status})`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line) continue;
+      const v = JSON.parse(line) as RoundtableEvent & { error?: { code?: string; message?: string } };
+      if (v.error) throw new ApiError(502, v.error.code ?? "ERROR", v.error.message ?? "the roundtable failed");
+      onEvent(v);
+    }
+  }
+}
+
 /** Streams a chat answer. `onDelta` receives each piece; aborting `signal` closes the connection, which stops the model. */
 export async function streamChat(body: unknown, onDelta: (t: string) => void, signal: AbortSignal): Promise<ChatReply | { stopped: true }> {
   const res = await fetch("/api/chat/stream", { method: "POST", headers: { "content-type": "application/json", "x-kk-csrf": csrf }, credentials: "same-origin", body: JSON.stringify(body), signal });
@@ -237,6 +273,7 @@ export const api = {
   session: () => request<{ paired: boolean; csrf: string }>("GET", "/api/session"),
   logout: () => request<void>("POST", "/api/logout"),
   config: () => request<Config>("GET", "/api/config"),
+  experts: () => request<{ experts: ExpertInfo[]; min: number; max: number }>("GET", "/api/experts"),
   models: () => request<{ current: string; installed: string[]; can_choose: boolean }>("GET", "/api/models"),
   chooseModel: (model: string) => request<{ route: { model: string } }>("POST", "/api/model", { model }),
   memories: (q?: string, f?: MemoryFilter) => {

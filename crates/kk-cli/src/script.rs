@@ -1002,6 +1002,151 @@ pub fn code(args: &[String]) -> u8 {
     })
 }
 
+/// `kaku roundtable QUESTION --experts ID,ID[,ID...] [--json]`, or `kaku roundtable --list`: one question to several
+/// experts, each alone, then a lead's resolution. In words by default; with `--json`, one event per line as the service sends it.
+pub fn roundtable(args: &[String]) -> u8 {
+    let json_mode = args.iter().any(|a| a == "--json");
+    let list = args.iter().any(|a| a == "--list");
+    let experts = crate::flag(args, "--experts");
+    let question = args.iter().skip(1).find(|a| {
+        !a.starts_with("--")
+            && Some((*a).as_str()) != crate::flag(args, "--data-dir").as_deref()
+            && Some((*a).as_str()) != experts.as_deref()
+    });
+    let usage = "usage: kaku roundtable QUESTION --experts ID,ID[,ID...] [--json]   (kaku roundtable --list names the experts)";
+    if !list && (question.is_none() || experts.is_none()) {
+        return fail(json_mode, USAGE, usage);
+    }
+    let ids: Vec<String> = experts
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let question = question.cloned().unwrap_or_default();
+    crate::tui::with_service(&serve_args(args), |dir| {
+        let http = match connect(dir, json_mode) {
+            Ok(h) => h,
+            Err(c) => return c,
+        };
+        if list {
+            return match call(&http, Method::Get, "/api/experts", None) {
+                Ok((200, v)) => {
+                    if json_mode {
+                        println!("{v}");
+                    } else {
+                        for e in v["experts"].as_array().into_iter().flatten() {
+                            println!(
+                                "{:22} {} ({}): {}",
+                                clean(e["id"].as_str().unwrap_or("")),
+                                clean(e["name"].as_str().unwrap_or("")),
+                                clean(e["group"].as_str().unwrap_or("")),
+                                clean(e["summary"].as_str().unwrap_or(""))
+                            );
+                        }
+                    }
+                    OK
+                }
+                Ok((s, v)) => {
+                    let (m, c) = refusal(s, &v);
+                    fail(json_mode, c, &m)
+                }
+                Err(e) => fail(json_mode, UNAVAILABLE, &e),
+            };
+        }
+        let req = Req {
+            id: 0,
+            admin: false,
+            method: Method::Post,
+            path: "/api/chat/roundtable".into(),
+            body: Some(json!({"message": question, "experts": ids})),
+            stream: true,
+        };
+        let never = std::sync::atomic::AtomicBool::new(false);
+        let mut answered = 0usize;
+        let mut resolved = false;
+        // an answer names its expert by id; the name arrives when the expert is first asked
+        let mut names: std::collections::BTreeMap<String, String> = Default::default();
+        let resp = http.run_events(&req, &never, &mut |v| {
+            if json_mode {
+                // pieces of an answer are for a screen; a program gets each whole answer once
+                if v.get("delta").is_none() {
+                    println!("{v}");
+                }
+                return;
+            }
+            let id = v["expert"].as_str().unwrap_or("").to_string();
+            if let Some(n) = v["name"].as_str() {
+                names.insert(id.clone(), n.to_string());
+            }
+            let name = clean(names.get(&id).map(String::as_str).unwrap_or(&id));
+            if let Some(a) = v["answer"].as_str() {
+                answered += 1;
+                println!("== {name} ==\n{}\n", clean(a));
+            } else if let Some(why) = v["failed"].as_str() {
+                println!("== {name} ==\n(no answer: {})\n", clean(why));
+            } else if v.get("resolution").is_some() {
+                let r = &v["resolution"];
+                println!("== Resolution ==");
+                if r.is_null() {
+                    println!(
+                        "(none: {})",
+                        clean(v["reason"].as_str().unwrap_or("no reason given"))
+                    );
+                } else if r["structured"] == true {
+                    resolved = true;
+                    for (label, key) in [
+                        ("Decision", "decision"),
+                        ("Agreed", "agreed"),
+                        ("Disputed", "disputed"),
+                        ("Open questions", "open_questions"),
+                    ] {
+                        match r[key].as_str().filter(|t| !t.is_empty()) {
+                            Some(t) => println!("{label}: {}", clean(t)),
+                            None => println!("{label}: (the lead wrote nothing here)"),
+                        }
+                    }
+                } else {
+                    resolved = true;
+                    println!("{}", clean(r["text"].as_str().unwrap_or("")));
+                }
+            }
+        });
+        match resp.result {
+            Ok((200, v)) => {
+                if json_mode {
+                    println!(
+                        "{}",
+                        json!({"done": v["done"] == true, "unresolved": v["unresolved"] == true})
+                    );
+                }
+                // answers without a resolution are still worth having, but a script should be able to tell
+                if resolved || json_mode && v["unresolved"] != true {
+                    OK
+                } else if answered > 0 {
+                    3
+                } else {
+                    UNAVAILABLE
+                }
+            }
+            Ok((502, v)) => fail(
+                json_mode,
+                UNAVAILABLE,
+                &clean(
+                    v["error"]["message"]
+                        .as_str()
+                        .unwrap_or("the roundtable could not be run"),
+                ),
+            ),
+            Ok((s, v)) => {
+                let (m, c) = refusal(s, &v);
+                fail(json_mode, c, &m)
+            }
+            Err(e) => fail(json_mode, UNAVAILABLE, &e),
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -49,6 +49,7 @@ Usage:
   kaku jobs [--json] | kaku findings JOB [--json] | kaku follow JOB [--timeout S]   list reviews, read what one found, watch one until it ends
   kaku ask QUESTION --folder DIR [--json]   ask about the documents in a folder; every quote is checked (exit 3 if any is not found)
   kaku chat MESSAGE|- [--json] [--keep | --session ID]   one message to the private assistant; nothing is kept unless --keep starts a kept conversation or --session continues one
+  kaku roundtable QUESTION --experts ID,ID[,ID...] [--json]   one question to 2 to 5 experts, each alone, then a lead's resolution in four parts (kaku roundtable --list names the experts)
   kaku sessions [--json]            list the kept conversations; `kaku sessions export ID [--out FILE]` writes one as Markdown; these commands cannot approve anything
   kaku pair                         print a new one-time pairing link for the browser
   kaku approve [APPROVAL-ID]        review the exact release in this terminal and approve it
@@ -114,6 +115,7 @@ fn main() -> ExitCode {
         Some("ask") => script::ask(&args),
         Some("code") => script::code(&args),
         Some("chat") => script::chat(&args),
+        Some("roundtable") => script::roundtable(&args),
         Some("sessions") => script::sessions(&args[1..]),
         Some("update") => update::run(&args[1..]),
         Some("pack") => pack::run(&args[1..]),

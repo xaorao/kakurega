@@ -5,6 +5,7 @@ pub mod coding;
 mod compaction;
 pub mod crash;
 pub mod deliver;
+pub mod experts;
 mod extraction;
 mod fixfiles;
 pub mod keys;

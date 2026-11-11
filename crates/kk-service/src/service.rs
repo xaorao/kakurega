@@ -4000,6 +4000,254 @@ async fn chat_stream(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Resp
     resp
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoundtableBody {
+    message: String,
+    /// The built-in experts to ask, 2 to 5, each once.
+    experts: Vec<String>,
+    #[serde(default)]
+    sources: Vec<String>,
+    #[serde(default)]
+    attachments: Vec<String>,
+    #[serde(default)]
+    session: Option<String>,
+    #[serde(default)]
+    project: Option<String>,
+}
+
+/// The experts a roundtable can ask.
+async fn experts_list() -> Json<Value> {
+    use crate::experts::{EXPERTS, MAX_PARTICIPANTS, MIN_PARTICIPANTS};
+    Json(json!({
+        "experts": EXPERTS.iter().map(|e| json!({"id": e.id, "name": e.name, "group": e.group, "summary": e.summary})).collect::<Vec<_>>(),
+        "min": MIN_PARTICIPANTS, "max": MAX_PARTICIPANTS,
+    }))
+}
+
+/// One question to several experts, then a lead's resolution, streamed as one JSON object per line:
+/// `{"expert", "state": "asking"}`, `{"expert", "delta"}` pieces, `{"expert", "answer", "truncated"}` or
+/// `{"expert", "failed"}`, then `{"resolution": {...} | null, ...}` and `{"done": true, ...the usual reply fields}`.
+/// Every expert gets exactly what an ordinary chat would have sent for this question, on the same route, plus its own
+/// instruction; none sees another's answer. If the client goes away, the running answer is stopped and no further model is asked.
+async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody>) -> Response {
+    use crate::experts::{self, MAX_PARTICIPANTS, MIN_PARTICIPANTS};
+    let mut chosen: Vec<&'static experts::Expert> = Vec::new();
+    for id in &b.experts {
+        match experts::find(id) {
+            Some(e) if !chosen.iter().any(|c| c.id == e.id) => chosen.push(e),
+            Some(_) => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "EXPERT_TWICE",
+                    "each expert is asked once",
+                )
+            }
+            None => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "NO_SUCH_EXPERT",
+                    "there is no expert with that name",
+                )
+            }
+        }
+    }
+    if !(MIN_PARTICIPANTS..=MAX_PARTICIPANTS).contains(&chosen.len()) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "EXPERT_COUNT",
+            "a roundtable asks 2 to 5 experts",
+        );
+    }
+    let body = ChatBody {
+        message: b.message,
+        history: Vec::new(),
+        sources: b.sources,
+        attachments: b.attachments,
+        session: b.session,
+        project: b.project,
+    };
+    let run = match chat_validate(&svc, body) {
+        Ok(r) => r,
+        Err(resp) => return *resp,
+    };
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    let svc2 = svc.clone();
+    tokio::task::spawn_blocking(move || {
+        let line = |v: Value| -> Vec<u8> {
+            let mut b = v.to_string().into_bytes();
+            b.push(b'\n');
+            b
+        };
+        let mut run = run;
+        prepare_history(&svc2, &mut run);
+        let ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
+        svc2.remember_sent(&ctx.messages, &ctx.excluded_notes);
+        if ctx.nothing_to_read() {
+            let r = no_model_reply();
+            let _ = tx.send(line(json!({"resolution": null, "reason": r.text})));
+            let _ = tx.send(line({
+                let mut v = chat_finish(&svc2, &run, &ctx, &r);
+                v["done"] = json!(true);
+                v
+            }));
+            return;
+        }
+        let window = svc2.runner.route_info()["context_tokens"].as_u64();
+        let cap = experts::answer_cap(window, chosen.len());
+        let mut answers: Vec<(&'static experts::Expert, String)> = Vec::new();
+        let mut missing: Vec<&'static experts::Expert> = Vec::new();
+        let mut gone = false;
+        for e in &chosen {
+            if tx
+                .send(line(
+                    json!({"expert": e.id, "name": e.name, "state": "asking"}),
+                ))
+                .is_err()
+            {
+                gone = true;
+                break;
+            }
+            // the expert's instruction goes right after the product's own, before the notes and the question
+            let mut messages = ctx.messages.clone();
+            let at = usize::from(messages.first().is_some_and(|m| m.role == "system"));
+            messages.insert(
+                at,
+                kk_types::chat::ChatMessage::new("system", e.instruction),
+            );
+            let started = std::time::Instant::now();
+            let estimated = kk_route::tokens::estimate_messages(&messages);
+            let result = svc2.runner.chat_stream(messages, &mut |piece| {
+                if tx
+                    .send(line(json!({"expert": e.id, "delta": piece})))
+                    .is_err()
+                {
+                    gone = true;
+                    return false;
+                }
+                true
+            });
+            match result {
+                Ok(s) if s.stopped || gone => {
+                    gone = true;
+                    break;
+                }
+                Ok(s) => {
+                    let measured = s.reply.prompt_tokens.filter(|n| *n > 0);
+                    svc2.record_usage(
+                        &s.reply.route_id,
+                        &s.reply.class,
+                        s.reply.simulated,
+                        measured.unwrap_or(estimated),
+                        measured.is_some(),
+                        kk_route::tokens::estimate_text(&s.reply.text),
+                        started.elapsed().as_millis() as i64,
+                    );
+                    let text = s.reply.text.trim().to_string();
+                    if text.is_empty() {
+                        missing.push(e);
+                        let _ = tx.send(line(
+                            json!({"expert": e.id, "failed": "the model gave no answer"}),
+                        ));
+                    } else {
+                        let (kept, truncated) = experts::fit(&text, cap);
+                        let _ = tx.send(line(json!({"expert": e.id, "answer": text, "truncated_for_lead": truncated})));
+                        answers.push((e, kept));
+                    }
+                }
+                Err(m) => {
+                    missing.push(e);
+                    let _ = tx.send(line(json!({"expert": e.id, "failed": m})));
+                }
+            }
+        }
+        if gone {
+            svc2.log_event(
+                "chat.roundtable_stopped",
+                "chat",
+                &[("answered", answers.len().into())],
+            );
+            let _ = tx.send(line(json!({"stopped": true})));
+            return;
+        }
+        svc2.log_event(
+            "chat.roundtable",
+            "chat",
+            &[
+                ("asked", chosen.len().into()),
+                ("answered", answers.len().into()),
+            ],
+        );
+        if answers.is_empty() {
+            let _ = tx.send(line(json!({"resolution": null, "reason": "no expert answered, so there is nothing to resolve"})));
+            let _ = tx.send(line(
+                json!({"error": {"code": "NO_MODEL", "message": "no expert could be asked"}}),
+            ));
+            return;
+        }
+        let pairs: Vec<(&str, &str)> = answers.iter().map(|(e, a)| (e.name, a.as_str())).collect();
+        let absent: Vec<&str> = missing.iter().map(|e| e.name).collect();
+        let lead = vec![
+            kk_types::chat::ChatMessage::new("system", experts::LEAD_INSTRUCTION),
+            kk_types::chat::ChatMessage::new(
+                "user",
+                &experts::lead_question(&run.body.message, &pairs, &absent),
+            ),
+        ];
+        let names: Vec<&str> = chosen.iter().map(|e| e.name).collect();
+        match svc2.runner.chat(lead) {
+            Ok(mut r) => {
+                let text = r.text.trim().to_string();
+                let parts = experts::read_resolution(&text);
+                let _ = tx.send(line(json!({
+                    "resolution": {
+                        "structured": parts.is_some(),
+                        "agreed": parts.as_ref().map(|p| p.agreed.clone()),
+                        "disputed": parts.as_ref().map(|p| p.disputed.clone()),
+                        "decision": parts.as_ref().map(|p| p.decision.clone()),
+                        "open_questions": parts.as_ref().map(|p| p.open_questions.clone()),
+                        "text": text,
+                    },
+                    "answered": answers.iter().map(|(e, _)| e.id).collect::<Vec<_>>(),
+                    "missing": missing.iter().map(|e| e.id).collect::<Vec<_>>(),
+                })));
+                // what a kept conversation remembers of a roundtable: who was asked and the resolution
+                r.text = format!("Roundtable ({}).\n\n{text}", names.join(", "));
+                let _ = tx.send(line({
+                    let mut v = chat_finish(&svc2, &run, &ctx, &r);
+                    v["done"] = json!(true);
+                    v
+                }));
+            }
+            Err(m) => {
+                // the experts' answers stand on their own; only the resolution is missing
+                let _ = tx.send(line(json!({"resolution": null, "reason": format!("the lead could not be asked: {m}"),
+                    "answered": answers.iter().map(|(e, _)| e.id).collect::<Vec<_>>(),
+                    "missing": missing.iter().map(|e| e.id).collect::<Vec<_>>()})));
+                let _ = tx.send(line(json!({"done": true, "unresolved": true})));
+            }
+        }
+    });
+    let stream = futures_util::stream::unfold(rx, |mut rx| async move {
+        rx.recv().await.map(|bytes| {
+            (
+                Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(bytes)),
+                rx,
+            )
+        })
+    });
+    let mut resp = Response::new(axum::body::Body::from_stream(stream));
+    resp.headers_mut().insert(
+        "content-type",
+        axum::http::HeaderValue::from_static("application/x-ndjson"),
+    );
+    resp.headers_mut().insert(
+        "cache-control",
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    resp
+}
+
 const MAX_HISTORY: i64 = 200;
 
 #[derive(Deserialize)]
@@ -9418,6 +9666,8 @@ impl Extension for Routes {
             .route("/api/schedules/{id}/delete", post(schedule_delete))
             .route("/api/events", get(events))
             .route("/api/inbox", get(inbox))
+            .route("/api/experts", get(experts_list))
+            .route("/api/chat/roundtable", post(chat_roundtable))
             .route("/api/jobs", get(list).post(start))
             .route("/api/jobs/{id}", get(get_job))
             .route("/api/jobs/{id}/files", get(files))

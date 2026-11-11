@@ -109,6 +109,81 @@ impl Http {
         Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
     }
 
+    /// Runs a streamed request whose lines are events of several kinds (a roundtable): `on_event` gets every line that is not
+    /// the end. Setting `cancel` closes the connection, which stops the model. The result is the last object of the stream
+    /// (`done`, `stopped`, or the error).
+    pub fn run_events(
+        &self,
+        req: &Req,
+        cancel: &std::sync::atomic::AtomicBool,
+        on_event: &mut dyn FnMut(&Value),
+    ) -> Resp {
+        use std::io::BufRead;
+        use std::sync::atomic::Ordering;
+        let result = (|| -> Result<(u16, Value), String> {
+            let url = format!("{}{}", self.base, req.path);
+            let mut r = self
+                .agent
+                .post(&url)
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(1800)))
+                .build()
+                .header("Origin", &self.base)
+                .header("Sec-Fetch-Site", "same-origin")
+                .header("x-kk-csrf", &self.csrf)
+                .send_json(req.body.clone().unwrap_or(Value::Null))
+                .map_err(|e| e.to_string())?;
+            let status = r.status().as_u16();
+            if status != 200 {
+                let text = r.body_mut().read_to_string().map_err(|e| e.to_string())?;
+                return Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)));
+            }
+            let (tx, rx) = std::sync::mpsc::channel::<Result<String, String>>();
+            let reader = r.into_body().into_reader();
+            std::thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(reader);
+                loop {
+                    let mut line = String::new();
+                    match reader.read_line(&mut line) {
+                        Ok(0) => {
+                            let _ = tx.send(Err("the answer ended before it was finished".into()));
+                            return;
+                        }
+                        Ok(_) => {
+                            if tx.send(Ok(line)).is_err() {
+                                return;
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Err(e.to_string()));
+                            return;
+                        }
+                    }
+                }
+            });
+            loop {
+                if cancel.load(Ordering::SeqCst) {
+                    return Ok((200, serde_json::json!({"stopped": true})));
+                }
+                let line = match rx.recv_timeout(std::time::Duration::from_millis(80)) {
+                    Ok(l) => l?,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        return Err("the answer ended before it was finished".into())
+                    }
+                };
+                let v: Value = serde_json::from_str(line.trim()).map_err(|e| e.to_string())?;
+                if v.get("error").is_some() {
+                    return Ok((502, v));
+                } else if v["done"] == true || v["stopped"] == true {
+                    return Ok((200, v));
+                }
+                on_event(&v);
+            }
+        })();
+        Resp { id: req.id, result }
+    }
+
     /// Runs a streamed request: `on_delta` gets each piece as it arrives. Setting `cancel` closes the connection, which
     /// stops the model. The result is the final object of the stream, `{"stopped": true}` after a cancel, or the error.
     pub fn run_stream(
