@@ -384,16 +384,19 @@ async function start() {
 
 // A handle on the shell's own state for the end-to-end tests and for diagnosis. It lives in the main process only: the page
 // has no bridge to it, and it holds nothing a notification would not show.
-globalThis.kakuregaShell = Object.freeze({
-  tray: () => tray,
-  menu: () => trayMenu,
-  window: () => window,
-  state: () => ({ ...state }),
-  language: () => language,
-  notices: () => notices.map(({ title, body, target }) => ({ title, body, target })),
-  clickNotice: (i) => notices[i]?.notification.emit("click"),
-  pollInbox,
-});
+// It exists in a development run only: a packaged app has no such handle.
+if (!runsFromAsar) {
+  globalThis.kakuregaShell = Object.freeze({
+    tray: () => tray,
+    menu: () => trayMenu,
+    window: () => window,
+    state: () => ({ ...state }),
+    language: () => language,
+    notices: () => notices.map(({ title, body, target }) => ({ title, body, target })),
+    clickNotice: (i) => notices[i]?.notification.emit("click"),
+    pollInbox,
+  });
+}
 
 // One window, one companion: a second launch only brings the first one forward.
 if (!app.requestSingleInstanceLock()) {

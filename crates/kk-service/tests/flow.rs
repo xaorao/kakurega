@@ -21929,3 +21929,35 @@ fn sv258_a_project_is_a_listed_thing_with_a_folder_and_its_conversations_and_rem
         "{log}"
     );
 }
+
+#[test]
+fn sv259_the_desktop_shell_reads_the_same_inbox_with_the_admin_token_and_nobody_reads_it_without() {
+    let (c, w, _root) = file_service(
+        "admin-inbox",
+        FileRunner::new("http://127.0.0.1:11434", 16384),
+    );
+    let page = w.get("/api/inbox").1;
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let base = format!("http://{}", c.addr);
+    let mut without = agent.get(&format!("{base}/admin/inbox")).call().unwrap();
+    assert_ne!(
+        without.status().as_u16(),
+        200,
+        "{:?}",
+        without.body_mut().read_to_string()
+    );
+    let mut with = agent
+        .get(&format!("{base}/admin/inbox"))
+        .header(
+            "Authorization",
+            &format!("Bearer {}", c.security.admin_token()),
+        )
+        .call()
+        .unwrap();
+    assert_eq!(with.status().as_u16(), 200);
+    let v: Value = with.body_mut().read_json().unwrap();
+    assert_eq!(v["items"], page["items"]);
+}

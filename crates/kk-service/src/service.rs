@@ -10053,6 +10053,9 @@ impl Extension for Routes {
             .route("/ext/pair", post(ext_pair))
             .route("/ext/status", get(ext_status))
             .route("/ext/capture", post(ext_capture))
+            // the same list the owner's page reads, for the desktop shell's menu-bar count and notifications; the admin
+            // token can already read everything in it
+            .route("/admin/inbox", get(inbox))
             .route("/admin/overview", get(admin_overview))
             .route("/admin/jobs", get(admin_jobs_list).post(admin_job_start))
             .route("/admin/jobs/{id}", get(admin_job_get))

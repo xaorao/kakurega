@@ -42,6 +42,8 @@ node tests/e2e/prompts_web.mjs
 node tests/e2e/handoff_web.mjs
 node tests/e2e/sample_web.mjs
 node tests/e2e/projects_web.mjs
+node tests/e2e/desktop_tray.mjs
+node tests/e2e/desktop_install.mjs
 node tests/e2e/hide_web.mjs
 node tests/e2e/desktop.mjs
 node tests/e2e/desktop_attack.mjs

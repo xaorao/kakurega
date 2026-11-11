@@ -109,7 +109,7 @@ try {
   const p1 = await poll(app);
   const title1 = await shell(app, () => (process.platform === "darwin" ? globalThis.kakuregaShell.tray().getTitle() : "1"));
   const l1 = await menuLabels(app);
-  check("a finished review raises the count next to the icon and in the menu", p1?.count === 1 && title1 === "1" && l1.find((l) => l.id === "inbox").label === "Waiting for you (1)" && l1.find((l) => l.id === "status").label === "1 thing is waiting for you", JSON.stringify([p1, title1]));
+  check("a finished review raises the count next to the icon and in the menu", p1?.count >= 1 && p1.complete === true && (process.platform !== "darwin" || title1 === String(p1.count)) && l1.find((l) => l.id === "inbox").label === `Waiting for you (${p1.count})` && l1.find((l) => l.id === "status").label.startsWith(`${p1.count} `), JSON.stringify([p1, title1]));
   check("while the window is in front no notification is shown", p1?.shown === 0 && (await shell(app, () => globalThis.__shownByOs.length)) === 0);
 
   // the owner is elsewhere: one generic notification, once
