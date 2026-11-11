@@ -80,9 +80,13 @@ impl Link for Project {
                         "{path} was never listed"
                     );
                     self.reads.push(path.clone());
-                    Ok(
-                        json!({"ok": true, "result": {"path": path, "text": "def login():\n    pass\ndef logout():\n    pass\n"}}),
-                    )
+                    // package files are empty, as they usually are
+                    let text = if path.ends_with("__init__.py") {
+                        ""
+                    } else {
+                        "def login():\n    pass\ndef logout():\n    pass\n"
+                    };
+                    Ok(json!({"ok": true, "result": {"path": path, "text": text}}))
                 }
                 _ => Ok(json!({"ok": true, "result": {}})),
             },
@@ -171,15 +175,18 @@ fn ws01_every_source_file_gets_a_second_look_on_its_own_most_telling_first_and_a
             "payments/auth/session.py",
             "payments/api/handlers.py",
             "payments/config.py",
-            "payments/__init__.py",
             "payments/util/backoff.py"
         ],
         "sessions first; never a test or a document"
     );
-    assert_eq!(
-        link.reads, link.suspect_files,
-        "each file was read through the broker, once"
-    );
+    // each file was read through the broker, once; the empty package file was read and passed over without a question
+    let asked: Vec<&String> = link
+        .reads
+        .iter()
+        .filter(|p| !p.ends_with("__init__.py"))
+        .collect();
+    assert_eq!(asked, link.suspect_files.iter().collect::<Vec<_>>());
+    assert_eq!(link.reads.len(), link.suspect_files.len() + 1);
     // one usable suspicion (a line of zero and an empty summary are dropped), asked about with only the file in front
     assert_eq!(link.prove_asks.len(), 1);
     let ask = &link.prove_asks[0];
@@ -322,7 +329,7 @@ fn ws03_the_second_look_has_a_limit_can_be_off_skips_a_file_already_reported_and
         "{:?}",
         reported.suspect_files
     );
-    assert_eq!(reported.suspect_files.len(), 4);
+    assert_eq!(reported.suspect_files.len(), 3);
 
     // a worker that starts again from its saved state looks at no file twice
     let mut state = AgentState::new("sys", "review");
@@ -338,11 +345,7 @@ fn ws03_the_second_look_has_a_limit_can_be_off_skips_a_file_already_reported_and
     run(&mut again, state, &config(12), &|| false).unwrap();
     assert_eq!(
         again.suspect_files,
-        vec![
-            "payments/config.py",
-            "payments/__init__.py",
-            "payments/util/backoff.py"
-        ]
+        vec!["payments/config.py", "payments/util/backoff.py"]
     );
     // and a state saved before this existed still loads
     let old: AgentState =
@@ -439,4 +442,19 @@ fn ws05_a_model_that_stops_answering_during_the_second_look_ends_the_second_look
     )
     .unwrap();
     assert_eq!(r, Outcome::Cancelled);
+}
+
+#[test]
+fn ws06_an_empty_file_is_passed_over_and_does_not_use_up_the_bound() {
+    // four files have text and one is empty: a bound of four asks about all four
+    let mut link = project(vec![say("Done.")], vec![proof("print('GOOD')")]);
+    run(
+        &mut link,
+        AgentState::new("sys", "review"),
+        &config(4),
+        &|| false,
+    )
+    .unwrap();
+    assert_eq!(link.suspect_files.len(), 4, "{:?}", link.suspect_files);
+    assert!(link.reads.iter().any(|p| p.ends_with("__init__.py")));
 }

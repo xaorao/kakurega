@@ -89,6 +89,10 @@ pub struct AgentState {
     /// The source files that were given a second look after the model said it was done, in the order they were taken.
     #[serde(default)]
     pub looked: Vec<String>,
+    /// How many of those the model was really asked about: an empty file is passed over without a question and does
+    /// not use up the bound.
+    #[serde(default)]
+    pub asked: usize,
 }
 
 impl AgentState {
@@ -101,6 +105,7 @@ impl AgentState {
             ],
             turn: 0,
             looked: Vec::new(),
+            asked: 0,
         }
     }
 
@@ -627,6 +632,7 @@ fn second_look_step(
         .map(|(i, l)| format!("{}: {l}\n", i + 1))
         .collect();
     let file_block = format!("FILE {path}\n{numbered}");
+    state.asked += 1;
     let answer = ask_fresh(
         link,
         &[
@@ -772,7 +778,7 @@ pub fn run(
                 save(link, &state)?;
                 continue;
             }
-            while state.looked.len() < config.sweep_files {
+            while state.asked < config.sweep_files {
                 if cancelled() {
                     save(link, &state)?;
                     return Ok(Outcome::Cancelled);
