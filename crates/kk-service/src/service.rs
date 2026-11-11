@@ -256,6 +256,8 @@ pub struct Service {
     compaction_wait: Mutex<std::collections::HashMap<String, usize>>,
     /// Start of the current minute, calls written to the log in it, calls counted but not written. See `agent_call`.
     call_window: Mutex<(i64, usize, usize)>,
+    /// Team runs that are working now, and those asked to stop.
+    team: Mutex<team::Live>,
     pub test_mode: bool,
 }
 
@@ -377,6 +379,8 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS pack_seen(name TEXT NOT NULL, key_id TEXT NOT NULL, version TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(name, key_id));
              CREATE TABLE IF NOT EXISTS methods(name TEXT PRIMARY KEY, body TEXT NOT NULL, hash TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS method_approvals(name TEXT PRIMARY KEY, hash TEXT NOT NULL, approved_at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS team_runs(id TEXT PRIMARY KEY, goal TEXT NOT NULL, project TEXT, status TEXT NOT NULL, final TEXT, final_note TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL, updated INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS team_tasks(run TEXT NOT NULL, n INTEGER NOT NULL, expert TEXT NOT NULL, expert_name TEXT NOT NULL, after TEXT NOT NULL, task TEXT NOT NULL, state TEXT NOT NULL, result TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', question TEXT NOT NULL DEFAULT '', asked TEXT NOT NULL DEFAULT '[]', attempts INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(run, n));
              CREATE TABLE IF NOT EXISTS project_settings(project TEXT PRIMARY KEY, notes_only INTEGER NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS secrets(name TEXT PRIMARY KEY, value BLOB NOT NULL, stored_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);
@@ -823,9 +827,11 @@ impl Service {
             lease_skew: std::sync::atomic::AtomicI64::new(0),
             compaction_wait: Mutex::new(std::collections::HashMap::new()),
             call_window: Mutex::new((0, 0, 0)),
+            team: Mutex::new(team::Live::default()),
             test_mode,
         });
         settle_all_fixes(&svc);
+        svc.team_recover();
         // the scheduler wakes once a minute and holds the service only weakly, so dropping the service ends it
         let weak = Arc::downgrade(&svc);
         std::thread::spawn(move || loop {
@@ -1148,6 +1154,7 @@ struct PathQuery {
 mod mcp;
 mod methods;
 mod packs;
+mod team;
 
 type Svc = axum::Extension<Arc<Service>>;
 
@@ -9699,6 +9706,12 @@ impl Extension for Routes {
             .route("/api/inbox", get(inbox))
             .route("/api/experts", get(experts_list))
             .route("/api/chat/roundtable", post(chat_roundtable))
+            .route("/api/team", get(team::team_list).post(team::team_plan))
+            .route("/api/team/{id}", get(team::team_get))
+            .route("/api/team/{id}/delete", post(team::team_delete))
+            .route("/api/team/{id}/start", post(team::team_start))
+            .route("/api/team/{id}/stop", post(team::team_stop))
+            .route("/api/team/{id}/answer", post(team::team_answer))
             .route("/api/jobs", get(list).post(start))
             .route("/api/jobs/{id}", get(get_job))
             .route("/api/jobs/{id}/files", get(files))

@@ -393,3 +393,15 @@ button.linklike:hover { color: var(--ink); }
 .rt-parts dd { margin: 0; }
 .rt-decision { border-left: 3px solid var(--cipher); padding-left: 10px; }
 .rt-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.team-goal { white-space: pre-wrap; overflow-wrap: anywhere; }
+ol.team-tasks { list-style: none; padding: 0; margin: 0; }
+.team-allow > summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+.team-allow[open] > summary { margin-bottom: 8px; }
+.team-allow > summary::before { content: "▸"; margin-right: 6px; color: var(--graphite); }
+.team-allow[open] > summary::before { content: "▾"; }
+.team-ask { border-left: 3px solid var(--amber); padding-left: 10px; }
+.team-qa { overflow-wrap: anywhere; }
+.team-runs { gap: 0; border: 1px solid var(--line); border-radius: 8px; }
+.team-runs .row { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: space-between; align-items: baseline; }
+.team-runs .row[aria-current="true"] { background: var(--veil); }
+.team-run-goal { overflow-wrap: anywhere; min-width: 0; flex: 1 1 240px; }

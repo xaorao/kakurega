@@ -33,6 +33,23 @@ export interface RoundtableResolution { structured: boolean; agreed: string | nu
 /** One line of a roundtable's stream: an expert's state, a piece of its answer, its whole answer or its failure; then the resolution. */
 export type RoundtableEvent = Record<string, unknown> & { expert?: string; state?: string; delta?: string; answer?: string; failed?: string; stopped?: boolean; done?: boolean };
 
+export type TeamTask = {
+  n: number;
+  expert: string;
+  expert_name: string;
+  after: number[];
+  task: string;
+  state: "waiting" | "running" | "done" | "needs_input" | "failed" | "skipped";
+  result: string;
+  note: string;
+  question: string;
+  asked: { question: string; answer: string }[];
+  attempts: number;
+};
+export type TeamStatus = "planned" | "running" | "waiting" | "done" | "stopped" | "interrupted";
+export type TeamRun = { id: string; goal: string; project: string | null; status: TeamStatus; working: boolean; final: string | null; final_note: string; created: number; updated: number; tasks: TeamTask[] };
+export type TeamRunSummary = { id: string; goal: string; status: TeamStatus; created: number; updated: number; tasks: number; done: number; needs_input: number; not_done: number };
+
 /** Streams a roundtable. `onEvent` receives each line; aborting `signal` closes the connection, which stops the model. */
 export async function streamRoundtable(body: unknown, onEvent: (e: RoundtableEvent) => void, signal: AbortSignal): Promise<void> {
   const res = await fetch("/api/chat/roundtable", { method: "POST", headers: { "content-type": "application/json", "x-kk-csrf": csrf }, credentials: "same-origin", body: JSON.stringify(body), signal });
@@ -274,6 +291,13 @@ export const api = {
   logout: () => request<void>("POST", "/api/logout"),
   config: () => request<Config>("GET", "/api/config"),
   experts: () => request<{ experts: ExpertInfo[]; yours?: { id: string; name: string; summary: string }[]; min: number; max: number }>("GET", "/api/experts"),
+  teamRuns: () => request<{ runs: TeamRunSummary[] }>("GET", "/api/team"),
+  teamRun: (id: string) => request<TeamRun>("GET", `/api/team/${encodeURIComponent(id)}`),
+  teamPlan: (goal: string, experts: string[]) => request<TeamRun>("POST", "/api/team", experts.length > 0 ? { goal, experts } : { goal }),
+  teamStart: (id: string) => request<TeamRun>("POST", `/api/team/${encodeURIComponent(id)}/start`, {}),
+  teamStop: (id: string) => request<{ stopping: boolean }>("POST", `/api/team/${encodeURIComponent(id)}/stop`, {}),
+  teamAnswer: (id: string, task: number, answer: string) => request<TeamRun>("POST", `/api/team/${encodeURIComponent(id)}/answer`, { task, answer }),
+  teamDelete: (id: string) => request<{ deleted: string }>("POST", `/api/team/${encodeURIComponent(id)}/delete`, {}),
   models: () => request<{ current: string; installed: string[]; can_choose: boolean }>("GET", "/api/models"),
   chooseModel: (model: string) => request<{ route: { model: string } }>("POST", "/api/model", { model }),
   memories: (q?: string, f?: MemoryFilter) => {

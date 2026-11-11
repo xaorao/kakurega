@@ -12,6 +12,7 @@ pub mod keys;
 pub mod report;
 pub mod service;
 pub mod snapshot;
+pub mod team;
 pub mod tenants;
 
 pub use service::{ChatReply, JobRunner, Routes, Service, StreamedReply, LEASABLE_TOOLS};

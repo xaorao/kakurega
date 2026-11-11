@@ -1147,6 +1147,195 @@ pub fn roundtable(args: &[String]) -> u8 {
     })
 }
 
+fn team_words(v: &Value) -> String {
+    let mut out = format!(
+        "{}  {}\n{}\n",
+        clean(v["id"].as_str().unwrap_or("")),
+        clean(v["status"].as_str().unwrap_or("")),
+        clean(v["goal"].as_str().unwrap_or(""))
+    );
+    for t in v["tasks"].as_array().into_iter().flatten() {
+        let after: Vec<String> = t["after"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|n| n.as_u64())
+            .map(|n| n.to_string())
+            .collect();
+        out.push_str(&format!(
+            "\n{}. [{}] {}{}: {}\n",
+            t["n"],
+            clean(t["state"].as_str().unwrap_or("")),
+            clean(t["expert_name"].as_str().unwrap_or("")),
+            if after.is_empty() {
+                String::new()
+            } else {
+                format!(" (after {})", after.join(", "))
+            },
+            clean(t["task"].as_str().unwrap_or(""))
+        ));
+        if let Some(q) = t["question"].as_str().filter(|q| !q.is_empty()) {
+            out.push_str(&format!("   asks you: {}\n", clean(q)));
+        }
+        if let Some(n) = t["note"].as_str().filter(|n| !n.is_empty()) {
+            out.push_str(&format!("   why: {}\n", clean(n)));
+        }
+        if let Some(r) = t["result"].as_str().filter(|r| !r.is_empty()) {
+            for line in r.lines() {
+                out.push_str(&format!("   {}\n", clean(line)));
+            }
+        }
+    }
+    if let Some(f) = v["final"].as_str() {
+        out.push_str(&format!("\nResult:\n{}\n", clean(f)));
+    } else if let Some(n) = v["final_note"].as_str().filter(|n| !n.is_empty()) {
+        out.push_str(&format!("\nNo result from the lead: {}\n", clean(n)));
+    }
+    out
+}
+
+/// `kaku team plan GOAL [--experts ID,ID]`, `kaku team list`, `kaku team show ID`, `kaku team start ID [--wait]`,
+/// `kaku team stop ID`, `kaku team answer ID TASK TEXT`, `kaku team delete ID`: a lead's plan of tasks for experts.
+/// A plan is never started by making it. `--wait` follows a run until it ends or needs the owner (exit 3).
+pub fn team(args: &[String]) -> u8 {
+    let json_mode = args.iter().any(|a| a == "--json");
+    let wait = args.iter().any(|a| a == "--wait");
+    let experts = crate::flag(args, "--experts");
+    // the command's own words come first; from the first other option on, the rest belongs to the service (its values are not words)
+    let mut words: Vec<&String> = Vec::new();
+    let mut it = args.iter().skip(1);
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--json" | "--wait" => {}
+            "--experts" => {
+                it.next();
+            }
+            other if other.starts_with("--") => break,
+            _ => words.push(a),
+        }
+    }
+    let usage = "usage: kaku team plan GOAL [--experts ID,ID] | list | show ID | start ID [--wait] | stop ID | answer ID TASK TEXT | delete ID   (add --json for one object)";
+    let id_ok = |id: &str| {
+        id.len() == 17 && id.starts_with("team-") && id[5..].chars().all(|c| c.is_ascii_hexdigit())
+    };
+    let (method, path, body): (Method, String, Option<Value>) = match words.as_slice() {
+        [w, goal] if w.as_str() == "plan" && !goal.trim().is_empty() => {
+            let mut b = json!({"goal": goal});
+            if let Some(e) = &experts {
+                b["experts"] = json!(e
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>());
+            }
+            (Method::Post, "/api/team".into(), Some(b))
+        }
+        [w] if w.as_str() == "list" => (Method::Get, "/api/team".into(), None),
+        [w, id] if w.as_str() == "show" && id_ok(id) => {
+            (Method::Get, format!("/api/team/{id}"), None)
+        }
+        [w, id] if matches!(w.as_str(), "start" | "stop" | "delete") && id_ok(id) => {
+            (Method::Post, format!("/api/team/{id}/{w}"), Some(json!({})))
+        }
+        [w, id, task, text]
+            if w.as_str() == "answer" && id_ok(id) && task.parse::<usize>().is_ok() =>
+        {
+            (
+                Method::Post,
+                format!("/api/team/{id}/answer"),
+                Some(json!({"task": task.parse::<usize>().unwrap_or(0), "answer": text})),
+            )
+        }
+        _ => return fail(json_mode, USAGE, usage),
+    };
+    let what = words[0].clone();
+    crate::tui::with_service(&serve_args(args), |dir| {
+        let http = match connect(dir, json_mode) {
+            Ok(h) => h,
+            Err(c) => return c,
+        };
+        let mut v = match call(&http, method, &path, body.clone()) {
+            Ok((s, v)) if s < 300 => v,
+            Ok((s, v)) => {
+                let (m, c) = refusal(s, &v);
+                return fail(json_mode, c, &m);
+            }
+            Err(e) => return fail(json_mode, UNAVAILABLE, &e),
+        };
+        if what == "list" {
+            say(json_mode, &v, || {
+                let rows: Vec<String> = v["runs"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|r| {
+                        format!(
+                            "{}  {:11}  {} of {} done  {}",
+                            clean(r["id"].as_str().unwrap_or("")),
+                            clean(r["status"].as_str().unwrap_or("")),
+                            r["done"],
+                            r["tasks"],
+                            clean(r["goal"].as_str().unwrap_or(""))
+                        )
+                    })
+                    .collect();
+                if rows.is_empty() {
+                    "No team runs yet.".into()
+                } else {
+                    rows.join("\n")
+                }
+            });
+            return OK;
+        }
+        if matches!(what.as_str(), "stop" | "delete") {
+            say(json_mode, &v, || {
+                if what == "delete" {
+                    "Deleted.".into()
+                } else if v["stopping"] == true {
+                    "Stopping: the answer being written is cut off and no further task is asked."
+                        .into()
+                } else {
+                    "Stopped.".into()
+                }
+            });
+            return OK;
+        }
+        if wait && matches!(what.as_str(), "start" | "answer") {
+            let id = v["id"].as_str().unwrap_or("").to_string();
+            let started = Instant::now();
+            while (v["status"] == "running" || v["working"] == true)
+                && started.elapsed() < Duration::from_secs(3600)
+            {
+                std::thread::sleep(Duration::from_millis(500));
+                match call(&http, Method::Get, &format!("/api/team/{id}"), None) {
+                    Ok((200, next)) => v = next,
+                    Ok((s, e)) => {
+                        let (m, c) = refusal(s, &e);
+                        return fail(json_mode, c, &m);
+                    }
+                    Err(e) => return fail(json_mode, UNAVAILABLE, &e),
+                }
+            }
+        }
+        say(json_mode, &v, || {
+            let mut text = team_words(&v);
+            if v["status"] == "planned" {
+                text.push_str(&format!(
+                    "\nNothing has run. Start it with: kaku team start {} --wait\n",
+                    clean(v["id"].as_str().unwrap_or(""))
+                ));
+            }
+            text.trim_end().to_string()
+        });
+        // a run that waits for the owner is not a failure, but a script must be able to tell
+        if v["status"] == "waiting" {
+            3
+        } else {
+            OK
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
