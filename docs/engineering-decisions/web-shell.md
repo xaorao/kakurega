@@ -290,3 +290,10 @@ Performance of Solid with long streaming transcripts at our scale; accessibility
 - Evidence: web unit tests ft01-ft04 (filter, grouping with the top level first, name and extension, a path that looks like an object key or markup), browser 506/506 (the gutter and colour, the grouping, the filter with before and after counts, an empty match, a 1,200-file list cut to 400 with the sentence and a file beyond the 400 found by typing, axe on both views), two screenshots read by eye.
 - Not covered: a nested outline, keyboard navigation between files beyond Tab, files over 60,000 characters (shown uncoloured by the highlighter's own limit), a mobile width.
 
+
+## Sample data (plan item 7)
+- Target: a person, or a judge, can try a review, a question about documents and meeting notes without bringing a file of their own.
+- Built: "Try it with sample files" on the first screen. It writes a small made-up payments project (the one the reviews are tested on, with its planted defect and its hostile README) and three made-up documents (a supply agreement, a meeting transcript, handover notes with a made-up key and a planted order) into `kakurega-sample` inside the owner's first allowed folder, and offers three shortcuts: choose the project for a review, ask the documents, take notes from the meeting. The files go through the same doors as any file; nothing is special-cased for them.
+- Removal deletes exactly the files it wrote (a list is kept in the folder) and leaves anything a person added. A folder of that name that this program did not make is never written into.
+- Evidence: kk-service sv257; `tests/e2e/sample_web.mjs` 9 browser checks with the adversary model (its own log holds the meeting and neither the made-up password nor the made-up key).
+- Not built: the app running with sample data in a browser with no install at all. That needs the hosted mode, which is parked.

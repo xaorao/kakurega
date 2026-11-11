@@ -1240,6 +1240,7 @@ mod methods;
 mod outbound;
 mod packs;
 mod prompts;
+mod sample;
 mod share;
 mod swap;
 mod team;
@@ -9956,6 +9957,8 @@ impl Extension for Routes {
                 get(swap::names_get).post(swap::names_set),
             )
             .route("/api/outbound", get(outbound::list))
+            .route("/api/sample", get(sample::status).post(sample::load))
+            .route("/api/sample/remove", post(sample::remove))
             .route("/api/handoff", get(handoff::status).post(handoff::propose))
             .route("/api/handoff/{id}/run", post(handoff::run))
             .route("/api/handoff/{id}/cancel", post(handoff::cancel))

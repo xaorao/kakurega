@@ -1,3 +1,4 @@
+import { takeHint } from "../components/SampleCard";
 import { visible } from "../visible";
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, type AskReply, type Passage } from "../api";
@@ -51,7 +52,7 @@ function MeaningIndex(props: { tick: number }) {
 }
 
 export function Documents() {
-  const [dir, setDir] = createSignal<string | undefined>(undefined);
+  const [dir, setDir] = createSignal<string | undefined>(takeHint("kk-docs-folder") ?? undefined);
   const [listing] = createResource(() => dir() ?? "", (d) => api.fs(d || undefined));
   const [question, setQuestion] = createSignal("");
   const [busy, setBusy] = createSignal(false);

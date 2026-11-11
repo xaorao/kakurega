@@ -1,3 +1,4 @@
+import { SampleCard } from "../components/SampleCard";
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError, type Config, type Readiness } from "../api";
 import { rich, t } from "../i18n";
@@ -65,6 +66,7 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
       <h1 id="h-new">{t("new.title")}</h1>
       <p class="greeting">{t("new.greeting")}</p>
       <p class="lead">{t("new.lead")}</p>
+      <SampleCard onReview={(folder) => setDir(folder)} />
       <Show when={ready()}>
         {(r) => (
           <div class="card stack" role="region" aria-label={t("setup.region")}>

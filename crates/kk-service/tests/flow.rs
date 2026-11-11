@@ -16289,7 +16289,11 @@ fn sv178_a_project_set_to_answer_only_from_its_material_asks_no_model_when_it_ho
     assert_eq!(calls(), before + 1);
     assert_ne!(r["route"]["id"], "none");
     // on: nothing relevant means no model call, a fixed reply, no usage recorded
-    let used = |w: &Web| w.get("/api/usage").1.to_string();
+    // what was used, without the window's two clock readings: those move on by themselves when a second passes
+    let used = |w: &Web| {
+        let u = w.get("/api/usage").1;
+        json!({"routes": u["routes"], "total": u["total"]}).to_string()
+    };
     let usage_before = used(&w);
     let (s, v) = w.post(
         "/api/project-settings",
@@ -21688,4 +21692,97 @@ fn sv256_text_is_handed_to_the_coding_agent_only_after_it_was_shown_back_and_a_s
         "{r}"
     );
     assert!(none.handed.lock().unwrap().is_empty());
+}
+
+#[test]
+fn sv257_the_sample_is_written_into_its_own_folder_works_through_the_real_doors_and_is_removed_without_touching_anything_else(
+) {
+    let runner = FileRunner::new("http://127.0.0.1:11434", 16384);
+    let (_c, w, root) = file_service("sample", runner.clone());
+    let (_, st) = w.get("/api/sample");
+    assert_eq!(
+        (st["possible"].clone(), st["loaded"].clone()),
+        (json!(true), json!(false))
+    );
+    let (s, st) = w.post("/api/sample", json!({}));
+    assert_eq!((s, st["loaded"].clone()), (200, json!(true)), "{st}");
+    let dir = root.join("kakurega-sample");
+    assert_eq!(
+        fs::canonicalize(st["folder"].as_str().unwrap()).unwrap(),
+        fs::canonicalize(&dir).unwrap()
+    );
+    for f in [
+        "payments-service/payments/auth/session.py",
+        "payments-service/.env",
+        "documents/supply-agreement.md",
+        "documents/weekly-sync-transcript.txt",
+        "documents/handover-notes.txt",
+    ] {
+        assert!(dir.join(f).is_file(), "{f}");
+    }
+    assert!(st["transcript"]
+        .as_str()
+        .unwrap()
+        .starts_with("Asha Rao: Thanks everyone."));
+    // loading again is harmless
+    assert_eq!(w.post("/api/sample", json!({})).0, 200);
+
+    // the documents can be asked about, and the made-up key and the planted order in them never reach the model
+    let (s, a) = w.post(
+        "/api/ask",
+        json!({"folder": st["documents"], "question": "How long does the supply agreement run?"}),
+    );
+    assert_eq!(s, 200, "{a}");
+    let sent = runner.sent();
+    assert!(
+        sent.contains("24 months") && !sent.contains("sk-ant") && !sent.contains("hunter2"),
+        "{sent}"
+    );
+    // the project is a folder a review can be started on
+    let (s, j) = w.post(
+        "/api/jobs",
+        json!({"repo": st["project"], "recipient": "external-auditor"}),
+    );
+    assert_eq!(s, 202, "{j}");
+
+    // a person's own file in the sample folder survives the removal, and so does the folder that holds it
+    fs::write(dir.join("documents/my-own-notes.txt"), "mine").unwrap();
+    let (_, r) = w.post("/api/sample/remove", json!({}));
+    assert_eq!(r["loaded"], json!(false), "{r}");
+    assert!(r["removed"].as_u64().unwrap() >= 16, "{r}");
+    assert!(
+        !dir.join("payments-service").exists()
+            && !dir.join("documents/supply-agreement.md").exists()
+    );
+    assert_eq!(
+        fs::read_to_string(dir.join("documents/my-own-notes.txt")).unwrap(),
+        "mine"
+    );
+    assert_eq!(
+        w.post("/api/sample/remove", json!({})).1["removed"],
+        json!(0)
+    );
+
+    // a folder of that name that this program did not make is never written into
+    let (_c2, w2, root2) = file_service(
+        "sample-taken",
+        FileRunner::new("http://127.0.0.1:11434", 16384),
+    );
+    fs::create_dir_all(root2.join("kakurega-sample")).unwrap();
+    fs::write(root2.join("kakurega-sample/thesis.txt"), "years of work").unwrap();
+    let (s, r) = w2.post("/api/sample", json!({}));
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (409, Some("SAMPLE_REFUSED")),
+        "{r}"
+    );
+    assert_eq!(
+        fs::read_dir(root2.join("kakurega-sample")).unwrap().count(),
+        1
+    );
+    w2.post("/api/sample/remove", json!({}));
+    assert_eq!(
+        fs::read_to_string(root2.join("kakurega-sample/thesis.txt")).unwrap(),
+        "years of work"
+    );
 }

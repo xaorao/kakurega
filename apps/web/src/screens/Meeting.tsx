@@ -1,6 +1,7 @@
 import { createSignal, For, Show } from "solid-js";
 import { api, ApiError, type MeetingNotes, type MeetingPoint } from "../api";
 import { t } from "../i18n";
+import { takeHint } from "../components/SampleCard";
 import { fitBytes, NOTE_BYTES, plainTranscript } from "../meeting-text";
 
 const KINDS = ["decision", "action", "question"] as const;
@@ -8,8 +9,8 @@ const KINDS = ["decision", "action", "question"] as const;
 const MAX_FILE_BYTES = 400_000;
 
 export function Meeting() {
-  const [text, setText] = createSignal("");
-  const [title, setTitle] = createSignal("");
+  const [text, setText] = createSignal(takeHint("kk-meeting-text") ?? "");
+  const [title, setTitle] = createSignal(takeHint("kk-meeting-title") ?? "");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
   const [notes, setNotes] = createSignal<MeetingNotes | null>(null);
