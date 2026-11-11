@@ -107,6 +107,31 @@ pub trait JobRunner: Send + Sync {
     fn handoff_run(&self, _text: &str) -> Result<String, String> {
         Err("no outside coding agent is installed on this computer".into())
     }
+    /// The read-only GitHub connector: whether a client id is set, whether an account is connected and which, a sign-in
+    /// that waits for the owner. Never a token or a device code.
+    fn github_status(&self) -> Value {
+        json!({"available": false, "connected": false, "client_set": false})
+    }
+    /// Keeps the client id of the owner's GitHub App. Errors are `{"code", "message"}` in plain words.
+    fn github_set_client(&self, _client_id: &str) -> Result<Value, Value> {
+        Err(github_unavailable())
+    }
+    /// Starts a device sign-in: the code to type and GitHub's page to type it on.
+    fn github_start(&self) -> Result<Value, Value> {
+        Err(github_unavailable())
+    }
+    /// Asks GitHub once whether the sign-in was finished, when its interval has passed.
+    fn github_poll(&self) -> Result<Value, Value> {
+        Err(github_unavailable())
+    }
+    /// Removes the token from this computer.
+    fn github_sign_out(&self) -> Result<Value, Value> {
+        Err(github_unavailable())
+    }
+    /// One read: whoami, repos, issues, pulls, issue, file or search, with its parameters.
+    fn github_read(&self, _action: &str, _params: &Value) -> Result<Value, Value> {
+        Err(github_unavailable())
+    }
     /// The routes the owner can choose between while the service runs, and which one is in use. No key is ever in it.
     fn route_options(&self) -> Value {
         json!({"changeable": false})
@@ -139,6 +164,10 @@ pub trait JobRunner: Send + Sync {
         let stopped = !on_chunk(&r.text);
         Ok(StreamedReply { reply: r, stopped })
     }
+}
+
+fn github_unavailable() -> Value {
+    json!({"code": "NOT_AVAILABLE", "message": "the GitHub connector is not available in this configuration"})
 }
 
 #[derive(Debug, Clone)]
@@ -1234,6 +1263,7 @@ struct PathQuery {
 }
 
 mod breakit;
+mod github;
 mod handoff;
 mod mcp;
 mod meeting;
@@ -9965,6 +9995,12 @@ impl Extension for Routes {
             .route("/api/handoff", get(handoff::status).post(handoff::propose))
             .route("/api/handoff/{id}/run", post(handoff::run))
             .route("/api/handoff/{id}/cancel", post(handoff::cancel))
+            .route("/api/connectors/github/status", get(github::status))
+            .route("/api/connectors/github/client", post(github::set_client))
+            .route("/api/connectors/github/start", post(github::start))
+            .route("/api/connectors/github/poll", post(github::poll))
+            .route("/api/connectors/github/signout", post(github::sign_out))
+            .route("/api/connectors/github/read", post(github::read))
             .route("/api/prompts", get(prompts::list).post(prompts::change))
             .route("/api/route/options", get(swap::route_options))
             .route("/api/route/choose", post(swap::route_choose))
