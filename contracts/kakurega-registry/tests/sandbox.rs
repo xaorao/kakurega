@@ -859,3 +859,303 @@ async fn orders_pay_the_reviewer_for_the_capsule_and_return_unmet_ones_on_a_real
     );
     Ok(())
 }
+
+async fn testnet_code(http: &reqwest::Client, account: &str) -> Vec<u8> {
+    let code: Value = http
+        .post(TESTNET_RPC)
+        .json(
+            &json!({"jsonrpc": "2.0", "id": 1, "method": "query", "params": {
+            "request_type": "view_code", "finality": "final", "account_id": account}}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    unb64(
+        code["result"]["code_base64"]
+            .as_str()
+            .expect("contract code"),
+    )
+}
+
+/// The token path on a real runtime, with a real NEP-141 contract (wrapped NEAR's code, fetched from testnet).
+#[tokio::test]
+#[ignore]
+async fn live_a_token_order_is_opened_by_a_transfer_paid_in_the_token_and_survives_a_failed_payout()
+-> testresult::TestResult {
+    let http = reqwest::Client::new();
+    let token_wasm = testnet_code(&http, "wrap.testnet").await;
+    let wasm = std::fs::read(cargo_near_build::build_with_cli(Default::default())?)?;
+    let e = start().await?;
+    let token = e.account("token.sandbox", 30).await;
+    near_api::Contract::deploy(token.clone())
+        .use_code(token_wasm)
+        .with_init_call("new", json!({}))?
+        .with_signer(e.key.clone())
+        .send_to(&e.net)
+        .await?
+        .assert_success();
+    let contract = e.account("registry.sandbox", 20).await;
+    near_api::Contract::deploy(contract.clone())
+        .use_code(wasm)
+        .with_init_call(
+            "new",
+            json!({"verifier": "verifier.sandbox", "token": "token.sandbox", "min_token_order": (NEAR / 10).to_string()}),
+        )?
+        .with_signer(e.key.clone())
+        .send_to(&e.net)
+        .await?
+        .assert_success();
+    let carl = e.account("carl.sandbox", 20).await;
+    let rita = e.account("rita.sandbox", 10).await;
+    let cap = key(1);
+    let balance = |who: &'static str| {
+        let (t, e) = (token.clone(), &e);
+        async move {
+            e.view(&t, "ft_balance_of", json!({"account_id": who}))
+                .await
+                .as_str()
+                .unwrap()
+                .parse::<u128>()
+                .unwrap()
+        }
+    };
+    let register = |who: &'static str| json!({"account_id": who});
+    // Carl and the registry can hold the token; Rita cannot yet. Carl wraps five NEAR.
+    e.call(
+        &token,
+        &carl,
+        "storage_deposit",
+        register("carl.sandbox"),
+        NEAR / 100,
+    )
+    .await?;
+    e.call(
+        &token,
+        &carl,
+        "storage_deposit",
+        register("registry.sandbox"),
+        NEAR / 100,
+    )
+    .await?;
+    e.call(&token, &carl, "near_deposit", json!({}), 5 * NEAR)
+        .await?;
+    let transfer = |amount: u128, msg: String| json!({"receiver_id": "registry.sandbox", "amount": amount.to_string(), "msg": msg});
+
+    // A transfer with no terms, and one below the smallest order, come straight back.
+    e.call(
+        &token,
+        &carl,
+        "ft_transfer_call",
+        transfer(NEAR, "pay rita".into()),
+        1,
+    )
+    .await?;
+    e.call(
+        &token,
+        &carl,
+        "ft_transfer_call",
+        transfer(
+            NEAR / 100,
+            order_terms("rita.sandbox", &cap, 600).to_string(),
+        ),
+        1,
+    )
+    .await?;
+    assert_eq!(
+        balance("carl.sandbox").await,
+        5 * NEAR,
+        "both were refunded in full"
+    );
+    assert_eq!(balance("registry.sandbox").await, 0);
+    assert_eq!(e.view(&contract, "orders_total", json!({})).await, "0");
+
+    // A transfer with terms opens an order in the token.
+    e.call(
+        &token,
+        &carl,
+        "ft_transfer_call",
+        transfer(NEAR, order_terms("rita.sandbox", &cap, 600).to_string()),
+        1,
+    )
+    .await?;
+    let o = e.view(&contract, "order", json!({"order_id": "0"})).await;
+    assert_eq!(
+        (
+            o["state"].as_str(),
+            o["token"].as_str(),
+            o["client"].as_str()
+        ),
+        (Some("Open"), Some("token.sandbox"), Some("carl.sandbox"))
+    );
+    assert_eq!(o["amount"], NEAR.to_string());
+    assert_eq!(
+        (
+            balance("carl.sandbox").await,
+            balance("registry.sandbox").await
+        ),
+        (4 * NEAR, NEAR)
+    );
+
+    // Rita registers her capsule, but she cannot hold the token yet: the payout fails, the order stays earned, the money stays.
+    let digest = "cd".repeat(32);
+    e.call(
+        &contract,
+        &rita,
+        "register_for_order",
+        delivery(&cap, &digest, "rita.sandbox", 0),
+        NEAR / 10,
+    )
+    .await?;
+    assert_eq!(
+        e.view(&contract, "order", json!({"order_id": "0"})).await["state"],
+        "Earned"
+    );
+    assert_eq!(balance("registry.sandbox").await, NEAR);
+
+    // Once she can hold it, anyone may retry and the money goes to her, once.
+    e.call(
+        &token,
+        &rita,
+        "storage_deposit",
+        register("rita.sandbox"),
+        NEAR / 100,
+    )
+    .await?;
+    e.call(&contract, &carl, "claim_order", json!({"order_id": "0"}), 0)
+        .await?;
+    assert_eq!(
+        e.view(&contract, "order", json!({"order_id": "0"})).await["state"],
+        "Paid"
+    );
+    assert_eq!(
+        (
+            balance("rita.sandbox").await,
+            balance("registry.sandbox").await
+        ),
+        (NEAR, 0)
+    );
+    assert!(
+        e.call(&contract, &rita, "claim_order", json!({"order_id": "0"}), 0)
+            .await
+            .is_err()
+    );
+    assert_eq!(balance("rita.sandbox").await, NEAR);
+    Ok(())
+}
+
+fn testnet_signer(var: &str) -> testresult::TestResult<std::sync::Arc<near_api::Signer>> {
+    let file: Value =
+        near_sdk::serde_json::from_str(&std::fs::read_to_string(std::env::var(var)?)?)?;
+    Ok(near_api::Signer::from_secret_key(
+        file["private_key"].as_str().expect("private_key").parse()?,
+    )?)
+}
+
+/// On NEAR testnet: a client account opens a NEAR order and the reviewer account is paid for its capsule.
+/// `KAKU_TESTNET_REGISTRY`, `KAKU_TESTNET_CLIENT` with `KAKU_TESTNET_CLIENT_KEY_FILE`, `KAKU_TESTNET_REVIEWER` with
+/// `KAKU_TESTNET_REVIEWER_KEY_FILE`. Throwaway accounts; testnet NEAR only.
+#[tokio::test]
+#[ignore]
+async fn testnet_an_order_is_opened_and_paid_for_the_reviewers_capsule() -> testresult::TestResult {
+    let contract: AccountId = std::env::var("KAKU_TESTNET_REGISTRY")?.parse()?;
+    let client: AccountId = std::env::var("KAKU_TESTNET_CLIENT")?.parse()?;
+    let reviewer: AccountId = std::env::var("KAKU_TESTNET_REVIEWER")?.parse()?;
+    let (client_key, reviewer_key) = (
+        testnet_signer("KAKU_TESTNET_CLIENT_KEY_FILE")?,
+        testnet_signer("KAKU_TESTNET_REVIEWER_KEY_FILE")?,
+    );
+    let net = near_api::NetworkConfig::testnet();
+    let view = |method: &'static str, args: Value| {
+        let (c, net) = (contract.clone(), net.clone());
+        async move {
+            near_api::Contract(c)
+                .call_function(method, args)
+                .read_only::<Value>()
+                .fetch_from(&net)
+                .await
+                .unwrap()
+                .data
+        }
+    };
+    let send = |who: AccountId,
+                key: std::sync::Arc<near_api::Signer>,
+                method: &'static str,
+                args: Value,
+                deposit: u128| {
+        let (c, net) = (contract.clone(), net.clone());
+        async move {
+            let done = near_api::Contract(c)
+                .call_function(method, args)
+                .transaction()
+                .gas(NearGas::from_tgas(100))
+                .deposit(NearToken::from_yoctonear(deposit))
+                .with_signer(who, key)
+                .send_to(&net)
+                .await
+                .unwrap()
+                .into_full()
+                .unwrap();
+            println!(
+                "{method}: {} ({})",
+                done.outcome().transaction_hash,
+                done.total_gas_burnt
+            );
+            done.into_result().map(|_| ()).map_err(|e| format!("{e:?}"))
+        }
+    };
+    let id: u64 = view("orders_total", json!({}))
+        .await
+        .as_str()
+        .unwrap()
+        .parse()?;
+    // a capsule key and digest made for this run only
+    let seed: [u8; 32] = <sha2::Sha256 as sha2::Digest>::digest(now_nanos().to_le_bytes()).into();
+    let cap = SigningKey::from_bytes(&seed);
+    let digest = hex(&<sha2::Sha256 as sha2::Digest>::digest(seed));
+    send(
+        client.clone(),
+        client_key,
+        "open_order",
+        json!({"terms": order_terms(reviewer.as_str(), &cap, 900)}),
+        NEAR / 2,
+    )
+    .await?;
+    let o = view("order", json!({"order_id": id.to_string()})).await;
+    assert_eq!(
+        (o["state"].as_str(), o["client"].as_str()),
+        (Some("Open"), Some(client.as_str()))
+    );
+    let before = near_api::Tokens::account(reviewer.clone())
+        .near_balance()
+        .fetch_from(&net)
+        .await?
+        .total
+        .as_yoctonear();
+    send(
+        reviewer.clone(),
+        reviewer_key,
+        "register_for_order",
+        delivery(&cap, &digest, reviewer.as_str(), id),
+        NEAR / 10,
+    )
+    .await?;
+    let o = view("order", json!({"order_id": id.to_string()})).await;
+    println!("order {id}: {o}");
+    assert_eq!(o["state"], "Paid");
+    let after = near_api::Tokens::account(reviewer.clone())
+        .near_balance()
+        .fetch_from(&net)
+        .await?
+        .total
+        .as_yoctonear();
+    let amount: u128 = o["amount"].as_str().unwrap().parse()?;
+    println!(
+        "reviewer gained {} yoctoNEAR of an order of {amount}",
+        after as i128 - before as i128
+    );
+    assert!(after > before + amount - NEAR / 20);
+    Ok(())
+}
