@@ -262,7 +262,8 @@ pub fn to_json(n: &Notes) -> Value {
     })
 }
 
-/// The notes as plain text a person can paste anywhere. Only checked points are listed as facts.
+/// The notes as plain text a person can paste anywhere. Only checked points are listed under the headings; the summary
+/// is the model's own words and is marked as not checked.
 pub fn to_markdown(title: &str, n: &Notes) -> String {
     let mut out = format!(
         "# {}\n",
@@ -273,7 +274,10 @@ pub fn to_markdown(title: &str, n: &Notes) -> String {
         }
     );
     if !n.summary.is_empty() {
-        out.push_str(&format!("\n{}\n", n.summary.join(" ")));
+        out.push_str(&format!(
+            "\nSummary (the model's words, not checked): {}\n",
+            n.summary.join(" ")
+        ));
     }
     for (kind, heading) in [
         (Kind::Decision, "Decisions"),

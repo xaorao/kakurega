@@ -4,7 +4,7 @@
 A person has secrets in the material they work with: keys in a settings file, a token in a transcript, a password someone said in a meeting. When they use the product the ordinary way on that material, does the secret reach the model?
 
 ## The model is an adversary
-`adversary_model.py` stands in for the local model. It is told every planted secret, and whenever one of them, or its base64, hex or URL-encoded form, appears anywhere in what it is sent, it repeats it in its answer. It writes every request it receives to a log. That log, kept by the model and not by the product, is the record of what reached it.
+`adversary_model.py` stands in for the local model. It is told every planted secret, and whenever one of them, or its base64, hex or URL-encoded form, appears anywhere in what it is sent, it repeats it in its answer. It writes every request it receives to a log. What counts as the secret arriving: the whole value, either half of it, any line of a key block, and each of these in base64, hex or URL-encoded form. The log is read once nothing has been added to it for a moment, so a late request is counted with its own case. That log, kept by the model and not by the product, is the record of what reached it.
 
 A model that repeats whatever it is shown is the worst case for a product whose protection sits outside the model: nothing depends on the model behaving. It also means this benchmark does not measure how often a real model is talked into leaking; that is a different question (see Limits).
 
@@ -24,7 +24,7 @@ Every secret is random and made fresh for the run. The results hold its SHA-256,
 ## Verdicts
 Each case records what was observed (the HTTP status, whether the model was asked at all, whether any form of the secret is in the model's log, whether it is anywhere in plain form under the service's data folder), and the verdict follows from those and nothing else:
 
-- held: the product was used, the model was asked, the secret was not in what it received.
+- held: the product was used, the model was asked a question (a request to its chat address; listing or describing the model does not count), and no form of the secret was in anything it received.
 - refused: the product said no before any model was asked (a note that holds a key is not kept).
 - sent by the owner: the owner typed the secret into the chat box themselves, with the model on their own computer. Counted apart, not as held.
 - allowed on this computer: the secret was in a note the owner marked restricted, which by that label goes to the model on this computer and to no other. Counted apart.
@@ -32,10 +32,10 @@ Each case records what was observed (the HTTP status, whether the model was aske
 - not run: an error. It shows nothing, and results with such a case are not signed.
 
 ## A model at another address
-The local-model route refuses an address that is not this computer (the benchmark checks that once), so a model elsewhere cannot be stood up from outside. That arm is the test `bench_elsewhere` in `crates/kk-service/tests/flow.rs`: 14 secrets through 5 doors against a recording model whose address is not this computer. There the typed secret and the confidential note must be held too. It is run by `cargo test -p kk-service --test flow bench_elsewhere`; with `KK_BENCH_OUT=FILE` it writes its records. The model in that arm records what it is sent inside the test process; the real network transports to NEAR AI Cloud are tested separately.
+The local-model route refuses an address that is not this computer. The benchmark tries it once, fails if the model there was asked anything, and records the outcome in the results, where the verifier checks it again. So a model elsewhere cannot be stood up from outside. That arm is the test `bench_elsewhere` in `crates/kk-service/tests/flow.rs`: 14 secrets through 5 doors against a recording model whose address is not this computer. There the typed secret and the confidential note must be held too. It is run by `cargo test -p kk-service --test flow bench_elsewhere`; with `KK_BENCH_OUT=FILE` it writes its records. The model in that arm records what it is sent inside the test process; the real network transports to NEAR AI Cloud are tested separately.
 
 ## Signed results
-`results.signed.json` is `results.json` signed (a DSSE envelope, Ed25519). `signer.pub` is the public key. `kaku bench verify` checks the signature against a key you give it, then recomputes every verdict and every count from the recorded observations and refuses results in which a verdict does not follow from them, the control failed, a case is listed twice or a case did not run. `kaku bench sign` refuses to sign such results in the first place.
+`results.signed.json` is `results.json` signed (a DSSE envelope, Ed25519). `signer.pub` is the public key. `kaku bench verify` checks the signature against a key you give it, then recomputes every verdict and every count from the recorded observations and refuses results in which a verdict does not follow from them, the control failed, a case is listed twice, a case did not run, the number of cases is not the number the run had, a leak does not say in which form the secret arrived, or the model at another address was accepted. `kaku bench sign` refuses to sign such results in the first place.
 
 A signature shows the file was not changed after it was signed. It does not show the run was honest. For that, run it again: `benchmarks/leak/reverify --rerun`.
 
@@ -48,3 +48,4 @@ A signature shows the file was not changed after it was signed. It does not show
 
 ## Try it yourself
 The app has a screen for this, "Try to break it" (from "Where your data goes"). You write any text; the service plants it in a file next to two secrets made for that one attempt (a key of a well-known shape and a password said with the word password) and asks the model this computer is set to use to work on that file, through the same code a chat with an attached file goes through. The page shows the two planted secrets, exactly what the model was sent, what it answered, and whether either secret was in either. Every attempt is counted on that computer, and so is every leak. The counter is local: it is that installation's own record, not a public total.
+- A secret cut into pieces smaller than half of it, or changed in a way other than the four forms above, would not be seen by the check.

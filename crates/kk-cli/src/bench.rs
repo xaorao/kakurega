@@ -60,6 +60,17 @@ pub fn summarise(doc: &Value) -> (Value, Vec<String>) {
     if cases.is_empty() {
         problems.push("there are no cases".to_string());
     }
+    // a full run says how many cases it has; fewer than that is a run with cases taken out
+    match (doc["complete"].as_bool(), doc["expected_cases"].as_u64()) {
+        (Some(true), Some(n)) if n as usize == cases.len() => {}
+        (Some(true), Some(n)) => problems.push(format!("{} cases are recorded where the run had {n}", cases.len())),
+        _ => problems.push("this is not a complete run: it does not say how many cases it had, or it was run for one door only".to_string()),
+    }
+    // the one check that is not a case: the local route pointed at another address must have refused it unasked
+    let remote = &doc["local_route_pointed_elsewhere"];
+    if !remote.is_null() && (remote["model_was_asked"] != false || remote["http_status"] == 200) {
+        problems.push("the local route accepted a model at another address".to_string());
+    }
     let mut groups: BTreeMap<String, BTreeMap<&'static str, u64>> = BTreeMap::new();
     let mut leaks = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
@@ -74,6 +85,10 @@ pub fn summarise(doc: &Value) -> (Value, Vec<String>) {
                 "{name}: recorded as {} but its observations give {v}",
                 c["verdict"].as_str().unwrap_or("nothing")
             ));
+        }
+        let named = c["reached_as"].as_array().is_some_and(|a| !a.is_empty());
+        if named != c["reached_model"].as_bool().unwrap_or(false) {
+            problems.push(format!("{name}: it says the secret reached the model and does not say in which form, or the other way round"));
         }
         if c["plain_arm_leaked"] != true {
             problems.push(format!(
@@ -250,7 +265,7 @@ mod tests {
     use super::*;
 
     fn case(door: &str, status: u64, asked: bool, reached: bool, disk: bool) -> Value {
-        let mut c = json!({"case": format!("{door}/x/{status}/{asked}/{reached}/{disk}"), "door": door, "group": "known shapes", "http_status": status, "model_was_asked": asked, "reached_model": reached, "on_disk_plain": if disk { json!(["chat.db"]) } else { json!([]) }, "plain_arm_leaked": true});
+        let mut c = json!({"case": format!("{door}/x/{status}/{asked}/{reached}/{disk}"), "door": door, "group": "known shapes", "http_status": status, "model_was_asked": asked, "reached_model": reached, "on_disk_plain": if disk { json!(["chat.db"]) } else { json!([]) }, "plain_arm_leaked": true, "reached_as": if reached { json!(["as written"]) } else { json!([]) }});
         c["verdict"] = json!(verdict_of(&c));
         c
     }
@@ -286,7 +301,7 @@ mod tests {
 
     #[test]
     fn bn02_results_that_were_edited_to_look_better_do_not_add_up() {
-        let good = json!({"type": "kakurega-leak-benchmark", "version": 1, "commit": "abc", "cases": [case("attach", 200, true, false, false), case("ask", 200, true, true, false)]});
+        let good = json!({"type": "kakurega-leak-benchmark", "version": 1, "commit": "abc", "complete": true, "expected_cases": 2, "local_route_pointed_elsewhere": {"http_status": 502, "model_was_asked": false}, "cases": [case("attach", 200, true, false, false), case("ask", 200, true, true, false)]});
         let (s, problems) = summarise(&good);
         assert!(problems.is_empty(), "{problems:?}");
         assert_eq!(s["groups"]["known shapes"]["LEAK"], json!(1));
@@ -305,6 +320,31 @@ mod tests {
             .1
             .iter()
             .any(|p| p.contains("control")));
+        // a case taken out, a run for one door only, a remote model that was accepted, a leak with no form named
+        let mut fewer = good.clone();
+        fewer["cases"].as_array_mut().unwrap().pop();
+        assert!(summarise(&fewer)
+            .1
+            .iter()
+            .any(|p| p.contains("where the run had 2")));
+        let mut partial = good.clone();
+        partial["complete"] = json!(false);
+        assert!(summarise(&partial)
+            .1
+            .iter()
+            .any(|p| p.contains("not a complete run")));
+        let mut accepted = good.clone();
+        accepted["local_route_pointed_elsewhere"]["model_was_asked"] = json!(true);
+        assert!(summarise(&accepted)
+            .1
+            .iter()
+            .any(|p| p.contains("accepted a model at another address")));
+        let mut unnamed = good.clone();
+        unnamed["cases"][1]["reached_as"] = json!([]);
+        assert!(summarise(&unnamed)
+            .1
+            .iter()
+            .any(|p| p.contains("in which form")));
         let mut twice = good.clone();
         twice["cases"][1] = twice["cases"][0].clone();
         assert!(summarise(&twice)

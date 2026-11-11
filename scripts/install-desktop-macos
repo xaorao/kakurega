@@ -51,6 +51,13 @@ case "$published" in
 esac
 [ "${#published}" -eq 64 ] || refuse "the published SHA-256 must be 64 hexadecimal characters"
 
+# The zip is copied once into a new folder only this user can reach, and that one copy is both checked and unpacked: the
+# file that was checked cannot be exchanged for another before it is unpacked.
+work=$(mktemp -d "${TMPDIR:-/tmp}/kakurega-install.XXXXXX")
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+chmod 700 "$work"
+cp "$zip" "$work/download.zip" || refuse "the zip could not be read"
+zip="$work/download.zip"
 actual=$(shasum -a 256 "$zip" | awk '{ print $1 }')
 if [ "$actual" != "$published" ]; then
   say "REFUSED: the zip does not match the published SHA-256." >&2
@@ -61,9 +68,6 @@ if [ "$actual" != "$published" ]; then
 fi
 say "SHA-256 matches the published value: $actual"
 
-work=$(mktemp -d "${TMPDIR:-/tmp}/kakurega-install.XXXXXX")
-trap 'rm -rf "$work"' EXIT HUP INT TERM
-chmod 700 "$work"
 ditto -x -k "$zip" "$work/unpacked" || refuse "the zip could not be unpacked"
 
 entries=$(ls -A "$work/unpacked")

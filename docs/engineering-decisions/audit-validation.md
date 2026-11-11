@@ -24,3 +24,25 @@ The audit read the four handoff reports only (it could not open the private repo
 - Taint propagation and broker egress under job restart (effects and broker tests exist; restart behaviour of the whole job path is not attacked end to end).
 - Vault, backups, indexes, temp files and log metadata for residue after `forget` (the tombstone and text/index removal are tested; backups made by the owner and SQLite free pages are not examined).
 - Key recovery and restore for the approver and log keys.
+
+## Independent audit of the work of 2026-11-11 (one read-only reviewer that was given the code and no conclusions)
+Each finding was checked against the code. CONFIRMED means I reproduced it or read the exact path; the fix and its test are named.
+
+| # | Finding | Verdict | What was done | Evidence |
+|---|---|---|---|---|
+| 1 | Two detections that overlap: the later one replaced the earlier, and the rest of a secret was sent to a model elsewhere | CONFIRMED (the three inputs reproduce it) | Overlapping or touching ranges are joined into the widest one; the password reader keeps a value whole when it holds a sign | kk-secrets sw07 |
+| 2 | A line with a letter whose lower case has another length made the password reader cut through a character and panic, which could poison the attachments lock | CONFIRMED | Only Latin letters are folded, so no byte moves | kk-secrets sp05 |
+| 3 | The same letters made the reader skip the whole line | CONFIRMED | Same change | sp05 |
+| 4 | A document could make the model write a web address with a placeholder in it; the value was put back and the link carried it away on a click | PLAUSIBLE, treated as real | A value is never put back inside a web address | sw08 |
+| 5 | Reviews on a route elsewhere do not pass the hiding layer and were missing from "what left this computer"; a Telegram row was listed that nothing writes | CONFIRMED | A review that used a model elsewhere is now an entry in the list; the Telegram row is gone and the list says what it does not hold. Names are still not swapped in reviews: stated in LIMITS and on the entry | kk-service ob01 |
+| 6 | Loading and removing the sample followed links out of its folder | CONFIRMED by reading | Nothing is written or removed through a link, and a linked sample folder is refused | kk-service sv260 |
+| 7 | A Greek name in capitals was not hidden | CONFIRMED | Names and text are folded the same way and the two small sigmas are one letter | sw09 |
+| 8 | The password reader flagged ordinary sentences and missed some common forms | CONFIRMED (the eight sentences) | Only a short list of words may stand between the name and the value; codes take digits unless a linking word is there; "pwd" added, "login" removed | sp01, sp03 with the eight sentences |
+| 9 | Double brackets in the owner's text were damaged and never repaired | CONFIRMED | They are kept apart by an invisible mark and put back when the answer is shown | sw03 |
+| 10 | The Claude Code hand-over passed the service's whole environment and could hang on a long answer | CONFIRMED by reading | Minimal environment; the answer is read while the program runs, with a size cap. One real run after the change | kk-cli ho02; `handoff_web.mjs` with the real program |
+| 11 | A spent budget during the second look lost the review's answer; reads were not bounded | PLAUSIBLE, treated as real | Any refusal ends only the second look; files read are bounded too | kk-worker ws05, ws06 |
+| 12 | The route could be switched between hiding a question and sending it | PLAUSIBLE, treated as real | A question holds the route from hiding to answer; a switch waits. The second half (a route object dropped inside a request handler) is OPEN, low: no reproduction | read of the code; the service suite runs with the gate |
+| 13 | The leak benchmark could say "held" for a partial secret, counted any request as the model being asked, and its verifier did not check completeness | CONFIRMED by reading | Halves of a secret and every line of a key block count as a leak; only chat requests count as asked; the log is read once it is quiet; the verifier checks the number of cases, the form of each leak and the remote-model check | kk-cli bn02; `bench_cli.py` 17; the benchmark rerun gave the same 168 verdicts |
+| 14 | The packaged desktop app honours environment overrides that skip its integrity check; the installer checked the zip and then read it again from its path | Part CONFIRMED | The installer now checks and unpacks one private copy. The overrides stay, for development: whoever can set this user's environment can already run any program as this user, and the record says so | `desktop_install.mjs` 12 |
+
+Sentences that claimed more than the code showed were corrected in the meeting-notes, secret-detection, agents-team and worker-loop records, in the leak benchmark's method, and in two code comments. The meeting notes now mark the summary as the model's own words, not checked.

@@ -27,14 +27,15 @@ def k(*args):
 
 
 def case(name, door, status, asked, reached, verdict):
-    return {"case": name, "door": door, "group": "known shapes", "http_status": status, "model_was_asked": asked, "reached_model": reached, "on_disk_plain": [], "plain_arm_leaked": True, "verdict": verdict}
+    return {"case": name, "door": door, "group": "known shapes", "http_status": status, "model_was_asked": asked, "reached_model": reached, "on_disk_plain": [], "plain_arm_leaked": True, "reached_as": ["as written"] if reached else [], "verdict": verdict}
 
 
 def b64d(s):
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
-good = {"type": "kakurega-leak-benchmark", "version": 1, "commit": "0" * 40, "tree_had_uncommitted_changes": False, "model": "adversary",
+good = {"type": "kakurega-leak-benchmark", "version": 1, "commit": "0" * 40, "tree_had_uncommitted_changes": False, "model": "adversary", "complete": True, "expected_cases": 3,
+        "local_route_pointed_elsewhere": {"http_status": 502, "model_was_asked": False, "said": "NO_MODEL"},
         "cases": [case("attach/a", "attach", 200, True, False, "held"), case("ask/a", "ask", 200, True, True, "LEAK"), case("note/a", "note", 422, False, False, "refused")]}
 f = work / "results.json"
 f.write_text(json.dumps(good, indent=1))
@@ -86,6 +87,11 @@ nocontrol["cases"][0]["plain_arm_leaked"] = False
 (work / "nocontrol.json").write_text(json.dumps(nocontrol))
 rc, out, err = k("sign", str(work / "nocontrol.json"), "--key", str(key))
 check("results whose control failed are not signed", rc == 2 and "control" in err, f"{rc} {err}")
+fewer = json.loads(json.dumps(good))
+fewer["cases"].pop()
+(work / "fewer.json").write_text(json.dumps(fewer))
+rc, out, err = k("sign", str(work / "fewer.json"), "--key", str(key))
+check("results with a case taken out are not signed", rc == 2 and "where the run had 3" in err, f"{rc} {err}")
 (work / "float.json").write_text('{"type": "kakurega-leak-benchmark", "version": 1, "score": 0.5, "cases": []}')
 rc, out, err = k("sign", str(work / "float.json"), "--key", str(key))
 check("a file this cannot sign is said in words", rc == 2 and "whole numbers" in err, f"{rc} {err}")

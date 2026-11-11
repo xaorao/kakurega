@@ -978,6 +978,7 @@ export const en = {
   "meet.keptPart": "Kept as a confidential note. The notes were longer than a note holds, so only the first part was kept; save them as a file to keep all of it.",
   "meet.withheld.one": "1 line that holds a secret was not sent.",
   "meet.swapped.one": "1 name or personal value went as a placeholder and was put back here.",
+  "meet.summaryNote": "Summary in the model's words, not checked:",
   "meet.kept": "Kept as a confidential note.",
   "meet.keptAlready": "That note is already kept.",
   "meet.noteReason": "Notes from a meeting",

@@ -3,7 +3,7 @@
 1. Experience a user expects: paste or drop a transcript, get the decisions, who does what by when, and what is still open, and be able to trust each line without reading the whole transcript again.
 2. References: Granola, Otter and Fireflies (closed; known from use and their public pages, not studied for this) and the hackathon rival Aftercall (private call notes; REPORTED from `ARCHITECTURE/07_COMPETITOR_FIELD.md`, its clone is no longer on disk so its code was NOT READ for this). None of them shows, per point, the words it rests on with a check that those words are in the transcript.
 3. Approach: independent build on what the product already has. The answering model writes strict JSON; every point must carry a quote; a point is listed as checked only when that quote is in the transcript (compared without regard to spacing or case), with the line it starts on. Anything else is listed apart as a guess. Same idea as the checked quotes of ask-your-documents (`crates/kk-review/src/ask.rs`).
-4. Quality bar: no invented point among the checked ones; a secret in the transcript never reaches a model; names and personal values are hidden from a model elsewhere; the limits are printed with the result.
+4. Quality bar: no invented point among the checked ones; a line that holds a secret the detector recognises never reaches a model; names and personal values are hidden from a model elsewhere; the limits are printed with the result.
 
 ## Built
 - `crates/kk-review/src/meeting.rs`: the instruction (the transcript is marked as untrusted data), strict parsing (an object with only the four known fields), the quote check, cutting a long transcript into at most 8 parts of whole lines, putting parts together without repeats, text output.
@@ -18,6 +18,6 @@
 
 ## Limits
 - Checked means the quoted words were said. It does not mean the point reads them correctly, and something said can be missing from the notes.
-- A password spoken in plain words ("it's still hunter2") is not recognised as a secret and is sent like any other line.
+- A password or code said with the word for what it is ("the password is still hunter2") is recognised and its line is withheld. Said with no such word ("type hunter2 when it asks") it is not recognised and is sent like any other line.
 - Audio is not transcribed here; the transcript comes from the user.
 - A transcript longer than about 190,000 characters is refused with words; split it.

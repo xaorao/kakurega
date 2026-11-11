@@ -90,15 +90,47 @@ QUESTION = "Summarise this for me and list anything that looks important, word f
 
 
 def needles(secret):
-    """Every form of the secret whose arrival at the model counts as a leak."""
-    core = [secret]
+    """Every form of the secret whose arrival at the model counts as a leak: the whole value, each half of it (a part of
+    a secret is a leak too), and each of those in base64, hex and URL-encoded form. For a key block: every line of it."""
     if "PRIV" + "ATE KEY" in secret:
-        body = "".join(secret.splitlines()[1:-1])
-        core = [body[40:80], secret.splitlines()[3]]
+        core = [l for l in secret.splitlines()[1:-1] if len(l) >= 16]
+    else:
+        core = [secret]
+        if len(secret) >= 16:
+            half = len(secret) // 2
+            core += [secret[:half], secret[half:]]
     out = []
     for c in core:
         out += [c, base64.b64encode(c.encode()).decode(), c.encode().hex(), urllib.parse.quote(c, safe="")]
     return sorted(set(out))
+
+
+def settled(log_file, quiet=0.25, limit=5.0):
+    """The model's log once nothing has been added to it for a moment, so a request that is still on its way is counted
+    with the case that caused it and not with the next one."""
+    end = time.time() + limit
+    size, since = log_file.stat().st_size, time.time()
+    while time.time() < end:
+        time.sleep(0.05)
+        now = log_file.stat().st_size
+        if now != size:
+            size, since = now, time.time()
+        elif time.time() - since >= quiet:
+            break
+    return log_file.read_text()
+
+
+def chat_requests(log_slice):
+    """The questions put to the model in this part of its log: only those count as the model having been asked."""
+    out = []
+    for line in log_slice.splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if str(rec.get("path", "")).startswith("/api/chat"):
+            out.append(rec.get("body", ""))
+    return out
 
 
 class Client:
@@ -285,8 +317,8 @@ def run_arm(route, host, chosen):
             canary_file.write_text(json.dumps({"needles": pins}))
             before = model_log.stat().st_size
             status, answer = DOORS[door][1](c, d / "root", material, n)
-            time.sleep(0.05)
-            sent = model_log.read_text()[before:]
+            sent = settled(model_log)[before:]
+            asked = chat_requests(sent)
             reached = sorted({("as written" if p == secret else "another form") for p in pins if p in sent})
             # the control: the same material in a plain prompt to the same model
             plain = json.dumps({"model": "adversary", "stream": False, "messages": [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": QUESTION + "\n\n" + material}]}).encode()
@@ -302,7 +334,7 @@ def run_arm(route, host, chosen):
                 "reached_model": bool(reached), "reached_as": reached,
                 "in_answer": any(p in answer for p in pins),
                 "on_disk_plain": disk,
-                "model_was_asked": len(sent) > 0,
+                "model_was_asked": len(asked) > 0,
                 "plain_arm_leaked": plain_leak,
             })
             r = rows[-1]
@@ -329,7 +361,7 @@ def main():
         d, model, server, c, _, model_log, _ = start("lan", lan)
         try:
             status, v = c.req("/api/chat", {"message": "hello"})
-            refused_remote = {"http_status": status, "model_was_asked": model_log.stat().st_size > 0, "said": str(v.get("error", {}).get("code"))}
+            refused_remote = {"http_status": status, "model_was_asked": len(chat_requests(settled(model_log))) > 0, "said": str(v.get("error", {}).get("code"))}
             print(f"local route pointed at another address: status {status}, model asked: {refused_remote['model_was_asked']}")
         finally:
             server.kill()
@@ -337,7 +369,8 @@ def main():
     commit = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     dirty = bool(subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, text=True).stdout.strip())
     doc = {"type": "kakurega-leak-benchmark", "version": 1, "commit": commit, "tree_had_uncommitted_changes": dirty, "ran_at": int(time.time()),
-           "model": "adversary (repeats any planted secret it is shown)", "local_route_pointed_elsewhere": refused_remote, "cases": rows}
+           "model": "adversary (repeats any planted secret it is shown)", "local_route_pointed_elsewhere": refused_remote,
+           "expected_cases": len(cases()), "complete": only is None, "cases": rows}
     out.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")
     for group in ["known shapes", "beyond the detector"]:
         rs = [r for r in rows if r["group"] == group]
@@ -346,6 +379,9 @@ def main():
     print(f"wrote {out}")
     # for a script: a leak among the shapes the product says it knows, or a case that did not run, is a failure
     bad = [r["case"] for r in rows if r["verdict"] == "not_run" or (r["verdict"] == "LEAK" and r["group"] == "known shapes") or not r["plain_arm_leaked"]]
+    # the local-model route must have refused the model at another address without asking it anything
+    if refused_remote is not None and (refused_remote["model_was_asked"] or refused_remote["http_status"] == 200):
+        bad.append("the local route accepted a model at another address")
     if bad:
         print("FAILED: " + ", ".join(bad[:20]))
         sys.exit(1)

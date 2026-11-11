@@ -93,7 +93,7 @@ export function Meeting() {
         {(n) => (
           <div class="card stack" id="meet-result" aria-labelledby="h-meet-result">
             <h2 id="h-meet-result">{n().title || t("meet.result")}</h2>
-            <Show when={n().summary.length > 0}><p>{n().summary.join(" ")}</p></Show>
+            <Show when={n().summary.length > 0}><p><span class="muted">{t("meet.summaryNote")}</span> {n().summary.join(" ")}</p></Show>
             <Show when={n().checked.length === 0 && n().unchecked.length === 0}><p class="muted">{t("meet.nothing")}</p></Show>
             <For each={KINDS}>
               {(kind) => (
