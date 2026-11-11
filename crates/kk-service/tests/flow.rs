@@ -19050,7 +19050,17 @@ impl TeamRunner {
     }
 }
 
+/// What team tests handed to the stand-in coding agent, newest last.
+static TEAM_HANDED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
 impl JobRunner for TeamRunner {
+    fn handoff_tool(&self) -> Option<String> {
+        Some("Claude Code 9.9".into())
+    }
+    fn handoff_run(&self, text: &str) -> Result<String, String> {
+        TEAM_HANDED.lock().unwrap().push(text.to_string());
+        Ok("def fix():\n    return 'rotate the key'".into())
+    }
     fn run(
         &self,
         repo: &Path,
@@ -22044,4 +22054,142 @@ fn sv260_the_sample_never_writes_or_removes_through_a_link() {
         json!(0)
     );
     assert!(elsewhere.join(".kakurega-sample").exists());
+}
+
+#[test]
+fn sv261_a_task_for_the_coding_agent_waits_for_the_owners_yes_on_the_exact_text_and_is_sent_once() {
+    const PLAN: &str = "1 | security-reviewer | after: - | List how the payment key could leak.\n2 | claude-code | after: 1 | Write a function that rotates the key.\n";
+    let goal = "Rotate the payment key safely (hand-over test).";
+    let handed = || {
+        TEAM_HANDED
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|t| t.contains("hand-over test"))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+
+    // yes: the exact text shown is what is sent, once
+    let (_c, w, _runner) = team("team-handover", PLAN);
+    let (s, v) = w.post(
+        "/api/team",
+        json!({"goal": goal, "experts": ["security-reviewer", "claude-code"]}),
+    );
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    assert_eq!(v["tasks"][1]["expert"], json!("claude-code"), "{v}");
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(&w, &id, &["waiting"]);
+    assert_eq!(team_states(&v)[..2], ["done", "needs_input"], "{v}");
+    let q = v["tasks"][1]["question"].as_str().unwrap().to_string();
+    assert!(
+        q.starts_with("[hand-over]")
+            && q.contains("not private")
+            && q.contains("Write a function that rotates the key.")
+            && q.contains("result of task 1"),
+        "{q}"
+    );
+    assert!(
+        handed().is_empty(),
+        "nothing is handed over on the lead's word"
+    );
+    let (s, _) = w.post(
+        &format!("/api/team/{id}/answer"),
+        json!({"task": 2, "answer": "yes"}),
+    );
+    assert_eq!(s, 200);
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(&w, &id, &["done"]);
+    assert_eq!(v["tasks"][1]["state"], json!("done"), "{v}");
+    assert!(v["tasks"][1]["result"]
+        .as_str()
+        .unwrap()
+        .contains("rotate the key"));
+    assert!(
+        v["tasks"][1]["note"]
+            .as_str()
+            .unwrap()
+            .contains("not private"),
+        "{v}"
+    );
+    let sent = handed();
+    assert_eq!(sent.len(), 1, "sent once");
+    // what was sent is the text between the notice and the fingerprint of the question the owner read
+    let shown = q
+        .split_once("\n\n")
+        .unwrap()
+        .1
+        .rsplit_once("\n\nfingerprint ")
+        .unwrap()
+        .0;
+    assert_eq!(sent[0], shown);
+    assert!(!sent[0].contains("[hand-over]"));
+    let (_, o) = w.get("/api/outbound");
+    assert!(
+        o["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["to"].as_str().unwrap_or("").contains("Claude Code")),
+        "{o}"
+    );
+
+    // anything but yes: the task fails in words and nothing is sent
+    let (_c2, w2, _r2) = team("team-handover-no", PLAN);
+    let goal_no = "Rotate the payment key safely (declined test).";
+    let (_, v) = w2.post(
+        "/api/team",
+        json!({"goal": goal_no, "experts": ["security-reviewer", "claude-code"]}),
+    );
+    let id2 = v["id"].as_str().unwrap().to_string();
+    w2.post(&format!("/api/team/{id2}/start"), json!({}));
+    team_wait(&w2, &id2, &["waiting"]);
+    w2.post(
+        &format!("/api/team/{id2}/answer"),
+        json!({"task": 2, "answer": "no, keep it here"}),
+    );
+    w2.post(&format!("/api/team/{id2}/start"), json!({}));
+    let v = team_wait(&w2, &id2, &["done", "failed", "partial"]);
+    assert_eq!(v["tasks"][1]["state"], json!("failed"), "{v}");
+    assert!(
+        v["tasks"][1]["note"]
+            .as_str()
+            .unwrap()
+            .contains("did not approve"),
+        "{v}"
+    );
+    assert!(!TEAM_HANDED
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|t| t.contains("declined test")));
+
+    // a task that holds a password is never offered for hand-over
+    let (_c3, w3, _r3) = team("team-handover-secret", "1 | claude-code | after: - | Log in with the password hunter2x9 and fix it.\n2 | security-reviewer | after: - | Review.\n");
+    let (_, v) = w3.post("/api/team", json!({"goal": "Fix the login (secret test).", "experts": ["security-reviewer", "claude-code"]}));
+    let id3 = v["id"].as_str().unwrap().to_string();
+    w3.post(&format!("/api/team/{id3}/start"), json!({}));
+    let v = team_wait(&w3, &id3, &["done", "failed", "partial"]);
+    assert_eq!(v["tasks"][0]["state"], json!("failed"), "{v}");
+    assert!(
+        v["tasks"][0]["note"]
+            .as_str()
+            .unwrap()
+            .contains("key or a password"),
+        "{v}"
+    );
+    assert!(!TEAM_HANDED
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|t| t.contains("secret test")));
+
+    // and it is never in a plan the owner did not name it for
+    let (_c4, w4, _r4) = team("team-handover-unnamed", PLAN);
+    let (s, v) = w4.post("/api/team", json!({"goal": "Rotate the key."}));
+    assert_ne!(
+        s, 200,
+        "a plan that uses the coding agent without the owner naming it is not usable: {v}"
+    );
 }

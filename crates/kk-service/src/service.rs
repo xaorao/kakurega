@@ -4203,6 +4203,9 @@ async fn experts_list(axum::Extension(svc): Svc) -> Json<Value> {
     Json(json!({
         "experts": EXPERTS.iter().map(|e| json!({"id": e.id, "name": e.name, "group": e.group, "summary": e.summary})).collect::<Vec<_>>(),
         "yours": yours,
+        // offered for team runs only, and only when it is installed: the coding agent on this computer, which is not
+        // private and is asked nothing without the owner's yes on the exact text
+        "teammates": svc.runner.handoff_tool().map(|tool| vec![json!({"id": team::OUTSIDE_SEAT, "name": tool, "summary": "The coding agent installed on this computer. Not private: each task for it is shown to you first and sent only on your yes."})]).unwrap_or_default(),
         "min": MIN_PARTICIPANTS, "max": MAX_PARTICIPANTS,
     }))
 }

@@ -123,9 +123,121 @@ impl Drop for DriverGuard {
     }
 }
 
+/// The seat of the coding agent installed on this computer. It is never in a plan unless the owner named it.
+pub(super) const OUTSIDE_SEAT: &str = "claude-code";
+const OUTSIDE_SUMMARY: &str = "The coding agent installed on this computer. Not private: each task for it is shown to the owner first and sent only on their yes. Give it only a task that needs none of the owner's files.";
+/// How a question to the owner about a hand-over begins, so it is told apart from an expert's own question.
+const HANDOVER_MARK: &str = "[hand-over]";
+
 impl Service {
     /// The seat for an id: a built-in expert, or one of the owner's methods approved for exactly its current text.
+    /// A task whose expert is the coding agent installed on this computer. Nothing is sent on the lead's word: the task
+    /// stops and asks the owner, showing the exact text and its fingerprint, and only the owner's "yes" to that very text
+    /// sends it, once. Any other answer skips the hand-over. The text is the task and the earlier results it builds on,
+    /// without the owner's notes or instructions, and it is refused outright when it holds a key or a password.
+    fn team_outside_task(
+        &self,
+        id: &str,
+        n: usize,
+        goal: &str,
+        total: usize,
+        t: &TaskRow,
+        earlier: &[(&str, &str)],
+    ) {
+        // what the owner already answered about a hand-over is not part of what is handed over
+        let said: Vec<(String, String)> = t
+            .asked
+            .iter()
+            .filter(|(q, _)| !q.starts_with(HANDOVER_MARK))
+            .cloned()
+            .collect();
+        let text = team::task_question(goal, n, total, &t.task, earlier, &said);
+        let digest = kk_evidence::capsule::sha256_hex(text.as_bytes());
+        let stamp = format!("fingerprint {digest}");
+        let decided = t
+            .asked
+            .iter()
+            .rev()
+            .find(|(q, _)| q.starts_with(HANDOVER_MARK));
+        match decided {
+            Some((q, answer))
+                if q.contains(&stamp) && answer.trim().eq_ignore_ascii_case("yes") =>
+            {
+                self.log_event(
+                    "outbound.model",
+                    "Claude Code on this computer, then its maker",
+                    &[
+                        ("chars", text.chars().count().into()),
+                        ("swapped", 0usize.into()),
+                    ],
+                );
+                match self.runner.handoff_run(&text) {
+                    Ok(reply) => {
+                        let kept: String = reply.chars().take(MAX_RESULT_CHARS).collect();
+                        self.team_set_task(id, n, State::Done, &kept, "answered by the coding agent on this computer after your yes; not private", "");
+                    }
+                    Err(why) => {
+                        let why: String =
+                            why.chars().filter(|c| !c.is_control()).take(200).collect();
+                        self.team_set_task(
+                            id,
+                            n,
+                            State::Failed,
+                            "",
+                            &format!("the coding agent gave no answer: {why}"),
+                            "",
+                        );
+                    }
+                }
+            }
+            // the owner answered a hand-over question for this very text with something other than yes
+            Some((q, _)) if q.contains(&stamp) => {
+                self.team_set_task(
+                    id,
+                    n,
+                    State::Failed,
+                    "",
+                    "you did not approve handing this task to the coding agent",
+                    "",
+                );
+            }
+            // not asked yet, or the text has changed since it was asked: ask (again), within the usual limit
+            _ if t.asked.len() >= team::MAX_ASKS => {
+                self.team_set_task(
+                    id,
+                    n,
+                    State::Failed,
+                    "",
+                    "it asked the owner more than twice",
+                    "",
+                );
+            }
+            _ if kk_secrets::holds_secret(&text) || kk_secrets::spoken::holds(&text) => {
+                self.team_set_task(id, n, State::Failed, "", "the task holds what looks like a key or a password, so it was not offered for hand-over", "");
+            }
+            _ => {
+                let question = format!(
+                    "{HANDOVER_MARK} The lead gave this task to the coding agent installed on this computer. That is not private: the text below would go to its maker under your own account. Answer yes to send exactly this text, once. Any other answer skips it.\n\n{text}\n\n{stamp}"
+                );
+                self.team_set_task(id, n, State::NeedsInput, "", "", &question);
+            }
+        }
+    }
+
     fn team_seat(&self, id: &str) -> Option<(Seat, String)> {
+        // the coding agent installed on this computer can be given a task, when there is one and the owner named it
+        if id == OUTSIDE_SEAT {
+            return self.runner.handoff_tool().map(|tool| {
+                (
+                    Seat {
+                        id: id.to_string(),
+                        name: tool,
+                        instruction: String::new(),
+                    },
+                    OUTSIDE_SUMMARY.to_string(),
+                )
+            });
+        }
         match id.strip_prefix(METHOD_PREFIX) {
             Some(name) => self
                 .methods_active()
@@ -502,6 +614,18 @@ impl Service {
                 .map(|(a, b)| (a.as_str(), b.as_str()))
                 .collect();
             let question = team::task_question(&run.goal, n, total, &t.task, &earlier, &t.asked);
+            if t.expert == OUTSIDE_SEAT {
+                self.team_outside_task(id, n, &run.goal, total, t, &earlier);
+                self.log_event(
+                    "team.task",
+                    id,
+                    &[
+                        ("task", n.into()),
+                        ("attempt", ((t.attempts + 1) as usize).into()),
+                    ],
+                );
+                continue;
+            }
             let mut messages = ctx.messages.clone();
             let at = usize::from(messages.first().is_some_and(|m| m.role == "system"));
             messages.insert(

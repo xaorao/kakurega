@@ -8,7 +8,7 @@ import { t } from "../i18n";
 export function Team(props: { id?: string }) {
   // a list that could not be read is said so with a way to try again, never shown as "no experts" or "no runs"
   const [roster, { refetch: refetchRoster }] = createResource(() => api.experts().catch(() => null));
-  const everyone = createMemo<ExpertInfo[]>(() => [...(roster()?.experts ?? []), ...(roster()?.yours ?? []).map((y) => ({ ...y, group: t("rt.yours") }))]);
+  const everyone = createMemo<ExpertInfo[]>(() => [...(roster()?.experts ?? []), ...(roster()?.yours ?? []).map((y) => ({ ...y, group: t("rt.yours") })), ...(roster()?.teammates ?? []).map((y) => ({ ...y, group: t("team.outside") }))]);
   const [runs, { refetch: refetchRuns }] = createResource(() => api.teamRuns().catch(() => null));
   const [goal, setGoal] = createSignal("");
   const [allowed, setAllowed] = createSignal<string[]>([]);
