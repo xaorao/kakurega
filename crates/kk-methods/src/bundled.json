@@ -1,0 +1,146 @@
+[
+  {
+    "name": "code-review",
+    "group": "Engineering",
+    "description": "Review a change for defects before style: what breaks, what leaks, what is untested.",
+    "triggers": ["code review", "pull request", "review this diff", "review this patch", "merge request"],
+    "avoid": ["contract", "lease"],
+    "body": "Review the change in this order and stop at the first level that has real problems.\n1. Correctness: inputs that are empty, huge, repeated, out of order or hostile; error paths; what happens when a call it depends on fails or is slow.\n2. Security: anything that reaches a file path, a shell, a query, a URL or a template; secrets in code or logs; a check that happens after the action it guards.\n3. Data: migrations that cannot be undone, writes without a transaction, a cache that can serve the old value.\n4. Tests: name the cases that are not covered, most likely to fail first.\n5. Only then readability: names that mislead, a function that does two things.\nFor every finding give the file and line, what goes wrong with a concrete input, and the smallest change that fixes it. Say plainly when you could not check something. Do not praise, and do not list style points when a real defect exists."
+  },
+  {
+    "name": "threat-model",
+    "group": "Engineering",
+    "description": "Work out who could attack a feature, what they want, and which defence is missing.",
+    "triggers": ["threat model", "attack surface", "security design", "abuse case", "trust boundary"],
+    "avoid": [],
+    "body": "Build the threat model in five short parts.\n1. What is protected: list the assets (data, money, accounts, the ability to act as someone) and who owns each.\n2. Who attacks: an outsider with no account, a user with an account, a compromised dependency or tool, an insider. For each, what they already have.\n3. Where trust changes: every place data crosses from a less trusted side to a more trusted one (network to service, user text to a query or a prompt, file to parser, tool result to model).\n4. For each crossing: what the attacker sends, what happens today, and the control that stops it. Mark each control as present, partial or missing.\n5. The three risks to fix first, by how bad and how easy, with the cheapest effective fix for each.\nPrefer concrete attacks over categories. Say what you assumed and could not verify."
+  },
+  {
+    "name": "bug-report",
+    "group": "Engineering",
+    "description": "Turn a vague problem into a report someone else can reproduce and fix.",
+    "triggers": ["bug report", "file a bug", "write up this bug", "reproduce this", "steps to reproduce"],
+    "avoid": [],
+    "body": "Write the report so a person who was not there can reproduce it in five minutes.\nTitle: what is wrong and where, in one line, without the word 'broken'.\nSteps: numbered, starting from a known state, one action per step, with the exact input.\nExpected: what should have happened and why you think so.\nActual: what happened, with the exact message or output, not a paraphrase.\nHow often: always, sometimes (say how many of how many tries), or once.\nEnvironment: version, platform, and anything unusual about the setup.\nWhat you ruled out: things you tried that made no difference.\nIf a step or fact is missing, ask for it instead of guessing. Keep opinions about the cause in a separate last line marked as a guess."
+  },
+  {
+    "name": "test-plan",
+    "group": "Engineering",
+    "description": "List the cases that would show a feature is wrong, most likely failures first.",
+    "triggers": ["test plan", "test cases", "what should we test", "acceptance tests", "edge cases"],
+    "avoid": [],
+    "body": "Plan tests by asking how this could be wrong, not by confirming it works.\nFor the feature described, list cases in this order: the ordinary path once; empty input; the largest input allowed and one more; wrong type and malformed input; the same action twice; two actions at the same time; an action interrupted half way; a dependency that fails, is slow, or returns something unexpected; a user who is not allowed; hostile input aimed at a parser, a path, a query or a prompt.\nFor each case write: the starting state, the action, and the exact result that counts as a pass. A case with no checkable result is not a test.\nMark the five cases most likely to find a real defect. Say which cases need a real service or real hardware and cannot be judged from a mock."
+  },
+  {
+    "name": "commit-message",
+    "group": "Engineering",
+    "description": "Write a commit message that says what changed and why, in the project's own style.",
+    "triggers": ["commit message", "write a commit", "describe this commit", "changelog entry"],
+    "avoid": [],
+    "body": "Write the message for someone reading the history a year from now.\nFirst line: what the change does, as a plain statement, at most about 70 characters, no trailing full stop. Use the form the project's history already uses.\nBody, only if the first line is not enough: why the change was needed, what was wrong before, and anything a reader could not see from the diff (a trade-off taken, a follow-up that is still owed). Wrap at about 72 characters.\nDo not describe how you worked, do not list files, and do not add praise, emoji or tags the project does not use. One commit, one purpose: if the change does two things, say so and suggest splitting it."
+  },
+  {
+    "name": "release-notes",
+    "group": "Product",
+    "description": "Write release notes users can act on: what changed for them and what they must do.",
+    "triggers": ["release notes", "what is new", "changelog", "announce this release", "upgrade notes"],
+    "avoid": [],
+    "body": "Write for the person who uses the product, not for the people who built it.\nStart with anything the user must do or must know before upgrading (a breaking change, a migration, a setting that moved). If there is nothing, say so in one line.\nThen group changes as New, Better, Fixed. One line each, starting with what the user can now do or no longer suffers, in their words. Leave out internal refactors and anything a user cannot notice.\nFor a fix, name the visible problem, not the cause. For a security fix, say what was at risk and who was affected, without a recipe for abuse.\nNo superlatives. Do not promise anything that is not in this release. If something known is still broken, list it under Known problems."
+  },
+  {
+    "name": "incident-review",
+    "group": "Engineering",
+    "description": "Write a blameless review of an incident: timeline, cause, and fixes that would have caught it.",
+    "triggers": ["postmortem", "incident review", "outage report", "root cause", "what went wrong"],
+    "avoid": [],
+    "body": "Write the review without blaming a person; describe what the system and the process allowed.\n1. Summary in three lines: what users saw, for how long, how many were affected.\n2. Timeline with times: first sign, detection, each decision, mitigation, full recovery. Mark how each fact is known.\n3. Cause: follow 'why' until you reach something that can be changed (a missing check, an alert that did not fire, a risky default). Separate the trigger from the conditions that made it possible.\n4. What went well and what was luck.\n5. Actions: each with an owner role and a way to tell it is done. Prefer changes that would have prevented or detected this over reminders to be careful.\nState what is still unknown. Do not soften the impact."
+  },
+  {
+    "name": "meeting-notes",
+    "group": "Product",
+    "description": "Turn a transcript or rough notes into decisions, owners and open questions.",
+    "triggers": ["meeting notes", "minutes", "summarise this meeting", "action items", "call notes"],
+    "avoid": [],
+    "body": "From the notes or transcript, produce four short lists and nothing else.\nDecisions: what was decided, in one line each, with who decided if it is stated.\nActions: who does what by when. If no person or no date was named, write 'no owner' or 'no date' rather than inventing one.\nOpen questions: what was raised and not settled, and who can settle it.\nNumbers and commitments: any figure, price, date or promise that was said, quoted exactly.\nKeep people's words when they matter and do not add opinions. If the notes contradict themselves, show both versions. Leave out greetings and small talk. If the text is too thin to support a decision, say that it is unclear instead of guessing."
+  },
+  {
+    "name": "contract-reading",
+    "group": "Business",
+    "description": "Read a contract for what you owe, what you get, and what happens when things go wrong.",
+    "triggers": ["contract", "agreement", "terms and conditions", "clause", "indemnity", "termination", "liability", "lease"],
+    "avoid": ["smart contract"],
+    "body": "Read the document as the party the owner is, and report in this order. This is a reading aid, not legal advice.\n1. Who the parties are and what each must do, with dates and amounts quoted exactly.\n2. Money: what is paid, when, what triggers extra cost, and what happens on late payment.\n3. Ending it: how long it runs, how either side can end it, notice periods, what survives the end.\n4. When things go wrong: limits on liability, indemnities, warranties, penalties, who decides a dispute and where.\n5. One-sided or unusual terms: automatic renewal, exclusivity, assignment, changes the other side may make alone.\n6. What is missing that a contract of this kind usually has.\nQuote the clause number and the words for every point. Mark anything ambiguous as ambiguous. End with the questions to put to a lawyer or to the other side."
+  },
+  {
+    "name": "privacy-check",
+    "group": "Business",
+    "description": "Check a feature or document for personal data: what is collected, where it goes, who can see it.",
+    "triggers": ["personal data", "privacy review", "privacy impact", "gdpr", "data protection", "pii"],
+    "avoid": [],
+    "body": "Go through the feature or document and answer plainly.\n1. What personal data is touched: list each kind (name, contact, identifier, location, health, money, anything about a child) and whether it is needed for the purpose.\n2. Where it goes: every system, vendor and country it reaches, and whether it leaves the device or the organisation.\n3. Who can see it: roles, support staff, vendors, and anyone by mistake (logs, analytics, backups, error reports).\n4. How long it is kept and how it is deleted, including from backups.\n5. What the person was told and what choice they have.\n6. The three changes that would reduce the data or the exposure most: collect less, keep it shorter, keep it local, or separate the identifier.\nSay what you could not determine from what you were given. Do not assume a legal basis; ask what it is."
+  },
+  {
+    "name": "plain-language",
+    "group": "Writing",
+    "description": "Rewrite text so a newcomer understands it the first time, without losing a fact.",
+    "triggers": ["plain language", "plain english", "simplify this text", "rewrite simply", "easier to read"],
+    "avoid": [],
+    "body": "Rewrite the text for a reader who is new to the subject and reads it once.\nPut the main point first. One idea per sentence, most sentences under twenty words. Use the everyday word (use, not utilise; help, not facilitate). Say who does what: active voice, real subjects. Replace a jargon term with what it means, or explain it the first time it appears. Turn a long sentence with a list inside it into a list.\nKeep every fact, number, name, date and condition exactly as it was; never add a claim that was not there. Keep quoted text, code and commands unchanged.\nAfter the rewrite, list anything in the original that was unclear to you, as questions for the author, instead of guessing its meaning."
+  },
+  {
+    "name": "sql-review",
+    "group": "Engineering",
+    "description": "Check a query or migration for wrong results, slow plans and unsafe changes.",
+    "triggers": ["sql", "query plan", "migration", "slow query", "database index", "schema change"],
+    "avoid": [],
+    "body": "Check in this order.\nCorrectness: joins that multiply rows, a filter in the wrong place for an outer join, NULL in a comparison or a NOT IN, missing grouping columns, time zones and inclusive or exclusive ranges, integer division.\nSafety: user input built into the text instead of bound as a parameter; an UPDATE or DELETE without a WHERE or with one that can match everything; a migration that locks a large table, drops data, or cannot be rolled back.\nSpeed: a filter or join on a column with no usable index, a function wrapped around an indexed column, SELECT * where few columns are needed, a query inside a loop.\nFor each point say what result or risk it causes and show the corrected statement. If you need the table sizes, indexes or the engine to judge, ask. Do not claim a query is fast without a plan."
+  },
+  {
+    "name": "api-design",
+    "group": "Engineering",
+    "description": "Review an API for names, errors, compatibility and the mistakes callers will make.",
+    "triggers": ["api design", "endpoint design", "rest api", "api review", "request and response", "breaking change"],
+    "avoid": [],
+    "body": "Judge the interface from the caller's side.\nNames: the same thing has the same name everywhere; a name says what it returns or does; no abbreviations a newcomer must look up.\nShape: required fields are truly required; lists are paged and say how; times carry a zone; money carries a currency; identifiers are opaque.\nErrors: each failure a caller can act on has its own code and a message that says what to change; nothing internal leaks; a retry is safe or says it is not (idempotency).\nLimits: sizes, rates and timeouts are stated and enforced with a clear refusal.\nCompatibility: what can be added later without breaking callers, and what in this design would be hard to change.\nSecurity: who may call it, what they may see of other people's data, and what a hostile caller sends.\nList the three mistakes a hurried caller is most likely to make with this design, and how the design could prevent each."
+  },
+  {
+    "name": "decision-record",
+    "group": "Product",
+    "description": "Write down a decision so it can be understood and challenged later.",
+    "triggers": ["decision record", "architecture decision", "write up this decision", "trade-off", "why we chose"],
+    "avoid": [],
+    "body": "Write one page with these headings.\nContext: the problem and the constraints that are real (not the ones assumed), in a few lines.\nOptions: each option that was seriously possible, including doing nothing, with its cost, its risk and who it is good for.\nDecision: what was chosen, stated in one sentence.\nWhy: the reasons that decided it, and the evidence for each. Mark what is measured, what is reported by someone else, and what is a judgement.\nWhat we give up: the real downsides accepted, and what would have to be true for the decision to be wrong.\nRevisit when: the sign or the number that should make us look again.\nDo not argue for the decision after the fact; a reader should be able to disagree from what is written."
+  },
+  {
+    "name": "numbers-check",
+    "group": "Analysis",
+    "description": "Check what a set of numbers can and cannot support before anyone decides on it.",
+    "triggers": ["statistics", "sample size", "percentage change", "average", "correlation", "metrics", "benchmark results", "survey results"],
+    "avoid": [],
+    "body": "Before accepting a number, check these and report each briefly.\nWhat was counted: the exact definition, the period, and what was left out.\nOut of how many: the denominator and the sample size; a percentage without them is not a finding.\nCompared with what: a baseline measured the same way, at the same time, on the same kind of cases.\nSpread: is one average hiding very different groups or a few extreme values; give the median or the range when you can.\nChance: with this sample, how much could the number move by luck; say when a difference is too small to tell.\nCause: what else changed at the same time; a correlation is stated as a correlation.\nHow it was picked: were the cases, the period or the metric chosen after seeing the result.\nRecompute any figure you can from the data given and say when your result differs. End with what the numbers support, what they do not, and the one extra measurement that would settle the most."
+  },
+  {
+    "name": "email-reply",
+    "group": "Writing",
+    "description": "Draft a short, clear reply that answers what was asked and says what happens next.",
+    "triggers": ["reply to this email", "draft a reply", "write an email", "respond to this message", "follow-up email"],
+    "avoid": [],
+    "body": "Draft the reply the owner would send.\nAnswer the question that was asked in the first two lines. If the answer is no, say no and why, briefly. Then give only the detail the reader needs to act.\nOne email, one purpose. Put any request to the reader on its own line with a date. If several questions were asked, answer them in the same order, numbered.\nKeep the owner's tone from the earlier messages; plain and polite, no filler opening and no closing that says nothing. No promise the owner has not made and no fact that is not in what you were given; where something is missing, leave a marked gap like [date?] instead of inventing it.\nSubject line: say what the email is about and whether an action is needed. Keep it under about 150 words unless the content truly needs more."
+  },
+  {
+    "name": "dependency-check",
+    "group": "Engineering",
+    "description": "Look at a project's dependencies for risk: unmaintained, over-privileged, or unpinned.",
+    "triggers": ["dependencies", "dependency audit", "supply chain", "package versions", "lockfile", "third-party library"],
+    "avoid": [],
+    "body": "For the dependency list or manifest given, report:\nPinned or not: which entries float (a range, a branch, 'latest') and whether a lockfile fixes them.\nWhat runs at install or build time: install scripts, build scripts, plugins, and anything fetched from the network during the build.\nReach: for each direct dependency, what it can touch (network, files, shell, credentials) compared with what the project uses it for. Flag the ones with far more reach than need.\nUpkeep: anything that looks abandoned, has a single maintainer for something critical, or was recently transferred or renamed. Say when you cannot know this from the file alone.\nDuplicates and weight: two libraries doing the same job, or a large one used for one small function.\nLicences that restrict how the project may be distributed.\nDo not state that a version has or has not a known vulnerability unless a source you were given says so; say what to check and where."
+  },
+  {
+    "name": "research-brief",
+    "group": "Analysis",
+    "description": "Answer a research question from sources, separating what is shown from what is claimed.",
+    "triggers": ["research this", "literature review", "compare the sources", "what does the evidence say", "summarise these papers", "fact check"],
+    "avoid": [],
+    "body": "Answer from the sources you were given, not from memory.\nStart with the answer in two or three sentences and how sure it is.\nThen the evidence: for each main point, which source says it, in its own words or a close quote, with where in the source. Mark each point as shown (data or a primary record), reported (someone says so), or inferred (your reasoning).\nWhere sources disagree, show both and what would explain the difference (date, definition, who was measured, who paid).\nWhat is missing: questions the sources do not answer, and what kind of source would.\nNever cite something you were not given, and never fill a gap with a plausible detail. If the sources are too thin to answer, say so and stop."
+  }
+]

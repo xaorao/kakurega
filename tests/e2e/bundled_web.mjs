@@ -1,0 +1,72 @@
+// The skills that come with the program, as a person meets them: on the shelf, added, read, approved.
+// Real service, scripted model (no model is needed to manage methods).
+//   node tests/e2e/bundled_web.mjs      screenshots in target/bundled-web/
+
+import { chromium } from "playwright-core";
+import { spawn } from "node:child_process";
+import { mkdirSync, rmSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
+
+const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const work = join(repo, "target/bundled-web");
+rmSync(work, { recursive: true, force: true });
+const root = join(work, "root");
+mkdirSync(root, { recursive: true });
+const chrome = join(homedir(), "Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing");
+const server = spawn(join(repo, "target/debug/kaku"), ["serve", "--data-dir", join(work, "data"), "--root", root, "--scripted", join(repo, "tests/e2e/script.json"), "--ui-dir", join(repo, "apps/web/dist")], { stdio: ["ignore", "pipe", "pipe"] });
+process.on("exit", () => { try { server.kill(); } catch {} });
+let log = "";
+server.stdout.on("data", (d) => (log += d));
+server.stderr.on("data", (d) => (log += d));
+const deadline = Date.now() + 30000;
+while (!/#pair=/.test(log) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+const link = /http:\/\/127\.0\.0\.1:\d+\/#pair=[\w-]+/.exec(log)?.[0];
+if (!link) throw new Error("no pairing link:\n" + log);
+const browser = await chromium.launch({ executablePath: chrome, headless: true });
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+const page = await ctx.newPage();
+const problems = [];
+page.on("console", (m) => { if (m.type() === "error" && !/status of 409/.test(m.text())) problems.push("console: " + m.text()); });
+page.on("pageerror", (e) => problems.push("pageerror: " + e.message));
+const shot = (p, n) => p.screenshot({ path: join(work, `${n}.png`), fullPage: true });
+const check = (cond, what) => { console.log(cond ? "PASS" : "FAIL", what); if (!cond) process.exitCode = 1; };
+const origin = new URL(link).origin;
+
+await page.goto(link);
+await page.waitForSelector("nav");
+const skip = page.getByRole("button", { name: "Skip the rest" });
+if (await skip.count()) await skip.click();
+await page.goto(origin + "/#/instructions");
+await page.getByRole("heading", { name: "Methods" }).waitFor();
+const shelf = page.locator("#bundled-methods");
+await shelf.locator("summary").click();
+const items = shelf.locator("li[data-bundled]");
+check((await items.count()) >= 15 && (await shelf.locator(".rt-group h4").count()) >= 4, "the skills that come with the program are listed by group");
+check(await page.getByText("No methods yet.").isVisible(), "none of them is in the owner's list until added");
+await shot(page, "1-shelf");
+const row = shelf.locator('li[data-bundled="code-review"]');
+check(/Review a change for defects before style/.test(await row.innerText()), "each says in a line what it is for");
+await row.getByRole("button", { name: "Add" }).click();
+await page.getByText("Added code-review. Read it above and approve it to use it.").waitFor();
+check(await page.getByText("Waiting for your approval: not in use").isVisible(), "an added skill waits for approval like any method");
+await page.getByRole("button", { name: "Show text" }).first().click();
+check(await page.getByText(/Review the change in this order/).first().isVisible(), "its whole text can be read before approving");
+await shelf.locator("summary").click().catch(() => undefined);
+if (!(await row.isVisible())) await shelf.locator("summary").click();
+check(/In your list/.test(await row.innerText()) && (await row.getByRole("button", { name: "Add" }).count()) === 0, "the shelf shows it is in the list and offers no second add");
+await page.getByRole("button", { name: "Approve this text" }).first().click();
+await page.getByText("Approved: in use").waitFor();
+check(true, "after approving its text it is in use");
+await shot(page, "2-added-approved");
+const phone = await browser.newContext({ viewport: { width: 375, height: 800 }, colorScheme: "dark", storageState: await ctx.storageState() });
+const pp = await phone.newPage();
+await pp.goto(origin + "/#/instructions");
+await pp.locator("#bundled-methods summary").click();
+await pp.locator('#bundled-methods li[data-bundled="threat-model"]').waitFor();
+check(await pp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "the shelf fits a phone in dark mode with no sideways scroll");
+await shot(pp, "3-phone-dark");
+check(problems.length === 0, "no console errors: " + problems.join(" | "));
+await browser.close();
+server.kill();

@@ -5,6 +5,8 @@
 //! approval void. Selection is deterministic and bounded, and the text reaches a model inside a fixed frame that the text
 //! cannot close or forge.
 
+pub mod bundled;
+
 use kk_evidence::capsule::sha256_hex;
 use serde_json::{json, Map, Value};
 

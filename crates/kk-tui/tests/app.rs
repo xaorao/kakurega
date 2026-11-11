@@ -8221,3 +8221,42 @@ fn tu115_stop_lists_what_is_working_and_stops_one_thing_by_its_id() {
     b.handle(ok(&r[0], 200, json!({"items": [], "count": 0, "quiet": 0})));
     assert!(text(&b).contains("Nothing is working right now."));
 }
+
+#[test]
+fn tu116_the_bundled_skills_are_listed_and_one_is_taken_still_unapproved() {
+    let mut app = booted();
+    let r = enter(&mut app, "/method bundled");
+    assert_eq!(r[0].path, "/api/methods");
+    app.handle(ok(&r[0], 200, json!({"methods": [], "bundled": [{"name": "code-review", "group": "Engineering", "description": "Review a change\u{1b}[2J", "hash": "h", "added": false}, {"name": "plain-language", "group": "Writing", "description": "Rewrite simply", "hash": "h", "added": true}]})));
+    let all = text(&app);
+    assert!(
+        all.contains("Skills that come with Kakurega")
+            && all.contains("code-review")
+            && all.contains("(in your list) Rewrite simply")
+            && all.contains("/method take NAME")
+            && !all.contains('\u{1b}'),
+        "{all}"
+    );
+    let r = enter(&mut app, "/method take code-review");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].body.as_ref().unwrap()),
+        ("/api/methods/bundled", &json!({"name": "code-review"}))
+    );
+    app.handle(ok(
+        &r[0],
+        200,
+        json!({"name": "code-review", "hash": "h", "approved": false}),
+    ));
+    assert!(text(&app).contains("Added code-review. /method show code-review shows its text; /method approve code-review puts it in use."));
+    let r = enter(&mut app, "/method take code-review");
+    app.handle(ok(&r[0], 409, json!({"error": {"code": "METHOD_EXISTS", "message": "you already have a method with that name"}})));
+    assert!(text(&app).contains("you already have a method with that name"));
+    for bad in [
+        "/method take",
+        "/method take ../x",
+        "/method take a b",
+        "/method bundled now",
+    ] {
+        assert!(enter(&mut app, bad).is_empty(), "{bad}");
+    }
+}

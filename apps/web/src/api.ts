@@ -139,6 +139,7 @@ export interface LogEntry { seq: number; at: number; kind: string; subject: stri
 export interface LogSummary { count: number; head: string | null; public_key: string; recent: LogEntry[] }
 export interface ChatTurn { role: "user" | "assistant"; content: string }
 export interface Method { name: string; description: string; triggers: string[]; avoid: string[]; body: string; hash: string; approved: boolean; approved_at?: number | null }
+export interface BundledMethod { name: string; group: string; description: string; hash: string; added: boolean }
 export interface MethodProposal { id: number; job: string; name: string; description: string; triggers: string[]; body: string }
 export interface McpTool { name: string; description: string; pin: string; mode: "off" | "allow" | "ask"; effect: "read_only" | "may_change" | "unknown"; schema?: string }
 export interface McpServer { name: string; program: string; args: string[]; env_names: string[] | null; tools: McpTool[] }
@@ -364,7 +365,8 @@ export const api = {
   mcpPending: () => request<{ pending: { id: string; server: string; tool: string; args: string; age_secs: number }[] }>("GET", "/api/mcp/pending"),
   mcpDecide: (id: string, approve: boolean) => request<{ approved: boolean }>("POST", "/api/mcp/pending/decide", { id, approve }),
   mcpTest: (server: string, tool: string, args: unknown) => request<{ text: string; is_error: boolean; truncated: boolean }>("POST", "/api/mcp/test", { server, tool, args }),
-  methods: () => request<{ methods: Method[]; limits: { methods: number; body_chars: number; triggers: number } }>("GET", "/api/methods"),
+  methods: () => request<{ methods: Method[]; bundled?: BundledMethod[]; limits: { methods: number; body_chars: number; triggers: number } }>("GET", "/api/methods"),
+  addBundledMethod: (name: string) => request<{ name: string; hash: string; approved: boolean }>("POST", "/api/methods/bundled", { name }),
   saveMethod: (m: { name: string; description: string; triggers: string[]; avoid: string[]; body: string }) => request<{ name: string; hash: string; approved: boolean }>("POST", "/api/methods", m),
   approveMethod: (name: string, hash: string) => request<{ approved: boolean }>("POST", "/api/methods/approve", { name, hash }),
   revokeMethod: (name: string) => request<{ revoked: boolean }>("POST", "/api/methods/revoke", { name }),

@@ -46,6 +46,10 @@ pub enum MethodAction {
     Remove(String),
     /// Methods a review suggested, waiting for the owner.
     Suggestions,
+    /// The methods that ship with the program.
+    Bundled,
+    /// Add one of them to the owner's methods, unapproved.
+    Take(String),
     Keep(i64),
     Dismiss(i64),
     Add {
@@ -421,7 +425,7 @@ pub fn usage(name: &str) -> &'static str {
         "forgetreview" => "/forgetreview JOB",
         "instructions" => "/instructions [set [in PROJECT:] TEXT | clear [PROJECT]]",
         "notesonly" => "/notesonly [on|off [PROJECT]]",
-        "method" => "/method [show|approve|revoke|remove NAME | add NAME WORD,WORD|- TEXT | suggestions | keep|dismiss NUMBER]",
+        "method" => "/method [show|approve|revoke|remove NAME | add NAME WORD,WORD|- TEXT | suggestions | keep|dismiss NUMBER | bundled | take NAME]",
         "mcp" => "/mcp [check NAME | allow|ask SERVER TOOL [knowingly] | off SERVER TOOL | pending | approve|deny ID | remove NAME | add NAME /full/path [ARGS]]",
         "pii" => "/pii [add ENTRY | remove ENTRY]",
         "find" => "/find WORDS",
@@ -1027,6 +1031,16 @@ pub fn parse(line: &str) -> Result<Command, String> {
                     }))
                 }
                 "suggestions" if tail.is_empty() => Ok(Command::Method(MethodAction::Suggestions)),
+                "bundled" if tail.is_empty() => Ok(Command::Method(MethodAction::Bundled)),
+                "take"
+                    if !tail.is_empty()
+                        && tail.len() <= 64
+                        && tail
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')) =>
+                {
+                    Ok(Command::Method(MethodAction::Take(tail.to_string())))
+                }
                 "keep" | "dismiss" => match tail.parse::<i64>() {
                     Ok(n) if n > 0 => Ok(Command::Method(if sub == "keep" {
                         MethodAction::Keep(n)

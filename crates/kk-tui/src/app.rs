@@ -189,6 +189,8 @@ enum Intent {
     Roundtable,
     WorkList,
     WorkStop,
+    MethodBundled,
+    MethodTake,
     TeamList,
     /// A plan, a look, a start or an answer: the reply is the run, shown and then watched while it works.
     TeamRun,
@@ -3140,6 +3142,16 @@ impl App {
                         "/api/methods",
                         None,
                     )],
+                    M::Bundled => {
+                        vec![self.req(Intent::MethodBundled, false, Method::Get, "/api/methods", None)]
+                    }
+                    M::Take(name) => vec![self.req(
+                        Intent::MethodTake,
+                        false,
+                        Method::Post,
+                        "/api/methods/bundled",
+                        Some(json!({"name": name})),
+                    )],
                     M::Suggestions => vec![self.req(
                         Intent::MethodSuggestions,
                         false,
@@ -5240,6 +5252,42 @@ impl App {
                     lines.push(String::new());
                     lines.push("These came from a model that read project files: read them with care. /method keep NUMBER saves one (it still waits for your approval); /method dismiss NUMBER removes it.".to_string());
                     self.push(Kind::Info, Some("Methods suggested by a review"), lines);
+                }
+                Vec::new()
+            }
+            Intent::MethodBundled => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let mut rows: Vec<String> = body["bundled"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|b| {
+                        format!(
+                            "  {:18} {}{}",
+                            clean(b["name"].as_str().unwrap_or("")),
+                            if b["added"] == true {
+                                "(in your list) "
+                            } else {
+                                ""
+                            },
+                            clean(b["description"].as_str().unwrap_or(""))
+                        )
+                    })
+                    .collect();
+                rows.push(String::new());
+                rows.push("/method take NAME adds one to your methods. It applies only after you read it (/method show NAME) and approve it.".into());
+                self.push(Kind::Info, Some("Skills that come with Kakurega"), rows);
+                Vec::new()
+            }
+            Intent::MethodTake => {
+                if ok {
+                    let name = clean(body["name"].as_str().unwrap_or(""));
+                    self.say(Kind::Ok, format!("Added {name}. /method show {name} shows its text; /method approve {name} puts it in use."));
+                } else {
+                    self.say(Kind::Error, err_text(status, &body));
                 }
                 Vec::new()
             }

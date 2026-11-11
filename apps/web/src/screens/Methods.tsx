@@ -1,5 +1,5 @@
 import { createResource, createSignal, For, Show } from "solid-js";
-import { api, ApiError, type Method } from "../api";
+import { api, ApiError, type Method, type BundledMethod } from "../api";
 import { t } from "../i18n";
 
 const words = (text: string) => text.split(",").map((w) => w.trim()).filter(Boolean);
@@ -180,6 +180,55 @@ function Proposals(props: { onChanged: (message: string) => void }) {
   );
 }
 
+/** The methods that ship with the program, by group. Adding one puts it in the list above, still waiting for approval. */
+function Bundled(props: { list: BundledMethod[]; onChanged: (message: string) => void }) {
+  const [problem, setProblem] = createSignal("");
+  const groups = () => {
+    const out: { group: string; items: BundledMethod[] }[] = [];
+    for (const b of props.list) {
+      const g = out.find((x) => x.group === b.group);
+      if (g) g.items.push(b);
+      else out.push({ group: b.group, items: [b] });
+    }
+    return out;
+  };
+  const add = async (name: string) => {
+    setProblem("");
+    try {
+      await api.addBundledMethod(name);
+      props.onChanged(t("met.bundled.added", { name }));
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("met.error"));
+    }
+  };
+  return (
+    <details class="team-allow" id="bundled-methods">
+      <summary>{t("met.bundled.heading", { n: props.list.length })}</summary>
+      <p class="muted">{t("met.bundled.lead")}</p>
+      <Show when={problem()}><p role="alert" class="bad">{problem()}</p></Show>
+      <For each={groups()}>
+        {(g) => (
+          <div class="rt-group">
+            <h4>{g.group}</h4>
+            <ul class="plain bundled-list">
+              <For each={g.items}>
+                {(b) => (
+                  <li class="work-item" data-bundled={b.name}>
+                    <span class="work-what"><strong>{b.name}</strong> <span class="muted">{b.description}</span></span>
+                    <Show when={!b.added} fallback={<span class="chip">{t("met.bundled.have")}</span>}>
+                      <button type="button" onClick={() => void add(b.name)}>{t("met.bundled.add")}</button>
+                    </Show>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </div>
+        )}
+      </For>
+    </details>
+  );
+}
+
 export function Methods() {
   const [data, { refetch }] = createResource(() => api.methods());
   const [status, setStatus] = createSignal("");
@@ -197,6 +246,7 @@ export function Methods() {
           <>
             <Show when={d().methods.length === 0}><p class="muted">{t("met.none")}</p></Show>
             <ul class="plain stack"><For each={d().methods}>{(m) => <Row m={m} onChanged={changed} />}</For></ul>
+            <Show when={(d().bundled ?? []).length > 0}><Bundled list={d().bundled ?? []} onChanged={changed} /></Show>
             <h3>{t("met.new")}</h3>
             <Form onDone={changed} />
           </>

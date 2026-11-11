@@ -9857,6 +9857,7 @@ impl Extension for Routes {
                 post(methods::proposals_dismiss),
             )
             .route("/api/methods/approve", post(methods::methods_approve))
+            .route("/api/methods/bundled", post(methods::bundled_add))
             .route("/api/methods/revoke", post(methods::methods_revoke))
             .route("/api/methods/remove", post(methods::methods_remove))
             .route(

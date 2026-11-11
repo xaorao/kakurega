@@ -20332,3 +20332,110 @@ fn sv246_a_public_route_is_given_public_notes_only_whatever_its_address_says() {
         );
     }
 }
+
+#[test]
+fn sv247_a_bundled_method_is_added_unapproved_and_applies_only_after_the_owner_approves_its_text() {
+    let (c, w, seen, _root) = instructions_service("methods-bundled");
+    assert_eq!(
+        Web::new(c.addr)
+            .post("/api/methods/bundled", json!({"name": "code-review"}))
+            .0,
+        401
+    );
+    let list = w.get("/api/methods").1;
+    let bundled = list["bundled"].as_array().unwrap();
+    assert!(bundled.len() >= 15, "{list}");
+    assert!(bundled.iter().all(|b| b["added"] == false
+        && b["hash"].as_str().unwrap().len() == 64
+        && b["group"].is_string()));
+    assert!(
+        list["methods"].as_array().unwrap().is_empty(),
+        "nothing is installed until the owner adds it"
+    );
+    // a question the method is for: it does not apply while it is only on the shelf
+    w.post(
+        "/api/chat",
+        json!({"message": "Please do a code review of this pull request"}),
+    );
+    assert!(!seen
+        .lock()
+        .unwrap()
+        .iter()
+        .flatten()
+        .any(|m| m.content.contains("Review the change in this order")));
+    let (st, v) = w.post("/api/methods/bundled", json!({"name": "no-such"}));
+    assert_eq!(
+        (st, v["error"]["code"].as_str()),
+        (404, Some("NO_SUCH_BUNDLED"))
+    );
+    let (st, v) = w.post("/api/methods/bundled", json!({"name": "code-review"}));
+    assert_eq!((st, v["approved"].as_bool()), (200, Some(false)), "{v}");
+    let hash = v["hash"].as_str().unwrap().to_string();
+    let list = w.get("/api/methods").1;
+    assert_eq!(
+        (
+            list["methods"][0]["name"].as_str(),
+            list["methods"][0]["approved"].as_bool()
+        ),
+        (Some("code-review"), Some(false))
+    );
+    assert!(list["bundled"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|b| b["name"] == "code-review" && b["added"] == true));
+    // added is not approved: it still does not apply
+    seen.lock().unwrap().clear();
+    w.post(
+        "/api/chat",
+        json!({"message": "Please do a code review of this pull request"}),
+    );
+    assert!(!seen
+        .lock()
+        .unwrap()
+        .iter()
+        .flatten()
+        .any(|m| m.content.contains("Review the change in this order")));
+    assert_eq!(
+        w.post(
+            "/api/methods/approve",
+            json!({"name": "code-review", "hash": hash})
+        )
+        .0,
+        200
+    );
+    seen.lock().unwrap().clear();
+    let (_, r) = w.post(
+        "/api/chat",
+        json!({"message": "Please do a code review of this pull request"}),
+    );
+    assert_eq!(r["methods_used"], json!(["code-review"]), "{r}");
+    assert!(seen
+        .lock()
+        .unwrap()
+        .iter()
+        .flatten()
+        .any(|m| m.content.contains("Review the change in this order")));
+    // adding again, or over a method of the owner's with that name in another case, replaces nothing
+    let (st, v) = w.post("/api/methods/bundled", json!({"name": "code-review"}));
+    assert_eq!(
+        (st, v["error"]["code"].as_str()),
+        (409, Some("METHOD_EXISTS"))
+    );
+    w.post(
+        "/api/methods",
+        method_body("Threat-Model", json!(["threat model"]), "My own way."),
+    );
+    let (st, v) = w.post("/api/methods/bundled", json!({"name": "threat-model"}));
+    assert_eq!(
+        (st, v["error"]["code"].as_str()),
+        (409, Some("METHOD_EXISTS")),
+        "{v}"
+    );
+    let mine = w.get("/api/methods").1;
+    assert!(mine["methods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m["name"] == "Threat-Model" && m["body"] == "My own way."));
+}

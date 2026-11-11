@@ -170,9 +170,46 @@ pub(super) async fn methods_get(axum::Extension(svc): Svc) -> Response {
             v["approved_at"] = json!(at);
             v
         }).collect::<Vec<_>>(),
+        // the methods that ship with the program; `added` says the owner has one of that name already (their own or this one)
+        "bundled": kk_methods::bundled::all().iter().map(|b| json!({
+            "name": b.method.name, "group": b.group, "description": b.method.description, "hash": b.method.hash,
+            "added": rows.iter().any(|(m, _, _)| m.name.eq_ignore_ascii_case(&b.method.name)),
+        })).collect::<Vec<_>>(),
         "limits": {"methods": MAX_METHODS, "body_chars": kk_methods::MAX_BODY, "triggers": kk_methods::MAX_TRIGGERS},
     }))
     .into_response()
+}
+
+/// Adds one of the methods that ship with the program to the owner's methods. It is added unapproved, like any other: the
+/// owner reads its text and approves that exact text before it applies. A name already in use is never replaced.
+pub(super) async fn bundled_add(axum::Extension(svc): Svc, Json(b): Json<NameBody>) -> Response {
+    let Some(found) = kk_methods::bundled::find(&b.name) else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "NO_SUCH_BUNDLED",
+            "no method with that name ships with this program",
+        );
+    };
+    let m = found.method;
+    let all = svc.methods_all();
+    if all
+        .iter()
+        .any(|(x, _, _)| x.name.eq_ignore_ascii_case(&m.name))
+    {
+        return error(
+            StatusCode::CONFLICT,
+            "METHOD_EXISTS",
+            "you already have a method with that name; remove it first if you want the bundled one",
+        );
+    }
+    if all.len() as i64 >= MAX_METHODS {
+        return refuse("you have the most methods that can be kept; remove one first");
+    }
+    if let Err(e) = svc.method_save(&m) {
+        return refuse(&e);
+    }
+    svc.log_event("method.added_bundled", &m.name, &[]);
+    Json(json!({"name": m.name, "hash": m.hash, "approved": false})).into_response()
 }
 
 /// Saves or replaces a method. It is saved unapproved: changing the text of an approved method takes its approval away.
