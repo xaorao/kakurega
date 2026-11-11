@@ -1,6 +1,6 @@
 mod attachments;
 pub mod backup;
-mod budget;
+pub mod budget;
 pub mod coding;
 mod compaction;
 pub mod crash;

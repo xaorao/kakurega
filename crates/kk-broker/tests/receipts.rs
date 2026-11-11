@@ -53,6 +53,7 @@ impl Route for Receipting {
             message: ChatMessage::new("assistant", "ok"),
             prompt_tokens: 1,
             completion_tokens: 1,
+            cut_short: false,
         })
     }
 }
@@ -180,6 +181,7 @@ impl Route for CountingLocal {
             message: ChatMessage::new("assistant", "ok"),
             prompt_tokens: 1,
             completion_tokens: 1,
+            cut_short: false,
         })
     }
 }

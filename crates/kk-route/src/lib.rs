@@ -41,6 +41,8 @@ pub struct Completion {
     pub message: ChatMessage,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+    /// The model stopped because it reached the most tokens it was allowed to write, not because it had finished.
+    pub cut_short: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -536,6 +538,7 @@ impl Route for OllamaRoute {
             },
             prompt_tokens: v["prompt_eval_count"].as_u64().unwrap_or(0),
             completion_tokens: v["eval_count"].as_u64().unwrap_or(0),
+            cut_short: v["done_reason"] == "length",
         })
     }
 }
@@ -649,6 +652,7 @@ impl OllamaRoute {
                             stopped: true,
                             prompt_tokens,
                             completion_tokens,
+                            cut_short: false,
                         });
                     }
                 }
@@ -661,6 +665,7 @@ impl OllamaRoute {
                     stopped: false,
                     prompt_tokens,
                     completion_tokens,
+                    cut_short: v["done_reason"] == "length",
                 });
             }
         }
@@ -769,6 +774,8 @@ pub struct Streamed {
     pub stopped: bool,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+    /// The model stopped because it reached the most tokens it was allowed to write, not because it had finished.
+    pub cut_short: bool,
 }
 
 pub struct ScriptedRoute {
@@ -852,6 +859,7 @@ impl Route for ScriptedRoute {
             message,
             prompt_tokens: 0,
             completion_tokens: 0,
+            cut_short: false,
         })
     }
 }

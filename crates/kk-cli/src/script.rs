@@ -575,10 +575,13 @@ pub fn chat(args: &[String]) -> u8 {
                 if json_mode {
                     println!(
                         "{}",
-                        json!({"reply": reply, "session": session, "route": {"class": v["route"]["class"], "simulated": v["route"]["simulated"]}, "notes_used": v["notes_used"]})
+                        json!({"reply": reply, "cut_short": v["cut_short"] == true, "session": session, "route": {"class": v["route"]["class"], "simulated": v["route"]["simulated"]}, "notes_used": v["notes_used"]})
                     );
                 } else {
                     println!("{}", clean(reply));
+                    if v["cut_short"] == true {
+                        eprintln!("this answer reached the model's length limit and stops there; ask it to continue");
+                    }
                     if keep {
                         if let Some(id) = &session {
                             eprintln!(
@@ -1083,6 +1086,9 @@ pub fn roundtable(args: &[String]) -> u8 {
             if let Some(a) = v["answer"].as_str() {
                 answered += 1;
                 println!("== {name} ==\n{}\n", clean(a));
+                if v["cut_short"] == true {
+                    println!("(this answer reached the model's length limit and stops there)\n");
+                }
             } else if let Some(why) = v["failed"].as_str() {
                 println!("== {name} ==\n(no answer: {})\n", clean(why));
             } else if v.get("resolution").is_some() {

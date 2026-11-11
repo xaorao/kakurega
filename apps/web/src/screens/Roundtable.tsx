@@ -3,7 +3,7 @@ import { api, ApiError, streamRoundtable, type ExpertInfo, type RoundtableResolu
 import { Markdown } from "../components/Markdown";
 import { t } from "../i18n";
 
-type Seat = { id: string; name: string; state: "waiting" | "asking" | "answered" | "failed"; text: string; why: string; cut: boolean };
+type Seat = { id: string; name: string; state: "waiting" | "asking" | "answered" | "failed"; text: string; why: string; cut: boolean; short: boolean };
 
 const STORE = "kk.roundtable.experts";
 
@@ -67,7 +67,7 @@ export function Roundtable() {
     setResolution(null);
     setNoResolution("");
     const names = new Map(everyone().map((x) => [x.id, x.name]));
-    setSeats(chosen().map((id) => ({ id, name: names.get(id) ?? id, state: "waiting", text: "", why: "", cut: false })));
+    setSeats(chosen().map((id) => ({ id, name: names.get(id) ?? id, state: "waiting", text: "", why: "", cut: false, short: false })));
     setBusy(true);
     stop = new AbortController();
     try {
@@ -78,7 +78,7 @@ export function Roundtable() {
             const id = v.expert;
             if (v.state === "asking") seat(id, (s) => ({ ...s, state: "asking" }));
             else if (typeof v.delta === "string") seat(id, (s) => ({ ...s, text: s.text + v.delta }));
-            else if (typeof v.answer === "string") seat(id, (s) => ({ ...s, state: "answered", text: v.answer as string, cut: v.truncated_for_lead === true }));
+            else if (typeof v.answer === "string") seat(id, (s) => ({ ...s, state: "answered", text: v.answer as string, cut: v.truncated_for_lead === true, short: v.cut_short === true }));
             else if (typeof v.failed === "string") seat(id, (s) => ({ ...s, state: "failed", text: "", why: v.failed as string }));
           } else if ("resolution" in v) {
             if (v.resolution) setResolution(v.resolution as RoundtableResolution);
@@ -174,6 +174,7 @@ export function Roundtable() {
                 <p><strong>{s.name}</strong> <span class={chip(s)}>{label(s)}</span></p>
                 <Show when={s.text}><Markdown text={s.text} /></Show>
                 <Show when={s.state === "failed"}><p class="muted">{s.why}</p></Show>
+                <Show when={s.short}><p class="muted">{t("chat.cutShort")}</p></Show>
                 <Show when={s.cut}><p class="muted">{t("rt.cut")}</p></Show>
               </li>
             )}

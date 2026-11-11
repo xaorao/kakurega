@@ -387,6 +387,48 @@ mod streaming {
     }
 
     #[test]
+    fn st06_an_answer_that_hit_its_length_limit_says_so_and_one_that_finished_does_not() {
+        use kk_route::Route;
+        let route = |lines: Vec<String>| {
+            let (url, _) = serve(lines);
+            OllamaRoute::new(&url, "m").unwrap()
+        };
+        let limit = "{\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"done_reason\":\"length\",\"prompt_eval_count\":7,\"eval_count\":50}";
+        let stop = "{\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"done_reason\":\"stop\",\"prompt_eval_count\":7,\"eval_count\":3}";
+        let out = route(vec![chunk("It leaks through the"), limit.into()])
+            .stream(&req(), &mut |_| true)
+            .unwrap();
+        assert!(out.cut_short && !out.stopped && out.text == "It leaks through the");
+        for done in [stop, DONE] {
+            let out = route(vec![chunk("Done."), done.into()])
+                .stream(&req(), &mut |_| true)
+                .unwrap();
+            assert!(!out.cut_short, "{done}");
+        }
+        // the owner stopping it is not the model's limit
+        let out = route(vec![chunk("a"), chunk("b"), limit.into()])
+            .stream(&req(), &mut |_| false)
+            .unwrap();
+        assert!(out.stopped && !out.cut_short);
+        // the answer that arrives whole
+        let whole = |reason: &str| {
+            format!("{{\"message\":{{\"role\":\"assistant\",\"content\":\"x\"}},\"done\":true,\"done_reason\":\"{reason}\",\"prompt_eval_count\":1,\"eval_count\":1}}")
+        };
+        assert!(
+            route(vec![whole("length")])
+                .complete(&req())
+                .unwrap()
+                .cut_short
+        );
+        assert!(
+            !route(vec![whole("stop")])
+                .complete(&req())
+                .unwrap()
+                .cut_short
+        );
+    }
+
+    #[test]
     fn st02_stopping_early_closes_the_connection_so_the_model_stops() {
         let many: Vec<String> = (0..60).map(|i| chunk(&format!("w{i} "))).collect();
         let (url, cut_short) = serve(many);

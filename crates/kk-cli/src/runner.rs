@@ -63,6 +63,12 @@ impl ReviewRunner {
         }
     }
 
+    /// The most tokens one chat answer may be: the room the service keeps free in the window for the reply (so a prompt
+    /// that fills its share still leaves the answer its own), never less than 500 and never more than 4,096.
+    fn reply_room(&self) -> u32 {
+        reply_room(self.context_tokens)
+    }
+
     /// The route that answers questions: the NEAR route when the owner chose it, otherwise the local model.
     fn answer_route(&self) -> Result<Box<dyn Route>, kk_route::RouteError> {
         match &self.remote {
@@ -75,6 +81,10 @@ impl ReviewRunner {
         OllamaRoute::new(&self.ollama, &self.model_name())
             .map(|r| r.with_context_tokens(self.context_tokens))
     }
+}
+
+fn reply_room(context_tokens: u32) -> u32 {
+    kk_service::budget::reply_reserve(u64::from(context_tokens)).clamp(500, 4096) as u32
 }
 
 /// What the owner is told when the NEAR model fails, or its proof does not verify. The answer is never given in that case.
@@ -188,6 +198,7 @@ impl JobRunner for ReviewRunner {
                     class: "device_only".into(),
                     simulated: true,
                     prompt_tokens: None,
+                    cut_short: false,
                 });
             }
             return Ok(kk_service::ChatReply {
@@ -196,19 +207,21 @@ impl JobRunner for ReviewRunner {
                 class: "device_only".into(),
                 simulated: true,
                 prompt_tokens: None,
-            });
+cut_short: false,
+});
         }
         let route = self.answer_route().map_err(|e| e.to_string())?;
         let done = route
             .complete(&kk_route::CompletionRequest {
                 messages,
                 tools: Vec::new(),
-                max_tokens: 500,
+                max_tokens: self.reply_room(),
                 temperature: 0.2,
             })
             .map_err(|e| self.failure(e))?;
         Ok(kk_service::ChatReply {
             prompt_tokens: (done.prompt_tokens > 0).then_some(done.prompt_tokens),
+            cut_short: done.cut_short,
             text: done.message.content,
             route_id: route.id().to_string(),
             class: route.class().as_str().to_string(),
@@ -285,7 +298,7 @@ impl JobRunner for ReviewRunner {
                 &kk_route::CompletionRequest {
                     messages,
                     tools: Vec::new(),
-                    max_tokens: 500,
+                    max_tokens: self.reply_room(),
                     temperature: 0.2,
                 },
                 on_chunk,
@@ -294,6 +307,7 @@ impl JobRunner for ReviewRunner {
         Ok(kk_service::StreamedReply {
             reply: kk_service::ChatReply {
                 prompt_tokens: (done.prompt_tokens > 0).then_some(done.prompt_tokens),
+                cut_short: done.cut_short,
                 text: done.text,
                 route_id: route.id().to_string(),
                 class: "device_only".into(),
@@ -728,6 +742,19 @@ impl kk_memory::Embedder for OllamaEmbedder {
         } else {
             0.6
         }
+    }
+}
+
+#[cfg(test)]
+mod room {
+    #[test]
+    fn rn_reply_room_follows_the_window_between_500_and_4096_tokens() {
+        // the room the service leaves free for the reply is the most the model is allowed to write
+        assert_eq!(super::reply_room(2048), 500);
+        assert_eq!(super::reply_room(4096), 614);
+        assert_eq!(super::reply_room(8192), 1228);
+        assert_eq!(super::reply_room(32_000), 4096);
+        assert_eq!(super::reply_room(200_000), 4096);
     }
 }
 

@@ -109,6 +109,8 @@ pub struct ChatReply {
     pub simulated: bool,
     /// The model's own count of the prompt it read, cached part included; None when the model gave none.
     pub prompt_tokens: Option<u64>,
+    /// The model reached the most it was allowed to write, so the text stops before the model had finished.
+    pub cut_short: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -3287,6 +3289,7 @@ fn no_model_reply() -> ChatReply {
         class: "none".into(),
         simulated: false,
         prompt_tokens: None,
+        cut_short: false,
     }
 }
 
@@ -3893,7 +3896,7 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
         );
     }
     let usage = json!({"elapsed_ms": elapsed_ms, "context_tokens": measured.unwrap_or(estimated), "context_tokens_estimate": estimated, "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "history_turns_summarized": run.summarized, "summary_text": run.summary, "compacted_now": run.compacted_now, "compaction_failed": run.compaction_failed, "estimate": measured.is_none()});
-    json!({"usage": usage, "reply": r.text, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated, "stays_here": svc.route_for_owner()["stays_here"], "host": svc.route_for_owner()["host"]}, "instructions_used": ctx.instructions_used, "methods_used": ctx.methods_used, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "files": {"used": ctx.files_used, "trimmed": ctx.files_trimmed, "left_out": ctx.files_left_out, "withheld_instructions": ctx.files_withheld_instructions, "withheld_secrets": ctx.files_withheld_secrets}, "saved": saved, "not_saved": not_saved, "project": run.body.project})
+    json!({"usage": usage, "reply": r.text, "cut_short": r.cut_short, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated, "stays_here": svc.route_for_owner()["stays_here"], "host": svc.route_for_owner()["host"]}, "instructions_used": ctx.instructions_used, "methods_used": ctx.methods_used, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "files": {"used": ctx.files_used, "trimmed": ctx.files_trimmed, "left_out": ctx.files_left_out, "withheld_instructions": ctx.files_withheld_instructions, "withheld_secrets": ctx.files_withheld_secrets}, "saved": saved, "not_saved": not_saved, "project": run.body.project})
 }
 
 async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
@@ -4186,7 +4189,7 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
                         ));
                     } else {
                         let (kept, truncated) = experts::fit(&text, cap);
-                        let _ = tx.send(line(json!({"expert": e.id, "answer": text, "truncated_for_lead": truncated})));
+                        let _ = tx.send(line(json!({"expert": e.id, "answer": text, "truncated_for_lead": truncated, "cut_short": s.reply.cut_short})));
                         answers.push((e.clone(), kept));
                     }
                 }

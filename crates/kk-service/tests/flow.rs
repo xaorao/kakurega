@@ -313,6 +313,7 @@ impl JobRunner for CannedRunner {
                 class: "device_only".into(),
                 simulated: true,
                 prompt_tokens: None,
+                cut_short: false,
             });
         }
         if self.confirm {
@@ -327,6 +328,7 @@ impl JobRunner for CannedRunner {
                 class: "device_only".into(),
                 simulated: true,
                 prompt_tokens: None,
+                cut_short: false,
             })
         } else {
             Err("no model is running".into())
@@ -3911,6 +3913,7 @@ impl JobRunner for SlowRunner {
                         class: "device_only".into(),
                         simulated: true,
                         prompt_tokens: None,
+                        cut_short: false,
                     },
                     stopped: true,
                 });
@@ -3924,6 +3927,7 @@ impl JobRunner for SlowRunner {
                 class: "device_only".into(),
                 simulated: true,
                 prompt_tokens: None,
+                cut_short: false,
             },
             stopped: false,
         })
@@ -6431,6 +6435,7 @@ impl JobRunner for ShortRunner {
             class: "device_only".into(),
             simulated: true,
             prompt_tokens: None,
+            cut_short: false,
         })
     }
 }
@@ -6547,6 +6552,7 @@ impl JobRunner for SummaryRunner {
             class: "device_only".into(),
             simulated: true,
             prompt_tokens: None,
+            cut_short: false,
         })
     }
     fn summarize(&self, m: Vec<kk_types::chat::ChatMessage>) -> Result<String, String> {
@@ -8031,6 +8037,7 @@ impl JobRunner for RouteRunner {
             class: "device_only".into(),
             simulated: false,
             prompt_tokens: None,
+            cut_short: false,
         })
     }
 }
@@ -9982,6 +9989,7 @@ impl JobRunner for FileRunner {
             class: "device_only".into(),
             simulated: true,
             prompt_tokens: None,
+            cut_short: false,
         })
     }
 }
@@ -18406,6 +18414,8 @@ struct TableRunner {
     lead: Mutex<Option<String>>,
     /// When set, every expert fails.
     all_fail: std::sync::atomic::AtomicBool,
+    /// When set, every answer says it reached the model's length limit.
+    cut: std::sync::atomic::AtomicBool,
 }
 
 impl JobRunner for TableRunner {
@@ -18428,12 +18438,14 @@ impl JobRunner for TableRunner {
     fn chat(&self, m: Vec<kk_types::chat::ChatMessage>) -> Result<kk_service::ChatReply, String> {
         use kk_service::experts::{EXPERTS, LEAD_INSTRUCTION};
         self.seen.lock().unwrap().push(m.clone());
+        let cut_short = self.cut.load(std::sync::atomic::Ordering::SeqCst);
         let reply = |text: String| kk_service::ChatReply {
             text,
             route_id: "device:test".into(),
             class: "device_only".into(),
             simulated: true,
             prompt_tokens: None,
+            cut_short,
         };
         if m.iter()
             .any(|x| x.role == "system" && x.content == LEAD_INSTRUCTION)
@@ -18476,6 +18488,7 @@ fn table(tag: &str) -> (kk_companion::Companion, Web, Arc<TableRunner>) {
             "Agreed: keep secrets out of the code.\nDisputed: the architect wants a service, the reviewer a vault.\nDecision: use the vault now.\nOpen questions: the tester and the writer did not answer.".into(),
         )),
         all_fail: Default::default(),
+        cut: Default::default(),
     });
     let svc = Service::new(&root.join("data"), vec![root.clone()], runner.clone(), true).unwrap();
     let c = start(Options {
@@ -18979,6 +18992,8 @@ struct TeamRunner {
     hold: std::sync::atomic::AtomicBool,
     /// When set, asking a task's expert panics: the driver dies.
     die: std::sync::atomic::AtomicBool,
+    /// When set, a task's answer says it reached the model's length limit.
+    cut: std::sync::atomic::AtomicBool,
 }
 
 impl TeamRunner {
@@ -18989,6 +19004,7 @@ impl TeamRunner {
             class: "device_only".into(),
             simulated: true,
             prompt_tokens: None,
+            cut_short: false,
         }
     }
     fn task_number(m: &[kk_types::chat::ChatMessage]) -> usize {
@@ -19069,7 +19085,8 @@ impl JobRunner for TeamRunner {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        let r = self.chat(m)?;
+        let mut r = self.chat(m)?;
+        r.cut_short = self.cut.load(SeqCst);
         let stopped = !on_chunk(&r.text);
         Ok(kk_service::StreamedReply { reply: r, stopped })
     }
@@ -19086,6 +19103,7 @@ fn team_runner(plan: &str) -> Arc<TeamRunner> {
         closing: Mutex::new(Ok("Keep the key in the vault.\nNot done: Nothing.".into())),
         hold: Default::default(),
         die: Default::default(),
+        cut: Default::default(),
     })
 }
 
@@ -19728,4 +19746,55 @@ fn sv239_a_run_survives_a_crash_and_a_restart_with_its_finished_tasks_and_is_car
         .unwrap()
         .content
         .contains("result of task 1"));
+}
+
+#[test]
+fn sv240_an_answer_that_reached_the_models_length_limit_is_marked_in_chat_roundtable_and_team() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (_c, w, runner) = table("cut-short");
+    let (st, v) = w.post("/api/chat", json!({"message": "hello"}));
+    assert_eq!((st, v["cut_short"].as_bool()), (200, Some(false)), "{v}");
+    runner.cut.store(true, SeqCst);
+    let (st, v) = w.post("/api/chat", json!({"message": "hello"}));
+    assert_eq!((st, v["cut_short"].as_bool()), (200, Some(true)), "{v}");
+    let (_, lines) = roundtable(
+        &w,
+        json!({"message": "q", "experts": ["security-reviewer", "data-analyst"]}),
+    );
+    let answers: Vec<&Value> = lines.iter().filter(|l| l.get("answer").is_some()).collect();
+    assert_eq!(answers.len(), 2);
+    assert!(
+        answers.iter().all(|a| a["cut_short"] == true),
+        "{answers:?}"
+    );
+    runner.cut.store(false, SeqCst);
+    let (_, lines) = roundtable(
+        &w,
+        json!({"message": "q", "experts": ["security-reviewer", "data-analyst"]}),
+    );
+    assert!(lines
+        .iter()
+        .filter(|l| l.get("answer").is_some())
+        .all(|a| a["cut_short"] == false));
+
+    let (_c2, w2, r2) = team(
+        "cut-short-team",
+        "1 | plain-writer | - | A.\n2 | data-analyst | - | B.",
+    );
+    r2.cut.store(true, SeqCst);
+    let id = w2.post("/api/team", json!({"goal": "g"})).1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    w2.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(&w2, &id, &["done"]);
+    assert_eq!(team_states(&v), ["done", "done"]);
+    assert_eq!(
+        v["tasks"][0]["note"],
+        "the answer reached the model's length limit and stops there"
+    );
+    assert_eq!(
+        v["tasks"][0]["result"], "result of task 1",
+        "the text that did arrive is kept"
+    );
 }

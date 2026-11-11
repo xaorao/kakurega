@@ -191,7 +191,7 @@ export function Team() {
                       </form>
                     </Show>
                     <Show when={task.result}><Markdown text={task.result} /></Show>
-                    <Show when={task.note}><p class="muted">{t("team.why")} {task.note}.</p></Show>
+                    <Show when={task.note}><p class="muted">{t(task.state === "done" ? "team.note" : "team.why")} {task.note}.</p></Show>
                   </li>
                 )}
               </For>

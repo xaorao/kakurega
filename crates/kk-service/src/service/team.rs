@@ -471,6 +471,7 @@ impl Service {
                 .runner
                 .chat_stream(messages, &mut |_| !self.team_stop_asked(id));
             let attempts = t.attempts + 1;
+            let mut cut_short = false;
             let text = match result {
                 Ok(s) if s.stopped || self.team_stop_asked(id) => {
                     self.team_unbegin_task(id, n);
@@ -487,6 +488,7 @@ impl Service {
                         kk_route::tokens::estimate_text(&s.reply.text),
                         started.elapsed().as_millis() as i64,
                     );
+                    cut_short = s.reply.cut_short;
                     Ok(s.reply.text)
                 }
                 Err(e) => Err(e),
@@ -501,6 +503,8 @@ impl Service {
                     let note = if kept.chars().count() < r.chars().count() {
                         kept.push_str("\n[the result was longer and was cut here]");
                         "the result was cut to fit"
+                    } else if cut_short {
+                        "the answer reached the model's length limit and stops there"
                     } else {
                         ""
                     };

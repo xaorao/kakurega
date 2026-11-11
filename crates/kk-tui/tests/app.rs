@@ -7925,3 +7925,19 @@ fn tu112_a_roundtable_fills_a_card_per_expert_then_the_resolution_and_stays_out_
     }));
     assert!(!b.chat_waiting);
 }
+
+#[test]
+fn tu113_a_chat_answer_that_reached_the_models_length_limit_says_so_first() {
+    let mut app = booted();
+    let r = enter(&mut app, "explain everything");
+    app.handle(ok(&r[0], 200, json!({"done": true, "reply": "It starts and then", "cut_short": true, "route": {"class": "device_only", "simulated": false}})));
+    let all = text(&app);
+    assert!(
+        all.contains("reached the model's length limit and stops there"),
+        "{all}"
+    );
+    let mut b = booted();
+    let r = enter(&mut b, "short one");
+    b.handle(ok(&r[0], 200, json!({"done": true, "reply": "Done.", "cut_short": false, "route": {"class": "device_only", "simulated": false}})));
+    assert!(!text(&b).contains("length limit"));
+}

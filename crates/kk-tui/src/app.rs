@@ -3584,7 +3584,11 @@ impl App {
                 }
             }
         } else if let Some(a) = v["answer"].as_str() {
-            let lines = text_lines(a);
+            let mut lines = text_lines(a);
+            if v["cut_short"] == true {
+                lines.push(String::new());
+                lines.push("(this answer reached the model's length limit and stops there)".into());
+            }
             match self.live.take() {
                 Some((i, _))
                     if self
@@ -5774,6 +5778,9 @@ impl App {
                     if dropped > 0 {
                         foot.push(format!("{dropped} older message(s) were not sent because the conversation is long"));
                     }
+                }
+                if body["cut_short"] == true {
+                    foot.insert(0, "this answer reached the model's length limit and stops there; ask it to continue".to_string());
                 }
                 if self.session.is_some() {
                     foot.push(if body["saved"] == true {
