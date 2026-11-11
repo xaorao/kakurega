@@ -2,7 +2,7 @@
 // cannot exist on one and be missing from the other. Labels and help are keys of the language files; the words a person might
 // type for a setting are written next to it.
 
-export type SettingKind = "theme" | "language" | "notify" | "link" | "info" | "shortcuts" | "piiallow" | "hiddennames" | "singlekeys" | "model";
+export type SettingKind = "theme" | "language" | "notify" | "link" | "info" | "shortcuts" | "piiallow" | "hiddennames" | "route" | "singlekeys" | "model";
 export type SettingSection = "appearance" | "notifications" | "privacy" | "keyboard" | "data";
 
 export interface Setting {
@@ -24,6 +24,7 @@ export const SETTINGS: readonly Setting[] = [
   { id: "theme", section: "appearance", kind: "theme", label: "set.theme.label", help: "set.theme.help", keywords: ["dark mode", "light mode", "colour", "color", "night", "appearance"] },
   { id: "language", section: "appearance", kind: "language", label: "set.language.label", help: "set.language.help", keywords: ["hindi", "english", "locale", "translation", "भाषा"] },
   { id: "notifications", section: "notifications", kind: "notify", label: "set.notify.label", help: "set.notify.help", keywords: ["notify", "alerts", "desktop", "popup", "waiting", "approval"] },
+  { id: "route", section: "privacy", kind: "route", label: "set.route.label", help: "set.route.help", keywords: ["near", "cloud", "tee", "enclave", "private", "key", "api key", "account", "where", "local", "remote", "provider", "verified"] },
   { id: "model", section: "privacy", kind: "model", label: "set.model.label", help: "set.model.help", keywords: ["llm", "ollama", "qwen", "switch model", "bigger model", "faster", "smaller", "answers"] },
   { id: "where-data-goes", section: "privacy", kind: "link", label: "set.where.label", help: "set.where.help", keywords: ["privacy", "route", "model", "leaves", "network", "policy", "private"], target: "#/privacy" },
   { id: "instructions", section: "privacy", kind: "link", label: "set.instr.label", help: "set.instr.help", keywords: ["orders", "prompt", "style", "tone", "language of answers", "agents"], target: "#/instructions" },

@@ -193,3 +193,61 @@ pub(super) async fn names_set(axum::Extension(svc): Svc, Json(b): Json<NamesBody
     }
     Json(json!({"changed": changed > 0, "names": svc.hidden_names().len()})).into_response()
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RouteBody {
+    #[serde(default)]
+    route: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    key: Option<String>,
+    #[serde(default)]
+    forget_key: bool,
+}
+
+/// The routes the owner can choose between, and the one in use, with the route as it is shown everywhere else.
+pub(super) async fn route_options(axum::Extension(svc): Svc) -> Response {
+    let mut v = svc.runner.route_options();
+    v["route"] = svc.route_for_owner();
+    v["note"] = json!("The model on this computer keeps everything here. NEAR AI Cloud runs the model on hardware that proves what it runs, and your questions go there encrypted; the proof is checked before an answer is shown. The account key is kept in a file in this program's data folder that only you can read.");
+    Json(v).into_response()
+}
+
+/// Switches the route. The key, when one is typed, goes to the runner and into its private file and nowhere else: it is
+/// not logged, not stored by the service and not in any answer.
+pub(super) async fn route_choose(axum::Extension(svc): Svc, Json(b): Json<RouteBody>) -> Response {
+    let refuse = |why: &str| error(StatusCode::UNPROCESSABLE_ENTITY, "ROUTE_REFUSED", why);
+    if b.model.as_deref().is_some_and(|m| m.chars().count() > 200)
+        || b.key.as_deref().is_some_and(|k| k.len() > 500)
+    {
+        return refuse("that is too long to be a model name or a key");
+    }
+    let choice =
+        json!({"route": b.route, "model": b.model, "key": b.key, "forget_key": b.forget_key});
+    let svc2 = svc.clone();
+    let out = tokio::task::spawn_blocking(move || svc2.runner.choose_route(&choice)).await;
+    match out {
+        Ok(Ok(mut v)) => {
+            svc.log_event(
+                if b.forget_key {
+                    "route.key_forgotten"
+                } else {
+                    "route.chosen"
+                },
+                v["current"].as_str().unwrap_or("?"),
+                &[],
+            );
+            v["route"] = svc.route_for_owner();
+            Json(v).into_response()
+        }
+        // the runner's reasons are written for the owner and never hold the key
+        Ok(Err(why)) => refuse(&why),
+        Err(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ROUTE_FAILED",
+            "the route could not be changed",
+        ),
+    }
+}

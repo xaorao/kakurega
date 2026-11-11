@@ -99,6 +99,15 @@ pub trait JobRunner: Send + Sync {
     fn choose_model(&self, _name: &str) -> Result<(), String> {
         Err("this configuration has one fixed model".into())
     }
+    /// The routes the owner can choose between while the service runs, and which one is in use. No key is ever in it.
+    fn route_options(&self) -> Value {
+        json!({"changeable": false})
+    }
+    /// Switches the route that answers: `{"route": "local"}`, or `{"route": "near", "model": NAME, "key": KEY}` (the key
+    /// may be left out when one is already kept), or `{"forget_key": true}`. Returns the new options.
+    fn choose_route(&self, _choice: &Value) -> Result<Value, String> {
+        Err("this configuration has one fixed route".into())
+    }
     /// Checks whose failure this runner can fix on its own, by id.
     fn repairable(&self) -> Vec<String> {
         Vec::new()
@@ -9929,6 +9938,8 @@ impl Extension for Routes {
                 "/api/hidden-names",
                 get(swap::names_get).post(swap::names_set),
             )
+            .route("/api/route/options", get(swap::route_options))
+            .route("/api/route/choose", post(swap::route_choose))
             .route("/api/meeting-notes", post(meeting::notes))
             .route("/api/break", get(breakit::stats).post(breakit::attempt))
             .route("/api/usage", get(usage_summary))

@@ -1,4 +1,4 @@
-import { createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError } from "../api";
 import { LOCALES, locale, setLocale, t, type Key, type Locale } from "../i18n";
 import { notifier, notifyState, turnNotifyOn } from "../notifier";
@@ -9,6 +9,10 @@ import { chooseSingleKeys, singleKeys } from "../single-keys";
 /** The names that are swapped for placeholders before a question goes to a model that is not on this computer. */
 function HiddenNames() {
   const [list, { refetch }] = createResource(() => api.hiddenNames());
+  // whether the list is in use depends on where the model runs, which the owner can change further up this page
+  const stale = () => void refetch();
+  window.addEventListener("kk-config-stale", stale);
+  onCleanup(() => window.removeEventListener("kk-config-stale", stale));
   const [name, setName] = createSignal("");
   const [error, setError] = createSignal("");
   const [done, setDone] = createSignal("");
@@ -97,6 +101,65 @@ function PiiAllow() {
   );
 }
 
+/** Where the model that answers runs: on this computer, or on NEAR AI Cloud's verified hardware with the owner's own key. */
+function RouteChoice() {
+  const [opts, { mutate, refetch }] = createResource(() => api.routeOptions());
+  const [model, setModel] = createSignal("");
+  const [key, setKey] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal("");
+  const [done, setDone] = createSignal("");
+  const change = async (body: Parameters<typeof api.routeChoose>[0], said: string) => {
+    setBusy(true);
+    setError("");
+    setDone("");
+    try {
+      mutate(await api.routeChoose(body));
+      setKey("");
+      setDone(said);
+      window.dispatchEvent(new Event("kk-config-stale"));
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : t("set.route.error"));
+      await refetch();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div class="stack" id="route-choice">
+      <Show when={opts()} fallback={<p class="muted">{opts.error ? t("set.route.error") : t("review.loading")}</p>}>
+        {(o) => (
+          <>
+            <p id="route-current"><strong>{t(`set.route.now.${o().current ?? "local"}`, { model: (o().current === "near" ? o().near?.model : o().local?.model) ?? "", host: o().route.host ?? "" })}</strong></p>
+            <Show when={o().changeable} fallback={<p class="muted">{t("set.route.fixed")}</p>}>
+              <Show when={o().current !== "local"}>
+                <div class="actions">
+                  <button type="button" disabled={busy()} onClick={() => void change({ route: "local" }, t("set.route.done.local"))}>{t("set.route.useLocal")}</button>
+                </div>
+              </Show>
+              <form class="stack" onSubmit={(e) => { e.preventDefault(); void change({ route: "near", model: (model().trim() || o().near?.model) ?? "", ...(key().trim() ? { key: key().trim() } : {}) }, t("set.route.done.near")); }}>
+                <label for="route-model">{t("set.route.model")}</label>
+                <input id="route-model" value={model() || (o().near?.model ?? "")} maxlength="200" placeholder={t("set.route.modelHint")} autocomplete="off" spellcheck={false} onInput={(e) => setModel(e.currentTarget.value)} />
+                <label for="route-key">{t(o().near?.key_saved ? "set.route.keySaved" : "set.route.key")}</label>
+                <input id="route-key" type="password" value={key()} maxlength="500" autocomplete="off" placeholder={o().near?.key_saved ? t("set.route.keyKeep") : ""} onInput={(e) => setKey(e.currentTarget.value)} />
+                <div class="actions">
+                  <button class="primary" type="submit" disabled={busy() || !((model().trim() || o().near?.model) && (key().trim() || o().near?.key_saved))}>{t("set.route.useNear")}</button>
+                  <Show when={o().near?.key_saved && o().current !== "near"}>
+                    <button type="button" disabled={busy()} onClick={() => void change({ forget_key: true }, t("set.route.done.forgot"))}>{t("set.route.forget")}</button>
+                  </Show>
+                </div>
+              </form>
+              <p class="muted">{t("set.route.note")}</p>
+            </Show>
+          </>
+        )}
+      </Show>
+      <Show when={done()}><p role="status" class="ok">{done()}</p></Show>
+      <Show when={error()}><p role="alert" class="bad">{error()}</p></Show>
+    </div>
+  );
+}
+
 /** Which installed model on this computer answers. Offered only when there is more than one and the model runs here. */
 function ModelChoice(props: { id: string }) {
   const [info, { refetch }] = createResource(() => api.models());
@@ -163,6 +226,7 @@ function Control(props: { s: Setting }) {
       )}
       {props.s.kind === "piiallow" && <PiiAllow />}
       {props.s.kind === "hiddennames" && <HiddenNames />}
+      {props.s.kind === "route" && <RouteChoice />}
       {props.s.kind === "model" && <ModelChoice id={props.s.id} />}
       {props.s.kind === "singlekeys" && (
         <label class="row">

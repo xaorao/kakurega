@@ -126,8 +126,14 @@ fn serve(args: &[String]) -> Result<(), String> {
         commitment_key: keys.commitment_key,
         max_turns: 20,
         scripted: crate::flag(args, "--scripted").map(PathBuf::from),
-        remote: crate::near::remote_from_flags(args)?,
-        outside: crate::outside::from_flags(args)?,
+        // a flag decides; without one, what the owner chose last in the app
+        remote: match crate::flag(args, "--route") {
+            Some(_) => crate::near::remote_from_flags(args)?,
+            None => crate::near::remote_from_saved(&data),
+        }
+        .into(),
+        outside: crate::outside::from_flags(args)?.into(),
+        route_dir: Some(data.clone()),
         context_tokens: match crate::flag(args, "--context") {
             Some(v) => v
                 .parse::<u32>()

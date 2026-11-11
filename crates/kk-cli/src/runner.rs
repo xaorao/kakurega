@@ -20,10 +20,37 @@ pub struct ReviewRunner {
     pub context_tokens: u32,
     /// A model on NEAR AI Cloud's confidential hardware, when the owner chose it. Answers, review jobs and summaries go to it
     /// (verified first); coding tasks, embeddings and model choice stay with the local model.
-    pub remote: Option<std::sync::Arc<kk_near::route::NearRoute>>,
+    pub remote: Slot<kk_near::route::NearRoute>,
     /// An outside model for testing (not private), when the owner switched it on. It answers chat, roundtable and team
     /// questions only; reviews, coding tasks, embeddings and model choice stay with the local model.
-    pub outside: Option<std::sync::Arc<crate::outside::OutsideRoute>>,
+    pub outside: Slot<crate::outside::OutsideRoute>,
+    /// Where the owner's choice of route is kept between runs (the data folder), or nowhere: then the choice is the
+    /// flags' and cannot be changed while the service runs.
+    pub route_dir: Option<PathBuf>,
+}
+
+/// A route the owner can switch on or off while the service runs. Whoever asks takes a copy of the current one, so a
+/// review that has started keeps the route it started with.
+pub struct Slot<T>(std::sync::RwLock<Option<std::sync::Arc<T>>>);
+
+impl<T> Slot<T> {
+    pub fn get(&self) -> Option<std::sync::Arc<T>> {
+        self.0.read().ok().and_then(|g| g.clone())
+    }
+    pub fn is_some(&self) -> bool {
+        self.get().is_some()
+    }
+    pub fn set(&self, value: Option<std::sync::Arc<T>>) {
+        if let Ok(mut g) = self.0.write() {
+            *g = value;
+        }
+    }
+}
+
+impl<T> From<Option<std::sync::Arc<T>>> for Slot<T> {
+    fn from(value: Option<std::sync::Arc<T>>) -> Self {
+        Slot(std::sync::RwLock::new(value))
+    }
 }
 
 /// The one outside test route, shared by everything that asks it a question.
@@ -150,7 +177,7 @@ impl ReviewRunner {
 
     /// The window of the model that answers questions.
     fn answer_window(&self) -> u32 {
-        match (&self.remote, &self.outside) {
+        match (self.remote.get(), self.outside.get()) {
             (None, Some(_)) => crate::outside::CONTEXT_TOKENS,
             _ => self.context_tokens,
         }
@@ -159,9 +186,9 @@ impl ReviewRunner {
     /// The route that answers questions: the NEAR route when the owner chose it, else the outside test model when that
     /// was switched on, otherwise the local model.
     fn answer_route(&self) -> Result<Box<dyn Route>, kk_route::RouteError> {
-        match (&self.remote, &self.outside) {
-            (Some(near), _) => Ok(Box::new(SharedNear(near.clone()))),
-            (None, Some(out)) => Ok(Box::new(SharedOutside(out.clone()))),
+        match (self.remote.get(), self.outside.get()) {
+            (Some(near), _) => Ok(Box::new(SharedNear(near))),
+            (None, Some(out)) => Ok(Box::new(SharedOutside(out))),
             (None, None) => Ok(Box::new(self.route()?)),
         }
     }
@@ -169,8 +196,8 @@ impl ReviewRunner {
     /// The route a review's agent works on. Never the outside test model: a review reads the owner's files, and a route
     /// that is not private is given none of them.
     fn review_route(&self) -> Result<Box<dyn Route>, kk_route::RouteError> {
-        match &self.remote {
-            Some(near) => Ok(Box::new(SharedNear(near.clone()))),
+        match self.remote.get() {
+            Some(near) => Ok(Box::new(SharedNear(near))),
             None => Ok(Box::new(self.route()?)),
         }
     }
@@ -488,7 +515,7 @@ cut_short: false,
                 "scripted test model (test mode)".into(),
                 "",
             ));
-        } else if let Some(near) = &self.remote {
+        } else if let Some(near) = self.remote.get() {
             // the proof is fetched and verified now; the answer to "is this model safe to use" is what the hardware says
             match near.verify_deployment() {
                 Ok(_) => out.push(check(
@@ -804,12 +831,87 @@ cut_short: false,
         Ok(())
     }
 
+    fn route_options(&self) -> Value {
+        let current = if self.scripted.is_some() {
+            "test"
+        } else if self.remote.is_some() {
+            "near"
+        } else if self.outside.is_some() {
+            "outside"
+        } else {
+            "local"
+        };
+        let dir = self.route_dir.as_deref();
+        json!({
+            "changeable": self.scripted.is_none() && dir.is_some(),
+            "current": current,
+            "local": {"model": self.model_name()},
+            "near": {
+                "model": self.remote.get().map(|n| n.model().to_string()).or_else(|| dir.and_then(crate::near::saved_choice).and_then(|(_, m)| m)),
+                "key_saved": dir.and_then(crate::near::saved_key).is_some(),
+            },
+            // the outside test model is switched on from the terminal only; here it can only be left
+            "outside": {"in_use": current == "outside"},
+        })
+    }
+
+    fn choose_route(&self, choice: &Value) -> Result<Value, String> {
+        if self.scripted.is_some() {
+            return Err("the test model cannot be changed".into());
+        }
+        let Some(dir) = self.route_dir.as_deref() else {
+            return Err("this configuration has one fixed route".into());
+        };
+        if choice["forget_key"] == true {
+            if self.remote.is_some() {
+                return Err("the key is in use: switch to the model on this computer first".into());
+            }
+            crate::near::forget_key(dir);
+            return Ok(self.route_options());
+        }
+        match choice["route"].as_str() {
+            Some("local") => {
+                self.remote.set(None);
+                self.outside.set(None);
+                crate::near::save_choice(dir, "local", None)?;
+            }
+            Some("near") => {
+                let model = choice["model"].as_str().map(str::trim).unwrap_or("");
+                if model.is_empty() {
+                    return Err(
+                        "give the name of a model NEAR AI Cloud lists as confidential".into(),
+                    );
+                }
+                let typed = choice["key"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|k| !k.is_empty());
+                let key = match typed {
+                    Some(k) => k.to_string(),
+                    None => {
+                        crate::near::saved_key(dir).ok_or("give your NEAR AI Cloud account key")?
+                    }
+                };
+                // built first: a route that cannot be made leaves everything as it was
+                let route = crate::near::remote_from(model, &key)?;
+                if typed.is_some() {
+                    crate::near::save_key(dir, &key)?;
+                }
+                crate::near::save_choice(dir, "near", Some(model))?;
+                self.outside.set(None);
+                self.remote.set(Some(route));
+            }
+            _ => return Err("the route is local or near".into()),
+        }
+        Ok(self.route_options())
+    }
+
     fn route_info(&self) -> Value {
-        if let (Some(near), None) = (&self.remote, &self.scripted) {
+        if let (Some(near), None) = (self.remote.get(), &self.scripted) {
             return json!({"id": near.id(), "class": "verified_tee", "model": near.model(), "simulated": false, "endpoint": near.base_url(), "context_tokens": self.context_tokens,
                "transport": match &self.transport { Transport::Local => "local sandbox".to_string(), Transport::Lima { vm, .. } => format!("sandbox in the {vm} virtual machine") }});
         }
-        if let (Some(out), None) = (&self.outside, &self.scripted) {
+        if let (Some(out), None) = (self.outside.get(), &self.scripted) {
             // said as it is: a hosted model that is not private, switched on by the owner for testing
             return json!({"id": out.id(), "class": "public", "model": out.model(), "simulated": false, "endpoint": out.base_url(), "context_tokens": crate::outside::CONTEXT_TOKENS, "test_route": true,
                "transport": match &self.transport { Transport::Local => "local sandbox".to_string(), Transport::Lima { vm, .. } => format!("sandbox in the {vm} virtual machine") }});
@@ -906,17 +1008,20 @@ mod outside_route {
             max_turns: 1,
             scripted: None,
             context_tokens: 4096,
-            remote: None,
-            outside: outside.then(|| {
-                std::sync::Arc::new(
-                    crate::outside::OutsideRoute::new(
-                        "anthropic:claude-sonnet-5-5",
-                        "test-key-0123456789abcdefghij",
-                        crate::outside::HOST,
+            remote: None.into(),
+            outside: outside
+                .then(|| {
+                    std::sync::Arc::new(
+                        crate::outside::OutsideRoute::new(
+                            "anthropic:claude-sonnet-5-5",
+                            "test-key-0123456789abcdefghij",
+                            crate::outside::HOST,
+                        )
+                        .unwrap(),
                     )
-                    .unwrap(),
-                )
-            }),
+                })
+                .into(),
+            route_dir: None,
         }
     }
 
@@ -1061,8 +1166,9 @@ mod live {
                 max_turns: 1,
                 scripted: None,
                 context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
-                remote: None,
-                outside: None,
+                remote: None.into(),
+                outside: None.into(),
+                route_dir: None,
             };
             for (name, turns) in &convos {
                 let turns: Vec<(String, String)> = turns
@@ -1232,8 +1338,9 @@ mod live {
             max_turns: 1,
             scripted: None,
             context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
-            remote: None,
-            outside: None,
+            remote: None.into(),
+            outside: None.into(),
+            route_dir: None,
         };
         let messages = vec![
             ChatMessage::new("system", "Answer in one short sentence."),
@@ -1274,8 +1381,9 @@ mod live {
             max_turns: 1,
             scripted: None,
             context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
-            remote: None,
-            outside: None,
+            remote: None.into(),
+            outside: None.into(),
+            route_dir: None,
         };
         let older: Vec<(String, String)> = [
             ("user", "I am planning a trip to Lisbon in March with my sister Maria. Our budget is 800 pounds in total."),
@@ -1633,8 +1741,9 @@ mod pick {
             max_turns: 1,
             scripted: scripted.then(|| PathBuf::from("/nonexistent/script.json")),
             context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
-            remote: None,
-            outside: None,
+            remote: None.into(),
+            outside: None.into(),
+            route_dir: None,
         }
     }
 
@@ -1748,8 +1857,9 @@ mod near_tests {
             max_turns: 1,
             scripted: None,
             context_tokens: kk_route::DEFAULT_CONTEXT_TOKENS,
-            remote: Some(std::sync::Arc::new(near)),
-            outside: None,
+            remote: Some(std::sync::Arc::new(near)).into(),
+            outside: None.into(),
+            route_dir: None,
         };
         Rig {
             _env: env,
@@ -1889,5 +1999,185 @@ mod near_tests {
             "Goal: x"
         );
         assert_eq!(r.gw.chats.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+}
+
+#[cfg(test)]
+mod route_choice {
+    use super::ReviewRunner;
+    use kk_sandbox::Transport;
+    use kk_service::JobRunner;
+    use serde_json::json;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+
+    // written in two pieces so this file holds nothing shaped like a key
+    const KEY: &str = concat!("sk-", "test-0123456789abcdefghij");
+
+    fn runner(dir: Option<PathBuf>, scripted: bool) -> ReviewRunner {
+        ReviewRunner {
+            model: std::sync::RwLock::new("local-model".into()),
+            ollama: "http://127.0.0.1:1".into(),
+            transport: Transport::Local,
+            worker_binary: PathBuf::from("/nonexistent"),
+            scratch: std::env::temp_dir(),
+            commitment_key: [0u8; 32],
+            max_turns: 1,
+            scripted: scripted.then(|| PathBuf::from("/nonexistent/script.json")),
+            context_tokens: 4096,
+            remote: None.into(),
+            outside: None.into(),
+            route_dir: dir,
+        }
+    }
+
+    fn dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("kk-route-choice-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn rt01_the_owner_switches_to_near_and_back_and_the_key_is_kept_in_one_private_file_and_nowhere_else(
+    ) {
+        let d = dir("switch");
+        let r = runner(Some(d.clone()), false);
+        let o = r.route_options();
+        assert_eq!(
+            (
+                o["changeable"].clone(),
+                o["current"].clone(),
+                o["near"]["key_saved"].clone()
+            ),
+            (json!(true), json!("local"), json!(false))
+        );
+
+        // refused, and nothing changes: no model, no key, a key that is not a plain key, a route that does not exist
+        for bad in [
+            json!({"route": "near", "model": " ", "key": KEY}),
+            json!({"route": "near", "model": "some-model"}),
+            json!({"route": "near", "model": "some-model", "key": "has spaces in it"}),
+            json!({"route": "outside"}),
+            json!({}),
+        ] {
+            let e = r.choose_route(&bad).unwrap_err();
+            assert!(!e.contains(KEY) && !e.contains("has spaces"), "{e}");
+            assert_eq!(r.route_options()["current"], json!("local"), "{bad}");
+        }
+        assert!(!d.join("near.key").exists() && !d.join("route.json").exists());
+
+        let o = r.choose_route(&json!({"route": "near", "model": "deepseek-ai/DeepSeek-V3.1", "key": format!("  {KEY}\n")})).unwrap();
+        assert_eq!(
+            (
+                o["current"].clone(),
+                o["near"]["model"].clone(),
+                o["near"]["key_saved"].clone()
+            ),
+            (
+                json!("near"),
+                json!("deepseek-ai/DeepSeek-V3.1"),
+                json!(true)
+            )
+        );
+        assert!(
+            !o.to_string().contains(KEY),
+            "the options never hold the key: {o}"
+        );
+        let info = r.route_info();
+        assert_eq!(
+            (info["class"].clone(), info["model"].clone()),
+            (json!("verified_tee"), json!("deepseek-ai/DeepSeek-V3.1"))
+        );
+        assert!(!info.to_string().contains(KEY));
+        // the key: one file, readable by its owner only; the choice file does not hold it
+        let key_file = d.join("near.key");
+        assert_eq!(std::fs::read_to_string(&key_file).unwrap(), KEY);
+        assert_eq!(
+            std::fs::metadata(&key_file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(!std::fs::read_to_string(d.join("route.json"))
+            .unwrap()
+            .contains(KEY));
+        assert_eq!(
+            std::fs::read_dir(&d).unwrap().count(),
+            2,
+            "nothing else was written"
+        );
+
+        // the key cannot be forgotten while it is in use
+        assert!(r
+            .choose_route(&json!({"forget_key": true}))
+            .unwrap_err()
+            .contains("in use"));
+        // back to this computer: the key stays for next time, and NEAR can be chosen again without typing it
+        let o = r.choose_route(&json!({"route": "local"})).unwrap();
+        assert_eq!(
+            (o["current"].clone(), o["near"]["key_saved"].clone()),
+            (json!("local"), json!(true))
+        );
+        assert_eq!(r.route_info()["class"], json!("device_only"));
+        assert_eq!(
+            r.choose_route(&json!({"route": "near", "model": "another/model"}))
+                .unwrap()["current"],
+            json!("near")
+        );
+        r.choose_route(&json!({"route": "local"})).unwrap();
+        let o = r.choose_route(&json!({"forget_key": true})).unwrap();
+        assert_eq!(o["near"]["key_saved"], json!(false));
+        assert!(!key_file.exists());
+        assert!(r
+            .choose_route(&json!({"route": "near", "model": "another/model"}))
+            .is_err());
+    }
+
+    #[test]
+    fn rt02_the_saved_choice_is_used_at_the_next_start_and_a_key_file_others_can_read_is_not() {
+        let d = dir("saved");
+        assert!(crate::near::remote_from_saved(&d).is_none());
+        let r = runner(Some(d.clone()), false);
+        r.choose_route(&json!({"route": "near", "model": "m/one", "key": KEY}))
+            .unwrap();
+        let again = crate::near::remote_from_saved(&d).expect("the saved route");
+        assert_eq!(again.model(), "m/one");
+        // chosen local: the next start is local although the key is still there
+        r.choose_route(&json!({"route": "local"})).unwrap();
+        assert!(crate::near::remote_from_saved(&d).is_none());
+        r.choose_route(&json!({"route": "near", "model": "m/one"}))
+            .unwrap();
+        // someone widened the key file: it is not used
+        std::fs::set_permissions(d.join("near.key"), std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+        assert!(
+            crate::near::saved_key(&d).is_none() && crate::near::remote_from_saved(&d).is_none()
+        );
+        // a damaged choice file is no choice
+        std::fs::write(d.join("route.json"), "{not json").unwrap();
+        assert!(crate::near::saved_choice(&d).is_none());
+    }
+
+    #[test]
+    fn rt03_a_fixed_configuration_and_the_test_model_cannot_be_switched() {
+        let fixed = runner(None, false);
+        assert_eq!(fixed.route_options()["changeable"], json!(false));
+        assert!(fixed
+            .choose_route(&json!({"route": "near", "model": "m", "key": KEY}))
+            .unwrap_err()
+            .contains("fixed"));
+        let d = dir("test-model");
+        let test = runner(Some(d.clone()), true);
+        assert_eq!(
+            (
+                test.route_options()["changeable"].clone(),
+                test.route_options()["current"].clone()
+            ),
+            (json!(false), json!("test"))
+        );
+        assert!(test
+            .choose_route(&json!({"route": "near", "model": "m", "key": KEY}))
+            .unwrap_err()
+            .contains("test model"));
+        assert_eq!(std::fs::read_dir(&d).unwrap().count(), 0);
     }
 }

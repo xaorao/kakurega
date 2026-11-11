@@ -118,7 +118,7 @@ a { color: inherit; }
 .redacted { background: var(--redline-bg); color: var(--redline); border: 1px dashed var(--redline); border-radius: var(--radius-s); padding: 14px; }
 
 label { font-size: 13px; font-weight: 500; color: var(--stone); }
-input[type="text"], input:not([type]), input[type="file"] { font: inherit; padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--paper); color: var(--ink); width: 100%; }
+input[type="text"], input[type="password"], input:not([type]), input[type="file"] { font: inherit; padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--paper); color: var(--ink); width: 100%; }
 input:focus { border-color: var(--ink); }
 button, .button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--paper); color: var(--ink); border-radius: var(--radius-s); padding: 8px 14px; text-decoration: none; display: inline-block; }
 button:hover:not(:disabled), .button:hover { border-color: var(--ink); }

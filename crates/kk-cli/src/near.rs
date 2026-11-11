@@ -10,7 +10,7 @@ use std::sync::Arc;
 const KEY_VAR: &str = "NEAR_AI_API_KEY";
 
 /// A key that is plain: one token of printable characters, not empty, not absurdly long.
-fn plain_key(k: &str) -> bool {
+pub fn plain_key(k: &str) -> bool {
     !k.is_empty() && k.len() <= 256 && k.chars().all(|c| c.is_ascii_graphic())
 }
 
@@ -101,6 +101,87 @@ pub fn remote_from_flags(args: &[String]) -> Result<Option<Arc<NearRoute>>, Stri
     })
     .map(|r| Some(Arc::new(r)))
     .map_err(|e| e.to_string())
+}
+
+/// The owner's choice of route as kept between runs: a small file in the data folder, and the account key in a file of
+/// its own that only the owner can read. Neither is ever written anywhere else, and the key is never put in a message.
+pub const CHOICE_FILE: &str = "route.json";
+pub const SAVED_KEY_FILE: &str = "near.key";
+
+fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let tmp = path.with_extension("tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(|e| format!("cannot write in the data folder: {e}"))?;
+    f.write_all(bytes)
+        .and_then(|_| f.sync_all())
+        .map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+}
+
+pub fn saved_key(dir: &Path) -> Option<String> {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join(SAVED_KEY_FILE);
+    let meta = std::fs::metadata(&path).ok()?;
+    // a key file anyone else could read is not used
+    if !meta.is_file() || meta.permissions().mode() & 0o077 != 0 {
+        return None;
+    }
+    let k = std::fs::read_to_string(&path).ok()?.trim().to_string();
+    plain_key(&k).then_some(k)
+}
+
+pub fn save_key(dir: &Path, key: &str) -> Result<(), String> {
+    write_private(&dir.join(SAVED_KEY_FILE), key.as_bytes())
+}
+
+pub fn forget_key(dir: &Path) -> bool {
+    std::fs::remove_file(dir.join(SAVED_KEY_FILE)).is_ok()
+}
+
+pub fn save_choice(dir: &Path, route: &str, model: Option<&str>) -> Result<(), String> {
+    let doc = serde_json::json!({"route": route, "model": model});
+    write_private(&dir.join(CHOICE_FILE), doc.to_string().as_bytes())
+}
+
+/// The saved choice: the route's name and, for NEAR, the model.
+pub fn saved_choice(dir: &Path) -> Option<(String, Option<String>)> {
+    let v: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join(CHOICE_FILE)).ok()?).ok()?;
+    Some((
+        v["route"].as_str()?.to_string(),
+        v["model"].as_str().map(String::from),
+    ))
+}
+
+/// A NEAR route from a model name and a key, the way the flags build one. Nothing is asked of the network here: the
+/// hardware proof is fetched and checked when the route is first used, and by "check the enclave now".
+pub fn remote_from(model: &str, key: &str) -> Result<Arc<NearRoute>, String> {
+    if !plain_key(key) {
+        return Err("that is not a plain account key".into());
+    }
+    NearRoute::new(NearConfig {
+        base_url: None,
+        api_key: key.to_string(),
+        model: model.to_string(),
+        policy: NearPolicy::default(),
+    })
+    .map(Arc::new)
+    .map_err(|e| e.to_string())
+}
+
+/// The route to start on when no flag chose one: what the owner chose last in the app, if it can still be made.
+pub fn remote_from_saved(dir: &Path) -> Option<Arc<NearRoute>> {
+    match saved_choice(dir)? {
+        (route, Some(model)) if route == "near" => remote_from(&model, &saved_key(dir)?).ok(),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
