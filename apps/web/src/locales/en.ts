@@ -1115,6 +1115,8 @@ export const en = {
   "out.kind.review": "review",
   "out.review": "A review used a model that is not on this computer ({to}): {calls} questions, about {tokens} tokens of the project. Files marked as secret were withheld; names are not swapped in reviews.",
   "log.kind.outbound.review": "Review used a model elsewhere",
+  "chat.tabs": "Open conversations",
+  "chat.tabClose": "Close the tab {title} (the conversation is kept)",
   "nav.docs": "Documents",
   "docs.title": "Ask your documents",
   "docs.lead": "Ask a question about the text documents in a folder. The model answers from them, and Kakurega checks that every passage it quotes really is in the file it names. Secret files are never sent.",

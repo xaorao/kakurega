@@ -774,9 +774,59 @@ export function Chat() {
       if (myView === view) returnFocus();
     }
   };
+  // Kept conversations opened in this window stay within reach as tabs. A tab is a way back to a conversation, nothing
+  // more: closing one forgets nothing, and the list lives in this browser tab only.
+  const TABS_KEY = "kk-chat-tabs";
+  const MAX_TABS = 8;
+  const [tabs, setTabs] = createSignal<string[]>((() => {
+    try {
+      const v = JSON.parse(sessionStorage.getItem(TABS_KEY) ?? "[]");
+      return Array.isArray(v) ? v.filter((x) => typeof x === "string").slice(-MAX_TABS) : [];
+    } catch {
+      return [];
+    }
+  })());
+  const saveTabs = (next: string[]) => {
+    setTabs(next);
+    try { sessionStorage.setItem(TABS_KEY, JSON.stringify(next)); } catch { /* the tabs then last until the page is reloaded */ }
+  };
+  createEffect(() => {
+    const open = session();
+    if (open && !tabs().includes(open)) saveTabs([...tabs(), open].slice(-MAX_TABS));
+  });
+  // a conversation that was forgotten or archived elsewhere loses its tab
+  createEffect(() => {
+    const list = kept();
+    if (!list || kept.loading || showArchived()) return;
+    const known = new Set(list.map((k) => k.id));
+    const open = session();
+    const next = tabs().filter((id) => known.has(id) || id === open);
+    if (next.length !== tabs().length) saveTabs(next);
+  });
+  const tabTitle = (id: string) => (kept() ?? []).find((k) => k.id === id)?.title || t("chat.untitled");
+  const closeTab = (id: string) => {
+    saveTabs(tabs().filter((x) => x !== id));
+    if (session() === id) show(null, []);
+  };
+
   return (
     <section class="stack wide" aria-labelledby="h-chat">
       <h1 id="h-chat">{t("chat.title")}</h1>
+      <Show when={tabs().length > 0}>
+        <div class="chat-tabs" role="tablist" aria-label={t("chat.tabs")}>
+          <For each={tabs()}>
+            {(id) => (
+              <span class={session() === id ? "chat-tab active" : "chat-tab"}>
+                <button type="button" role="tab" aria-selected={session() === id} disabled={busy()} onClick={() => { if (session() !== id) void openKept(id); }}>{tabTitle(id)}</button>
+                <button type="button" class="linklike" disabled={busy()} aria-label={t("chat.tabClose", { title: tabTitle(id) })} onClick={() => closeTab(id)}>×</button>
+              </span>
+            )}
+          </For>
+          <span class={session() === null ? "chat-tab active" : "chat-tab"}>
+            <button type="button" role="tab" aria-selected={session() === null} disabled={busy()} onClick={() => { if (session() !== null) show(null, []); }}>{t("chat.newChat")}</button>
+          </span>
+        </div>
+      </Show>
       <p class="lead">{t("chat.lead")}</p>
       <p class="muted">{session() ? t("chat.noteKept") : t("chat.note")}</p>
       <div class="stack">
