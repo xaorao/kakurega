@@ -198,6 +198,12 @@ if (!real) {
 {
   await page.goto(new URL(link).origin + "/#/team");
   await page.getByRole("heading", { name: "Team", exact: true }).waitFor();
+  // the seat that works on the project's files is offered, under its own heading, and is not ticked by default
+  await page.getByText("Choose which experts the lead may use").click();
+  const reviewer = page.locator("label.rt-expert", { hasText: "Project reviewer" });
+  await reviewer.waitFor({ timeout: long });
+  check((await page.getByRole("heading", { name: "Works on the project's files, in the sandbox" }).count()) === 1 && (await reviewer.count()) === 1 && !(await reviewer.locator("input").isChecked()), "the Project reviewer is offered under its own heading and is not chosen unless the owner ticks it");
+  check((await page.locator("#team-project").count()) === 0, "with no project made, no project choice is shown");
   const made = ["sk-ant", "api03-abcdefghijklmnopqrstuvwxyz0123456789"].join("-");
   const notes = { name: "billing-notes.txt", mimeType: "text/plain", buffer: Buffer.from(`Refunds over 500 need a second approval.\nAPI_KEY=${made}\nThe export runs nightly.\n`) };
   await page.locator("#team-files").setInputFiles(notes);
