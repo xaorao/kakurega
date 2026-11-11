@@ -651,3 +651,98 @@ fn sg14_ordinary_long_hex_is_still_not_a_secret() {
         flagged.first()
     );
 }
+
+#[test]
+fn sg15_a_random_key_that_spells_a_placeholder_word_by_chance_is_still_a_key() {
+    // the key a run of sg13 once drew: its body holds "yoUr"
+    let drawn = format!(
+        "{}{}{}",
+        "sk-ant", "-api03-", "dyL66RkepS6TUtemyoUrvmWvtv3GWWcvyiskZDTa1xz"
+    );
+    assert_eq!(scan(&drawn).len(), 1, "{drawn}");
+    let hex: String = drawn.bytes().map(|b| format!("{b:02x}")).collect();
+    assert!(looks_secret(&format!("Raw: {hex}")).is_some());
+    // every placeholder word, in every casing a random body can produce, at every place in a random body
+    let a = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut missed = Vec::new();
+    for (n, word) in [
+        "your",
+        "example",
+        "placeholder",
+        "changeme",
+        "dummy",
+        "redacted",
+    ]
+    .iter()
+    .enumerate()
+    {
+        for round in 0..40u64 {
+            let body = fresh(a, 43, 7_000 + round * 31 + n as u64);
+            let at = (round as usize * 7) % (body.len() - word.len());
+            let cased: String = word
+                .chars()
+                .enumerate()
+                .map(|(i, c)| {
+                    if (round >> i) & 1 == 1 {
+                        c.to_ascii_uppercase()
+                    } else {
+                        c
+                    }
+                })
+                .collect();
+            let key = format!(
+                "{}{}{}{}{}",
+                "sk-ant",
+                "-api03-",
+                &body[..at],
+                cased,
+                &body[at + word.len()..]
+            );
+            if scan(&key).is_empty() {
+                missed.push(key);
+            }
+        }
+    }
+    assert!(
+        missed.is_empty(),
+        "{} missed, first: {:?}",
+        missed.len(),
+        missed.first()
+    );
+    // a body of small letters and digits only (many providers') that spells the word between other letters
+    let low = "abcdefghijklmnopqrstuvwxyz0123456789";
+    for round in 0..40u64 {
+        let body = fresh(low, 43, 9_000 + round);
+        let at = 1 + (round as usize * 5) % (body.len() - 6);
+        let key = format!(
+            "{}{}{}q{}k{}",
+            "sk-ant",
+            "-api03-",
+            &body[..at - 1],
+            "your",
+            &body[at + 5..]
+        );
+        assert_eq!(scan(&key).len(), 1, "{key}");
+    }
+    // what a person writes as a placeholder is still not a key
+    for doc in [
+        format!(
+            "{}{}",
+            "sk-ant-", "api03-your-key-goes-here-your-key-goes-here"
+        ),
+        format!(
+            "{}{}",
+            "sk-ant-", "PUT_YOUR_TOKEN_HERE_PUT_YOUR_TOKEN_HERE_0000"
+        ),
+        format!(
+            "{}{}",
+            "sk-ant-", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        ),
+        format!(
+            "{}{}",
+            "sk-ant-", "api03-example-example-example-example-example"
+        ),
+    ] {
+        assert!(scan(&doc).is_empty(), "a placeholder was withheld: {doc}");
+    }
+}

@@ -1386,6 +1386,19 @@ pub fn placeholder_body(body: &str) -> bool {
     if body.chars().count() >= 12 && distinct.len() <= 3 {
         return true;
     }
+    // A random body can spell one of these words by chance (`...UtemyoUrvm...` holds "your"), and a real key must never be
+    // set aside as documentation for that. So a body that looks random (long, with digits, capitals and small letters, and
+    // many different characters) is never a placeholder, and elsewhere the word counts only when it stands on its own
+    // (`PUT_YOUR_TOKEN_HERE`, `your-key-here`, `YourTokenGoesHere`), not when letters run into it on either side.
+    let (mut digit, mut upper, mut lower) = (false, false, false);
+    for c in body.chars() {
+        digit |= c.is_ascii_digit();
+        upper |= c.is_ascii_uppercase();
+        lower |= c.is_ascii_lowercase();
+    }
+    if body.len() >= 24 && digit && upper && lower && distinct.len() >= 16 {
+        return false;
+    }
     let l = body.to_ascii_lowercase();
     body.len() >= 16
         && [
@@ -1399,7 +1412,20 @@ pub fn placeholder_body(body: &str) -> bool {
             "key_here",
         ]
         .iter()
-        .any(|w| l.contains(w))
+        .any(|w| {
+            l.match_indices(w).any(|(i, _)| {
+                // as written, not lowered: a new word in `YourTokenGoesHere` starts at a capital
+                let b = body.as_bytes();
+                let (first, last) = (b[i], b[i + w.len() - 1]);
+                let starts = i == 0
+                    || !b[i - 1].is_ascii_alphabetic()
+                    || (b[i - 1].is_ascii_lowercase() && first.is_ascii_uppercase());
+                let ends = i + w.len() == b.len()
+                    || !b[i + w.len()].is_ascii_alphabetic()
+                    || (b[i + w.len()].is_ascii_uppercase() && last.is_ascii_lowercase());
+                starts && ends
+            })
+        })
 }
 
 fn push(hits: &mut Vec<Hit>, rule: &'static str, start: usize, end: usize, decoded: bool) {
