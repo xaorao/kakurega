@@ -26,6 +26,7 @@ mod ocr;
 mod outside;
 mod pack;
 mod parse_child;
+mod profile;
 #[cfg(test)]
 mod recall_bench;
 mod runner;
@@ -86,10 +87,44 @@ Usage:
   kaku chain register JOB --key-file FILE [--order ID]   publish a delivered review's capsule digest and model receipts on NEAR, after showing exactly what becomes public (testnet)
   kaku chain quote --pay-with SYMBOL@chain --usdc AMOUNT ...   a price from NEAR Intents for paying an order from another chain, with the order's terms as the transfer's message (a dry quote: nothing is sent)
 
-Options for every command: --data-dir DIR (default ~/.kakurega)";
+  kaku profile [list] | new NAME | use NAME | current | remove NAME [--confirm NAME]   separate sets of keys, memory, skills and settings
+
+Options for every command: --profile NAME (a profile made with `kaku profile new`), or --data-dir DIR (default ~/.kakurega, the profile `default`)";
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // `--profile NAME` is turned into the data folder it names, once, here: every command already knows `--data-dir`
+    if args.first().map(String::as_str) != Some("profile") {
+        if let Some(i) = args.iter().position(|a| a == "--profile") {
+            let Some(name) = args.get(i + 1).cloned() else {
+                eprintln!("--profile needs a profile's name");
+                return ExitCode::from(2);
+            };
+            args.drain(i..=i + 1);
+            if flag(&args, "--data-dir").is_none() {
+                match profile::resolve(&profile::home(), None, Some(name), None) {
+                    Ok((dir, _)) => {
+                        let at = match args.first() {
+                            Some(first) if !first.starts_with('-') => 1,
+                            Some(_) => 0,
+                            None => {
+                                args.push("tui".into());
+                                1
+                            }
+                        };
+                        args.splice(
+                            at..at,
+                            ["--data-dir".to_string(), dir.to_string_lossy().into_owned()],
+                        );
+                    }
+                    Err(why) => {
+                        eprintln!("{why}");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+        }
+    }
     // a help flag after a command asks for help, never for the command to run (`kaku serve --help` must not start a service).
     // Commands that take free text or run another program keep their arguments as they are.
     let wants_help = args.len() > 1
@@ -114,6 +149,7 @@ fn main() -> ExitCode {
             let key = format!("{}{}", "sk_li", "ve_abcdefghijklmnop0123");
             panic!("probe: could not read /Users/someone/private/notes.txt holding {key}");
         }
+        Some("profile") => profile::run(&args[1..]) as u8,
         Some("pair") => approve::pair(&args[1..]),
         Some("approve") => approve::run(&args[1..]),
         Some("verify") => verify::run(&args[1..]),
@@ -183,11 +219,19 @@ pub fn flags(args: &[String], name: &str) -> Vec<String> {
         .collect()
 }
 
+/// The data folder this command works in: `--data-dir`, else the profile asked for or chosen (see `profile.rs`). A profile
+/// that was asked for by name and does not exist ends the command; it never falls back to another profile's data.
 pub fn data_dir(args: &[String]) -> std::path::PathBuf {
-    flag(args, "--data-dir")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
-                .join(".kakurega")
-        })
+    match profile::resolve(
+        &profile::home(),
+        flag(args, "--data-dir"),
+        flag(args, "--profile"),
+        std::env::var("KAKU_PROFILE").ok(),
+    ) {
+        Ok((dir, _)) => dir,
+        Err(why) => {
+            eprintln!("{why}");
+            std::process::exit(2);
+        }
+    }
 }

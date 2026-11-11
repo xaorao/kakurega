@@ -1123,6 +1123,7 @@ export const en = {
   "chat.tabs": "Open conversations",
   "chat.tabClose": "Close the tab {title} (the conversation is kept)",
   "team.outside": "On this computer, not private",
+  "head.profile": "Profile: {name}",
   "nav.docs": "Documents",
   "docs.title": "Ask your documents",
   "docs.lead": "Ask a question about the text documents in a folder. The model answers from them, and Kakurega checks that every passage it quotes really is in the file it names. Secret files are never sent.",

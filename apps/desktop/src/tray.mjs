@@ -92,6 +92,10 @@ export function menuTemplate(state, t, actions) {
     { id: "open", label: t("tray.open"), click: () => actions.open() },
     { id: "inbox", label: n > 0 ? t("tray.inboxCount", { n }) : t("tray.inbox"), click: () => actions.inbox() },
     ...(state.stopped || !actions.capture ? [] : [{ id: "capture", label: t("tray.capture"), click: () => actions.capture() }]),
+    // offered only when there is more than one profile: choosing one restarts the app in it
+    ...(Array.isArray(state.profiles) && state.profiles.length > 1 && actions.profile
+      ? [{ id: "profile", label: t("tray.profile", { name: state.profile }), submenu: state.profiles.map((name) => ({ id: `profile-${name}`, label: name, type: "radio", checked: name === state.profile, click: () => actions.profile(name) })) }]
+      : []),
     { type: "separator" },
     { id: "notify", label: t("tray.notify"), type: "checkbox", checked: !!state.notify, click: (item) => actions.setNotify(!!item?.checked) },
     { type: "separator" },

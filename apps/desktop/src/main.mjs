@@ -14,11 +14,16 @@ import { createNotifier, readInbox } from "./inbox.mjs";
 import { menuTemplate, trayIconPng, trayTitle, trayToolTip } from "./tray.mjs";
 import { bundledPaths, checkPart, readManifest } from "./bundle.mjs";
 import { createCapture, pickSource, MAX_PICTURE_BYTES } from "./capture.mjs";
+import { chooseProfile, currentProfile, profileDir, profileNames, DEFAULT as DEFAULT_PROFILE } from "./profiles.mjs";
 
-const dataDir = process.env.KAKUREGA_DATA_DIR ?? join(homedir(), ".kakurega");
+// The data folder: the one named for a test or a special set-up, else the profile in use (see profiles.mjs).
+const profilesHome = process.env.KAKUREGA_HOME ?? join(homedir(), ".kakurega");
+const profileName = process.env.KAKUREGA_DATA_DIR ? null : currentProfile(profilesHome);
+const dataDir = process.env.KAKUREGA_DATA_DIR ?? profileDir(profilesHome, profileName);
 // When the data folder is chosen explicitly (a second profile, a test), the window's own files (cache, cookies) live inside it
 // instead of in the one place every copy of the app shares, so copies cannot damage each other's caches.
-if (process.env.KAKUREGA_DATA_DIR) app.setPath("userData", join(dataDir, "electron"));
+// a named profile keeps the shell's own state (window settings, the page's storage) inside its own folder too
+if (process.env.KAKUREGA_DATA_DIR || profileName !== DEFAULT_PROFILE) app.setPath("userData", join(dataDir, "electron"));
 // `app.isPackaged` is false for a bundle whose program is still called Electron, which is how this one is built, so the test for "this is
 // the packaged app" is that its code is read from an archive
 const runsFromAsar = app.getAppPath().endsWith(".asar");
@@ -322,6 +327,13 @@ async function runCapture() {
 
 const trayActions = {
   capture: () => void runCapture(),
+  // another profile is another data folder with its own keys: the app starts again in it
+  profile: (name) => {
+    if (profileName === null || name === profileName || !chooseProfile(profilesHome, name)) return;
+    // a development run driven by a test starts the app again itself
+    if (runsFromAsar || !process.env.KAKUREGA_NO_RELAUNCH) app.relaunch();
+    app.quit();
+  },
   open: () => showWindow(),
   inbox: () => showWindow("#/inbox"),
   setNotify: (on) => {
@@ -334,7 +346,11 @@ const trayActions = {
 
 function refreshTray() {
   if (!tray || tray.isDestroyed()) return;
-  const key = JSON.stringify([state.count, state.stopped, state.notify, language]);
+  if (profileName !== null) {
+    state.profile = profileName;
+    state.profiles = [DEFAULT_PROFILE, ...profileNames(profilesHome)];
+  }
+  const key = JSON.stringify([state.count, state.stopped, state.notify, language, state.profile, state.profiles]);
   // rebuilt only when something on it changed, so a menu the owner has open is not replaced under the pointer
   if (key === trayKey) return;
   trayKey = key;

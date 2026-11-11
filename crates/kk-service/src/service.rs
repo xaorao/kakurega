@@ -1309,6 +1309,12 @@ async fn config(axum::Extension(svc): Svc) -> Json<Value> {
         "route": svc.route_for_owner(),
         "roots": svc.roots.iter().map(|r| r.to_string_lossy()).collect::<Vec<_>>(),
         "test_mode": svc.test_mode,
+        // the name of the profile this data folder is (written when the profile was made); none for the first folder
+        "profile": std::fs::read_to_string(svc.data_dir.join("profile.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .and_then(|v| v["name"].as_str().map(str::to_string))
+            .filter(|n| !n.is_empty() && n.len() <= 32 && n.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')),
         // Nothing leaves this computer without the owner deciding on that exact release; there is no setting that turns this
         // off. Whether the decision must also carry a signature from an enrolled approval key is the only thing that varies.
         "approvals": {"asks_every_release": true, "signing_key_enrolled": svc.approvers_enrolled()},

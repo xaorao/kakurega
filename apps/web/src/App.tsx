@@ -138,6 +138,9 @@ function Badge(props: { config: Config }) {
         </span>
       </Show>
       <span class="badge">{r().model ?? r().id}</span>
+      <Show when={props.config.profile}>
+        <span class="badge">{t("head.profile", { name: props.config.profile ?? "" })}</span>
+      </Show>
     </div>
   );
 }

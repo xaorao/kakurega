@@ -120,6 +120,8 @@ export async function streamChat(body: unknown, onDelta: (t: string) => void, si
 }
 
 export interface Config {
+  /** The profile this service works in, when it is a named one. */
+  profile?: string | null;
   version: string;
   route: { id: string; class: string; model?: string; simulated: boolean; transport?: string; host?: string | null; stays_here?: boolean };
   roots: string[];

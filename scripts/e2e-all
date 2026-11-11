@@ -35,6 +35,7 @@ node tests/e2e/share_web.mjs
 python3 tests/e2e/notes_cli.py
 python3 tests/e2e/github_cli.py
 python3 tests/e2e/bench_cli.py
+python3 tests/e2e/profile_cli.py
 python3 scripts/bench-leak.py --out target/bench-leak-gate.json
 node tests/e2e/meeting_web.mjs
 node tests/e2e/break_web.mjs
@@ -49,6 +50,7 @@ node tests/e2e/states_web.mjs
 node tests/e2e/states2_web.mjs
 node tests/e2e/verify_inapp.mjs
 node tests/e2e/desktop_tray.mjs
+node tests/e2e/desktop_profiles.mjs
 node tests/e2e/desktop_install.mjs
 node tests/e2e/hide_web.mjs
 node tests/e2e/desktop.mjs
