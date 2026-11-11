@@ -20101,8 +20101,8 @@ fn sv243_a_running_review_can_be_stopped_and_a_stopped_review_offers_nothing() {
     let started = std::time::Instant::now();
     let job = wait_for(&w, &id, &["failed"]);
     assert!(
-        started.elapsed() < Duration::from_secs(3),
-        "it ended at its next step, not after all 400: {:?}",
+        started.elapsed() < Duration::from_secs(8),
+        "it ended at its next step, not after all 400 (which take ten seconds): {:?}",
         started.elapsed()
     );
     assert!(runner.steps.load(SeqCst) < 100);

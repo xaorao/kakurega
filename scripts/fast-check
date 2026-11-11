@@ -18,10 +18,17 @@ if [ -n "$risky" ]; then
   [ "${FULL_GATE_DONE:-}" = "1" ] || { echo "FAST STOP: set FULL_GATE_DONE=1 only after the full gate passed on this revision"; exit 3; }
 fi
 echo "== format"; cargo fmt --all -- --check
+# every test's output is kept, so a failure that does not come back on the next run can still be named
+mkdir -p target
+: > target/fast-check-tests.log
 for c in $crates; do
   echo "== lint and tests: $c"
   cargo clippy -q -p "$c" --all-targets -- -D warnings
-  cargo test -q -p "$c"
+  if ! cargo test -q -p "$c" >> target/fast-check-tests.log 2>&1; then
+    grep -E -A12 -e '--- FAILED' -e 'panicked at' -e '^error' target/fast-check-tests.log | cut -c1-400 | head -60
+    echo "FAST STOP: tests of $c failed (full output in target/fast-check-tests.log)"
+    exit 1
+  fi
 done
 if printf '%s\n' "$files" | grep -q '^apps/web/'; then
   echo "== web"; (cd apps/web && npx tsc --noEmit && node --test test/*.test.mjs)

@@ -53,3 +53,29 @@
 ### Built: signed packs
 - `kk-packs` (layer 3): `check_pack` (size, one DSSE signature by a pinned key, strict shape, every method through `kk-methods`, expiry, rollback by pack name) and `sign_pack` (refuses what a recipient would refuse); service `/api/packs*` (up to 10 pinned publishers, weak keys refused, import all-or-nothing, never replaces a method, secret scan, recorded highest version per pack name); `kaku pack keygen|sign|check`; web screen under Instructions. Evidence: pk01 to pk10 (12 of 12 mutants), sv216 to sv220 (11 mutants, after an invalid first run and tests that did not exercise the label rules were fixed), pc01 and pc02 (3 mutants), `tests/e2e/packs_web.mjs` (9 of 9 in a real browser, screenshot read).
 - Not built: pack rotation of the publisher key, a catalog or index of packs, packs of outside-tool configurations (excluded on purpose: a pack must never carry a program to run), importing from a URL. The Instructions page now holds five long sections and needs a contents list in the polish phase.
+
+## Bundled skills, catalog and plugins (added; ledger G-GH-55, G-GH-58, G-GH-59, G-GH-62)
+Target for this part: the owner opens a shelf of ready-made skills, adds the ones they want, reads each and approves it; later they install more from a publisher's signed catalog, and a plugin can bring skills and suggest outside tools. Installing never gives anything power.
+
+### What was read for this part (by me)
+| Source (commit) | Files | Depth | What it settled |
+|---|---|---|---|
+| Hermes (29a61cb7, MIT) | `tools/skills_hub_install.py` | FULL | quarantine then move; a lock file with source, trust level, scan verdict and content hash; uninstall and update resolve paths without following links; an update is fetched only from the source it was installed from. Weak points: the old copy is removed before the new one is moved in; the content hash is cut to 16 hex characters; a 100,000-character skill only gets a warning |
+| Hermes | `tools/skills_guard.py` 18-66, 154-175, 820-838, 939-962 | PART | trust levels by source and a verdict table; the scanner looks for shell exfiltration because their skills carry scripts that an agent runs |
+| Mapping report (subagent, REPORTED) | `private-ai/specs/maps/plugins-skills-map.md` | n/a | where the rest lives |
+NOT READ yet: goose hooks and plugins; OpenCode skill loading; openclaw install trust; the OAuth sources (rmcp `auth.rs`, goose `oauth`, OpenCode `mcp/oauth.ts`).
+
+### Decisions for this part
+| Capability | Decision | Reason |
+|---|---|---|
+| Bundled skills | BUILD: 18 methods written here, shipped in the binary, listed by group; added unapproved, approved by the owner like any method | Ghast's 30 are tool skills and closed; ours are guidance texts, which is what a method is. One rule for every method, shipped or not |
+| Skill scanning | EXCLUDE the shell-pattern scanner | a method here holds no script and names no tool, so there is nothing for it to find; the risk that remains is persuasive text, which the owner reads before approving and which reaches the model inside a frame it cannot close |
+| Install paths, quarantine, lock file | EXCLUDE | methods live in the encrypted store, not in folders, so the path-escape class does not exist; the store row with its hash and approval is the lock |
+| Picking a skill by name in a message | exists (`/name`) | |
+| Signed catalog, packs that suggest tools | OWED, next | |
+
+### Built: bundled skills
+- `crates/kk-methods/src/bundled.json` and `bundled.rs` (18 methods in five groups: code review, threat model, bug report, test plan, commit message, incident review, SQL review, API design, dependency check, release notes, meeting notes, decision record, contract reading, privacy check, plain language, email reply, numbers check, research brief).
+- `GET /api/methods` lists them with whether the owner already has one of that name; `POST /api/methods/bundled` adds one, unapproved, and never over an existing name. Web: a shelf on the Methods screen. Terminal: `/method bundled`, `/method take NAME`.
+- Evidence: kk-methods bd01 (each is a valid method, unique, bounded, with no order to ignore rules and no address) and bd02 (each applies to the request it is for, none to an unrelated question, "smart contract" does not bring the legal one); kk-service sv247 (on the shelf it does not apply; added it does not apply; approved it does; nothing is replaced); kk-tui tu116; `tests/e2e/bundled_web.mjs` 9 browser checks, screenshots read by me.
+- Limit: whether a given model follows a skill's guidance well is a quality question for the model; with the 3b local model it often does not.
