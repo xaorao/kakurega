@@ -297,6 +297,40 @@ impl Service {
         );
     }
 
+    /// What team runs need from the owner: a plan not yet started, an expert's question, a run the service's stop cut off.
+    pub(super) fn team_inbox(&self) -> Vec<Value> {
+        let runs: Vec<(String, String, String, i64)> = {
+            let store = self.store.lock().expect("lock");
+            let c = store.connection();
+            c.prepare("SELECT id, goal, status, updated FROM team_runs WHERE status IN ('planned', 'waiting', 'interrupted') ORDER BY updated DESC")
+                .and_then(|mut st| {
+                    st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+                        .map(|rows| rows.flatten().collect())
+                })
+                .unwrap_or_default()
+        };
+        let mut items = Vec::new();
+        for (id, goal, status, updated) in runs {
+            let title: String = goal.chars().take(80).collect();
+            let item = |kind: &str, what: String| json!({"kind": kind, "team": id, "title": title, "since": updated, "what": what});
+            match status.as_str() {
+                "planned" => items.push(item("team_planned", "A plan is waiting for you. Read it, then start it or delete it.".into())),
+                "interrupted" => items.push(item(
+                    "team_interrupted",
+                    "The service stopped while this was running. Finished tasks are kept; carry on to ask the rest.".into(),
+                )),
+                _ => {
+                    for t in self.team_tasks(&id).iter().filter(|t| t.state == State::NeedsInput) {
+                        let mut v = item("team_question", format!("{} asks: {}", t.expert_name, t.question));
+                        v["task"] = json!(t.n);
+                        items.push(v);
+                    }
+                }
+            }
+        }
+        items
+    }
+
     fn team_stop_asked(&self, id: &str) -> bool {
         self.team.lock().expect("lock").stop.contains(id)
     }

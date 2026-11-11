@@ -38,9 +38,11 @@ export function Inbox() {
               <For each={r().items}>
                 {(i) => (
                   <li class="card stack">
-                    <p><span class="chip">{t(`inbox.kind.${i.kind}` as Key)}</span> <strong>{i.recipient}</strong> · <code>{i.job}</code></p>
+                    <Show when={i.team} fallback={<p><span class="chip">{t(`inbox.kind.${i.kind}` as Key)}</span> <strong>{i.recipient}</strong> · <code>{i.job}</code></p>}>
+                      <p><span class="chip">{t(`inbox.kind.${i.kind}` as Key)}</span> <strong>{i.title}</strong></p>
+                    </Show>
                     <p>{i.what}</p>
-                    <div class="actions"><a class="primary" href={`#/job/${i.job}`}>{t("inbox.open")}</a></div>
+                    <div class="actions"><a class="primary" href={i.team ? `#/team/${i.team}` : `#/job/${i.job}`}>{t("inbox.open")}</a></div>
                   </li>
                 )}
               </For>

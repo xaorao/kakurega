@@ -300,3 +300,18 @@ test("n14 two tabs racing on one event show it once even when both find nobody l
   assert.equal(x + y, 1);
   assert.equal(a.shown.length + b.shown.length, 1);
 });
+
+test("n14 an expert's question on a team run is announced once per question, and a plan to start is not", async () => {
+  const w = world();
+  const t = tab(w);
+  t.n.setEnabled(true);
+  await t.n.observe([]);
+  const q = (task, since) => ({ kind: "team_question", team: "team-0123456789ab", task, since });
+  assert.equal(await t.n.observe([{ kind: "team_planned", team: "team-0123456789ab", since: 1 }, { kind: "team_interrupted", team: "team-aaaaaaaaaaaa", since: 1 }]), 0);
+  assert.equal(await t.n.observe([q(1, 5)]), 1);
+  assert.equal(await t.n.observe([q(1, 5)]), 0, "the same question is not repeated");
+  // two tasks of one run asking at the same moment are two questions
+  assert.equal(await t.n.observe([q(1, 5), q(2, 5)]), 1);
+  assert.equal(t.shown.length, 2);
+  assert.ok(!/team-0123456789ab/.test(JSON.stringify(t.shown)), "nothing about the work is in the notification");
+});

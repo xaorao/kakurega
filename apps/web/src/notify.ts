@@ -13,12 +13,15 @@ export const MAX_PER_UPDATE = 3;
 const FOCUS_LOCK = "kk:notify-focus";
 
 /** What needs the owner. The other kinds of inbox items are listed on the Inbox screen and not announced. */
-export type Kind = "approval_waiting" | "ready_to_review" | "ready_to_deliver" | "failed" | "suggestions";
-const ANNOUNCED: ReadonlySet<string> = new Set(["approval_waiting", "ready_to_review", "failed"]);
+export type Kind = "approval_waiting" | "ready_to_review" | "ready_to_deliver" | "failed" | "suggestions" | "team_planned" | "team_question" | "team_interrupted";
+const ANNOUNCED: ReadonlySet<string> = new Set(["approval_waiting", "ready_to_review", "failed", "team_question"]);
 
 export interface Item {
   kind: Kind;
-  job: string;
+  /** The review it is about, or the team run (and the task of that run) for a team item. */
+  job?: string;
+  team?: string;
+  task?: number;
   since: number;
 }
 
@@ -43,12 +46,12 @@ export interface Notifier {
   enabled(): boolean;
   setEnabled(on: boolean): void;
   /** The inbox as it is now. Returns how many notifications were shown. Never throws. */
-  observe(items: readonly { kind: string; job: string; since: number }[]): Promise<number>;
+  observe(items: readonly { kind: string; job?: string; team?: string; task?: number; since: number }[]): Promise<number>;
   /** Call when the window gained or lost focus, so other tabs know somebody is looking. */
   focusChanged(): Promise<void>;
 }
 
-const keyOf = (i: { kind: string; job: string; since: number }) => `${i.kind}:${i.job}:${i.since}`;
+const keyOf = (i: { kind: string; job?: string; team?: string; task?: number; since: number }) => `${i.kind}:${i.job ?? `${i.team ?? ""}#${i.task ?? 0}`}:${i.since}`;
 
 export function createNotifier(env: Env, text: (kind: string) => string): Notifier {
   const seen = new Set<string>();
@@ -94,7 +97,7 @@ export function createNotifier(env: Env, text: (kind: string) => string): Notifi
   };
 
   /** Shows one notification if nobody is looking. Returns whether it was shown. */
-  const announce = async (item: { kind: string; job: string; since: number }): Promise<boolean> => {
+  const announce = async (item: { kind: string; job?: string; team?: string; task?: number; since: number }): Promise<boolean> => {
     const key = keyOf(item);
     const run = async (): Promise<boolean> => {
       if (isClaimed(key) || env.hasFocus()) return false;

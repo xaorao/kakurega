@@ -7685,6 +7685,7 @@ async fn inbox(axum::Extension(svc): Svc) -> Json<Value> {
             items.push(json!({"kind": "suggestions", "job": id, "recipient": recipient, "since": created, "count": pending, "what": format!("{pending} suggested note(s) to keep or dismiss.")}));
         }
     }
+    items.extend(svc.team_inbox());
     items.sort_by(|a, b| b["since"].as_i64().cmp(&a["since"].as_i64()));
     Json(json!({"items": items, "count": items.len()}))
 }

@@ -187,7 +187,7 @@ export interface Passage { file: string; start: number; focus: number; lines: st
 export interface ChatSent { messages: { role: string; content: string }[]; cut: boolean; excluded_notes?: { id: string; text: string; reason: string }[]; at: number; route: { class: string; simulated: boolean; host: string | null; stays_here: boolean; id: string; name?: string | null } }
 export interface PrivacyFacts { model: { class: string; id: string; name?: string | null; simulated: boolean; host: string | null; stays_here: boolean }; search: { on: boolean; host: string | null }; extension: { on: boolean }; telegram: { on: boolean }; agents: { tools_open: string[]; calls_are_logged: boolean }; notes: { count: number; encrypted_at_rest: boolean }; approvals: { signing_key_enrolled: boolean }; updates: { checks_in_background: boolean } }
 export interface Lease { tool: string; remaining: number; expires_at: number; issued_at: number }
-export interface InboxItem { kind: "approval_waiting" | "ready_to_review" | "ready_to_deliver" | "failed" | "suggestions"; job: string; recipient: string; since: number; what: string; count?: number }
+export interface InboxItem { kind: "approval_waiting" | "ready_to_review" | "ready_to_deliver" | "failed" | "suggestions" | "team_planned" | "team_question" | "team_interrupted"; job?: string; recipient?: string; team?: string; title?: string; task?: number; since: number; what: string; count?: number }
 export interface Schedule { id: string; repo: string; recipient: string; every_hours: number; next_at: number }
 export interface ScheduleRun { schedule: string; at: number; outcome: string; job: string | null }
 export interface ResearchItem { url: string; host?: string; allowed: boolean; reason?: string }

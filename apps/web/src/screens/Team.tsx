@@ -1,10 +1,10 @@
-import { createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, Show, untrack } from "solid-js";
 import { api, ApiError, type ExpertInfo, type TeamRun, type TeamTask } from "../api";
 import { Markdown } from "../components/Markdown";
 import { t } from "../i18n";
 
 /** A goal handed to a lead: the plan it wrote, each task as it runs, the questions it has for the owner, and the result. */
-export function Team() {
+export function Team(props: { id?: string }) {
   const [roster] = createResource(() => api.experts().catch(() => ({ experts: [] as ExpertInfo[], yours: [], min: 2, max: 5 })));
   const everyone = createMemo<ExpertInfo[]>(() => [...(roster()?.experts ?? []), ...(roster()?.yours ?? []).map((y) => ({ ...y, group: t("rt.yours") }))]);
   const [runs, { refetch: refetchRuns }] = createResource(() => api.teamRuns().catch(() => ({ runs: [] })));
@@ -67,7 +67,7 @@ export function Team() {
     setConfirmDelete(false);
     api.teamPlan(goal().trim(), allowed()).then(
       (r) => {
-        setRun(r);
+        show(r);
         setAnswers({});
         setGoal("");
         void refetchRuns();
@@ -76,11 +76,21 @@ export function Team() {
     ).finally(() => setPlanning(false));
   };
 
+  const show = (r: TeamRun | null) => {
+    setRun(r);
+    const want = r ? `#/team/${r.id}` : "#/team";
+    if (location.hash !== want) location.hash = want;
+  };
   const open = (id: string) => act(async () => {
-    setRun(await api.teamRun(id));
+    show(await api.teamRun(id));
     setAnswers({});
     setConfirmDelete(false);
   });
+  // a link to one run (from "Waiting for you", or a page reload) opens that run
+  // It follows the address only: showing a run changes the address, and that must not ask for the run that was shown before.
+  createEffect(on(() => props.id ?? "", (id) => {
+    if (/^team-[0-9a-f]{12}$/.test(id) && untrack(run)?.id !== id) void open(id);
+  }));
   const start = () => act(async () => setRun(await api.teamStart(run()!.id)));
   const stop = () => act(async () => {
     await api.teamStop(run()!.id);
@@ -89,7 +99,7 @@ export function Team() {
   });
   const remove = () => act(async () => {
     await api.teamDelete(run()!.id);
-    setRun(null);
+    show(null);
     setConfirmDelete(false);
     void refetchRuns();
   });

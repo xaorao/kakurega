@@ -89,6 +89,17 @@ if (!real) {
   check(/This expert asks: Which cloud do you deploy to\?/.test(await two.innerText()) && /Waiting for you/.test(await page.locator("#team-run").innerText()), "the question is shown where it was asked, and the run says it waits for the owner");
   check(await two.getByRole("button", { name: "Answer and carry on" }).isDisabled() && (await page.getByRole("button", { name: "Carry on", exact: true }).count()) === 0, "an empty answer cannot be sent, and the only way on is to answer");
   await shot(page, "3-asks-you");
+  // the question is also in "Waiting for you", and opening it there lands on this run
+  await page.getByRole("link", { name: /Waiting for you/ }).click();
+  const waitingItem = page.locator("main li.card").filter({ hasText: "An expert asks you" });
+  await waitingItem.waitFor();
+  check(/Software architect asks: Which cloud do you deploy to\?/.test(await waitingItem.innerText()) && /Decide where our payment key/.test(await waitingItem.innerText()), "the question is listed in Waiting for you with the run's goal");
+  await waitingItem.getByRole("link", { name: "Open" }).click();
+  await page.locator('.team-tasks > li[data-task="2"][data-state="needs_input"]').waitFor();
+  check(/#\/team\/team-[0-9a-f]{12}$/.test(page.url()), "opening it shows the run, and the address names the run");
+  await page.reload();
+  await page.locator('.team-tasks > li[data-task="2"][data-state="needs_input"]').waitFor();
+  check(true, "a reload of that address shows the same run");
   await two.getByRole("textbox").fill("Our own cloud account in Mumbai.");
   await two.getByRole("button", { name: "Answer and carry on" }).click();
 }

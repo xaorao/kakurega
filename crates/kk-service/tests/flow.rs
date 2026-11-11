@@ -19224,6 +19224,16 @@ fn sv234_a_lead_writes_a_plan_that_is_kept_unstarted_and_an_unusable_plan_starts
         ),
         (Some(3), Some(0))
     );
+    let inbox = w.get("/api/inbox").1;
+    assert_eq!(
+        (
+            inbox["count"].as_u64(),
+            inbox["items"][0]["kind"].as_str(),
+            inbox["items"][0]["team"].as_str()
+        ),
+        (Some(1), Some("team_planned"), Some(id.as_str())),
+        "{inbox}"
+    );
 
     // a first plan that is refused is asked for once more, with the reason
     *runner.plans.lock().unwrap() = vec![
@@ -19463,6 +19473,27 @@ fn sv237_an_expert_can_stop_to_ask_the_owner_and_only_the_owners_answer_moves_th
     assert_eq!(v["tasks"][0]["question"], "Which vault do you use?");
     assert_eq!(runner.task_calls(), [1, 3]);
     assert_eq!(w.get("/api/team").1["runs"][0]["needs_input"], 1);
+    // the question is in "Waiting for you", with the run and the task it belongs to
+    let inbox = w.get("/api/inbox").1;
+    let item = inbox["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["kind"] == "team_question")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (
+            item["team"].as_str(),
+            item["task"].as_u64(),
+            item["title"].as_str()
+        ),
+        (Some(id.as_str()), Some(1), Some("g"))
+    );
+    assert_eq!(
+        item["what"],
+        "Security reviewer asks: Which vault do you use?"
+    );
     for (body, st, code) in [
         (json!({"task": 3, "answer": "x"}), 409, "NOT_ASKING"),
         (json!({"task": 9, "answer": "x"}), 404, "NO_SUCH_TASK"),
@@ -19487,6 +19518,14 @@ fn sv237_an_expert_can_stop_to_ask_the_owner_and_only_the_owners_answer_moves_th
     assert_eq!(
         v["tasks"][0]["asked"],
         json!([{"question": "Which vault do you use?", "answer": "The company one."}])
+    );
+    assert!(
+        !w.get("/api/inbox").1["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["team"] == id.as_str()),
+        "a finished run asks nothing of the owner"
     );
     assert_eq!(runner.task_calls(), [1, 3, 1, 2]);
     let seen = runner.seen.lock().unwrap().clone();
@@ -19720,6 +19759,11 @@ fn sv239_a_run_survives_a_crash_and_a_restart_with_its_finished_tasks_and_is_car
         (Some("interrupted"), Some(false)),
         "{v}"
     );
+    assert!(w.get("/api/inbox").1["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|i| i["kind"] == "team_interrupted" && i["team"] == id.as_str()));
     assert_eq!(team_states(&v), ["done", "waiting"]);
     assert_eq!(
         v["tasks"][0]["result"], "result of task 1",
