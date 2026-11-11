@@ -1,29 +1,32 @@
 import { deadlineLines, timeLeft } from "./expiry.mjs";
+import { english } from "./strings.mjs";
 
-export function describe(a) {
-  const files = (a.files ?? []).map((f) => `  ${f.name}  ${f.bytes} bytes  sha256 ${String(f.sha256 ?? "").slice(0, 16)}`);
+export function describe(a, t = english) {
+  const files = (a.files ?? []).map((f) => t("desc.file", { name: f.name, bytes: f.bytes, sha: String(f.sha256 ?? "").slice(0, 16) }));
   const removed = (a.removed ?? []).map((r) => `  ${r.what} (${r.why})`);
   const notEstablished = (a.not_established ?? []).map((n) => `  - ${n}`);
   const d = a.disclosure;
-  const disclosure = d ? [`Cumulative disclosure: ${d.files_after} of ${d.project_files} project files would have been shown to this recipient (${d.releases_before} earlier release(s)).`, ...(d.reasons ?? []).map((r) => `  ! ${r}`), `  Not checked: ${(d.not_checked ?? []).join(" ")}`, ""] : [];
+  const disclosure = d
+    ? [t("desc.disclosure", { after: d.files_after, total: d.project_files, before: d.releases_before }), ...(d.reasons ?? []).map((r) => `  ! ${r}`), t("desc.notChecked", { list: (d.not_checked ?? []).join(" ") }), ""]
+    : [];
   return [
-    `Recipient: ${a.recipient}`,
-    `Digest: ${a.digest}`,
-    ...deadlineLines(a),
+    t("desc.recipient", { recipient: a.recipient }),
+    t("desc.digest", { digest: a.digest }),
+    ...deadlineLines(a, t),
     "",
-    "These exact files will be signed and handed over, nothing else:",
+    t("desc.files"),
     ...files,
     "",
     ...disclosure,
-    "Withheld and never released:",
-    ...(removed.length ? removed : ["  (none)"]),
+    t("desc.withheld"),
+    ...(removed.length ? removed : [t("desc.none")]),
     "",
-    "This release does not establish:",
-    ...(notEstablished.length ? notEstablished : ["  (nothing listed)"]),
+    t("desc.notEstablished"),
+    ...(notEstablished.length ? notEstablished : [t("desc.nothingListed")]),
   ].join("\n");
 }
 
-export function createApprover({ client, confirm, authenticate, sign = null, seen = new Set() }) {
+export function createApprover({ client, confirm, authenticate, sign = null, seen = new Set(), t = english }) {
   return async function pollOnce() {
     const list = await client.get("/admin/approvals");
     if (list.status !== 200) return [];
@@ -45,7 +48,7 @@ export function createApprover({ client, confirm, authenticate, sign = null, see
         done.push({ id: item.id, outcome: "expired" });
         continue;
       }
-      const yes = a.requires_proof && sign?.ownsDialog ? true : await confirm(describe(a), a);
+      const yes = a.requires_proof && sign?.ownsDialog ? true : await confirm(describe(a, t), a);
       if (!yes) {
         await client.post(`/admin/approvals/${item.id}/deny`);
         done.push({ id: item.id, outcome: "denied" });
@@ -61,7 +64,7 @@ export function createApprover({ client, confirm, authenticate, sign = null, see
         }
         body.proof = proof;
       } else {
-        const proven = await authenticate(`Approve release ${String(a.digest).slice(0, 12)} to ${a.recipient}`);
+        const proven = await authenticate(t("approve.reason", { digest: String(a.digest).slice(0, 12), recipient: a.recipient }));
         if (!proven) {
           await client.post(`/admin/approvals/${item.id}/deny`);
           done.push({ id: item.id, outcome: "authentication_failed" });
