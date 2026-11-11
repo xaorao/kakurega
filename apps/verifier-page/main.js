@@ -1,4 +1,5 @@
 import { b64urlDecode, verifyCapsule } from "@kakurega/verifier";
+import { NETWORKS, amount, hex, isAccount, lookup, sha256Hex, when } from "./chain.js";
 
 const $ = (id) => document.getElementById(id);
 const out = $("out");
@@ -9,6 +10,7 @@ const REASONS = {
   capsule_shape: "The file does not have the shape of a capsule.",
   unsupported_version: "This capsule is from a version this page does not know.",
   bad_key: "A key in the capsule is not usable.",
+  key_list: "The capsule's key list is not exactly the one key that signed it: the file was altered after signing.",
   no_keys: "The capsule carries no key.",
   signature_count: "An envelope does not have exactly one signature.",
   bad_signature: "A signature does not match its content.",
@@ -36,7 +38,142 @@ function list(title, items) {
   return wrap;
 }
 
-function show(r) {
+/** Text that came from the chain: no control characters, and never longer than a line or two. */
+function plain(v) {
+  return String(v ?? "?").replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, "").slice(0, 300);
+}
+
+function hardwareItems(h) {
+  const items = [
+    `NEAR's verifier checked its Intel TDX quote against Intel's collateral on ${when(h.attested_at)}`,
+    `Intel patch level then: ${plain(h.tcb_status)}`,
+    `Asked for by: ${plain(h.attested_by)}`,
+  ];
+  if (h.compose_sha256) items.push(`Deployment description (SHA-256): ${plain(h.compose_sha256)}`);
+  return items;
+}
+
+function showChain(box, place, found) {
+  box.replaceChildren();
+  const { entry, hardware, order, unregistered } = found;
+  if (!entry) {
+    const v = el("div", "Not registered on NEAR under this signing key", "verdict");
+    v.setAttribute("role", "status");
+    box.append(v, el("p", `Looked up at ${place}. That says only that nobody registered this exact file there.`, "note"));
+  } else {
+    const v = el("div", "Registered on NEAR", "verdict ok");
+    v.setAttribute("role", "status");
+    box.append(v);
+    const dl = el("dl");
+    const row = (k, val, code) => dl.append(el("dt", k), el("dd", val, code ? "code" : ""));
+    row("Registered by", plain(entry.registered_by), true);
+    row("When", when(entry.registered_at));
+    row("Where", place, true);
+    const n = Array.isArray(entry.receipts) ? entry.receipts.length : 0;
+    box.append(dl);
+    box.append(el("p", "That account proved to the contract that it controls the capsule's signing key."));
+    box.append(el("p", n === 0 ? "No model signatures were registered with it." : n === 1 ? "The contract verified 1 model signature registered with it." : `The contract verified ${n} model signatures registered with it.`));
+    if (unregistered > 0) {
+      box.append(el("p", `${unregistered} of this capsule's model signatures were not registered with it.`, "note"));
+    }
+  }
+  for (const h of hardware) {
+    if (h.record) box.append(list(`Hardware record for model key ${h.signer.slice(0, 16)}…`, hardwareItems(h.record)));
+    else box.append(el("p", `No hardware record at this registry for model key ${h.signer.slice(0, 16)}….`, "note"));
+  }
+  if (order && order.order) {
+    const o = order.order;
+    box.append(
+      list(`Registered for order ${plain(order.id)}`, [
+        `State: ${plain(o.state)}`,
+        `Amount: ${plain(amount(o))}`,
+        `Client: ${plain(o.client)}`,
+        `Reviewer: ${plain(o.reviewer)}`,
+      ]),
+    );
+  }
+  const not = ["That any claim in the capsule is true."];
+  if (hardware.some((h) => h.record)) {
+    not.push(
+      "That a hardware quote is recent, beyond Intel's collateral accepting it at that time.",
+      "Which software ran: the measurements are recorded, none is approved by the contract.",
+      "Anything about the GPU.",
+    );
+  }
+  box.append(list("What the chain does not establish", not));
+}
+
+/** The part of the page that asks NEAR, shown under a valid capsule. Nothing is sent until the button is pressed. */
+function chainSection(bytes, report) {
+  const wrap = el("section");
+  wrap.id = "chain";
+  wrap.append(el("h2", "On NEAR (optional)"));
+  wrap.append(
+    el(
+      "p",
+      "Pressing the button sends this capsule's digest and the keys named in it to a public NEAR server, to ask what the Kakurega registry holds about it. Nothing else leaves this page.",
+      "note",
+    ),
+  );
+  const net = document.createElement("select");
+  net.id = "net";
+  for (const name of Object.keys(NETWORKS)) {
+    const o = el("option", name);
+    o.value = name;
+    net.append(o);
+  }
+  const reg = document.createElement("input");
+  reg.type = "text";
+  reg.id = "registry";
+  reg.autocomplete = "off";
+  reg.spellcheck = false;
+  reg.value = NETWORKS.testnet.registry;
+  net.addEventListener("change", () => {
+    reg.value = NETWORKS[net.value].registry;
+  });
+  const netLabel = el("label", "Network");
+  netLabel.htmlFor = "net";
+  const regLabel = el("label", "Registry account");
+  regLabel.htmlFor = "registry";
+  const go = el("button", "Look this capsule up on NEAR");
+  go.type = "button";
+  go.id = "lookup";
+  const box = el("div");
+  box.id = "chain-out";
+  box.setAttribute("aria-live", "polite");
+  go.addEventListener("click", async () => {
+    const registry = reg.value.trim();
+    const fail = (m) => {
+      const a = el("p", m, "bad");
+      a.setAttribute("role", "alert");
+      box.replaceChildren(a);
+    };
+    if (!isAccount(registry)) return fail("That is not a NEAR account name.");
+    let signer = null;
+    try {
+      const k = JSON.parse(new TextDecoder().decode(bytes)).keys;
+      const raw = Array.isArray(k) && k.length === 1 ? b64urlDecode(k[0]) : null;
+      if (raw && raw.length === 32) signer = hex(raw);
+    } catch {
+      signer = null;
+    }
+    if (!signer) return fail("This capsule's signing key could not be read.");
+    go.disabled = true;
+    box.replaceChildren(el("p", "Asking NEAR…", "note"));
+    try {
+      const found = await lookup(NETWORKS[net.value], registry, await sha256Hex(bytes), signer, report.receipts || []);
+      showChain(box, `${registry} on NEAR ${net.value}`, found);
+    } catch (e) {
+      fail(e && e.message ? e.message : "The lookup could not be done.");
+    } finally {
+      go.disabled = false;
+    }
+  });
+  wrap.append(netLabel, net, regLabel, reg, go, box);
+  return wrap;
+}
+
+function show(r, bytes) {
   out.replaceChildren();
   const v = el("div", r.valid ? "Valid: the signatures check out" : "Not valid", "verdict " + (r.valid ? "ok" : "bad"));
   v.setAttribute("role", "status");
@@ -78,6 +215,7 @@ function show(r) {
     );
   }
   if (not.length) out.append(list("What this check does not establish", not));
+  out.append(chainSection(bytes, r));
 }
 
 let last = null;
@@ -96,7 +234,7 @@ async function check(file) {
   }
   const bytes = new Uint8Array(await file.arrayBuffer());
   try {
-    show(await verifyCapsule(bytes, { pinned, now: Math.floor(Date.now() / 1000) }));
+    show(await verifyCapsule(bytes, { pinned, now: Math.floor(Date.now() / 1000) }), bytes);
   } catch (e) {
     out.replaceChildren(el("div", "The check could not run on this file.", "verdict bad"));
   }

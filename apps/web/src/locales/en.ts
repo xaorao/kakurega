@@ -985,6 +985,7 @@ export const en = {
   "reason.bad_signature": "A signature does not match. The capsule or one of its statements was changed after signing.",
   "reason.payload_not_canonical": "A signed statement is not in the exact required form.",
   "reason.mixed_signers": "The statements are signed by different keys.",
+  "reason.key_list": "The capsule's key list is not exactly the one key that signed it: the file was altered after signing.",
   "reason.duplicate_release": "The capsule has two release statements.",
   "reason.release_missing": "The capsule has no release statement.",
   "reason.release_shape": "The release statement is malformed.",

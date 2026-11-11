@@ -161,6 +161,8 @@ async function run(bytes, pinned, now, expectedRecipient) {
     }
   }
   if (release === null) stop("release_missing");
+  // The key list is not covered by any signature, so it must be exactly the one key that signed.
+  if (claimed.length !== 1 || (await keyIdOf(claimed[0])) !== signer) stop("key_list");
   const rel = release.value;
 
   if (!exactKeys(rel, ["type", "version", "capsule_id", "created", "expires", "recipient", "policy_version", "files", "assurance", "source_commitment"]) || rel.get("type") !== "release") stop("release_shape");

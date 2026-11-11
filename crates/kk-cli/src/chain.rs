@@ -11,6 +11,9 @@ const USAGE: &str = "usage:
   kaku chain attest --model NAME --key-file FILE [--account NAME]
                                           have NEAR's verifier check that model's hardware proof and record its key (testnet)
   kaku chain capsule FILE                 who registered this capsule on NEAR, and what the chain checked
+  kaku chain register JOB --key-file FILE [--account NAME] [--order ID] [--yes]
+                                          publish a delivered review's capsule digest and model receipts on NEAR (testnet);
+                                          with --order, for that order, which the contract then pays out
   kaku chain order ID                     what an order holds
 options: [--network testnet|mainnet] [--registry ACCOUNT] [--json]";
 
@@ -136,6 +139,8 @@ pub fn run(args: &[String]) -> u8 {
         "--model",
         "--key-file",
         "--account",
+        "--order",
+        "--data-dir",
     ];
     let mut words: Vec<&String> = Vec::new();
     let mut skip = false;
@@ -146,7 +151,7 @@ pub fn run(args: &[String]) -> u8 {
             skip = true;
         } else if !a.starts_with("--") {
             words.push(a);
-        } else if a != "--json" {
+        } else if a != "--json" && a != "--yes" {
             eprintln!("unknown option `{a}`\n{USAGE}");
             return 2;
         }
@@ -224,6 +229,118 @@ pub fn run(args: &[String]) -> u8 {
                         for l in hardware_lines(&h) {
                             println!("  {l}");
                         }
+                    }
+                    0
+                }
+            }
+        }
+        (Some("register"), Some(job)) => {
+            let Some(file) = crate::flag(args, "--key-file") else {
+                eprintln!("{USAGE}");
+                return 2;
+            };
+            let order = match crate::flag(args, "--order").map(|o| o.parse::<u64>()) {
+                None => None,
+                Some(Ok(n)) => Some(n),
+                Some(Err(_)) => {
+                    eprintln!("an order is named by its number");
+                    return 2;
+                }
+            };
+            if !job.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') || job.is_empty() {
+                eprintln!("that is not a review id");
+                return 2;
+            }
+            let payer = match Payer::from_key_file(
+                std::path::Path::new(&file),
+                crate::flag(args, "--account").as_deref(),
+            ) {
+                Ok(p) => p,
+                Err(e) => return fail(&e),
+            };
+            let admin = match crate::approve::connect(args) {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!("{e}");
+                    return 1;
+                }
+            };
+            let ticket = match admin.post(
+                &format!("/admin/jobs/{job}/chain-ticket"),
+                json!({"account": payer.account.as_str(), "order": order}),
+            ) {
+                Ok((200, t)) => t,
+                Ok((_, e)) => {
+                    eprintln!(
+                        "the service did not prepare the registration: {}",
+                        clean(e["error"]["message"].as_str().unwrap_or("no reason given"))
+                    );
+                    return 1;
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    return 1;
+                }
+            };
+            let count = ticket["receipts"].as_array().map_or(0, Vec::len);
+            println!(
+                "This will be published at {place}, for everyone to read, and cannot be removed:"
+            );
+            println!(
+                "  the capsule's digest {}",
+                clean(text(&ticket["capsule_sha256"]))
+            );
+            println!(
+                "  the key that signed it {}",
+                clean(text(&ticket["capsule_signer"]))
+            );
+            println!("  {count} model receipt(s): each model's name and signing key, and the digests of its request and answer");
+            println!("  the account {} and the time", payer.account);
+            if let Some(id) = order {
+                println!("  that it is delivered for order {id}");
+            }
+            if ticket["receipts_left_out"].as_u64().unwrap_or(0) > 0 {
+                println!(
+                    "  ({} further receipt(s) in the capsule are not published: a registration carries at most 16)",
+                    ticket["receipts_left_out"]
+                );
+            }
+            println!(
+                "Not published: the capsule itself, or any file, finding, question or answer."
+            );
+            if !args.iter().any(|a| a == "--yes") {
+                use std::io::{BufRead, IsTerminal, Write};
+                if !std::io::stdin().is_terminal() {
+                    eprintln!("nothing was published: confirm at a terminal, or pass --yes");
+                    return 2;
+                }
+                print!("Type yes to publish: ");
+                let _ = std::io::stdout().flush();
+                let mut line = String::new();
+                if std::io::stdin().lock().read_line(&mut line).is_err() || line.trim() != "yes" {
+                    println!("Nothing was published.");
+                    return 3;
+                }
+            }
+            match rt.block_on(chain.register(&payer, &ticket)) {
+                Err(e) => fail(&e),
+                Ok((sent, e)) => {
+                    if as_json {
+                        println!(
+                            "{}",
+                            json!({"transaction": sent.transaction, "gas_tgas": sent.gas_tgas, "registry": chain.registry(), "entry": e})
+                        );
+                    } else {
+                        println!(
+                            "Registered. Transaction {} ({:.1} Tgas).",
+                            sent.transaction, sent.gas_tgas
+                        );
+                        println!(
+                            "  by {} on {}; model signatures the contract verified: {}",
+                            clean(text(&e["registered_by"])),
+                            when(&e["registered_at"]),
+                            e["receipts"].as_array().map_or(0, Vec::len)
+                        );
                     }
                     0
                 }
@@ -482,6 +599,24 @@ mod tests {
         );
         assert_eq!(run(&["hardware", &"ab".repeat(32), "--verbose"]), 2);
         assert_eq!(run(&["capsule", "/nonexistent/file.kkg"]), 2);
+        assert_eq!(run(&["register"]), 2);
+        assert_eq!(run(&["register", "job-1"]), 2, "no key file");
+        assert_eq!(
+            run(&[
+                "register",
+                "job-1",
+                "--key-file",
+                "/nonexistent/key.json",
+                "--order",
+                "x"
+            ]),
+            2
+        );
+        assert_eq!(
+            run(&["register", "../etc", "--key-file", "/nonexistent/key.json"]),
+            2,
+            "not a review id"
+        );
         assert_eq!(
             run(&[
                 "attest",

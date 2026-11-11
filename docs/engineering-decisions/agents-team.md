@@ -1,0 +1,31 @@
+# Experts, roundtable, lead and activity (ledger G-GH-33 and G-GH-37 to G-GH-41)
+
+## Target experience
+1. The owner asks one question and gets several independent expert answers side by side, then one resolution that says where they agree, where they differ and what to do; or hands a larger job to a lead that splits it, follows each part, and stops for the owner whenever something leaves the computer or changes a file. At any time one screen shows what is running, waiting, blocked or stalled, and nothing is lost when the service restarts.
+2. Strongest references: OpenCode (child sessions, jobs and recovery), Hermes (roundtable, result caps, the task board), goose (approval forwarding from a child, required final output), OpenCode's Claude agent provider (an outside coding agent that can only use the host's tools). Ghast's team mode is the experience benchmark (user side only).
+3. Approach: build on the one kernel. A participant is never a second authority: it answers through the same model runner and, when it acts, through the same broker with facts no wider than its parent's. Roundtable first (it needs no new power), then the lead and handoffs on the existing job records, then the activity view, then Claude Code as a teammate through `kaku mcp`.
+4. Quality criteria: a participant sees nothing its route may not carry; one participant's failure never loses the others' answers; every answer that comes back is capped and framed as untrusted text; a child can never do what its parent could not; a restart loses no finished work; the owner can stop everything at once.
+
+## What was read (by me unless marked)
+| Source (commit) | Files | Depth | What it settled |
+|---|---|---|---|
+| OpenCode (fe04656, MIT) | `packages/core/src/tool/plugin/subagent.ts` | FULL | depth limit by walking parents; spawn is itself a permission action; result returned raw, uncapped, inside a tag built by string concatenation |
+| OpenCode | `packages/core/src/permission.ts` 150-200; `session/subagent-job.ts` 20-48; `session/subagent-completion.ts` | PART, PART, FULL | a child's rules are its agent's plus its own session's, the parent's are not intersected; saved "allow" rules reach every session of the project; the completion tag carries a model-written description unescaped |
+| OpenCode | `packages/core/src/job.ts` 20-60, 200-280, 440-495 | PART | a job is persisted only once backgrounded; settle tells completed, cancelled and error apart |
+| OpenCode | `packages/core/src/plugin/provider/claude-agent/claude/query-options.ts` | FULL | Claude Code run with its own tools, skills, hooks and settings off and only the host's MCP tools allowed |
+| goose (71dd9a9, Apache-2.0) | `crates/goose/src/agents/subagent_handler.rs` 1-300; `crates/goose-agent/src/subagent.rs` 1-200 | PART | a child's approval request is forwarded to the parent's owner; completion only through a final-output tool, else failed with a reason; pending children are derived from the conversation, so a restart can find them; concurrency is unlimited by default |
+| Hermes (29a61cb7, MIT) | `tools/delegate_tool_results.py` 150-320; `tools/delegate_tool_toolsets.py` | PART, FULL | cap per answer = min(24,000 chars, half the parent's remaining window split over the batch, floor 2,000), head and tail kept; children never gain a tool the parent lacks, five tools always withheld, but one setting re-adds every MCP toolset |
+| Hermes | `agent/moa_loop.py` 414-470, 619-700, 914-989 | PART | each reference gets its own instruction and a view cut to its window; a failure is a labelled note; order is kept; if all fail the synthesis is skipped; if the synthesis fails the raw answers are used; running calls cannot be stopped |
+| Mapping reports (subagents, REPORTED) | `private-ai/specs/maps/agents-team-map.md` | n/a | where the rest lives |
+NOT READ: OpenCode `session/execution/restart.ts`; Hermes kanban (`kanban_db.py`, `kanban_db_dispatch.py`, `kanban_decompose.py`); goose `acp/provider.rs`; the rest of the Claude agent provider; codex's multi-agent code (not in the local clone); openclaw's subagent registry.
+
+## Decisions
+| Capability | Decision | Reason |
+|---|---|---|
+| Roster of experts | BUILD our own, texts written here; an expert is a name, a group, an instruction and optionally one of the installed models. Owner-added experts are approved like methods (content pinned by hash) | Ghast's texts are closed; OpenCode's roster carries permissions, which here belong to the kernel alone |
+| Roundtable | ADAPT Hermes's shape (independent answers, labelled failures, kept order, synthesis with a raw fallback); IMPROVE: each participant's route is checked against the data's label before it sees anything, answers are capped and framed as untrusted before the lead reads them, the resolution has fixed parts (agreed, disputed, decision, open questions), a stop reaches every running call | the references send one conversation to every provider and cannot stop a call |
+| Result cap | ADAPT Hermes's rule (a share of the reader's remaining window, with a floor and a ceiling, head and tail kept); the full text stays in the vault, not in a readable spill file | their spill file is deliberately not private |
+| Lead, handoffs, completion conditions | BUILD on the existing job and effect records: a task graph whose parts each name an expected result; completion is the kernel's check where one exists (a reproducer, a test run), the owner's say otherwise. OWED reading first: Hermes kanban | "non-empty text" is their completion evidence |
+| Child permissions | BUILD: a child is another worker session on the same broker with facts no wider than its parent's; nothing is inherited by name, nothing is saved as "always allow" across sessions | the gap read in OpenCode's rule resolution |
+| Activity view | BUILD on the run and job records, with stale detection and a warning before a cut; OWED reading: OpenCode restart, Hermes dispatch | |
+| Claude Code as a teammate | ADAPT OpenCode's approach: start it with its own tools off and only `kaku mcp` allowed, so each of its actions is a Kakurega tool call with the existing leases and approvals. EXCLUDE inferring "waiting for approval" from its output | goose's auto mode approves every request; Ghast guesses from stderr words |

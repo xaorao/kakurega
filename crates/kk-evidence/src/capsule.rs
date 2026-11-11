@@ -55,6 +55,8 @@ pub struct ReceiptReport {
     pub model: String,
     pub request_sha256: String,
     pub response_sha256: String,
+    /// The model's signature over `MODEL:REQUEST:ANSWER`, 128 hex digits, as it verified.
+    pub signature: String,
 }
 
 #[derive(Debug, Clone)]
@@ -294,6 +296,7 @@ fn check_receipt(r: &Value) -> Result<ReceiptReport, &'static str> {
         model: model.to_string(),
         request_sha256: request.to_string(),
         response_sha256: response.to_string(),
+        signature: sig.to_string(),
     })
 }
 
@@ -439,6 +442,11 @@ pub fn verify(bytes: &[u8], opts: &VerifyOptions) -> Report {
     let Some((release_env, rel)) = release else {
         return fail("release_missing");
     };
+    // The key list is not covered by any signature, so it must be exactly the one key that signed. Otherwise the same signed
+    // content could exist as many different files (a key added, or swapped when the reader pins the signer), each valid.
+    if claimed.len() != 1 || Some(KeyId::of(&claimed[0])) != signer {
+        return fail("key_list");
+    }
 
     if !exact_keys(
         &rel,

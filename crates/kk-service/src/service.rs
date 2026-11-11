@@ -8532,6 +8532,111 @@ async fn download(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Re
     }
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChainTicketBody {
+    /// The NEAR account that will send the registration.
+    account: String,
+    /// The order the capsule is delivered for, if any.
+    order: Option<u64>,
+}
+
+/// What the owner needs to register a delivered capsule on NEAR: the capsule's digest, its signing key, its verified model
+/// receipts, and that key's signature over the registry's binding message for one account (and one order). The message is
+/// built here from the capsule this service delivered; nothing a caller sends is signed as given. Owner only.
+async fn admin_chain_ticket(
+    axum::Extension(svc): Svc,
+    UrlPath(id): UrlPath<String>,
+    Json(b): Json<ChainTicketBody>,
+) -> Response {
+    use kk_evidence::capsule::{sha256_hex, verify, VerifyOptions};
+    use kk_evidence::registry::{binding_message, is_account_id, MAX_CHAIN_RECEIPTS};
+    let path = svc
+        .inner
+        .lock()
+        .expect("lock")
+        .jobs
+        .get(&id)
+        .and_then(|j| j.delivered.as_ref().map(|d| d.path.clone()));
+    let Some(path) = path else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "NO_CAPSULE",
+            "nothing has been delivered yet",
+        );
+    };
+    let Ok(bytes) = std::fs::read(&path) else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "NO_CAPSULE",
+            "the capsule file is missing",
+        );
+    };
+    if !is_account_id(&b.account) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_ACCOUNT",
+            "that is not a NEAR account name",
+        );
+    }
+    let report = verify(
+        &bytes,
+        &VerifyOptions {
+            pinned_keys: Some(vec![svc.keys.signer.public()]),
+            now: now(),
+            expected_recipient: None,
+        },
+    );
+    // only a capsule this service signed, still valid and unchanged on disk, is spoken for
+    if !report.valid || !report.signer_pinned {
+        return error(
+            StatusCode::CONFLICT,
+            "CAPSULE_NOT_OURS",
+            "the delivered file no longer verifies as a capsule this computer signed",
+        );
+    }
+    let left_out = report.receipts.len().saturating_sub(MAX_CHAIN_RECEIPTS);
+    let receipts = &report.receipts[..report.receipts.len().min(MAX_CHAIN_RECEIPTS)];
+    let digest = sha256_hex(&bytes);
+    let Some(message) = binding_message(&digest, receipts, &b.account, b.order) else {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_TICKET",
+            "the registration message could not be built for these values",
+        );
+    };
+    let hex = |x: &[u8]| x.iter().map(|c| format!("{c:02x}")).collect::<String>();
+    let signature = svc.keys.signer.sign(message.as_bytes());
+    svc.log_event(
+        "chain.ticket",
+        &id,
+        &[
+            ("receipts", receipts.len().into()),
+            ("for_order", usize::from(b.order.is_some()).into()),
+        ],
+    );
+    Json(json!({
+        "capsule_sha256": digest,
+        "capsule_signer": hex(&svc.keys.signer.public()),
+        "binding_signature": hex(&signature),
+        "message": message,
+        "account": b.account,
+        "order": b.order,
+        "receipts": receipts.iter().map(|r| json!({
+            "signer": r.signer, "model": r.model, "request_sha256": r.request_sha256,
+            "response_sha256": r.response_sha256, "signature": r.signature,
+        })).collect::<Vec<_>>(),
+        "receipts_left_out": left_out,
+        "published": [
+            "the capsule's digest and the key that signed it",
+            "for each model answer: the model's name and signing key, and the digests of the request and the answer",
+            "the NEAR account that registers, and the time",
+        ],
+        "not_published": ["the capsule itself", "any file, finding, question or answer"],
+    }))
+    .into_response()
+}
+
 async fn admin_list(axum::Extension(svc): Svc) -> Json<Value> {
     let g = svc.inner.lock().expect("lock");
     // oldest first, by the number in the id: `appr-9` was asked before `appr-10`
@@ -9330,6 +9435,7 @@ impl Extension for Routes {
             .route("/api/jobs/{id}/deliver", post(do_deliver))
             .route("/api/jobs/{id}/capsule", get(download))
             .route("/admin/log", get(log_export))
+            .route("/admin/jobs/{id}/chain-ticket", post(admin_chain_ticket))
             .route("/admin/diagnostics", get(diagnostics))
             .route(
                 "/admin/approvers",

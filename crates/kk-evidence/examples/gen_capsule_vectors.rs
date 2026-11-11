@@ -351,6 +351,79 @@ fn main() {
     );
 
     let mut v = parse(&good);
+    arr_mut(get_mut(&mut v, "keys")).push(Value::Str(b64::encode(&other.public())));
+    add(
+        "a second, unused key added to the key list",
+        emit(&v),
+        None,
+        NOW,
+        None,
+        false,
+        Some("key_list"),
+    );
+    add(
+        "a second, unused key added to the key list, signer pinned",
+        emit(&v),
+        Some(&pin_good),
+        NOW,
+        None,
+        false,
+        Some("key_list"),
+    );
+
+    let mut v = parse(&good);
+    arr_mut(get_mut(&mut v, "keys"))[0] = Value::Str(b64::encode(&other.public()));
+    add(
+        "key list names another valid key, signer pinned",
+        emit(&v),
+        Some(&pin_good),
+        NOW,
+        None,
+        false,
+        Some("key_list"),
+    );
+
+    let mut v = parse(&good);
+    {
+        let keys = arr_mut(get_mut(&mut v, "keys"));
+        let same = keys[0].clone();
+        keys.push(same);
+    }
+    add(
+        "the signing key listed twice",
+        emit(&v),
+        None,
+        NOW,
+        None,
+        false,
+        Some("key_list"),
+    );
+
+    let mut v = parse(&good);
+    arr_mut(get_mut(&mut v, "keys")).clear();
+    add(
+        "empty key list, signer pinned",
+        emit(&v),
+        Some(&pin_good),
+        NOW,
+        None,
+        false,
+        Some("key_list"),
+    );
+
+    let mut v = parse(&good);
+    arr_mut(get_mut(&mut v, "keys"))[0] = Value::Str(b64::encode(&[7u8; 32]));
+    add(
+        "key list holds 32 bytes that are not the signer, signer pinned",
+        emit(&v),
+        Some(&pin_good),
+        NOW,
+        None,
+        false,
+        Some("key_list"),
+    );
+
+    let mut v = parse(&good);
     {
         let envs = arr_mut(get_mut(&mut v, "envelopes"));
         let payload = match get_mut(&mut envs[1], "payload") {

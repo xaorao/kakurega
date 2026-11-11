@@ -4,6 +4,7 @@
 //   node tests/e2e/verifier_page.mjs     screenshots in target/verifier-page/
 
 import { chromium } from "playwright-core";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -94,4 +95,101 @@ await phone.locator(".verdict").waitFor();
 const overflow = await phone.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
 check(!overflow, "phone width in dark mode has no sideways scroll");
 await phone.screenshot({ path: join(work, "phone-dark.png"), fullPage: true });
+
+// ---- the NEAR lookup: nothing is sent until asked; then only the digest and the keys go to the public RPC ----
+const cctx = await browser.newContext({ viewport: { width: 1000, height: 1300 } });
+const cp = await cctx.newPage();
+const cproblems = [];
+cp.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) cproblems.push("console: " + m.text()); });
+cp.on("pageerror", (e) => cproblems.push("pageerror: " + e.message));
+const calls = [];
+const elsewhere = [];
+let mode = "registered";
+cp.on("request", (r) => { if (!r.url().startsWith("file:") && !r.url().startsWith("https://rpc.testnet.fastnear.com")) elsewhere.push(r.url()); });
+await cctx.route("https://rpc.testnet.fastnear.com/**", async (route) => {
+  const body = JSON.parse(route.request().postData());
+  const args = JSON.parse(Buffer.from(body.params.args_base64, "base64").toString());
+  calls.push({ method: body.params.method_name, account: body.params.account_id, args, headers: route.request().headers() });
+  if (mode === "down") return route.fulfill({ status: 503, body: "busy" });
+  if (mode === "notregistry") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ jsonrpc: "2.0", id: 1, error: { name: "HANDLER_ERROR" } }) });
+  let result = null;
+  const m = body.params.method_name;
+  if (m === "get" && mode === "registered") result = { registered_by: "alice.testnet\u001b[2J", registered_at: "1700000000000000000", capsule_signer: args.capsule_signer, receipts: [], order: "4" };
+  if (m === "hardware" && mode === "registered" && calls.filter((c) => c.method === "hardware").length === 1) result = { signer: args.signer, tcb_status: "UpToDate", attested_at: "1700000100000000000", attested_by: "alice.testnet", compose_sha256: "cd".repeat(32), advisory_ids: [], mr_td: "ef".repeat(48) };
+  if (m === "order") result = { state: "Paid", amount: "497090000000000000000000", token: null, client: "carl.testnet", reviewer: "alice.testnet" };
+  return route.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, result: { result: Array.from(Buffer.from(JSON.stringify(result))) } }) });
+});
+await cp.goto(page_url);
+check((await cp.locator("#lookup").count()) === 0, "there is no NEAR lookup before a capsule is checked");
+await cp.setInputFiles("#file", join(work, "forged.kkg"));
+await cp.locator(".verdict").waitFor();
+check((await cp.locator("#lookup").count()) === 0, "nor under a capsule that is not valid");
+await cp.setInputFiles("#file", two);
+await cp.locator("#lookup").waitFor();
+check(calls.length === 0 && /sends this capsule's digest and the keys named in it/.test(await cp.locator("#chain").innerText()), "under a valid capsule the lookup is offered, says what it sends, and has sent nothing");
+await cp.locator("#lookup").click();
+await cp.getByText("Registered on NEAR").waitFor();
+const chainText = await cp.locator("#chain").innerText();
+const digest = createHash("sha256").update(bytes).digest("hex");
+const signerHex = Buffer.from(key, "base64url").toString("hex");
+const allowed = new Set(["capsule_sha256", "capsule_signer", "signer", "order_id"]);
+check(calls.length === 4 && calls.every((c) => c.account === "kakurega-registry-5d26f9.testnet" && Object.keys(c.args).every((k) => allowed.has(k))) && calls[0].args.capsule_sha256 === digest && calls[0].args.capsule_signer === signerHex, "the RPC was asked four things, with the digest, the signer key, two model keys and the order number and nothing else: " + JSON.stringify(calls.map((c) => [c.method, Object.keys(c.args)])));
+check(calls.every((c) => !("cookie" in c.headers) && !("referer" in c.headers)), "with no cookie and no referrer");
+check(/alice\.testnet\[2J/.test(chainText) && !chainText.includes("\u001b") && /2023-11-14 22:13:20 UTC/.test(chainText), "the registering account and the time are shown, with control characters from the chain removed");
+check(/2 of this capsule's model signatures were not registered/.test(chainText), "model signatures the chain does not hold for this capsule are counted");
+check(/Hardware record for model key/.test(chainText) && /Intel patch level then: UpToDate/.test(chainText) && /No hardware record at this registry for model key/.test(chainText), "a model key with a hardware record and one without are told apart");
+check(/Registered for order 4/.test(chainText) && /0\.49709 NEAR/.test(chainText) && /State: Paid/.test(chainText), "the order it was registered for is shown in NEAR");
+check(/does not establish/.test(chainText) && /claim in the capsule is true/.test(chainText) && /quote is recent/.test(chainText) && /GPU/.test(chainText), "and what the chain does not establish is said");
+await cp.screenshot({ path: join(work, "chain-registered.png"), fullPage: true });
+
+mode = "unregistered";
+await cp.locator("#lookup").click();
+await cp.getByText("Not registered on NEAR under this signing key").waitFor();
+check(/nobody registered this exact file/.test(await cp.locator("#chain").innerText()), "an unregistered capsule is said to be unregistered, not invalid");
+await cp.screenshot({ path: join(work, "chain-unregistered.png"), fullPage: true });
+mode = "down";
+await cp.locator("#lookup").click();
+await cp.getByRole("alert").filter({ hasText: "answered 503" }).waitFor();
+check((await cp.getByText("Registered on NEAR").count()) === 0, "a failing RPC is reported and no earlier result is left standing");
+mode = "notregistry";
+await cp.locator("#lookup").click();
+await cp.getByRole("alert").filter({ hasText: "does not answer as a Kakurega registry" }).waitFor();
+check(true, "an account that is not a registry is named as such");
+const before = calls.length;
+await cp.fill("#registry", "Not An Account");
+await cp.locator("#lookup").click();
+await cp.getByRole("alert").filter({ hasText: "not a NEAR account name" }).waitFor();
+await cp.selectOption("#net", "mainnet");
+check((await cp.inputValue("#registry")) === "", "no registry is assumed on mainnet");
+await cp.locator("#lookup").click();
+await cp.getByRole("alert").filter({ hasText: "not a NEAR account name" }).waitFor();
+check(calls.length === before, "a name that is not an account is refused before anything is sent");
+check(elsewhere.length === 0, "nothing was sent anywhere but the NEAR RPC: " + elsewhere.join(", "));
+check(cproblems.length === 0, "no console errors in the lookup: " + cproblems.join("; "));
+
+const cphone = await (await browser.newContext({ viewport: { width: 375, height: 900 }, colorScheme: "dark" })).newPage();
+await cphone.goto(page_url);
+await cphone.setInputFiles("#file", two);
+await cphone.locator("#lookup").waitFor();
+check(!(await cphone.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)), "the lookup section fits a phone in dark mode");
+await cphone.screenshot({ path: join(work, "chain-phone-dark.png"), fullPage: true });
+
+// LIVE, only when asked: the capsule that tests/e2e/chain_register.py registered on testnet, read by the page itself
+const liveCapsule = join(repo, "target/chain-register-tmp/review.kkg");
+if (process.env.KAKU_LIVE_CHAIN === "1") {
+  const { existsSync } = await import("node:fs");
+  if (!existsSync(liveCapsule)) {
+    check(false, "KAKU_LIVE_CHAIN=1 needs target/chain-register-tmp/review.kkg (run tests/e2e/chain_register.py with a testnet account first)");
+  } else {
+    const lp = await (await browser.newContext({ viewport: { width: 1000, height: 1200 } })).newPage();
+    await lp.goto(page_url);
+    await lp.setInputFiles("#file", liveCapsule);
+    await lp.locator("#lookup").waitFor();
+    await lp.locator("#lookup").click();
+    await lp.locator("#chain-out .verdict").waitFor({ timeout: 30000 });
+    const live = await lp.locator("#chain").innerText();
+    check(/Registered by\s+kakurega-[a-z0-9-]+\.testnet/.test(live) && /kakurega-registry-5d26f9\.testnet on NEAR testnet/.test(live), "LIVE: the page reads a real registration from NEAR testnet by itself");
+    await lp.screenshot({ path: join(work, "chain-live.png"), fullPage: true });
+  }
+}
 await browser.close();

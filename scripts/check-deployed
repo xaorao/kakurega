@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Is the registry on NEAR running exactly the contract built from this repository?
+
+Builds the contract here, hashes the result, and compares it with the code hash NEAR reports for the account. Reads only.
+
+  scripts/check-deployed [ACCOUNT] [--network testnet|mainnet] [--no-build]
+
+Exit 0 when they match, 1 when they differ, 2 when it could not be checked. The build is not the reproducible (Docker) one, so
+a match shows that this source, built on this machine with this toolchain, is what runs there; another machine may produce
+different bytes from the same source.
+"""
+import hashlib, json, subprocess, sys, urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+CONTRACT = ROOT / "contracts/kakurega-registry"
+WASM = CONTRACT / "target/near/kakurega_registry.wasm"
+DEFAULT = {"testnet": "kakurega-registry-5d26f9.testnet"}
+RPC = {"testnet": "https://rpc.testnet.fastnear.com", "mainnet": "https://rpc.mainnet.fastnear.com"}
+ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def base58_to_hex(text):
+    n = 0
+    for c in text:
+        if c not in ALPHABET:
+            raise ValueError("not base58")
+        n = n * 58 + ALPHABET.index(c)
+    return n.to_bytes(32, "big").hex()
+
+
+def main(argv):
+    args = [a for a in argv if not a.startswith("--")]
+    network = "testnet"
+    if "--network" in argv:
+        i = argv.index("--network")
+        network = argv[i + 1] if i + 1 < len(argv) else ""
+        args = [a for a in args if a != network]
+    if network not in RPC:
+        print("--network is testnet or mainnet")
+        return 2
+    account = args[0] if args else DEFAULT.get(network)
+    if not account:
+        print(f"no registry is known on {network}; name the account")
+        return 2
+    if "--no-build" not in argv:
+        b = subprocess.run(["cargo", "near", "build", "non-reproducible-wasm"], cwd=CONTRACT, capture_output=True, text=True)
+        if b.returncode != 0:
+            print("the contract did not build:\n" + (b.stderr or b.stdout)[-600:])
+            return 2
+    if not WASM.exists():
+        print(f"no built contract at {WASM.relative_to(ROOT)}")
+        return 2
+    built = hashlib.sha256(WASM.read_bytes()).hexdigest()
+    req = {"jsonrpc": "2.0", "id": 1, "method": "query", "params": {"request_type": "view_account", "finality": "final", "account_id": account}}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(RPC[network], data=json.dumps(req).encode(), headers={"content-type": "application/json"}), timeout=30) as r:
+            doc = json.load(r)
+        deployed = base58_to_hex(doc["result"]["code_hash"])
+    except KeyError:
+        print(f"{account} does not exist on NEAR {network}")
+        return 2
+    except Exception:  # the network, or an answer in an unexpected form
+        print(f"could not read {account} on NEAR {network}")
+        return 2
+    if deployed == "00" * 32:
+        print(f"{account} on NEAR {network} holds no contract")
+        return 1
+    print(f"built here : {built}")
+    print(f"on {network}: {deployed}  ({account})")
+    if built == deployed:
+        print("MATCH: the account runs exactly this build")
+        return 0
+    print("DIFFERENT: the account does not run this build (other source, another toolchain, or a redeploy)")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

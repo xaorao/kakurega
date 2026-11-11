@@ -2994,6 +2994,7 @@ version = "0.0.1"
 dependencies = [
  "axum",
  "crossterm",
+ "ed25519-dalek",
  "futures-util",
  "getrandom 0.3.4",
  "kk-backup",

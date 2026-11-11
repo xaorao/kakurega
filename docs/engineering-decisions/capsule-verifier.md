@@ -22,3 +22,8 @@ WASM build of the Rust verifier and the browser UI around the JS one; the keyed 
 
 ## Model receipts (NEAR loop step 3)
 - The release's `assurance` may carry `route_receipts`; both verifiers check them (shape, kind, key, signature, duplicates, cap) in the same order and agree on 45 shared vectors, 14 of them new. See `near-route.md`.
+
+## Finding: a capsule's key list was not authenticated (fixed)
+- Found by a hostile test of the registration ticket: a capsule with one byte of its `keys` entry changed still verified when the reader pinned the signer, because the pinned key replaced the list and the list was then never looked at. Without a pin, a second, unused key could be appended and the capsule stayed valid. No signature could be forged this way, but the same signed content could exist as many different files, each valid, which breaks anything that names a capsule by its file digest (the NEAR registry does).
+- Fix, in both verifiers: the key list must be exactly the one key that signed (`key_list` otherwise). Six shared vectors added (52 in all): an unused second key with and without a pin, another valid key under a pin, the signer listed twice, an empty list under a pin, 32 bytes that are no key under a pin. No earlier vector's verdict changed. Mutants: the rule removed, count only, identity only in Rust; removed and count only in JavaScript; 5 of 5 caught.
+- The reason is shown in words on the web, on the standalone page and in Hindi (unread by a person, like the rest of the Hindi text).

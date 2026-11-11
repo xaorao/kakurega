@@ -987,6 +987,7 @@ export const hi: Record<keyof typeof en, string> = {
   "reason.bad_signature": "एक हस्ताक्षर मेल नहीं खाता। हस्ताक्षर के बाद कैप्सूल या उसका कोई कथन बदला गया।",
   "reason.payload_not_canonical": "एक हस्ताक्षरित कथन सटीक आवश्यक रूप में नहीं है।",
   "reason.mixed_signers": "कथनों पर अलग-अलग कुंजियों के हस्ताक्षर हैं।",
+  "reason.key_list": "कैप्सूल की कुंजी-सूची में ठीक वही एक कुंजी नहीं है जिसने हस्ताक्षर किए: फ़ाइल हस्ताक्षर के बाद बदली गई है।",
   "reason.duplicate_release": "कैप्सूल में दो रिलीज़ कथन हैं।",
   "reason.release_missing": "कैप्सूल में कोई रिलीज़ कथन नहीं है।",
   "reason.release_shape": "रिलीज़ कथन गलत ढंग का है।",

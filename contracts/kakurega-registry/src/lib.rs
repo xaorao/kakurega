@@ -1131,6 +1131,36 @@ mod tests {
         r.register(DIGEST.into(), "00".repeat(32), "00".repeat(64), vec![]);
     }
 
+    // The same literals are asserted on the application side (`kk-evidence`, `rb01`), so the two cannot drift apart.
+    #[test]
+    fn rg19_the_message_and_the_receipts_digest_are_the_ones_the_application_signs() {
+        let r = fresh();
+        let one = |c: char| ReceiptArg {
+            signer: c.to_string().repeat(64),
+            model: "vendor/model".into(),
+            request_sha256: "1".repeat(64),
+            response_sha256: "2".repeat(64),
+            signature: "3".repeat(128),
+        };
+        let empty = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        assert_eq!(receipts_digest(&[]), empty);
+        assert_eq!(
+            r.binding_message(DIGEST.into(), vec![], "alice.testnet".parse().unwrap()),
+            format!("kakurega-register-v2:{DIGEST}:{empty}:alice.testnet")
+        );
+        let with = "73d428482db3202c6ad45ac6748bada43579da85141e4ebdd1ed68be2a974d84";
+        assert_eq!(receipts_digest(&[one('a'), one('b')]), with);
+        assert_eq!(
+            r.order_binding_message(
+                U64(7),
+                DIGEST.into(),
+                vec![one('a'), one('b')],
+                "rita.testnet".parse().unwrap()
+            ),
+            format!("kakurega-register-v2:{DIGEST}:{with}:rita.testnet:order:7")
+        );
+    }
+
     // ---- the hardware check ----
 
     use crate::hardware::{

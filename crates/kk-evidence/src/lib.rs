@@ -6,3 +6,4 @@ pub mod dsse;
 pub mod gate;
 pub mod hw;
 pub mod keys;
+pub mod registry;

@@ -438,6 +438,69 @@ impl Chain {
         ))
     }
 
+    /// Registers a capsule with what the owner's service prepared for it (`ticket`: the digest, the signing key, its signature
+    /// over the registry's message for the payer's account, and the model receipts). With an order in the ticket, the
+    /// registration is for that order and the contract pays it out. Returns the transaction and the entry as the chain holds it.
+    pub async fn register(
+        &self,
+        payer: &Payer,
+        ticket: &Value,
+    ) -> Result<(Sent, Value), ChainError> {
+        self.writable()?;
+        let field = |name: &str, len: usize| -> Result<&str, ChainError> {
+            ticket[name]
+                .as_str()
+                .filter(|s| is_hex(s, len))
+                .ok_or_else(|| {
+                    ChainError::Input(format!("the ticket's {name} is not {len} hex digits"))
+                })
+        };
+        let (digest, signer, signature) = (
+            field("capsule_sha256", 64)?,
+            field("capsule_signer", 64)?,
+            field("binding_signature", 128)?,
+        );
+        if ticket["account"] != json!(payer.account.as_str()) {
+            return Err(ChainError::Input(
+                "the ticket was made for another account than the one that pays".into(),
+            ));
+        }
+        let receipts = ticket["receipts"]
+            .as_array()
+            .ok_or_else(|| ChainError::Input("the ticket carries no receipt list".into()))?;
+        let mut args = json!({
+            "capsule_sha256": digest,
+            "capsule_signer": signer,
+            "binding_signature": signature,
+            "receipts": receipts,
+        });
+        let method = match ticket["order"].as_u64() {
+            Some(id) => {
+                args["order_id"] = json!(id.to_string());
+                "register_for_order"
+            }
+            None if ticket["order"].is_null() => "register",
+            None => {
+                return Err(ChainError::Input(
+                    "the ticket's order is not a number".into(),
+                ))
+            }
+        };
+        let sent = self
+            .send(
+                payer,
+                method,
+                args,
+                CALL_GAS,
+                NearToken::from_millinear(STORAGE_DEPOSIT_MILLINEAR),
+            )
+            .await?;
+        let entry = self.entry(digest, signer).await?.ok_or_else(|| {
+            ChainError::Answer("the registration was sent but is not on the chain".into())
+        })?;
+        Ok((sent, entry))
+    }
+
     /// Returns an unmet order to its client after the deadline. Anyone may send it.
     pub async fn refund_order(&self, payer: &Payer, id: u64) -> Result<Sent, ChainError> {
         self.send(

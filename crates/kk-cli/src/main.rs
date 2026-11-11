@@ -71,6 +71,7 @@ Usage:
   kaku verify CAPSULE [--pin KEY]   check a capsule offline (KEY: base64url public key)
   kaku chain hardware KEY | capsule FILE | order ID   what NEAR holds: a model key's hardware record, who registered a capsule, an order (reads only; --network, --registry, --json)
   kaku chain attest --model NAME --key-file FILE   have NEAR's own verifier check that model's hardware proof and record its signing key (testnet; the account in the key file pays)
+  kaku chain register JOB --key-file FILE [--order ID]   publish a delivered review's capsule digest and model receipts on NEAR, after showing exactly what becomes public (testnet)
 
 Options for every command: --data-dir DIR (default ~/.kakurega)";
 

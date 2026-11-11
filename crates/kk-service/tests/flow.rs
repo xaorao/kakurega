@@ -571,7 +571,7 @@ fn wait_for(w: &Web, id: &str, want: &[&str]) -> Value {
 
 #[test]
 fn sv01_the_whole_journey_over_http_ends_in_a_capsule_that_verifies() {
-    let (c, w, repo, _root, svc) = boot("flow", true);
+    let (c, w, repo, root, svc) = boot("flow", true);
     let (code, cfg) = w.get("/api/config");
     assert_eq!(code, 200);
     assert_eq!(cfg["route"]["simulated"], true);
@@ -696,6 +696,130 @@ fn sv01_the_whole_journey_over_http_ends_in_a_capsule_that_verifies() {
     assert_eq!(
         code, 409,
         "a delivered release cannot be delivered again: {twice}"
+    );
+
+    // The owner asks for what registers this capsule on NEAR, for one account and one order.
+    let ticket_path = format!("/admin/jobs/{id}/chain-ticket");
+    let (code, t) = admin(
+        &base,
+        &token,
+        "POST",
+        &ticket_path,
+        Some(json!({"account": "rita.testnet", "order": 3})),
+    );
+    assert_eq!(code, 200, "{t}");
+    let want = kk_evidence::registry::binding_message(
+        &capsule::sha256_hex(&bytes),
+        &report.receipts,
+        "rita.testnet",
+        Some(3),
+    )
+    .unwrap();
+    assert_eq!(
+        t["message"],
+        want.as_str(),
+        "the message is the registry's own, for this capsule"
+    );
+    assert!(want.ends_with(":rita.testnet:order:3"));
+    assert_eq!(t["capsule_sha256"], capsule::sha256_hex(&bytes).as_str());
+    let unhex = |h: &str| -> Vec<u8> {
+        (0..h.len() / 2)
+            .map(|i| u8::from_str_radix(&h[i * 2..i * 2 + 2], 16).unwrap())
+            .collect()
+    };
+    let key = ed25519_dalek::VerifyingKey::from_bytes(&svc.signer_public()).unwrap();
+    assert_eq!(
+        unhex(t["capsule_signer"].as_str().unwrap()),
+        svc.signer_public()
+    );
+    let sig: [u8; 64] = unhex(t["binding_signature"].as_str().unwrap())
+        .try_into()
+        .unwrap();
+    key.verify_strict(want.as_bytes(), &ed25519_dalek::Signature::from_bytes(&sig))
+        .expect("the capsule key signed exactly that message");
+    assert!(
+        t["published"].to_string().contains("digest")
+            && t["not_published"].to_string().contains("finding"),
+        "the answer says what goes on the chain and what does not: {t}"
+    );
+    // a plain registration is a different message, so one ticket cannot stand in for the other
+    let (_, plain) = admin(
+        &base,
+        &token,
+        "POST",
+        &ticket_path,
+        Some(json!({"account": "rita.testnet"})),
+    );
+    assert!(plain["message"]
+        .as_str()
+        .unwrap()
+        .ends_with(":rita.testnet"));
+    assert_ne!(plain["binding_signature"], t["binding_signature"]);
+    // nothing is signed for a name that is not an account, for an unknown review, or for a caller-chosen message
+    for bad in ["Rita", "rita.testnet:order:9", "a", "rita..testnet", ""] {
+        let (code, r) = admin(
+            &base,
+            &token,
+            "POST",
+            &ticket_path,
+            Some(json!({"account": bad})),
+        );
+        assert_eq!(
+            (code, r["error"]["code"].as_str()),
+            (400, Some("BAD_ACCOUNT")),
+            "{bad:?}: {r}"
+        );
+    }
+    let (code, _) = admin(
+        &base,
+        &token,
+        "POST",
+        "/admin/jobs/job-999/chain-ticket",
+        Some(json!({"account": "rita.testnet"})),
+    );
+    assert_eq!(code, 404);
+    let (code, extra) = admin(
+        &base,
+        &token,
+        "POST",
+        &ticket_path,
+        Some(json!({"account": "rita.testnet", "message": "sign this instead"})),
+    );
+    assert!(
+        code == 400 || code == 422,
+        "an extra field is refused, not ignored: {code} {extra}"
+    );
+    // a paired browser session is not the owner's terminal
+    let (code, session) = w.post(&ticket_path, json!({"account": "rita.testnet"}));
+    assert!(code == 401 || code == 403, "{code} {session}");
+    let log = log_text(&base, &token);
+    assert!(
+        log.contains("chain.ticket") && !log.contains("rita.testnet"),
+        "the log records that a ticket was made, not for whom"
+    );
+    // once the delivered file no longer verifies as ours, nothing is signed for it
+    // the delivered file is the one whose bytes the download returned
+    let on_disk = std::fs::read_dir(root.join("data").join("capsules"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| std::fs::read(p).is_ok_and(|b| b == bytes))
+        .expect("the delivered capsule file");
+    let mut changed = std::fs::read(&on_disk).unwrap();
+    let n = changed.len();
+    changed[n / 2] ^= 1;
+    std::fs::write(&on_disk, changed).unwrap();
+    let (code, gone) = admin(
+        &base,
+        &token,
+        "POST",
+        &ticket_path,
+        Some(json!({"account": "rita.testnet"})),
+    );
+    assert_eq!(
+        (code, gone["error"]["code"].as_str()),
+        (409, Some("CAPSULE_NOT_OURS")),
+        "{gone}"
     );
 }
 

@@ -98,3 +98,4 @@ check(refused === 422, `a method with a tools field is refused with 422 (status 
 
 check(problems.length === 0, "no console errors: " + problems.join("; "));
 await browser.close();
+server.kill();
