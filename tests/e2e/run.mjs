@@ -189,7 +189,8 @@ page.on("requestfailed", async (r) => {
   if (r.url().endsWith("/api/chat/stream") && r.failure()?.errorText === "net::ERR_ABORTED" && response?.status() === 200) return;
   // Harness artifact too: the first screen asks whether the sample is loaded (a read that changes nothing), and this script
   // reloads or leaves that screen without waiting for it. A read cut off by leaving the page is not a failed request.
-  if (r.url().endsWith("/api/sample") && r.method() === "GET" && r.failure()?.errorText === "net::ERR_ABORTED") return;
+  // The same for the privacy page's list of what left this computer, which is read again every few seconds.
+  if (["/api/sample", "/api/outbound"].some((p) => r.url().endsWith(p)) && r.method() === "GET" && r.failure()?.errorText === "net::ERR_ABORTED") return;
   if (r.url().endsWith("/api/chat/stream") && r.failure()?.errorText === "net::ERR_CONNECTION_RESET" && excusedRequests < injectedResets) {
     excusedRequests++;
     return;
