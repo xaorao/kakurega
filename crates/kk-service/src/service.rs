@@ -4231,6 +4231,8 @@ async fn experts_list(axum::Extension(svc): Svc) -> Json<Value> {
         // offered for team runs only, and only when it is installed: the coding agent on this computer, which is not
         // private and is asked nothing without the owner's yes on the exact text
         "teammates": svc.runner.handoff_tool().map(|tool| vec![json!({"id": team::OUTSIDE_SEAT, "name": tool, "summary": "The coding agent installed on this computer. Not private: each task for it is shown to you first and sent only on your yes."})]).unwrap_or_default(),
+        // offered for team runs only: the seat that reviews the project's files in the sandbox
+        "workers": [{"id": team::REVIEW_SEAT, "name": team::REVIEW_NAME, "summary": team::REVIEW_SUMMARY}],
         "min": MIN_PARTICIPANTS, "max": MAX_PARTICIPANTS,
     }))
 }

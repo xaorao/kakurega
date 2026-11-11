@@ -130,12 +130,136 @@ impl Drop for DriverGuard {
 
 /// The seat of the coding agent installed on this computer. It is never in a plan unless the owner named it.
 pub(super) const OUTSIDE_SEAT: &str = "claude-code";
+/// The seat whose task is a sandboxed review of the run's project folder. It reads the project's files through the same
+/// worker, sandbox and broker every review uses; no expert reads files any other way.
+pub(super) const REVIEW_SEAT: &str = "project-review";
+pub(super) const REVIEW_NAME: &str = "Project reviewer";
+pub(super) const REVIEW_SUMMARY: &str = "Reviews the files of the run's project folder in the sealed sandbox and reports only the defects it could reproduce. It is the same review as New review, whatever its task says, so give it the task of reviewing the project. It takes minutes, and it needs a project that has a folder.";
 const OUTSIDE_SUMMARY: &str = "The coding agent installed on this computer. Not private: each task for it is shown to the owner first and sent only on their yes. Give it only a task that needs none of the owner's files.";
 /// How a question to the owner about a hand-over begins, so it is told apart from an expert's own question.
 const HANDOVER_MARK: &str = "[hand-over]";
 
 impl Service {
     /// The seat for an id: a built-in expert, or one of the owner's methods approved for exactly its current text.
+    /// The folder of a project, when the project has one this program may still read.
+    fn team_project_folder(&self, project: Option<&str>) -> Option<std::path::PathBuf> {
+        let name = project?;
+        let folder: Option<String> = {
+            let store = self.store.lock().expect("lock");
+            store
+                .connection()
+                .query_row("SELECT folder FROM projects WHERE name = ?1", [name], |r| {
+                    r.get(0)
+                })
+                .ok()
+                .flatten()
+        };
+        self.allowed_dir(&folder?)
+    }
+
+    /// A task whose expert is the project reviewer: an ordinary review of the run's project folder is started (it is
+    /// listed with the other reviews, runs in the sandbox, and can be stopped), and what it could reproduce becomes the
+    /// task's result. True when the owner stopped the run while it worked.
+    ///
+    /// The findings are words about the owner's files, so they are handed on only while the model the other experts use
+    /// is on this computer; a review's findings otherwise leave only through a release the owner approves.
+    fn team_review_task(self: &Arc<Self>, id: &str, n: usize, run: &RunRow) -> bool {
+        let fail = |why: &str| self.team_set_task(id, n, State::Failed, "", why, "");
+        if self.runner.route_info()["class"] != "device_only" {
+            fail("the model in use is not on this computer, and a review's findings are handed to other experts only when it is; choose the model on this computer in Settings, or start a review yourself");
+            return false;
+        }
+        let Some(folder) = self.team_project_folder(run.project.as_deref()) else {
+            fail("the run's project has no folder this program may read; give the project a folder under Projects and plan again");
+            return false;
+        };
+        let job = match self.start_job(&folder.to_string_lossy(), &format!("team run {id}")) {
+            Ok(j) => j,
+            Err(why) => {
+                fail(&format!("the review could not start: {why}"));
+                return false;
+            }
+        };
+        let mut asked_to_stop = false;
+        let state = loop {
+            let state = {
+                let g = self.inner.lock().expect("lock");
+                g.jobs.get(&job).map(|j| j.state.clone())
+            };
+            match state {
+                Some(JobState::Running) => {
+                    if !asked_to_stop && self.team_stop_asked(id) {
+                        asked_to_stop = true;
+                        self.stop_ask(&job);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                other => break other,
+            }
+        };
+        if asked_to_stop {
+            return true;
+        }
+        match state {
+            Some(JobState::Failed(why)) => fail(&format!(
+                "the review ({job}) failed: {}",
+                why.chars()
+                    .filter(|c| !c.is_control())
+                    .take(200)
+                    .collect::<String>()
+            )),
+            None => fail("the review was removed before it finished"),
+            Some(_) => {
+                let snap = self.inner.lock().expect("lock").snaps.get(&job).cloned();
+                let findings: Vec<&crate::snapshot::SnapFinding> = snap
+                    .as_ref()
+                    .map(|s| s.findings.iter().filter(|f| f.reproduced).collect())
+                    .unwrap_or_default();
+                let not_confirmed = snap
+                    .as_ref()
+                    .map_or(0, |s| s.findings.len() - findings.len() + s.unparsed);
+                let mut text = format!(
+                    "Review {job} of the project folder: {} defect(s) the sandbox reproduced{}.\n",
+                    findings.len(),
+                    if not_confirmed > 0 {
+                        format!(", {not_confirmed} suspicion(s) it could not reproduce (left out)")
+                    } else {
+                        String::new()
+                    }
+                );
+                for (i, f) in findings.iter().enumerate() {
+                    // a finding's words come from a model that read the project: a line that holds a key is not handed on
+                    let why = if kk_secrets::holds_secret(&f.explanation)
+                        || kk_secrets::spoken::holds(&f.explanation)
+                    {
+                        "(its explanation holds what looks like a key and is left out)"
+                    } else {
+                        f.explanation.trim()
+                    };
+                    let title = if kk_secrets::holds_secret(&f.title) {
+                        "(title left out)"
+                    } else {
+                        f.title.trim()
+                    };
+                    text.push_str(&format!(
+                        "{}. {} ({}:{})\n   {}\n",
+                        i + 1,
+                        title,
+                        f.file,
+                        f.line,
+                        why
+                    ));
+                }
+                if findings.is_empty() {
+                    text.push_str("Nothing was confirmed. That is not proof that the project has no defect.\n");
+                }
+                let kept: String = text.chars().take(MAX_RESULT_CHARS).collect();
+                self.team_set_task(id, n, State::Done, &kept, &format!("from the sandboxed review {job}; open it under Reviews for the files and the proof"), "");
+            }
+        }
+        false
+    }
+
     /// A task whose expert is the coding agent installed on this computer. Nothing is sent on the lead's word: the task
     /// stops and asks the owner, showing the exact text and its fingerprint, and only the owner's "yes" to that very text
     /// sends it, once. Any other answer skips the hand-over. The text is the task and the earlier results it builds on,
@@ -231,6 +355,16 @@ impl Service {
 
     fn team_seat(&self, id: &str) -> Option<(Seat, String)> {
         // the coding agent installed on this computer can be given a task, when there is one and the owner named it
+        if id == REVIEW_SEAT {
+            return Some((
+                Seat {
+                    id: id.to_string(),
+                    name: REVIEW_NAME.to_string(),
+                    instruction: String::new(),
+                },
+                REVIEW_SUMMARY.to_string(),
+            ));
+        }
         if id == OUTSIDE_SEAT {
             return self.runner.handoff_tool().map(|tool| {
                 (
@@ -640,6 +774,22 @@ impl Service {
                 .map(|(a, b)| (a.as_str(), b.as_str()))
                 .collect();
             let question = team::task_question(&run.goal, n, total, &t.task, &earlier, &t.asked);
+            if t.expert == REVIEW_SEAT {
+                let stopped = self.team_review_task(id, n, &run);
+                self.log_event(
+                    "team.task",
+                    id,
+                    &[
+                        ("task", n.into()),
+                        ("attempt", ((t.attempts + 1) as usize).into()),
+                    ],
+                );
+                if stopped {
+                    self.team_unbegin_task(id, n);
+                    return "stopped";
+                }
+                continue;
+            }
             if t.expert == OUTSIDE_SEAT {
                 self.team_outside_task(id, n, &run.goal, total, t, &earlier);
                 self.log_event(
@@ -835,6 +985,14 @@ pub(super) async fn team_plan(axum::Extension(svc): Svc, Json(b): Json<PlanBody>
             "a lead can hand work to at most 24 experts",
         );
     }
+    if ids.iter().any(|i| i == REVIEW_SEAT) && svc.team_project_folder(project.as_deref()).is_none()
+    {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "NO_PROJECT_FOLDER",
+            "the project reviewer needs a project that has a folder: choose one for this run, or give the project a folder under Projects",
+        );
+    }
     let mut roster: Vec<(String, String)> = Vec::new();
     for id in &ids {
         match svc.team_seat(id) {
@@ -941,6 +1099,9 @@ pub(super) async fn team_plan(axum::Extension(svc): Svc, Json(b): Json<PlanBody>
 
 /// The name shown for an expert id.
 fn seat_name(id: &str) -> String {
+    if id == REVIEW_SEAT {
+        return REVIEW_NAME.to_string();
+    }
     match id.strip_prefix(METHOD_PREFIX) {
         Some(name) => name.to_string(),
         None => experts::find(id)

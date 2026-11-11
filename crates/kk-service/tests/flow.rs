@@ -19018,6 +19018,8 @@ struct TeamRunner {
     die: std::sync::atomic::AtomicBool,
     /// When set, a task's answer says it reached the model's length limit.
     cut: std::sync::atomic::AtomicBool,
+    /// When set, the model is said to be on confidential hardware elsewhere, not on this computer.
+    away: std::sync::atomic::AtomicBool,
 }
 
 impl TeamRunner {
@@ -19075,6 +19077,9 @@ impl JobRunner for TeamRunner {
     fn route_info(&self) -> Value {
         let mut v = self.inner.route_info();
         v["context_tokens"] = json!(4096);
+        if self.away.load(std::sync::atomic::Ordering::SeqCst) {
+            v["class"] = json!("verified_tee");
+        }
         v
     }
     fn chat(&self, m: Vec<kk_types::chat::ChatMessage>) -> Result<kk_service::ChatReply, String> {
@@ -19138,6 +19143,7 @@ fn team_runner(plan: &str) -> Arc<TeamRunner> {
         hold: Default::default(),
         die: Default::default(),
         cut: Default::default(),
+        away: Default::default(),
     })
 }
 
@@ -22566,5 +22572,117 @@ fn sv265_a_signed_catalog_lists_a_publishers_packs_and_only_the_exact_listed_fil
         ),
         (Some("update_available"), Some("1.0.0")),
         "{v}"
+    );
+}
+
+#[test]
+fn sv266_the_project_reviewer_runs_a_real_review_of_the_runs_project_and_hands_on_only_what_was_reproduced(
+) {
+    const PLAN: &str = "1 | project-review | after: - | Review the project.\n2 | plain-writer | after: 1 | Say what was found in three lines.\n";
+    let (root, _repo) = repo_copy("team-review");
+    let runner = team_runner(PLAN);
+    let (_c, w) = team_service(&root, runner.clone());
+    // without a project that has a folder the seat cannot be planned, and it is never used unless the owner names it
+    let (s, v) = w.post(
+        "/api/team",
+        json!({"goal": "Review it.", "experts": ["project-review", "plain-writer"]}),
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (400, Some("NO_PROJECT_FOLDER")),
+        "{v}"
+    );
+    let (s, v) = w.post("/api/team", json!({"goal": "Review it."}));
+    assert_ne!(s, 201, "the lead may not use the reviewer on its own: {v}");
+    let (s, r) = w.post(
+        "/api/projects",
+        json!({"name": "kestrel", "folder": root.join("repo").to_string_lossy()}),
+    );
+    assert_eq!(s, 200, "{r}");
+    let (s, v) = w.post("/api/team", json!({"goal": "Review the project and sum it up.", "experts": ["project-review", "plain-writer"], "project": "kestrel"}));
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["tasks"][0]["expert_name"], "Project reviewer", "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        w.get("/api/jobs").1["jobs"].as_array().map_or(0, Vec::len),
+        0,
+        "a plan starts no review"
+    );
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(&w, &id, &["done"]);
+    assert_eq!(team_states(&v), ["done", "done"], "{v}");
+    let result = v["tasks"][0]["result"].as_str().unwrap();
+    assert!(
+        result.contains("1 defect(s) the sandbox reproduced")
+            && result.contains("Token not revoked (payments/auth/session.py:"),
+        "{result}"
+    );
+    assert!(
+        v["tasks"][0]["note"]
+            .as_str()
+            .unwrap()
+            .contains("from the sandboxed review job-"),
+        "{v}"
+    );
+    // it was an ordinary review: listed with the others, for this run, and nothing was released
+    let jobs = w.get("/api/jobs").1;
+    let job = &jobs["jobs"][0];
+    assert_eq!(job["recipient"], json!(format!("team run {id}")), "{jobs}");
+    assert!(job["delivered"].is_null(), "{job}");
+    // the next expert was given the finding inside a frame, as data
+    let seen = runner.seen.lock().unwrap().clone();
+    let later: String = seen
+        .last()
+        .unwrap()
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        seen.iter().any(|m| m
+            .iter()
+            .any(|x| x.content.contains("<<<expert Project reviewer>>>")
+                && x.content.contains("Token not revoked"))),
+        "{later}"
+    );
+    // the reviewer itself asked no chat model: its work is the sandboxed review
+    assert_eq!(runner.task_calls(), [2]);
+}
+
+#[test]
+fn sv267_a_reviews_findings_are_not_handed_to_experts_whose_model_is_elsewhere() {
+    const PLAN: &str = "1 | project-review | after: - | Review the project.\n2 | plain-writer | after: 1 | Say what was found.\n";
+    let (root, _repo) = repo_copy("team-review-away");
+    let runner = team_runner(PLAN);
+    let (_c, w) = team_service(&root, runner.clone());
+    w.post(
+        "/api/projects",
+        json!({"name": "kestrel", "folder": root.join("repo").to_string_lossy()}),
+    );
+    let (s, v) = w.post("/api/team", json!({"goal": "Review the project.", "experts": ["project-review", "plain-writer"], "project": "kestrel"}));
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    runner.away.store(true, std::sync::atomic::Ordering::SeqCst);
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(&w, &id, &["done", "failed", "partial"]);
+    assert_eq!(v["tasks"][0]["state"], json!("failed"), "{v}");
+    assert!(
+        v["tasks"][0]["note"]
+            .as_str()
+            .unwrap()
+            .contains("not on this computer"),
+        "{v}"
+    );
+    assert_eq!(
+        w.get("/api/jobs").1["jobs"].as_array().map_or(0, Vec::len),
+        0,
+        "no review was started"
+    );
+    let seen = runner.seen.lock().unwrap().clone();
+    assert!(
+        !seen
+            .iter()
+            .any(|m| m.iter().any(|x| x.content.contains("Token not revoked"))),
+        "nothing about the project reached the model"
     );
 }

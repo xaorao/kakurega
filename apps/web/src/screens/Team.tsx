@@ -9,7 +9,7 @@ import { t } from "../i18n";
 export function Team(props: { id?: string }) {
   // a list that could not be read is said so with a way to try again, never shown as "no experts" or "no runs"
   const [roster, { refetch: refetchRoster }] = createResource(() => api.experts().catch(() => null));
-  const everyone = createMemo<ExpertInfo[]>(() => [...(roster()?.experts ?? []), ...(roster()?.yours ?? []).map((y) => ({ ...y, group: t("rt.yours") })), ...(roster()?.teammates ?? []).map((y) => ({ ...y, group: t("team.outside") }))]);
+  const everyone = createMemo<ExpertInfo[]>(() => [...(roster()?.experts ?? []), ...(roster()?.yours ?? []).map((y) => ({ ...y, group: t("rt.yours") })), ...(roster()?.workers ?? []).map((y) => ({ ...y, group: t("team.workers") })), ...(roster()?.teammates ?? []).map((y) => ({ ...y, group: t("team.outside") }))]);
   const [runs, { refetch: refetchRuns }] = createResource(() => api.teamRuns().catch(() => null));
   const [goal, setGoal] = createSignal("");
   const [allowed, setAllowed] = createSignal<string[]>([]);
@@ -62,6 +62,9 @@ export function Team(props: { id?: string }) {
     }
   };
 
+  // the project the run is about: its notes are offered to the experts, and its folder is what the project reviewer reads
+  const [projects] = createResource(() => api.projects().then((r) => r.projects.filter((p) => p.listed), () => []));
+  const [project, setProject] = createSignal("");
   // files for the whole run: read on this computer like a chat's files, and given to every expert as checked data
   const [files, setFiles] = createSignal<AttachmentSummary[]>([]);
   const [fileNote, setFileNote] = createSignal("");
@@ -90,7 +93,7 @@ export function Team(props: { id?: string }) {
     setError("");
     setPlanning(true);
     setConfirmDelete(false);
-    api.teamPlan(goal().trim(), allowed(), files().map((f) => f.id)).then(
+    api.teamPlan(goal().trim(), allowed(), files().map((f) => f.id), project()).then(
       (r) => {
         show(r);
         setAnswers({});
@@ -149,6 +152,14 @@ export function Team(props: { id?: string }) {
       <form class="card stack" onSubmit={plan}>
         <label for="team-goal">{t("team.goal")}</label>
         <textarea id="team-goal" rows="3" maxlength="4000" value={goal()} disabled={planning()} onInput={(e) => setGoal(e.currentTarget.value)} />
+        <Show when={(projects() ?? []).length > 0}>
+          <label for="team-project">{t("team.project")}</label>
+          <select id="team-project" value={project()} disabled={planning()} onChange={(e) => setProject(e.currentTarget.value)}>
+            <option value="">{t("team.projectNone")}</option>
+            <For each={projects() ?? []}>{(p) => <option value={p.name}>{p.folder_available ? t("team.projectWithFolder", { name: p.name }) : p.name}</option>}</For>
+          </select>
+          <p class="muted">{t("team.projectHelp")}</p>
+        </Show>
         <div class="stack team-files">
           <div class="actions">
             <input ref={picker} id="team-files" type="file" multiple hidden aria-label={t("files.attach")} onChange={(e) => { void addFiles(e.currentTarget.files); e.currentTarget.value = ""; }} />
