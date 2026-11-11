@@ -18333,14 +18333,24 @@ fn sv224_the_owner_sees_the_input_schema_the_model_will_see_and_it_is_cleaned() 
 fn sv225_a_program_whose_contents_changed_since_it_was_added_is_refused_until_the_owner_adds_it_again(
 ) {
     let (_c, w, _seen, root) = instructions_service("mcp-hash");
+    // a small script that starts the stand-in server: its contents can be changed and it still runs, which a compiled
+    // program with bytes added to it does not always do (the system may refuse a program whose signature no longer fits)
     let copy = root.join("fake_copy");
-    std::fs::copy(fake_mcp_path(), &copy).unwrap();
+    std::fs::write(
+        &copy,
+        format!("#!/bin/sh\nexec '{}' \"$@\"\n", fake_mcp_path()),
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     let body = json!({"name": "srv", "program": copy.to_string_lossy(), "args": [], "env": {"FAKE_MODE": "ok"}});
     assert_eq!(w.post("/api/mcp/servers", body.clone()).0, 200);
     assert_eq!(w.post("/api/mcp/discover", json!({"name": "srv"})).0, 200);
     // the program file is replaced by something else
     let mut bytes = std::fs::read(&copy).unwrap();
-    bytes.extend_from_slice(b"\0changed");
+    bytes.extend_from_slice(b"# changed\n");
     std::fs::write(&copy, bytes).unwrap();
     let (s, v) = w.post("/api/mcp/discover", json!({"name": "srv"}));
     assert_eq!(s, 422, "{v}");
