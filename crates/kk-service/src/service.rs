@@ -423,6 +423,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS methods(name TEXT PRIMARY KEY, body TEXT NOT NULL, hash TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS method_approvals(name TEXT PRIMARY KEY, hash TEXT NOT NULL, approved_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS hidden_names(name TEXT PRIMARY KEY, added INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS saved_prompts(name TEXT PRIMARY KEY, text TEXT NOT NULL, added INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS break_counter(id INTEGER PRIMARY KEY CHECK (id = 1), attempts INTEGER NOT NULL, leaks INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS team_runs(id TEXT PRIMARY KEY, goal TEXT NOT NULL, project TEXT, status TEXT NOT NULL, final TEXT, final_note TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL, updated INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS team_tasks(run TEXT NOT NULL, n INTEGER NOT NULL, expert TEXT NOT NULL, expert_name TEXT NOT NULL, after TEXT NOT NULL, task TEXT NOT NULL, state TEXT NOT NULL, result TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', question TEXT NOT NULL DEFAULT '', asked TEXT NOT NULL DEFAULT '[]', attempts INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(run, n));
@@ -1228,6 +1229,7 @@ mod meeting;
 mod methods;
 mod outbound;
 mod packs;
+mod prompts;
 mod share;
 mod swap;
 mod team;
@@ -9944,6 +9946,7 @@ impl Extension for Routes {
                 get(swap::names_get).post(swap::names_set),
             )
             .route("/api/outbound", get(outbound::list))
+            .route("/api/prompts", get(prompts::list).post(prompts::change))
             .route("/api/route/options", get(swap::route_options))
             .route("/api/route/choose", post(swap::route_choose))
             .route("/api/meeting-notes", post(meeting::notes))

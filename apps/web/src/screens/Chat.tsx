@@ -7,6 +7,7 @@ import { afterInput, closedAtStart, matches as slashMatches, onKey as slashKey, 
 import { batch, createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { api, ApiError, streamChat, type AttachmentRead, type AttachmentSummary, type ChatHit, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
 import { t } from "../i18n";
+import { SavedPrompts } from "../components/SavedPrompts";
 import { Markdown } from "../components/Markdown";
 import { HistoryPicker } from "../components/HistoryPicker";
 import { SentView } from "../components/SentView";
@@ -1187,6 +1188,7 @@ export function Chat() {
             }
           }}
         />
+        <SavedPrompts text={text} onUse={(p) => { setText(p); box?.focus(); }} />
         <Show when={slashOpen()}>
           <Show
             when={slashRows().length > 0}

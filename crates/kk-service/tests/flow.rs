@@ -21385,3 +21385,109 @@ fn sv254_what_left_this_computer_lists_questions_to_a_model_elsewhere_and_what_w
         "{o}"
     );
 }
+
+#[test]
+fn sv255_saved_prompts_are_kept_replaced_by_name_removed_and_never_hold_a_secret() {
+    let (_c, w, _root) = file_service("prompts", FileRunner::new("http://127.0.0.1:11434", 16384));
+    assert_eq!(w.get("/api/prompts").1["prompts"], json!([]));
+    let key = format!(
+        "{}-{}",
+        "sk-ant", "api03-abcdefghijklmnopqrstuvwxyz0123456789"
+    );
+    for (bad, why) in [
+        (json!({"name": " ", "text": "x"}), "name is 1 to 60"),
+        (
+            json!({"name": "n".repeat(61), "text": "x"}),
+            "name is 1 to 60",
+        ),
+        (json!({"name": "ok", "text": "  "}), "1 to 4,000"),
+        (
+            json!({"name": "ok", "text": "x".repeat(4001)}),
+            "1 to 4,000",
+        ),
+        (
+            json!({"name": "ok", "text": format!("use {key}")}),
+            "looks like a secret",
+        ),
+        (json!({"name": "ok"}), "give a name and a text"),
+        (
+            json!({"name": "ok", "text": "x", "remove": "ok"}),
+            "give a name and a text",
+        ),
+    ] {
+        let (s, r) = w.post("/api/prompts", bad.clone());
+        assert_eq!(
+            (s, r["error"]["code"].as_str()),
+            (422, Some("PROMPT_REFUSED")),
+            "{bad}: {r}"
+        );
+        assert!(r["error"]["message"].as_str().unwrap().contains(why), "{r}");
+    }
+    assert_ne!(
+        w.post(
+            "/api/prompts",
+            json!({"name": "a", "text": "b", "run": true})
+        )
+        .0,
+        200
+    );
+    let (s, r) = w.post("/api/prompts", json!({"name": "  Weekly   summary ", "text": "  Summarise this week in five bullets.\nPlain words.  "}));
+    assert_eq!((s, r["changed"].clone()), (200, json!(true)), "{r}");
+    assert_eq!(r["prompts"][0]["name"], json!("Weekly summary"));
+    assert_eq!(
+        r["prompts"][0]["text"],
+        json!("Summarise this week in five bullets.\nPlain words.")
+    );
+    w.post(
+        "/api/prompts",
+        json!({"name": "Bug report", "text": "Write a bug report from these notes."}),
+    );
+    // the same name in another case replaces, it does not add
+    let (_, r) = w.post(
+        "/api/prompts",
+        json!({"name": "weekly summary", "text": "Three bullets."}),
+    );
+    let names: Vec<&str> = r["prompts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["Bug report", "weekly summary"]);
+    assert_eq!(r["prompts"][1]["text"], json!("Three bullets."));
+    let (_, r) = w.post("/api/prompts", json!({"remove": "BUG REPORT"}));
+    assert_eq!(
+        (r["changed"].clone(), r["prompts"].as_array().unwrap().len()),
+        (json!(true), 1)
+    );
+    assert_eq!(
+        w.post("/api/prompts", json!({"remove": "not there"})).1["changed"],
+        json!(false)
+    );
+    // the limit: a hundred, and the hundred-and-first is refused while replacing one still works
+    for i in 0..99 {
+        assert_eq!(
+            w.post(
+                "/api/prompts",
+                json!({"name": format!("p{i}"), "text": "t"})
+            )
+            .0,
+            200
+        );
+    }
+    assert_eq!(
+        w.post("/api/prompts", json!({"name": "one too many", "text": "t"}))
+            .0,
+        422
+    );
+    assert_eq!(
+        w.post("/api/prompts", json!({"name": "p5", "text": "replaced"}))
+            .0,
+        200
+    );
+    let log = w.get("/api/log").1.to_string();
+    assert!(
+        log.contains("prompt.saved") && !log.contains("Three bullets") && !log.contains("eekly"),
+        "{log}"
+    );
+}
