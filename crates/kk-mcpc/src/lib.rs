@@ -260,7 +260,20 @@ impl Server {
             if let Some(d) = &config.cwd {
                 cmd.current_dir(d);
             }
-            let mut child = cmd.spawn().map_err(|e| McpError::Start(e.to_string()))?;
+            // A program file that was written a moment ago can be refused as "text file busy" while any process still
+            // holds it open for writing. That passes by itself, so it is tried again a few times before it counts as a
+            // failure to start.
+            let mut tries = 0;
+            let mut child = loop {
+                match cmd.spawn() {
+                    Ok(c) => break c,
+                    Err(e) if e.raw_os_error() == Some(26) && tries < 5 => {
+                        tries += 1;
+                        std::thread::sleep(std::time::Duration::from_millis(40 * tries));
+                    }
+                    Err(e) => return Err(McpError::Start(e.to_string())),
+                }
+            };
             let (Some(stdin), Some(stdout), Some(mut stderr)) =
                 (child.stdin.take(), child.stdout.take(), child.stderr.take())
             else {
