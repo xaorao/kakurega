@@ -106,6 +106,11 @@ pub enum Event {
         id: u64,
         text: String,
     },
+    /// One event of a roundtable for request `id`: an expert being asked, a piece of its answer, its answer, or the resolution.
+    Table {
+        id: u64,
+        line: Value,
+    },
     Tick,
     /// The terminal reported that it gained (true) or lost (false) the owner's focus.
     Focus(bool),
@@ -122,6 +127,9 @@ pub enum Kind {
 
 /// The title of an answer to `/aside`: shown on the screen, and left out of the conversation text that is searched, copied and exported.
 pub const ASIDE_TITLE: &str = "Aside";
+/// Every card of a roundtable has a title that starts with this. Like an aside, a roundtable asked in the terminal is not
+/// part of the conversation and is not saved.
+pub const TABLE_TITLE: &str = "Roundtable";
 
 /// The title of the card that lists what `/transcript` found.
 const SEARCH_TITLE: &str = "Search in this conversation";
@@ -174,6 +182,8 @@ enum Intent {
     HistoryLoad,
     HistorySave,
     Aside,
+    Experts,
+    Roundtable,
     PiiShow,
     PiiEdit,
     HistoryClear,
@@ -411,6 +421,8 @@ pub struct App {
     pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     live: Option<(usize, String)>,
     pub chat_waiting: bool,
+    /// The names of the experts at the running roundtable, by id.
+    pub table_names: std::collections::BTreeMap<String, String>,
     pub approver: Option<kk_evidence::approval::ApproverKey>,
     pub fixes_seen: Vec<(String, usize, String, bool)>,
     /// Addresses suggested by the last search, numbered from 1 for /read.
@@ -523,6 +535,7 @@ impl App {
             cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             live: None,
             chat_waiting: false,
+            table_names: Default::default(),
             approver: None,
             editor_request: None,
             clipboard_request: None,
@@ -1439,6 +1452,12 @@ impl App {
                 Vec::new()
             }
             Event::Resp(r) => self.on_resp(r),
+            Event::Table { id, line } => {
+                if matches!(self.pending.get(&id), Some(Intent::Roundtable)) {
+                    self.on_table(&line);
+                }
+                Vec::new()
+            }
             Event::Delta { id, text } => {
                 if matches!(self.pending.get(&id), Some(Intent::Chat)) {
                     let text = clean(&text);
@@ -3222,6 +3241,38 @@ impl App {
                     )],
                 }
             }
+            Command::Roundtable(None) => {
+                vec![self.req(Intent::Experts, false, Method::Get, "/api/experts", None)]
+            }
+            Command::Roundtable(Some((experts, question))) => {
+                if self.chat_waiting {
+                    self.say(
+                        Kind::Warn,
+                        "An answer is still arriving. Ask the roundtable when it is finished.",
+                    );
+                    return Vec::new();
+                }
+                // no session id is sent, so nothing is appended to the kept conversation
+                let mut body = json!({"message": question, "experts": experts});
+                if let Some(p) = &self.chat_project {
+                    body["project"] = json!(p);
+                }
+                self.chat_waiting = true;
+                self.esc_armed = 0;
+                self.live = None;
+                self.table_names.clear();
+                self.cancel
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                let mut req = self.req(
+                    Intent::Roundtable,
+                    false,
+                    Method::Post,
+                    "/api/chat/roundtable",
+                    Some(body),
+                );
+                req.stream = true;
+                vec![req]
+            }
             Command::Aside(text) => {
                 if self.chat_waiting {
                     self.say(
@@ -3362,7 +3413,8 @@ impl App {
                     blocks.push(format!("You: {line}"));
                 }
                 // what a search found is about the conversation, not part of it
-                (_, Some(t)) if t == SEARCH_TITLE || t == ASIDE_TITLE => {}
+                (_, Some(t))
+                    if t == SEARCH_TITLE || t == ASIDE_TITLE || t.starts_with(TABLE_TITLE) => {}
                 (_, Some(t)) => blocks.push(format!("{t}:\n{}", c.lines.join("\n"))),
                 (_, None) => blocks.push(c.lines.join("\n")),
             }
@@ -3507,10 +3559,110 @@ impl App {
         }
     }
 
+    /// Shows one event of a roundtable: a card per expert that fills as the answer arrives, then the resolution.
+    fn on_table(&mut self, v: &Value) {
+        let id = v["expert"].as_str().unwrap_or("").to_string();
+        if let Some(n) = v["name"].as_str() {
+            self.table_names.insert(id.clone(), clean(n));
+        }
+        let title = format!(
+            "{TABLE_TITLE}: {}",
+            self.table_names
+                .get(&id)
+                .cloned()
+                .unwrap_or_else(|| clean(&id))
+        );
+        if v["state"] == "asking" {
+            self.push(Kind::Info, Some(&title), vec!["(being asked)".into()]);
+            self.live = Some((self.cards.len() - 1, String::new()));
+        } else if let Some(d) = v["delta"].as_str() {
+            if let Some((i, acc)) = &mut self.live {
+                acc.push_str(&clean(d));
+                let lines = text_lines(acc);
+                if let Some(c) = self.cards.get_mut(*i) {
+                    c.lines = lines;
+                }
+            }
+        } else if let Some(a) = v["answer"].as_str() {
+            let lines = text_lines(a);
+            match self.live.take() {
+                Some((i, _))
+                    if self
+                        .cards
+                        .get(i)
+                        .is_some_and(|c| c.title.as_deref() == Some(title.as_str())) =>
+                {
+                    self.cards[i].lines = lines;
+                }
+                _ => self.push(Kind::Info, Some(&title), lines),
+            }
+        } else if let Some(why) = v["failed"].as_str() {
+            let lines = vec![format!("No answer: {}", clean(why))];
+            match self.live.take() {
+                Some((i, _))
+                    if self
+                        .cards
+                        .get(i)
+                        .is_some_and(|c| c.title.as_deref() == Some(title.as_str())) =>
+                {
+                    self.cards[i].kind = Kind::Warn;
+                    self.cards[i].lines = lines;
+                }
+                _ => self.push(Kind::Warn, Some(&title), lines),
+            }
+        } else if v.get("resolution").is_some() {
+            let r = &v["resolution"];
+            let mut lines: Vec<String> = Vec::new();
+            if r.is_null() {
+                lines.push(format!(
+                    "No resolution: {}.",
+                    clean(v["reason"].as_str().unwrap_or("the lead gave none"))
+                ));
+            } else if r["structured"] == true {
+                for (label, key) in [
+                    ("Decision", "decision"),
+                    ("Agreed", "agreed"),
+                    ("Disputed", "disputed"),
+                    ("Open questions", "open_questions"),
+                ] {
+                    lines.push(format!("**{label}**"));
+                    lines.push(String::new());
+                    match r[key].as_str().filter(|t| !t.is_empty()) {
+                        Some(t) => lines.extend(text_lines(t)),
+                        None => lines.push("(the lead wrote nothing here)".into()),
+                    }
+                    lines.push(String::new());
+                }
+            } else {
+                lines.push(
+                    "The lead did not use the four parts, so its text is shown as written.".into(),
+                );
+                lines.push(String::new());
+                lines.extend(text_lines(r["text"].as_str().unwrap_or("")));
+                lines.push(String::new());
+            }
+            lines.push(
+                "Same model as the experts: treat the decision as advice, not a check. Not saved."
+                    .into(),
+            );
+            self.push(
+                Kind::Info,
+                Some(&format!("{TABLE_TITLE}: resolution")),
+                lines,
+            );
+        }
+        self.scroll_back = 0;
+    }
+
     fn on_resp(&mut self, r: Resp) -> Vec<Req> {
         let Some(intent) = self.pending.remove(&r.id) else {
             return Vec::new();
         };
+        if matches!(intent, Intent::Roundtable) {
+            // however it ended, the composer is free again
+            self.chat_waiting = false;
+            self.live = None;
+        }
         let (status, body) = match r.result {
             Ok(x) => x,
             Err(e) => {
@@ -5459,6 +5611,46 @@ impl App {
                         Kind::Info,
                         "No change: that entry was already there, or was not on the list.",
                     );
+                }
+                Vec::new()
+            }
+            Intent::Experts => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let mut lines = Vec::new();
+                for e in body["experts"].as_array().into_iter().flatten() {
+                    lines.push(format!(
+                        "{:22} {} ({}): {}",
+                        clean(e["id"].as_str().unwrap_or("")),
+                        clean(e["name"].as_str().unwrap_or("")),
+                        clean(e["group"].as_str().unwrap_or("")),
+                        clean(e["summary"].as_str().unwrap_or(""))
+                    ));
+                }
+                for e in body["yours"].as_array().into_iter().flatten() {
+                    lines.push(format!(
+                        "{:22} your approved method: {}",
+                        clean(e["id"].as_str().unwrap_or("")),
+                        clean(e["summary"].as_str().unwrap_or(""))
+                    ));
+                }
+                lines.push(String::new());
+                lines.push(format!(
+                    "Ask {} to {} of them: {}",
+                    body["min"],
+                    body["max"],
+                    crate::cmd::usage("roundtable")
+                ));
+                self.push(Kind::Info, Some("Experts"), lines);
+                Vec::new()
+            }
+            Intent::Roundtable => {
+                if body["stopped"] == true {
+                    self.say(Kind::Warn, "Stopped. No one else was asked.");
+                } else if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
                 }
                 Vec::new()
             }

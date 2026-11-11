@@ -84,7 +84,16 @@ fn event_loop(
         let cancel = app.cancel.clone();
         std::thread::spawn(move || {
             while let Ok(req) = req_rx.recv() {
-                let resp = if req.stream {
+                let resp = if req.stream && req.path == "/api/chat/roundtable" {
+                    let t = ev_tx.clone();
+                    let id = req.id;
+                    http.run_events(&req, &cancel, &mut |v| {
+                        let _ = t.send(Event::Table {
+                            id,
+                            line: v.clone(),
+                        });
+                    })
+                } else if req.stream {
                     let tx = ev_tx.clone();
                     let id = req.id;
                     http.run_stream(&req, &cancel, &mut |t| {

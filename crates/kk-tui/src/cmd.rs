@@ -109,6 +109,8 @@ pub enum Command {
     },
     /// A question put to the assistant that is not part of the conversation and is never saved.
     Aside(String),
+    /// One question to several experts, each alone, then a lead's resolution. With no experts: list who can be asked.
+    Roundtable(Option<(Vec<String>, String)>),
     Correct {
         id: String,
         text: String,
@@ -207,6 +209,7 @@ pub const NAMES: &[&str] = &[
     "ask",
     "code",
     "aside",
+    "roundtable",
     "remember",
     "correct",
     "forget",
@@ -275,6 +278,7 @@ pub fn describe(name: &str) -> &'static str {
         "ask" => "ask about documents; every quote is checked",
         "code" => "have a local model change a project; you read the patch before anything changes",
         "aside" => "ask something that stays out of the conversation and is not saved",
+        "roundtable" => "ask 2 to 5 experts one question, each alone; a lead says what to do",
         "remember" => "save a note",
         "correct" => "change a saved note",
         "forget" => "delete a saved note for good",
@@ -380,6 +384,7 @@ pub fn usage(name: &str) -> &'static str {
         "ask" => "/ask FOLDER : QUESTION",
         "code" => "/code FOLDER : TASK | /code show|apply|undo [ID]",
         "aside" => "/aside QUESTION",
+        "roundtable" => "/roundtable EXPERT,EXPERT[,EXPERT] : QUESTION   (alone, it lists the experts)",
         "correct" => "/correct ID NEW TEXT",
         "forget" => "/forget ID",
         "forgetreview" => "/forgetreview JOB",
@@ -675,6 +680,26 @@ pub fn parse(line: &str) -> Result<Command, String> {
             }
             _ => Err(format!("usage: {}", usage("pii"))),
         },
+        "roundtable" => {
+            if rest.is_empty() {
+                return Ok(Command::Roundtable(None));
+            }
+            match rest.split_once(" : ") {
+                Some((who, q)) if !q.trim().is_empty() => {
+                    let ids: Vec<String> = who
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    if ids.len() < 2 || ids.iter().any(|i| i.contains(char::is_whitespace)) {
+                        Err(format!("usage: {}", usage("roundtable")))
+                    } else {
+                        Ok(Command::Roundtable(Some((ids, q.trim().to_string()))))
+                    }
+                }
+                _ => Err(format!("usage: {}", usage("roundtable"))),
+            }
+        }
         "aside" => {
             if rest.is_empty() {
                 Err(format!("usage: {}", usage("aside")))

@@ -7756,3 +7756,172 @@ fn tu_me04_suggested_methods_can_be_listed_kept_and_dismissed_and_the_text_is_cl
     let r = enter(&mut a, "/method dismiss 5");
     assert_eq!(r[0].body.as_ref().unwrap(), &json!({"id": 5}));
 }
+
+#[test]
+fn tu112_a_roundtable_fills_a_card_per_expert_then_the_resolution_and_stays_out_of_the_conversation(
+) {
+    let mut app = booted();
+    app.session = Some("chat-1".into());
+    // alone, the command lists who can be asked
+    let r = enter(&mut app, "/roundtable");
+    assert_eq!((r.len(), r[0].path.as_str()), (1, "/api/experts"));
+    app.handle(ok(&r[0], 200, json!({"experts": [{"id": "security-reviewer", "name": "Security reviewer", "group": "Engineering", "summary": "Looks for leaks."}], "yours": [{"id": "method:house-counsel", "name": "house-counsel", "summary": "Our own reading"}], "min": 2, "max": 5})));
+    let all = text(&app);
+    assert!(
+        all.contains("security-reviewer")
+            && all.contains("method:house-counsel")
+            && all.contains("your approved method")
+            && all.contains("Ask 2 to 5"),
+        "{all}"
+    );
+    // malformed asks are refused with the usage, before anything is sent
+    for bad in [
+        "/roundtable security-reviewer : q",
+        "/roundtable a,b",
+        "/roundtable a,b : ",
+        "/roundtable a b,c : q",
+    ] {
+        assert!(enter(&mut app, bad).is_empty(), "{bad}");
+    }
+    assert!(text(&app).contains("usage: /roundtable"));
+    let r = enter(
+        &mut app,
+        "/roundtable security-reviewer, data-analyst : vault or code?",
+    );
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0].path, "/api/chat/roundtable");
+    assert!(r[0].stream);
+    let body = r[0].body.as_ref().unwrap();
+    assert_eq!(
+        body["experts"],
+        json!(["security-reviewer", "data-analyst"])
+    );
+    assert_eq!(body["message"], "vault or code?");
+    assert!(
+        body.get("session").is_none(),
+        "nothing is appended to the kept conversation"
+    );
+    assert!(app.chat_waiting, "the composer is busy, so Esc can stop it");
+    assert!(enter(&mut app, "/roundtable a,b : again").is_empty());
+    assert!(text(&app).contains("still arriving"));
+    let id = r[0].id;
+    let ev = |app: &mut App, line: Value| {
+        app.handle(Event::Table { id, line });
+    };
+    ev(
+        &mut app,
+        json!({"expert": "security-reviewer", "name": "Security reviewer", "state": "asking"}),
+    );
+    assert!(text(&app).contains("Roundtable: Security reviewer\n(being asked)"));
+    ev(
+        &mut app,
+        json!({"expert": "security-reviewer", "delta": "Use a "}),
+    );
+    ev(
+        &mut app,
+        json!({"expert": "security-reviewer", "delta": "vault\u{1b}[2J."}),
+    );
+    let all = text(&app);
+    assert!(
+        all.contains("Use a vault\u{fffd}[2J.")
+            && !all.contains('\u{1b}')
+            && !all.contains("(being asked)"),
+        "{all}"
+    );
+    ev(
+        &mut app,
+        json!({"expert": "security-reviewer", "answer": "Use a vault.", "truncated_for_lead": false}),
+    );
+    ev(
+        &mut app,
+        json!({"expert": "data-analyst", "name": "Data analyst", "state": "asking"}),
+    );
+    ev(
+        &mut app,
+        json!({"expert": "data-analyst", "failed": "the model is not running"}),
+    );
+    let all = text(&app);
+    assert!(
+        all.contains("Roundtable: Data analyst\nNo answer: the model is not running"),
+        "{all}"
+    );
+    ev(
+        &mut app,
+        json!({"resolution": {"structured": true, "agreed": "A vault.", "disputed": "", "decision": "Move the key.", "open_questions": "Which vault?", "text": "x"}}),
+    );
+    let all = text(&app);
+    let at = |s: &str| {
+        all.find(s)
+            .unwrap_or_else(|| panic!("{s} missing in {all}"))
+    };
+    assert!(
+        at("Roundtable: resolution") < at("**Decision**")
+            && at("Move the key.") < at("**Agreed**")
+            && at("**Disputed**") < at("(the lead wrote nothing here)")
+    );
+    assert!(all.contains("advice, not a check"));
+    app.handle(ok(&r[0], 200, json!({"done": true})));
+    assert!(!app.chat_waiting);
+    assert_eq!(
+        app.cards
+            .iter()
+            .filter(|c| c
+                .title
+                .as_deref()
+                .is_some_and(|t| t.starts_with("Roundtable")))
+            .count(),
+        3,
+        "one card per expert and one resolution, none doubled"
+    );
+    assert!(
+        app.chat_history.is_empty(),
+        "neither the question nor an answer joined the history"
+    );
+    let conv = app.transcript_text();
+    assert!(
+        !conv.contains("Use a vault") && !conv.contains("Move the key"),
+        "{conv}"
+    );
+    // an event for another request is ignored
+    app.handle(Event::Table {
+        id: id + 999,
+        line: json!({"expert": "x", "answer": "stray"}),
+    });
+    assert!(!text(&app).contains("stray"));
+
+    // unstructured and missing resolutions say so; a refusal and a stop free the composer
+    let mut b = booted();
+    let r = enter(&mut b, "/roundtable a,b : q");
+    b.handle(Event::Table {
+        id: r[0].id,
+        line: json!({"resolution": {"structured": false, "text": "just do it"}}),
+    });
+    assert!(text(&b).contains("did not use the four parts") && text(&b).contains("just do it"));
+    b.handle(Event::Table { id: r[0].id, line: json!({"resolution": null, "reason": "no expert answered, so there is nothing to resolve"}) });
+    assert!(text(&b).contains("No resolution: no expert answered"));
+    b.handle(ok(
+        &r[0],
+        502,
+        json!({"error": {"code": "NO_MODEL", "message": "no expert could be asked"}}),
+    ));
+    assert!(text(&b).contains("no expert could be asked") && !b.chat_waiting);
+    let r = enter(&mut b, "/roundtable a,the-boss : q");
+    b.handle(ok(&r[0], 400, json!({"error": {"code": "NO_SUCH_EXPERT", "message": "there is no expert with that name"}})));
+    assert!(text(&b).contains("no expert with that name") && !b.chat_waiting);
+    let r = enter(&mut b, "/roundtable a,b : q");
+    b.handle(key(KeyCode::Esc));
+    b.handle(key(KeyCode::Esc));
+    assert!(
+        b.cancel.load(std::sync::atomic::Ordering::SeqCst),
+        "Esc twice stops a roundtable like an answer"
+    );
+    b.handle(ok(&r[0], 200, json!({"stopped": true})));
+    assert!(text(&b).contains("Stopped. No one else was asked.") && !b.chat_waiting);
+    // the service going away mid-table frees the composer too
+    let r = enter(&mut b, "/roundtable a,b : q");
+    b.handle(Event::Resp(Resp {
+        id: r[0].id,
+        result: Err("connection reset".into()),
+    }));
+    assert!(!b.chat_waiting);
+}
