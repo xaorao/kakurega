@@ -1,13 +1,15 @@
 import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, Show, untrack } from "solid-js";
 import { api, ApiError, type ExpertInfo, type TeamRun, type TeamTask } from "../api";
+import { LoadState } from "../components/LoadState";
 import { Markdown } from "../components/Markdown";
 import { t } from "../i18n";
 
 /** A goal handed to a lead: the plan it wrote, each task as it runs, the questions it has for the owner, and the result. */
 export function Team(props: { id?: string }) {
-  const [roster] = createResource(() => api.experts().catch(() => ({ experts: [] as ExpertInfo[], yours: [], min: 2, max: 5 })));
+  // a list that could not be read is said so with a way to try again, never shown as "no experts" or "no runs"
+  const [roster, { refetch: refetchRoster }] = createResource(() => api.experts().catch(() => null));
   const everyone = createMemo<ExpertInfo[]>(() => [...(roster()?.experts ?? []), ...(roster()?.yours ?? []).map((y) => ({ ...y, group: t("rt.yours") }))]);
-  const [runs, { refetch: refetchRuns }] = createResource(() => api.teamRuns().catch(() => ({ runs: [] })));
+  const [runs, { refetch: refetchRuns }] = createResource(() => api.teamRuns().catch(() => null));
   const [goal, setGoal] = createSignal("");
   const [allowed, setAllowed] = createSignal<string[]>([]);
   const [run, setRun] = createSignal<TeamRun | null>(null);
@@ -144,6 +146,7 @@ export function Team(props: { id?: string }) {
             </For>
           </fieldset>
         </details>
+        <Show when={!roster() && !roster.loading}><LoadState loading={false} retry={() => void refetchRoster()} /></Show>
         <div class="rt-actions">
           <button class="primary" type="submit" disabled={!goal().trim() || planning()}>{planning() ? t("team.planning") : t("team.plan")}</button>
           <span class="muted">{t("team.planNote")}</span>
@@ -211,7 +214,7 @@ export function Team(props: { id?: string }) {
       </Show>
 
       <h2>{t("team.earlier")}</h2>
-      <Show when={(runs()?.runs ?? []).length > 0} fallback={<p class="muted">{t("team.none")}</p>}>
+      <Show when={(runs()?.runs ?? []).length > 0} fallback={<Show when={runs()} fallback={<LoadState loading={runs.loading} retry={() => void refetchRuns()} />}><p class="muted">{t("team.none")}</p></Show>}>
         <ul class="plain stack team-runs">
           <For each={runs()?.runs ?? []}>
             {(x) => (
