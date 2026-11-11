@@ -5,6 +5,7 @@ pub mod code;
 pub mod feedback;
 pub mod import;
 pub mod job;
+pub mod meeting;
 pub mod pattern;
 pub mod release;
 pub mod repair;

@@ -52,6 +52,11 @@ fn serve_args(args: &[String]) -> Vec<String> {
         "--vm",
         "--worker-bin",
         "--launcher",
+        "--route",
+        "--outside-model",
+        "--near-model",
+        "--near-url",
+        "--near-key-file",
     ];
     let mut out = Vec::new();
     let mut i = 0;
@@ -1240,6 +1245,126 @@ pub fn share(args: &[String]) -> u8 {
                 "Anyone can check it with: kaku verify {} --pin {}",
                 path.display(),
                 clean(v["signer_public"].as_str().unwrap_or("YOUR-PUBLIC-KEY"))
+            );
+        }
+        OK
+    })
+}
+
+/// Text for the terminal, line by line: control characters are dropped from each line and the line breaks are kept.
+fn clean_lines(text: &str) -> String {
+    text.lines().map(clean).collect::<Vec<_>>().join("\n")
+}
+
+/// `kaku notes FILE [--title TEXT] [--out FILE] [--json]`: notes from a meeting transcript, each point kept only when the
+/// words it quotes are in the transcript. The text goes to the answering model of the running service and nowhere else.
+pub fn notes(args: &[String]) -> u8 {
+    let json_mode = args.iter().any(|a| a == "--json");
+    let out = crate::flag(args, "--out");
+    let title = crate::flag(args, "--title");
+    let usage = "usage: kaku notes FILE [--title TEXT] [--out FILE] [--json]   (a transcript as a text file; - reads it from standard input)";
+    let Some(file) = args
+        .get(1)
+        .filter(|a| !a.starts_with("--") || a.as_str() == "-")
+    else {
+        return fail(json_mode, USAGE, usage);
+    };
+    let text = if file == "-" {
+        let mut t = String::new();
+        match std::io::Read::read_to_string(&mut std::io::stdin(), &mut t) {
+            Ok(_) => t,
+            Err(e) => {
+                return fail(
+                    json_mode,
+                    USAGE,
+                    &format!("cannot read standard input: {e}"),
+                )
+            }
+        }
+    } else {
+        match std::fs::read_to_string(file) {
+            Ok(t) => t,
+            Err(e) => {
+                return fail(
+                    json_mode,
+                    USAGE,
+                    &format!("cannot read {file} as text: {e}"),
+                )
+            }
+        }
+    };
+    crate::tui::with_service(&serve_args(args), |dir| {
+        let http = match connect(dir, json_mode) {
+            Ok(h) => h,
+            Err(c) => return c,
+        };
+        let mut body = json!({"text": text});
+        if let Some(t) = &title {
+            body["title"] = json!(t);
+        }
+        let v = match http.post_slow("/api/meeting-notes", &body) {
+            Ok((200, v)) => v,
+            Ok((s, v)) => {
+                let (m, c) = refusal(s, &v);
+                return fail(json_mode, c, &m);
+            }
+            Err(e) => return fail(json_mode, UNAVAILABLE, &e),
+        };
+        let markdown = v["markdown"].as_str().unwrap_or("").to_string();
+        if let Some(path) = &out {
+            // never over a file that exists
+            let written = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .and_then(|mut f| std::io::Write::write_all(&mut f, markdown.as_bytes()));
+            if let Err(e) = written {
+                return fail(json_mode, USAGE, &format!("cannot write {path}: {e}"));
+            }
+        }
+        if json_mode {
+            println!("{v}");
+            return OK;
+        }
+        if out.is_none() {
+            println!("{}", clean_lines(&markdown));
+        } else {
+            println!("Wrote {}", out.as_deref().unwrap_or(""));
+        }
+        let n = |k: &str| v[k].as_u64().unwrap_or(0);
+        let count = |k: &str| v[k].as_array().map_or(0, Vec::len);
+        eprintln!(
+            "{} checked against the transcript, {} not backed by it.",
+            count("checked"),
+            count("unchecked")
+        );
+        if v["route"]["stays_here"].as_bool() == Some(true) {
+            eprintln!("The model that read this runs on this computer.");
+        } else {
+            eprintln!(
+                "The model that read this is at {}, not on this computer.",
+                clean(v["route"]["host"].as_str().unwrap_or("another computer"))
+            );
+        }
+        if n("swapped") > 0 {
+            match n("swapped") {
+                1 => eprintln!("1 name or personal value went as a placeholder and was put back."),
+                k => eprintln!(
+                    "{k} names and personal values went as placeholders and were put back."
+                ),
+            }
+        }
+        if n("withheld_lines") > 0 {
+            match n("withheld_lines") {
+                1 => eprintln!("1 line that holds a secret was not sent."),
+                k => eprintln!("{k} lines that hold a secret were not sent."),
+            }
+        }
+        if n("unreadable_parts") > 0 {
+            eprintln!(
+                "{} of {} parts came back in a form that could not be read, so their points are missing.",
+                n("unreadable_parts"),
+                n("parts")
             );
         }
         OK

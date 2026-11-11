@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stands in for a local model server (the Ollama chat API) for the team screen's browser test: it answers as a lead that
+"""Stands in for a local model server (the Ollama chat API) for the browser tests: it writes fixed meeting notes, and for the team screen it answers as a lead that
 writes a plan, as experts doing tasks (one of which asks the owner a question first), and as the lead closing.
 
   python3 tests/e2e/team_script.py PORT
@@ -15,6 +15,17 @@ asked_owner = {"done": False}
 def answer(messages):
     system = "\n".join(m.get("content", "") for m in messages if m.get("role") == "system")
     last = messages[-1].get("content", "") if messages else ""
+    if "You write notes from a meeting transcript" in system:
+        # two points whose quotes are in the transcript the test pastes, and one that is invented
+        return json.dumps({
+            "summary": "The team agreed a date for the pricing page.",
+            "decisions": [{"text": "Ship the new pricing page on Friday", "quote": "Then we ship the new pricing page on Friday."}],
+            "actions": [
+                {"owner": "Cara Lind", "task": "Send the addendum to counsel", "due": "by Wednesday", "quote": "I'll send the addendum to their counsel at legal@meridian.example by Wednesday."},
+                {"owner": "Dana", "task": "Hire two engineers", "due": "", "quote": "Dana will hire two engineers next month"},
+            ],
+            "questions": [],
+        })
     if "You are the lead of a small team" in system:
         if "refuse-this-plan" in last:
             return "I think the boss should do it all."

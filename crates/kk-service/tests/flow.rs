@@ -20741,8 +20741,11 @@ fn sv249_a_model_elsewhere_gets_placeholders_for_names_and_personal_values_and_t
         "{shown}"
     );
     // the signed log holds a count, never a name
-    let (_, log) = w.get("/api/events");
-    assert!(!log.to_string().contains("Asha"), "{log}");
+    let (_, log) = w.get("/api/log");
+    assert!(
+        log.to_string().contains("hidden_name.added") && !log.to_string().contains("Asha"),
+        "{log}"
+    );
 
     // removing a name sends it as written again; the address is still hidden
     assert_eq!(
@@ -20767,4 +20770,188 @@ fn sv249_a_model_elsewhere_gets_placeholders_for_names_and_personal_values_and_t
         here.sent()
     );
     assert_eq!(r["swapped"], json!(0), "{r}");
+}
+
+/// A model that answers with a fixed text and remembers what it was sent.
+#[derive(Clone)]
+struct SaysRunner {
+    inner: FileRunner,
+    says: String,
+}
+
+impl JobRunner for SaysRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        self.inner.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        self.inner.route_info()
+    }
+    fn chat(&self, m: Vec<kk_types::chat::ChatMessage>) -> Result<kk_service::ChatReply, String> {
+        let mut r = self.inner.chat(m)?;
+        r.text = self.says.clone();
+        Ok(r)
+    }
+}
+
+#[test]
+fn sv250_meeting_notes_keep_only_points_whose_quote_is_in_the_transcript_and_never_send_a_secret_line(
+) {
+    let key = format!(
+        "{}-{}",
+        "sk-ant", "api03-abcdefghijklmnopqrstuvwxyz0123456789"
+    );
+    let transcript = format!(
+        "Asha Rao: We ship the pricing page on Friday, agreed?\nBen: Agreed, Friday it is.\nBen: the deploy key is {key}\nAsha Rao: Ben, please send the contract to Meridian by Wednesday.\nBen: Yes, I will send the contract to Meridian by Wednesday.\n"
+    );
+    let serve = |endpoint: &'static str, tag: &str, says: Value| {
+        let inner = FileRunner::new(endpoint, 16384);
+        let (root, _repo) = repo_copy(tag);
+        let svc = Service::new(
+            &root.join("data"),
+            vec![root.clone()],
+            Arc::new(SaysRunner {
+                inner: inner.clone(),
+                says: says.to_string(),
+            }),
+            true,
+        )
+        .unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        (c, w, inner)
+    };
+
+    // a model on this computer
+    let says = json!({
+        "summary": "The team agreed to ship on Friday.",
+        "decisions": [{"text": "Ship the pricing page on Friday", "quote": "We ship the pricing page on Friday, agreed?"}],
+        "actions": [
+            {"owner": "Ben", "task": "Send the contract to Meridian", "due": "by Wednesday", "quote": "I will send the contract to Meridian by Wednesday."},
+            {"owner": "Dana", "task": "Hire two engineers", "due": "", "quote": "Dana will hire two engineers"}
+        ],
+        "questions": []
+    });
+    let (_c, w, here) = serve("http://127.0.0.1:11434", "meeting-local", says);
+    for (bad, why) in [
+        ("too short", "too little text"),
+        (&"word ".repeat(60_000)[..], "too long"),
+    ] {
+        let (s, r) = w.post("/api/meeting-notes", json!({"text": bad}));
+        assert_eq!(
+            (s, r["error"]["code"].as_str()),
+            (422, Some("MEETING_REFUSED")),
+            "{r}"
+        );
+        assert!(r["error"]["message"].as_str().unwrap().contains(why), "{r}");
+    }
+    let (s, r) = w.post(
+        "/api/meeting-notes",
+        json!({"text": transcript, "title": "  Weekly   sync "}),
+    );
+    assert_eq!(s, 200, "{r}");
+    assert_eq!(r["title"], json!("Weekly sync"));
+    let checked: Vec<(&str, i64)> = r["checked"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| (i["text"].as_str().unwrap(), i["line"].as_i64().unwrap()))
+        .collect();
+    assert_eq!(
+        checked,
+        vec![
+            ("Ship the pricing page on Friday", 1),
+            ("Send the contract to Meridian", 5)
+        ],
+        "{r}"
+    );
+    assert_eq!(
+        r["unchecked"][0]["text"],
+        json!("Hire two engineers"),
+        "{r}"
+    );
+    assert_eq!(
+        (r["withheld_lines"].clone(), r["swapped"].clone()),
+        (json!(1), json!(0)),
+        "{r}"
+    );
+    let sent = here.sent();
+    assert!(
+        !sent.contains("sk-ant") && sent.contains("this line was withheld"),
+        "{sent}"
+    );
+    assert!(
+        sent.contains("=== TRANSCRIPT ===") && sent.contains("Asha Rao: We ship"),
+        "{sent}"
+    );
+    let md = r["markdown"].as_str().unwrap();
+    assert!(
+        md.starts_with("# Weekly sync")
+            && md.contains("[line 5]")
+            && md.contains("Not backed by the transcript"),
+        "{md}"
+    );
+    assert!(!r.to_string().contains("sk-ant"), "{r}");
+    let (_, log) = w.get("/api/log");
+    let log = log.to_string();
+    assert!(
+        log.contains("meeting.notes") && !log.contains("pricing page"),
+        "{log}"
+    );
+    // a body with a field this does not know is refused
+    assert_ne!(
+        w.post(
+            "/api/meeting-notes",
+            json!({"text": transcript, "send_to": "x"})
+        )
+        .0,
+        200
+    );
+
+    // a model elsewhere works on placeholders, and its quotes are checked against the real words
+    let says = json!({
+        "summary": "[[NAME_1]] and Ben agreed a date.",
+        "decisions": [{"text": "[[NAME_1]] wants the pricing page out on Friday", "quote": "[[NAME_1]]: We ship the pricing page on Friday, agreed?"}],
+        "actions": [{"owner": "Ben", "task": "Send the contract to [[NAME_2]]", "due": "by Wednesday", "quote": "I will send the contract to [[NAME_2]] by Wednesday."}]
+    });
+    let (_c2, w2, away) = serve("https://api.example.com", "meeting-remote", says);
+    w2.post("/api/hidden-names", json!({"add": "Asha Rao"}));
+    w2.post("/api/hidden-names", json!({"add": "Meridian"}));
+    let (s, r) = w2.post("/api/meeting-notes", json!({"text": transcript}));
+    assert_eq!(s, 200, "{r}");
+    let sent = away.sent();
+    assert!(
+        !sent.contains("Asha") && !sent.contains("Meridian") && !sent.contains("sk-ant"),
+        "{sent}"
+    );
+    assert_eq!(r["swapped"], json!(2), "{r}");
+    assert_eq!(r["checked"].as_array().unwrap().len(), 2, "{r}");
+    assert_eq!(
+        r["checked"][0]["text"],
+        json!("Asha Rao wants the pricing page out on Friday"),
+        "{r}"
+    );
+    assert_eq!(
+        r["checked"][1]["quote"],
+        json!("I will send the contract to Meridian by Wednesday."),
+        "{r}"
+    );
+    assert_eq!(
+        r["summary"][0],
+        json!("Asha Rao and Ben agreed a date."),
+        "{r}"
+    );
+    assert_eq!(r["route"]["stays_here"], json!(false));
 }

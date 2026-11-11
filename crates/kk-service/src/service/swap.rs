@@ -63,14 +63,24 @@ impl Service {
     /// and the answer comes back with them restored.
     pub(super) fn ask(
         &self,
-        mut messages: Vec<kk_types::chat::ChatMessage>,
+        messages: Vec<kk_types::chat::ChatMessage>,
     ) -> Result<ChatReply, String> {
+        self.ask_counted(messages).map(|(reply, _)| reply)
+    }
+
+    /// `ask`, also saying how many different values went as placeholders.
+    pub(super) fn ask_counted(
+        &self,
+        mut messages: Vec<kk_types::chat::ChatMessage>,
+    ) -> Result<(ChatReply, usize), String> {
         let swap = self.hide_messages(&mut messages);
         let mut reply = self.runner.chat(messages)?;
+        let mut swapped = 0;
         if let Some(s) = &swap {
             reply.text = s.show(&reply.text);
+            swapped = s.total();
         }
-        Ok(reply)
+        Ok((reply, swapped))
     }
 
     /// `ask`, handing the answer over in pieces. A route that leaves this computer answers in one piece (it is held until

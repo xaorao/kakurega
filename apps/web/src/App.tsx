@@ -14,6 +14,7 @@ import { Chat } from "./screens/Chat";
 import { Roundtable } from "./screens/Roundtable";
 import { Team } from "./screens/Team";
 import { Documents } from "./screens/Documents";
+import { Meeting } from "./screens/Meeting";
 import { CodeTask } from "./screens/CodeTask";
 import { Inbox } from "./screens/Inbox";
 import { notifier } from "./notifier";
@@ -275,6 +276,7 @@ export function App() {
       { id: "new", label: t("nav.new"), group: t("palette.screens"), run: go("#/") },
       { id: "inbox", label: t("nav.inbox"), group: t("palette.screens"), run: go("#/inbox") },
       { id: "docs", label: t("nav.docs"), group: t("palette.screens"), run: go("#/docs") },
+      { id: "meeting", label: t("nav.meeting"), group: t("palette.screens"), run: go("#/meeting") },
       { id: "code", label: t("nav.code"), group: t("palette.screens"), run: go("#/code") },
       { id: "chat", label: t("nav.chat"), group: t("palette.screens"), run: go("#/chat") },
       { id: "roundtable", label: t("nav.roundtable"), group: t("palette.screens"), run: go("#/roundtable") },
@@ -325,6 +327,7 @@ export function App() {
               <a class="primary" href="#/">{t("nav.new")}</a>
               <a href="#/inbox" class={hash() === "#/inbox" ? "navlink active" : "navlink"}>{t("nav.inbox")}{waiting() > 0 ? <span class="count" aria-label={t("nav.inboxCount", { n: waiting() })}> ({waiting()})</span> : null}</a>
               <a href="#/docs" class={hash() === "#/docs" ? "navlink active" : "navlink"}>{t("nav.docs")}</a>
+              <a href="#/meeting" class={hash() === "#/meeting" ? "navlink active" : "navlink"}>{t("nav.meeting")}</a>
               <a href="#/code" class={hash() === "#/code" ? "navlink active" : "navlink"}>{t("nav.code")}</a>
               <a href="#/chat" class={hash() === "#/chat" ? "navlink active" : "navlink"}>{t("nav.chat")}</a>
               <a href="#/roundtable" class={hash() === "#/roundtable" ? "navlink active" : "navlink"}>{t("nav.roundtable")}</a>
@@ -367,7 +370,7 @@ export function App() {
               <ErrorBoundary fallback={(_err, reset) => <section class="card stack" role="alert"><p>{t("app.crashed")}</p><button onClick={reset}>{t("app.reload")}</button></section>}>
               <Show when={config()}>
                 {(c) => (
-                  <Show when={hash() !== "#/memory" && hash() !== "#/instructions" && hash() !== "#/settings" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/roundtable" && !hash().startsWith("#/team") && hash() !== "#/docs" && hash() !== "#/code" && hash() !== "#/inbox" && hash() !== "#/agent" && hash() !== "#/privacy"} fallback={hash() === "#/settings" ? <Settings /> : hash() === "#/instructions" ? <Instructions /> : hash() === "#/privacy" ? <Privacy /> : hash() === "#/agent" ? <AgentAccess /> : hash() === "#/inbox" ? <Inbox /> : hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/roundtable" ? <Roundtable /> : hash().startsWith("#/team") ? <Team id={hash().slice(7)} /> : hash() === "#/docs" ? <Documents /> : hash() === "#/code" ? <CodeTask /> : <Memory />}>
+                  <Show when={hash() !== "#/memory" && hash() !== "#/instructions" && hash() !== "#/settings" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/roundtable" && !hash().startsWith("#/team") && hash() !== "#/docs" && hash() !== "#/meeting" && hash() !== "#/code" && hash() !== "#/inbox" && hash() !== "#/agent" && hash() !== "#/privacy"} fallback={hash() === "#/settings" ? <Settings /> : hash() === "#/instructions" ? <Instructions /> : hash() === "#/privacy" ? <Privacy /> : hash() === "#/agent" ? <AgentAccess /> : hash() === "#/inbox" ? <Inbox /> : hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/roundtable" ? <Roundtable /> : hash().startsWith("#/team") ? <Team id={hash().slice(7)} /> : hash() === "#/docs" ? <Documents /> : hash() === "#/meeting" ? <Meeting /> : hash() === "#/code" ? <CodeTask /> : <Memory />}>
                     <Show when={jobId()} fallback={<NewReview config={c()} onStarted={(id) => { void refresh(); location.hash = `#/job/${id}`; }} />}>
                     {(id) => <ReviewView id={id()} config={c()} onUpdate={() => void refresh()} />}
                     </Show>

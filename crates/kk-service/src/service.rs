@@ -1200,6 +1200,7 @@ struct PathQuery {
 }
 
 mod mcp;
+mod meeting;
 mod methods;
 mod packs;
 mod share;
@@ -9907,6 +9908,7 @@ impl Extension for Routes {
                 "/api/hidden-names",
                 get(swap::names_get).post(swap::names_set),
             )
+            .route("/api/meeting-notes", post(meeting::notes))
             .route("/api/usage", get(usage_summary))
             .route("/api/usage/prices", get(prices_get).post(prices_set))
             .route("/api/exports/transcript", post(transcript_export))

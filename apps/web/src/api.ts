@@ -143,6 +143,8 @@ export interface BundledMethod { name: string; group: string; description: strin
 export interface MethodProposal { id: number; job: string; name: string; description: string; triggers: string[]; body: string }
 export interface McpTool { name: string; description: string; pin: string; mode: "off" | "allow" | "ask"; effect: "read_only" | "may_change" | "unknown"; schema?: string }
 export interface McpServer { name: string; program: string; args: string[]; env_names: string[] | null; tools: McpTool[] }
+export interface MeetingPoint { kind: "decision" | "action" | "question"; text: string; owner: string; due: string; quote: string; line: number | null }
+export interface MeetingNotes { title: string; summary: string[]; checked: MeetingPoint[]; unchecked: MeetingPoint[]; parts: number; unreadable_parts: number; markdown: string; withheld_lines: number; swapped: number; elapsed_ms: number; route: { stays_here: boolean; host: string | null }; limits: string }
 export interface ChatReply { cut_short?: boolean; swapped?: number; instructions_used?: boolean; methods_used?: string[]; project?: string | null; reply: string; route: { id: string; class: string; simulated: boolean; stays_here?: boolean; host?: string | null }; notes_used: number; notes?: { id: string; text: string; why: string; untrusted: boolean; project?: string | null }[]; notes_withheld: number; notes_left_out?: number; files?: { used: number; trimmed: number; left_out: number; withheld_instructions: number; withheld_secrets: number }; web_sources_used: number; web_sources_trimmed?: number; web_sources_left_out?: number; saved?: boolean; not_saved?: "full" | "forgotten" | "error" | null; usage?: { elapsed_ms?: number; context_tokens?: number; context_window?: number | null; estimate?: boolean; context_tokens_estimate: number; reply_tokens_estimate: number; history_turns_sent: number; history_turns_dropped: number; history_turns_summarized?: number; summary_text?: string | null; compacted_now?: boolean; compaction_failed?: string | null } }
 export interface Instructions {
   global: { text: string; updated_at: number } | null;
@@ -315,6 +317,7 @@ export const api = {
     return request<{ memories: MemoryItem[] }>("GET", `/api/memories${qs ? `?${qs}` : ""}`);
   },
   piiAllow: () => request<{ entries: { entry: string; added_at: number }[]; max_entries: number; note: string }>("GET", "/api/pii-allow"),
+  meetingNotes: (text: string, title?: string) => request<MeetingNotes>("POST", "/api/meeting-notes", title ? { text, title } : { text }),
   hiddenNames: () => request<{ names: { name: string; added_at: number }[]; max: number; applies: boolean; note: string }>("GET", "/api/hidden-names"),
   hiddenNameAdd: (name: string) => request<{ changed: boolean; names: number }>("POST", "/api/hidden-names", { add: name }),
   hiddenNameRemove: (name: string) => request<{ changed: boolean; names: number }>("POST", "/api/hidden-names", { remove: name }),

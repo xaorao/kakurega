@@ -262,6 +262,28 @@ impl Http {
         Resp { id: req.id, result }
     }
 
+    /// A request in the owner's session whose answer takes as long as a model takes (notes from a long transcript): the
+    /// same agent and headers as any other, with fifteen minutes allowed.
+    pub fn post_slow(&self, path: &str, body: &Value) -> Result<(u16, Value), String> {
+        let mut resp = self
+            .agent
+            .post(&format!("{}{path}", self.base))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(900)))
+            .build()
+            .header("Origin", &self.base)
+            .header("Sec-Fetch-Site", "same-origin")
+            .header("x-kk-csrf", &self.csrf)
+            .send_json(body.clone())
+            .map_err(|e| e.to_string())?;
+        let status = resp.status().as_u16();
+        let text = resp
+            .body_mut()
+            .read_to_string()
+            .map_err(|e| e.to_string())?;
+        Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
+    }
+
     pub fn run(&self, req: &Req) -> Resp {
         Resp {
             id: req.id,
