@@ -4,6 +4,8 @@ void ApiError;
 import { NewReview } from "./screens/NewReview";
 import { ReviewView } from "./screens/ReviewView";
 // every screen but the first one is loaded when it is first opened, from this program only
+// They are not put under one waiting boundary: that boundary would take the whole screen away, and the keyboard focus with
+// it, every time any part of a screen reads something again.
 const Handoff = lazy(() => import("./screens/Handoff").then((m) => ({ default: m.Handoff })));
 const Projects = lazy(() => import("./screens/Projects").then((m) => ({ default: m.Projects })));
 const Skills = lazy(() => import("./screens/Skills").then((m) => ({ default: m.Skills })));
@@ -384,7 +386,6 @@ export function App() {
                 <Welcome onDone={() => setWelcome(false)} />
               </Show>
               <ErrorBoundary fallback={(_err, reset) => <section class="card stack" role="alert"><p>{t("app.crashed")}</p><button onClick={reset}>{t("app.reload")}</button></section>}>
-              <Suspense fallback={<p class="muted" role="status">{t("review.loading")}</p>}>
               <Show when={config()}>
                 {(c) => (
                   <Show when={hash() !== "#/memory" && hash() !== "#/instructions" && hash() !== "#/settings" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/roundtable" && !hash().startsWith("#/team") && hash() !== "#/docs" && hash() !== "#/meeting" && hash() !== "#/skills" && hash() !== "#/projects" && hash() !== "#/handoff" && hash() !== "#/break" && hash() !== "#/code" && hash() !== "#/inbox" && hash() !== "#/agent" && hash() !== "#/privacy"} fallback={hash() === "#/settings" ? <Settings /> : hash() === "#/instructions" ? <Instructions /> : hash() === "#/privacy" ? <Privacy /> : hash() === "#/agent" ? <AgentAccess /> : hash() === "#/inbox" ? <Inbox /> : hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/roundtable" ? <Roundtable /> : hash().startsWith("#/team") ? <Team id={hash().slice(7)} /> : hash() === "#/docs" ? <Documents /> : hash() === "#/meeting" ? <Meeting /> : hash() === "#/skills" ? <Skills /> : hash() === "#/projects" ? <Projects /> : hash() === "#/handoff" ? <Handoff /> : hash() === "#/break" ? <BreakIt /> : hash() === "#/code" ? <CodeTask /> : <Memory />}>
@@ -394,7 +395,6 @@ export function App() {
                   </Show>
                 )}
               </Show>
-              </Suspense>
               </ErrorBoundary>
             </main>
           </div>

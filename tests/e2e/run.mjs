@@ -187,6 +187,9 @@ page.on("requestfailed", async (r) => {
   // showed the complete answer (checked by the chat steps); a request without a response still counts as a failure.
   const response = await r.response().catch(() => null);
   if (r.url().endsWith("/api/chat/stream") && r.failure()?.errorText === "net::ERR_ABORTED" && response?.status() === 200) return;
+  // Harness artifact too: the first screen asks whether the sample is loaded (a read that changes nothing), and this script
+  // reloads or leaves that screen without waiting for it. A read cut off by leaving the page is not a failed request.
+  if (r.url().endsWith("/api/sample") && r.method() === "GET" && r.failure()?.errorText === "net::ERR_ABORTED") return;
   if (r.url().endsWith("/api/chat/stream") && r.failure()?.errorText === "net::ERR_CONNECTION_RESET" && excusedRequests < injectedResets) {
     excusedRequests++;
     return;
@@ -2240,7 +2243,7 @@ try {
   // settings: one place for every setting, searchable by name, meaning or a word people use
   await page.getByRole("link", { name: "Settings" }).click();
   await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
-  check("the settings screen lists every setting in its section", (await page.locator("li[id^='setting-']").count()) === 14);
+  check("the settings screen lists every setting in its section", (await page.locator("li[id^='setting-']").count()) === 16);
   await page.locator("#setting-model").getByText("Using scripted test model").waitFor();
   check("with a test model there is nothing to choose and the Model setting says so", (await page.locator("#set-model").count()) === 0);
   await axeCheck(page, "settings screen");

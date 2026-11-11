@@ -8950,9 +8950,9 @@ fn sv87_notes_that_disagree_are_listed_and_the_owner_keeps_one_or_says_both_are_
 }
 
 #[test]
-fn sv88_the_activity_list_holds_the_newest_hundred_events_and_the_export_holds_all_of_them() {
+fn sv88_the_activity_list_holds_the_newest_four_hundred_events_and_the_export_holds_all_of_them() {
     let (c, w, _seen, _root) = instructions_service("activity-window");
-    for i in 0..130 {
+    for i in 0..430 {
         let (s, _) = w.post(
             "/api/instructions",
             json!({"project": format!("p{}", i % 25), "text": format!("Be brief {i}.")}),
@@ -8961,9 +8961,9 @@ fn sv88_the_activity_list_holds_the_newest_hundred_events_and_the_export_holds_a
     }
     let (_, v) = w.get("/api/log");
     let recent = v["recent"].as_array().unwrap();
-    assert_eq!(recent.len(), 100, "the newest hundred");
+    assert_eq!(recent.len(), 400, "the newest four hundred");
     assert!(
-        v["count"].as_i64().unwrap() >= 130,
+        v["count"].as_i64().unwrap() >= 430,
         "the log itself holds every event: {}",
         v["count"]
     );
@@ -8972,7 +8972,7 @@ fn sv88_the_activity_list_holds_the_newest_hundred_events_and_the_export_holds_a
         c.security.admin_token(),
     );
     assert!(
-        export.matches("instructions.changed").count() >= 130,
+        export.matches("instructions.changed").count() >= 430,
         "the export has them all"
     );
 }

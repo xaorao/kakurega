@@ -3202,7 +3202,9 @@ async fn suggestion_dismiss(
 }
 
 /// How many of the newest events the Activity screen lists. The whole signed log can always be exported.
-const ACTIVITY_WINDOW: usize = 100;
+// wide enough that a day of ordinary use (each question to a model elsewhere is an entry) does not push the
+// approvals and deliveries out of view
+const ACTIVITY_WINDOW: usize = 400;
 
 async fn log_summary(axum::Extension(svc): Svc) -> Response {
     let head = svc.log.head().ok().flatten();
