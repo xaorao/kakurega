@@ -16,6 +16,11 @@ This file is the plain list. Evidence for each line is in `TESTING.md`; the stat
 - The event log lives on the same machine as its key. Entries removed from the end are only detectable with an anchor kept elsewhere.
 - Hindi text was written by the builder and not reviewed by a native reader. Text that comes from the server stays English.
 - A secret detector is heuristic: it has no seed-phrase detection.
+- A password or a code said with no word for what it is ("type Blue42 when it asks") is not recognised and is sent like any other line. The leak benchmark counts these: 10 of its 42 cases outside the known shapes reach the model (`benchmarks/leak/METHOD.md`).
+- Names are hidden from a model elsewhere only when you listed them; a name that is not on the list is sent as written. Hiding applies to chat, roundtable, team runs, document questions and meeting notes, not to reviews.
+- The NEAR account key typed in Settings is kept in a file only you can read, not in the system keychain.
+- "Ask Claude Code" is not private: the text you approve goes to Anthropic through your own Claude Code. The GitHub connector has been run against a stand-in for GitHub only.
+- The second look of a review takes each file on its own, so a defect that needs two files to see is not found by it; it looks at 12 files at most.
 - The Electron desktop app is large (about 250 MB, about 450 MB memory); Tauri was not measured.
 
 ## Deliberately not built
