@@ -36,6 +36,7 @@ python3 tests/e2e/notes_cli.py
 python3 tests/e2e/bench_cli.py
 python3 scripts/bench-leak.py --out target/bench-leak-gate.json
 node tests/e2e/meeting_web.mjs
+node tests/e2e/break_web.mjs
 node tests/e2e/hide_web.mjs
 node tests/e2e/desktop.mjs
 node tests/e2e/desktop_attack.mjs

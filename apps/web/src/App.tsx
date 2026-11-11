@@ -15,6 +15,7 @@ import { Roundtable } from "./screens/Roundtable";
 import { Team } from "./screens/Team";
 import { Documents } from "./screens/Documents";
 import { Meeting } from "./screens/Meeting";
+import { BreakIt } from "./screens/BreakIt";
 import { CodeTask } from "./screens/CodeTask";
 import { Inbox } from "./screens/Inbox";
 import { notifier } from "./notifier";
@@ -277,6 +278,7 @@ export function App() {
       { id: "inbox", label: t("nav.inbox"), group: t("palette.screens"), run: go("#/inbox") },
       { id: "docs", label: t("nav.docs"), group: t("palette.screens"), run: go("#/docs") },
       { id: "meeting", label: t("nav.meeting"), group: t("palette.screens"), run: go("#/meeting") },
+      { id: "break", label: t("break.title"), group: t("palette.screens"), run: go("#/break") },
       { id: "code", label: t("nav.code"), group: t("palette.screens"), run: go("#/code") },
       { id: "chat", label: t("nav.chat"), group: t("palette.screens"), run: go("#/chat") },
       { id: "roundtable", label: t("nav.roundtable"), group: t("palette.screens"), run: go("#/roundtable") },
@@ -370,7 +372,7 @@ export function App() {
               <ErrorBoundary fallback={(_err, reset) => <section class="card stack" role="alert"><p>{t("app.crashed")}</p><button onClick={reset}>{t("app.reload")}</button></section>}>
               <Show when={config()}>
                 {(c) => (
-                  <Show when={hash() !== "#/memory" && hash() !== "#/instructions" && hash() !== "#/settings" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/roundtable" && !hash().startsWith("#/team") && hash() !== "#/docs" && hash() !== "#/meeting" && hash() !== "#/code" && hash() !== "#/inbox" && hash() !== "#/agent" && hash() !== "#/privacy"} fallback={hash() === "#/settings" ? <Settings /> : hash() === "#/instructions" ? <Instructions /> : hash() === "#/privacy" ? <Privacy /> : hash() === "#/agent" ? <AgentAccess /> : hash() === "#/inbox" ? <Inbox /> : hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/roundtable" ? <Roundtable /> : hash().startsWith("#/team") ? <Team id={hash().slice(7)} /> : hash() === "#/docs" ? <Documents /> : hash() === "#/meeting" ? <Meeting /> : hash() === "#/code" ? <CodeTask /> : <Memory />}>
+                  <Show when={hash() !== "#/memory" && hash() !== "#/instructions" && hash() !== "#/settings" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/roundtable" && !hash().startsWith("#/team") && hash() !== "#/docs" && hash() !== "#/meeting" && hash() !== "#/break" && hash() !== "#/code" && hash() !== "#/inbox" && hash() !== "#/agent" && hash() !== "#/privacy"} fallback={hash() === "#/settings" ? <Settings /> : hash() === "#/instructions" ? <Instructions /> : hash() === "#/privacy" ? <Privacy /> : hash() === "#/agent" ? <AgentAccess /> : hash() === "#/inbox" ? <Inbox /> : hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/roundtable" ? <Roundtable /> : hash().startsWith("#/team") ? <Team id={hash().slice(7)} /> : hash() === "#/docs" ? <Documents /> : hash() === "#/meeting" ? <Meeting /> : hash() === "#/break" ? <BreakIt /> : hash() === "#/code" ? <CodeTask /> : <Memory />}>
                     <Show when={jobId()} fallback={<NewReview config={c()} onStarted={(id) => { void refresh(); location.hash = `#/job/${id}`; }} />}>
                     {(id) => <ReviewView id={id()} config={c()} onUpdate={() => void refresh()} />}
                     </Show>

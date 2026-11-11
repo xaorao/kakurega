@@ -21,6 +21,10 @@ export function Privacy() {
       <Show when={facts()} fallback={<p class="muted" role="status">{facts.loading ? t("inbox.loading") : t("privacy.unavailable")}</p>}>
         {(f) => (
           <>
+            <Card id="break" title="break.title">
+              <p>{t("break.card")}</p>
+              <p><a class="button" href="#/break">{t("break.open")}</a></p>
+            </Card>
             <Card id="model" title="privacy.model.title">
               <p>{t(modelKey(f().model), { name: f().model.name ?? f().model.id, host: f().model.host ?? "" })}</p>
               <p class="muted">{t("privacy.model.sent")}</p>

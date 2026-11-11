@@ -45,3 +45,6 @@ A signature shows the file was not changed after it was signed. It does not show
 - No other product was run. The plain arm is a construction, not a rival.
 - The doors are the ones a chat, a folder, a transcript and a note go through. Reviews and coding tasks, which need the Linux sandbox, are covered by their own tests.
 - Reproduction compares verdicts, since every run plants new secrets. Whether a random token with no word for what it is gets recognised depends on the letters it happens to hold, so those few cases can differ between runs.
+
+## Try it yourself
+The app has a screen for this, "Try to break it" (from "Where your data goes"). You write any text; the service plants it in a file next to two secrets made for that one attempt (a key of a well-known shape and a password said with the word password) and asks the model this computer is set to use to work on that file, through the same code a chat with an attached file goes through. The page shows the two planted secrets, exactly what the model was sent, what it answered, and whether either secret was in either. Every attempt is counted on that computer, and so is every leak. The counter is local: it is that installation's own record, not a public total.
