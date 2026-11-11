@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, shell, systemPreferences, session, Notification, Tray, Menu, nativeImage } from "electron";
+import { app, BrowserWindow, dialog, shell, systemPreferences, session, Notification, Tray, Menu, nativeImage, desktopCapturer, screen } from "electron";
 import { spawn, execFile } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -13,6 +13,7 @@ import { english, pickLanguage, translator } from "./strings.mjs";
 import { createNotifier, readInbox } from "./inbox.mjs";
 import { menuTemplate, trayIconPng, trayTitle, trayToolTip } from "./tray.mjs";
 import { bundledPaths, checkPart, readManifest } from "./bundle.mjs";
+import { createCapture, pickSource, MAX_PICTURE_BYTES } from "./capture.mjs";
 
 const dataDir = process.env.KAKUREGA_DATA_DIR ?? join(homedir(), ".kakurega");
 // When the data folder is chosen explicitly (a second profile, a test), the window's own files (cache, cookies) live inside it
@@ -221,7 +222,106 @@ function showWindow(hash) {
   window.focus();
 }
 
+// A picture of the screen for the chat. Taken here, in the main process, only from the shell's own menu; the page has no
+// way to ask for it and its permission requests stay refused.
+let captureTestPng = null;
+let captureTestAnswer = null;
+
+async function grabScreen() {
+  if (captureTestPng) return captureTestPng;
+  if (macOS && systemPreferences.getMediaAccessStatus("screen") === "denied") return "denied";
+  const display = window && !window.isDestroyed() ? screen.getDisplayMatching(window.getBounds()) : screen.getPrimaryDisplay();
+  // the app's own window is taken out of the picture: the owner wants what is behind it
+  const wasVisible = !!window && !window.isDestroyed() && window.isVisible();
+  if (wasVisible) {
+    window.hide();
+    await sleep(350);
+  }
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ["screen"],
+      thumbnailSize: { width: Math.round(display.size.width * display.scaleFactor), height: Math.round(display.size.height * display.scaleFactor) },
+    });
+    const source = pickSource(sources, display.id);
+    if (!source || source.thumbnail.isEmpty()) return macOS && systemPreferences.getMediaAccessStatus("screen") !== "granted" ? "denied" : null;
+    let png = source.thumbnail.toPNG();
+    // a full-resolution picture of a large screen can pass the chat's file limit: the picture is then made at the screen's
+    // size in points, which is still readable
+    if (png.length > MAX_PICTURE_BYTES) png = source.thumbnail.resize({ width: display.size.width, quality: "best" }).toPNG();
+    return png;
+  } finally {
+    if (wasVisible && window && !window.isDestroyed()) window.show();
+  }
+}
+
+/** Shows the picture in a window that runs no script and has no bridge, and asks with a native dialog on it. */
+async function confirmPicture(png) {
+  if (captureTestAnswer !== null) return captureTestAnswer;
+  const image = nativeImage.createFromBuffer(png);
+  const { width, height } = image.getSize();
+  const area = screen.getPrimaryDisplay().workAreaSize;
+  const scale = Math.min(1, (area.width * 0.6) / Math.max(1, width), (area.height * 0.6) / Math.max(1, height));
+  const preview = new BrowserWindow({
+    width: Math.max(320, Math.round(width * scale)),
+    height: Math.max(200, Math.round(height * scale)),
+    title: t("capture.preview.title"),
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    backgroundColor: "#111111",
+    webPreferences: { javascript: false, sandbox: true, contextIsolation: true, nodeIntegration: false, partition: "kakurega-capture-preview" },
+  });
+  preview.setMenuBarVisibility(false);
+  preview.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  preview.webContents.on("will-navigate", (e) => e.preventDefault());
+  try {
+    await preview.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><meta charset="utf-8"><title>${t("capture.preview.title")}</title><body style="margin:0;background:#111"><img alt="" style="display:block;width:100vw;height:100vh;object-fit:contain" src="data:image/png;base64,${png.toString("base64")}">`)}`);
+    const r = await dialog.showMessageBox(preview, {
+      type: "question",
+      message: t("capture.confirm.message"),
+      detail: t("capture.confirm.detail"),
+      buttons: [t("capture.confirm.yes"), t("capture.confirm.no")],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    });
+    return r.response === 0;
+  } finally {
+    if (!preview.isDestroyed()) preview.destroy();
+  }
+}
+
+const captureScreen = createCapture({
+  grab: async () => {
+    const got = await grabScreen();
+    if (got === "denied") {
+      await dialog.showMessageBox({ type: "info", message: t("capture.denied.message"), detail: t("capture.denied.detail") });
+      return null;
+    }
+    return got;
+  },
+  confirm: confirmPicture,
+  upload: (name, png) => adminClient(current.admin).postBytes(`/admin/attachments?name=${encodeURIComponent(name)}`, png),
+  open: (hash) => showWindow(hash),
+});
+let lastCapture = null;
+
+async function runCapture() {
+  if (!current) return;
+  let r;
+  try {
+    r = await captureScreen();
+  } catch (e) {
+    r = { outcome: "refused", status: 0 };
+  }
+  lastCapture = r;
+  const why = { too_large: "capture.failed.large", refused: "capture.failed.refused" }[r.outcome];
+  if (why && captureTestAnswer === null) await dialog.showMessageBox({ type: "warning", message: t("capture.failed.message"), detail: t(why) });
+}
+
 const trayActions = {
+  capture: () => void runCapture(),
   open: () => showWindow(),
   inbox: () => showWindow("#/inbox"),
   setNotify: (on) => {
@@ -395,6 +495,16 @@ if (!runsFromAsar) {
     notices: () => notices.map(({ title, body, target }) => ({ title, body, target })),
     clickNotice: (i) => notices[i]?.notification.emit("click"),
     pollInbox,
+    // the picture and the owner's answer a test supplies in place of the screen and the dialog
+    setCapture: (png, answer) => {
+      captureTestPng = png;
+      captureTestAnswer = answer;
+    },
+    capture: async () => {
+      await runCapture();
+      return lastCapture;
+    },
+    lastCapture: () => lastCapture,
   });
 }
 

@@ -10118,6 +10118,12 @@ impl Extension for Routes {
             // the same list the owner's page reads, for the desktop shell's menu-bar count and notifications; the admin
             // token can already read everything in it
             .route("/admin/inbox", get(inbox))
+            // a picture of the screen the owner took from the desktop shell's menu: the same door a dropped file uses
+            .route(
+                "/admin/attachments",
+                post(attachment_upload)
+                    .layer(axum::extract::DefaultBodyLimit::max(ATTACH_BODY_MAX)),
+            )
             .route("/admin/overview", get(admin_overview))
             .route("/admin/jobs", get(admin_jobs_list).post(admin_job_start))
             .route("/admin/jobs/{id}", get(admin_job_get))

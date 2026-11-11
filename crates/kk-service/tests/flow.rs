@@ -22271,3 +22271,61 @@ fn sv262_a_kept_conversation_can_suggest_a_skill_that_waits_unapproved_and_a_bad
         "{v}"
     );
 }
+
+#[test]
+fn sv263_the_shell_hands_a_file_in_through_its_own_token_and_the_page_reads_it_like_any_attachment()
+{
+    let runner = SummaryRunner::new(Ok("[]".into()));
+    let (c, w, _id, _data, _root) = kept_chat("admin-attach", runner);
+    let base = format!("http://{}", c.addr);
+    let token = c.security.admin_token().to_string();
+    let send = |tok: Option<&str>, name: &str, bytes: &[u8]| -> (u16, Value) {
+        let cfg = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .build();
+        let agent: ureq::Agent = cfg.into();
+        let mut req = agent
+            .post(&format!("{base}/admin/attachments?name={name}"))
+            .header("Content-Type", "application/octet-stream");
+        if let Some(t) = tok {
+            req = req.header("Authorization", &format!("Bearer {t}"));
+        }
+        let mut r = req.send(bytes).unwrap();
+        (
+            r.status().as_u16(),
+            r.body_mut().read_json().unwrap_or(Value::Null),
+        )
+    };
+    // no token, a wrong token and the page's own session are all refused
+    assert!([401, 403].contains(&send(None, "note.txt", b"hello").0));
+    assert!([401, 403].contains(&send(Some("wrong"), "note.txt", b"hello").0));
+    assert!([401, 403].contains(&w.post_raw("/admin/attachments?name=note.txt", b"hello").0));
+    // with the token it is the same door a dropped file uses: read, checked, and found by the page under its id
+    let key = format!(
+        "{}-{}",
+        "sk-ant", "api03-abcdefghijklmnopqrstuvwxyz0123456789"
+    );
+    let (s, v) = send(
+        Some(&token),
+        "note.txt",
+        format!("first line\nAPI_KEY={key}\nlast line\n").as_bytes(),
+    );
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    assert_eq!(v["flagged"]["secret"], json!(1), "{v}");
+    let (s, read) = w.get(&format!("/api/attachments/{id}"));
+    assert_eq!(
+        (s, read["name"].as_str()),
+        (200, Some("note.txt")),
+        "{read}"
+    );
+    // an empty file and a name that is a secret are refused in the same words as from the page
+    assert_eq!(
+        send(Some(&token), "empty.txt", b"").0,
+        w.post_raw("/api/attachments?name=empty.txt", b"").0
+    );
+    assert_eq!(
+        send(Some(&token), &key, b"x").1["error"]["code"],
+        json!("SECRET_IN_NAME")
+    );
+}

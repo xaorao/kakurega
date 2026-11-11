@@ -375,6 +375,10 @@ export function Chat() {
   };
   window.addEventListener("scroll", onScroll, { passive: true });
   onCleanup(() => window.removeEventListener("scroll", onScroll));
+  // a file handed over by another screen or by the desktop shell (a picture of the screen) is shown where it will be sent from
+  onMount(() => {
+    if (files().length > 0) queueMicrotask(() => { box?.scrollIntoView({ block: "center" }); box?.focus(); });
+  });
   // A file dropped anywhere on the page is attached here; without this the browser would open it in place of the page and the
   // message being written would be lost. Only drags that carry files count, so dragging selected text shows no drop target.
   onMount(() => {

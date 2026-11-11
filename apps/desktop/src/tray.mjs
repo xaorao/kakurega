@@ -91,6 +91,7 @@ export function menuTemplate(state, t, actions) {
     { type: "separator" },
     { id: "open", label: t("tray.open"), click: () => actions.open() },
     { id: "inbox", label: n > 0 ? t("tray.inboxCount", { n }) : t("tray.inbox"), click: () => actions.inbox() },
+    ...(state.stopped || !actions.capture ? [] : [{ id: "capture", label: t("tray.capture"), click: () => actions.capture() }]),
     { type: "separator" },
     { id: "notify", label: t("tray.notify"), type: "checkbox", checked: !!state.notify, click: (item) => actions.setNotify(!!item?.checked) },
     { type: "separator" },

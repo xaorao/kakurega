@@ -97,7 +97,7 @@ try {
   const tray = await shell(app, () => { const t = globalThis.kakuregaShell.tray(); return t && { destroyed: t.isDestroyed(), title: process.platform === "darwin" ? t.getTitle() : "" }; });
   check("the app shows a menu-bar item as soon as it runs, with no number while nothing waits", !!tray && !tray.destroyed && tray.title === "", JSON.stringify(tray));
   const labels = await menuLabels(app);
-  check("its menu says Kakurega is running and what waits, and offers Open, Waiting for you, notifications and Quit", JSON.stringify(labels.map((l) => l.label)) === JSON.stringify(["Kakurega is running", "Nothing is waiting for you", "Open Kakurega", "Waiting for you", "Tell me when something needs me", "Quit Kakurega"]) && labels[0].enabled === false && labels[1].enabled === false, JSON.stringify(labels.map((l) => l.label)));
+  check("its menu says Kakurega is running and what waits, and offers Open, Waiting for you, notifications and Quit", JSON.stringify(labels.map((l) => l.label)) === JSON.stringify(["Kakurega is running", "Nothing is waiting for you", "Open Kakurega", "Waiting for you", "Take a picture of the screen for the chat…", "Tell me when something needs me", "Quit Kakurega"]) && labels[0].enabled === false && labels[1].enabled === false, JSON.stringify(labels.map((l) => l.label)));
   const adminInbox = await admin(data, "GET", "/admin/inbox");
   const st0 = await shell(app, () => globalThis.kakuregaShell.state());
   check(`the shell reads the inbox through its admin token (${adminInbox.status === 200 ? "the service's /admin/inbox" : "this service has no /admin/inbox, so the reviews' part from /admin/jobs"})`, st0.complete === (adminInbox.status === 200), `GET /admin/inbox -> ${adminInbox.status}`);
@@ -156,6 +156,42 @@ try {
   await clickMenu(app, "notify");
   check("and on again", (await shell(app, () => globalThis.kakuregaShell.state().notify)) === true);
 
+  // A picture of the screen for the chat. The screen itself and the owner's answer are supplied by the test: a picture of
+  // the app's own window stands in for the screen (the operating system's permission is not something a test can grant).
+  await shell(app, () => globalThis.kakuregaShell.window().show());
+  await page.goto(new URL("#/privacy", page.url()).href);
+  await page.getByRole("heading", { level: 1 }).first().waitFor();
+  await shell(app, async () => {
+    const png = (await globalThis.kakuregaShell.window().webContents.capturePage()).toPNG();
+    globalThis.kakuregaShell.setCapture(png, false);
+  });
+  const discarded = await shell(app, () => globalThis.kakuregaShell.capture());
+  check("a picture the owner discards is not attached and the screen does not change", discarded?.outcome === "discarded" && new URL(page.url()).hash === "#/privacy", JSON.stringify(discarded));
+  await shell(app, async () => {
+    const png = (await globalThis.kakuregaShell.window().webContents.capturePage()).toPNG();
+    globalThis.kakuregaShell.setCapture(png, true);
+  });
+  await clickMenu(app, "capture");
+  await page.waitForFunction(() => location.hash === "#/chat", null, { timeout: 30000 });
+  const chip = page.locator("text=/screen-\\d{8}-\\d{6}\\.png/").first();
+  await chip.waitFor({ timeout: 15000 });
+  check("a picture the owner accepts from the menu opens the chat with the picture attached under a dated name", await chip.isVisible(), page.url());
+  const done = await shell(app, () => globalThis.kakuregaShell.lastCapture());
+  check("the shell reports it as attached, by an attachment's id", done?.outcome === "attached" && /^att-[0-9a-f]{12}$/.test(done?.id ?? ""), JSON.stringify(done));
+  await page.screenshot({ path: join(work, "capture-chat.png") });
+  const noToken = await fetch(`http://127.0.0.1:${JSON.parse(readFileSync(join(data, "admin.json"), "utf8")).port}/admin/attachments?name=x.png`, { method: "POST", body: Buffer.from([1, 2, 3]) });
+  check("the picture's door needs the shell's own token", noToken.status === 401, String(noToken.status));
+  const perms = await page.evaluate(async () => {
+    try {
+      await navigator.mediaDevices.getDisplayMedia({ video: true });
+      return "granted";
+    } catch (e) {
+      return String(e?.name ?? e);
+    }
+  });
+  check("the page itself still cannot take a picture of the screen", perms !== "granted", perms);
+  await shell(app, () => globalThis.kakuregaShell.setCapture(null, null));
+
   // closing the window keeps Kakurega in the menu bar (macOS)
   const companionBefore = companion(data);
   await shell(app, () => globalThis.kakuregaShell.window().close());
@@ -208,7 +244,7 @@ try {
   await page.waitForLoadState("domcontentloaded");
   const lang = await shell(app, () => globalThis.kakuregaShell.language());
   const hiLabels = (await menuLabels(app)).map((l) => l.label);
-  check("with the system in Hindi the menu-bar item's menu is in Hindi", lang === "hi" && JSON.stringify(hiLabels) === JSON.stringify([STRINGS.hi["tray.running"], STRINGS.hi["tray.nothing"], STRINGS.hi["tray.open"], STRINGS.hi["tray.inbox"], STRINGS.hi["tray.notify"], STRINGS.hi["tray.quit"]]), JSON.stringify([lang, hiLabels]));
+  check("with the system in Hindi the menu-bar item's menu is in Hindi", lang === "hi" && JSON.stringify(hiLabels) === JSON.stringify([STRINGS.hi["tray.running"], STRINGS.hi["tray.nothing"], STRINGS.hi["tray.open"], STRINGS.hi["tray.inbox"], STRINGS.hi["tray.capture"], STRINGS.hi["tray.notify"], STRINGS.hi["tray.quit"]]), JSON.stringify([lang, hiLabels]));
   await setFocus(app, false);
   await poll(app);
   await review(data, "Hindi-Recipient-7708");

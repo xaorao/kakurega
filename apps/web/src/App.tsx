@@ -168,6 +168,18 @@ export function App() {
   // on a narrow screen the menu is closed until asked for; choosing a page closes it again
   const [menuOpen, setMenuOpen] = createSignal(false);
   createEffect(() => { hash(); setMenuOpen(false); });
+  // the desktop shell opens this address after the owner took a picture of the screen: the attachment is handed to the chat once
+  createEffect(() => {
+    const id = /^#\/chat\/attach\/(att-[0-9a-f]{12})$/.exec(hash())?.[1];
+    if (!id) return;
+    void api.attachment(id)
+      .then((a) => {
+        const { read: _read, ...summary } = a;
+        try { sessionStorage.setItem("kk-chat-attach", JSON.stringify(summary)); } catch { /* the chat opens without it */ }
+      })
+      .catch(() => { /* a file that is gone: the chat opens without it */ })
+      .finally(() => { location.hash = "#/chat"; });
+  });
   const shown = createMemo(() => {
     const q = query().trim().toLowerCase();
     if (!q) return jobs();

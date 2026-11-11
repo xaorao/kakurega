@@ -20,5 +20,18 @@ export function adminClient(admin, fetchImpl = fetch) {
     } catch {}
     return { status: r.status, json };
   };
-  return { get: (p) => call("GET", p), post: (p, b = {}) => call("POST", p, b) };
+  // raw bytes (a picture), for the one route that takes a file
+  const postBytes = async (path, bytes) => {
+    const r = await fetchImpl(admin.base + path, {
+      method: "POST",
+      headers: { authorization: `Bearer ${admin.token}`, "content-type": "application/octet-stream" },
+      body: bytes,
+    });
+    let json = null;
+    try {
+      json = await r.json();
+    } catch {}
+    return { status: r.status, json };
+  };
+  return { get: (p) => call("GET", p), post: (p, b = {}) => call("POST", p, b), postBytes };
 }
