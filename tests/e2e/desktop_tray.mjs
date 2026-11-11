@@ -193,12 +193,13 @@ try {
   await shell(app, () => globalThis.kakuregaShell.setCapture(null, null));
 
   // closing the window keeps Kakurega in the menu bar (macOS)
-  const companionBefore = companion(data);
-  await shell(app, () => globalThis.kakuregaShell.window().close());
-  await sleep(1500);
-  const afterClose = await shell(app, () => { const w = globalThis.kakuregaShell.window(); return { destroyed: w.isDestroyed(), visible: !w.isDestroyed() && w.isVisible(), tray: !globalThis.kakuregaShell.tray().isDestroyed() }; });
-  const stillServing = await admin(data, "GET", "/admin/overview");
+  // elsewhere closing the window ends the app, as those systems expect, so the window is left open there
   if (process.platform === "darwin") {
+    const companionBefore = companion(data);
+    await shell(app, () => globalThis.kakuregaShell.window().close());
+    await sleep(1500);
+    const afterClose = await shell(app, () => { const w = globalThis.kakuregaShell.window(); return { destroyed: w.isDestroyed(), visible: !w.isDestroyed() && w.isVisible(), tray: !globalThis.kakuregaShell.tray().isDestroyed() }; });
+    const stillServing = await admin(data, "GET", "/admin/overview");
     check("closing the window leaves the app running in the menu bar, with its companion and its data", afterClose.destroyed === false && afterClose.visible === false && afterClose.tray && companion(data) === companionBefore && companionBefore !== "" && stillServing.status === 200, JSON.stringify(afterClose));
     await clickMenu(app, "open");
     await sleep(800);

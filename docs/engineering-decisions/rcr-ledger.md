@@ -8,7 +8,7 @@ Matrix A (terminal) is written as sections A01-A46 rather than tables and is lis
 
 ## Summary (computed from the tables below)
 
-- Rows: 372. BUILT 239, PARTIAL 9, KEPT 24, EXCLUDED 43, LATER 57 (a later surface or something external), UNCHECKED 0. (Recounted from the tables after each row was re-judged; the earlier counts had not been kept up as rows closed.)
+- Rows: 372. BUILT 240, PARTIAL 10, KEPT 24, EXCLUDED 43, LATER 55 (a later surface or something external), UNCHECKED 0. (Recounted from the tables after each row was re-judged; the earlier counts had not been kept up as rows closed.)
 - Owed and applicable: OWED-H 0, OWED-M 0, OWED-L 0. PARTIAL rows each name what is missing.
 - Honesty note: the BUILT statuses were assigned by me from the code, tests and records named in each row; the first pass by other agents (the matrices) was never used as evidence that something exists. A few rows say NOT VERIFIED where I could not confirm a detail.
 
@@ -342,8 +342,8 @@ No OWED-H row remains. The medium rows below come next, in order.
 | G-GH-56 | Updated skill content must be re-approved (changelog: "installed plugi | ADAPT: approval pinned to a content hash; any change re-prompts | BUILT | methods: approval pinned to the content hash, an edit voids it, putting the old text back does not restore it (mt08, mt17, sv190; trace row 42; docs/engineering-decisions/skills.md) |
 | G-GH-57 | Partner Mode: scenario packs (work, companion, quiet), initiative engi | ADAPT the structure: schema-constrained personal model, anchored initiative, boundaries en | LATER | partner mode |
 | G-GH-58 | Plugin store: 496 plugins in 16 categories, Skills / Manage connection | BUILD our own catalog and format (study-only source). Take the structure: manifest, detail | LATER | plugin store |
-| G-GH-59 | Package format: `plugin.json` plus `mcp.json` plus `skills/` plus `hoo | BUILD with a signed catalog (Ed25519, pinned key) and signed packages. Their digest comes  | LATER | signed packs of methods are built (kk-packs, trace row 44); the catalog, `plugin.json` and `mcp.json` packages and skills with hooks are not built |
-| G-GH-60 | "Installing does not grant access; install, authorisation and executio | ADAPT as policy: install grants nothing; each effect is a kernel grant with its own approv | LATER | install grants nothing |
+| G-GH-59 | Package format: `plugin.json` plus `mcp.json` plus `skills/` plus `hoo | BUILD with a signed catalog (Ed25519, pinned key) and signed packages. Their digest comes  | PARTIAL | signed packs of methods and a signed catalog that binds each pack to its exact file are built (skills.md; sv265, `packs_web.mjs` 15); `plugin.json` and `mcp.json` packages and skills with hooks are not |
+| G-GH-60 | "Installing does not grant access; install, authorisation and executio | ADAPT as policy: install grants nothing; each effect is a kernel grant with its own approv | BUILT | installing gives nothing: a method from a pack, a catalog, a review or a conversation arrives unapproved, and an outside tool is off until allowed one by one (skills.md) |
 | G-GH-61 | Plugin lifecycle hooks `SessionStart`, `UserPromptSubmit`, `SubagentSt | EXCLUDE command hooks by default. BUILD declarative hooks that only add context; hook outp | LATER | declarative hooks |
 | G-GH-62 | Provenance and licence audit of ported plugins: official source verifi | ADAPT the labels and the "runtime claims never exceed recorded evidence" rule for our cata | LATER | provenance audit |
 | G-GH-63 | OAuth connectors: 31 plugins flagged `oauthRequired`; 538 MCP services | BUILD later: tokens live in the vault, never in model context; the audit job idea (automat | LATER | OAuth connectors |
