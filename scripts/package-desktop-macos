@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Builds the self-contained macOS app: the release kaku, the shipped Secure Enclave helper and the web interface go inside
+# Kakurega.app, then the app is zipped and its SHA-256 written beside the zip (target/packaged/). Publish that value with the
+# zip; scripts/install-desktop-macos checks it before it unpacks anything.
+set -euo pipefail
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+out="${1:-$repo/target/packaged}"
+cd "$repo"
+cargo build --release --locked -p kk-cli
+pnpm --dir "$repo" --filter @kakurega/web run build >/dev/null
+sh spikes/enclave/build.sh "$repo/target/release/kaku-enclave" >/dev/null
+node apps/desktop/scripts/package.mjs "$out" --kaku "$repo/target/release/kaku" --web "$repo/apps/web/dist" --enclave "$repo/target/release/kaku-enclave"

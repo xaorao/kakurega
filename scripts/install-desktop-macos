@@ -1,0 +1,111 @@
+#!/bin/sh
+# Installs the Kakurega desktop app on macOS from its published zip, after checking the zip against its published SHA-256.
+#
+#   scripts/install-desktop-macos [--clear-quarantine] ZIP SHA256 [DESTINATION]
+#
+#   ZIP          Kakurega-<version>-macos-<arch>.zip as downloaded
+#   SHA256       the 64-character value published with the release, or the .sha256 file that holds it
+#   DESTINATION  the folder to install into (default /Applications)
+#   --clear-quarantine
+#                after every check has passed, remove the download mark macOS puts on files from the internet, so the
+#                app opens without the "cannot be verified" refusal. Only do this for a zip whose value you took from
+#                the release page yourself.
+#
+# Order, so nothing from the archive is opened or run before it is known to be the published one: the zip's SHA-256 is
+# compared with the published value; only then is it unpacked, into a new private temporary folder; the result must be
+# exactly one Kakurega.app with no link pointing outside it, and its signature must be intact; only then is it moved into
+# place. Nothing inside the archive is ever executed by this script. On any failure nothing is installed and an existing
+# Kakurega.app is left as it was.
+set -eu
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+umask 022
+
+say() { printf '%s\n' "$*"; }
+refuse() {
+  say "REFUSED: $*" >&2
+  say "Nothing was installed." >&2
+  exit 1
+}
+
+clear_quarantine=0
+if [ "${1:-}" = "--clear-quarantine" ]; then
+  clear_quarantine=1
+  shift
+fi
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+  say "usage: $0 [--clear-quarantine] ZIP SHA256 [DESTINATION]" >&2
+  exit 2
+fi
+zip=$1
+published=$2
+dest=${3:-/Applications}
+
+[ -f "$zip" ] || refuse "no such file: $zip"
+if [ -f "$published" ]; then
+  published=$(awk 'NR == 1 { print $1 }' "$published")
+fi
+published=$(printf '%s' "$published" | tr 'A-F' 'a-f')
+case "$published" in
+  *[!0-9a-f]*|"") refuse "the published SHA-256 must be 64 hexadecimal characters" ;;
+esac
+[ "${#published}" -eq 64 ] || refuse "the published SHA-256 must be 64 hexadecimal characters"
+
+actual=$(shasum -a 256 "$zip" | awk '{ print $1 }')
+if [ "$actual" != "$published" ]; then
+  say "REFUSED: the zip does not match the published SHA-256." >&2
+  say "  published: $published" >&2
+  say "  this zip:  $actual" >&2
+  say "The download is damaged or is not the published one. Nothing was unpacked or installed." >&2
+  exit 1
+fi
+say "SHA-256 matches the published value: $actual"
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/kakurega-install.XXXXXX")
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+chmod 700 "$work"
+ditto -x -k "$zip" "$work/unpacked" || refuse "the zip could not be unpacked"
+
+entries=$(ls -A "$work/unpacked")
+[ "$entries" = "Kakurega.app" ] || refuse "the zip must hold exactly Kakurega.app and nothing else"
+app="$work/unpacked/Kakurega.app"
+[ -d "$app" ] && [ ! -L "$app" ] || refuse "Kakurega.app in the zip is not a folder"
+# every link must stay inside the app: no absolute target and no step up out of the folder it sits in
+links_out() {
+  find "$1" -type l -print | while IFS= read -r link; do
+    target=$(readlink "$link")
+    case "$target" in
+      (/*|..|../*|*/..|*/../*) printf '%s\n' "$link" ;;
+    esac
+  done
+}
+bad_link=$(links_out "$app")
+[ -z "$bad_link" ] || refuse "a link in the app points outside it: ${bad_link#"$work/unpacked/"}"
+codesign --verify --deep --strict "$app" 2>/dev/null || refuse "the app's signature is broken (a file inside it was changed after it was built)"
+
+mkdir -p "$dest" || refuse "cannot create $dest"
+target="$dest/Kakurega.app"
+if pgrep -f "$target/Contents/MacOS/" >/dev/null 2>&1; then
+  refuse "Kakurega is running from $target; quit it first"
+fi
+if [ -e "$target" ] || [ -L "$target" ]; then
+  old="$dest/.Kakurega.app.replaced.$$"
+  mv "$target" "$old" || refuse "cannot move the installed Kakurega.app aside"
+  if ! mv "$app" "$target"; then
+    mv "$old" "$target"
+    refuse "cannot move the new Kakurega.app into $dest; the installed one was put back"
+  fi
+  rm -rf "$old"
+else
+  mv "$app" "$target" || refuse "cannot move Kakurega.app into $dest"
+fi
+
+if [ "$clear_quarantine" -eq 1 ]; then
+  xattr -dr com.apple.quarantine "$target" 2>/dev/null || true
+  say "Removed the download mark, as asked."
+fi
+say "Installed: $target"
+say ""
+say "Please read: this app is signed ad hoc only. It has no Developer ID signature from an identified developer and it"
+say "is not notarized by Apple. The SHA-256 check above is what tells you this is the published build. macOS may refuse"
+say "to open it the first time; then open System Settings > Privacy & Security and choose Open Anyway for Kakurega."
