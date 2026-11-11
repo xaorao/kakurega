@@ -103,6 +103,7 @@ fn l01_the_real_worker_runs_in_the_vm_sandbox_with_the_broker_on_the_host() {
             json!([{"name": "read_file", "description": "", "parameters": {"type": "object"}}])
                 .to_string(),
         max_turns: 8,
+        second_look_files: 0,
         limits: limits(),
         transport: transport(),
     };

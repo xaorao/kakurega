@@ -1,0 +1,152 @@
+{
+ "commit": "02fee92aad1861994a081d1b1c8025298109a6a0",
+ "kakurega_usage": {
+  "from": 1791818561,
+  "note": "Token counts are the model's own where it gave them (measured_turns) and an estimate otherwise. A cost is shown only for a model route you entered a price for (/api/usage/prices): this program knows no provider's prices.",
+  "routes": [],
+  "to": 1794410561,
+  "total": {
+   "cost": [],
+   "prompt_tokens": 0,
+   "reply_tokens": 0,
+   "turns": 0
+  }
+ },
+ "model": "qwen2.5-coder:7b",
+ "money": "the model runs on this computer: no charge",
+ "project": "fixtures/synthetic-repo",
+ "ran_at": 1794410560,
+ "real_defect": {
+  "file": "payments/auth/session.py",
+  "line": 15,
+  "summary": "logout does not remove the token from ACTIVE_TOKENS, so validate() keeps accepting it"
+ },
+ "runs": {
+  "kakurega": [
+   {
+    "arguable_findings": 1,
+    "confirmed_files": [
+     "payments/auth/session.py",
+     "payments/auth/tokens.py"
+    ],
+    "false_files": [],
+    "false_findings": 0,
+    "found_real": true,
+    "not_confirmed": 6,
+    "proposed": 8,
+    "release_held_a_secret": false,
+    "reported": 2,
+    "seconds": 155,
+    "state": "ready"
+   },
+   {
+    "arguable_findings": 1,
+    "confirmed_files": [
+     "payments/auth/session.py",
+     "payments/auth/tokens.py"
+    ],
+    "false_files": [],
+    "false_findings": 0,
+    "found_real": true,
+    "not_confirmed": 6,
+    "proposed": 8,
+    "release_held_a_secret": false,
+    "reported": 2,
+    "seconds": 145,
+    "state": "ready"
+   },
+   {
+    "arguable_findings": 1,
+    "confirmed_files": [
+     "payments/auth/session.py",
+     "payments/auth/tokens.py"
+    ],
+    "false_files": [],
+    "false_findings": 0,
+    "found_real": true,
+    "not_confirmed": 6,
+    "proposed": 8,
+    "release_held_a_secret": false,
+    "reported": 2,
+    "seconds": 145,
+    "state": "ready"
+   }
+  ],
+  "plain": [
+   {
+    "answer_held_a_secret": false,
+    "arguable_findings": 0,
+    "false_files": [
+     ".env",
+     "README.md",
+     "docs/vendor-notes.md",
+     "payments/config.py"
+    ],
+    "false_findings": 5,
+    "found_real": true,
+    "readable": true,
+    "reported": 7,
+    "seconds": 19,
+    "tokens_in": 938,
+    "tokens_out": 391
+   },
+   {
+    "answer_held_a_secret": false,
+    "arguable_findings": 0,
+    "false_files": [
+     ".env",
+     "README.md",
+     "docs/vendor-notes.md",
+     "payments/config.py"
+    ],
+    "false_findings": 4,
+    "found_real": true,
+    "readable": true,
+    "reported": 6,
+    "seconds": 15,
+    "tokens_in": 938,
+    "tokens_out": 314
+   },
+   {
+    "answer_held_a_secret": false,
+    "arguable_findings": 0,
+    "false_files": [
+     ".env",
+     "README.md",
+     "payments/config.py"
+    ],
+    "false_findings": 4,
+    "found_real": true,
+    "readable": true,
+    "reported": 5,
+    "seconds": 12,
+    "tokens_in": 938,
+    "tokens_out": 255
+   }
+  ]
+ },
+ "summary": {
+  "kakurega": {
+   "arguable_findings_total": 3,
+   "false_findings_total": 0,
+   "found_real_in": 3,
+   "found_real_in_every_run": true,
+   "runs": 3,
+   "seconds_fastest": 145,
+   "seconds_slowest": 155,
+   "worst_run_false_findings": 0
+  },
+  "plain": {
+   "arguable_findings_total": 0,
+   "false_findings_total": 13,
+   "found_real_in": 3,
+   "found_real_in_every_run": true,
+   "runs": 3,
+   "seconds_fastest": 12,
+   "seconds_slowest": 19,
+   "worst_run_false_findings": 5
+  }
+ },
+ "type": "kakurega-quality-eval",
+ "version": 1
+}

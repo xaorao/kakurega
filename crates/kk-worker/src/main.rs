@@ -17,6 +17,10 @@ fn real_main() -> i32 {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(24);
+    let second_look = std::env::var("KK_SECOND_LOOK")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     let tool_specs: Vec<ToolSpec> = std::env::var("KK_TOOLS")
         .ok()
         .and_then(|v| serde_json::from_str(&v).ok())
@@ -33,6 +37,7 @@ fn real_main() -> i32 {
         max_turns,
         max_tokens: 1024,
         min_looks: 4,
+        sweep_files: second_look,
     };
     match run(&mut link, state, &config, &|| false) {
         Ok(Outcome::Finished(text)) => {

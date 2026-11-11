@@ -10,6 +10,8 @@ pub struct WorkerLaunch {
     pub task: String,
     pub tools_json: String,
     pub max_turns: u32,
+    /// How many source files get a second look once the model says it is done. 0 turns it off.
+    pub second_look_files: usize,
     pub limits: Limits,
     pub transport: Transport,
 }
@@ -30,6 +32,10 @@ pub fn run_worker(
         ("KK_TASK".into(), launch.task.clone()),
         ("KK_TOOLS".into(), launch.tools_json.clone()),
         ("KK_MAX_TURNS".into(), launch.max_turns.to_string()),
+        (
+            "KK_SECOND_LOOK".into(),
+            launch.second_look_files.to_string(),
+        ),
     ];
     spec.limits = launch.limits.clone();
     let outcome = serve_lines_with(&spec, &launch.transport, |line| {

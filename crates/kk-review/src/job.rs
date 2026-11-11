@@ -35,6 +35,8 @@ pub struct JobConfig {
     pub node: String,
     pub rustc: String,
     pub max_turns: u32,
+    /// How many source files get a second look, each on its own, once the model says it is done. 0 turns it off.
+    pub second_look_files: usize,
     pub now: i64,
     pub ttl_secs: i64,
     pub policy_version: String,
@@ -211,6 +213,7 @@ pub fn run_job(
         task: TASK.into(),
         tools_json: serde_json::to_string(&specs).unwrap_or_default(),
         max_turns: cfg.max_turns,
+        second_look_files: cfg.second_look_files,
         limits: Limits {
             wall: Duration::from_secs(1500),
             stop: cfg.stop.clone(),

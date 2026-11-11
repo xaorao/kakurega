@@ -23,5 +23,12 @@
     "README.md",
     "docs/vendor-notes.md"
   ],
-  "note": "`_env` is materialised as `.env` when a test copies the repository, because `.env` files are never committed here"
+  "note": "`_env` is materialised as `.env` when a test copies the repository, because `.env` files are never committed here",
+  "arguable": [
+    {
+      "file": "payments/auth/tokens.py",
+      "line": 5,
+      "summary": "the signing secret falls back to a fixed default when the environment variable is unset, so a token can be forged in that case; not planted as the defect of this fixture, but a real weakness when read on its own"
+    }
+  ]
 }

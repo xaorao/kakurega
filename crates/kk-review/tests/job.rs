@@ -98,6 +98,7 @@ fn config(name: &str) -> JobConfig {
         node: "/usr/bin/node".into(),
         rustc: "/usr/bin/rustc".into(),
         max_turns: 12,
+        second_look_files: 0,
         now: 1_700_000_000,
         ttl_secs: 86_400,
         policy_version: "policy-1".into(),
@@ -2024,4 +2025,83 @@ fn j26_a_review_the_owner_stops_ends_its_worker_at_once_and_releases_nothing() {
     let report = run_job(&plain, routes, ev, &|_, _| {});
     assert_eq!(report.error, None);
     assert!(report.draft.is_ok());
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn j29_a_model_that_says_no_defects_is_asked_about_each_source_file_on_its_own_and_a_proved_suspicion_is_released(
+) {
+    let mut cfg = config("j29");
+    cfg.second_look_files = 12;
+    let (routes, ev) = scripted(vec![
+        // the review's own conversation: one look, then "nothing", twice (it is told once to look further)
+        calls(vec![("list_files", json!({}))]),
+        ChatMessage::new("assistant", "No defects found."),
+        ChatMessage::new("assistant", "Still none."),
+        // the second look, file by file in its order: tokens (nothing), session (one suspicion, then the proof),
+        // handlers, config and backoff (nothing); the empty package files are not asked about
+        ChatMessage::new("assistant", "[]"),
+        ChatMessage::new("assistant", "[{\"line\": 15, \"summary\": \"logout leaves the token in ACTIVE_TOKENS\"}]"),
+        ChatMessage::new(
+            "assistant",
+            &json!({"real": true, "title": "Token still valid after logout", "line": 15, "explanation": "logout() does not remove the token, so validate() keeps accepting it.", "reproducer": REPRO}).to_string(),
+        ),
+        ChatMessage::new("assistant", "[]"),
+        ChatMessage::new("assistant", "[]"),
+        ChatMessage::new("assistant", "[]"),
+    ]);
+    let report = run_job(&cfg, routes, ev, &|_, _| {});
+    assert_eq!(report.error, None);
+    assert_eq!(
+        report.worker_exit,
+        Some(Exit::Code(0)),
+        "stderr: {}",
+        report.worker_stderr
+    );
+    assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
+    assert_eq!(
+        report.findings[0].1.status,
+        CheckStatus::Reproduced,
+        "{:?}",
+        report.findings[0].1
+    );
+    assert_eq!(report.findings[0].0.file, "payments/auth/session.py");
+    // the withheld file was never asked for, by the model or on its behalf
+    assert!(
+        report.audit.iter().all(|e| e.outcome == "ok"),
+        "{:?}",
+        report.audit
+    );
+    let draft = report.draft.expect("a release draft");
+    assert!(draft.files.contains_key("finding-1.txt"));
+    assert!(!draft
+        .files
+        .values()
+        .any(|b| String::from_utf8_lossy(b).contains("hunter2")));
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn j30_a_model_that_stops_answering_in_the_second_look_still_ends_the_review_cleanly_with_nothing_to_release(
+) {
+    let mut cfg = config("j30");
+    cfg.second_look_files = 12;
+    let (routes, ev) = scripted(vec![
+        calls(vec![("list_files", json!({}))]),
+        ChatMessage::new("assistant", "No defects found."),
+        ChatMessage::new("assistant", "Still none."),
+    ]);
+    let report = run_job(&cfg, routes, ev, &|_, _| {});
+    assert_eq!(report.error, None);
+    assert_eq!(
+        report.worker_exit,
+        Some(Exit::Code(0)),
+        "stderr: {}",
+        report.worker_stderr
+    );
+    assert!(report.findings.is_empty());
+    assert!(
+        report.draft.is_err(),
+        "nothing was found, so nothing is prepared for release"
+    );
 }

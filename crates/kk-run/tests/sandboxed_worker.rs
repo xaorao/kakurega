@@ -101,6 +101,7 @@ fn s01_the_real_worker_binary_completes_a_review_inside_the_sandbox() {
         ])
         .to_string(),
         max_turns: 10,
+        second_look_files: 0,
         limits: limits(),
         transport: Transport::Local,
     };

@@ -32,6 +32,7 @@ fn config() -> AgentConfig {
         max_turns: 12,
         max_tokens: 64,
         min_looks: 4,
+        sweep_files: 0,
     }
 }
 

@@ -247,6 +247,7 @@ impl JobRunner for ReviewRunner {
             node: sandbox_node(),
             rustc: sandbox_rustc(),
             max_turns: self.max_turns,
+            second_look_files: 12,
             now,
             ttl_secs: 86_400,
             policy_version: "policy-1".into(),
