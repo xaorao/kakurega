@@ -22329,3 +22329,80 @@ fn sv263_the_shell_hands_a_file_in_through_its_own_token_and_the_page_reads_it_l
         json!("SECRET_IN_NAME")
     );
 }
+
+#[test]
+fn sv264_files_attached_to_a_team_run_reach_every_expert_as_checked_data_and_never_the_outside_agent(
+) {
+    const PLAN: &str = "1 | security-reviewer | after: - | Read the notes and list the risks.\n2 | claude-code | after: 1 | Write a checklist from the risks.\n";
+    let (_c, w, runner) = team("team-files", PLAN);
+    let key = format!(
+        "{}-{}",
+        "sk-ant", "api03-abcdefghijklmnopqrstuvwxyz0123456789"
+    );
+    let (s, a) = w.post_raw(
+        "/api/attachments?name=billing-notes.txt",
+        format!("Refunds over 500 need a second approval (zebra-marker-771).\nAPI_KEY={key}\nThe export runs nightly.\n").as_bytes(),
+    );
+    assert_eq!(s, 201, "{a}");
+    let att = a["id"].as_str().unwrap().to_string();
+
+    // a file that is not held, and more files than a message takes, plan nothing
+    let (s, v) = w.post(
+        "/api/team",
+        json!({"goal": "Review billing.", "attachments": ["att-000000000000"]}),
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (404, Some("FILE_GONE")),
+        "{v}"
+    );
+    let (s, v) = w.post(
+        "/api/team",
+        json!({"goal": "Review billing.", "attachments": vec![att.clone(); 6]}),
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (400, Some("TOO_MANY_FILES")),
+        "{v}"
+    );
+    assert_eq!(w.get("/api/team").1["runs"].as_array().unwrap().len(), 0);
+
+    let (s, v) = w.post(
+        "/api/team",
+        json!({"goal": "Review the billing notes (files test).", "experts": ["security-reviewer", "claude-code"], "attachments": [att]}),
+    );
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["files"], json!(["billing-notes.txt"]), "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(&w, &id, &["waiting"]);
+    assert_eq!(team_states(&v)[..2], ["done", "needs_input"], "{v}");
+    // the expert was given the file's text as data, with the line that holds the key withheld
+    let seen = runner.seen.lock().unwrap().clone();
+    let task1 = seen
+        .iter()
+        .find(|m| {
+            m.iter()
+                .any(|x| x.content == kk_service::team::TASK_INSTRUCTION)
+        })
+        .expect("task 1 was asked");
+    let all: String = task1
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        all.contains("zebra-marker-771")
+            && all.contains("billing-notes.txt")
+            && all.contains("DATA"),
+        "{all}"
+    );
+    assert!(!all.contains(&key), "the key's line is withheld");
+    assert!(all.contains("Read the notes and list the risks."));
+    // the text offered for the outside agent holds the task and the earlier result, not the file
+    let q = v["tasks"][1]["question"].as_str().unwrap();
+    assert!(
+        q.starts_with("[hand-over]") && !q.contains("zebra-marker-771") && !q.contains(&key),
+        "{q}"
+    );
+}

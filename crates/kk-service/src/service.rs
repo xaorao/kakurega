@@ -491,6 +491,24 @@ fn init_store(v: &Vault) -> Result<(), String> {
             .execute_batch("ALTER TABLE sessions ADD COLUMN project TEXT;")
             .map_err(|e| e.to_string())?;
     }
+    // stores made before a team run could carry files
+    let team_has_files = {
+        let c = v.connection();
+        let mut st = c
+            .prepare("SELECT name FROM pragma_table_info('team_runs')")
+            .map_err(|e| e.to_string())?;
+        let names: Vec<String> = st
+            .query_map([], |r| r.get(0))
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .collect();
+        names.iter().any(|n| n == "attachments")
+    };
+    if !team_has_files {
+        v.connection()
+            .execute_batch("ALTER TABLE team_runs ADD COLUMN attachments TEXT;")
+            .map_err(|e| e.to_string())?;
+    }
     // stores made before a conversation could branch
     let has_parent = {
         let c = v.connection();

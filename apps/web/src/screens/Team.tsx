@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, Show, untrack } from "solid-js";
-import { api, ApiError, type ExpertInfo, type TeamRun, type TeamTask } from "../api";
+import { api, ApiError, type AttachmentSummary, type ExpertInfo, type TeamRun, type TeamTask } from "../api";
+import { MAX_BYTES, MAX_FILES, sizeText } from "../attach";
 import { LoadState } from "../components/LoadState";
 import { Markdown } from "../components/Markdown";
 import { t } from "../i18n";
@@ -61,17 +62,40 @@ export function Team(props: { id?: string }) {
     }
   };
 
+  // files for the whole run: read on this computer like a chat's files, and given to every expert as checked data
+  const [files, setFiles] = createSignal<AttachmentSummary[]>([]);
+  const [fileNote, setFileNote] = createSignal("");
+  let picker: HTMLInputElement | undefined;
+  const addFiles = async (list: FileList | null) => {
+    setFileNote("");
+    for (const f of Array.from(list ?? [])) {
+      if (files().length >= MAX_FILES) { setFileNote(t("team.filesMax", { n: MAX_FILES })); break; }
+      if (f.size > MAX_BYTES) { setFileNote(t("files.tooBig", { name: f.name, max: sizeText(MAX_BYTES) })); continue; }
+      try {
+        const a = await api.attachFile(f);
+        setFiles((x) => [...x, a]);
+      } catch (err) {
+        setFileNote(err instanceof ApiError ? err.message : t("team.filesError", { name: f.name }));
+      }
+    }
+  };
+  const dropFile = (id: string) => {
+    setFiles((x) => x.filter((f) => f.id !== id));
+    void api.removeAttachment(id).catch(() => { /* it expires by itself */ });
+  };
+
   const plan = (e: Event) => {
     e.preventDefault();
     if (!goal().trim() || planning()) return;
     setError("");
     setPlanning(true);
     setConfirmDelete(false);
-    api.teamPlan(goal().trim(), allowed()).then(
+    api.teamPlan(goal().trim(), allowed(), files().map((f) => f.id)).then(
       (r) => {
         show(r);
         setAnswers({});
         setGoal("");
+        setFiles([]);
         void refetchRuns();
       },
       fail,
@@ -125,6 +149,26 @@ export function Team(props: { id?: string }) {
       <form class="card stack" onSubmit={plan}>
         <label for="team-goal">{t("team.goal")}</label>
         <textarea id="team-goal" rows="3" maxlength="4000" value={goal()} disabled={planning()} onInput={(e) => setGoal(e.currentTarget.value)} />
+        <div class="stack team-files">
+          <div class="actions">
+            <input ref={picker} id="team-files" type="file" multiple hidden aria-label={t("files.attach")} onChange={(e) => { void addFiles(e.currentTarget.files); e.currentTarget.value = ""; }} />
+            <button type="button" disabled={planning()} onClick={() => picker?.click()}>{t("files.attach")}</button>
+            <span class="muted">{t("team.filesHelp")}</span>
+          </div>
+          <Show when={files().length > 0}>
+            <ul class="plain stack" aria-label={t("team.filesList")}>
+              <For each={files()}>
+                {(f) => (
+                  <li>
+                    <strong>{f.name}</strong> <span class="muted">{sizeText(f.bytes)} · {t("files.chars", { n: f.chars })}{f.flagged.secret > 0 ? ` · ${t("team.filesWithheld", { n: f.flagged.secret })}` : ""}</span>{" "}
+                    <button type="button" class="link" onClick={() => dropFile(f.id)}>{t("files.remove")}</button>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </Show>
+          <Show when={fileNote()}><span role="status" class="muted">{fileNote()}</span></Show>
+        </div>
         <details class="team-allow">
           <summary>{t("team.allow")}</summary>
           <fieldset class="rt-experts">
@@ -160,6 +204,9 @@ export function Team(props: { id?: string }) {
             <div class="card stack">
               <h2 id="team-run">{t("team.run")} <span class={statusChip(r().status)} data-status={r().status}>{t(`team.status.${r().status}`)}</span></h2>
               <p class="team-goal">{r().goal}</p>
+              <Show when={(r().files ?? []).length > 0}>
+                <p class="muted">{t("team.filesWith", { list: (r().files ?? []).map((n) => n ?? t("team.fileGone")).join(", ") })}</p>
+              </Show>
               <p class="muted" role="status" aria-live="polite">{t(`team.help.${r().status}`)}</p>
               <div class="rt-actions">
                 <Show when={canStart() && !(r().status === "waiting" && hasQuestion())}><button class="primary" type="button" disabled={acting()} onClick={start}>{startLabel()}</button></Show>

@@ -194,6 +194,26 @@ if (!real) {
   check(true, "when nothing runs, the Activity screen says nothing is working");
   await shot(page, "7-activity");
 }
+// ---- files for the whole run ----
+{
+  await page.goto(new URL(link).origin + "/#/team");
+  await page.getByRole("heading", { name: "Team", exact: true }).waitFor();
+  const made = ["sk-ant", "api03-abcdefghijklmnopqrstuvwxyz0123456789"].join("-");
+  const notes = { name: "billing-notes.txt", mimeType: "text/plain", buffer: Buffer.from(`Refunds over 500 need a second approval.\nAPI_KEY=${made}\nThe export runs nightly.\n`) };
+  await page.locator("#team-files").setInputFiles(notes);
+  const list = page.getByRole("list", { name: "Files for this run" });
+  await list.getByText("billing-notes.txt").waitFor({ timeout: long });
+  check(/1 line\(s\) with a key withheld/.test(await list.innerText()), "a file attached for the run is listed, and says a line with a key is withheld");
+  await list.getByRole("button", { name: "Remove" }).click();
+  check((await list.count()) === 0, "it can be removed again before planning");
+  await page.locator("#team-files").setInputFiles(notes);
+  await list.getByText("billing-notes.txt").waitFor({ timeout: long });
+  await page.getByLabel("The goal").fill("Read the billing notes and say what a new teammate must know.");
+  await page.getByRole("button", { name: "Make a plan" }).click();
+  await page.getByText("With the files: billing-notes.txt").waitFor({ timeout: long });
+  check((await list.count()) === 0 && (await page.locator("#team-run [data-status]").getAttribute("data-status")) === "planned", "the planned run names its files and the form is cleared");
+  await shot(page, "7-run-with-files");
+}
 check(problems.length === 0, "no console errors or failed requests: " + problems.join(" | "));
 
 // ---- a phone in dark mode ----

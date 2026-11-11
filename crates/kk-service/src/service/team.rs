@@ -27,6 +27,10 @@ pub(super) struct PlanBody {
     experts: Vec<String>,
     #[serde(default)]
     project: Option<String>,
+    /// Files the owner attached for this run (ids from `POST /api/attachments`). Every expert and the lead get them as
+    /// labelled data, through the same checks a chat message's files pass.
+    #[serde(default)]
+    attachments: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -54,6 +58,7 @@ struct RunRow {
     id: String,
     goal: String,
     project: Option<String>,
+    attachments: Vec<String>,
     status: String,
     final_text: Option<String>,
     final_note: String,
@@ -262,7 +267,7 @@ impl Service {
         store
             .connection()
             .query_row(
-                "SELECT id, goal, project, status, final, final_note, created, updated FROM team_runs WHERE id = ?1",
+                "SELECT id, goal, project, status, final, final_note, created, updated, attachments FROM team_runs WHERE id = ?1",
                 [id],
                 |r| {
                     Ok(RunRow {
@@ -274,6 +279,10 @@ impl Service {
                         final_note: r.get(5)?,
                         created: r.get(6)?,
                         updated: r.get(7)?,
+                        attachments: r
+                            .get::<_, Option<String>>(8)?
+                            .and_then(|t| serde_json::from_str(&t).ok())
+                            .unwrap_or_default(),
                     })
                 },
             )
@@ -465,6 +474,14 @@ impl Service {
         self.team.lock().expect("lock").stop.contains(id)
     }
 
+    /// The names of a run's attached files that are still held; one that is gone is listed as null.
+    fn team_file_names(&self, ids: &[String]) -> Vec<Option<String>> {
+        let mut store = self.attachments.lock().expect("lock");
+        ids.iter()
+            .map(|id| store.get(now(), id).map(|s| s.parsed.name.clone()))
+            .collect()
+    }
+
     fn team_json(&self, run: &RunRow) -> Value {
         let tasks = self.team_tasks(&run.id);
         let active = self.team.lock().expect("lock").active.contains(&run.id);
@@ -472,6 +489,7 @@ impl Service {
             "id": run.id,
             "goal": run.goal,
             "project": run.project,
+            "files": self.team_file_names(&run.attachments),
             "status": run.status,
             "working": active,
             "final": run.final_text,
@@ -537,12 +555,20 @@ impl Service {
             message: run.goal.clone(),
             history: Vec::new(),
             sources: Vec::new(),
-            attachments: Vec::new(),
+            attachments: run.attachments.clone(),
             session: None,
             project: run.project.clone(),
         };
         let Ok(chat) = chat_validate(self, body) else {
-            self.team_set_final(id, None, "the goal could not be prepared for the model");
+            self.team_set_final(
+                id,
+                None,
+                if run.attachments.is_empty() {
+                    "the goal could not be prepared for the model"
+                } else {
+                    "an attached file is no longer held (files are kept in memory for two hours): attach it again and plan a new run"
+                },
+            );
             return "stopped";
         };
         let ctx = chat_context(self, &chat.body, None);
@@ -782,7 +808,7 @@ pub(super) async fn team_plan(axum::Extension(svc): Svc, Json(b): Json<PlanBody>
         message: goal.clone(),
         history: Vec::new(),
         sources: Vec::new(),
-        attachments: Vec::new(),
+        attachments: b.attachments.clone(),
         session: None,
         project: b.project.clone(),
     };
@@ -891,8 +917,8 @@ pub(super) async fn team_plan(axum::Extension(svc): Svc, Json(b): Json<PlanBody>
         let c = store.connection();
         let at = now();
         let _ = c.execute(
-            "INSERT INTO team_runs(id, goal, project, status, final, final_note, created, updated) VALUES(?1, ?2, ?3, 'planned', NULL, '', ?4, ?4)",
-            kk_vault::rusqlite::params![id, goal, project, at],
+            "INSERT INTO team_runs(id, goal, project, status, final, final_note, created, updated, attachments) VALUES(?1, ?2, ?3, 'planned', NULL, '', ?4, ?4, ?5)",
+            kk_vault::rusqlite::params![id, goal, project, at, serde_json::to_string(&b.attachments).unwrap_or_else(|_| "[]".into())],
         );
         for t in &plan {
             let name = seat_name(&t.expert);

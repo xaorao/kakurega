@@ -48,7 +48,7 @@ export type TeamTask = {
 };
 export type WorkItem = { kind: "review" | "code" | "team"; id: string; title: string; state: string; since: number; last: number; quiet_for: number; quiet: boolean; can_stop: boolean };
 export type TeamStatus = "planned" | "running" | "waiting" | "done" | "stopped" | "interrupted";
-export type TeamRun = { id: string; goal: string; project: string | null; status: TeamStatus; working: boolean; final: string | null; final_note: string; created: number; updated: number; tasks: TeamTask[] };
+export type TeamRun = { id: string; goal: string; project: string | null; /** Names of the files attached to the run; null for one no longer held. */ files?: (string | null)[]; status: TeamStatus; working: boolean; final: string | null; final_note: string; created: number; updated: number; tasks: TeamTask[] };
 export type TeamRunSummary = { id: string; goal: string; status: TeamStatus; created: number; updated: number; tasks: number; done: number; needs_input: number; not_done: number };
 
 /** Streams a roundtable. `onEvent` receives each line; aborting `signal` closes the connection, which stops the model. */
@@ -307,7 +307,7 @@ export const api = {
   work: () => request<{ items: WorkItem[]; count: number; quiet: number; quiet_after: number }>("GET", "/api/work"),
   teamRuns: () => request<{ runs: TeamRunSummary[] }>("GET", "/api/team"),
   teamRun: (id: string) => request<TeamRun>("GET", `/api/team/${encodeURIComponent(id)}`),
-  teamPlan: (goal: string, experts: string[]) => request<TeamRun>("POST", "/api/team", experts.length > 0 ? { goal, experts } : { goal }),
+  teamPlan: (goal: string, experts: string[], attachments: string[] = []) => request<TeamRun>("POST", "/api/team", { goal, ...(experts.length > 0 ? { experts } : {}), ...(attachments.length > 0 ? { attachments } : {}) }),
   teamStart: (id: string) => request<TeamRun>("POST", `/api/team/${encodeURIComponent(id)}/start`, {}),
   teamStop: (id: string) => request<{ stopping: boolean }>("POST", `/api/team/${encodeURIComponent(id)}/stop`, {}),
   teamAnswer: (id: string, task: number, answer: string) => request<TeamRun>("POST", `/api/team/${encodeURIComponent(id)}/answer`, { task, answer }),
