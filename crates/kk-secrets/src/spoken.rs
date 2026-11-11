@@ -127,7 +127,7 @@ fn random_token(t: &str) -> bool {
     let up = t.chars().filter(char::is_ascii_uppercase).count();
     let low = t.chars().filter(char::is_ascii_lowercase).count();
     let dig = t.chars().filter(char::is_ascii_digit).count();
-    up >= 4 && low >= 4 && dig >= 3
+    up >= 3 && low >= 3 && dig >= 2
 }
 
 /// The byte ranges of the values in this text that read like a secret someone wrote or said.

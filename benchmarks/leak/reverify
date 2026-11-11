@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Check the committed leak benchmark results, and optionally run the benchmark again and compare.
+
+  benchmarks/leak/reverify            the signature against the key in signer.pub, and every verdict and count recomputed
+  benchmarks/leak/reverify --rerun    the same, then a fresh run on this computer compared case by case
+
+A fresh run plants new random secrets, so what is compared is each case's verdict. Among the shapes the product says it
+knows every verdict must match. The few cases built from a random token with no word for what it is can differ from run
+to run (whether such a token is recognised depends on the letters it happens to hold); those differences are printed.
+Needs target/debug/kaku (cargo build -p kk-cli) and, for --rerun, the web interface built (pnpm -C apps/web build).
+"""
+import base64
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+here = Path(__file__).resolve().parent
+repo = here.parent.parent
+kaku = repo / "target/debug/kaku"
+pin = (here / "signer.pub").read_text().strip()
+signed = here / "results.signed.json"
+
+r = subprocess.run([str(kaku), "bench", "verify", str(signed), "--pin", pin])
+if r.returncode != 0:
+    sys.exit(r.returncode)
+if "--rerun" not in sys.argv:
+    sys.exit(0)
+
+env = json.loads(signed.read_text())
+committed = json.loads(base64.urlsafe_b64decode(env["payload"] + "=" * (-len(env["payload"]) % 4)))
+fresh_path = repo / "target/bench-leak-rerun.json"
+run = subprocess.run([sys.executable, str(repo / "scripts/bench-leak.py"), "--out", str(fresh_path)], capture_output=True, text=True)
+if not fresh_path.exists():
+    print(run.stdout[-2000:], run.stderr[-2000:])
+    sys.exit("the fresh run did not finish")
+fresh = {c["case"]: c for c in json.loads(fresh_path.read_text())["cases"]}
+old = {c["case"]: c for c in committed["cases"]}
+missing = sorted(set(old) ^ set(fresh))
+differ_known, differ_other = [], []
+for name in sorted(set(old) & set(fresh)):
+    if old[name]["verdict"] != fresh[name]["verdict"]:
+        (differ_known if old[name]["group"] == "known shapes" else differ_other).append(f"{name}: signed {old[name]['verdict']}, now {fresh[name]['verdict']}")
+print(f"\nFresh run: {len(fresh)} cases, {len(set(old) & set(fresh)) - len(differ_known) - len(differ_other)} with the same verdict as the signed results.")
+for d in differ_other:
+    print("  differs (outside the known shapes): " + d)
+for d in differ_known:
+    print("  DIFFERS: " + d)
+for m in missing:
+    print("  only in one of the two: " + m)
+if differ_known or missing:
+    sys.exit("NOT REPRODUCED: the fresh run does not match the signed results")
+print("Reproduced.")

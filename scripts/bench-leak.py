@@ -344,6 +344,11 @@ def main():
         tally = {v: sum(r["verdict"] == v for r in rs) for v in ["held", "refused", "sent_by_owner", "allowed_on_this_computer", "LEAK", "not_run"]}
         print(f"\n{group}: {len(rs)} cases: {tally}; plain arm leaked {sum(r['plain_arm_leaked'] for r in rs)}/{len(rs)}; on disk in plain: {sum(bool(r['on_disk_plain']) for r in rs)}")
     print(f"wrote {out}")
+    # for a script: a leak among the shapes the product says it knows, or a case that did not run, is a failure
+    bad = [r["case"] for r in rows if r["verdict"] == "not_run" or (r["verdict"] == "LEAK" and r["group"] == "known shapes") or not r["plain_arm_leaked"]]
+    if bad:
+        print("FAILED: " + ", ".join(bad[:20]))
+        sys.exit(1)
 
 
 if __name__ == "__main__":
