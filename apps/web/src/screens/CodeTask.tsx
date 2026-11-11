@@ -20,6 +20,7 @@ export function CodeTask() {
   const [task, setTask] = createSignal("");
   const [current, setCurrent] = createSignal<Task | null>(null);
   const [error, setError] = createSignal("");
+  const [stopping, setStopping] = createSignal(false);
   const [note, setNote] = createSignal("");
   const [confirming, setConfirming] = createSignal(false);
   const [acting, setActing] = createSignal(false);
@@ -54,6 +55,7 @@ export function CodeTask() {
     setNote("");
     setConfirming(false);
     setCurrent(null);
+    setStopping(false);
     try {
       const { id } = await api.codeStart(chosen(), task().trim());
       follow(id);
@@ -116,6 +118,12 @@ export function CodeTask() {
             <ul class="plain stack" aria-live="polite">
               <For each={c().progress}>{(p) => <li class="muted">{p}</li>}</For>
             </ul>
+            <Show when={c().state === "running"}>
+              <div class="actions">
+                <button type="button" disabled={stopping()} onClick={async () => { try { await api.stopWork("code", c().id); setStopping(true); } catch (e) { setError(e instanceof ApiError ? e.message : t("work.stopError")); } }}>{t("work.stop")}</button>
+                <Show when={stopping()}><span role="status" class="muted">{t("work.stoppingCode")}</span></Show>
+              </div>
+            </Show>
             <Show when={c().state === "failed"}><p role="alert" class="bad">{t("code.failed")} {c().error}</p></Show>
             <Show when={c().state === "attention"}><p role="alert" class="bad">{t("code.attention", { list: c().attention.join(", ") })}</p></Show>
             <Show when={done(c().state) && c().state !== "failed"}>

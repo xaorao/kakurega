@@ -226,4 +226,28 @@ fn s03_an_oversized_line_kills_the_worker_and_a_silent_worker_times_out() {
     .expect("run");
     assert_eq!(out2.exit, Exit::TimedOut);
     assert!(t.elapsed() < Duration::from_secs(10));
+    // the owner's stop ends a served worker at once
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut held = limits();
+    held.wall = Duration::from_secs(60);
+    held.stop = Some(flag.clone());
+    let setter = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(700));
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    let mut b3 = broker(vec![]);
+    let s3 = open(&mut b3);
+    let t = std::time::Instant::now();
+    let out3 = run_script(
+        &mut b3,
+        s3,
+        "/usr/bin/python3",
+        &silent,
+        held,
+        &Transport::Local,
+    )
+    .expect("run");
+    assert_eq!(out3.exit, Exit::Stopped);
+    assert!(t.elapsed() < Duration::from_secs(10), "{:?}", t.elapsed());
+    setter.join().unwrap();
 }

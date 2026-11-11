@@ -215,3 +215,46 @@ fn l03_a_worker_that_hangs_is_stopped_inside_the_vm_and_the_caller_gets_its_answ
         "0"
     );
 }
+
+#[test]
+#[ignore]
+fn l04_the_owners_stop_ends_a_run_inside_the_vm_at_once_and_leaves_nothing_behind() {
+    use kk_sandbox::{run_with, SandboxSpec};
+    let mut spec = SandboxSpec::new("/usr/bin/python3");
+    let marker = format!(
+        "kk-l04-{}-{}",
+        std::process::id(),
+        std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos()
+    );
+    spec.args = vec![
+        "-c".into(),
+        format!("import time\nprint('started', flush=True)\ntime.sleep(300)  # {marker}\n").into(),
+    ];
+    spec.limits.wall = Duration::from_secs(120);
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    spec.limits.stop = Some(flag.clone());
+    let setter = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(3));
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    let t = transport();
+    let started = std::time::Instant::now();
+    let o = run_with(&spec, &t).expect("the run returns");
+    let took = started.elapsed();
+    setter.join().unwrap();
+    assert_eq!(o.exit, Exit::Stopped);
+    assert!(
+        took >= Duration::from_secs(3) && took < Duration::from_secs(30),
+        "returned after {took:?}"
+    );
+    std::thread::sleep(Duration::from_secs(2));
+    let (head, tail) = marker.split_at(1);
+    assert_eq!(
+        in_vm(&format!("pgrep -fc '[{head}]{tail}' || true")).trim(),
+        "0"
+    );
+    assert_eq!(
+        in_vm("systemctl --user list-units 'kk-worker-*' --no-legend --plain 2>/dev/null | grep -c running || true").trim(),
+        "0"
+    );
+}

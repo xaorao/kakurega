@@ -105,6 +105,7 @@ fn config(name: &str) -> JobConfig {
         extra_files: Vec::new(),
         semgrep: kk_review::pattern::from_setting(None),
         job_name: name.into(),
+        stop: None,
     }
 }
 
@@ -1913,4 +1914,114 @@ fn j27_suggested_methods_are_capped_carry_the_untrusted_label_and_release_nothin
         report.draft.is_err(),
         "suggesting a method releases nothing"
     );
+}
+
+/// A model whose second answer arrives just as the owner presses stop.
+struct StopsAtSecondCall {
+    inner: ScriptedRoute,
+    calls: std::sync::atomic::AtomicUsize,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Route for StopsAtSecondCall {
+    fn id(&self) -> &str {
+        self.inner.id()
+    }
+    fn class(&self) -> RouteClass {
+        self.inner.class()
+    }
+    fn tee_verified(&self) -> bool {
+        self.inner.tee_verified()
+    }
+    fn evidence(&self) -> kk_route::RouteEvidence {
+        self.inner.evidence()
+    }
+    fn complete(
+        &self,
+        request: &kk_route::CompletionRequest,
+    ) -> Result<kk_route::Completion, kk_route::RouteError> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.calls.fetch_add(1, SeqCst) == 1 {
+            self.stop.store(true, SeqCst);
+        }
+        self.inner.complete(request)
+    }
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn j26_a_review_the_owner_stops_ends_its_worker_at_once_and_releases_nothing() {
+    use std::sync::atomic::Ordering::SeqCst;
+    // the same script that, left alone, finds the real defect and prepares a release (j01)
+    let script = || {
+        vec![
+            calls(vec![("list_files", json!({}))]),
+            calls(vec![(
+                "read_file",
+                json!({"path": "payments/auth/session.py"}),
+            )]),
+            calls(vec![(
+                "report_finding",
+                json!({"title": "Token still valid after logout", "file": "payments/auth/session.py", "line": 15, "explanation": "logout() only pops a local dict, so validate() keeps accepting the token.", "reproducer": REPRO}),
+            )]),
+            ChatMessage::new("assistant", "One defect found."),
+        ]
+    };
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut cfg = config("j26");
+    cfg.stop = Some(stop.clone());
+    let route = StopsAtSecondCall {
+        inner: ScriptedRoute::new("scripted", RouteClass::DeviceOnly, false, script()),
+        calls: Default::default(),
+        stop: stop.clone(),
+    };
+    let ev = vec![route.evidence()];
+    let started = std::time::Instant::now();
+    let report = run_job(
+        &cfg,
+        RouteSet::new(vec![Box::new(route) as Box<dyn Route>]),
+        ev,
+        &|_, _| {},
+    );
+    assert_eq!(
+        report.error.as_deref(),
+        Some(kk_review::job::STOPPED_BY_OWNER)
+    );
+    assert_eq!(
+        report.worker_exit,
+        Some(Exit::Stopped),
+        "stderr: {}",
+        report.worker_stderr
+    );
+    assert!(
+        report.draft.is_err(),
+        "a stopped review prepares no release"
+    );
+    assert!(report.findings.is_empty(), "and reports no finding");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(60),
+        "{:?}",
+        started.elapsed()
+    );
+    // asked before it begins: the worker is never started
+    let mut early = config("j26-early");
+    early.stop = Some(stop.clone());
+    assert!(stop.load(SeqCst));
+    let (routes, ev) = scripted(script());
+    let report = run_job(&early, routes, ev, &|_, _| {});
+    assert_eq!(
+        report.error.as_deref(),
+        Some(kk_review::job::STOPPED_BY_OWNER)
+    );
+    assert_eq!(report.worker_exit, None);
+    assert!(report.draft.is_err());
+    // a switch that is never set changes nothing: the review ends ready, as j01 shows
+    let mut plain = config("j26-plain");
+    plain.stop = Some(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+        false,
+    )));
+    let (routes, ev) = scripted(script());
+    let report = run_job(&plain, routes, ev, &|_, _| {});
+    assert_eq!(report.error, None);
+    assert!(report.draft.is_ok());
 }

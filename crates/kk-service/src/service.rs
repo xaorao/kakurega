@@ -29,6 +29,25 @@ pub trait JobRunner: Send + Sync {
         extra: Vec<kk_review::import::ImportedFile>,
         progress: &dyn Fn(&str, &str),
     ) -> JobReport;
+    /// Like `run`, for a review the owner may stop: when `stop` becomes true the review ends as soon as it can and reports
+    /// that it was stopped. A runner that cannot stop part-way runs to the end; the service discards the result then.
+    #[allow(clippy::too_many_arguments)]
+    fn run_stoppable(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job_name: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+        _stop: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> JobReport {
+        self.run(repo, recipient, job_name, now, extra, progress)
+    }
+    /// Whether this runner ends a review or a coding task part-way when asked, or only at its end.
+    fn stops_part_way(&self) -> bool {
+        false
+    }
     fn route_info(&self) -> Value;
     fn readiness(&self) -> Vec<Value> {
         Vec::new()
@@ -60,6 +79,17 @@ pub trait JobRunner: Send + Sync {
         _external: Option<&kk_review::code::External<'_>>,
     ) -> Result<crate::coding::CodeOutcome, String> {
         Err("coding tasks are not available in this configuration".into())
+    }
+    /// Like `code_task`, for a task the owner may stop (see `run_stoppable`).
+    fn code_task_stoppable(
+        &self,
+        files: &[kk_review::import::ImportedFile],
+        task: &str,
+        progress: &dyn Fn(&str),
+        external: Option<&kk_review::code::External<'_>>,
+        _stop: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<crate::coding::CodeOutcome, String> {
+        self.code_task(files, task, progress, external)
     }
     /// The models this runner could answer with, installed on this computer. Empty when the choice is fixed.
     fn local_models(&self) -> Vec<String> {
@@ -260,6 +290,8 @@ pub struct Service {
     call_window: Mutex<(i64, usize, usize)>,
     /// Team runs that are working now, and those asked to stop.
     team: Mutex<team::Live>,
+    /// The stop switch of every review and coding task that is running, by its id.
+    stops: Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
     pub test_mode: bool,
 }
 
@@ -830,6 +862,7 @@ impl Service {
             compaction_wait: Mutex::new(std::collections::HashMap::new()),
             call_window: Mutex::new((0, 0, 0)),
             team: Mutex::new(team::Live::default()),
+            stops: Mutex::new(Default::default()),
             test_mode,
         });
         settle_all_fixes(&svc);
@@ -1046,15 +1079,22 @@ impl Service {
         let svc = self.clone();
         let (jid, rec) = (id.clone(), recipient.to_string());
         let extra = self.memory_files(&dir, recipient);
+        let stop = self.stop_switch(&id);
         std::thread::spawn(move || {
             let svc2 = svc.clone();
             let jid2 = jid.clone();
             let report = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                svc.runner
-                    .run(&dir, &rec, &jid, now(), extra, &move |stage, detail| {
-                        svc2.push_event(&jid2, stage, detail)
-                    })
+                svc.runner.run_stoppable(
+                    &dir,
+                    &rec,
+                    &jid,
+                    now(),
+                    extra,
+                    &move |stage, detail| svc2.push_event(&jid2, stage, detail),
+                    &stop,
+                )
             }));
+            let stopped = svc.stop_switch_done(&jid);
             let (job, snap) = {
                 let mut g = svc.inner.lock().expect("lock");
                 let Some(job) = g.jobs.get_mut(&jid) else {
@@ -1072,7 +1112,12 @@ impl Service {
                         for sg in &r.method_suggestions {
                             svc.method_propose(&jid, &sg.json);
                         }
-                        let snap = Snapshot::from_report(&r);
+                        let mut snap = Snapshot::from_report(&r);
+                        if stopped {
+                            // the owner stopped it: nothing it found is offered, whether or not the runner could end early
+                            snap.error = Some(kk_review::job::STOPPED_BY_OWNER.into());
+                            snap.draft = None;
+                        }
                         job.state = match (&snap.error, &snap.draft) {
                             (Some(e), _) => JobState::Failed(e.clone()),
                             (None, Some(_)) => JobState::Ready,
@@ -5536,6 +5581,7 @@ async fn code_start(axum::Extension(svc): Svc, Json(b): Json<CodeBody>) -> Respo
     svc.log_event("code.started", &id, &[]);
     let svc2 = svc.clone();
     let id2 = id.clone();
+    let stop = svc.stop_switch(&id);
     std::thread::spawn(move || {
         let imported = kk_review::import::scan_tree(&repo, kk_types::label::Level::Internal);
         let progress = |line: &str| {
@@ -5546,9 +5592,17 @@ async fn code_start(axum::Extension(svc): Svc, Json(b): Json<CodeBody>) -> Respo
             }
         };
         let external = svc2.mcp_external();
-        let result = svc2
-            .runner
-            .code_task(&imported.files, &task, &progress, external.as_ref());
+        let mut result = svc2.runner.code_task_stoppable(
+            &imported.files,
+            &task,
+            &progress,
+            external.as_ref(),
+            &stop,
+        );
+        if svc2.stop_switch_done(&id2) {
+            // the owner stopped it: no patch is offered, whether or not the runner could end early
+            result = Err(kk_review::job::STOPPED_BY_OWNER.into());
+        }
         let mut g = svc2.coding.lock().expect("lock");
         if let Some(t) = g.list.get_mut(&id2) {
             match result {
@@ -6396,6 +6450,36 @@ const MAX_LEASE_USES: i64 = 1000;
 const MAX_LEASE_MINUTES: i64 = 1440;
 
 impl Service {
+    /// A new stop switch for a review or coding task that is starting.
+    fn stop_switch(&self, id: &str) -> Arc<std::sync::atomic::AtomicBool> {
+        let s = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.stops
+            .lock()
+            .expect("lock")
+            .insert(id.to_string(), s.clone());
+        s
+    }
+
+    /// Takes the switch away when the work has ended, and says whether the owner had asked for a stop.
+    fn stop_switch_done(&self, id: &str) -> bool {
+        self.stops
+            .lock()
+            .expect("lock")
+            .remove(id)
+            .is_some_and(|s| s.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
+    /// Asks a running review or coding task to stop. False when nothing with that id is running.
+    fn stop_ask(&self, id: &str) -> bool {
+        match self.stops.lock().expect("lock").get(id) {
+            Some(s) => {
+                s.store(true, std::sync::atomic::Ordering::SeqCst);
+                true
+            }
+            None => false,
+        }
+    }
+
     fn lease_now(&self) -> i64 {
         now() + self.lease_skew.load(std::sync::atomic::Ordering::SeqCst)
     }
@@ -7631,6 +7715,22 @@ type InboxJob = (
     bool,
 );
 
+/// Stops a running review or coding task. With a runner that can end part-way the sandboxed worker is ended at once and
+/// the model is not asked again; otherwise the work runs to its end and its result is discarded. Either way nothing it
+/// produced is offered afterwards.
+async fn work_stop(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+    if !svc.stop_ask(&id) {
+        return error(
+            StatusCode::CONFLICT,
+            "NOT_RUNNING",
+            "nothing with that id is running",
+        );
+    }
+    svc.log_event("work.stop_asked", &id, &[]);
+    Json(json!({"id": id, "stopping": true, "at_once": svc.runner.stops_part_way()}))
+        .into_response()
+}
+
 /// A piece of work that has shown no sign of progress for this long is marked as gone quiet.
 pub const QUIET_AFTER_SECS: i64 = 600;
 
@@ -7667,7 +7767,7 @@ async fn work(axum::Extension(svc): Svc) -> Json<Value> {
                 "running",
                 j.created,
                 last,
-                false,
+                true,
             ));
         }
     }
@@ -7678,7 +7778,13 @@ async fn work(axum::Extension(svc): Svc) -> Json<Value> {
             let state = v["state"].as_str().unwrap_or("");
             if matches!(state, "running" | "applying" | "undoing") {
                 items.push(item(
-                    "code", &t.id, &t.task, state, t.created, t.created, false,
+                    "code",
+                    &t.id,
+                    &t.task,
+                    state,
+                    t.created,
+                    t.created,
+                    state == "running",
                 ));
             }
         }
@@ -7708,6 +7814,8 @@ async fn inbox(axum::Extension(svc): Svc) -> Json<Value> {
                     JobState::Running => "running",
                     JobState::Ready => "ready",
                     JobState::NothingToRelease(_) => "nothing",
+                    // a review the owner stopped needs nothing from the owner
+                    JobState::Failed(why) if why == kk_review::job::STOPPED_BY_OWNER => "stopped",
                     JobState::Failed(_) => "failed",
                 };
                 (
@@ -9667,6 +9775,8 @@ impl Extension for Routes {
             .route("/api/code/{id}", get(code_get))
             .route("/api/code/{id}/apply", post(code_apply))
             .route("/api/code/{id}/undo", post(code_undo))
+            .route("/api/code/{id}/stop", post(work_stop))
+            .route("/api/jobs/{id}/stop", post(work_stop))
             .route("/api/models", get(models_list))
             .route("/api/model", post(model_choose))
             .route("/api/route/attest", post(route_attest))

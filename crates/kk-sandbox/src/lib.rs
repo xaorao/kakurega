@@ -16,6 +16,17 @@ pub struct Limits {
     pub open_files: u64,
     pub wall: Duration,
     pub output_bytes: usize,
+    /// When this is set to true by whoever started the run, the program is ended at once, like at the wall-time limit.
+    pub stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+}
+
+impl Limits {
+    /// Whether the owner asked for this run to end.
+    pub fn stop_asked(&self) -> bool {
+        self.stop
+            .as_ref()
+            .is_some_and(|s| s.load(std::sync::atomic::Ordering::SeqCst))
+    }
 }
 
 impl Default for Limits {
@@ -28,6 +39,7 @@ impl Default for Limits {
             open_files: 256,
             wall: Duration::from_secs(60),
             output_bytes: 1 << 20,
+            stop: None,
         }
     }
 }
@@ -97,6 +109,8 @@ pub enum Exit {
     Code(i32),
     Signal(i32),
     TimedOut,
+    /// Ended because whoever started it asked (`Limits::stop`).
+    Stopped,
 }
 
 #[derive(Debug)]
@@ -281,6 +295,19 @@ pub fn run_unchecked(spec: &SandboxSpec) -> Result<Outcome, SandboxError> {
                     let _ = child.kill();
                     let _ = child.wait();
                     break Exit::TimedOut;
+                }
+                if spec.limits.stop_asked() {
+                    let _ = Command::new("systemctl")
+                        .args(["--user", "stop", &format!("{unit}.scope")])
+                        .env_clear()
+                        .env(
+                            "XDG_RUNTIME_DIR",
+                            std::env::var("XDG_RUNTIME_DIR").unwrap_or_default(),
+                        )
+                        .output();
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break Exit::Stopped;
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -542,6 +569,12 @@ pub fn serve_lines_with(
             let _ = child.wait();
             break Exit::TimedOut;
         }
+        if spec.limits.stop_asked() {
+            stop_scope(&unit);
+            let _ = child.kill();
+            let _ = child.wait();
+            break Exit::Stopped;
+        }
     };
     let (stderr_bytes, _) = join_reader(t_err, Duration::from_secs(10));
     Ok(ServeOutcome {
@@ -647,6 +680,7 @@ impl SandboxSpec {
                 open_files: w.open_files,
                 wall: Duration::from_millis(w.wall_ms),
                 output_bytes: w.output_bytes,
+                stop: None,
             },
             chdir: w.chdir.map(PathBuf::from),
             weaken_for_self_test: None,
@@ -765,6 +799,12 @@ pub fn run_with(spec: &SandboxSpec, transport: &Transport) -> Result<Outcome, Sa
                             let _ = child.kill();
                             let _ = child.wait();
                             break Exit::TimedOut;
+                        }
+                        if spec.limits.stop_asked() {
+                            stop_lima_scope(vm, &unit);
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            break Exit::Stopped;
                         }
                         std::thread::sleep(Duration::from_millis(10));
                     }

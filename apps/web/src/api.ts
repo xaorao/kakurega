@@ -421,6 +421,8 @@ export const api = {
   codeList: () => request<{ tasks: { id: string; task: string; state: string; created: number }[] }>("GET", "/api/code"),
   codeGet: (id: string) => request<CodeTask>("GET", `/api/code/${id}`),
   codeApply: (id: string, digest: string) => request<{ applied: boolean; files: number }>("POST", `/api/code/${id}/apply`, { digest }),
+  /** Asks a running review or coding task to stop. `at_once` is false when it can only end at its own end. */
+  stopWork: (kind: "review" | "code", id: string) => request<{ stopping: boolean; at_once: boolean }>("POST", `/api/${kind === "review" ? "jobs" : "code"}/${encodeURIComponent(id)}/stop`, {}),
   codeUndo: (id: string) => request<{ undone: boolean }>("POST", `/api/code/${id}/undo`, {}),
   readiness: () => request<Readiness>("GET", "/api/readiness"),
   fs: (path?: string) => request<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>("GET", `/api/fs${path ? `?path=${encodeURIComponent(path)}` : ""}`),

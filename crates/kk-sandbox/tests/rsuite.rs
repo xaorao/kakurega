@@ -333,6 +333,30 @@ fn r18_resource_exhaustion_is_bounded() {
     let t = std::time::Instant::now();
     assert_eq!(run_unchecked(&s).unwrap().exit, Exit::TimedOut);
     assert!(t.elapsed() < Duration::from_secs(8));
+    // the owner's stop ends a run at once, long before its wall time, and a stop that is never asked changes nothing
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let s = limited(&dir, sleeper, |l| {
+        l.wall = Duration::from_secs(60);
+        l.stop = Some(flag.clone());
+    });
+    let setter = {
+        let flag = flag.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(700));
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        })
+    };
+    let t = std::time::Instant::now();
+    assert_eq!(run_unchecked(&s).unwrap().exit, Exit::Stopped);
+    assert!(
+        t.elapsed() >= Duration::from_millis(600) && t.elapsed() < Duration::from_secs(8),
+        "{:?}",
+        t.elapsed()
+    );
+    setter.join().unwrap();
+    let never = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let s = limited(&dir, "print('fine')\n", |l| l.stop = Some(never));
+    assert_eq!(run_unchecked(&s).unwrap().exit, Exit::Code(0));
     let disk = "f = open('/tmp/big', 'wb')\ntry:\n    while True: f.write(b'x' * 1_000_000)\nexcept Exception as e:\n    print('disk refused', type(e).__name__)\n";
     let s = limited(&dir, disk, |l| l.file_bytes = 5_000_000);
     assert!(

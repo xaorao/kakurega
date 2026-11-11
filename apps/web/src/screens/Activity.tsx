@@ -150,7 +150,8 @@ function WorkingNow() {
   const stop = async (i: WorkItem) => {
     setErr("");
     try {
-      await api.teamStop(i.id);
+      if (i.kind === "team") await api.teamStop(i.id);
+      else await api.stopWork(i.kind, i.id);
       await refetch();
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t("work.stopError"));
@@ -171,7 +172,7 @@ function WorkingNow() {
                     <span class={i.quiet ? "chip warn" : "muted"}>{i.quiet ? t("work.quiet", { n: minutes(i.quiet_for) }) : t("work.alive", { n: minutes(i.quiet_for) })}</span>
                     <span class="actions">
                       <a class="button" href={link(i)}>{t("inbox.open")}</a>
-                      <Show when={i.can_stop} fallback={<span class="muted">{t("work.noStop")}</span>}><button type="button" onClick={() => void stop(i)}>{t("team.stop")}</button></Show>
+                      <Show when={i.can_stop} fallback={<span class="muted">{t("work.noStop")}</span>}><button type="button" onClick={() => void stop(i)}>{t("work.stop")}</button></Show>
                     </span>
                   </li>
                 )}

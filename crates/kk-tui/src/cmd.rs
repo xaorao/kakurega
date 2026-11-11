@@ -132,6 +132,8 @@ pub enum Command {
     /// One question to several experts, each alone, then a lead's resolution. With no experts: list who can be asked.
     Roundtable(Option<(Vec<String>, String)>),
     Team(TeamAction),
+    /// Stop a running review, coding task or team run by its id; with no id, list what is working.
+    Stop(Option<String>),
     Correct {
         id: String,
         text: String,
@@ -232,6 +234,7 @@ pub const NAMES: &[&str] = &[
     "aside",
     "roundtable",
     "team",
+    "stop",
     "remember",
     "correct",
     "forget",
@@ -304,6 +307,7 @@ pub fn describe(name: &str) -> &'static str {
         "team" => {
             "a lead splits a goal into tasks for experts; nothing runs until you start the plan"
         }
+        "stop" => "stop a running review, coding task or team run; alone, it lists what is working",
         "remember" => "save a note",
         "correct" => "change a saved note",
         "forget" => "delete a saved note for good",
@@ -411,6 +415,7 @@ pub fn usage(name: &str) -> &'static str {
         "aside" => "/aside QUESTION",
         "roundtable" => "/roundtable EXPERT,EXPERT[,EXPERT] : QUESTION   (alone, it lists the experts)",
         "team" => "/team plan GOAL | /team start|stop|show [ID] | /team answer TASK TEXT | /team delete ID   (alone, it lists your runs)",
+        "stop" => "/stop ID   (job-N, code-N or team-...; alone, it lists what is working)",
         "correct" => "/correct ID NEW TEXT",
         "forget" => "/forget ID",
         "forgetreview" => "/forgetreview JOB",
@@ -706,6 +711,20 @@ pub fn parse(line: &str) -> Result<Command, String> {
             }
             _ => Err(format!("usage: {}", usage("pii"))),
         },
+        "stop" => {
+            let digits =
+                |t: &str| !t.is_empty() && t.len() <= 18 && t.chars().all(|c| c.is_ascii_digit());
+            if rest.is_empty() {
+                Ok(Command::Stop(None))
+            } else if rest.strip_prefix("job-").is_some_and(digits)
+                || rest.strip_prefix("code-").is_some_and(digits)
+                || team_id_ok(rest)
+            {
+                Ok(Command::Stop(Some(rest.to_string())))
+            } else {
+                Err(format!("usage: {}", usage("stop")))
+            }
+        }
         "team" => {
             let usage_err = || Err(format!("usage: {}", usage("team")));
             let (word, tail) = match rest.split_once(char::is_whitespace) {

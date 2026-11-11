@@ -43,6 +43,17 @@ pub struct JobConfig {
     pub extra_files: Vec<crate::import::ImportedFile>,
     /// The scanner for the optional pattern-rule second opinion, or why there is none.
     pub semgrep: Result<PathBuf, String>,
+    /// Set to true by the owner to end the review: the sandboxed worker is ended at once and nothing is prepared for release.
+    pub stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+}
+
+/// What a review that the owner stopped reports as its error.
+pub const STOPPED_BY_OWNER: &str = "stopped by you";
+
+fn stop_asked(cfg: &JobConfig) -> bool {
+    cfg.stop
+        .as_ref()
+        .is_some_and(|s| s.load(std::sync::atomic::Ordering::SeqCst))
 }
 
 #[derive(Debug, Clone)]
@@ -202,10 +213,15 @@ pub fn run_job(
         max_turns: cfg.max_turns,
         limits: Limits {
             wall: Duration::from_secs(1500),
+            stop: cfg.stop.clone(),
             ..Limits::default()
         },
         transport: cfg.transport.clone(),
     };
+    if stop_asked(cfg) {
+        report.error = Some(STOPPED_BY_OWNER.into());
+        return report;
+    }
     progress("review", "the agent is reading the project in the sandbox");
     match run_worker(&mut broker, session, &launch) {
         Ok(out) => {
@@ -220,6 +236,11 @@ pub fn run_job(
     report.audit = broker.audit.clone();
     report.route_receipts = broker.receipts.clone();
     report.final_taint = broker.final_taint(session);
+    if stop_asked(cfg) {
+        // whatever the worker had found is not checked and not offered: a stopped review releases nothing
+        report.error = Some(STOPPED_BY_OWNER.into());
+        return report;
+    }
 
     let index: BTreeMap<String, &crate::import::ImportedFile> =
         files.iter().map(|f| (f.path.clone(), f)).collect();

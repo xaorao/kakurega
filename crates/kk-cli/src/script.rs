@@ -1153,6 +1153,44 @@ pub fn roundtable(args: &[String]) -> u8 {
     })
 }
 
+/// `kaku stop ID [--json]`: stops a running review (job-N), coding task (code-N) or team run (team-...). Nothing a stopped
+/// review or coding task found is offered afterwards.
+pub fn stop(args: &[String]) -> u8 {
+    let json_mode = args.iter().any(|a| a == "--json");
+    let id = args.iter().skip(1).find(|a| !a.starts_with("--"));
+    let path = match id.map(String::as_str) {
+        Some(i) if i.starts_with("job-") && i[4..].chars().all(|c| c.is_ascii_digit()) && i.len() > 4 => format!("/api/jobs/{i}/stop"),
+        Some(i) if i.starts_with("code-") && i[5..].chars().all(|c| c.is_ascii_digit()) && i.len() > 5 => format!("/api/code/{i}/stop"),
+        Some(i) if i.len() == 17 && i.starts_with("team-") && i[5..].chars().all(|c| c.is_ascii_hexdigit()) => format!("/api/team/{i}/stop"),
+        _ => return fail(json_mode, USAGE, "usage: kaku stop ID   (a review job-N, a coding task code-N or a team run team-...; kaku work lists what is running)"),
+    };
+    crate::tui::with_service(&serve_args(args), |dir| {
+        let http = match connect(dir, json_mode) {
+            Ok(h) => h,
+            Err(c) => return c,
+        };
+        match call(&http, Method::Post, &path, Some(json!({}))) {
+            Ok((200, v)) => {
+                say(json_mode, &v, || {
+                    if v["stopping"] == false {
+                        "Stopped.".into()
+                    } else if v["at_once"] == false {
+                        "It will stop at the end of the step in progress. Nothing it found will be offered.".into()
+                    } else {
+                        "Stopping now.".into()
+                    }
+                });
+                OK
+            }
+            Ok((s, v)) => {
+                let (m, c) = refusal(s, &v);
+                fail(json_mode, c, &m)
+            }
+            Err(e) => fail(json_mode, UNAVAILABLE, &e),
+        }
+    })
+}
+
 /// `kaku work [--json]`: everything that is working now (reviews, coding tasks, team runs), with a mark on what has shown
 /// no progress for a while. Exit 0 when nothing has gone quiet, 3 when something has.
 pub fn work(args: &[String]) -> u8 {

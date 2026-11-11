@@ -378,9 +378,9 @@ button.linklike:hover { color: var(--ink); }
 .code-file { margin: 12px 0 0; font-weight: 600; }
 .code-file code { font-size: 14px; }
 
-.steps ol { margin: 0.5rem 0; padding: 0; list-style: none; display: block; }
-.steps li { display: block; padding: 0.15rem 0; overflow-wrap: anywhere; }
-.steps li code { white-space: normal; }
+details.steps ol { margin: 0.5rem 0; padding: 0; list-style: none; display: block; }
+details.steps li { display: block; padding: 0.15rem 0; overflow-wrap: anywhere; }
+details.steps li code { white-space: normal; }
 
 /* roundtable */
 .rt-experts { border: 0; padding: 0; margin: 0; display: grid; gap: 12px; }
@@ -409,3 +409,5 @@ ol.team-tasks { list-style: none; padding: 0; margin: 0; }
 .work-item { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .work-item:last-child { border-bottom: 0; }
 .work-what { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+.steps li.stop-row .actions { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 0; }
+.steps li.stop-row .mark { visibility: hidden; }

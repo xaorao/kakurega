@@ -35,6 +35,9 @@ function statusText(s: string): [string, string] {
 
 function Progress(props: { job: Job }) {
   const [againError, setAgainError] = createSignal("");
+  // "" until the owner asks; then whether it ends at once or only at the end of the step in progress
+  const [stopping, setStopping] = createSignal<"" | "now" | "late">("");
+  const [stopError, setStopError] = createSignal("");
   const reached = () => new Set(props.job.events.map((e) => e.stage));
   const finished = () => reached().has("finished");
   return (
@@ -52,6 +55,16 @@ function Progress(props: { job: Job }) {
           );
         }}
       </For>
+      <Show when={props.job.state === "running"}>
+        <li class="stop-row">
+          <span class="mark" aria-hidden="true"></span>
+          <span class="actions">
+            <button type="button" disabled={stopping() !== ""} onClick={async () => { setStopError(""); try { const r = await api.stopWork("review", props.job.id); setStopping(r.at_once ? "now" : "late"); } catch (e) { setStopError(e instanceof ApiError ? e.message : t("work.stopError")); } }}>{t("work.stop")}</button>
+            <Show when={stopping() !== ""}><span role="status" class="muted">{t(stopping() === "now" ? "work.stopping" : "work.stopLate")}</span></Show>
+            <Show when={stopError()}><span role="alert" class="bad">{stopError()}</span></Show>
+          </span>
+        </li>
+      </Show>
       <Show when={props.job.state === "failed"}>
         <li class="fail"><span class="mark">!</span><span>{t("progress.stopped")}</span><span class="sub">{props.job.note}</span>
           <span class="actions"><button type="button" onClick={async () => { setAgainError(""); try { const r = await api.startJob(props.job.repo, props.job.recipient); location.hash = `#/job/${r.id}`; } catch (e) { /* the old review stays as it was; the person is told why nothing started */ setAgainError(e instanceof ApiError && e.code === "BUSY" ? t("new.busy") : t("progress.againFailed", { why: e instanceof ApiError ? e.message : t("new.startError") })); } }}>{t("progress.again")}</button><Show when={againError()}><span class="sub" role="alert">{againError()}</span></Show></span>

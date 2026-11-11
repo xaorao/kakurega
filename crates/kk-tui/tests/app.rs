@@ -8158,3 +8158,66 @@ fn tu114_a_team_run_is_planned_started_followed_answered_and_shown_in_the_termin
         "the deleted run is no longer what the short forms mean"
     );
 }
+
+#[test]
+fn tu115_stop_lists_what_is_working_and_stops_one_thing_by_its_id() {
+    let mut app = booted();
+    let r = enter(&mut app, "/stop");
+    assert_eq!(r[0].path, "/api/work");
+    app.handle(ok(&r[0], 200, json!({"items": [{"kind": "review", "id": "job-3", "title": "acme\u{1b}[2J", "quiet": true, "quiet_for": 1300, "can_stop": true}, {"kind": "team", "id": "team-0123456789ab", "title": "Decide", "quiet": false, "quiet_for": 20, "can_stop": true}], "count": 2, "quiet": 1})));
+    let all = text(&app);
+    assert!(
+        all.contains("job-3")
+            && all.contains("no sign of progress for 21 min")
+            && all.contains("progress 1 min ago")
+            && all.contains("/stop ID stops one")
+            && !all.contains('\u{1b}'),
+        "{all}"
+    );
+    for (line, path) in [
+        ("/stop job-3", "/api/jobs/job-3/stop"),
+        ("/stop code-12", "/api/code/code-12/stop"),
+        (
+            "/stop team-0123456789ab",
+            "/api/team/team-0123456789ab/stop",
+        ),
+    ] {
+        let r = enter(&mut app, line);
+        assert_eq!((r.len(), r[0].path.as_str()), (1, path), "{line}");
+    }
+    for bad in [
+        "/stop everything",
+        "/stop job-",
+        "/stop job-1/../x",
+        "/stop team-XYZ",
+        "/stop code-1 now",
+    ] {
+        assert!(enter(&mut app, bad).is_empty(), "{bad}");
+    }
+    assert!(text(&app).contains("usage: /stop ID"));
+    let r = enter(&mut app, "/stop job-3");
+    app.handle(ok(
+        &r[0],
+        200,
+        json!({"id": "job-3", "stopping": true, "at_once": true}),
+    ));
+    assert!(text(&app).contains("Stopping now. Nothing it found will be offered."));
+    let r = enter(&mut app, "/stop job-3");
+    app.handle(ok(
+        &r[0],
+        200,
+        json!({"id": "job-3", "stopping": true, "at_once": false}),
+    ));
+    assert!(text(&app).contains("It will stop at the end of the step in progress."));
+    let r = enter(&mut app, "/stop job-3");
+    app.handle(ok(
+        &r[0],
+        409,
+        json!({"error": {"code": "NOT_RUNNING", "message": "nothing with that id is running"}}),
+    ));
+    assert!(text(&app).contains("nothing with that id is running"));
+    let mut b = booted();
+    let r = enter(&mut b, "/stop");
+    b.handle(ok(&r[0], 200, json!({"items": [], "count": 0, "quiet": 0})));
+    assert!(text(&b).contains("Nothing is working right now."));
+}

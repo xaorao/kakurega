@@ -15787,7 +15787,10 @@ impl JobRunner for CodeRunner {
     }
 }
 
-fn code_service(tag: &str, runner: CodeRunner) -> (kk_companion::Companion, Web, PathBuf) {
+fn code_service<R: JobRunner + 'static>(
+    tag: &str,
+    runner: R,
+) -> (kk_companion::Companion, Web, PathBuf) {
     let (root, _repo) = repo_copy(tag);
     let svc = Service::new(
         &root.join("data"),
@@ -19922,7 +19925,7 @@ fn sv241_one_list_shows_what_is_working_now_and_marks_what_has_gone_quiet() {
 }
 
 #[test]
-fn sv242_a_running_review_is_in_the_working_list_until_it_ends_and_cannot_be_stopped_from_there() {
+fn sv242_a_running_review_is_in_the_working_list_until_it_ends_and_can_be_stopped_from_there() {
     let (root, repo) = repo_copy("work-view-review");
     let svc = Service::new(
         &root.join("data"),
@@ -19959,7 +19962,7 @@ fn sv242_a_running_review_is_in_the_working_list_until_it_ends_and_cannot_be_sto
             Some("review"),
             Some(id.as_str()),
             Some("acme-audit"),
-            Some(false),
+            Some(true),
             Some(false)
         ),
         "{v}"
@@ -19970,4 +19973,309 @@ fn sv242_a_running_review_is_in_the_working_list_until_it_ends_and_cannot_be_sto
         0,
         "a finished review is not working"
     );
+}
+
+/// A runner that ends a review part-way when asked: it works in steps and looks at the stop switch between them.
+struct StopRunner {
+    inner: CannedRunner,
+    /// How many steps were worked before the run ended.
+    steps: std::sync::atomic::AtomicUsize,
+}
+
+impl JobRunner for StopRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        self.inner.run(repo, recipient, job, now, extra, progress)
+    }
+    fn stops_part_way(&self) -> bool {
+        true
+    }
+    fn run_stoppable(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+        stop: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> kk_review::job::JobReport {
+        use std::sync::atomic::Ordering::SeqCst;
+        for _ in 0..400 {
+            if stop.load(SeqCst) {
+                let mut r = self.inner.run(repo, recipient, job, now, extra, progress);
+                r.error = Some(kk_review::job::STOPPED_BY_OWNER.into());
+                return r;
+            }
+            self.steps.fetch_add(1, SeqCst);
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        self.inner.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        json!({"id": "ollama:x", "class": "device_only", "model": "x", "simulated": false, "endpoint": "http://127.0.0.1:11434"})
+    }
+    fn code_task_stoppable(
+        &self,
+        _files: &[kk_review::import::ImportedFile],
+        _task: &str,
+        progress: &dyn Fn(&str),
+        _external: Option<&kk_review::code::External<'_>>,
+        stop: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<kk_service::coding::CodeOutcome, String> {
+        progress("working");
+        for _ in 0..400 {
+            if stop.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(kk_review::job::STOPPED_BY_OWNER.into());
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        Err("the task was never stopped".into())
+    }
+}
+
+fn stop_service<R: JobRunner + 'static>(
+    tag: &str,
+    runner: Arc<R>,
+) -> (kk_companion::Companion, Web, PathBuf) {
+    let (root, repo) = repo_copy(tag);
+    let svc = Service::new(&root.join("data"), vec![root.clone()], runner, true).unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    (c, w, repo)
+}
+
+#[test]
+fn sv243_a_running_review_can_be_stopped_and_a_stopped_review_offers_nothing() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let runner = Arc::new(StopRunner {
+        inner: CannedRunner { confirm: true },
+        steps: Default::default(),
+    });
+    let (c, w, repo) = stop_service("stop-review", runner.clone());
+    assert_eq!(
+        Web::new(c.addr).post("/api/jobs/job-1/stop", json!({})).0,
+        401
+    );
+    let (st, e) = w.post("/api/jobs/job-1/stop", json!({}));
+    assert_eq!(
+        (st, e["error"]["code"].as_str()),
+        (409, Some("NOT_RUNNING")),
+        "nothing is running yet"
+    );
+    let id = w
+        .post(
+            "/api/jobs",
+            json!({"repo": repo.to_string_lossy(), "recipient": "acme-audit"}),
+        )
+        .1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let work = w.get("/api/work").1;
+    assert_eq!(
+        (
+            work["items"][0]["id"].as_str(),
+            work["items"][0]["can_stop"].as_bool()
+        ),
+        (Some(id.as_str()), Some(true))
+    );
+    let (st, v) = w.post(&format!("/api/jobs/{id}/stop"), json!({}));
+    assert_eq!(
+        (st, v["stopping"].as_bool(), v["at_once"].as_bool()),
+        (200, Some(true), Some(true)),
+        "{v}"
+    );
+    let started = std::time::Instant::now();
+    let job = wait_for(&w, &id, &["failed"]);
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "it ended at its next step, not after all 400: {:?}",
+        started.elapsed()
+    );
+    assert!(runner.steps.load(SeqCst) < 100);
+    assert!(job.to_string().contains("stopped by you"), "{job}");
+    // nothing it found is offered: there is no release to look at and none to approve
+    let rel = w.get(&format!("/api/jobs/{id}/release")).1;
+    assert_eq!(rel["available"], false, "{rel}");
+    assert!(rel.get("files").is_none(), "{rel}");
+    assert_ne!(
+        w.post(&format!("/api/jobs/{id}/approval"), json!({})).0,
+        200
+    );
+    assert_eq!(w.get("/api/work").1["count"], 0);
+    assert_eq!(
+        w.get("/api/inbox").1["count"],
+        0,
+        "a review the owner stopped is not waiting for the owner"
+    );
+    // it is over: a second stop has nothing to stop
+    let (st, e) = w.post(&format!("/api/jobs/{id}/stop"), json!({}));
+    assert_eq!(
+        (st, e["error"]["code"].as_str()),
+        (409, Some("NOT_RUNNING"))
+    );
+    // a path that is not an id of anything running
+    assert_eq!(w.post("/api/jobs/..%2F..%2Fadmin/stop", json!({})).0, 409);
+
+    // a coding task is stopped the same way and offers no patch
+    let (st, t) = w.post(
+        "/api/code",
+        json!({"folder": repo.to_string_lossy(), "task": "rename the function"}),
+    );
+    assert_eq!(st, 202, "{t}");
+    let cid = t["id"].as_str().unwrap().to_string();
+    let (st, v) = w.post(&format!("/api/code/{cid}/stop"), json!({}));
+    assert_eq!((st, v["stopping"].as_bool()), (200, Some(true)), "{v}");
+    let started = std::time::Instant::now();
+    loop {
+        let v = w.get(&format!("/api/code/{cid}")).1;
+        if v["state"] != "running" {
+            assert_eq!(v["state"], "failed", "{v}");
+            assert!(v.to_string().contains("stopped by you"), "{v}");
+            assert_ne!(
+                w.post(&format!("/api/code/{cid}/apply"), json!({})).0,
+                200,
+                "a stopped task has nothing to apply"
+            );
+            break;
+        }
+        assert!(started.elapsed() < Duration::from_secs(5));
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn sv244_a_runner_that_cannot_stop_part_way_runs_on_and_its_result_is_discarded() {
+    // SleepyRunner knows nothing of stopping: it finishes its review with a finding that would be ready to release
+    let (_c, w, repo) = stop_service(
+        "stop-review-late",
+        Arc::new(SleepyRunner(CannedRunner { confirm: true })),
+    );
+    let id = w
+        .post(
+            "/api/jobs",
+            json!({"repo": repo.to_string_lossy(), "recipient": "acme-audit"}),
+        )
+        .1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (st, v) = w.post(&format!("/api/jobs/{id}/stop"), json!({}));
+    assert_eq!(
+        (st, v["stopping"].as_bool(), v["at_once"].as_bool()),
+        (200, Some(true), Some(false)),
+        "the reply says it will end at its own end"
+    );
+    let job = wait_for(&w, &id, &["failed", "ready", "nothing_to_release"]);
+    assert_eq!(
+        job["state"], "failed",
+        "the owner stopped it, so it is not ready: {job}"
+    );
+    assert!(job.to_string().contains("stopped by you"));
+    assert_ne!(
+        w.post(&format!("/api/jobs/{id}/approval"), json!({})).0,
+        200,
+        "nothing it found can be released"
+    );
+    // a review that is not stopped still ends ready, as before
+    let id2 = w
+        .post(
+            "/api/jobs",
+            json!({"repo": repo.to_string_lossy(), "recipient": "acme-audit"}),
+        )
+        .1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        wait_for(&w, &id2, &["failed", "ready", "nothing_to_release"])["state"],
+        "ready"
+    );
+}
+
+/// A coding runner that knows nothing of stopping: it takes a while, then offers its patch as usual.
+struct LateCodeRunner(CodeRunner);
+
+impl JobRunner for LateCodeRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        self.0.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        self.0.route_info()
+    }
+    fn code_task(
+        &self,
+        files: &[kk_review::import::ImportedFile],
+        task: &str,
+        progress: &dyn Fn(&str),
+        external: Option<&kk_review::code::External<'_>>,
+    ) -> Result<kk_service::coding::CodeOutcome, String> {
+        std::thread::sleep(Duration::from_millis(1200));
+        self.0.code_task(files, task, progress, external)
+    }
+}
+
+#[test]
+fn sv245_a_coding_task_stopped_on_a_runner_that_cannot_stop_part_way_offers_no_patch() {
+    let (_c, w, proj) = code_service("code-stop-late", LateCodeRunner(standard_runner()));
+    let start = |w: &Web| {
+        w.post(
+            "/api/code",
+            json!({"folder": proj.to_string_lossy(), "task": "Fix add and add a test"}),
+        )
+        .1["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let id = start(&w);
+    let (st, v) = w.post(&format!("/api/code/{id}/stop"), json!({}));
+    assert_eq!(
+        (st, v["stopping"].as_bool(), v["at_once"].as_bool()),
+        (200, Some(true), Some(false)),
+        "{v}"
+    );
+    let v = wait_code(&w, &id);
+    assert_eq!(
+        v["state"], "failed",
+        "the runner finished with a patch, and the owner had stopped it: {v}"
+    );
+    assert!(v.to_string().contains("stopped by you"), "{v}");
+    assert!(
+        v["changes"].as_array().is_none_or(Vec::is_empty),
+        "no patch is shown: {v}"
+    );
+    assert_ne!(
+        w.post(
+            &format!("/api/code/{id}/apply"),
+            json!({"digest": "0".repeat(64)})
+        )
+        .0,
+        200
+    );
+    // the same task, not stopped, is ready with its patch as before
+    let id2 = start(&w);
+    let v = wait_code(&w, &id2);
+    assert_eq!(v["state"], "ready", "{v}");
 }

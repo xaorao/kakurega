@@ -23,6 +23,53 @@ pub struct ReviewRunner {
     pub remote: Option<std::sync::Arc<kk_near::route::NearRoute>>,
 }
 
+/// A route that stops answering once the owner has asked for the work to stop. Everything else about it is the route inside.
+struct Stoppable {
+    inner: Box<dyn Route>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Stoppable {
+    fn wrap(
+        inner: Box<dyn Route>,
+        stop: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Box<dyn Route> {
+        Box::new(Stoppable {
+            inner,
+            stop: stop.clone(),
+        })
+    }
+}
+
+impl Route for Stoppable {
+    fn id(&self) -> &str {
+        self.inner.id()
+    }
+    fn class(&self) -> RouteClass {
+        self.inner.class()
+    }
+    fn tee_verified(&self) -> bool {
+        self.inner.tee_verified()
+    }
+    fn reply_key_bound(&self) -> bool {
+        self.inner.reply_key_bound()
+    }
+    fn evidence(&self) -> kk_route::RouteEvidence {
+        self.inner.evidence()
+    }
+    fn complete(
+        &self,
+        request: &kk_route::CompletionRequest,
+    ) -> Result<kk_route::Completion, kk_route::RouteError> {
+        if self.stop.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(kk_route::RouteError::Unreachable(
+                kk_review::job::STOPPED_BY_OWNER.into(),
+            ));
+        }
+        self.inner.complete(request)
+    }
+}
+
 /// The one NEAR route, shared by everything that asks it a question.
 struct SharedNear(std::sync::Arc<kk_near::route::NearRoute>);
 
@@ -119,7 +166,26 @@ impl JobRunner for ReviewRunner {
         extra: Vec<kk_review::import::ImportedFile>,
         progress: &dyn Fn(&str, &str),
     ) -> JobReport {
+        let never = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.run_stoppable(repo, recipient, job_name, now, extra, progress, &never)
+    }
+
+    fn stops_part_way(&self) -> bool {
+        true
+    }
+
+    fn run_stoppable(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job_name: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+        stop: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> JobReport {
         let cfg = JobConfig {
+            stop: Some(stop.clone()),
             repo: repo.to_path_buf(),
             recipient: recipient.to_string(),
             default_level: Level::Internal,
@@ -157,7 +223,7 @@ impl JobRunner for ReviewRunner {
             let ev = vec![route.evidence()];
             return run_job(
                 &cfg,
-                RouteSet::new(vec![Box::new(route) as Box<dyn Route>]),
+                RouteSet::new(vec![Stoppable::wrap(Box::new(route), stop)]),
                 ev,
                 progress,
             );
@@ -165,7 +231,12 @@ impl JobRunner for ReviewRunner {
         match self.answer_route() {
             Ok(route) => {
                 let ev = vec![route.evidence()];
-                run_job(&cfg, RouteSet::new(vec![route]), ev, progress)
+                run_job(
+                    &cfg,
+                    RouteSet::new(vec![Stoppable::wrap(route, stop)]),
+                    ev,
+                    progress,
+                )
             }
             Err(e) => {
                 let mut r = run_job(&cfg, RouteSet::new(vec![]), vec![], progress);
@@ -559,6 +630,18 @@ cut_short: false,
         progress: &dyn Fn(&str),
         external: Option<&kk_review::code::External<'_>>,
     ) -> Result<kk_service::coding::CodeOutcome, String> {
+        let never = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.code_task_stoppable(files, task, progress, external, &never)
+    }
+
+    fn code_task_stoppable(
+        &self,
+        files: &[kk_review::import::ImportedFile],
+        task: &str,
+        progress: &dyn Fn(&str),
+        external: Option<&kk_review::code::External<'_>>,
+        stop: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<kk_service::coding::CodeOutcome, String> {
         use kk_review::code::{
             detect_runner, run_task_with, Runner, SandboxTester, Tester, Workspace, MAX_TURNS,
         };
@@ -568,7 +651,8 @@ cut_short: false,
                     .into(),
             );
         }
-        let route = self.route().map_err(model_failure)?;
+        // once the owner asks for a stop the model is not asked again, so the task ends at its next step
+        let route = Stoppable::wrap(Box::new(self.route().map_err(model_failure)?), stop);
         let (mut ws, left) = Workspace::from_imported(files);
         let runner = detect_runner(ws.files());
         let tester = runner.map(|r| SandboxTester {
@@ -587,13 +671,16 @@ cut_short: false,
             n => format!("the model works on {} files; {n} are withheld because they hold secrets or private data", ws.files().len()),
         });
         let report = run_task_with(
-            &route,
+            route.as_ref(),
             &mut ws,
             task,
             tester.as_ref().map(|t| t as &dyn Tester),
             MAX_TURNS,
             external,
         );
+        if stop.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(kk_review::job::STOPPED_BY_OWNER.into());
+        }
         progress("the tests run again on the final files, by the kernel");
         let kernel_test = tester.as_ref().map(|t| t.run(ws.files()));
         Ok(kk_service::coding::CodeOutcome {
@@ -742,6 +829,58 @@ impl kk_memory::Embedder for OllamaEmbedder {
         } else {
             0.6
         }
+    }
+}
+
+#[cfg(test)]
+mod stoppable {
+    use super::Stoppable;
+    use kk_route::{ChatMessage, CompletionRequest, Route, RouteClass, RouteError, ScriptedRoute};
+    use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+    use std::sync::Arc;
+
+    #[test]
+    fn rn_a_stopped_route_is_not_asked_again_and_is_otherwise_the_route_inside() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let inner = ScriptedRoute::new(
+            "scripted",
+            RouteClass::VerifiedTee,
+            true,
+            vec![
+                ChatMessage::new("assistant", "second"),
+                ChatMessage::new("assistant", "first"),
+            ],
+        );
+        let plain = ScriptedRoute::new("scripted", RouteClass::VerifiedTee, true, vec![]);
+        let route = Stoppable::wrap(Box::new(inner), &stop);
+        // what the kernel reads to decide what a route may be sent is passed through untouched
+        assert_eq!(route.id(), plain.id());
+        assert_eq!(route.class(), plain.class());
+        assert_eq!(route.tee_verified(), plain.tee_verified());
+        assert_eq!(route.reply_key_bound(), plain.reply_key_bound());
+        assert_eq!(route.evidence(), plain.evidence());
+        assert_eq!(
+            kk_route::route_ceiling(route.as_ref()),
+            kk_route::route_ceiling(&plain)
+        );
+        let req = CompletionRequest {
+            messages: vec![ChatMessage::new("user", "hi")],
+            tools: vec![],
+            max_tokens: 10,
+            temperature: 0.0,
+        };
+        let first = route.complete(&req).unwrap().message.content;
+        stop.store(true, SeqCst);
+        match route.complete(&req) {
+            Err(RouteError::Unreachable(why)) => assert_eq!(why, "stopped by you"),
+            other => panic!("{other:?}"),
+        }
+        // the script still holds its second answer: the model was not asked
+        stop.store(false, SeqCst);
+        let next = route.complete(&req).unwrap().message.content;
+        let mut both = vec![first, next];
+        both.sort();
+        assert_eq!(both, ["first", "second"]);
     }
 }
 

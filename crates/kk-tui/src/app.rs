@@ -187,6 +187,8 @@ enum Intent {
     Aside,
     Experts,
     Roundtable,
+    WorkList,
+    WorkStop,
     TeamList,
     /// A plan, a look, a start or an answer: the reply is the run, shown and then watched while it works.
     TeamRun,
@@ -3263,6 +3265,25 @@ impl App {
                     )],
                 }
             }
+            Command::Stop(None) => {
+                vec![self.req(Intent::WorkList, false, Method::Get, "/api/work", None)]
+            }
+            Command::Stop(Some(id)) => {
+                let path = if id.starts_with("job-") {
+                    format!("/api/jobs/{id}/stop")
+                } else if id.starts_with("code-") {
+                    format!("/api/code/{id}/stop")
+                } else {
+                    format!("/api/team/{id}/stop")
+                };
+                vec![self.req(
+                    Intent::WorkStop,
+                    false,
+                    Method::Post,
+                    &path,
+                    Some(json!({})),
+                )]
+            }
             Command::Team(action) => {
                 use crate::cmd::TeamAction;
                 let known =
@@ -5814,6 +5835,53 @@ impl App {
                     self.say(
                         Kind::Info,
                         "No change: that entry was already there, or was not on the list.",
+                    );
+                }
+                Vec::new()
+            }
+            Intent::WorkList => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let mut lines: Vec<String> = body["items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|i| {
+                        let mins = (i["quiet_for"].as_i64().unwrap_or(0) / 60).max(1);
+                        format!(
+                            "{:17}  {}  {}",
+                            clean(i["id"].as_str().unwrap_or("")),
+                            if i["quiet"] == true {
+                                format!("no sign of progress for {mins} min")
+                            } else {
+                                format!("progress {mins} min ago")
+                            },
+                            clean(i["title"].as_str().unwrap_or(""))
+                        )
+                    })
+                    .collect();
+                if lines.is_empty() {
+                    lines.push("Nothing is working right now.".into());
+                } else {
+                    lines.push(String::new());
+                    lines.push("/stop ID stops one. Nothing a stopped review or coding task found is offered.".into());
+                }
+                self.push(Kind::Info, Some("Working now"), lines);
+                Vec::new()
+            }
+            Intent::WorkStop => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                } else if body["stopping"] == false {
+                    self.say(Kind::Info, "Stopped.");
+                } else if body["at_once"] == false {
+                    self.say(Kind::Warn, "It will stop at the end of the step in progress. Nothing it found will be offered.");
+                } else {
+                    self.say(
+                        Kind::Warn,
+                        "Stopping now. Nothing it found will be offered.",
                     );
                 }
                 Vec::new()
