@@ -94,7 +94,15 @@ impl Swap {
     }
 
     fn placeholder(&mut self, tag: &'static str, kind: Option<Kind>, value: &str) -> String {
-        let key = (tag, compared(kind, value));
+        // a secret is compared exactly: two keys that differ only in the case of a letter are two keys
+        let key = (
+            tag,
+            if tag == "SECRET" {
+                value.to_string()
+            } else {
+                compared(kind, value)
+            },
+        );
         if let Some(p) = self.forward.get(&key) {
             return p.clone();
         }
@@ -162,6 +170,19 @@ impl Swap {
                 (s, e, tag(kind), Some(kind))
             })
             .collect();
+        // a key, token or password in the text is hidden the same way: the owner may have pasted one into a question, and
+        // no answer needs its value
+        let secrets = crate::scan(&text)
+            .into_iter()
+            .map(|h| (h.start, h.end))
+            .chain(crate::spoken::find(&text));
+        for (s, e) in secrets {
+            if e > s && text.is_char_boundary(s) && text.is_char_boundary(e) {
+                // a secret wins over a personal value found inside it (digits of a key read as a phone number)
+                spans.retain(|(a, b, _, _)| !(s < *b && *a < e));
+                spans.push((s, e, "SECRET", None));
+            }
+        }
         for (s, e) in self.name_spans(&text) {
             if !spans.iter().any(|(a, b, _, _)| s < *b && *a < e) {
                 spans.push((s, e, "NAME", None));
@@ -337,6 +358,51 @@ mod tests {
         let mut big = Swap::new(&many);
         big.hide(&many.join(", "));
         assert!(big.total() <= MAX_NAMES);
+    }
+
+    #[test]
+    fn sw06_a_key_or_password_in_the_text_goes_as_a_placeholder_too_and_comes_back() {
+        let key = format!(
+            "{}-{}",
+            "sk-ant", "api03-abcdefghijklmnopqrstuvwxyz0123456789"
+        );
+        let mut s = Swap::new(&[]);
+        let text = format!(
+            "Why does this fail?\nAPI_KEY={key}\nthe staging password is hunter2\nretries=3"
+        );
+        let hidden = s.hide(&text);
+        assert!(
+            !hidden.contains("sk-ant") && !hidden.contains("hunter2"),
+            "{hidden}"
+        );
+        assert!(
+            hidden.contains("[[SECRET_1]]")
+                && hidden.contains("[[SECRET_2]]")
+                && hidden.contains("retries=3"),
+            "{hidden}"
+        );
+        assert_eq!(s.counts().get("SECRET"), Some(&2));
+        // the same key again is the same placeholder, and the answer shows the owner their own value
+        assert!(s.hide(&format!("again {key}")).contains("[[SECRET_1]]"));
+        assert_eq!(
+            s.show("Remove [[SECRET_2]] from the notes."),
+            "Remove hunter2 from the notes."
+        );
+        // two keys that differ only in case are two values, each restored as itself
+        let (k1, k2) = (
+            format!("{}{}", "ghp_", "a".repeat(36)),
+            format!("{}{}", "ghp_", "A".repeat(36)),
+        );
+        let mut two = Swap::new(&[]);
+        let h = two.hide(&format!("{k1} and {k2}"));
+        assert_eq!(two.show(&h), format!("{k1} and {k2}"), "{h}");
+        // the text with nothing of the kind is untouched
+        let mut plain = Swap::new(&[]);
+        assert_eq!(
+            plain.hide("The token limit is 8k and the status code is 200."),
+            "The token limit is 8k and the status code is 200."
+        );
+        assert_eq!(plain.total(), 0);
     }
 
     #[test]

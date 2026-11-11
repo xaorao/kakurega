@@ -6,6 +6,7 @@
 //! alphabet and length); the matcher, the false-positive filters and the wallet rules are written here. See NOTICE.md.
 
 pub mod pii;
+pub mod spoken;
 pub mod swap;
 
 use std::collections::BTreeSet;

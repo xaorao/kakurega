@@ -7,6 +7,7 @@ pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 mod approve;
 mod approver;
 mod backup;
+mod bench;
 mod chain;
 mod config;
 mod diagnostics;
@@ -76,6 +77,7 @@ Usage:
   kaku log verify FILE [--pin KEY] [--anchor COUNT:HEAD]   check a saved log offline
   kaku share JOB FINDING [--out FILE]   one finding of a delivered review as a file with a proof; it shows nothing of the rest of the release
   kaku notes FILE [--title TEXT] [--out FILE]   notes from a meeting transcript; a point is kept only when its quote is in the transcript
+  kaku bench sign|verify FILE          sign the leak benchmark's results, or check a signed results file against a pinned key
   kaku verify FILE [--pin KEY] [--out DIR]   check a capsule or a share offline (KEY: base64url public key); --out writes a share's files into a new folder
   kaku chain hardware KEY | capsule FILE | order ID   what NEAR holds: a model key's hardware record, who registered a capsule, an order (reads only; --network, --registry, --json)
   kaku chain attest --model NAME --key-file FILE   have NEAR's own verifier check that model's hardware proof and record its signing key (testnet; the account in the key file pays)
@@ -127,6 +129,7 @@ fn main() -> ExitCode {
         Some("work") => script::work(&args),
         Some("stop") => script::stop(&args),
         Some("share") => script::share(&args),
+        Some("bench") => bench::run(&args[1..]),
         Some("notes") => script::notes(&args),
         Some("sessions") => script::sessions(&args[1..]),
         Some("update") => update::run(&args[1..]),

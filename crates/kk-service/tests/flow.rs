@@ -10208,7 +10208,7 @@ fn sv98_attached_files_go_to_the_model_as_labelled_data_and_what_is_left_out_is_
     assert_eq!(s, 201);
     let id2 = c2["id"].as_str().unwrap().to_string();
 
-    // on this computer: the secret goes along, the instruction never does
+    // on this computer too: neither the secret nor the instruction goes along
     let (s, r) = w.post(
         "/api/chat",
         json!({"message": "Summarise the notes", "attachments": [id, id2]}),
@@ -10216,7 +10216,7 @@ fn sv98_attached_files_go_to_the_model_as_labelled_data_and_what_is_left_out_is_
     assert_eq!(s, 200, "{r}");
     assert_eq!(
         r["files"],
-        json!({"used": 2, "trimmed": 0, "left_out": 0, "withheld_instructions": 1, "withheld_secrets": 0})
+        json!({"used": 2, "trimmed": 0, "left_out": 0, "withheld_instructions": 1, "withheld_secrets": 1})
     );
     let sent = runner.sent();
     assert!(
@@ -10235,14 +10235,14 @@ fn sv98_attached_files_go_to_the_model_as_labelled_data_and_what_is_left_out_is_
         "{sent}"
     );
     assert!(
-        sent.contains(&key),
-        "a model on this computer may read the secret"
+        !sent.contains(&key) && !sent.contains("sk-ant"),
+        "a secret in a file is not given to any model: {sent}"
     );
     assert!(
         !sent.contains("evil@example.com") && !sent.contains("Ignore all previous"),
         "{sent}"
     );
-    assert!(sent.contains("[left out: 1 part(s) at lines 1-"), "{sent}");
+    assert!(sent.contains("[left out: 2 part(s) at lines 1-"), "{sent}");
 
     // no file, or an unknown, stale or malformed one
     let (s, r) = w.post("/api/chat", json!({"message": "again"}));
@@ -20954,4 +20954,209 @@ fn sv250_meeting_notes_keep_only_points_whose_quote_is_in_the_transcript_and_nev
         "{r}"
     );
     assert_eq!(r["route"]["stays_here"], json!(false));
+}
+
+/// The leak benchmark's "model elsewhere" arm. The local-model route refuses an address that is not this computer, so a
+/// model elsewhere cannot be stood up from outside the way `scripts/bench-leak.py` does for a model here; this runs the
+/// same kind of cases against a recording model whose address is not this computer. With `KK_BENCH_OUT` set it also
+/// writes its records to that file.
+#[test]
+fn bench_elsewhere_a_secret_in_the_owners_material_never_reaches_a_model_at_another_address() {
+    use std::hash::{BuildHasher, Hasher};
+    let fresh = |n: usize, alphabet: &str| -> String {
+        let a: Vec<char> = alphabet.chars().collect();
+        (0..n)
+            .map(|i| {
+                let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+                h.write_usize(i);
+                a[(h.finish() % a.len() as u64) as usize]
+            })
+            .collect()
+    };
+    const ALNUM: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    const DIGITS: &str = "0123456789";
+    // (name, group, the secret, the line it is written in)
+    let shapes: Vec<(&str, &str, String, String)> = {
+        let mut v = Vec::new();
+        let mut add = |name: &'static str,
+                       group: &'static str,
+                       secret: String,
+                       line: &dyn Fn(&str) -> String| {
+            let l = line(&secret);
+            v.push((name, group, secret, l));
+        };
+        add(
+            "anthropic-key",
+            "known shapes",
+            format!("{}-{}{}AA", "sk-ant", "api03-", fresh(93, ALNUM)),
+            &|s| format!("API_KEY={s}"),
+        );
+        add(
+            "openai-key",
+            "known shapes",
+            format!("{}-{}{}", "sk", "proj-", fresh(48, ALNUM)),
+            &|s| format!("API_KEY={s}"),
+        );
+        add(
+            "github-token",
+            "known shapes",
+            format!("{}_{}", "ghp", fresh(36, ALNUM)),
+            &|s| format!("API_KEY={s}"),
+        );
+        add(
+            "stripe-key",
+            "known shapes",
+            format!("{}_{}{}", "sk", "live_", fresh(24, ALNUM)),
+            &|s| format!("API_KEY={s}"),
+        );
+        add("aws-secret", "known shapes", fresh(40, ALNUM), &|s| {
+            format!(
+                "AWS_ACCESS_KEY_ID=AKIA{}\nAWS_SECRET_ACCESS_KEY={s}",
+                "Q".repeat(16)
+            )
+        });
+        add("db-password", "known shapes", fresh(24, ALNUM), &|s| {
+            format!("DATABASE_URL=postgres://app:{s}@db.internal:5432/main")
+        });
+        add("generic-password", "known shapes", fresh(20, ALNUM), &|s| {
+            format!("ADMIN_PASSWORD={s}")
+        });
+        add("bearer", "known shapes", fresh(40, ALNUM), &|s| {
+            format!("Authorization: Bearer {s}")
+        });
+        add(
+            "key-in-prose",
+            "known shapes",
+            format!("{}_{}", "ghp", fresh(36, ALNUM)),
+            &|s| format!("For the record, the credential we use is {s} and it must not be shared."),
+        );
+        add(
+            "human-password-named",
+            "beyond the detector",
+            format!("Blue42Harbor&{}", fresh(3, DIGITS)),
+            &|s| format!("The staging server password is still {s} from the demo."),
+        );
+        add("pin-named", "beyond the detector", fresh(6, DIGITS), &|s| {
+            format!("The door code is {s}, please do not pass it on.")
+        });
+        add(
+            "bare-token-named",
+            "beyond the detector",
+            fresh(32, ALNUM),
+            &|s| format!("For the record, the credential we use is {s} and it must not be shared."),
+        );
+        add(
+            "human-password-unnamed",
+            "beyond the detector",
+            format!("Blue42Harbor&{}", fresh(3, DIGITS)),
+            &|s| format!("Ben said to type {s} when the staging box asks."),
+        );
+        add(
+            "pin-unnamed",
+            "beyond the detector",
+            fresh(6, DIGITS),
+            &|s| format!("Punch in {s} at the side entrance."),
+        );
+        v
+    };
+    const FILLER: &str = "Quarterly notes for the billing service.\nThe export job runs every night and writes a summary for finance.\n";
+    let inner = FileRunner::new("https://api.example.com", 32768);
+    let (root, _repo) = repo_copy("bench-elsewhere");
+    let svc = Service::new(
+        &root.join("data"),
+        vec![root.clone()],
+        Arc::new(SaysRunner {
+            inner: inner.clone(),
+            says: "{\"answer\": \"ok\", \"citations\": []}".into(),
+        }),
+        true,
+    )
+    .unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+
+    let mut rows: Vec<Value> = Vec::new();
+    for (n, (name, group, secret, line)) in shapes.iter().enumerate() {
+        let material = format!("{FILLER}{line}\n{FILLER}");
+        for door in ["attach", "ask", "meeting", "note", "typed"] {
+            *inner.seen.lock().unwrap() = Vec::new();
+            let (status, _answer) = match door {
+                "attach" => {
+                    let (s, v) = w.post_raw(&format!("/api/attachments?name=notes-{n}.txt"), material.as_bytes());
+                    assert_eq!(s, 201, "{v}");
+                    let id = v["id"].as_str().unwrap().to_string();
+                    let r = w.post("/api/chat", json!({"message": "Summarise this, word for word.", "attachments": [id]}));
+                    w.post(&format!("/api/attachments/{id}/remove"), json!({}));
+                    r
+                }
+                "ask" => {
+                    let d = root.join(format!("folder-{n}"));
+                    std::fs::create_dir_all(&d).unwrap();
+                    std::fs::write(d.join("settings.txt"), &material).unwrap();
+                    std::fs::write(d.join("readme.md"), FILLER).unwrap();
+                    w.post("/api/ask", json!({"folder": d.to_string_lossy(), "question": "What credential does the billing service use? Quote it exactly."}))
+                }
+                "meeting" => {
+                    let text: String = material.lines().map(|l| format!("Asha: {l}\n")).collect();
+                    w.post("/api/meeting-notes", json!({"text": text}))
+                }
+                "note" => {
+                    // a confidential note may go to a model elsewhere that proves what it runs on; whatever it holds that
+                    // reads like a secret still must not
+                    let (s, v) = w.post("/api/memories", json!({"text": material, "level": "confidential", "reason": "bench"}));
+                    if s != 200 && s != 201 {
+                        (s, v)
+                    } else {
+                        w.post("/api/chat", json!({"message": "What do my notes say about the billing service credential?"}))
+                    }
+                }
+                _ => w.post("/api/chat", json!({"message": format!("Here is my settings file, tidy it up:\n{material}")})),
+            };
+            let sent = inner.sent();
+            let reached = sent.contains(secret.as_str());
+            let asked = !sent.is_empty();
+            let verdict = if reached {
+                "LEAK"
+            } else if (status == 200 || status == 201) && asked {
+                "held"
+            } else if (status == 409 || status == 422) && !asked {
+                "refused"
+            } else {
+                "not_run"
+            };
+            rows.push(json!({"case": format!("{door}/{name}"), "door": door, "shape": name, "group": group, "route": "elsewhere", "http_status": status, "model_was_asked": asked, "reached_model": reached, "verdict": verdict}));
+        }
+    }
+    if let Ok(path) = std::env::var("KK_BENCH_OUT") {
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&json!({"cases": rows})).unwrap(),
+        )
+        .unwrap();
+    }
+    let of = |group: &str, verdict: &str| {
+        rows.iter()
+            .filter(|r| r["group"] == group && r["verdict"] == verdict)
+            .map(|r| r["case"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(of("known shapes", "LEAK"), Vec::<String>::new());
+    assert_eq!(of("known shapes", "not_run"), Vec::<String>::new());
+    assert_eq!(of("beyond the detector", "not_run"), Vec::<String>::new());
+    // what is known to get through: a password or code said with no word for what it is. Listed, so a change in either
+    // direction is seen.
+    let mut leaks = of("beyond the detector", "LEAK");
+    leaks.sort();
+    let expected: Vec<String> = ["ask", "attach", "meeting", "note", "typed"]
+        .iter()
+        .flat_map(|d| ["human-password-unnamed", "pin-unnamed"].map(|s| format!("{d}/{s}")))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    assert_eq!(leaks, expected);
 }

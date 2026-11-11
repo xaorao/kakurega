@@ -101,7 +101,9 @@ pub fn instruction_like(text: &str) -> bool {
 
 /// Whether a passage holds what looks like a secret.
 pub fn has_secret(text: &str) -> bool {
-    !kk_secrets::scan(text).is_empty() || kk_secrets::looks_secret(text).is_some()
+    !kk_secrets::scan(text).is_empty()
+        || kk_secrets::looks_secret(text).is_some()
+        || kk_secrets::spoken::holds(text)
 }
 
 /// The lines of a file that belong to a private-key block, passage by passage: from a `-----BEGIN ... PRIVATE KEY...-----` line
@@ -672,5 +674,24 @@ mod tests {
             })
             .collect();
         assert_eq!(flagged, [(0, 1), (0, 2), (1, 0), (1, 1)]);
+    }
+
+    #[test]
+    fn at30_a_password_or_code_said_in_a_sentence_is_left_out_like_any_secret_and_ordinary_talk_is_kept(
+    ) {
+        let p = parsed(&["The staging server password is still hunter2 from the demo.\nThe password policy is reviewed on Friday.\nThe door code is 482913."]);
+        let b = block(&p, false);
+        assert!(
+            !b.body.contains("hunter2") && !b.body.contains("482913"),
+            "{}",
+            b.body
+        );
+        assert!(
+            b.body
+                .contains("The password policy is reviewed on Friday."),
+            "{}",
+            b.body
+        );
+        assert_eq!(b.withheld_secrets, 2);
     }
 }
