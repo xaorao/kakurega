@@ -22,6 +22,7 @@ kk-memory = { path = "../kk-memory" }
 kk-review = { path = "../kk-review" }
 kk-route = { path = "../kk-route" }
 kk-near = { path = "../kk-near" }
+kk-chain = { path = "../kk-chain" }
 kk-sandbox = { path = "../kk-sandbox" }
 kk-types = { path = "../kk-types" }
 kk-parse = { path = "../kk-parse" }

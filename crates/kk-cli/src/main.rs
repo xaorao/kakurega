@@ -7,6 +7,7 @@ pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 mod approve;
 mod approver;
 mod backup;
+mod chain;
 mod config;
 mod diagnostics;
 mod doctor;
@@ -68,6 +69,8 @@ Usage:
   kaku log export [--out FILE]      save the signed event log
   kaku log verify FILE [--pin KEY] [--anchor COUNT:HEAD]   check a saved log offline
   kaku verify CAPSULE [--pin KEY]   check a capsule offline (KEY: base64url public key)
+  kaku chain hardware KEY | capsule FILE | order ID   what NEAR holds: a model key's hardware record, who registered a capsule, an order (reads only; --network, --registry, --json)
+  kaku chain attest --model NAME --key-file FILE   have NEAR's own verifier check that model's hardware proof and record its signing key (testnet; the account in the key file pays)
 
 Options for every command: --data-dir DIR (default ~/.kakurega)";
 
@@ -112,6 +115,7 @@ fn main() -> ExitCode {
         Some("sessions") => script::sessions(&args[1..]),
         Some("update") => update::run(&args[1..]),
         Some("pack") => pack::run(&args[1..]),
+        Some("chain") => chain::run(&args[1..]),
         None if std::io::IsTerminal::is_terminal(&std::io::stdout())
             && std::io::IsTerminal::is_terminal(&std::io::stdin()) =>
         {
