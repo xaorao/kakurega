@@ -1,3 +1,4 @@
+import { LoadState } from "../components/LoadState";
 import { createResource, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { api, ApiError, type McpServer } from "../api";
 import { t } from "../i18n";
@@ -112,7 +113,7 @@ export function McpPending() {
 }
 
 export function Mcp() {
-  const [data, { refetch }] = createResource(() => api.mcp());
+  const [data, { refetch }] = createResource(() => api.mcp().catch(() => null));
   const [status, setStatus] = createSignal("");
   const [name, setName] = createSignal("");
   const [program, setProgram] = createSignal("");
@@ -137,7 +138,7 @@ export function Mcp() {
       <p class="muted">{t("mcp.warn")}</p>
       <McpPending />
       <Show when={status()}><p role="status" class="ok">{status()}</p></Show>
-      <Show when={data()} fallback={<p class="muted">{t("review.loading")}</p>}>
+      <Show when={data()} fallback={<LoadState loading={data.loading} retry={() => void refetch()} />}>
         {(d) => (
           <>
             <Show when={d().servers.length === 0}><p class="muted">{t("mcp.none")}</p></Show>

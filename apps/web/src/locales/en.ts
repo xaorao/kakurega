@@ -1072,6 +1072,8 @@ export const en = {
   "proj.notes": "Its notes",
   "proj.remove": "Take off the list",
   "proj.error": "The projects could not be read or changed.",
+  "load.failed": "This could not be read from the service.",
+  "load.retry": "Try again",
   "nav.docs": "Documents",
   "docs.title": "Ask your documents",
   "docs.lead": "Ask a question about the text documents in a folder. The model answers from them, and Kakurega checks that every passage it quotes really is in the file it names. Secret files are never sent.",

@@ -1,3 +1,4 @@
+import { LoadState } from "../components/LoadState";
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, type Method, type BundledMethod } from "../api";
 import { t } from "../i18n";
@@ -230,7 +231,7 @@ function Bundled(props: { list: BundledMethod[]; onChanged: (message: string) =>
 }
 
 export function Methods() {
-  const [data, { refetch }] = createResource(() => api.methods());
+  const [data, { refetch }] = createResource(() => api.methods().catch(() => null));
   const [status, setStatus] = createSignal("");
   const changed = (message: string) => { setStatus(message); void refetch(); };
   return (
@@ -241,7 +242,7 @@ export function Methods() {
       <Show when={status()}><p role="status" class="ok">{status()}</p></Show>
       <Proposals onChanged={changed} />
       <Packs onChanged={changed} />
-      <Show when={data()} fallback={<p class="muted">{t("review.loading")}</p>}>
+      <Show when={data()} fallback={<LoadState loading={data.loading} retry={() => void refetch()} />}>
         {(d) => (
           <>
             <Show when={d().methods.length === 0}><p class="muted">{t("met.none")}</p></Show>

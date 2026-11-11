@@ -1,3 +1,4 @@
+import { LoadState } from "../components/LoadState";
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError } from "../api";
 import { t, type Key } from "../i18n";
@@ -58,7 +59,7 @@ export function AgentAccess() {
       </div>
       <div class="card stack" role="region" aria-label={t("agent.active")}>
         <h2>{t("agent.active")}</h2>
-        <Show when={access()} fallback={<p class="muted" role="status">{t("inbox.loading")}</p>}>
+        <Show when={access()} fallback={<LoadState loading={access.loading} retry={() => void refetch()} />}>
           {(a) => (
             <Show when={a().leases.length > 0} fallback={<p role="status">{t("agent.none")}</p>}>
               <ul class="plain stack">

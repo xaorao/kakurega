@@ -1,3 +1,4 @@
+import { LoadState } from "../components/LoadState";
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api } from "../api";
 import { t, type Key } from "../i18n";
@@ -31,7 +32,7 @@ export function Inbox() {
           <p id="notify-help" class="muted">{notify() === "denied" ? t("inbox.notify.denied") : t("inbox.notify.help")}</p>
         </Show>
       </div>
-      <Show when={inbox()} fallback={<p class="muted" role="status">{t("inbox.loading")}</p>}>
+      <Show when={inbox()} fallback={<LoadState loading={inbox.loading} retry={() => void refetch()} />}>
         {(r) => (
           <Show when={r().items.length > 0} fallback={<p class="card" role="status">{t("inbox.empty")}</p>}>
             <ul class="plain stack">
