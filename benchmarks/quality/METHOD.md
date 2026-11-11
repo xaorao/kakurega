@@ -29,5 +29,5 @@ The first run of this eval had the review find the planted defect in 0 of 3 runs
 ## Limits
 - One small project, one planted defect, one model. This shows that confirming findings removed the false ones here and that the second look recovered the defect here. It is not a measure of review quality in general.
 - The three Kakurega runs gave the same result, which suggests the review route runs the model without randomness; they are then not three independent samples.
-- Money: the model runs on this computer, so no charge. The service's usage record does not yet count the tokens a review uses, so tokens are reported for the plain arm only.
+- Money: the model runs on this computer, so no charge. Tokens are in `results.json` for both arms: about 940 in and 300 out per plain run; for the three reviews together the service's usage record shows 63,579 in and 8,334 out, about 21,000 in and 2,800 out per review. With a price entered for a route, the usage screen turns these into money.
 - The review takes about ten times as long as the single prompt.
