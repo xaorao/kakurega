@@ -313,3 +313,151 @@ async fn live_a_models_hardware_is_recorded_through_the_client_and_read_back() {
     assert!(chain.order(999_999).await.unwrap().is_none());
     assert_eq!(chain.order(0).await.unwrap().unwrap()["state"], "Paid");
 }
+
+// ---- NEAR Intents: a price for paying an order from another chain, never an offer to pay ----
+
+use kk_chain::intents::{dry_request, find, read_quote, read_tokens, Ask, Token};
+
+fn tokens() -> Vec<Token> {
+    read_tokens(&json!([
+        {"assetId": "nep141:usdc.near", "symbol": "USDC", "blockchain": "near", "decimals": 6, "price": "1"},
+        {"assetId": "nep141:sol-usdc.omft.near", "symbol": "USDC", "blockchain": "sol", "decimals": 6},
+        {"assetId": "nep141:btc.omft.near", "symbol": "BTC", "blockchain": "btc", "decimals": 8},
+        {"assetId": "nep141:dup-a", "symbol": "DUP", "blockchain": "eth", "decimals": 18},
+        {"assetId": "nep141:dup-b", "symbol": "DUP", "blockchain": "eth", "decimals": 18},
+        {"assetId": "", "symbol": "BAD", "blockchain": "eth", "decimals": 18},
+        {"assetId": "nep141:x", "symbol": "NODEC", "blockchain": "eth"},
+        {"assetId": "nep141:y", "symbol": "HUGE", "blockchain": "eth", "decimals": 400},
+        "not a token",
+    ]))
+}
+
+#[test]
+fn in01_only_well_formed_tokens_are_kept_and_a_coin_is_named_by_symbol_and_chain() {
+    let t = tokens();
+    assert_eq!(t.len(), 5, "{t:?}");
+    assert_eq!(
+        find(&t, "usdc@SOL").unwrap().asset_id,
+        "nep141:sol-usdc.omft.near"
+    );
+    assert_eq!(find(&t, "BTC@btc").unwrap().decimals, 8);
+    for (name, why) in [
+        ("USDC", "SYMBOL@chain"),
+        ("USDC@moon", "lists no USDC on moon"),
+        ("DUP@eth", "more than one"),
+        ("BAD@eth", "lists no BAD"),
+    ] {
+        let e = find(&t, name).unwrap_err().to_string();
+        assert!(e.contains(why), "{name}: {e}");
+    }
+}
+
+#[test]
+fn in02_the_request_is_always_dry_and_carries_the_orders_terms_as_the_transfers_message() {
+    let t = tokens();
+    let terms = json!({"reviewer": "rita.near", "require_hardware": true});
+    let r = dry_request(&Ask {
+        pay: find(&t, "USDC@sol").unwrap(),
+        arrive: find(&t, "USDC@near").unwrap(),
+        arrive_units: 25_000_000,
+        registry: "registry.near",
+        refund_to: "REFUND",
+        terms: &terms,
+        deadline_rfc3339: "2030-01-01T00:00:00.000Z",
+    });
+    assert_eq!(r["dry"], true);
+    assert_eq!(
+        (r["swapType"].as_str(), r["amount"].as_str()),
+        (Some("EXACT_OUTPUT"), Some("25000000"))
+    );
+    assert_eq!(
+        (r["originAsset"].as_str(), r["destinationAsset"].as_str()),
+        (Some("nep141:sol-usdc.omft.near"), Some("nep141:usdc.near"))
+    );
+    assert_eq!(
+        (r["recipient"].as_str(), r["refundTo"].as_str()),
+        (Some("registry.near"), Some("REFUND"))
+    );
+    assert_eq!(r["customRecipientMsg"], terms.to_string());
+}
+
+#[test]
+fn in03_an_answer_is_read_only_when_it_is_dry_kept_the_terms_and_offers_no_deposit_address() {
+    let t = tokens();
+    let pay = find(&t, "USDC@sol").unwrap();
+    let terms = json!({"reviewer": "rita.near"});
+    let good = json!({
+        "quoteRequest": {"dry": true, "customRecipientMsg": terms.to_string()},
+        "quote": {"amountInFormatted": "25.255482", "amountOut": "25000000", "amountOutFormatted": "25.0", "timeEstimate": 20},
+    });
+    let q = read_quote(&good, pay, &terms).unwrap();
+    assert_eq!(
+        (
+            q.pay.as_str(),
+            q.pay_symbol.as_str(),
+            q.pay_chain.as_str(),
+            q.arrive.as_str(),
+            q.seconds
+        ),
+        ("25.255482", "USDC", "sol", "25.0", 20)
+    );
+    let mut with_address = good.clone();
+    with_address["quote"]["depositAddress"] = json!("So1anaAddre55");
+    assert!(read_quote(&with_address, pay, &terms)
+        .unwrap_err()
+        .to_string()
+        .contains("not a dry quote"));
+    let mut wet = good.clone();
+    wet["quoteRequest"]["dry"] = json!(false);
+    assert!(read_quote(&wet, pay, &terms).is_err());
+    let mut other_terms = good.clone();
+    other_terms["quoteRequest"]["customRecipientMsg"] = json!("{}");
+    assert!(read_quote(&other_terms, pay, &terms)
+        .unwrap_err()
+        .to_string()
+        .contains("did not keep the order's terms"));
+    let mut dropped = good.clone();
+    dropped["quoteRequest"]
+        .as_object_mut()
+        .unwrap()
+        .remove("customRecipientMsg");
+    assert!(read_quote(&dropped, pay, &terms).is_err());
+    let mut odd = good.clone();
+    odd["quote"]["amountInFormatted"] = json!("25 USDC\u{001b}[2J");
+    assert!(
+        read_quote(&odd, pay, &terms).is_err(),
+        "an amount is digits and a point, nothing else"
+    );
+    assert!(read_quote(&json!({}), pay, &terms).is_err());
+}
+
+/// LIVE: a dry quote from NEAR Intents (no funds, no deposit address). Needs the network.
+#[tokio::test]
+#[ignore]
+async fn live_a_dry_quote_prices_paying_an_order_from_solana_and_keeps_the_terms() {
+    let http = reqwest::Client::new();
+    let t = kk_chain::intents::tokens(&http).await.unwrap();
+    assert!(t.len() > 50);
+    let terms = json!({"reviewer": "reviewer.near", "reviewer_key": "ab".repeat(32), "scope_sha256": "55".repeat(32), "deadline": "1900000000000000000", "require_hardware": true});
+    // `intents.near` stands in for a registry on mainnet: the service refuses a recipient that does not exist
+    let ask = |registry: &'static str| Ask {
+        pay: find(&t, "USDC@sol").unwrap(),
+        arrive: find(&t, "USDC@near").unwrap(),
+        arrive_units: 25_000_000,
+        registry,
+        refund_to: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+        terms: &terms,
+        deadline_rfc3339: "2030-01-01T00:00:00.000Z",
+    };
+    let q = kk_chain::intents::dry_quote(&http, &ask("intents.near"))
+        .await
+        .unwrap();
+    println!("{q:?}");
+    assert_eq!(q.arrive_units, "25000000");
+    assert!(q.pay.parse::<f64>().unwrap() >= 25.0 && q.pay.parse::<f64>().unwrap() < 27.0);
+    let missing = kk_chain::intents::dry_quote(&http, &ask("no-such-registry-zz9.near")).await;
+    assert!(
+        matches!(missing, Err(ChainError::Refused(_))),
+        "{missing:?}"
+    );
+}

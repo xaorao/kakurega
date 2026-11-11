@@ -214,6 +214,11 @@ impl Chain {
         })
     }
 
+    /// The HTTP client this chain uses for the services beside NEAR's RPC.
+    pub fn http(&self) -> &reqwest::Client {
+        &self.http
+    }
+
     pub fn network(&self) -> &Network {
         &self.network
     }

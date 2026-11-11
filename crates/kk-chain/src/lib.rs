@@ -5,6 +5,7 @@
 //! check a model's hardware quote, opening an order, registering a capsule for one. Transactions are sent on testnet only.
 
 pub mod collateral;
+pub mod intents;
 pub mod registry;
 
 pub use registry::{Chain, ChainError, ModelQuote, Network, Payer, Sent};

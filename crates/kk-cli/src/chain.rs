@@ -15,6 +15,9 @@ const USAGE: &str = "usage:
                                           publish a delivered review's capsule digest and model receipts on NEAR (testnet);
                                           with --order, for that order, which the contract then pays out
   kaku chain order ID                     what an order holds
+  kaku chain quote --pay-with SYMBOL@chain --usdc AMOUNT --refund-to ADDRESS --registry ACCOUNT
+                   --reviewer ACCOUNT --reviewer-key KEY --scope DIGEST [--hours N] [--require-hardware]
+                                          a price from NEAR Intents for paying an order from another chain; nothing is sent
 options: [--network testnet|mainnet] [--registry ACCOUNT] [--json]";
 
 fn hex(b: &[u8]) -> String {
@@ -41,6 +44,38 @@ fn when(v: &Value) -> String {
         rest % 3600 / 60,
         rest % 60
     )
+}
+
+/// Seconds since 1970 as the date and time 1Click reads (`2030-01-01T00:00:00.000Z`).
+fn rfc3339(secs: u64) -> String {
+    let w = when(&json!((u128::from(secs) * 1_000_000_000).to_string()));
+    format!("{}T{}.000Z", &w[..10], &w[11..19])
+}
+
+/// A decimal amount such as `25` or `25.5` in a token's smallest units; `None` when it is not a positive amount that fits.
+fn to_units(amount: &str, decimals: u32) -> Option<u128> {
+    let (whole, part) = amount.split_once('.').unwrap_or((amount, ""));
+    if whole.is_empty()
+        || whole.len() > 12
+        || part.len() > decimals as usize
+        || !whole
+            .bytes()
+            .chain(part.bytes())
+            .all(|c| c.is_ascii_digit())
+    {
+        return None;
+    }
+    let padded = format!("{part:0<width$}", width = decimals as usize);
+    let units = whole
+        .parse::<u128>()
+        .ok()?
+        .checked_mul(10u128.checked_pow(decimals)?)?
+        + if padded.is_empty() {
+            0
+        } else {
+            padded.parse::<u128>().ok()?
+        };
+    (units > 0).then_some(units)
 }
 
 /// An amount as the chain holds it, in words: NEAR to five places, or the token's smallest units.
@@ -141,6 +176,13 @@ pub fn run(args: &[String]) -> u8 {
         "--account",
         "--order",
         "--data-dir",
+        "--pay-with",
+        "--usdc",
+        "--refund-to",
+        "--reviewer",
+        "--reviewer-key",
+        "--scope",
+        "--hours",
     ];
     let mut words: Vec<&String> = Vec::new();
     let mut skip = false;
@@ -151,7 +193,7 @@ pub fn run(args: &[String]) -> u8 {
             skip = true;
         } else if !a.starts_with("--") {
             words.push(a);
-        } else if a != "--json" && a != "--yes" {
+        } else if a != "--json" && a != "--yes" && a != "--require-hardware" {
             eprintln!("unknown option `{a}`\n{USAGE}");
             return 2;
         }
@@ -341,6 +383,117 @@ pub fn run(args: &[String]) -> u8 {
                             when(&e["registered_at"]),
                             e["receipts"].as_array().map_or(0, Vec::len)
                         );
+                    }
+                    0
+                }
+            }
+        }
+        (Some("quote"), None) => {
+            use kk_chain::intents::{self, Ask};
+            let need = |name: &str| crate::flag(args, name);
+            let (
+                Some(pay_with),
+                Some(usdc),
+                Some(refund_to),
+                Some(reviewer),
+                Some(reviewer_key),
+                Some(scope),
+            ) = (
+                need("--pay-with"),
+                need("--usdc"),
+                need("--refund-to"),
+                need("--reviewer"),
+                need("--reviewer-key"),
+                need("--scope"),
+            )
+            else {
+                eprintln!("{USAGE}");
+                return 2;
+            };
+            if crate::flag(args, "--registry").is_none() {
+                eprintln!("name the registry's account on NEAR mainnet with --registry (NEAR Intents has no test network)");
+                return 2;
+            }
+            let hex64 = |s: &str| {
+                s.len() == 64 && s.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
+            };
+            let hours = match crate::flag(args, "--hours").map(|h| h.parse::<u64>()) {
+                None => 72,
+                Some(Ok(h)) if (1..=8760).contains(&h) => h,
+                _ => {
+                    eprintln!("--hours is a number from 1 to 8760");
+                    return 2;
+                }
+            };
+            if !kk_evidence::registry::is_account_id(&reviewer)
+                || !hex64(&reviewer_key)
+                || !hex64(&scope)
+                || refund_to.is_empty()
+                || refund_to.len() > 128
+                || !refund_to
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-' | b'_' | b':'))
+            {
+                eprintln!("the reviewer is a NEAR account, the reviewer key and the scope are 64 lowercase hex digits each, and the refund address is a plain address on the paying chain");
+                return 2;
+            }
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let terms = json!({
+                "reviewer": reviewer,
+                "reviewer_key": reviewer_key,
+                "scope_sha256": scope,
+                "deadline": (u128::from(now + hours * 3600) * 1_000_000_000).to_string(),
+                "require_hardware": args.iter().any(|a| a == "--require-hardware"),
+            });
+            let quoted = rt.block_on(async {
+                let tokens = intents::tokens(chain.http()).await?;
+                let pay = intents::find(&tokens, &pay_with)?;
+                let arrive = intents::find(&tokens, "USDC@near")?;
+                let units = to_units(&usdc, arrive.decimals).ok_or_else(|| {
+                    ChainError::Input("--usdc is a positive amount such as 25 or 25.50".into())
+                })?;
+                let ask = Ask {
+                    pay,
+                    arrive,
+                    arrive_units: units,
+                    registry: chain.registry(),
+                    refund_to: &refund_to,
+                    terms: &terms,
+                    deadline_rfc3339: &rfc3339(now + 600),
+                };
+                intents::dry_quote(chain.http(), &ask).await
+            });
+            match quoted {
+                Err(e) => fail(&e),
+                Ok(q) => {
+                    if as_json {
+                        println!(
+                            "{}",
+                            json!({"dry": true, "pay": q.pay, "pay_symbol": q.pay_symbol, "pay_chain": q.pay_chain,
+                                "arrive": q.arrive, "arrive_units": q.arrive_units, "seconds": q.seconds,
+                                "registry": chain.registry(), "terms": terms})
+                        );
+                    } else {
+                        println!(
+                            "DRY QUOTE. Nothing is sent and no deposit address was asked for."
+                        );
+                        println!(
+                            "To set {} USDC aside at {} for {}, a payer would send about {} {} on {}.",
+                            clean(&q.arrive),
+                            chain.registry(),
+                            clean(&reviewer),
+                            clean(&q.pay),
+                            clean(&q.pay_symbol),
+                            clean(&q.pay_chain)
+                        );
+                        println!(
+                            "It would arrive in about {} seconds, carrying the order's terms as the transfer's message; the order would wait {hours} hours for the reviewer's capsule.",
+                            q.seconds
+                        );
+                        println!("A real payment needs the registry on NEAR mainnet and the owner's word. This build does not send one.");
                     }
                     0
                 }
@@ -555,6 +708,69 @@ mod tests {
             "5000000 smallest units of token usdc.testnet"
         );
         assert_eq!(amount(&json!({"amount": "lots"})), "an unreadable amount");
+    }
+
+    #[test]
+    fn cc06_amounts_and_times_are_written_the_way_the_quote_service_reads_them() {
+        assert_eq!(to_units("25", 6), Some(25_000_000));
+        assert_eq!(to_units("25.5", 6), Some(25_500_000));
+        assert_eq!(to_units("0.000001", 6), Some(1));
+        for bad in [
+            "",
+            "0",
+            "0.0",
+            "-1",
+            "1e3",
+            "25.1234567",
+            ".5",
+            "1,000",
+            "9999999999999",
+            "25 ",
+        ] {
+            assert_eq!(to_units(bad, 6), None, "{bad:?}");
+        }
+        assert_eq!(rfc3339(0), "1970-01-01T00:00:00.000Z");
+        assert_eq!(rfc3339(1_700_000_000), "2023-11-14T22:13:20.000Z");
+    }
+
+    #[test]
+    fn cc07_a_quote_with_missing_or_malformed_terms_never_reaches_the_network() {
+        let run = |a: &[&str]| super::run(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        let key = "ab".repeat(32);
+        let full = [
+            "quote",
+            "--pay-with",
+            "USDC@sol",
+            "--usdc",
+            "25",
+            "--refund-to",
+            "ADDR1",
+            "--reviewer",
+            "rita.near",
+            "--reviewer-key",
+            &key,
+            "--scope",
+            &key,
+        ];
+        assert_eq!(run(&full[..11]), 2, "no scope");
+        assert_eq!(run(&full), 2, "no mainnet registry named");
+        let with = |extra: &[&'static str]| {
+            let mut v: Vec<&str> = full.to_vec();
+            v.extend(["--network", "mainnet", "--registry", "registry.near"]);
+            v.extend(extra);
+            v
+        };
+        assert_eq!(run(&with(&["--hours", "0"])), 2);
+        assert_eq!(run(&with(&["--hours", "soon"])), 2);
+        let mut bad_key = with(&[]);
+        bad_key[10] = "XYZ";
+        assert_eq!(run(&bad_key), 2);
+        let mut bad_refund = with(&[]);
+        bad_refund[6] = "addr with spaces";
+        assert_eq!(run(&bad_refund), 2);
+        let mut bad_reviewer = with(&[]);
+        bad_reviewer[8] = "Rita";
+        assert_eq!(run(&bad_reviewer), 2);
     }
 
     #[test]
