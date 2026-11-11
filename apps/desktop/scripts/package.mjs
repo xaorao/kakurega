@@ -1,27 +1,51 @@
-import { cpSync, mkdirSync, rmSync, writeFileSync, readFileSync, copyFileSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, writeFileSync, readFileSync, copyFileSync, chmodSync, existsSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { flipFuses, getCurrentFuseWire, FuseVersion, FuseV1Options } from "@electron/fuses";
 import { requireCurrentElectron } from "./electron-current.mjs";
+import { MANIFEST, bundledPaths, checkPart, makeManifest, sha256File } from "../src/bundle.mjs";
 
 const require = createRequire(import.meta.url);
 const asar = require("@electron/asar");
 const here = dirname(fileURLToPath(import.meta.url));
 const appDir = resolve(here, "..");
+const repoRoot = resolve(appDir, "../..");
 
-// A packaged app is: the Electron runtime, our code in one asar whose header hash is written into Info.plist, and
-// fuses that make the runtime load only that asar, verify it, and refuse Node and inspector entry points.
+/** The test build of the Secure Enclave helper answers its own dialog; it must never be shipped. Its build leaves this name in it. */
+export const TEST_HELPER_MARK = "KAKU_TEST_DECISION";
+
+// A packaged app is: the Electron runtime, our code in one asar whose header hash is written into Info.plist, fuses that make
+// the runtime load only that asar, verify it, and refuse Node and inspector entry points, and the parts that live outside the
+// asar (the kaku service and Secure Enclave helper in Contents/MacOS, the web interface in Contents/Resources/web) with their
+// SHA-256 values in bundle.json inside the asar, which the shell checks before it runs them.
 // cookieEncryption stays on for real builds; unattended tests turn it off because it makes macOS ask for the login
 // keychain password, which blocks the run.
-export async function packageApp(outDir, { cookieEncryption = true } = {}) {
+export async function packageApp(outDir, { cookieEncryption = true, kaku, web, enclave = null } = {}) {
+  if (!kaku || !existsSync(kaku)) throw new Error(`the kaku binary to bundle was not found: ${kaku}`);
+  if (!web || !existsSync(join(web, "index.html"))) throw new Error(`the web interface to bundle was not found (no index.html in ${web})`);
+  if (enclave && readFileSync(enclave).includes(TEST_HELPER_MARK)) throw new Error(`${enclave} is the test build of the signing helper, which approves without asking; build the shipped one with spikes/enclave/build.sh`);
   const electronApp = join(appDir, "node_modules/electron/dist/Electron.app");
   const out = join(outDir, "Kakurega.app");
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
   cpSync(electronApp, out, { recursive: true, verbatimSymlinks: true });
+  const parts = bundledPaths(join(out, "Contents/Resources"));
+  // The signature of a nested program is part of its bytes, and signing the whole bundle at the end signs it again. Signing each
+  // one here first, under its final name, gives the bytes that last step leaves (ad hoc signing of the same file is repeatable),
+  // so the values recorded below are the values of what ships; that is checked again after the last signature.
+  const signOne = (p) => execFileSync("codesign", ["--force", "--sign", "-", p], { stdio: "pipe" });
+  copyFileSync(kaku, parts.kaku);
+  chmodSync(parts.kaku, 0o755);
+  signOne(parts.kaku);
+  if (enclave) {
+    copyFileSync(enclave, parts.enclave);
+    chmodSync(parts.enclave, 0o755);
+    signOne(parts.enclave);
+  }
+  cpSync(web, parts.web, { recursive: true, verbatimSymlinks: true });
   const stage = join(outDir, "stage");
   mkdirSync(stage, { recursive: true });
   cpSync(join(appDir, "src"), join(stage, "src"), { recursive: true });
@@ -29,6 +53,9 @@ export async function packageApp(outDir, { cookieEncryption = true } = {}) {
   const pkg = JSON.parse(readFileSync(join(stage, "package.json"), "utf8"));
   delete pkg.devDependencies;
   writeFileSync(join(stage, "package.json"), JSON.stringify(pkg, null, 2));
+  // the values are taken from the copies inside the bundle, so they describe exactly what ships
+  const manifest = makeManifest({ kaku: parts.kaku, web: parts.web, enclave: enclave ? parts.enclave : null });
+  writeFileSync(join(stage, MANIFEST), JSON.stringify(manifest, null, 2));
   const asarPath = join(out, "Contents/Resources/app.asar");
   await asar.createPackage(stage, asarPath);
   rmSync(stage, { recursive: true, force: true });
@@ -53,12 +80,47 @@ export async function packageApp(outDir, { cookieEncryption = true } = {}) {
     [FuseV1Options.OnlyLoadAppFromAsar]: true,
     [FuseV1Options.GrantFileProtocolExtraPrivileges]: false,
   });
+  // ad hoc: a signature without an identity. It seals the bundle's files against accidental change, not against someone who
+  // can rewrite the app and sign it again; a Developer ID signature and notarization are not done (no identity exists yet)
   execFileSync("codesign", ["--force", "--deep", "--sign", "-", out], { stdio: "pipe" });
-  return { app: out, bin, asarPath, hash, fuses: await getCurrentFuseWire(bin) };
+  for (const [part, path] of [["kaku", parts.kaku], ["web", parts.web], ...(enclave ? [["enclave", parts.enclave]] : [])]) {
+    if (checkPart(manifest, part, path)) throw new Error(`packaging left ${part} different from the value recorded in ${MANIFEST}; the bundle would refuse to start`);
+  }
+  return { app: out, bin, asarPath, hash, manifest, parts, fuses: await getCurrentFuseWire(bin) };
+}
+
+/** The download: the app in a zip made with ditto (which keeps the framework links and signatures), and its SHA-256 in a file beside it. */
+export function zipApp(appPath, outDir, { version, arch = process.arch } = {}) {
+  const name = `Kakurega-${version}-macos-${arch}.zip`;
+  const zip = join(outDir, name);
+  rmSync(zip, { force: true });
+  execFileSync("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", appPath, zip], { stdio: "pipe" });
+  const sha256 = sha256File(zip);
+  const shaFile = `${zip}.sha256`;
+  writeFileSync(shaFile, `${sha256}  ${basename(zip)}\n`);
+  return { zip, sha256, shaFile, bytes: statSync(zip).size };
+}
+
+function option(args, name, fallback) {
+  const i = args.indexOf(name);
+  return i >= 0 && args[i + 1] ? resolve(args[i + 1]) : fallback;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   requireCurrentElectron();
-  const r = await packageApp(process.argv[2] ?? join(appDir, "../../target/packaged"));
-  console.log(JSON.stringify({ app: r.app, hash: r.hash, fuses: r.fuses }));
+  const args = process.argv.slice(2);
+  const outDir = args[0] && !args[0].startsWith("--") ? resolve(args[0]) : join(repoRoot, "target/packaged");
+  const kaku = option(args, "--kaku", join(repoRoot, "target/release/kaku"));
+  const web = option(args, "--web", join(repoRoot, "apps/web/dist"));
+  const enclave = option(args, "--enclave", [join(repoRoot, "target/release/kaku-enclave"), join(repoRoot, "target/debug/kaku-enclave")].find((p) => existsSync(p)) ?? null);
+  if (!existsSync(kaku)) {
+    console.error(`No kaku at ${kaku}. Build it with: cargo build --release -p kk-cli (or pass --kaku PATH).`);
+    process.exit(1);
+  }
+  const r = await packageApp(outDir, { kaku, web, enclave });
+  const { version } = JSON.parse(readFileSync(join(appDir, "package.json"), "utf8"));
+  const z = zipApp(r.app, outDir, { version });
+  console.log(JSON.stringify({ app: r.app, asar_hash: r.hash, bundle: r.manifest, fuses: r.fuses, zip: z.zip, sha256: z.sha256, sha256_file: z.shaFile }, null, 2));
+  if (!enclave) console.error("Note: no Secure Enclave helper was bundled (build it with spikes/enclave/build.sh); approvals then need a software key (`kaku approver enroll`).");
+  console.error("This app is signed ad hoc only: no Developer ID signature and no Apple notarization. Publish the SHA-256 value above with the zip.");
 }
