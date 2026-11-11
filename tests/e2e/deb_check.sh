@@ -5,7 +5,7 @@
 set -uo pipefail
 deb="$1"; version="$2"
 pass=0; fail=0
-check() { if [ "$2" = "0" ]; then echo "PASS  $1"; pass=$((pass+1)); else echo "FAIL  $1  $3"; fail=$((fail+1)); fi; }
+check() { if [ "$2" = "0" ]; then echo "PASS  $1"; pass=$((pass+1)); else echo "FAIL  $1  ${3:-}"; fail=$((fail+1)); fi; }
 sudo dpkg -r kakurega >/dev/null 2>&1
 sudo dpkg -i "$deb" >/tmp/deb-install.log 2>&1; check "the package installs" $? "$(tail -3 /tmp/deb-install.log)"
 dpkg -s kakurega 2>/dev/null | grep -q "Version: $version"; check "dpkg reports version $version" $?
@@ -30,7 +30,9 @@ for i in $(seq 1 60); do [ -f "$HOME/.kakurega/admin.json" ] && break; sleep 0.5
 [ -f "$HOME/.kakurega/admin.json" ]; check "the installed launcher starts the service" $? "$(tail -5 /tmp/deb-run.log)"
 PORT=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.kakurega/admin.json')))['port'])" 2>/dev/null)
 sleep 3
-CODE=$(curl -s -o /tmp/deb-index.html -w '%{http_code}' "http://127.0.0.1:$PORT/"); grep -qi "<!doctype html" /tmp/deb-index.html; check "the service serves the packaged web interface ($CODE)" $?
+# the service the app started answers only the app's own window, and it serves the web interface that came in the package
+CODE=$(curl -s -o /tmp/deb-index.html -w '%{http_code}' "http://127.0.0.1:$PORT/"); [ "$CODE" = "403" ] && grep -q "SHELL_ONLY" /tmp/deb-index.html; check "another program on this computer cannot open the app's page ($CODE)" $? "$(head -c 200 /tmp/deb-index.html)"
+ARGS=$(pgrep -af "/opt/kakurega/kaku serve" | head -1); echo "$ARGS" | grep -q -- "--ui-dir /opt/kakurega/web"; check "the service was started on the packaged web interface" $? "$ARGS"
 [ ! -e "$MARK" ]; check "a loose app folder planted beside the asar is ignored and never runs" $?
 sudo rm -rf /opt/kakurega/resources/app
 pkill -f "/opt/kakurega/kakurega" >/dev/null 2>&1; kill $LPID >/dev/null 2>&1

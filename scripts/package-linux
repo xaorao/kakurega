@@ -6,13 +6,15 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 vm="${KK_VM:-kak}"
 version="${1:-$(grep -m1 '^version' "$repo/Cargo.toml" | sed 's/.*"\(.*\)".*/\1/')}"
 limactl start "$vm" >/dev/null 2>&1 || true
+pin="$(node -p "require('$repo/apps/desktop/package.json').devDependencies.electron")"
 pnpm --dir "$repo" --filter @kakurega/web run build >/dev/null
 limactl shell "$vm" -- bash -lc "
 set -e
 . \$HOME/.cargo/env; export CARGO_TARGET_DIR=\$HOME/kk-target RUSTUP_TOOLCHAIN=1.94.1
 cd '$repo' && cargo build --release --locked -p kk-cli -p kk-worker
 mkdir -p ~/kk-desktop && cd ~/kk-desktop
-[ -d node_modules/electron/dist ] || { npm install --no-audit --no-fund electron@45.2.2 >/dev/null; node node_modules/electron/install.js; }
+# the Electron the package is built from is the one pinned in apps/desktop/package.json, installed again when the pin moved
+[ \"\$(node -p 'try{require(\"./node_modules/electron/package.json\").version}catch{\"\"}')\" = '$pin' ] && [ -d node_modules/electron/dist ] || { rm -rf node_modules/electron; npm install --no-audit --no-fund electron@$pin >/dev/null; node node_modules/electron/install.js; }
 cd '$repo'
 rm -rf \$HOME/kk-pkg && mkdir -p \$HOME/kk-pkg
 node apps/desktop/scripts/package-linux.mjs \$HOME/kk-desktop/node_modules/electron/dist \$HOME/kk-target/release/kaku \$HOME/kk-target/release/kk-worker '$repo/apps/web/dist' \$HOME/kk-pkg/build '$version'

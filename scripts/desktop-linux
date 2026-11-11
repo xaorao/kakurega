@@ -9,7 +9,8 @@ set -e
 mkdir -p ~/kk-desktop && cd ~/kk-desktop
 rm -rf src && cp -r '$repo/apps/desktop/src' . && cp '$repo/apps/desktop/package.json' .
 node -e 'const p=require(\"./package.json\");p.devDependencies={electron:p.devDependencies.electron};require(\"fs\").writeFileSync(\"package.json\",JSON.stringify(p))'
-[ -d node_modules/electron ] || npm install --no-audit --no-fund >/dev/null
+# installed again when the pin in package.json moved
+[ \"\$(node -p 'try{require(\"./node_modules/electron/package.json\").version}catch{\"\"}')\" = \"\$(node -p 'require(\"./package.json\").devDependencies.electron')\" ] || { rm -rf node_modules/electron; npm install --no-audit --no-fund >/dev/null; }
 [ -d node_modules/electron/dist ] || node node_modules/electron/install.js
 sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
 . \$HOME/.cargo/env; export CARGO_TARGET_DIR=\$HOME/kk-target RUSTUP_TOOLCHAIN=1.94.1
