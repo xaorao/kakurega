@@ -26,6 +26,14 @@ pub fn run(args: &[String]) -> u8 {
         eprintln!("--pin needs a base64url Ed25519 public key (32 bytes)");
         return 2;
     }
+    // a share (some files of a release, with a proof) is checked by its own rules
+    if is_share(&bytes) {
+        return share(
+            &bytes,
+            if has_pin { pinned } else { None },
+            crate::flag(args, "--out").as_deref(),
+        );
+    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -117,4 +125,95 @@ pub fn check_bytes(bytes: &[u8]) -> Result<serde_json::Value, String> {
     } else {
         Ok(serde_json::json!({"valid": false, "reason": report.reason}))
     }
+}
+
+/// Whether a file says it is a share. Only its own word for it: the check that follows decides whether it is a valid one.
+fn is_share(bytes: &[u8]) -> bool {
+    bytes.len() < 32 << 20
+        && bytes
+            .windows(25)
+            .any(|w| w == b"\"format\":\"kakurega-share\"")
+}
+
+/// Checks a share and prints what it shows. With `--out DIR` the shared files are also written into a new folder.
+fn share(bytes: &[u8], pinned: Option<Vec<[u8; 32]>>, out: Option<&str>) -> u8 {
+    use kk_evidence::share::{verify_share, ShareOptions};
+    let report = verify_share(
+        bytes,
+        &ShareOptions {
+            pinned_keys: pinned,
+        },
+    );
+    if !report.valid {
+        println!("INVALID: {}", report.reason.unwrap_or("unknown"));
+        return 1;
+    }
+    println!("VALID SHARE");
+    println!(
+        "signed by {}{}",
+        report.signer.as_ref().map(|k| k.as_str()).unwrap_or("?"),
+        if report.signer_pinned {
+            " (the key you pinned)"
+        } else {
+            " (key taken from the share; pin it to be sure who signed)"
+        }
+    );
+    println!(
+        "{} of the release's {} files are shared:",
+        report.files.len(),
+        report.total_files
+    );
+    for (name, content) in &report.files {
+        println!("  {name}  ({} bytes)", content.len());
+    }
+    println!(
+        "capsule {}",
+        report.capsule_sha256.as_deref().unwrap_or("?")
+    );
+    println!("\nEstablished:");
+    for e in &report.established {
+        println!("  + {e}");
+    }
+    println!("\nNot established:");
+    for n in &report.not_established {
+        println!("  - {n}");
+    }
+    if let Some(dir) = out {
+        let dir = std::path::Path::new(dir);
+        // a new folder only: nothing that exists is written over, and a name was already checked to be a plain file name
+        if let Err(e) = std::fs::create_dir(dir) {
+            eprintln!("cannot make the folder {}: {e}", dir.display());
+            return 2;
+        }
+        for (name, content) in &report.files {
+            if let Err(e) = std::fs::write(dir.join(name), content) {
+                eprintln!("cannot write {name}: {e}");
+                return 2;
+            }
+        }
+        // the check script reads a list of findings; one is written here for the shared finding(s) only. It is made on this
+        // computer from the shared entries and is not part of what was signed.
+        let entries: Vec<serde_json::Value> = report
+            .files
+            .iter()
+            .filter(|(name, _)| name.starts_with("meta-") && name.ends_with(".json"))
+            .filter_map(|(_, content)| serde_json::from_slice(content).ok())
+            .collect();
+        let has_index = report.files.iter().any(|(name, _)| name == "index.json");
+        if !entries.is_empty() && !has_index {
+            let index = serde_json::json!({ "findings": entries });
+            if let Err(e) = std::fs::write(dir.join("index.json"), index.to_string()) {
+                eprintln!("cannot write index.json: {e}");
+                return 2;
+            }
+            println!(
+                "\nThe shared files are in {}. To re-run the finding: python3 {}/run-check.py",
+                dir.display(),
+                dir.display()
+            );
+        } else {
+            println!("\nThe shared files are in {}", dir.display());
+        }
+    }
+    0
 }

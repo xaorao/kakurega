@@ -7,3 +7,4 @@ pub mod gate;
 pub mod hw;
 pub mod keys;
 pub mod registry;
+pub mod share;

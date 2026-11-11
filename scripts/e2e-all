@@ -30,6 +30,8 @@ python3 tests/e2e/tui_team.py
 python3 tests/e2e/stop_review.py
 node tests/e2e/stop_web.mjs
 node tests/e2e/bundled_web.mjs
+python3 tests/e2e/share_finding.py
+node tests/e2e/share_web.mjs
 node tests/e2e/desktop.mjs
 node tests/e2e/desktop_attack.mjs
 node tests/e2e/desktop_recovery.mjs

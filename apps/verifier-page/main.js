@@ -1,4 +1,4 @@
-import { b64urlDecode, verifyCapsule } from "@kakurega/verifier";
+import { b64urlDecode, verifyCapsule, verifyShare } from "@kakurega/verifier";
 import { NETWORKS, amount, hex, isAccount, lookup, sha256Hex, when } from "./chain.js";
 
 const $ = (id) => document.getElementById(id);
@@ -19,6 +19,19 @@ const REASONS = {
   receipt_kind: "A model receipt is not a hardware-enclave signature.",
   receipt_shape: "A model receipt is malformed, repeated, or there are too many.",
   expired: "The capsule has expired.",
+  share_not_json: "The file is not a share.",
+  share_not_canonical: "The file was changed after it was made (its bytes are not in the one allowed form).",
+  share_shape: "The file does not have the shape of a share.",
+  share_too_large: "The file is too large to be a share.",
+  not_in_release: "A file in this share is not part of the signed release: it was changed, or was never in it.",
+  leaf_shape: "A file entry in this share is malformed.",
+  leaf_place: "A file entry in this share claims a place it cannot have.",
+  leaf_order: "The file entries of this share are not in their one allowed order, or one is repeated.",
+  leaf_count: "This share carries no file, or too many.",
+  disclosure_shape: "The signed statement in this share does not have the shape it must have.",
+  bad_file_name: "A file in this share has a name that is not a plain file name.",
+  untrusted_signer: "It was not signed by the key you pasted.",
+  unknown_signer: "It was signed by a key other than the one it carries.",
   capsule_too_large: "The file is too large to be a capsule.",
 };
 
@@ -161,7 +174,8 @@ function chainSection(bytes, report) {
     go.disabled = true;
     box.replaceChildren(el("p", "Asking NEAR…", "note"));
     try {
-      const found = await lookup(NETWORKS[net.value], registry, await sha256Hex(bytes), signer, report.receipts || []);
+      const digest = report.capsuleSha256 || (await sha256Hex(bytes));
+      const found = await lookup(NETWORKS[net.value], registry, digest, signer, report.receipts || []);
       showChain(box, `${registry} on NEAR ${net.value}`, found);
     } catch (e) {
       fail(e && e.message ? e.message : "The lookup could not be done.");
@@ -171,6 +185,51 @@ function chainSection(bytes, report) {
   });
   wrap.append(netLabel, net, regLabel, reg, go, box);
   return wrap;
+}
+
+/** A shared file's text when it is plain text of a readable size; otherwise null and only its size is shown. */
+function readable(bytes) {
+  if (bytes.length > 20000) return null;
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text) ? null : text;
+  } catch {
+    return null;
+  }
+}
+
+function showShare(r, bytes) {
+  out.replaceChildren();
+  const v = el("div", r.valid ? "Valid share: these files are part of the signed release" : "Not valid", "verdict " + (r.valid ? "ok" : "bad"));
+  v.setAttribute("role", "status");
+  out.append(v);
+  if (!r.valid) {
+    out.append(el("p", REASONS[r.reason] || `Refused (${r.reason}).`));
+    out.append(el("p", `Code: ${r.reason}`, "note"));
+    return;
+  }
+  const dl = el("dl");
+  const row = (k, val, code) => {
+    dl.append(el("dt", k), el("dd", String(val), code ? "code" : ""));
+  };
+  row("Signer", r.signer, true);
+  row("Signer pinned", r.signerPinned ? "yes, matches the key you pasted" : "no, this is only the key the share carries");
+  row("Shared", `${r.files.length} of the release's ${r.totalFiles} files`);
+  row("Capsule digest", r.capsuleSha256, true);
+  out.append(dl);
+  out.append(el("h2", "The shared files"));
+  for (const f of r.files) {
+    const box = el("section");
+    box.className = "shared";
+    box.append(el("h3", `${f.name} (${f.bytes.length} bytes)`));
+    const text = readable(f.bytes);
+    // shown as text only: nothing in a shared file is ever treated as markup
+    box.append(text === null ? el("p", "Not shown here: it is not plain text, or it is long.", "note") : el("pre", text));
+    out.append(box);
+  }
+  out.append(list("What this check establishes", r.established));
+  out.append(list("What this check does not establish", r.notEstablished));
+  out.append(chainSection(bytes, r));
 }
 
 function show(r, bytes) {
@@ -234,7 +293,15 @@ async function check(file) {
   }
   const bytes = new Uint8Array(await file.arrayBuffer());
   try {
-    show(await verifyCapsule(bytes, { pinned, now: Math.floor(Date.now() / 1000) }), bytes);
+    // a share says what it is; the check that follows decides whether it is a valid one
+    let kind = null;
+    try {
+      kind = JSON.parse(new TextDecoder().decode(bytes)).format;
+    } catch {
+      kind = null;
+    }
+    if (kind === "kakurega-share") showShare(await verifyShare(bytes, { pinned }), bytes);
+    else show(await verifyCapsule(bytes, { pinned, now: Math.floor(Date.now() / 1000) }), bytes);
   } catch (e) {
     out.replaceChildren(el("div", "The check could not run on this file.", "verdict bad"));
   }

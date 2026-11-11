@@ -93,6 +93,7 @@ fn rs01_a_release_is_a_fixed_set_of_files_and_the_recipient_can_check_it_with_py
             "expected-1.txt",
             "finding-1.txt",
             "index.json",
+            "meta-1.json",
             "repro-1.py",
             "run-check.py",
             "sample-1.json"
@@ -627,6 +628,7 @@ fn rj01_a_javascript_finding_is_released_as_a_node_script_the_recipient_can_re_r
             "expected-1.txt",
             "finding-1.txt",
             "index.json",
+            "meta-1.json",
             "repro-1.mjs",
             "run-check.py",
             "sample-1.json"

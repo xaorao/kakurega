@@ -288,6 +288,66 @@ function Fixes(props: { jobId: string }) {
   );
 }
 
+/** Base64url text to bytes, for a file the service handed over as text. */
+function fromB64url(text: string): Uint8Array<ArrayBuffer> {
+  const pad = text.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (text.length % 4)) % 4);
+  const raw = atob(pad);
+  const out = new Uint8Array(new ArrayBuffer(raw.length));
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+/** One finding of a delivered review as a file with a proof, for someone who was not the recipient. */
+function ShareOne(props: { jobId: string }) {
+  const [list] = createResource(() => props.jobId, (id) => api.shareable(id).catch(() => ({ findings: [], signer_public: "" })));
+  const [made, setMade] = createSignal<{ n: number; name: string; files: string[]; total: number; key: string } | null>(null);
+  const [problem, setProblem] = createSignal("");
+  const share = async (n: number) => {
+    setProblem("");
+    try {
+      const r = await api.shareFinding(props.jobId, n);
+      const url = URL.createObjectURL(new Blob([fromB64url(r.share)], { type: "application/octet-stream" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = r.name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setMade({ n, name: r.name, files: r.files, total: r.total_files, key: r.signer_public });
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("share.error"));
+    }
+  };
+  return (
+    <Show when={(list()?.findings ?? []).length > 0}>
+      <section class="stack share-one" aria-labelledby="h-share">
+        <h3 id="h-share">{t("share.heading")}</h3>
+        <p class="muted">{t("share.lead")}</p>
+        <ul class="plain">
+          <For each={list()?.findings ?? []}>
+            {(f) => (
+              <li class="work-item" data-finding={f.n}>
+                <span class="work-what"><strong>{t("share.finding", { n: f.n })}</strong> {f.title}</span>
+                <button type="button" onClick={() => void share(f.n)}>{t("share.button")}</button>
+              </li>
+            )}
+          </For>
+        </ul>
+        <Show when={made()}>
+          {(m) => (
+            <div class="stack" role="status">
+              <p class="ok">{t("share.made", { name: m().name, files: m().files.length, total: m().total })}</p>
+              <p class="muted">{t("share.shows")}</p>
+              <p class="muted">{t("share.hides")}</p>
+              <p class="muted">{t("share.key")} <code class="wrap">{m().key}</code></p>
+            </div>
+          )}
+        </Show>
+        <Show when={problem()}><p role="alert" class="bad">{problem()}</p></Show>
+      </section>
+    </Show>
+  );
+}
+
 function Findings(props: { job: Job }) {
   const [data] = createResource(() => props.job.id, (id) => api.findings(id));
   return (
@@ -472,6 +532,7 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
                     <p class="ok">{rich("appr.delivered", { name: d().name, signer: d().signer.slice(0, 24) + "…" })}</p>
                     <p><a class="button" href={`/api/jobs/${props.job.id}/capsule`} download="review.kkg">{t("appr.download")}</a></p>
                     <p class="muted">{rich("appr.giveRecipient")}</p>
+                    <ShareOne jobId={props.job.id} />
                   </div>
                 )}
               </Show>

@@ -313,6 +313,11 @@ pub fn assemble(
                 ]),
             ));
         }
+        // the same entry as a file of its own, so one finding can be handed on and checked without the list of the others
+        files.insert(
+            format!("meta-{n}.json"),
+            canon::serialize(&Value::Object(entry.clone())).into_bytes(),
+        );
         index_entries.push(Value::Object(entry));
     }
     if n == 0 {

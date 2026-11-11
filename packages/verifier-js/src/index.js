@@ -314,3 +314,171 @@ function decodeEnvelope(v) {
   }
   return { type, payload: payloadBytes, signatures };
 }
+
+// ---- A share: some files of a release, with a proof and nothing else (see crates/kk-evidence/src/share.rs) ----
+
+const DISCLOSURE_TYPE = "application/vnd.kakurega.disclosure.v1+json";
+const SHARE_SCHEME = "salted-merkle-sha256-v1";
+const MAX_SHARED = 16;
+const MAX_SHARE_BYTES = 16 * 1024 * 1024;
+
+async function sha256(...parts) {
+  let n = 0;
+  for (const p of parts) n += p.length;
+  const all = new Uint8Array(n);
+  let at = 0;
+  for (const p of parts) {
+    all.set(p, at);
+    at += p.length;
+  }
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", all));
+}
+
+const unhex32 = (h) => (isStr(h) && isHex64(h) ? Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16))) : null);
+const sameBytes = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+/** Whether a leaf at place `m` of a tree of `n` leaves, with this path, gives `want` (RFC 9162, section 2.1.3.2). */
+async function pathLeadsTo(leaf, m, n, path, want) {
+  if (m >= n) return false;
+  let f = m;
+  let last = n - 1;
+  let r = leaf;
+  for (const p of path) {
+    if (last === 0) return false;
+    if (f % 2 === 1 || f === last) {
+      r = await sha256(Uint8Array.of(1), p, r);
+      if (f % 2 === 0) {
+        while (f % 2 === 0 && f !== 0) {
+          f = Math.floor(f / 2);
+          last = Math.floor(last / 2);
+        }
+      }
+    } else {
+      r = await sha256(Uint8Array.of(1), r, p);
+    }
+    f = Math.floor(f / 2);
+    last = Math.floor(last / 2);
+  }
+  return last === 0 && sameBytes(r, want);
+}
+
+/** Checks a share. `options.pinned` is a list of 32-byte public keys the reader trusts, or null. */
+export async function verifyShare(bytes, options = {}) {
+  const { pinned = null } = options;
+  try {
+    return await runShare(bytes, pinned);
+  } catch (e) {
+    if (e instanceof Stop) return { valid: false, reason: e.reason, signer: null, files: [], totalFiles: 0 };
+    throw e;
+  }
+}
+
+async function runShare(bytes, pinned) {
+  if (bytes.length > MAX_SHARE_BYTES) stop("share_too_large");
+  const top = parseOrStop(bytes, "share_not_json");
+  const canonical = enc.encode(serialize(top));
+  if (canonical.length !== bytes.length || !canonical.every((b, i) => b === bytes[i])) stop("share_not_canonical");
+  if (!exactKeys(top, ["format", "version", "keys", "envelope", "leaves"]) || top.get("format") !== "kakurega-share") stop("share_shape");
+  if (top.get("version") !== 1n) stop("unsupported_version");
+  const keys = top.get("keys");
+  const leaves = top.get("leaves");
+  if (!Array.isArray(keys) || !Array.isArray(leaves)) stop("share_shape");
+  const claimed = [];
+  for (const k of keys) {
+    const raw = isStr(k) ? b64urlDecode(k) : null;
+    if (raw === null || raw.length !== 32) stop("bad_key");
+    claimed.push(raw);
+  }
+  const isPinned = pinned !== null;
+  const trusted = new Map();
+  for (const k of isPinned ? pinned : claimed) {
+    if (classifyPublicKey(k) !== "ok") stop("bad_key");
+    trusted.set(await keyIdOf(k), k);
+  }
+  if (trusted.size === 0) stop("no_keys");
+  const env = decodeEnvelope(top.get("envelope"));
+  if (env === null) stop("bad_envelope");
+  if (env.type !== DISCLOSURE_TYPE) stop("unknown_payload_type");
+  if (env.signatures.length !== 1) stop("signature_count");
+  const [keyid, sig] = env.signatures[0];
+  const pub = trusted.get(keyid);
+  if (pub === undefined) stop(isPinned ? "untrusted_signer" : "unknown_signer");
+  if (!(await verifySignature(pub, pae(env.type, env.payload), sig))) stop("bad_signature");
+  let payloadText;
+  try {
+    payloadText = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(env.payload);
+    if (serialize(parseStrict(payloadText)) !== payloadText) stop("payload_not_canonical");
+  } catch (e) {
+    if (e instanceof Stop) throw e;
+    stop("payload_not_canonical");
+  }
+  // as for a capsule: the key list is not signed, so it must be exactly the key that signed
+  if (claimed.length !== 1 || (await keyIdOf(claimed[0])) !== keyid) stop("key_list");
+  const st = parseOrStop(payloadText, "payload_not_canonical");
+  if (!exactKeys(st, ["type", "version", "capsule_sha256", "release_payload_sha256", "scheme", "root", "leaves"]) || st.get("type") !== "disclosure") stop("disclosure_shape");
+  if (st.get("version") !== 1n || st.get("scheme") !== SHARE_SCHEME) stop("unsupported_version");
+  const capsuleSha = st.get("capsule_sha256");
+  const releaseSha = st.get("release_payload_sha256");
+  const want = unhex32(st.get("root"));
+  const totalBig = st.get("leaves");
+  if (!isStr(capsuleSha) || !isHex64(capsuleSha) || !isStr(releaseSha) || !isHex64(releaseSha) || want === null || !isInt(totalBig)) stop("disclosure_shape");
+  if (totalBig < 1n || totalBig > BigInt(MAX_FILES)) stop("disclosure_shape");
+  const total = Number(totalBig);
+  if (leaves.length === 0 || leaves.length > MAX_SHARED) stop("leaf_count");
+  const names = new Set();
+  const places = new Set();
+  const files = [];
+  let lastName = null;
+  for (const leaf of leaves) {
+    if (!exactKeys(leaf, ["name", "salt", "content", "index", "path"])) stop("leaf_shape");
+    const name = leaf.get("name");
+    const saltText = leaf.get("salt");
+    const contentText = leaf.get("content");
+    const index = leaf.get("index");
+    const steps = leaf.get("path");
+    if (!isStr(name) || !isStr(saltText) || !isStr(contentText) || !isInt(index) || !Array.isArray(steps)) stop("leaf_shape");
+    if (!validFileName(name)) stop("bad_file_name");
+    // one order only (by the bytes of the name), so the same share cannot be written as two different files
+    if (lastName !== null && !(lastName < name)) stop("leaf_order");
+    lastName = name;
+    if (index < 0n || index >= totalBig || places.has(index) || names.has(name)) stop("leaf_place");
+    places.add(index);
+    names.add(name);
+    const salt = b64urlDecode(saltText);
+    const content = b64urlDecode(contentText);
+    if (salt === null || salt.length !== 32 || content === null) stop("leaf_shape");
+    const hashes = [];
+    for (const step of steps) {
+      const h = unhex32(step);
+      if (h === null) stop("leaf_shape");
+      hashes.push(h);
+    }
+    if (hashes.length > 8) stop("leaf_shape");
+    const nameBytes = enc.encode(name);
+    const leafHash = await sha256(Uint8Array.of(0), salt, Uint8Array.of(nameBytes.length >> 8, nameBytes.length & 255), nameBytes, content);
+    if (!(await pathLeadsTo(leafHash, Number(index), total, hashes, want))) stop("not_in_release");
+    files.push({ name, bytes: content });
+  }
+  const notEstablished = [
+    "Anything about the release's other files: this share shows none of their names, sizes or contents.",
+    "That what a shared file says is true; only that the signer put exactly this file in the release.",
+    "Who the release was made for, or which model route produced it: a share does not carry that.",
+  ];
+  if (!isPinned) notEstablished.push("Who holds the signing key: no key was pinned, so the key shown comes from the share itself.");
+  return {
+    valid: true,
+    reason: null,
+    signer: keyid,
+    signerPinned: isPinned,
+    capsuleSha256: capsuleSha,
+    releasePayloadSha256: releaseSha,
+    totalFiles: total,
+    files,
+    established: [
+      `The disclosure statement carries a valid Ed25519 signature from ${keyid}.`,
+      `Each of the ${files.length} shared file(s) is exactly one of the ${total} files the signer bound into the release with that statement.`,
+      `The capsule it comes from has the SHA-256 digest ${capsuleSha}; a registry record for that digest is about the same release.`,
+    ],
+    notEstablished,
+  };
+}

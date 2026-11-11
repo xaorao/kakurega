@@ -66,11 +66,11 @@ pub struct ClaimSpec {
     pub how_to_check: String,
 }
 
-fn obj(pairs: Vec<(&str, Value)>) -> Value {
+pub(crate) fn obj(pairs: Vec<(&str, Value)>) -> Value {
     Value::Object(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
 }
 
-fn s(text: &str) -> Value {
+pub(crate) fn s(text: &str) -> Value {
     Value::Str(text.to_string())
 }
 
@@ -310,14 +310,14 @@ fn hex_decode(h: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-fn member<'a>(v: &'a Value, name: &str) -> Option<&'a Value> {
+pub(crate) fn member<'a>(v: &'a Value, name: &str) -> Option<&'a Value> {
     match v {
         Value::Object(m) => m.iter().find(|(k, _)| k == name).map(|(_, v)| v),
         _ => None,
     }
 }
 
-fn exact_keys(v: &Value, names: &[&str]) -> bool {
+pub(crate) fn exact_keys(v: &Value, names: &[&str]) -> bool {
     match v {
         Value::Object(m) => {
             m.len() == names.len() && names.iter().all(|n| m.iter().any(|(k, _)| k == n))
@@ -326,21 +326,21 @@ fn exact_keys(v: &Value, names: &[&str]) -> bool {
     }
 }
 
-fn str_of(v: Option<&Value>) -> Option<&str> {
+pub(crate) fn str_of(v: Option<&Value>) -> Option<&str> {
     match v {
         Some(Value::Str(x)) => Some(x),
         _ => None,
     }
 }
 
-fn int_of(v: Option<&Value>) -> Option<i64> {
+pub(crate) fn int_of(v: Option<&Value>) -> Option<i64> {
     match v {
         Some(Value::Int(x)) => Some(*x),
         _ => None,
     }
 }
 
-fn is_hex64(x: &str) -> bool {
+pub(crate) fn is_hex64(x: &str) -> bool {
     x.len() == 64
         && x.bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))

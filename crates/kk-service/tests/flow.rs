@@ -20439,3 +20439,177 @@ fn sv247_a_bundled_method_is_added_unapproved_and_applies_only_after_the_owner_a
         .iter()
         .any(|m| m["name"] == "Threat-Model" && m["body"] == "My own way."));
 }
+
+/// A review taken all the way to a delivered capsule. Returns the job id.
+fn delivered_review(c: &kk_companion::Companion, w: &Web, repo: &Path) -> String {
+    let (_, started) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "acme-audit"}),
+    );
+    let id = started["id"].as_str().unwrap().to_string();
+    wait_for(w, &id, &["ready"]);
+    let (_, req) = w.post(&format!("/api/jobs/{id}/approval"), json!({}));
+    let aid = req["approval"].as_str().unwrap().to_string();
+    let token = c.security.admin_token().to_string();
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    let (_, shown) = admin(
+        &base,
+        &token,
+        "GET",
+        &format!("/admin/approvals/{aid}"),
+        None,
+    );
+    let digest = shown["digest"].as_str().unwrap().to_string();
+    admin(
+        &base,
+        &token,
+        "POST",
+        &format!("/admin/approvals/{aid}/approve"),
+        Some(json!({"ack": &digest[..12]})),
+    );
+    assert_eq!(w.post(&format!("/api/jobs/{id}/deliver"), json!({})).0, 200);
+    id
+}
+
+#[test]
+fn sv248_one_finding_of_a_delivered_review_is_shared_with_a_proof_and_nothing_of_the_rest() {
+    use kk_evidence::share::{verify_share, ShareOptions};
+    let (c, w, repo, _root, svc) = boot("share-finding", true);
+    assert_eq!(
+        Web::new(c.addr)
+            .post("/api/jobs/job-1/share", json!({"finding": 1}))
+            .0,
+        401
+    );
+    assert_eq!(
+        w.post("/api/jobs/job-9/share", json!({"finding": 1})).1["error"]["code"],
+        "NOT_FOUND"
+    );
+    // a review that is ready but not delivered has nothing to share from
+    let (_, started) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "acme-audit"}),
+    );
+    let waiting = started["id"].as_str().unwrap().to_string();
+    wait_for(&w, &waiting, &["ready"]);
+    let (st, e) = w.post(&format!("/api/jobs/{waiting}/share"), json!({"finding": 1}));
+    assert_eq!(
+        (st, e["error"]["code"].as_str()),
+        (409, Some("NOT_DELIVERED"))
+    );
+
+    let id = delivered_review(&c, &w, &repo);
+    let capsule = w.get_bytes(&format!("/api/jobs/{id}/capsule")).1;
+    for bad in [0, 2, 99] {
+        let (st, e) = w.post(&format!("/api/jobs/{id}/share"), json!({"finding": bad}));
+        assert_eq!(
+            (st, e["error"]["code"].as_str()),
+            (404, Some("NO_SUCH_FINDING")),
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        w.post(
+            &format!("/api/jobs/{id}/share"),
+            json!({"finding": 1, "extra": true})
+        )
+        .0,
+        422
+    );
+    let (st, v) = w.post(&format!("/api/jobs/{id}/share"), json!({"finding": 1}));
+    assert_eq!(st, 200, "{v}");
+    let share = kk_evidence::b64::decode(v["share"].as_str().unwrap()).unwrap();
+    assert!(v["name"].as_str().unwrap().ends_with("-finding-1.kks"));
+    let names: Vec<&str> = v["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n.as_str().unwrap())
+        .collect();
+    assert!(
+        [
+            "finding-1.txt",
+            "expected-1.txt",
+            "sample-1.json",
+            "meta-1.json",
+            "run-check.py"
+        ]
+        .iter()
+        .all(|n| names.contains(n))
+            && names.iter().any(|n| n.starts_with("repro-1."))
+            && !names.contains(&"index.json"),
+        "{names:?}"
+    );
+    // a reader who was not the recipient checks it with the signer's key and gets exactly those files
+    let report = verify_share(
+        &share,
+        &ShareOptions {
+            pinned_keys: Some(vec![svc.signer_public()]),
+        },
+    );
+    assert!(report.valid, "{:?}", report.reason);
+    assert_eq!(
+        report
+            .files
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .collect::<Vec<_>>(),
+        names
+    );
+    assert_eq!(
+        report.capsule_sha256.as_deref(),
+        Some(kk_evidence::capsule::sha256_hex(&capsule).as_str()),
+        "it names the capsule a registry would record"
+    );
+    assert_eq!(
+        report.capsule_sha256.as_deref(),
+        v["capsule_sha256"].as_str()
+    );
+    assert!(
+        report.total_files > names.len(),
+        "the release holds more than was shared"
+    );
+    // the shared files are byte for byte the capsule's own
+    let (_, files) = kk_evidence::share::capsule_parts(&capsule, 0).unwrap();
+    for (name, bytes) in &report.files {
+        assert_eq!(&files[name], bytes, "{name}");
+    }
+    // nothing else of the release is in the share: no other file's name or content, not the recipient, not the route
+    let text = String::from_utf8(share.clone()).unwrap();
+    for (name, content) in files.iter().filter(|(n, _)| !names.contains(&n.as_str())) {
+        assert!(!text.contains(name.as_str()), "{name}");
+        assert!(
+            !text.contains(&kk_evidence::b64::encode(content)),
+            "{name} content"
+        );
+        assert!(
+            !text.contains(&kk_evidence::capsule::sha256_hex(content)),
+            "{name} hash"
+        );
+    }
+    assert!(
+        !text.contains("acme-audit") && !text.contains(&kk_evidence::b64::encode(b"acme-audit"))
+    );
+    // the same share every time, and it is written to the signed log without the finding's text
+    let (_, again) = w.post(&format!("/api/jobs/{id}/share"), json!({"finding": 1}));
+    assert_eq!(again["share"], v["share"]);
+    let log = w.get("/api/log").1.to_string();
+    assert!(log.contains("share.made"), "{log}");
+    // the capsule on disk is changed after delivery: nothing is shared from a capsule that no longer verifies
+    let dir = std::fs::read_dir(_root.join("data/capsules"))
+        .unwrap()
+        .flatten()
+        .next()
+        .unwrap()
+        .path();
+    let mut bytes = std::fs::read(&dir).unwrap();
+    let at = bytes.len() / 2;
+    bytes[at] ^= 1;
+    std::fs::write(&dir, &bytes).unwrap();
+    let (st, e) = w.post(&format!("/api/jobs/{id}/share"), json!({"finding": 1}));
+    assert_eq!(
+        (st, e["error"]["code"].as_str()),
+        (409, Some("CAPSULE_INVALID")),
+        "{e}"
+    );
+}

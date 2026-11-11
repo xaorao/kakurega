@@ -1153,6 +1153,99 @@ pub fn roundtable(args: &[String]) -> u8 {
     })
 }
 
+/// `kaku share JOB FINDING [--out FILE] [--json]`: one finding of a delivered review, with a proof that it is part of the
+/// signed release and nothing about the rest. The file is written for the owner to hand on; nothing is sent anywhere.
+pub fn share(args: &[String]) -> u8 {
+    let json_mode = args.iter().any(|a| a == "--json");
+    let out = crate::flag(args, "--out");
+    let mut words: Vec<&String> = Vec::new();
+    let mut it = args.iter().skip(1);
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--json" => {}
+            "--out" => {
+                it.next();
+            }
+            other if other.starts_with("--") => break,
+            _ => words.push(a),
+        }
+    }
+    let usage = "usage: kaku share JOB FINDING [--out FILE] [--json]   (a delivered review and the number of one of its findings)";
+    let (job, finding) = match words.as_slice() {
+        [job, n]
+            if job.len() > 4
+                && job.starts_with("job-")
+                && job[4..].chars().all(|c| c.is_ascii_digit()) =>
+        {
+            match n.parse::<u32>() {
+                Ok(n) if n > 0 => (job.to_string(), n),
+                _ => return fail(json_mode, USAGE, usage),
+            }
+        }
+        _ => return fail(json_mode, USAGE, usage),
+    };
+    crate::tui::with_service(&serve_args(args), |dir| {
+        let http = match connect(dir, json_mode) {
+            Ok(h) => h,
+            Err(c) => return c,
+        };
+        let v = match call(
+            &http,
+            Method::Post,
+            &format!("/api/jobs/{job}/share"),
+            Some(json!({"finding": finding})),
+        ) {
+            Ok((200, v)) => v,
+            Ok((s, v)) => {
+                let (m, c) = refusal(s, &v);
+                return fail(json_mode, c, &m);
+            }
+            Err(e) => return fail(json_mode, UNAVAILABLE, &e),
+        };
+        let Some(bytes) = v["share"]
+            .as_str()
+            .and_then(|t| kk_evidence::b64::decode(t).ok())
+        else {
+            return fail(
+                json_mode,
+                UNAVAILABLE,
+                "the service answered without a share",
+            );
+        };
+        let name = v["name"].as_str().unwrap_or("finding.kks").to_string();
+        let path = std::path::PathBuf::from(out.clone().unwrap_or(name));
+        // never over a file that exists
+        let written = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, &bytes));
+        if let Err(e) = written {
+            return fail(
+                json_mode,
+                USAGE,
+                &format!("cannot write {}: {e}", path.display()),
+            );
+        }
+        if json_mode {
+            println!(
+                "{}",
+                json!({"file": path, "files": v["files"], "total_files": v["total_files"], "capsule_sha256": v["capsule_sha256"], "signer": v["signer"]})
+            );
+        } else {
+            println!("Wrote {}", path.display());
+            println!("It shows: {}", clean(v["shows"].as_str().unwrap_or("")));
+            println!("It hides: {}", clean(v["hides"].as_str().unwrap_or("")));
+            println!(
+                "Anyone can check it with: kaku verify {} --pin {}",
+                path.display(),
+                clean(v["signer_public"].as_str().unwrap_or("YOUR-PUBLIC-KEY"))
+            );
+        }
+        OK
+    })
+}
+
 /// `kaku stop ID [--json]`: stops a running review (job-N), coding task (code-N) or team run (team-...). Nothing a stopped
 /// review or coding task found is offered afterwards.
 pub fn stop(args: &[String]) -> u8 {

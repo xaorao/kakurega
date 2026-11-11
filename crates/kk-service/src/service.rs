@@ -1201,6 +1201,7 @@ struct PathQuery {
 mod mcp;
 mod methods;
 mod packs;
+mod share;
 mod team;
 
 type Svc = axum::Extension<Arc<Service>>;
@@ -9915,6 +9916,10 @@ impl Extension for Routes {
             )
             .route("/api/jobs/{id}/deliver", post(do_deliver))
             .route("/api/jobs/{id}/capsule", get(download))
+            .route(
+                "/api/jobs/{id}/share",
+                get(share::shareable).post(share::share_finding),
+            )
             .route("/admin/log", get(log_export))
             .route("/admin/jobs/{id}/chain-ticket", post(admin_chain_ticket))
             .route("/admin/diagnostics", get(diagnostics))

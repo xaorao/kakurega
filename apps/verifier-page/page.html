@@ -31,6 +31,8 @@ li{margin:.25rem 0}
 code{font-family:var(--mono);font-size:.85rem;word-break:break-all}
 .note{color:var(--mute)}
 .bad{color:var(--bad)}
+h3{font-size:.95rem;margin:1rem 0 .3rem}
+pre{margin:.2rem 0;padding:.7rem .8rem;border:1px solid var(--line);border-radius:8px;background:var(--card);font:13px/1.45 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;max-height:22rem;overflow:auto}
 #chain{margin-top:2rem;padding-top:1rem;border-top:1px solid var(--line)}
 select,button{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:.5rem .7rem;min-height:2.5rem}
 button{margin:1rem 0;font-weight:600;cursor:pointer}
@@ -42,8 +44,8 @@ select{display:block}
 <body>
 <main>
 <h1>Kakurega capsule check</h1>
-<p class="lead">Drop a proof capsule (<code>.kkg</code>). It is checked in this page, on this device. Nothing is uploaded, and the network is used only if you press the NEAR lookup under a valid result.</p>
-<div id="drop" tabindex="0" role="button" aria-label="Choose a capsule file">Drop a capsule here, or press to choose a file<input id="file" type="file" hidden></div>
+<p class="lead">Drop a proof capsule (<code>.kkg</code>) or a share of one finding (<code>.kks</code>). It is checked in this page, on this device. Nothing is uploaded, and the network is used only if you press the NEAR lookup under a valid result.</p>
+<div id="drop" tabindex="0" role="button" aria-label="Choose a capsule or share file">Drop a capsule or a share here, or press to choose a file<input id="file" type="file" hidden></div>
 <label for="pin">Signer key you expect (optional)</label>
 <input id="pin" type="text" autocomplete="off" spellcheck="false" placeholder="base64url, 43 characters">
 <small>Without it, the page only shows that the capsule matches the key it carries. Paste the key you got from the sender by another route to check who signed it.</small>

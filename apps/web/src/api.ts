@@ -434,6 +434,8 @@ export const api = {
   files: (id: string) => request<{ files: FileEntry[] }>("GET", `/api/jobs/${id}/files`),
   file: (id: string, path: string) => request<{ path: string; withheld: boolean; text: string | null }>("GET", `/api/jobs/${id}/file?path=${encodeURIComponent(path)}`),
   audit: (id: string) => request<{ audit: AuditEntry[] }>("GET", `/api/jobs/${id}/audit`),
+  shareable: (id: string) => request<{ findings: { n: number; title: string }[]; signer_public?: string }>("GET", `/api/jobs/${id}/share`),
+  shareFinding: (id: string, finding: number) => request<{ name: string; share: string; files: string[]; total_files: number; shows: string; hides: string; signer_public: string }>("POST", `/api/jobs/${id}/share`, { finding }),
   findings: (id: string) => request<{ findings: Finding[]; unparsed: number }>("GET", `/api/jobs/${id}/findings`),
   release: (id: string) => request<Release>("GET", `/api/jobs/${id}/release`),
   requestApproval: (id: string) => request<{ approval: string; digest: string; how: string }>("POST", `/api/jobs/${id}/approval`, {}),

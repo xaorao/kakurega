@@ -30,6 +30,19 @@ writeFileSync(join(work, "flipped.kkg"), flipped);
 writeFileSync(join(work, "notes.txt"), "just some text\n");
 const key = JSON.parse(bytes.toString()).keys[0];
 
+// shares come from the shared vector file, so the page is held to the same cases as the two verifiers
+const shareVectors = JSON.parse(readFileSync(join(repo, "fixtures/share/vectors.json"), "utf8")).vectors;
+const shareFile = (name, file) => {
+  const v = shareVectors.find((x) => x.name === name);
+  if (!v) throw new Error("no share vector named " + name);
+  writeFileSync(join(work, file), Buffer.from(v.share, "base64url"));
+  return join(work, file);
+};
+const goodShare = shareFile("two files of five", "good.kks");
+const changedShare = shareFile("content changed", "changed.kks");
+const markupShare = shareFile("a file whose text looks like markup", "markup.kks");
+const shareKey = JSON.parse(readFileSync(goodShare, "utf8")).keys[0];
+
 const chrome = join(homedir(), "Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing");
 const browser = await chromium.launch({ executablePath: chrome, headless: true });
 const ctx = await browser.newContext({ viewport: { width: 1000, height: 900 } });
@@ -51,6 +64,30 @@ check(/Model signatures checked \(2\)/.test(body) && /vendor\/model/.test(body),
 check(/does not establish/i.test(body) && /attested confidential hardware/.test(body) && /answer is true/.test(body), "and it says what the check does not establish, hardware and truth included");
 check(/no, this is only the key the capsule carries/.test(body), "and it says the signer is not pinned");
 await page.screenshot({ path: join(work, "valid.png"), fullPage: true });
+
+// ---- a share of some files of a release ----
+await page.setInputFiles("#file", goodShare);
+await page.getByText("Valid share").waitFor();
+body = await page.locator("main").innerText();
+check(/2 of the release's 5 files/.test(body) && /finding-01\.txt/.test(body) && /finding-04\.txt/.test(body), "a good share is valid and says how many of the release's files it holds");
+check(/finding number 1: the token stays valid after logout/.test(body), "the shared file's text is shown");
+check(!/finding-00\.txt|finding-02\.txt|finding-03\.txt/.test(body) && !/finding number [023]/.test(body), "nothing of the files that were not shared is shown");
+check(/does not establish/i.test(body) && /other files/.test(body) && /Who the release was made for/.test(body), "and it says what a share does not establish");
+check(/no, this is only the key the share carries/.test(body), "and that the signer is not pinned");
+await page.screenshot({ path: join(work, "share-valid.png"), fullPage: true });
+await page.fill("#pin", shareKey);
+await page.getByText("yes, matches the key you pasted").waitFor();
+check(true, "pinned to its signer it says so");
+await page.fill("#pin", shareVectors.find((x) => x.name === "pinned to another key").pinned[0]);
+await page.getByText("It was not signed by the key you pasted.").waitFor();
+check((await verdict()) === "Not valid", "pinned to another key it is refused in words");
+await page.fill("#pin", "");
+await page.setInputFiles("#file", changedShare);
+await page.getByText("is not part of the signed release").waitFor();
+check((await verdict()) === "Not valid" && (await page.locator("pre").count()) === 0, "a share whose file was changed is refused, and shows no file");
+await page.setInputFiles("#file", markupShare);
+await page.getByText("Valid share").waitFor();
+check((await page.evaluate(() => window.pwned)) === undefined && (await page.locator("main img, main script").count()) === 0 && /<script>window\.pwned=1<\/script>/.test(await page.locator("pre").first().innerText()), "markup inside a shared file is shown as text and does not run");
 
 await page.setInputFiles("#file", join(work, "forged.kkg"));
 await page.getByText("model receipt's signature does not match").waitFor();

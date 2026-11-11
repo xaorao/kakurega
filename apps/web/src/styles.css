@@ -413,3 +413,5 @@ ol.team-tasks { list-style: none; padding: 0; margin: 0; }
 .steps li.stop-row .mark { visibility: hidden; }
 .bundled-list { margin: 0; padding: 0; list-style: none; }
 .rt-group h4 { font-size: 13px; margin: 8px 0 2px; color: var(--graphite); font-weight: 600; }
+.share-one { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 4px; }
+.share-one h3 { margin: 0; }
