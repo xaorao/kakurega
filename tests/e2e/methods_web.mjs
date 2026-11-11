@@ -39,7 +39,7 @@ const origin = new URL(link).origin;
 
 await page.goto(link);
 await page.waitForSelector("nav");
-await page.goto(origin + "/#/instructions");
+await page.goto(origin + "/#/skills");
 await page.getByRole("heading", { name: "Methods" }).waitFor();
 check(await page.getByText("No methods yet.").isVisible(), "a new install has no methods and says so");
 await page.locator("#met-new-name").fill("fruit-first");
@@ -63,7 +63,7 @@ let body = await ask("Tell me about a pineapple orchard in one sentence.");
 await shot("2-chat-before-approval");
 check(!/Methods used/.test(body), "an unapproved method is not used and the answer does not say it was");
 
-await page.goto(origin + "/#/instructions");
+await page.goto(origin + "/#/skills");
 await page.getByRole("heading", { name: "Methods" }).waitFor();
 await page.getByRole("button", { name: "Show text" }).click();
 check(await page.getByText("Begin your answer with the single word PINEAPPLE").isVisible(), "the owner can read the exact text before approving");
@@ -78,7 +78,7 @@ console.log("OBSERVED reply starts with PINEAPPLE:", /PINEAPPLE/i.test(body), "(
 body = await ask("What is two plus two?");
 check(!/Methods used/.test(body), "a question with none of its words does not use it");
 
-await page.goto(origin + "/#/instructions");
+await page.goto(origin + "/#/skills");
 await page.getByRole("heading", { name: "Methods" }).waitFor();
 await page.getByRole("button", { name: "Edit" }).click();
 await page.getByLabel("The text").first().fill("Begin your answer with the single word MANGO, then answer normally.");

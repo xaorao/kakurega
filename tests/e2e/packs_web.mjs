@@ -55,7 +55,7 @@ const importPack = async (text) => {
 
 await page.goto(link);
 await page.waitForSelector("nav");
-await page.goto(origin + "/#/instructions");
+await page.goto(origin + "/#/skills");
 await page.getByRole("heading", { name: "Method packs" }).waitFor();
 check(await page.getByText("No publisher is pinned yet, so no pack can be imported.").isVisible(), "a new install trusts no publisher and says so");
 await importPack(good);

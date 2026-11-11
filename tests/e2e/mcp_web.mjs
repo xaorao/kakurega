@@ -38,7 +38,7 @@ const origin = new URL(link).origin;
 
 await page.goto(link);
 await page.waitForSelector("nav");
-await page.goto(origin + "/#/instructions");
+await page.goto(origin + "/#/skills");
 await page.getByRole("heading", { name: "Outside tools" }).waitFor();
 check(await page.getByText("No outside programs yet.").isVisible(), "a new install has no outside programs and says so");
 
@@ -65,7 +65,7 @@ await echo.selectOption("allow");
 await page.waitForFunction(() => document.querySelector("#mcp-docs-echo")?.value === "allow");
 check((await echo.inputValue()) === "allow", "allowing a tool shows it as allowed");
 await page.reload();
-await page.goto(origin + "/#/instructions");
+await page.goto(origin + "/#/skills");
 await page.getByRole("heading", { name: "Outside tools" }).waitFor();
 check((await page.locator("#mcp-docs-echo").inputValue()) === "allow", "the choice is still there after a reload");
 check((await page.locator("#mcp-docs-write").inputValue()) === "off", "the other tool is still off");

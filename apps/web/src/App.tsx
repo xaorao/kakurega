@@ -4,6 +4,7 @@ void ApiError;
 import { NewReview } from "./screens/NewReview";
 import { ReviewView } from "./screens/ReviewView";
 // every screen but the first one is loaded when it is first opened, from this program only
+const Skills = lazy(() => import("./screens/Skills").then((m) => ({ default: m.Skills })));
 const Verify = lazy(() => import("./screens/Verify").then((m) => ({ default: m.Verify })));
 const Memory = lazy(() => import("./screens/Memory").then((m) => ({ default: m.Memory })));
 const Instructions = lazy(() => import("./screens/Instructions").then((m) => ({ default: m.Instructions })));
@@ -280,6 +281,7 @@ export function App() {
       { id: "docs", label: t("nav.docs"), group: t("palette.screens"), run: go("#/docs") },
       { id: "meeting", label: t("nav.meeting"), group: t("palette.screens"), run: go("#/meeting") },
       { id: "break", label: t("break.title"), group: t("palette.screens"), run: go("#/break") },
+      { id: "skills", label: t("nav.skills"), group: t("palette.screens"), run: go("#/skills") },
       { id: "code", label: t("nav.code"), group: t("palette.screens"), run: go("#/code") },
       { id: "chat", label: t("nav.chat"), group: t("palette.screens"), run: go("#/chat") },
       { id: "roundtable", label: t("nav.roundtable"), group: t("palette.screens"), run: go("#/roundtable") },
@@ -329,18 +331,23 @@ export function App() {
             <nav id="side-nav" class={menuOpen() ? "side open" : "side"} aria-label={t("nav.label")}>
               <a class="primary" href="#/">{t("nav.new")}</a>
               <a href="#/inbox" class={hash() === "#/inbox" ? "navlink active" : "navlink"}>{t("nav.inbox")}{waiting() > 0 ? <span class="count" aria-label={t("nav.inboxCount", { n: waiting() })}> ({waiting()})</span> : null}</a>
+              <h2>{t("nav.group.work")}</h2>
+              <a href="#/chat" class={hash() === "#/chat" ? "navlink active" : "navlink"}>{t("nav.chat")}</a>
               <a href="#/docs" class={hash() === "#/docs" ? "navlink active" : "navlink"}>{t("nav.docs")}</a>
               <a href="#/meeting" class={hash() === "#/meeting" ? "navlink active" : "navlink"}>{t("nav.meeting")}</a>
               <a href="#/code" class={hash() === "#/code" ? "navlink active" : "navlink"}>{t("nav.code")}</a>
-              <a href="#/chat" class={hash() === "#/chat" ? "navlink active" : "navlink"}>{t("nav.chat")}</a>
               <a href="#/roundtable" class={hash() === "#/roundtable" ? "navlink active" : "navlink"}>{t("nav.roundtable")}</a>
               <a href="#/team" class={hash().startsWith("#/team") ? "navlink active" : "navlink"}>{t("nav.team")}</a>
+              <h2>{t("nav.group.knows")}</h2>
               <a href="#/memory" class={hash() === "#/memory" ? "navlink active" : "navlink"}>{t("nav.memory")}</a>
               <a href="#/instructions" class={hash() === "#/instructions" ? "navlink active" : "navlink"}>{t("nav.instructions")}</a>
-              <a href="#/settings" class={hash() === "#/settings" ? "navlink active" : "navlink"}>{t("nav.settings")}</a>
+              <a href="#/skills" class={hash() === "#/skills" ? "navlink active" : "navlink"}>{t("nav.skills")}</a>
+              <h2>{t("nav.group.trust")}</h2>
               <a href="#/privacy" class={hash() === "#/privacy" ? "navlink active" : "navlink"}>{t("nav.privacy")}</a>
+              <a href="#/break" class={hash() === "#/break" ? "navlink active" : "navlink"}>{t("break.title")}</a>
               <a href="#/agent" class={hash() === "#/agent" ? "navlink active" : "navlink"}>{t("nav.agent")}</a>
               <a href="#/activity" class={hash() === "#/activity" ? "navlink active" : "navlink"}>{t("nav.activity")}</a>
+              <a href="#/settings" class={hash() === "#/settings" ? "navlink active" : "navlink"}>{t("nav.settings")}</a>
               <label class="sr" for="search">{t("nav.search.label")}</label>
               <input
                 id="search"
@@ -374,7 +381,7 @@ export function App() {
               <Suspense fallback={<p class="muted" role="status">{t("review.loading")}</p>}>
               <Show when={config()}>
                 {(c) => (
-                  <Show when={hash() !== "#/memory" && hash() !== "#/instructions" && hash() !== "#/settings" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/roundtable" && !hash().startsWith("#/team") && hash() !== "#/docs" && hash() !== "#/meeting" && hash() !== "#/break" && hash() !== "#/code" && hash() !== "#/inbox" && hash() !== "#/agent" && hash() !== "#/privacy"} fallback={hash() === "#/settings" ? <Settings /> : hash() === "#/instructions" ? <Instructions /> : hash() === "#/privacy" ? <Privacy /> : hash() === "#/agent" ? <AgentAccess /> : hash() === "#/inbox" ? <Inbox /> : hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/roundtable" ? <Roundtable /> : hash().startsWith("#/team") ? <Team id={hash().slice(7)} /> : hash() === "#/docs" ? <Documents /> : hash() === "#/meeting" ? <Meeting /> : hash() === "#/break" ? <BreakIt /> : hash() === "#/code" ? <CodeTask /> : <Memory />}>
+                  <Show when={hash() !== "#/memory" && hash() !== "#/instructions" && hash() !== "#/settings" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/roundtable" && !hash().startsWith("#/team") && hash() !== "#/docs" && hash() !== "#/meeting" && hash() !== "#/skills" && hash() !== "#/break" && hash() !== "#/code" && hash() !== "#/inbox" && hash() !== "#/agent" && hash() !== "#/privacy"} fallback={hash() === "#/settings" ? <Settings /> : hash() === "#/instructions" ? <Instructions /> : hash() === "#/privacy" ? <Privacy /> : hash() === "#/agent" ? <AgentAccess /> : hash() === "#/inbox" ? <Inbox /> : hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/roundtable" ? <Roundtable /> : hash().startsWith("#/team") ? <Team id={hash().slice(7)} /> : hash() === "#/docs" ? <Documents /> : hash() === "#/meeting" ? <Meeting /> : hash() === "#/skills" ? <Skills /> : hash() === "#/break" ? <BreakIt /> : hash() === "#/code" ? <CodeTask /> : <Memory />}>
                     <Show when={jobId()} fallback={<NewReview config={c()} onStarted={(id) => { void refresh(); location.hash = `#/job/${id}`; }} />}>
                     {(id) => <ReviewView id={id()} config={c()} onUpdate={() => void refresh()} />}
                     </Show>

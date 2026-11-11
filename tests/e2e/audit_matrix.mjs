@@ -56,7 +56,7 @@ const base_url = base;
 const browser = await chromium.launch({ executablePath: chrome, headless: true });
 const routes = [
   ["new-review", "#/"], ["waiting", "#/inbox"], ["documents", "#/docs"], ["chat", "#/chat"], ["memory", "#/memory"],
-  ["instructions", "#/instructions"], ["settings", "#/settings"], ["privacy", "#/privacy"], ["agent-access", "#/agent"], ["activity", "#/activity"],
+  ["instructions", "#/instructions"], ["skills", "#/skills"], ["meeting", "#/meeting"], ["break", "#/break"], ["settings", "#/settings"], ["privacy", "#/privacy"], ["agent-access", "#/agent"], ["activity", "#/activity"],
   ...(jobId ? [["review", `#/job/${jobId}`]] : []),
 ];
 const viewports = quick ? [["desktop", 1280, 860]] : [["desktop", 1280, 860], ["phone", 390, 844]];
