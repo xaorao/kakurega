@@ -1,6 +1,7 @@
 import { t } from "../i18n";
 import { Methods } from "./Methods";
 import { Mcp } from "./Mcp";
+import { GitHub } from "./GitHub";
 
 /** What the assistant can be taught and what it may reach: the owner's methods and packs, and outside tool servers. */
 export function Skills() {
@@ -10,6 +11,7 @@ export function Skills() {
       <p class="lead">{t("skills.lead")}</p>
       <Methods />
       <Mcp />
+      <GitHub />
     </section>
   );
 }

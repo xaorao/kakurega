@@ -66,7 +66,18 @@ export function Chat() {
   const [notesBusy, setNotesBusy] = createSignal(false);
   const [notesInfo, setNotesInfo] = createSignal("");
   // Files attached to the message being written: read on this computer, held in memory, sent with the next message.
-  const [files, setFiles] = createSignal<AttachmentSummary[]>([]);
+  // a screen that made an attachment for this chat (the GitHub connector) leaves it here; it is taken once
+  const [files, setFiles] = createSignal<AttachmentSummary[]>((() => {
+    try {
+      const raw = sessionStorage.getItem("kk-chat-attach");
+      if (raw === null) return [];
+      sessionStorage.removeItem("kk-chat-attach");
+      const a = JSON.parse(raw) as AttachmentSummary;
+      return typeof a?.id === "string" && typeof a?.name === "string" ? [a] : [];
+    } catch {
+      return [];
+    }
+  })());
   const [fileInfo, setFileInfo] = createSignal("");
   const [reading, setReading] = createSignal("");
   const [shown, setShown] = createSignal<Record<string, AttachmentRead | "loading">>({});

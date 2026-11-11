@@ -51,3 +51,8 @@ Recommendation: a GitHub App with read-only permissions and Enable Device Flow o
 - Pull request review comments (on lines of code) are not read; `issue` returns the conversation comments only. Files over 1 MB are refused rather than fetched raw.
 - A connection to github.com is not pinned to a checked address as `kk-fetch` pins page fetches; the hosts are fixed and TLS certificate checks bind them.
 - GitHub Enterprise hosts are not supported.
+
+## The screen (added after the backend)
+- Skills has a "GitHub (read only)" card: paste the client id of your own GitHub App, connect (the code to type at github.com is shown and the page asks again by itself when GitHub allows), read an issue, pull request or file by repository and number or path, and attach it to the next chat message. The attachment is the one the service made through the upload parser, so the lines that hold a secret or read like orders are already marked as held back; the card says how many.
+- Evidence: `tests/e2e/github_web.mjs`, 13 browser checks against the stand-in GitHub (refused client id, sign-in without a reload, a repository name with `..` cannot be asked for, the planted key and order counted as held back, the chat opening with the attachment, the token in its own file and in neither the page nor the service's output, sign-out).
+- NOT TESTED: the real github.com (BLOCKED until the owner's client id exists).

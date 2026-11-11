@@ -147,6 +147,7 @@ export interface BreakResult { planted: { key: string; password: string }; asked
 export interface HandoffProposal { id: string; text: string; sha256: string; chars: number; personal: string; tool: string; notice: string }
 export interface SampleState { possible: boolean; loaded: boolean; folder?: string; project?: string; documents?: string; transcript?: string | null; note?: string }
 export interface ProjectRow { name: string; folder: string | null; folder_available: boolean; conversations: number; notes_only: boolean; created: number; listed: boolean }
+export interface GitHubStatus { available: boolean; problem?: string | null; client_set: boolean; client_id?: string | null; connected: boolean; account?: { login: string; id: number } | null; scopes?: string[]; pending?: { user_code: string; verification_uri: string; expires_in: number; interval: number; next_poll_in: number } | null; read_only?: boolean; note?: string }
 export interface OutboundRow { at: number; seq: number; what: "model" | "search" | "pages" | "tool" | "release" | "telegram" | "held"; to: string; detail: Record<string, number | string> }
 export interface RouteOptions { changeable: boolean; current?: "local" | "near" | "outside" | "test"; local?: { model: string }; near?: { model: string | null; key_saved: boolean }; outside?: { in_use: boolean }; route: { stays_here: boolean; host: string | null; model?: string }; note: string }
 export interface MeetingPoint { kind: "decision" | "action" | "question"; text: string; owner: string; due: string; quote: string; line: number | null }
@@ -337,6 +338,12 @@ export const api = {
   sampleRemove: () => request<SampleState>("POST", "/api/sample/remove", {}),
   projects: () => request<{ projects: ProjectRow[] }>("GET", "/api/projects"),
   projectChange: (b: { name?: string; folder?: string; remove?: string }) => request<{ changed: boolean; projects: ProjectRow[]; kept?: string }>("POST", "/api/projects", b),
+  githubStatus: () => request<GitHubStatus>("GET", "/api/connectors/github/status"),
+  githubClient: (client_id: string) => request<GitHubStatus>("POST", "/api/connectors/github/client", { client_id }),
+  githubStart: () => request<{ user_code: string; verification_uri: string; next_poll_in: number }>("POST", "/api/connectors/github/start", {}),
+  githubPoll: () => request<{ state: string; done: boolean; message: string; interval?: number; next_poll_in?: number }>("POST", "/api/connectors/github/poll", {}),
+  githubSignOut: () => request<{ signed_out: boolean; message: string; revoke?: string }>("POST", "/api/connectors/github/signout", {}),
+  githubRead: (b: { action: string; owner?: string; repo?: string; number?: number; path?: string; attach?: boolean }) => request<{ issue?: { number?: number; title?: string; body?: string }; comments?: { author?: string; body?: string }[]; file?: { path?: string; text?: string }; attachment?: AttachmentSummary }>("POST", "/api/connectors/github/read", b),
   outbound: () => request<{ rows: OutboundRow[]; totals: Record<string, number>; looked_at: number; note: string }>("GET", "/api/outbound"),
   routeOptions: () => request<RouteOptions>("GET", "/api/route/options"),
   routeChoose: (b: { route?: "local" | "near"; model?: string; key?: string; forget_key?: boolean }) => request<RouteOptions>("POST", "/api/route/choose", b),

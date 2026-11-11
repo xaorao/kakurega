@@ -431,3 +431,5 @@ pre.wrap, code.wrap { white-space: pre-wrap; overflow-wrap: anywhere; word-break
 .saved-prompts .prompt-use { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .banner-note { background: var(--amber-bg); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 10px 14px; }
 #hand-text { width: 100%; font-family: var(--mono, monospace); font-size: 0.9em; }
+.gh-code { font-size: 1.6em; letter-spacing: 0.12em; padding: 6px 12px; border: 1px solid var(--line); border-radius: var(--radius-s); }
+.gh-text { max-height: 320px; overflow: auto; }
