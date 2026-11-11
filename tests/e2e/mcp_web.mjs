@@ -40,7 +40,9 @@ await page.goto(link);
 await page.waitForSelector("nav");
 await page.goto(origin + "/#/skills");
 await page.getByRole("heading", { name: "Outside tools" }).waitFor();
-check(await page.getByText("No outside programs yet.").isVisible(), "a new install has no outside programs and says so");
+// the heading is there before the list has been read, so the empty list is waited for, not sampled
+await page.getByText("No outside programs yet.").waitFor();
+check(true, "a new install has no outside programs and says so");
 
 await page.getByLabel("A short name for it").fill("docs");
 await page.getByLabel("Full path of the program").fill("node");
