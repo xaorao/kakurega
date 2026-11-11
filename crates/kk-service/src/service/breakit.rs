@@ -122,6 +122,7 @@ pub(super) async fn attempt(axum::Extension(svc): Svc, Json(b): Json<BreakBody>)
             ctx.files_withheld_secrets,
             ctx.files_withheld_instructions,
         );
+        let _hold = svc2.route_hold();
         let swap = svc2.hide_messages(&mut ctx.messages);
         let sent = ctx.messages.clone();
         let reply = svc2.runner.chat(ctx.messages.clone()).map(|mut r| {

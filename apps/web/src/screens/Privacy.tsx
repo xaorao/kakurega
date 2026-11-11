@@ -27,7 +27,7 @@ function Outbound() {
       case "pages": return t("out.pages", { n: Number(d.pages ?? 0) });
       case "tool": return t("out.tool", { to: r.to });
       case "release": return t("out.release", { to: r.to });
-      case "telegram": return t("out.telegram");
+      case "review": return t("out.review", { to: r.to, calls: Number(d.calls ?? 0), tokens: Number(d.tokens ?? 0) });
       default: return t("out.held", { where: r.to, secrets: Number(d.secrets ?? 0), orders: Number(d.instructions ?? 0) });
     }
   };

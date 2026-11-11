@@ -778,7 +778,8 @@ pub fn run(
                 save(link, &state)?;
                 continue;
             }
-            while state.asked < config.sweep_files {
+            // the files asked about are bounded, and so are the files merely read and passed over
+            while state.asked < config.sweep_files && state.looked.len() < config.sweep_files * 4 {
                 if cancelled() {
                     save(link, &state)?;
                     return Ok(Outcome::Cancelled);
@@ -788,7 +789,9 @@ pub fn run(
                     Ok(false) => break,
                     // the review itself is finished; a model or a tool that stops answering during the second look
                     // ends the second look, with whatever it already reported kept
-                    Err(WorkerError::Refused { code, .. }) if !fatal(&code) => break,
+                    // every refusal ends the second look and nothing more, also the ones that would end a review in
+                    // progress (a spent budget, an expired session): the review's own answer is already there
+                    Err(WorkerError::Refused { .. }) => break,
                     Err(e) => return Err(e),
                 }
                 save(link, &state)?;

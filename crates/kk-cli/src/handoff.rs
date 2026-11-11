@@ -10,6 +10,12 @@ use std::time::{Duration, Instant};
 
 const PROGRAM: &str = "claude";
 const TIME_LIMIT: Duration = Duration::from_secs(300);
+const ANSWER_MAX_BYTES: u64 = 1024 * 1024;
+/// What of this service's environment the program is given: where programs and the owner's home are, who they are, and
+/// how text is written. Nothing else.
+const PASSED_ON: &[&str] = &[
+    "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "TERM",
+];
 /// The options, checked against `claude --help` of 2.1: one answer and exit; no built-in tools; only the tool servers
 /// given here, which is none; no session kept on disk; one JSON object as the result.
 const ARGS: &[&str] = &[
@@ -87,12 +93,21 @@ pub fn run(text: &str) -> Result<String, String> {
     std::fs::create_dir(&dir)
         .map_err(|e| format!("cannot make an empty folder for the run: {e}"))?;
     let result = (|| {
-        let mut child = Command::new(&program)
-            .args(ARGS)
+        // The program gets the few settings it needs to find the owner's sign-in and nothing else of this service's
+        // environment: no account key of another service, no token, no proxy setting.
+        let mut cmd = Command::new(&program);
+        cmd.args(ARGS)
             .current_dir(&dir)
+            .env_clear()
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::null());
+        for name in PASSED_ON {
+            if let Some(v) = std::env::var_os(name) {
+                cmd.env(name, v);
+            }
+        }
+        let mut child = cmd
             .spawn()
             .map_err(|e| format!("Claude Code could not be started: {e}"))?;
         if let Some(mut stdin) = child.stdin.take() {
@@ -100,6 +115,19 @@ pub fn run(text: &str) -> Result<String, String> {
                 .write_all(text.as_bytes())
                 .map_err(|e| e.to_string())?;
         }
+        // The answer is read while the program runs: a long answer would otherwise fill the pipe and the program would
+        // wait for ever to write the rest. More than the cap is not an answer this takes.
+        let mut stdout = child.stdout.take().ok_or("Claude Code gave no answer")?;
+        let reader = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = std::io::Read::read_to_end(
+                &mut std::io::Read::take(&mut stdout, ANSWER_MAX_BYTES + 1),
+                &mut buf,
+            );
+            // whatever comes after the cap is read and dropped, so the program can still end
+            let _ = std::io::copy(&mut stdout, &mut std::io::sink());
+            buf
+        });
         let started = Instant::now();
         loop {
             match child.try_wait().map_err(|e| e.to_string())? {
@@ -115,8 +143,13 @@ pub fn run(text: &str) -> Result<String, String> {
                 None => std::thread::sleep(Duration::from_millis(100)),
             }
         }
-        let out = child.wait_with_output().map_err(|e| e.to_string())?;
-        answer_in(&String::from_utf8_lossy(&out.stdout))
+        let out = reader
+            .join()
+            .map_err(|_| "Claude Code's answer could not be read".to_string())?;
+        if out.len() as u64 > ANSWER_MAX_BYTES {
+            return Err("Claude Code's answer was too long to take".into());
+        }
+        answer_in(&String::from_utf8_lossy(&out))
     })();
     let _ = std::fs::remove_dir_all(&dir);
     result
@@ -158,6 +191,17 @@ mod tests {
             "--resume",
         ] {
             assert!(!ARGS.contains(&never));
+        }
+        // no key or token of this service's environment is on the list that is passed on
+        for name in PASSED_ON {
+            let n = name.to_lowercase();
+            assert!(
+                !n.contains("key")
+                    && !n.contains("token")
+                    && !n.contains("secret")
+                    && !n.contains("proxy"),
+                "{name}"
+            );
         }
     }
 }

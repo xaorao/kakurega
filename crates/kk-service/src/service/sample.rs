@@ -61,6 +61,30 @@ fn files() -> Vec<(String, String)> {
     out
 }
 
+/// Whether `path` is a real folder (not a link) that lies inside `dir` once every link on the way is followed. The sample
+/// writes and removes only through folders that pass this, so a link planted in or as the sample folder cannot send a
+/// write or a removal anywhere else.
+fn real_folder_inside(dir: &Path, path: &Path) -> bool {
+    let plain = |p: &Path| {
+        std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
+    };
+    if !plain(dir) || !plain(path) {
+        return false;
+    }
+    match (dir.canonicalize(), path.canonicalize()) {
+        (Ok(d), Ok(p)) => p.starts_with(&d),
+        _ => false,
+    }
+}
+
+/// A file of the sample may be written or removed when the folder it sits in is a real folder inside the sample and the
+/// file itself is not a link.
+fn safe_target(dir: &Path, path: &Path) -> bool {
+    path.parent()
+        .is_some_and(|parent| real_folder_inside(dir, parent))
+        && !std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink() || m.is_dir())
+}
+
 fn place(svc: &Service) -> Option<PathBuf> {
     svc.roots.first().map(|r| r.join(FOLDER))
 }
@@ -91,7 +115,8 @@ pub(super) async fn load(axum::Extension(svc): Svc) -> Response {
     let Some(dir) = place(&svc) else {
         return refuse("there is no folder this program may write the sample into");
     };
-    if dir.exists() && !dir.join(MARKER).is_file() {
+    let is_link = std::fs::symlink_metadata(&dir).is_ok_and(|m| m.file_type().is_symlink());
+    if is_link || (dir.exists() && !dir.join(MARKER).is_file()) {
         return refuse("a folder named kakurega-sample is already there and was not made by this program; it is left as it is");
     }
     let written = (|| -> std::io::Result<usize> {
@@ -100,6 +125,13 @@ pub(super) async fn load(axum::Extension(svc): Svc) -> Response {
             let path = dir.join(&rel);
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
+            }
+            // nothing is written through a link: not a linked folder on the way, not a linked file at the end
+            if !safe_target(&dir, &path) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "a link stands where a sample file goes",
+                ));
             }
             std::fs::write(&path, text)?;
             names.push(rel);
@@ -126,6 +158,9 @@ pub(super) async fn remove(axum::Extension(svc): Svc) -> Response {
     let Some(dir) = place(&svc) else {
         return Json(json!({"removed": 0})).into_response();
     };
+    if !real_folder_inside(&dir, &dir) {
+        return Json(json!({"removed": 0, "loaded": false})).into_response();
+    }
     let Ok(list) = std::fs::read_to_string(dir.join(MARKER)) else {
         return Json(json!({"removed": 0, "loaded": false})).into_response();
     };
@@ -136,6 +171,10 @@ pub(super) async fn remove(axum::Extension(svc): Svc) -> Response {
         .filter(|l| !l.is_empty() && !l.contains("..") && !l.starts_with('/'))
     {
         let path = dir.join(rel);
+        // the list is only a file in a folder anyone could have prepared: nothing is removed through a link
+        if !safe_target(&dir, &path) {
+            continue;
+        }
         if std::fs::remove_file(&path).is_ok() {
             removed += 1;
         }

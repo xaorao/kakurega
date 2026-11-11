@@ -21971,3 +21971,77 @@ fn sv259_the_desktop_shell_reads_the_same_inbox_with_the_admin_token_and_nobody_
     let v: Value = with.body_mut().read_json().unwrap();
     assert_eq!(v["items"], page["items"]);
 }
+
+#[test]
+fn sv260_the_sample_never_writes_or_removes_through_a_link() {
+    use std::os::unix::fs::symlink;
+    // a prepared folder: the marker lists a file behind a linked folder, and a sample file's place is taken by a link
+    let (_c, w, root) = file_service(
+        "sample-links",
+        FileRunner::new("http://127.0.0.1:11434", 16384),
+    );
+    let outside = root.join("outside");
+    fs::create_dir_all(outside.join("keys")).unwrap();
+    fs::write(outside.join("keys/id_ed25519"), "precious").unwrap();
+    fs::write(outside.join("victim.txt"), "do not overwrite").unwrap();
+    let dir = root.join("kakurega-sample");
+    fs::create_dir_all(dir.join("documents")).unwrap();
+    symlink(outside.join("keys"), dir.join("keys")).unwrap();
+    symlink(
+        outside.join("victim.txt"),
+        dir.join("documents/supply-agreement.md"),
+    )
+    .unwrap();
+    fs::write(
+        dir.join(".kakurega-sample"),
+        "keys/id_ed25519\ndocuments/supply-agreement.md\n../outside/victim.txt\n",
+    )
+    .unwrap();
+
+    // removing: nothing behind a link goes, and the linked file's target stays
+    let (_, r) = w.post("/api/sample/remove", json!({}));
+    assert_eq!(r["removed"], json!(0), "{r}");
+    assert_eq!(
+        fs::read_to_string(outside.join("keys/id_ed25519")).unwrap(),
+        "precious"
+    );
+    assert_eq!(
+        fs::read_to_string(outside.join("victim.txt")).unwrap(),
+        "do not overwrite"
+    );
+
+    // loading into a prepared folder with the marker: the file whose place is a link is not written through it
+    fs::write(dir.join(".kakurega-sample"), "").unwrap();
+    let (s, r) = w.post("/api/sample", json!({}));
+    assert_ne!(s, 200, "{r}");
+    assert_eq!(
+        fs::read_to_string(outside.join("victim.txt")).unwrap(),
+        "do not overwrite"
+    );
+
+    // the sample folder itself being a link is refused outright
+    let (_c2, w2, root2) = file_service(
+        "sample-linked-dir",
+        FileRunner::new("http://127.0.0.1:11434", 16384),
+    );
+    let elsewhere = root2.join("elsewhere");
+    fs::create_dir_all(&elsewhere).unwrap();
+    fs::write(elsewhere.join(".kakurega-sample"), "").unwrap();
+    symlink(&elsewhere, root2.join("kakurega-sample")).unwrap();
+    let (s, r) = w2.post("/api/sample", json!({}));
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (409, Some("SAMPLE_REFUSED")),
+        "{r}"
+    );
+    assert_eq!(
+        fs::read_dir(&elsewhere).unwrap().count(),
+        1,
+        "nothing was written through the link"
+    );
+    assert_eq!(
+        w2.post("/api/sample/remove", json!({})).1["removed"],
+        json!(0)
+    );
+    assert!(elsewhere.join(".kakurega-sample").exists());
+}

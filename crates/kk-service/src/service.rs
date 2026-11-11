@@ -1166,6 +1166,17 @@ impl Service {
                         // a review's use of the model goes into the same usage record as chat, one line per route
                         for u in &r.model_usage {
                             let n = |k: &str| u[k].as_u64().unwrap_or(0);
+                            // a review whose model is not on this computer is something that left it
+                            if u["class"] != "device_only" {
+                                svc.log_event(
+                                    "outbound.review",
+                                    u["class"].as_str().unwrap_or("?"),
+                                    &[
+                                        ("calls", (n("calls") as usize).into()),
+                                        ("tokens", (n("prompt_tokens") as usize).into()),
+                                    ],
+                                );
+                            }
                             svc.record_usage(
                                 u["route"].as_str().unwrap_or("?"),
                                 u["class"].as_str().unwrap_or("?"),
@@ -4041,6 +4052,8 @@ async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
         prepare_history(&svc2, &mut run);
         let mut ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
         // what is shown as "sent" is what was sent: with personal values hidden when the model is elsewhere
+        // the route is held as it is from the hiding to the answer: a switch waits until this question is done
+        let _hold = svc2.route_hold();
         let swap = svc2.hide_messages(&mut ctx.messages);
         ctx.swapped = swap.as_ref().map_or(0, |s| s.total());
         svc2.remember_sent(&ctx.messages, &ctx.excluded_notes);
@@ -4089,6 +4102,7 @@ async fn chat_stream(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Resp
         let mut run = run;
         prepare_history(&svc2, &mut run);
         let mut ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
+        let _hold = svc2.route_hold();
         let swap = svc2.hide_messages(&mut ctx.messages);
         ctx.swapped = swap.as_ref().map_or(0, |s| s.total());
         svc2.remember_sent(&ctx.messages, &ctx.excluded_notes);
@@ -4272,6 +4286,7 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
         let mut run = run;
         prepare_history(&svc2, &mut run);
         let mut ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
+        let hold = svc2.route_hold();
         let swap = svc2.hide_messages(&mut ctx.messages);
         ctx.swapped = swap.as_ref().map_or(0, |s| s.total());
         svc2.remember_sent(&ctx.messages, &ctx.excluded_notes);
@@ -4400,6 +4415,8 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
             ),
         ];
         let names: Vec<&str> = chosen.iter().map(|e| e.name.as_str()).collect();
+        // the lead is asked as a question of its own, which holds the route for itself
+        drop(hold);
         match svc2.ask(lead) {
             Ok(mut r) => {
                 let text = r.text.trim().to_string();

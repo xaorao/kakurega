@@ -24,7 +24,11 @@ pub(super) fn row_of(e: &Value) -> Option<Value> {
         "release.delivery_finished" => {
             ("release", subject.to_string(), json!({"state": d["state"]}))
         }
-        "telegram.sent" => ("telegram", String::new(), json!({})),
+        "outbound.review" => (
+            "review",
+            subject.to_string(),
+            json!({"calls": n("calls"), "tokens": n("tokens")}),
+        ),
         "held.back" => (
             "held",
             subject.to_string(),
@@ -62,7 +66,7 @@ pub(super) async fn list(axum::Extension(svc): Svc) -> Response {
     let rows: Vec<Value> = entries.iter().filter_map(row_of).collect();
     let mut totals = serde_json::Map::new();
     for what in [
-        "model", "search", "pages", "tool", "release", "telegram", "held",
+        "model", "review", "search", "pages", "tool", "release", "held",
     ] {
         totals.insert(
             what.into(),
@@ -74,7 +78,7 @@ pub(super) async fn list(axum::Extension(svc): Svc) -> Response {
         "totals": totals,
         "looked_at": entries.len(),
         "route": svc.route_for_owner(),
-        "note": "Read from the signed log of this program. A question to a model on this computer is not listed: it does not leave. Counts and destinations only; the log holds no words.",
+        "note": "Read from the signed log of this program. A question to a model on this computer is not listed: it does not leave. A roundtable is one entry for all its experts. Messages of the Telegram bridge are not listed here. Counts and destinations only; the log holds no words.",
     }))
     .into_response()
 }
@@ -118,6 +122,16 @@ mod tests {
             .unwrap()["what"],
             json!("release")
         );
+        assert_eq!(
+            row_of(&e(
+                "outbound.review",
+                "verified_tee",
+                json!({"calls": 9, "tokens": 21000})
+            ))
+            .unwrap()["detail"],
+            json!({"calls": 9, "tokens": 21000})
+        );
+        assert!(row_of(&e("telegram.sent", "s", json!({}))).is_none());
         for other in [
             "chat.turn",
             "memory.remembered",

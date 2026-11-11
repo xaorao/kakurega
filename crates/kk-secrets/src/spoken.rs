@@ -24,8 +24,48 @@ const NAMES: &[&str] = &[
     "secret key",
     "private key",
     "auth key",
-    "login",
+    "pwd",
 ];
+/// Names after which a value may follow at once, with no "is" or sign between ("root password hunter2").
+const DIRECT: &[&str] = &["password", "passwd", "passphrase", "pwd"];
+/// The words that may stand between the name and its value. Any other word ends the search: "the token count for gpt-4o"
+/// and "pin the version to node20" are not a name and its value.
+const BETWEEN: &[&str] = &[
+    "is",
+    "was",
+    "are",
+    "be",
+    "it",
+    "it's",
+    "its",
+    "still",
+    "now",
+    "currently",
+    "the",
+    "a",
+    "new",
+    "old",
+    "one",
+    "we",
+    "i",
+    "you",
+    "they",
+    "use",
+    "used",
+    "uses",
+    "gave",
+    "us",
+    "me",
+    "set",
+    "to",
+    "as",
+    "that",
+    "this",
+    "will",
+    "here",
+];
+/// Of those, the ones that say "the value follows".
+const LINKS: &[&str] = &["is", "was", "are", "be", "it's", "to", "as"];
 /// Words for a secret that may be digits alone.
 const CODES: &[&str] = &[
     "pin",
@@ -144,7 +184,9 @@ pub fn find(text: &str) -> Vec<(usize, usize)> {
         if line.contains("-----END") {
             public_block = false;
         }
-        let lower = line.to_lowercase();
+        // only the Latin letters are folded: the names looked for are plain Latin, and this keeps every byte of the line
+        // where it was, whatever other script stands next to it
+        let lower = line.to_ascii_lowercase();
         // tokens with their place in the line
         let tokens: Vec<(usize, &str)> = line
             .split_whitespace()
@@ -170,9 +212,11 @@ pub fn find(text: &str) -> Vec<(usize, usize)> {
                     // "passwords", "tokens", "PINs" are still the word
                     let after = lower[e..].trim_start_matches('s');
                     let after_ok = after.chars().next().is_none_or(|c| !c.is_alphanumeric());
-                    if !before_ok || !after_ok || lower.len() != line.len() {
+                    if !before_ok || !after_ok {
                         continue;
                     }
+                    // a sign right after the name, or a linking word on the way, says a value follows
+                    let mut linked = after.starts_with(['=', ':']);
                     for (at, raw) in tokens
                         .iter()
                         .filter(|(at, raw)| at + raw.len() > e)
@@ -180,23 +224,52 @@ pub fn find(text: &str) -> Vec<(usize, usize)> {
                     {
                         // a value glued to its name (passwd=abc123): only what follows the name is looked at
                         let (at, raw) = if *at < e {
-                            (&e, &raw[e - at..])
+                            (e, &raw[e - at..])
                         } else {
-                            (at, *raw)
+                            (*at, *raw)
                         };
-                        let t = trim_token(raw);
-                        // the value may be glued to a sign: password=abc123, pin:4821
-                        let t = t.rsplit(['=', ':']).next().unwrap_or(t);
-                        let hit = password_like(t) || (digits_ok && code_like(t));
-                        if hit
-                            && !names
-                                .iter()
-                                .chain(NAMES)
-                                .chain(CODES)
-                                .any(|w| t.eq_ignore_ascii_case(w))
+                        let cleaned = trim_token(raw);
+                        // what is left of the name's own token ("s:", "=", "?") carries no value
+                        let t = cleaned
+                            .trim_start_matches(['s', 'S'])
+                            .trim_start_matches(['=', ':', '?']);
+                        let t = if cleaned.len() == raw.len() && at == e {
+                            t
+                        } else {
+                            cleaned.trim_start_matches(['=', ':'])
+                        };
+                        // a label glued in front of the value (pin:4821) is dropped; a value that itself holds a sign
+                        // (Ab9Zq7Lm:Harbor99) is kept whole
+                        let t = match t.split_once(['=', ':']) {
+                            Some((label, rest))
+                                if !rest.is_empty()
+                                    && !label.is_empty()
+                                    && label.chars().all(char::is_alphabetic) =>
+                            {
+                                linked = true;
+                                rest
+                            }
+                            _ => t,
+                        };
+                        if t.is_empty() {
+                            continue;
+                        }
+                        let word = t.to_lowercase();
+                        let direct = DIRECT.contains(name);
+                        let is_value = if digits_ok {
+                            code_like(t) || (linked && password_like(t))
+                        } else {
+                            password_like(t) && (linked || direct)
+                        };
+                        if is_value && !NAMES.iter().chain(CODES).any(|w| t.eq_ignore_ascii_case(w))
                         {
                             let s = line_start + at + raw.rfind(t).unwrap_or(0);
                             out.push((s, s + t.len()));
+                            break;
+                        }
+                        if LINKS.contains(&word.as_str()) || raw.ends_with([':', '=']) {
+                            linked = true;
+                        } else if !BETWEEN.contains(&word.as_str()) {
                             break;
                         }
                     }
@@ -239,7 +312,10 @@ mod tests {
             ("Password: correct-horse&481", "correct-horse&481"),
             ("admin passwd=Blue42Harbor", "Blue42Harbor"),
             ("The wifi passphrase was \"winter&229\".", "winter&229"),
-            ("our login for the portal is ops / Summer2026!", "Summer2026"),
+            ("root password hunter2 for the old box", "hunter2"),
+            ("pwd: Xy7$kq9", "Xy7$kq9"),
+            ("password: Ab9Zq7Lm:Harbor99", "Ab9Zq7Lm:Harbor99"),
+            ("the passcode is Tr0ub4x", "Tr0ub4x"),
             ("For the record, the credential we use is aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY and it must not be shared.", "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY"),
             ("The door code is 482913.", "482913"),
             ("PIN 4821", "4821"),
@@ -300,6 +376,15 @@ mod tests {
             "Pinned the dependency to 16gb machines.",
             "The opinion of the team is that spinning up 12345 servers is too much.",
             "Passwords go in column x9 of the sheet.",
+            "The token count for gpt-4o is high.",
+            "Let's pin python3.11 in CI.",
+            "pin the version to node20",
+            "Enter the PIN at checkout, order 2026-1134",
+            "The OTP expired at 14:30, ticket INC0012345",
+            "The secret roadmap is in deck v3final",
+            "Token sale details are in doc NEAR-2024-Q3",
+            "credentials rotated by ops team in us-east-1",
+            "Our login for the portal moved to sso2 last week.",
             "Enter access code 12 on floor 3.",
             "The detokenizer is gpt2bpe9 and the subsecretary is b4dger7.",
         ] {
@@ -320,5 +405,26 @@ mod tests {
         // other scripts around it do not move the place
         let hindi = "पासवर्ड यह है: password is नमस्ते42x";
         assert_eq!(values(hindi), vec!["नमस्ते42x"]);
+    }
+
+    #[test]
+    fn sp05_letters_whose_lower_case_has_another_length_neither_break_the_reader_nor_blind_it() {
+        // these once made the reader cut through a character, and once made it skip the whole line
+        for odd in [
+            "İ password€abc123 İ\u{212A}",
+            "İİİ pin:4821İ",
+            "ǅ passwd=ǅabc12345",
+            "\u{212A}\u{212A} secret=\u{212A}x9y8z7",
+        ] {
+            let spans = find(odd);
+            for (s, e) in spans {
+                assert!(odd.is_char_boundary(s) && odd.is_char_boundary(e), "{odd}");
+            }
+        }
+        assert_eq!(values("İpek: the door code is 482913"), vec!["482913"]);
+        assert_eq!(
+            values("İpek said the password is Blue42Harbor"),
+            vec!["Blue42Harbor"]
+        );
     }
 }

@@ -1,7 +1,9 @@
 //! Hiding personal values from a model that is not on this computer: the names the owner listed and the values the
 //! personal-data detector finds are swapped for placeholders in everything sent, and swapped back in what comes back.
-//! Every question to the answering model goes through `ask`, `ask_stream` or `ask_summary`, or through `hide_messages`
-//! where the exact text sent is also shown to the owner.
+//! Every question the service itself puts to the answering model (chat, roundtable, team runs, document questions,
+//! meeting notes, summaries) goes through `ask`, `ask_stream` or `ask_summary`, or through `hide_messages` where the
+//! exact text sent is also shown to the owner. A review is not such a question: its agent runs in the sandbox and talks
+//! to the review route through the broker, with the files withheld there and no names swapped.
 
 use super::*;
 use kk_secrets::swap::Swap;
@@ -15,7 +17,15 @@ pub(super) struct NamesBody {
     remove: Option<String>,
 }
 
+/// Held for reading by every question from its hiding to its answer, and for writing while the route is switched: a
+/// question is never hidden for one route and then answered by another.
+static ROUTE_GATE: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
 impl Service {
+    pub(super) fn route_hold(&self) -> std::sync::RwLockReadGuard<'static, ()> {
+        ROUTE_GATE.read().unwrap_or_else(|e| e.into_inner())
+    }
+
     pub(super) fn hidden_names(&self) -> Vec<(String, i64)> {
         let store = self.store.lock().expect("lock");
         let c = store.connection();
@@ -84,6 +94,7 @@ impl Service {
         &self,
         mut messages: Vec<kk_types::chat::ChatMessage>,
     ) -> Result<(ChatReply, usize), String> {
+        let _hold = self.route_hold();
         let swap = self.hide_messages(&mut messages);
         let mut reply = self.runner.chat(messages)?;
         let mut swapped = 0;
@@ -101,6 +112,7 @@ impl Service {
         mut messages: Vec<kk_types::chat::ChatMessage>,
         on_chunk: &mut dyn FnMut(&str) -> bool,
     ) -> Result<StreamedReply, String> {
+        let _hold = self.route_hold();
         let swap = self.hide_messages(&mut messages);
         let mut out = match &swap {
             Some(s) => self
@@ -119,6 +131,7 @@ impl Service {
         &self,
         mut messages: Vec<kk_types::chat::ChatMessage>,
     ) -> Result<String, String> {
+        let _hold = self.route_hold();
         let swap = self.hide_messages(&mut messages);
         let text = self.runner.summarize(messages)?;
         Ok(match &swap {
@@ -238,7 +251,12 @@ pub(super) async fn route_choose(axum::Extension(svc): Svc, Json(b): Json<RouteB
     let choice =
         json!({"route": b.route, "model": b.model, "key": b.key, "forget_key": b.forget_key});
     let svc2 = svc.clone();
-    let out = tokio::task::spawn_blocking(move || svc2.runner.choose_route(&choice)).await;
+    let out = tokio::task::spawn_blocking(move || {
+        // waits for the questions in progress, and keeps new ones waiting until the switch is done
+        let _switching = ROUTE_GATE.write().unwrap_or_else(|e| e.into_inner());
+        svc2.runner.choose_route(&choice)
+    })
+    .await;
     match out {
         Ok(Ok(mut v)) => {
             svc.log_event(
