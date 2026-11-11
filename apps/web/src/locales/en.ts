@@ -458,6 +458,7 @@ export const en = {
   "rt.resolutionNote": "The lead read the experts' answers as opinions to weigh. It is the same model, so treat the decision as advice, not as a check.",
   "rt.unstructured": "The lead did not use the four parts, so its text is shown as written.",
   "rt.partEmpty": "The lead wrote nothing here.",
+  "rt.yours": "Your approved methods",
   "rt.decision": "Decision",
   "rt.agreed": "Agreed",
   "rt.disputed": "Disputed",

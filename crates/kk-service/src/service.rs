@@ -4004,7 +4004,7 @@ async fn chat_stream(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Resp
 #[serde(deny_unknown_fields)]
 struct RoundtableBody {
     message: String,
-    /// The built-in experts to ask, 2 to 5, each once.
+    /// Who to ask, 2 to 5, each once: a built-in expert's id, or `method:NAME` for one of the owner's approved methods.
     experts: Vec<String>,
     #[serde(default)]
     sources: Vec<String>,
@@ -4016,11 +4016,17 @@ struct RoundtableBody {
     project: Option<String>,
 }
 
-/// The experts a roundtable can ask.
-async fn experts_list() -> Json<Value> {
-    use crate::experts::{EXPERTS, MAX_PARTICIPANTS, MIN_PARTICIPANTS};
+/// Who a roundtable can ask: the built-in experts, and the owner's own approved methods, which can be asked as experts.
+async fn experts_list(axum::Extension(svc): Svc) -> Json<Value> {
+    use crate::experts::{EXPERTS, MAX_PARTICIPANTS, METHOD_PREFIX, MIN_PARTICIPANTS};
+    let yours: Vec<Value> = svc
+        .methods_active()
+        .iter()
+        .map(|a| json!({"id": format!("{METHOD_PREFIX}{}", a.method.name), "name": a.method.name, "summary": a.method.description}))
+        .collect();
     Json(json!({
         "experts": EXPERTS.iter().map(|e| json!({"id": e.id, "name": e.name, "group": e.group, "summary": e.summary})).collect::<Vec<_>>(),
+        "yours": yours,
         "min": MIN_PARTICIPANTS, "max": MAX_PARTICIPANTS,
     }))
 }
@@ -4032,9 +4038,31 @@ async fn experts_list() -> Json<Value> {
 /// instruction; none sees another's answer. If the client goes away, the running answer is stopped and no further model is asked.
 async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody>) -> Response {
     use crate::experts::{self, MAX_PARTICIPANTS, MIN_PARTICIPANTS};
-    let mut chosen: Vec<&'static experts::Expert> = Vec::new();
+    let mut chosen: Vec<experts::Seat> = Vec::new();
+    // an approved method sits as an expert with its own approved text, framed as every method is; one that is not approved
+    // for exactly its current content is not there to be asked
+    let methods = if b
+        .experts
+        .iter()
+        .any(|id| id.starts_with(experts::METHOD_PREFIX))
+    {
+        svc.methods_active()
+    } else {
+        Vec::new()
+    };
     for id in &b.experts {
-        match experts::find(id) {
+        let seat = match id.strip_prefix(experts::METHOD_PREFIX) {
+            Some(name) => methods
+                .iter()
+                .find(|a| a.method.name == name)
+                .map(|a| experts::Seat {
+                    id: id.clone(),
+                    name: a.method.name.clone(),
+                    instruction: kk_methods::render(std::slice::from_ref(a)),
+                }),
+            None => experts::find(id).map(experts::Seat::from),
+        };
+        match seat {
             Some(e) if !chosen.iter().any(|c| c.id == e.id) => chosen.push(e),
             Some(_) => {
                 return error(
@@ -4095,8 +4123,8 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
         }
         let window = svc2.runner.route_info()["context_tokens"].as_u64();
         let cap = experts::answer_cap(window, chosen.len());
-        let mut answers: Vec<(&'static experts::Expert, String)> = Vec::new();
-        let mut missing: Vec<&'static experts::Expert> = Vec::new();
+        let mut answers: Vec<(experts::Seat, String)> = Vec::new();
+        let mut missing: Vec<experts::Seat> = Vec::new();
         let mut gone = false;
         for e in &chosen {
             if tx
@@ -4113,7 +4141,7 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
             let at = usize::from(messages.first().is_some_and(|m| m.role == "system"));
             messages.insert(
                 at,
-                kk_types::chat::ChatMessage::new("system", e.instruction),
+                kk_types::chat::ChatMessage::new("system", &e.instruction),
             );
             let started = std::time::Instant::now();
             let estimated = kk_route::tokens::estimate_messages(&messages);
@@ -4145,18 +4173,18 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
                     );
                     let text = s.reply.text.trim().to_string();
                     if text.is_empty() {
-                        missing.push(e);
+                        missing.push(e.clone());
                         let _ = tx.send(line(
                             json!({"expert": e.id, "failed": "the model gave no answer"}),
                         ));
                     } else {
                         let (kept, truncated) = experts::fit(&text, cap);
                         let _ = tx.send(line(json!({"expert": e.id, "answer": text, "truncated_for_lead": truncated})));
-                        answers.push((e, kept));
+                        answers.push((e.clone(), kept));
                     }
                 }
                 Err(m) => {
-                    missing.push(e);
+                    missing.push(e.clone());
                     let _ = tx.send(line(json!({"expert": e.id, "failed": m})));
                 }
             }
@@ -4185,8 +4213,11 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
             ));
             return;
         }
-        let pairs: Vec<(&str, &str)> = answers.iter().map(|(e, a)| (e.name, a.as_str())).collect();
-        let absent: Vec<&str> = missing.iter().map(|e| e.name).collect();
+        let pairs: Vec<(&str, &str)> = answers
+            .iter()
+            .map(|(e, a)| (e.name.as_str(), a.as_str()))
+            .collect();
+        let absent: Vec<&str> = missing.iter().map(|e| e.name.as_str()).collect();
         let lead = vec![
             kk_types::chat::ChatMessage::new("system", experts::LEAD_INSTRUCTION),
             kk_types::chat::ChatMessage::new(
@@ -4194,7 +4225,7 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
                 &experts::lead_question(&run.body.message, &pairs, &absent),
             ),
         ];
-        let names: Vec<&str> = chosen.iter().map(|e| e.name).collect();
+        let names: Vec<&str> = chosen.iter().map(|e| e.name.as_str()).collect();
         match svc2.runner.chat(lead) {
             Ok(mut r) => {
                 let text = r.text.trim().to_string();
@@ -4208,8 +4239,8 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
                         "open_questions": parts.as_ref().map(|p| p.open_questions.clone()),
                         "text": text,
                     },
-                    "answered": answers.iter().map(|(e, _)| e.id).collect::<Vec<_>>(),
-                    "missing": missing.iter().map(|e| e.id).collect::<Vec<_>>(),
+                    "answered": answers.iter().map(|(e, _)| e.id.as_str()).collect::<Vec<_>>(),
+                    "missing": missing.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
                 })));
                 // what a kept conversation remembers of a roundtable: who was asked and the resolution
                 r.text = format!("Roundtable ({}).\n\n{text}", names.join(", "));
@@ -4222,8 +4253,8 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
             Err(m) => {
                 // the experts' answers stand on their own; only the resolution is missing
                 let _ = tx.send(line(json!({"resolution": null, "reason": format!("the lead could not be asked: {m}"),
-                    "answered": answers.iter().map(|(e, _)| e.id).collect::<Vec<_>>(),
-                    "missing": missing.iter().map(|e| e.id).collect::<Vec<_>>()})));
+                    "answered": answers.iter().map(|(e, _)| e.id.as_str()).collect::<Vec<_>>(),
+                    "missing": missing.iter().map(|e| e.id.as_str()).collect::<Vec<_>>()})));
                 let _ = tx.send(line(json!({"done": true, "unresolved": true})));
             }
         }

@@ -18,7 +18,9 @@ function remembered(): string[] {
 
 /** One question to several experts, each answering alone, then a lead's resolution in four parts. */
 export function Roundtable() {
-  const [roster] = createResource(() => api.experts().catch(() => ({ experts: [] as ExpertInfo[], min: 2, max: 5 })));
+  const [roster] = createResource(() => api.experts().catch(() => ({ experts: [] as ExpertInfo[], yours: [], min: 2, max: 5 })));
+  // the built-in experts, then the owner's own approved methods, which can be asked as experts
+  const everyone = createMemo<ExpertInfo[]>(() => [...(roster()?.experts ?? []), ...(roster()?.yours ?? []).map((y) => ({ ...y, group: t("rt.yours") }))]);
   const [picked, setPicked] = createSignal<string[]>(remembered());
   const [question, setQuestion] = createSignal("");
   const [seats, setSeats] = createSignal<Seat[]>([]);
@@ -32,7 +34,7 @@ export function Roundtable() {
 
   const groups = createMemo(() => {
     const out: { group: string; experts: ExpertInfo[] }[] = [];
-    for (const e of roster()?.experts ?? []) {
+    for (const e of everyone()) {
       const g = out.find((x) => x.group === e.group);
       if (g) g.experts.push(e);
       else out.push({ group: e.group, experts: [e] });
@@ -42,7 +44,7 @@ export function Roundtable() {
   const min = () => roster()?.min ?? 2;
   const max = () => roster()?.max ?? 5;
   // a remembered choice that this build no longer offers is dropped, not sent
-  const chosen = createMemo(() => picked().filter((id) => (roster()?.experts ?? []).some((e) => e.id === id)));
+  const chosen = createMemo(() => picked().filter((id) => everyone().some((e) => e.id === id)));
   const ready = () => chosen().length >= min() && chosen().length <= max() && question().trim().length > 0 && !busy();
 
   const toggle = (id: string) => {
@@ -64,7 +66,7 @@ export function Roundtable() {
     setStopped(false);
     setResolution(null);
     setNoResolution("");
-    const names = new Map((roster()?.experts ?? []).map((x) => [x.id, x.name]));
+    const names = new Map(everyone().map((x) => [x.id, x.name]));
     setSeats(chosen().map((id) => ({ id, name: names.get(id) ?? id, state: "waiting", text: "", why: "", cut: false })));
     setBusy(true);
     stop = new AbortController();

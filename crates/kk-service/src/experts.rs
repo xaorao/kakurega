@@ -108,6 +108,27 @@ pub const EXPERTS: &[Expert] = &[
     },
 ];
 
+/// Who sits at one roundtable: a built-in expert, or one of the owner's approved methods asked as an expert.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Seat {
+    pub id: String,
+    pub name: String,
+    pub instruction: String,
+}
+
+impl From<&Expert> for Seat {
+    fn from(e: &Expert) -> Seat {
+        Seat {
+            id: e.id.to_string(),
+            name: e.name.to_string(),
+            instruction: e.instruction.to_string(),
+        }
+    }
+}
+
+/// An id that names one of the owner's approved methods instead of a built-in expert starts with this.
+pub const METHOD_PREFIX: &str = "method:";
+
 pub fn find(id: &str) -> Option<&'static Expert> {
     EXPERTS.iter().find(|e| e.id == id)
 }

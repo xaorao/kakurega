@@ -76,6 +76,28 @@ const fresh = await (await browser.newContext()).newPage();
 const anon = await fresh.request.post(origin + "/api/chat/roundtable", { data: { message: "q", experts: ["security-reviewer", "data-analyst"] }, headers: { Origin: origin } });
 check(anon.status() === 401, `a browser that is not paired cannot ask (status ${anon.status()})`);
 
+// ---- one of the owner's own approved methods sits as an expert ----
+const approved = await page.evaluate(async () => {
+  const csrf = (await (await fetch("/api/session", { credentials: "same-origin" })).json()).csrf;
+  const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "x-kk-csrf": csrf }, credentials: "same-origin", body: JSON.stringify(body) }).then((r) => r.json());
+  const saved = await post("/api/methods", { name: "house-counsel", description: "Our own cautious reading", triggers: ["contract"], avoid: [], body: "Answer as our house counsel would: cautious and specific." });
+  await post("/api/methods/approve", { name: "house-counsel", hash: saved.hash });
+  return saved.hash;
+});
+await page.reload();
+await page.getByLabel("house-counsel").waitFor();
+check(typeof approved === "string" && /Your approved methods/.test(await page.locator(".rt-experts").innerText()), "an approved method is offered under its own heading");
+await page.getByLabel("Software architect").uncheck();
+await page.getByLabel("Sceptical tester").uncheck();
+await page.getByLabel("house-counsel").check();
+await page.getByLabel("Your question").fill("Should we sign the supplier contract?");
+await page.getByRole("button", { name: "Ask the roundtable" }).click();
+await page.getByRole("heading", { name: "Resolution" }).waitFor({ timeout: 600000 });
+check((await page.locator("main ul.plain > li.card").filter({ hasText: "house-counsel" }).getByText("Answered", { exact: true }).count()) === 1, "and it answers at the table like any expert");
+await page.getByLabel("house-counsel").uncheck();
+await page.getByLabel("Software architect").check();
+await page.getByLabel("Sceptical tester").check();
+
 // ---- the four-part resolution, a missing expert, and a long answer, from recorded stream lines ----
 const lines = (list) => list.map((v) => JSON.stringify(v)).join("\n") + "\n";
 let script = lines([
