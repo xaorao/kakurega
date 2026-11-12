@@ -291,10 +291,10 @@ fn card_lines(c: &Card, width: usize, th: &Theme) -> Vec<Line<'static>> {
         out.push(Line::from(vec![
             Span::styled("  ".to_string(), style),
             Span::styled(
-                format!(
+                crate::app::counted(&format!(
                     "… {} more line(s). Ctrl-O shows everything and folds it again.",
                     c.lines.len() - shown
-                ),
+                )),
                 th.dim(),
             ),
         ]));
@@ -364,7 +364,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
     let (visible, back) = window_lines(&app.cards, width, th, h, app.scroll_back);
     f.render_widget(Paragraph::new(visible), rows[1]);
     if back > 0 {
-        let note = format!(" {back} more line(s) below · PageDown ");
+        let note = crate::app::counted(&format!(" {back} more line(s) below · PageDown "));
         let w = note.chars().count() as u16;
         let r = Rect {
             x: rows[1].x + rows[1].width.saturating_sub(w),

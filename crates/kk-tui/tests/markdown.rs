@@ -60,7 +60,7 @@ fn md01_the_terminal_reader_makes_the_same_tree_as_the_web_reader_for_every_shar
     }
     assert!(
         different.is_empty(),
-        "{} case(s) differ:\n{}",
+        "{} cases differ:\n{}",
         different.len(),
         different.join("\n")
     );

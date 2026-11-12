@@ -63,7 +63,7 @@ try:
     check("the answer names the fruits of lines 3 and 4", "mango" in tail.lower() and "plum" in tail.lower(), tail[-500:])
     check("and none of the other lines reached it", not any(w in tail.lower() for w in ["apple", "cherry", "grape", "lemon"]), tail[-500:])
     send("what about @fruit.txt#40\r")
-    check("a line past the end is refused with the file's real length", wait_for(r"the file has 8 line\(s\)", 30) is not None, screen.text()[-500:])
+    check("a line past the end is refused with the file's real length", wait_for(r"the file has 8 lines", 30) is not None, screen.text()[-500:])
     send("\x03")
     pump(1)
 finally:

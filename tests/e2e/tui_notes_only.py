@@ -69,7 +69,7 @@ try:
     while time.time() < end and not re.search(r"1 note\(s\) used", after_question()):
         pump(0.5)
     tail = after_question()
-    check("with a saved note the model answers from it, shown as an answer with 1 note used", bool(re.search(r"banker", tail)) and "1 note(s) used" in tail and "no model was asked" not in tail, tail[-500:])
+    check("with a saved note the model answers from it, shown as an answer with 1 note used", bool(re.search(r"banker", tail)) and "1 note used" in tail and "no model was asked" not in tail, tail[-500:])
     send("/notesonly off\r")
     check("and it turns off", wait_for(r"Off for kestrel", 20) is not None)
     send("/quit\r")

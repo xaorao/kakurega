@@ -76,7 +76,7 @@ try:
     while time.time() < end and not re.search(r"1 attached file\(s\) read", screen.text()):
         pump(0.5)
     tail = screen.text()
-    check("the answer says one attached file was read", "1 attached file(s) read" in tail, tail[-500:])
+    check("the answer says one attached file was read", "1 attached file read" in tail, tail[-500:])
     check("and the answer is from the file (net 45)", "45" in tail.split("what are the payment terms")[-1], tail[-500:])
     send("tell me about @.env now\r")
     check("a secret-named file is refused, and the screen says why", wait_for(r"Could not attach @\.env.*kept out of conversations", 30) is not None or wait_for(r"kept out of conversations", 10) is not None, screen.text()[-600:])

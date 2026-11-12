@@ -463,6 +463,51 @@ pub fn percent_encode(s: &str) -> String {
     out
 }
 
+/// "1 file(s)" becomes "1 file", "3 file(s)" becomes "3 files", and "1 note(s) were" becomes "1 note was". The count is
+/// the nearest number within the three words before the counted word; with no number in reach the word is made plural.
+pub fn counted(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(at) = rest.find("(s)") {
+        let before = &rest[..at];
+        let one = before
+            .split_whitespace()
+            .rev()
+            .take(4)
+            .find_map(|w| {
+                let digits: String = w
+                    .chars()
+                    .filter(|c| c.is_ascii_digit() || *c == ',')
+                    .collect();
+                let plain = w.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+                (!digits.is_empty() && plain.chars().all(|c| c.is_ascii_digit() || c == ','))
+                    .then(|| digits == "1")
+            })
+            .unwrap_or(false);
+        out.push_str(before);
+        if !one {
+            out.push('s');
+        }
+        let mut after = &rest[at + 3..];
+        if one {
+            for (many, single) in [
+                (" were ", " was "),
+                (" are ", " is "),
+                (" hold ", " holds "),
+            ] {
+                if let Some(tail) = after.strip_prefix(many) {
+                    out.push_str(single);
+                    after = tail;
+                    break;
+                }
+            }
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
 pub fn clean(s: &str) -> String {
     s.chars()
         .map(|c| match c {
@@ -600,10 +645,18 @@ impl App {
     }
 
     fn push(&mut self, kind: Kind, title: Option<&str>, mut lines: Vec<String>) {
+        // counted words are written "file(s)" where they are made; here, in one place, they get their real form
+        for l in lines.iter_mut() {
+            if l.contains("(s)") {
+                *l = counted(l);
+            }
+        }
         if lines.len() > MAX_CARD_LINES {
             let cut = lines.len() - MAX_CARD_LINES;
             lines.truncate(MAX_CARD_LINES);
-            lines.push(format!("… {cut} more line(s) were not kept on the screen."));
+            lines.push(counted(&format!(
+                "… {cut} more line(s) were not kept on the screen."
+            )));
         }
         self.cards.push(Card {
             kind,
@@ -643,7 +696,7 @@ impl App {
         let marker = Card {
             kind: Kind::Info,
             title: None,
-            lines: vec![format!("{MARK} ({gone} card(s)). The conversation itself is unchanged; /export writes all of it.")],
+            lines: vec![counted(&format!("{MARK} ({gone} card(s)). The conversation itself is unchanged; /export writes all of it."))],
         };
         if had_marker {
             self.cards[0] = marker;
@@ -850,7 +903,7 @@ impl App {
                         ""
                     }
                 ),
-                detail: format!("keeps {} message(s)", i + 1),
+                detail: counted(&format!("keeps {} message(s)", i + 1)),
                 when: i as i64,
                 kind: crate::picker::ItemKind::BranchPoint,
                 project: None,
@@ -1424,7 +1477,7 @@ impl App {
             None => "checking",
         };
         let running = self.watching.len();
-        format!(
+        counted(&format!(
             "{} · {} · {} review(s){}{}{}",
             if self.route.is_empty() {
                 "connecting".to_string()
@@ -1446,7 +1499,7 @@ impl App {
                 Some(m) => format!(" · {m}"),
                 None => String::new(),
             }
-        )
+        ))
     }
 
     pub fn handle(&mut self, ev: Event) -> Vec<Req> {

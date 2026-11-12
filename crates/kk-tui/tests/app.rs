@@ -205,8 +205,8 @@ fn tu04_plain_text_is_a_chat_message_sent_with_bounded_history_and_never_as_a_co
     assert!(
         t.contains("Assistant")
             && t.contains("Here is a summary.")
-            && t.contains("2 note(s) used")
-            && t.contains("1 note(s) were not given to the model"),
+            && t.contains("2 notes used")
+            && t.contains("1 note was not given to the model"),
         "{t}"
     );
     assert!(!t.contains('\u{1b}'));
@@ -622,7 +622,7 @@ fn tu14_scrolling_follows_new_output_unless_the_user_scrolled_back() {
     let (rows, _) = render(&app, 60, 14, true);
     let all = rows.join("\n");
     assert!(
-        !all.contains("line number 59") && all.contains("more line(s) below"),
+        !all.contains("line number 59") && all.contains("more lines below"),
         "{all}"
     );
     app.handle(key(KeyCode::PageDown));
@@ -1101,7 +1101,7 @@ fn tu24_a_streamed_answer_grows_in_one_card_is_replaced_by_the_final_text_and_ca
         before + 2,
         "the answer is still one card, and what it used follows as one plain card"
     );
-    assert!(text(&a).contains("test model · 1 note(s) used"));
+    assert!(text(&a).contains("test model · 1 note used"));
     assert_eq!(
         a.chat_history.last().unwrap(),
         &(
@@ -1305,7 +1305,7 @@ fn tu28_messages_typed_while_an_answer_streams_are_queued_in_order_and_dropped_i
     a.handle(key(KeyCode::Esc));
     let after = a.handle(ok(&next[0], 200, json!({"stopped": true})));
     assert!(after.is_empty() && a.queued.is_empty());
-    assert!(text(&a).contains("1 queued message(s) were not sent"));
+    assert!(text(&a).contains("1 queued message was not sent"));
     // the queue is bounded
     let mut b = booted();
     enter(&mut b, "first");
@@ -1548,7 +1548,7 @@ fn tu34_the_footer_shows_the_context_estimate_and_older_turns_left_out() {
     let t = text(&a);
     assert!(
         t.contains("about 1240 tokens of context sent")
-            && t.contains("6 older message(s) were not sent"),
+            && t.contains("6 older messages were not sent"),
         "{t}"
     );
     let r = enter(&mut a, "again");
@@ -1877,7 +1877,7 @@ fn tu54_the_project_travels_with_every_message_and_a_kept_conversation_remembers
         json!({"reply": "hi", "route": {"simulated": false}, "notes_used": 1, "project": "papermark"}),
     ));
     assert!(
-        text(&a).contains("1 note(s) used · project papermark"),
+        text(&a).contains("1 note used · project papermark"),
         "the reply line says which project it used: {}",
         text(&a)
     );
@@ -2191,7 +2191,7 @@ fn tu44_a_chat_answer_lists_the_notes_that_shaped_it() {
     let r = enter(&mut a, "what is the staging port?");
     a.handle(ok(&r[0], 200, json!({"done": true, "reply": "8081", "route": {"simulated": true}, "notes_used": 1, "notes": [{"id": "m1", "text": "The staging server listens on port 8081", "why": "you asked to remember it; matched by keywords", "untrusted": false, "project": null}]})));
     let t = text(&a);
-    assert!(t.contains("1 note(s) used") && t.contains("note: The staging server listens on port 8081 (you asked to remember it; matched by keywords)"), "{t}");
+    assert!(t.contains("1 note used") && t.contains("note: The staging server listens on port 8081 (you asked to remember it; matched by keywords)"), "{t}");
     let r = enter(&mut a, "again");
     a.handle(ok(&r[0], 200, json!({"done": true, "reply": "ok", "route": {"simulated": true}, "notes_used": 1, "notes": [{"id": "m2", "text": "x\u{1b}[31mred", "why": "w\u{7}", "untrusted": true}]})));
     assert!(!text(&a).contains('\u{1b}') && !text(&a).contains('\u{7}'));
@@ -2253,13 +2253,13 @@ fn tu47_the_footer_says_how_many_web_pages_were_used_cut_short_or_left_out() {
     let r = enter(&mut a, "what does the report say");
     a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": true}, "notes_used": 0, "web_sources_used": 2, "web_sources_trimmed": 1, "web_sources_left_out": 3})));
     let t = text(&a);
-    assert!(t.contains("2 web page(s) used"), "{t}");
+    assert!(t.contains("2 web pages used"), "{t}");
     assert!(
-        t.contains("1 page(s) cut short to fit the model's window"),
+        t.contains("1 page cut short to fit the model's window"),
         "{t}"
     );
     assert!(
-        t.contains("3 page(s) left out: no room in the model's window"),
+        t.contains("3 pages left out: no room in the model's window"),
         "{t}"
     );
     let r = enter(&mut a, "again");
@@ -2277,14 +2277,14 @@ fn tu48_the_footer_says_how_many_matching_notes_were_left_out() {
     let r = enter(&mut a, "what do my notes say");
     a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": true}, "notes_used": 2, "notes_left_out": 3})));
     assert!(
-        text(&a).contains("3 matching note(s) left out: no room in the model's window"),
+        text(&a).contains("3 matching notes left out: no room in the model's window"),
         "{}",
         text(&a)
     );
     let r = enter(&mut a, "again");
     a.handle(ok(&r[0], 200, json!({"done": true, "reply": "hi", "route": {"simulated": true}, "notes_used": 1, "notes_left_out": 0})));
     assert_eq!(
-        text(&a).matches("matching note(s) left out").count(),
+        text(&a).matches("matching notes left out").count(),
         1,
         "nothing is said when none were left out"
     );
@@ -3246,7 +3246,7 @@ fn tu49_branch_copies_a_kept_conversation_at_a_chosen_message_and_opens_the_copy
     let r = enter(&mut a, "/branch 1");
     assert_eq!(r[0].body, Some(json!({"at": 1})));
     assert!(
-        enter(&mut a, "/branch 9").is_empty() && text(&a).contains("has 2 message(s)"),
+        enter(&mut a, "/branch 9").is_empty() && text(&a).contains("has 2 messages"),
         "{}",
         text(&a)
     );
@@ -3911,7 +3911,7 @@ fn tu62_pii_lists_adds_and_removes_through_the_service_and_reports_what_happened
         200,
         json!({"entries": [{"entry": "a@b.com\u{1b}[2J", "added_at": 1}]}),
     ));
-    assert!(!text(&app).contains('\u{1b}') && text(&app).contains("1 value(s)"));
+    assert!(!text(&app).contains('\u{1b}') && text(&app).contains("1 value"));
     for bad in ["/pii add", "/pii remove", "/pii wipe x", "/pii add"] {
         assert!(enter(&mut app, bad).is_empty(), "{bad}");
         assert!(text(&app).contains("usage: /pii"));
@@ -3938,7 +3938,7 @@ fn tu63_findings_show_pattern_matches_as_a_second_opinion_and_say_when_the_rules
     );
     assert!(all.contains("line 9: eval or exec"), "{all}");
     assert!(!all.contains('\u{1b}'));
-    assert!(all.contains("Pattern rules ran over 12 files and matched 2 place(s)"));
+    assert!(all.contains("Pattern rules ran over 12 files and matched 2 places"));
     let mut b = booted();
     b.jobs.push(kk_tui::app::JobRow {
         id: "job-4".into(),
@@ -4233,7 +4233,7 @@ fn tu68_a_long_result_is_folded_to_its_first_lines_and_ctrl_o_shows_all_and_fold
     assert!(
         screen.contains("finding line 10")
             && !screen.contains("finding line 11\n")
-            && screen.contains("… 30 more line(s). Ctrl-O shows everything"),
+            && screen.contains("… 30 more lines. Ctrl-O shows everything"),
         "{screen}"
     );
     assert!(
@@ -4241,19 +4241,19 @@ fn tu68_a_long_result_is_folded_to_its_first_lines_and_ctrl_o_shows_all_and_fold
         "the assistant's answer is never folded, the findings card is"
     );
     assert!(
-        screen.contains("short line 24") && !screen.contains("more line(s)\n  short"),
+        screen.contains("short line 24") && !screen.contains("more lines\n  short"),
         "24 lines is not over the limit"
     );
     app.handle(ctrl('o'));
     assert!(app.expand_all);
     let screen = all(&app);
     assert!(
-        screen.matches("finding line 40").count() == 2 && !screen.contains("more line(s)"),
+        screen.matches("finding line 40").count() == 2 && !screen.contains("more lines"),
         "everything is shown"
     );
     app.handle(ctrl('o'));
     assert!(!app.expand_all);
-    assert!(all(&app).contains("… 30 more line(s)"));
+    assert!(all(&app).contains("… 30 more lines"));
     // the key is listed in /help, and it resets the scroll to the newest line so the screen does not jump into the middle of a card
     let r = enter(&mut app, "/help");
     assert!(r.is_empty() && text(&app).contains("Ctrl-O"));
@@ -4603,7 +4603,7 @@ fn tu74_rewind_makes_a_copy_that_stops_before_one_of_your_messages_and_puts_it_b
     assert!(
         enter(&mut a, "/rewind 2").is_empty() && text(&a).contains("Message 2 is not one of yours")
     );
-    assert!(enter(&mut a, "/rewind 9").is_empty() && text(&a).contains("has 4 message(s)"));
+    assert!(enter(&mut a, "/rewind 9").is_empty() && text(&a).contains("has 4 messages"));
     assert!(
         a.rewound.is_none(),
         "a refused rewind leaves nothing waiting"
@@ -4716,7 +4716,7 @@ fn tu76_one_enormous_result_is_cut_to_a_bounded_number_of_lines_with_a_note() {
         card.lines
             .last()
             .unwrap()
-            .contains("more line(s) were not kept on the screen"),
+            .contains("more lines were not kept on the screen"),
         "{:?}",
         card.lines.last()
     );
@@ -6365,7 +6365,7 @@ fn tu103_two_reviews_running_at_once_each_keep_their_own_progress_and_the_header
     let r = enter(&mut app, "/reviews");
     app.handle(ok(&r[0], 200, json!({"jobs": [{"id": "job-1", "recipient": "acme", "state": "running"}, {"id": "job-2", "recipient": "globex", "state": "running"}]})));
     assert!(
-        app.status_line().contains("2 review(s)") && app.status_line().contains("2 running"),
+        app.status_line().contains("2 reviews") && app.status_line().contains("2 running"),
         "{}",
         app.status_line()
     );
@@ -6971,9 +6971,9 @@ fn tu_at02_a_message_with_files_attaches_them_first_and_sends_the_ids_with_the_q
         "files": {"used": 2, "trimmed": 1, "left_out": 0, "withheld_instructions": 1, "withheld_secrets": 1}})));
     let t = text(&app);
     assert!(
-        t.contains("2 attached file(s) read")
-            && t.contains("1 attached file(s) cut short")
-            && t.contains("2 passage(s) of attached files were not given"),
+        t.contains("2 attached files read")
+            && t.contains("1 attached file cut short")
+            && t.contains("2 passages of attached files were not given"),
         "{t}"
     );
     assert_eq!(
@@ -7170,11 +7170,11 @@ fn tu_br01_branch_pick_lists_every_message_and_choosing_one_branches_after_it() 
             .unwrap_or_default()
     };
     assert!(
-        row("assistant: first answer").contains("keeps 2 message(s)"),
+        row("assistant: first answer").contains("keeps 2 messages"),
         "{screen}"
     );
     assert!(
-        row("you: first question").contains("keeps 1 message(s)"),
+        row("you: first question").contains("keeps 1 message"),
         "{screen}"
     );
     // choosing the second one branches keeping the first two messages
@@ -7251,10 +7251,10 @@ fn tu_at06_a_file_can_be_named_with_the_lines_wanted_and_only_those_are_asked_fo
     app.handle(ok(
         &r[0],
         400,
-        json!({"error": {"code": "BAD_LINES", "message": "the file has 2 line(s)"}}),
+        json!({"error": {"code": "BAD_LINES", "message": "the file has 2 lines"}}),
     ));
     assert!(
-        text(&app).contains("the file has 2 line(s)"),
+        text(&app).contains("the file has 2 lines"),
         "{}",
         text(&app)
     );
@@ -8258,5 +8258,42 @@ fn tu116_the_bundled_skills_are_listed_and_one_is_taken_still_unapproved() {
         "/method bundled now",
     ] {
         assert!(enter(&mut app, bad).is_empty(), "{bad}");
+    }
+}
+
+#[test]
+fn tu_counted_words_get_their_real_form_wherever_the_count_stands() {
+    use kk_tui::app::counted;
+    for (written, shown) in [
+        ("1 file(s) read", "1 file read"),
+        ("3 file(s) read", "3 files read"),
+        ("0 note(s) used", "0 notes used"),
+        (
+            "1 note(s) were not given to the model",
+            "1 note was not given to the model",
+        ),
+        (
+            "2 note(s) were not given to the model",
+            "2 notes were not given to the model",
+        ),
+        (
+            "1 attached file(s) read for this answer",
+            "1 attached file read for this answer",
+        ),
+        (
+            "… 40000 more line(s) were not kept",
+            "… 40000 more lines were not kept",
+        ),
+        ("… 1 more line(s) below", "… 1 more line below"),
+        (
+            "ready · 1 review(s) · project x",
+            "ready · 1 review · project x",
+        ),
+        ("(1 earlier release(s))", "(1 earlier release)"),
+        ("11 file(s), 1 withheld", "11 files, 1 withheld"),
+        ("no number here, file(s) only", "no number here, files only"),
+        ("nothing to change", "nothing to change"),
+    ] {
+        assert_eq!(counted(written), shown, "{written}");
     }
 }

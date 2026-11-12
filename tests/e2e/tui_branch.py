@@ -61,7 +61,7 @@ try:
     while time.time() < end and len(re.findall(r"tokens of context", screen.text())) < 2:
         pump(0.5)
     send("/branch pick\r")
-    check("the list shows both questions and both answers, numbered", wait_for(r"Branch the conversation after one of its messages", 15) is not None and "keeps 4 message(s)" in screen.text() and "you: name one colour" in screen.text(), screen.text()[-900:])
+    check("the list shows both questions and both answers, numbered", wait_for(r"Branch the conversation after one of its messages", 15) is not None and "keeps 4 messages" in screen.text() and "you: name one colour" in screen.text(), screen.text()[-900:])
     send("\x1b[B\x1b[B")
     pump(0.5)
     send("\r")
