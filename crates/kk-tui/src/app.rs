@@ -2677,9 +2677,27 @@ impl App {
                     false,
                     Method::Post,
                     "/api/sessions",
-                    Some(match &self.chat_project {
-                        Some(p) => json!({"title": "", "project": p}),
-                        None => json!({"title": ""}),
+                    Some({
+                        // what is already on the screen is kept with it, held as privately as it was
+                        let turns: Vec<Value> = self
+                            .chat_history
+                            .iter()
+                            .flat_map(|(q, a)| {
+                                [
+                                    json!({"role": "user", "content": q}),
+                                    json!({"role": "assistant", "content": a}),
+                                ]
+                            })
+                            .collect();
+                        let mut body = json!({"title": ""});
+                        if let Some(p) = &self.chat_project {
+                            body["project"] = json!(p);
+                        }
+                        if !turns.is_empty() {
+                            body["turns"] = json!(turns);
+                            body["held"] = json!(self.held_level);
+                        }
+                        body
                     }),
                 )]
             }

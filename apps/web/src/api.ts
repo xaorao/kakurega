@@ -457,7 +457,8 @@ export const api = {
   archiveChat: (id: string, archived: boolean) => request<{ ok: boolean }>("POST", `/api/sessions/${id}/archive`, { archived }),
   searchChats: (q: string) => request<{ results: ChatHit[] }>("GET", `/api/sessions/search?q=${encodeURIComponent(q)}`),
   renameChat: (id: string, title: string) => request<{ renamed: boolean }>("POST", `/api/sessions/${id}/rename`, { title }),
-  keepChat: (title: string, project?: string) => request<{ id: string }>("POST", "/api/sessions", project ? { title, project } : { title }),
+  keepChat: (title: string, project?: string, turns?: ChatTurn[], held?: number) =>
+    request<{ id: string }>("POST", "/api/sessions", { title, ...(project ? { project } : {}), ...(turns && turns.length > 0 ? { turns, held } : {}) }),
   attachFile: (file: File) => attachFile(file),
   attachment: (id: string) => request<AttachmentRead>("GET", `/api/attachments/${id}`),
   removeAttachment: (id: string) => request<{ removed: boolean }>("POST", `/api/attachments/${id}/remove`, {}),

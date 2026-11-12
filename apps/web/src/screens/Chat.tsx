@@ -496,7 +496,11 @@ export function Chat() {
   const keep = async () => {
     setError("");
     try {
-      const r = await api.keepChat("", project().trim() || undefined);
+      // what is already on the screen is kept with it, held as privately as it was
+      const shown = turns()
+        .filter((t) => (t.role === "user" || t.role === "assistant") && t.content.trim() !== "")
+        .map(({ role, content }) => ({ role, content }));
+      const r = await api.keepChat("", project().trim() || undefined, shown, shown.length > 0 ? heldLevel : undefined);
       const carried = text();
       forgetDraft(draftKey(session()));
       retagSent(draftKey(session()), draftKey(r.id));

@@ -25022,3 +25022,74 @@ fn sv293_an_experts_own_instruction_is_hidden_like_the_rest_and_is_in_what_was_s
         "{sent}"
     );
 }
+
+#[test]
+fn sv294_keeping_a_conversation_keeps_the_turns_already_on_the_screen_as_privately_as_they_were_held(
+) {
+    let (_c, w, runner) = switch_service("keep-turns");
+    let turns = json!([
+        {"role": "user", "content": "What is the harbour-lantern plan?"},
+        {"role": "assistant", "content": "The harbour-lantern plan is settled."},
+        {"role": "user", "content": "And who signs it?"},
+        {"role": "assistant", "content": "Dana signs it."},
+        {"role": "user", "content": "a question left without an answer"},
+    ]);
+    let (s, v) = w.post(
+        "/api/sessions",
+        json!({"title": "", "turns": turns, "held": 3}),
+    );
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    let kept = w.get(&format!("/api/sessions/{id}")).1;
+    let got: Vec<&str> = kept["turns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["content"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            "What is the harbour-lantern plan?",
+            "The harbour-lantern plan is settled.",
+            "And who signs it?",
+            "Dana signs it."
+        ],
+        "{kept}"
+    );
+    // the next question is asked with them
+    let (s, _) = w.post(
+        "/api/chat",
+        json!({"message": "Repeat my first question", "session": id}),
+    );
+    assert_eq!(s, 200);
+    assert!(runner
+        .asked
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .contains("What is the harbour-lantern plan?"));
+    // they were held on this computer, so they do not go to a model elsewhere
+    runner.away.store(true, std::sync::atomic::Ordering::SeqCst);
+    let (s, v) = w.post("/api/chat", json!({"message": "Again?", "session": id}));
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("KEPT_MORE_PRIVATELY")),
+        "{v}"
+    );
+    runner
+        .away
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    // a malformed conversation is refused whole
+    for bad in [
+        json!([{"role": "system", "content": "x"}]),
+        json!([{"role": "user", "content": "bell\u{7}"}]),
+    ] {
+        assert_eq!(
+            w.post("/api/sessions", json!({"title": "", "turns": bad}))
+                .0,
+            400
+        );
+    }
+}

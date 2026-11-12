@@ -1698,6 +1698,23 @@ try {
   await slowList;
   await page.unroute("**/api/sessions");
   check("and the refreshed list agrees: nothing is kept", (await page.getByRole("button", { name: "Open" }).count()) === 0);
+  // keeping a conversation after it began keeps what is already on the screen: the model is asked with it and a reload
+  // brings it back
+  await page.getByLabel("Your message").fill("Earliercanary question before keeping");
+  await page.getByLabel("Your message").press("Enter");
+  await page.locator(".msg.assistant").first().waitFor();
+  await page.getByRole("button", { name: "Stop" }).waitFor({ state: "detached" }).catch(() => {});
+  await page.getByRole("button", { name: "Keep this conversation" }).click();
+  await page.getByText("Kept", { exact: true }).waitFor();
+  await page.waitForLoadState("load");
+  await page.reload();
+  await page.getByRole("link", { name: "Chat" }).click();
+  await page.getByRole("button", { name: "Open" }).first().click();
+  await page.locator(".msg").first().waitFor();
+  check("a conversation kept after it began keeps the turns that were already on the screen", (await page.locator(".msg").first().innerText()).includes("Earliercanary question before keeping") && (await page.locator(".msg").count()) === 2, await page.locator(".msg").first().innerText());
+  await page.getByRole("button", { name: "Forget" }).first().click();
+  await page.getByRole("button", { name: "Press again to forget" }).click();
+  await page.getByRole("button", { name: "Open" }).waitFor({ state: "detached" }).catch(() => {});
   // a message sent in a kept conversation is not brought back by Up once that conversation is forgotten
   await page.getByRole("button", { name: "Keep this conversation" }).click();
   await page.getByText("Kept", { exact: true }).waitFor();

@@ -5062,6 +5062,12 @@ struct SessionNew {
     /// The project the conversation is about; its notes are offered in every message.
     #[serde(default)]
     project: Option<String>,
+    /// The conversation so far, when an unkept one on the screen is kept: questions and their answers, in order.
+    #[serde(default)]
+    turns: Vec<ChatTurn>,
+    /// How privately those turns were held (see `chat_validate`); left out with turns, they count as held on this computer.
+    #[serde(default)]
+    held: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -5243,6 +5249,21 @@ async fn session_rename(
 }
 
 async fn session_new(axum::Extension(svc): Svc, Json(b): Json<SessionNew>) -> Response {
+    // the turns of an unkept conversation being kept: the same shape a chat's history has, and at most what a kept
+    // conversation may hold
+    let pairs = &b.turns;
+    if pairs.len() > MAX_SESSION_TURNS as usize
+        || pairs.iter().map(|t| t.content.len()).sum::<usize>() > 400_000
+        || pairs
+            .iter()
+            .any(|t| (t.role != "user" && t.role != "assistant") || !chat_clean(&t.content))
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_HISTORY",
+            "the conversation to keep is too long or malformed",
+        );
+    }
     if b.title.chars().count() > 80
         || !chat_clean(&b.title)
         || !kk_secrets::scan(&b.title).is_empty()
@@ -5293,6 +5314,28 @@ async fn session_new(axum::Extension(svc): Svc, Json(b): Json<SessionNew>) -> Re
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "STORE",
                 "could not keep the conversation",
+            );
+        }
+        // the turns already on the screen, as question and answer pairs; a question left without an answer is not kept
+        let mut seq = 0i64;
+        let mut i = 0usize;
+        while i + 1 < pairs.len() {
+            let (q, a) = (&pairs[i], &pairs[i + 1]);
+            if q.role == "user" && a.role == "assistant" {
+                let _ = c.execute(
+                    "INSERT INTO session_turns(session, seq, role, content, at) VALUES (?1, ?2, 'user', ?3, ?4), (?1, ?5, 'assistant', ?6, ?4)",
+                    kk_vault::rusqlite::params![id, seq, q.content, t, seq + 1, a.content],
+                );
+                seq += 2;
+                i += 2;
+            } else {
+                i += 1;
+            }
+        }
+        if seq > 0 {
+            let _ = c.execute(
+                "UPDATE sessions SET held = ?2 WHERE id = ?1",
+                kk_vault::rusqlite::params![id, b.held.unwrap_or(3).clamp(0, 3)],
             );
         }
     }
