@@ -33,7 +33,8 @@ const app = await electron.launch({
     KAKU_BIN: join(repo, "target/debug/kaku"),
     KAKU_ENCLAVE_BIN: join(repo, "target/debug/kaku-enclave-test"),
     KAKUREGA_DATA_DIR: data,
-    KAKU_ARGS: `--root ${root} --scripted ${join(here, "script.json")} --ui-dir ${join(repo, "apps/web/dist")}`,
+    // a model name as the first argument runs the same flows with that real local model (minutes, not seconds)
+    KAKU_ARGS: `--root ${root} ${process.argv[2] ? `--model ${process.argv[2]}` : `--scripted ${join(here, "script.json")}`} --ui-dir ${join(repo, "apps/web/dist")}`,
   },
 });
 const problems = [];
@@ -84,7 +85,7 @@ try {
   await page.getByRole("button", { name: "payments-service" }).click();
   await page.getByLabel("Recipient name").fill("acme-audit");
   await page.getByRole("button", { name: "Start review" }).click();
-  await page.getByRole("heading", { name: "The exact release" }).waitFor({ timeout: 120000 });
+  await page.getByRole("heading", { name: "The exact release" }).waitFor({ timeout: process.argv[2] ? 900000 : 120000 });
   await page.getByRole("button", { name: "Request approval" }).click();
   await page.getByRole("button", { name: "Sign and deliver the capsule" }).waitFor({ timeout: 20000 });
   const shown = await app.evaluate(() => globalThis.__shown);
@@ -106,7 +107,7 @@ try {
   await page.getByRole("button", { name: "payments-service" }).click();
   await page.getByLabel("Recipient name").fill("enclave-audit");
   await page.getByRole("button", { name: "Start review" }).click();
-  await page.getByRole("heading", { name: "The exact release" }).waitFor({ timeout: 120000 });
+  await page.getByRole("heading", { name: "The exact release" }).waitFor({ timeout: process.argv[2] ? 900000 : 120000 });
   await page.getByRole("button", { name: "Request approval" }).click();
   await page.getByRole("button", { name: "Sign and deliver the capsule" }).waitFor({ timeout: 30000 });
   const shown2 = await app.evaluate(() => globalThis.__shown);
@@ -120,7 +121,7 @@ try {
   await first.click();
   await page.getByLabel("Your question").fill("What does this folder describe?");
   await page.getByRole("button", { name: "Ask", exact: true }).click();
-  await page.getByRole("heading", { name: /Answer|Unchecked/i }).first().waitFor({ timeout: 60000 });
+  await page.getByRole("heading", { name: /Answer|Unchecked/i }).first().waitFor({ timeout: process.argv[2] ? 300000 : 60000 });
   const card = await page.locator("#h-answer").locator("xpath=..").innerText().catch(() => "");
   check("document questions work in the desktop window and show a checked or clearly unchecked answer", /not proof|not a checked|unchecked/i.test(card) || card.length > 40, card.replace(/\n/g, " | ").slice(0, 160));
   await page.locator("#h-answer").scrollIntoViewIfNeeded().catch(() => {});
