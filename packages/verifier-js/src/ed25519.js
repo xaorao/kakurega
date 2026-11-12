@@ -1,3 +1,5 @@
+import { Point } from "@noble/ed25519";
+
 const P = (1n << 255n) - 19n;
 const D = (((-121665n % P) + P) % P) * modInv(121666n) % P;
 const SQRT_M1 = modPow(2n, (P - 1n) / 4n, P);
@@ -60,7 +62,52 @@ export function classifyPublicKey(bytes) {
   return q[0] === 0n && q[1] === 1n ? "small_order" : "ok";
 }
 
+// Whether this browser's Web Crypto checks Ed25519: unknown until first asked.
+let webCrypto = null;
+
 export async function verifySignature(publicKey, message, signature) {
-  const key = await crypto.subtle.importKey("raw", publicKey, { name: "Ed25519" }, false, ["verify"]);
-  return crypto.subtle.verify("Ed25519", key, signature, message);
+  // the Rust checker's rule (verify_strict): a signature whose nonce point is of small order is refused
+  if (signature.length !== 64 || classifyPublicKey(signature.subarray(0, 32)) === "small_order") return false;
+  if (webCrypto !== false) {
+    try {
+      const key = await crypto.subtle.importKey("raw", publicKey, { name: "Ed25519" }, false, ["verify"]);
+      webCrypto = true;
+      return await crypto.subtle.verify("Ed25519", key, signature, message);
+    } catch (e) {
+      if (webCrypto === true || e?.name !== "NotSupportedError") throw e;
+      webCrypto = false;
+    }
+  }
+  return verifyStrict(publicKey, message, signature);
+}
+
+const L = 2n ** 252n + 27742317777372353535851937790883648493n;
+
+function littleEndian(bytes) {
+  let n = 0n;
+  for (let i = bytes.length - 1; i >= 0; i--) n = (n << 8n) | BigInt(bytes[i]);
+  return n;
+}
+
+// A browser without Ed25519 in Web Crypto (older Safari and Chromium): the Rust checker's verify_strict, on the audited
+// point arithmetic of @noble/ed25519. Canonical encodings only, s below the group order, neither the key nor the nonce
+// point of small order, and the cofactorless equation [s]B = R + [k]A. (The library's own verify uses the cofactored
+// equation, which accepts a few signatures the Rust checker refuses.)
+async function verifyStrict(publicKey, message, signature) {
+  let A, R;
+  try {
+    A = Point.fromBytes(publicKey, false);
+    R = Point.fromBytes(signature.subarray(0, 32), false);
+  } catch {
+    return false;
+  }
+  if (A.isSmallOrder() || R.isSmallOrder()) return false;
+  const s = littleEndian(signature.subarray(32, 64));
+  if (s >= L) return false;
+  const input = new Uint8Array(64 + message.length);
+  input.set(signature.subarray(0, 32), 0);
+  input.set(publicKey, 32);
+  input.set(message, 64);
+  const k = littleEndian(new Uint8Array(await crypto.subtle.digest("SHA-512", input))) % L;
+  return Point.BASE.multiply(s, false).equals(R.add(A.multiply(k, false)));
 }

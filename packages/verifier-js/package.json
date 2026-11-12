@@ -5,9 +5,10 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
-    "test": "node --test test/vectors.test.js test/share.test.js"
+    "test": "node --test test/vectors.test.js test/share.test.js test/fallback.test.js"
   },
   "dependencies": {
-    "@kakurega/canon": "workspace:*"
+    "@kakurega/canon": "workspace:*",
+    "@noble/ed25519": "3.2.0"
   }
 }

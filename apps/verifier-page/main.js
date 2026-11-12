@@ -303,7 +303,8 @@ async function check(file) {
     if (kind === "kakurega-share") showShare(await verifyShare(bytes, { pinned }), bytes);
     else show(await verifyCapsule(bytes, { pinned, now: Math.floor(Date.now() / 1000) }), bytes);
   } catch (e) {
-    out.replaceChildren(el("div", "The check could not run on this file.", "verdict bad"));
+    // a browser that does not give pages Web Crypto cannot run the check at all; that is not the file's fault
+    out.replaceChildren(el("div", globalThis.crypto?.subtle ? "The check could not run on this file." : "This browser does not give pages the Web Crypto functions the check needs. Open this page in a current browser, or run: kaku verify FILE", "verdict bad"));
   }
 }
 

@@ -211,6 +211,36 @@ await cphone.locator("#lookup").waitFor();
 check(!(await cphone.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)), "the lookup section fits a phone in dark mode");
 await cphone.screenshot({ path: join(work, "chain-phone-dark.png"), fullPage: true });
 
+// a browser whose Web Crypto has no Ed25519 (older Safari and Chromium): the page still checks, through the fallback
+const noEd = await browser.newContext({ viewport: { width: 1000, height: 900 } });
+await noEd.addInitScript(() => {
+  const real = crypto.subtle.importKey.bind(crypto.subtle);
+  crypto.subtle.importKey = (format, key, algorithm, ...rest) =>
+    (typeof algorithm === "string" ? algorithm : algorithm?.name) === "Ed25519"
+      ? Promise.reject(new DOMException("Ed25519 is not supported", "NotSupportedError"))
+      : real(format, key, algorithm, ...rest);
+});
+const ne = await noEd.newPage();
+ne.on("pageerror", (e) => problems.push("pageerror: " + e.message));
+await ne.goto(page_url);
+await ne.setInputFiles("#file", two);
+await ne.locator(".verdict").first().waitFor();
+check((await ne.locator(".verdict").first().innerText()).trim().startsWith("Valid"), "in a browser without Ed25519 in Web Crypto, a good capsule is still valid");
+await ne.setInputFiles("#file", join(work, "forged.kkg"));
+await ne.getByText("Not valid").first().waitFor();
+check((await ne.locator(".verdict").first().innerText()).trim() === "Not valid", "and the forged one is still refused");
+await noEd.close();
+
+// a browser that gives the page no Web Crypto at all: the page names the browser as the cause, not the file
+const noCrypto = await browser.newContext({ viewport: { width: 1000, height: 900 } });
+await noCrypto.addInitScript(() => Object.defineProperty(globalThis.crypto, "subtle", { value: undefined }));
+const nc = await noCrypto.newPage();
+await nc.goto(page_url);
+await nc.setInputFiles("#file", two);
+await nc.locator(".verdict").first().waitFor();
+check(/does not give pages the Web Crypto functions/.test(await nc.locator(".verdict").first().innerText()) && /kaku verify/.test(await nc.locator(".verdict").first().innerText()), "with no Web Crypto at all, the page says the browser is the cause and names the command line");
+await noCrypto.close();
+
 // LIVE, only when asked: the capsule that tests/e2e/chain_register.py registered on testnet, read by the page itself
 const liveCapsule = join(repo, "target/chain-register-tmp/review.kkg");
 if (process.env.KAKU_LIVE_CHAIN === "1") {

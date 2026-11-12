@@ -84,3 +84,5 @@ The switch for the screen-picture key in the desktop menu (`apps/desktop/src/mai
 
 Typefaces in the web app (`apps/web`): Outfit (Copyright 2021 The Outfit Project Authors) and JetBrains Mono (Copyright 2020 The JetBrains Mono Project Authors), both under the SIL Open Font License 1.1, taken unchanged from the `@fontsource/outfit` and `@fontsource/jetbrains-mono` packages (version 5.3.0). The licence texts ship with the app in `apps/web/public/licenses/`.
 
+Signature checking fallback in the recipient's checker (`packages/verifier-js`): `@noble/ed25519` 3.2.0 by Paul Miller (MIT, https://github.com/paulmillr/noble-ed25519), used unchanged as a dependency when a browser's Web Crypto has no Ed25519.
+

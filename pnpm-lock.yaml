@@ -60,6 +60,9 @@ importers:
       '@kakurega/canon':
         specifier: workspace:*
         version: link:../canon-js
+      '@noble/ed25519':
+        specifier: 3.2.0
+        version: 3.2.0
 
   tests/e2e:
     dependencies:
@@ -354,6 +357,9 @@ packages:
     cpu: [x64]
     os: [linux]
     libc: [glibc]
+
+  '@noble/ed25519@3.2.0':
+    resolution: {integrity: sha512-criDgRlnUA09hchYrTy/JUWPIEap5rZxQe6wDWzRx51oWWpDRcUpuNzlgPxDJaOK6AsW9c0wKcj3rKRv6t+bPQ==}
 
   '@rollup/rollup-android-arm-eabi@4.67.4':
     resolution: {integrity: sha512-/v/pUAPOcwp+r1Hjjdg0cBV1TE89CzGKrKh2FgkIQw2QBcIMmVPOCSfuOZStCn4Xh/98HXfo/ht6ztcssctPNg==}
@@ -1121,6 +1127,8 @@ snapshots:
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
+
+  '@noble/ed25519@3.2.0': {}
 
   '@rollup/rollup-android-arm-eabi@4.67.4':
     optional: true
