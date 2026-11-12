@@ -16,6 +16,12 @@ To get help from an AI you hand it your code, your contracts and your meeting no
 4. **Gives the recipient something to check.** The result is a signed capsule. The recipient verifies it offline, in a one-file web page or with one command, and is told what the check does *not* establish.
 5. **Uses confidential hardware where the model is not yours.** Before a question may go to NEAR AI Cloud, its Intel TDX and NVIDIA evidence is checked with a fresh challenge. The same check can be recorded on NEAR by NEAR's own verifier contract, so a recipient does not have to take our word for it.
 
+| | | |
+| --- | --- | --- |
+| <img src="docs/img/protection.png" alt="The Protection tab of a review: the .env file withheld, two files flagged as possible prompt injection, the model on this computer" width="100%"><br><sub>What the agent could not see, and what it was not allowed to obey.</sub> | <img src="docs/img/release.png" alt="The Release tab: the exact files with their sizes and hashes and the digest to approve" width="100%"><br><sub>The exact release and its digest, before anything is asked of you.</sub> | <img src="docs/img/verify.png" alt="The recipient's page: Valid, what is established and what is not" width="100%"><br><sub>The recipient's check, with what it does not establish.</sub> |
+
+Screenshots from a run with a local model (`tests/e2e/used_flagship.mjs`).
+
 ## Who it is for
 
 People who must give an outside party a result from private material: a security reviewer sending findings to a client, a lawyer answering from a contract set, a founder sharing diligence answers. The client pays for one verified review; the money is held by a NEAR contract and released when the capsule for that order is registered, not when either side says so. That order flow runs on testnet. Nothing is charged today.

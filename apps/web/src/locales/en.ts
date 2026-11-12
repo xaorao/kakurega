@@ -1379,7 +1379,7 @@ export const en = {
   "ver.code": "Code: <c>{code}</c>",
   "ver.valid": "Valid",
   "ver.established": "Established",
-  "ver.est1": "The release and its {claims} claim(s) carry a valid signature from <c>{signer}</c>.",
+  "ver.est1": "The release and its claims ({claims} in all) carry a valid signature from <c>{signer}</c>.",
   "ver.est2": "All {files} released files match the signed digests and sizes exactly. Nothing is missing or extra.",
   "ver.est3": "Every claim is bound to this exact release. It was made for <b>{recipient}</b> and expires {expires}.",
   "ver.est4": "The signing key is the one you pinned.",
