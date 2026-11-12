@@ -107,6 +107,25 @@ impl Workspace {
         )
     }
 
+    /// Each file's old Mac line endings (a carriage return alone) made line breaks, so its lines are numbered as an editor
+    /// numbers them. For reading only: a coding task keeps each file's bytes so its changes apply to them.
+    pub fn lone_returns_as_lines(&mut self) {
+        for text in self.files.values_mut() {
+            if text.contains('\r') {
+                let mut out = String::with_capacity(text.len());
+                let mut chars = text.chars().peekable();
+                while let Some(c) = chars.next() {
+                    if c == '\r' && chars.peek() != Some(&'\n') {
+                        out.push('\n');
+                    } else {
+                        out.push(c);
+                    }
+                }
+                *text = out;
+            }
+        }
+    }
+
     pub fn file(&self, path: &str) -> Option<&str> {
         self.files.get(path).map(String::as_str)
     }

@@ -2036,8 +2036,9 @@ pub fn explore(args: &[String]) -> u8 {
                         let mut line = format!("{id} started; the agent reads the project on this computer, and nothing is changed");
                         if !forgotten.is_empty() {
                             line.push_str(&format!(
-                                "\n100 questions are kept: {} was forgotten to make room",
-                                forgotten.join(", ")
+                                "\n100 questions are kept: {} {} forgotten to make room",
+                                forgotten.join(", "),
+                                if forgotten.len() == 1 { "was" } else { "were" }
                             ));
                         }
                         line

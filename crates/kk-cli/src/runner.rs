@@ -851,6 +851,8 @@ cut_short: false,
             return Err("the local model's address is not on this computer, so a question about a project is not answered".into());
         }
         let (mut ws, left) = Workspace::from_imported(files);
+        // nothing is changed in a question, so lines are numbered as the owner's editor numbers them
+        ws.lone_returns_as_lines();
         // the scripted test model works through the same agent with fixed steps: it lists, reads the first source file,
         // runs one script, and answers resting on that file's first line and on one line it made up
         let route: Box<dyn kk_route::Route> = if self.scripted.is_some() {

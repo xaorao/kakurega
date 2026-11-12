@@ -602,3 +602,24 @@ fn ex10_quotes_in_quotation_marks_ambiguous_places_long_lines_and_mixed_notation
         "{rep:?}"
     );
 }
+
+#[test]
+fn ex_cr01_a_file_with_old_mac_line_endings_is_cited_by_the_lines_an_editor_shows() {
+    let (mut w, _) = Workspace::from_imported(&[file(
+        "legacy/conf.txt",
+        "name = demo\rport = 8080\rmode = fast\r",
+        Level::Internal,
+    )]);
+    w.lone_returns_as_lines();
+    let c = check_citation(&w, "legacy/conf.txt", 2, "port = 8080");
+    assert_eq!(c.found, Found::AtLine, "{c:?}");
+    // a Windows file is left as it is
+    let (mut w, _) =
+        Workspace::from_imported(&[file("win.txt", "a = 1\r\nb = 2\r\n", Level::Internal)]);
+    w.lone_returns_as_lines();
+    assert_eq!(w.file("win.txt"), Some("a = 1\r\nb = 2\r\n"));
+    assert_eq!(
+        check_citation(&w, "win.txt", 2, "b = 2").found,
+        Found::AtLine
+    );
+}

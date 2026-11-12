@@ -2237,7 +2237,12 @@ impl Memories {
                 label: p.label.clone(),
                 subject: None,
                 project,
-                reason: format!("suggested by review {job_id}: {}", p.why),
+                // a conversation's suggestions share this path; their source already says "it came from conversation …"
+                reason: if job_id.starts_with("chat-") {
+                    format!("suggested in conversation {job_id}: {}", p.why)
+                } else {
+                    format!("suggested by review {job_id}: {}", p.why)
+                },
                 source: Source::Review(job_id.to_string()),
                 valid_from: None,
                 valid_to: None,
@@ -2706,10 +2711,23 @@ impl Recalled {
 }
 
 fn explain(m: &Memory) -> String {
-    let src = match &m.source {
-        Source::User => "you asked to remember it".to_string(),
-        Source::Review(id) if id.starts_with("chat-") => format!("it came from conversation {id}"),
-        Source::Review(id) => format!("it came from review {id}"),
+    // an accepted suggestion's reason begins by naming where it was suggested; the source is then said once, not twice
+    let (src, reason) = match &m.source {
+        Source::User => ("you asked to remember it".to_string(), m.reason.as_str()),
+        Source::Review(id) => {
+            let where_ = if id.starts_with("chat-") {
+                format!("suggested in conversation {id}")
+            } else {
+                format!("suggested by review {id}")
+            };
+            match m.reason.strip_prefix(&format!("{where_}: ")) {
+                Some(why) => (format!("it was {where_}"), why),
+                None if id.starts_with("chat-") => {
+                    (format!("it came from conversation {id}"), m.reason.as_str())
+                }
+                None => (format!("it came from review {id}"), m.reason.as_str()),
+            }
+        }
     };
     let window = match (m.valid_from, m.valid_to) {
         (None, None) => String::new(),
@@ -2719,5 +2737,5 @@ fn explain(m: &Memory) -> String {
             b.map(|x| format!("until {x}")).unwrap_or_default()
         ),
     };
-    format!("{}: {}{}", src, m.reason, window)
+    format!("{}: {}{}", src, reason, window)
 }

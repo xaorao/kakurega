@@ -519,9 +519,12 @@ fn places_in_labels(text: &str, ws: &Workspace) -> (Vec<Value>, Vec<usize>) {
 /// The answer's own words: every line except those the places were read from, and a line that only introduced them.
 fn answer_without_places(text: &str, used: &[usize]) -> String {
     let all: Vec<&str> = text.lines().collect();
-    // a line ending in a colon goes only when what follows it, after blank lines, is a place that was taken out
+    // a line ending in a colon, or a heading, goes only when what follows it, after blank lines, is a place that was taken
+    // out; the colon may sit inside emphasis ("**Places:**")
     let introduces = |n: usize| {
-        all[n].trim_end().ends_with(':')
+        let bare = all[n].trim().trim_end_matches(['*', '_']).trim_end();
+        let heading = all[n].trim_start().starts_with('#');
+        (bare.ends_with(':') || heading)
             && (n + 1..all.len())
                 .find(|k| !all[*k].trim().is_empty())
                 .is_some_and(|k| used.contains(&k))
@@ -1089,5 +1092,27 @@ impl ScriptRunner for SandboxScripts<'_> {
             }
             Err(e) => not_run(&format!("the sandbox could not run it: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod answer_text_tests {
+    use super::answer_without_places;
+
+    #[test]
+    fn ex_ap01_a_line_that_only_introduced_the_places_goes_with_them_in_any_markup() {
+        let text = "The key is read from the environment.\n\n**Places:**\n- config.py:7 `KEY = os.environ[\"KEY\"]`";
+        assert_eq!(
+            answer_without_places(text, &[3]),
+            "The key is read from the environment."
+        );
+        let text = "It retries three times.\n\n### Places\n\nnet.py:12 retries = 3";
+        assert_eq!(answer_without_places(text, &[4]), "It retries three times.");
+        let text = "Note:\nThe value is cached.\n__Sources:__\nnet.py:3 cache = {}";
+        assert_eq!(
+            answer_without_places(text, &[3]),
+            "Note:\nThe value is cached.",
+            "a colon line followed by the answer's own words stays"
+        );
     }
 }

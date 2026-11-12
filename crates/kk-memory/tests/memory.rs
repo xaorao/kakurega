@@ -4498,3 +4498,44 @@ fn me95_a_credential_is_refused_as_a_project_name_a_reason_a_subject_or_a_forget
         "{r:?}"
     );
 }
+
+#[test]
+fn me_sg02_a_note_suggested_in_a_conversation_says_so_once_and_never_calls_it_a_review() {
+    let m = mem(&dir());
+    let lbl = Label::new(Level::Internal).untrusted();
+    let p = m
+        .propose(
+            5,
+            "chat-3021364ace20",
+            "Invoices are due in 30 days",
+            "said by the owner",
+            &lbl,
+        )
+        .unwrap()
+        .unwrap();
+    m.accept_proposal(6, &p, "chat-3021364ace20", None).unwrap();
+    let got = m.recall("Invoices", &internal(), 9, 5).unwrap();
+    assert_eq!(got.len(), 1);
+    assert!(
+        got[0]
+            .why
+            .starts_with("it was suggested in conversation chat-3021364ace20: said by the owner")
+            && !got[0].why.contains("review"),
+        "{}",
+        got[0].why
+    );
+    let p = m
+        .propose(7, "job-9", "Payments use Redis", "seen in session.py", &lbl)
+        .unwrap()
+        .unwrap();
+    m.accept_proposal(8, &p, "job-9", None).unwrap();
+    let got = m.recall("Redis", &internal(), 9, 5).unwrap();
+    assert!(
+        got[0]
+            .why
+            .starts_with("it was suggested by review job-9: seen in session.py")
+            && got[0].why.matches("job-9").count() == 1,
+        "{}",
+        got[0].why
+    );
+}
