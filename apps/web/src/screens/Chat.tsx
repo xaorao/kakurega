@@ -6,7 +6,7 @@ import { exportFileName, tooLarge, transcriptIn, validExportName, type ExportFor
 import { afterInput, closedAtStart, matches as slashMatches, onKey as slashKey, parseLine, slashQuery, validJob, type PopoverState, type SlashCommand } from "../slash";
 import { batch, createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { api, ApiError, streamChat, type AttachmentRead, type AttachmentSummary, type ChatHit, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
-import { t } from "../i18n";
+import { t, type Key } from "../i18n";
 import { SavedPrompts } from "../components/SavedPrompts";
 import { Markdown } from "../components/Markdown";
 import { HistoryPicker } from "../components/HistoryPicker";
@@ -19,6 +19,28 @@ interface Shown extends ChatTurn {
   attached?: string[];
   foot?: string[];
   notes?: { id: string; text: string; why: string; untrusted: boolean; project?: string | null }[];
+}
+
+/** Where the next question goes, under the message box: the same facts as "Where your data goes", in one line. */
+function RouteLine() {
+  const [facts, { refetch }] = createResource(() => api.privacy().catch(() => null));
+  const again = () => void refetch();
+  window.addEventListener("kk-changed", again);
+  onCleanup(() => window.removeEventListener("kk-changed", again));
+  return (
+    <Show when={facts()}>
+      {(f) => {
+        const m = () => f().model;
+        const kind = () => (m().simulated ? "sim" : m().host === null ? "unknown" : m().stays_here ? "local" : m().class === "verified_tee" ? "tee" : "remote");
+        return (
+          <p class="route-line">
+            <span class={kind() === "local" ? "chip ok" : kind() === "tee" ? "chip warn" : kind() === "remote" ? "chip bad" : "chip"}>{t(`chat.route.${kind()}` as Key, { name: m().name ?? m().id, host: m().host ?? "" })}</span>{" "}
+            <a class="line-link" href="#/privacy">{t("chat.route.more")}</a>
+          </p>
+        );
+      }}
+    </Show>
+  );
 }
 
 export function Chat() {
@@ -1033,6 +1055,7 @@ export function Chat() {
           <Show when={sendFailed() && error() && !busy() && text().trim().length > 0}><button type="button" onClick={() => void send()}>{t("chat.retry")}</button></Show>
           <Show when={recovered()}><span role="status" class="muted">{t("chat.recovered")}</span></Show>
         </div>
+        <RouteLine />
         <div
           class={dragging() ? "stack attach drop" : "stack attach"}
         >

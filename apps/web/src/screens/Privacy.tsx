@@ -1,5 +1,5 @@
 import { For, Show, createResource, onCleanup } from "solid-js";
-import { api, type OutboundRow } from "../api";
+import { api, type OutboundRow, type PrivacyFacts } from "../api";
 import { t, type Key } from "../i18n";
 import { modelKey } from "../privacy";
 
@@ -51,6 +51,39 @@ function Outbound() {
   );
 }
 
+/** One door and the one word for its state: green when nothing goes through it, amber when something can go after a yes,
+ *  red when something goes without one. A row links to the card that says more. */
+function Glance(props: { f: PrivacyFacts }) {
+  const f = () => props.f;
+  const modelState = () => (f().model.simulated ? ["ok", "glance.model.test"] : f().model.stays_here ? ["ok", "glance.model.here"] : f().model.class === "verified_tee" ? ["warn", "glance.model.tee"] : ["bad", "glance.model.hosted"]);
+  const rows = (): [string, string, string, string][] => [
+    ["model", "privacy.model.title", ...(modelState() as [string, string])],
+    ["web", "privacy.web.title", ...(f().search.on ? ["warn", "glance.asks"] : ["ok", "glance.off"]) as [string, string]],
+    ["telegram", "privacy.tg.title", ...(f().telegram.on ? ["warn", "glance.counts"] : ["ok", "glance.notPaired"]) as [string, string]],
+    ["github", "privacy.gh.title", ...(f().github?.connected ? ["warn", "glance.readsWhenAsked"] : ["ok", "glance.notSignedIn"]) as [string, string]],
+    ["coding-agent", "privacy.ca.title", ...(f().coding_agent?.installed ? ["warn", "glance.asks"] : ["ok", "glance.none"]) as [string, string]],
+    ["extension", "privacy.ext.title", ...(f().extension.on ? ["warn", "glance.paired"] : ["ok", "glance.notPaired"]) as [string, string]],
+    ["agents", "privacy.agents.title", ...(f().agents.tools_open.length > 0 ? ["warn", "glance.toolsOpen"] : ["ok", "glance.readOnly"]) as [string, string]],
+    ["reviews", "privacy.reviews.title", "ok", "glance.youApprove"],
+    ["updates", "privacy.updates.title", "ok", "glance.noTelemetry"],
+  ];
+  return (
+    <section class="card stack" aria-labelledby="h-glance">
+      <h2 id="h-glance">{t("glance.title")}</h2>
+      <ul class="glance">
+        <For each={rows()}>
+          {([id, title, tone, word]) => (
+            <li>
+              <a href={`#pv-${id}`} onClick={(e) => { e.preventDefault(); document.getElementById(`pv-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{t(title as Key)}</a>
+              <span class={`chip ${tone}`}>{tone === "ok" ? "✓ " : ""}{t(word as Key)}</span>
+            </li>
+          )}
+        </For>
+      </ul>
+    </section>
+  );
+}
+
 export function Privacy() {
   const [facts] = createResource(() => api.privacy().catch(() => null));
   return (
@@ -60,6 +93,7 @@ export function Privacy() {
       <Show when={facts()} fallback={<p class="muted" role="status">{facts.loading ? t("inbox.loading") : t("privacy.unavailable")}</p>}>
         {(f) => (
           <>
+            <Glance f={f()} />
             <Outbound />
             <Card id="break" title="break.title">
               <p>{t("break.card")}</p>

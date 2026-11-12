@@ -488,3 +488,9 @@ button.danger:not(.linklike) { border-color: var(--redline); }
 @media (min-width: 641px) {
   .stack > button:not(.row):not(.linklike), .stack > a.button { align-self: flex-start; }
 }
+/* every door at a glance: its name, and one word for its state */
+.glance { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 4px 32px; }
+.glance li { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.glance a { color: var(--ink); text-decoration: none; display: inline-flex; align-items: center; min-height: 28px; }
+.glance a:hover { text-decoration: underline; }
+.route-line { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 13px; }

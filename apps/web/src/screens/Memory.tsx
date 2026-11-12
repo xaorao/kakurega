@@ -753,24 +753,6 @@ export function Memory() {
       <p class="lead">{t("mem.lead")}</p>
       <Show when={left()}>{(l) => <LeftBehindCard left={l()} onDone={() => setLeft(null)} />}</Show>
       <Held onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />
-      <form class="card stack" onSubmit={add}>
-        <h2>{t("mem.add.heading")}</h2>
-        <label for="mem-text">{t("mem.add.text")}</label>
-        <textarea id="mem-text" rows="3" value={text()} onInput={(e) => setText(e.currentTarget.value)} />
-        <label for="mem-level">{t("mem.add.level")}</label>
-        <select id="mem-level" value={level()} onChange={(e) => setLevel(e.currentTarget.value)}>
-          <For each={LEVELS}>{(l) => <option value={l}>{t(`mem.level.${l}` as Key)}</option>}</For>
-        </select>
-        <label for="mem-project">{t("mem.add.project")}</label>
-        <input id="mem-project" value={project()} maxlength="80" placeholder={t("mem.add.projectHint")} onInput={(e) => setProject(e.currentTarget.value)} />
-        <label for="mem-reason">{t("mem.add.reason")}</label>
-        <input id="mem-reason" value={reason()} onInput={(e) => setReason(e.currentTarget.value)} />
-        <div class="actions">
-          <button class="primary" type="submit" disabled={text().trim().length === 0}>{t("mem.add.button")}</button>
-          <Show when={note()}><span role="status" class="ok">{note()}</span></Show>
-          <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
-        </div>
-      </form>
       <Suggestions jobId="browser" heading="sug.browser.heading" lead="sug.browser.lead" onChange={() => void refetch()} />
       <div>
         <label class="sr" for="mem-search">{t("mem.search")}</label>
@@ -811,6 +793,24 @@ export function Memory() {
           {(m) => <Item m={m} pinned={pinned()?.has(m.id)} onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />}
         </For>
       </ul>
+      <form class="card stack" onSubmit={add}>
+        <h2>{t("mem.add.heading")}</h2>
+        <label for="mem-text">{t("mem.add.text")}</label>
+        <textarea id="mem-text" rows="3" value={text()} onInput={(e) => setText(e.currentTarget.value)} />
+        <label for="mem-level">{t("mem.add.level")}</label>
+        <select id="mem-level" value={level()} onChange={(e) => setLevel(e.currentTarget.value)}>
+          <For each={LEVELS}>{(l) => <option value={l}>{t(`mem.level.${l}` as Key)}</option>}</For>
+        </select>
+        <label for="mem-project">{t("mem.add.project")}</label>
+        <input id="mem-project" value={project()} maxlength="80" placeholder={t("mem.add.projectHint")} onInput={(e) => setProject(e.currentTarget.value)} />
+        <label for="mem-reason">{t("mem.add.reason")}</label>
+        <input id="mem-reason" value={reason()} onInput={(e) => setReason(e.currentTarget.value)} />
+        <div class="actions">
+          <button class="primary" type="submit" disabled={text().trim().length === 0}>{t("mem.add.button")}</button>
+          <Show when={note()}><span role="status" class="ok">{note()}</span></Show>
+          <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
+        </div>
+      </form>
       {/* the notes come first; looking after them (duplicates, disagreements, what was put away, bringing notes in, backups) comes after */}
       <Similar onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />
       <Disagreements onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
