@@ -231,3 +231,33 @@ fn cn07_a_client_that_keeps_its_connections_can_use_one_after_the_server_would_h
         assert_eq!(post.body_mut().read_to_string().unwrap(), "posted");
     }
 }
+
+#[test]
+fn cn_port_the_last_port_is_taken_again_when_free_and_another_one_when_it_is_not() {
+    // free: the service has the address it had before
+    let first = start(Options::default()).unwrap();
+    let port = first.addr.port();
+    drop(first);
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let again = start(Options {
+        preferred_port: Some(port),
+        ..Options::default()
+    })
+    .unwrap();
+    assert_eq!(again.addr.port(), port);
+    // taken by another program: any free port, never a failure to start
+    let other = start(Options {
+        preferred_port: Some(port),
+        ..Options::default()
+    })
+    .unwrap();
+    assert_ne!(other.addr.port(), port);
+    assert!(other.addr.ip().is_loopback());
+    // a port below 1024 is never asked for
+    let low = start(Options {
+        preferred_port: Some(80),
+        ..Options::default()
+    })
+    .unwrap();
+    assert!(low.addr.port() >= 1024 && low.addr.ip().is_loopback());
+}
