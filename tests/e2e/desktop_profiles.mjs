@@ -50,10 +50,12 @@ try {
   await app.evaluate(() => globalThis.kakuregaShell.pollInbox());
   const item = (await menu(app)).find((i) => i.id === "profile");
   check("appears in the menu, with the one in use marked", item?.label === "Profile: default" && JSON.stringify(item.sub) === JSON.stringify([{ label: "default", checked: true }, { label: "work", checked: false }]), JSON.stringify(item));
-  const closed = new Promise((r) => app.process().once("exit", r));
+  // the process is kept before the app quits: once it has quit, Playwright can no longer hand it out
+  const proc = app.process();
+  const closed = new Promise((r) => proc.once("exit", r));
   await app.evaluate(() => globalThis.kakuregaShell.menu().getMenuItemById("profile-work").click()).catch(() => {});
   await Promise.race([closed, new Promise((r) => setTimeout(r, 15000))]);
-  check("choosing it saves the choice and ends the app and its companion", readFileSync(join(home, "current-profile"), "utf8") === "work\n" && app.process().exitCode !== null && !existsSync(join(home, "admin.json")), String(app.process().exitCode));
+  check("choosing it saves the choice and ends the app and its companion", readFileSync(join(home, "current-profile"), "utf8") === "work\n" && proc.exitCode !== null && !existsSync(join(home, "admin.json")), String(proc.exitCode));
 
   ({ app, page } = await launch());
   const badges = await page.locator(".badges").innerText();
