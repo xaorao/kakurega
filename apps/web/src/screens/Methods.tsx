@@ -1,6 +1,6 @@
 import { LoadState } from "../components/LoadState";
 import { createResource, createSignal, For, Show } from "solid-js";
-import { api, ApiError, type Method, type BundledMethod, type PackCatalog, type PackCatalogEntry } from "../api";
+import { api, ApiError, type Method, type MethodVersion, type BundledMethod, type PackCatalog, type PackCatalogEntry } from "../api";
 import { t, type Key } from "../i18n";
 
 const words = (text: string) => text.split(",").map((w) => w.trim()).filter(Boolean);
@@ -45,6 +45,45 @@ function Form(props: { initial?: Method; onDone: (message: string) => void; onCa
   );
 }
 
+/** The texts a method had before, newest first; any one can be brought back, and then waits for approval again. */
+function History(props: { m: Method; onChanged: (message: string) => void }) {
+  const [versions, setVersions] = createSignal<MethodVersion[] | null>(null);
+  const [problem, setProblem] = createSignal("");
+  const load = async () => {
+    setProblem("");
+    try {
+      setVersions((await api.methodHistory(props.m.name)).versions);
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : t("met.error"));
+    }
+  };
+  const earlier = () => (versions() ?? []).filter((v) => !v.current);
+  return (
+    <details class="history" onToggle={(e) => { if (e.currentTarget.open && versions() === null) void load(); }}>
+      <summary>{t("met.history")}</summary>
+      <Show when={versions()} fallback={<p class="muted">{t("review.loading")}</p>}>
+        <Show when={earlier().length > 0} fallback={<p class="muted">{t("met.history.none")}</p>}>
+          <ol class="plain stack">
+            <For each={earlier()}>
+              {(v) => (
+                <li class="stack">
+                  <p class="muted">{t("met.history.saved", { when: new Date(v.saved_at * 1000).toLocaleString() })}{v.was_approved ? ` · ${t("met.history.wasApproved")}` : ""}</p>
+                  <Show when={v.description !== props.m.description}><p>{v.description}</p></Show>
+                  <pre class="plain-pre">{v.body}</pre>
+                  <div class="actions">
+                    <button type="button" onClick={async () => { setProblem(""); try { await api.restoreMethod(props.m.name, v.hash); setVersions(null); props.onChanged(t("met.history.restored")); } catch (e) { setProblem(e instanceof ApiError ? e.message : t("met.error")); } }}>{t("met.history.restore")}</button>
+                  </div>
+                </li>
+              )}
+            </For>
+          </ol>
+        </Show>
+      </Show>
+      <Show when={problem()}><span role="alert" class="bad">{problem()}</span></Show>
+    </details>
+  );
+}
+
 function Row(props: { m: Method; onChanged: (message: string) => void }) {
   const [open, setOpen] = createSignal(false);
   const [editing, setEditing] = createSignal(false);
@@ -69,6 +108,7 @@ function Row(props: { m: Method; onChanged: (message: string) => void }) {
       <Show when={editing()}>
         <Form initial={props.m} onDone={(msg) => { setEditing(false); props.onChanged(msg); }} onCancel={() => setEditing(false)} />
       </Show>
+      <Show when={open()}><History m={props.m} onChanged={props.onChanged} /></Show>
       <div class="actions">
         <button type="button" onClick={() => setOpen(!open())}>{open() ? t("met.hide") : t("met.show")}</button>
         <button type="button" onClick={() => { setEditing(!editing()); setOpen(true); }}>{t("met.edit")}</button>

@@ -8424,3 +8424,40 @@ fn tu_ex01_a_question_is_followed_to_its_answer_and_a_line_not_in_the_file_is_ne
             && text(&app).contains("usage: /explore")
     );
 }
+
+#[test]
+fn tu_mh01_a_skills_earlier_texts_are_listed_by_number_and_one_is_brought_back_by_its_number() {
+    let mut app = booted();
+    // nothing can be brought back before it was listed
+    assert!(enter(&mut app, "/method restore contract-check 1").is_empty());
+    assert!(text(&app).contains("/method history contract-check"));
+    let r = enter(&mut app, "/method history contract-check");
+    assert_eq!(
+        (r[0].path.as_str(), &r[0].body.as_ref().unwrap()["name"]),
+        ("/api/methods/history", &json!("contract-check"))
+    );
+    app.handle(ok(&r[0], 200, json!({"name": "contract-check", "versions": [
+        {"hash": "h3", "body": "Now.", "saved_at": 1_900_000_000, "was_approved": false, "current": true},
+        {"hash": "h2", "body": "Quote clause numbers and dates.", "saved_at": 1_800_000_000, "was_approved": true, "current": false},
+        {"hash": "h1", "body": "Quote clause numbers.", "saved_at": 1_700_000_000, "was_approved": false, "current": false}]})));
+    let t = text(&app);
+    assert!(
+        t.contains("1. saved")
+            && t.contains("you approved this text then")
+            && t.contains("Quote clause numbers and dates.")
+            && t.contains("2. saved"),
+        "{t}"
+    );
+    assert!(
+        !t.contains("     Now."),
+        "the text it has now is not listed as an earlier one: {t}"
+    );
+    let r = enter(&mut app, "/method restore contract-check 2");
+    assert_eq!(r[0].path, "/api/methods/restore");
+    assert_eq!(r[0].body.as_ref().unwrap()["hash"], "h1");
+    assert!(
+        enter(&mut app, "/method restore contract-check 9").is_empty(),
+        "a number not listed is refused"
+    );
+    assert!(enter(&mut app, "/method restore contract-check x").is_empty());
+}

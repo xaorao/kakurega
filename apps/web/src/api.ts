@@ -140,6 +140,8 @@ export interface Suggestion { id: string; text: string; why: string; level: stri
 export interface LogEntry { seq: number; at: number; kind: string; subject: string; data: Record<string, string | number> }
 export interface LogSummary { count: number; head: string | null; public_key: string; recent: LogEntry[] }
 export interface ChatTurn { role: "user" | "assistant"; content: string }
+/** One text a method has had: the whole text, when it was saved, whether it was ever approved, and whether it is the one now. */
+export interface MethodVersion { name: string; description: string; triggers: string[]; avoid: string[]; body: string; hash: string; saved_at: number; was_approved: boolean; current: boolean }
 export interface Method { name: string; description: string; triggers: string[]; avoid: string[]; body: string; hash: string; approved: boolean; approved_at?: number | null }
 export interface BundledMethod { name: string; group: string; description: string; hash: string; added: boolean }
 export interface PackCatalogEntry { name: string; version: string; description: string; file: string; sha256: string; methods: string[]; state: "new" | "imported" | "update_available" | "older_listed"; have: string | null }
@@ -423,6 +425,8 @@ export const api = {
   saveMethod: (m: { name: string; description: string; triggers: string[]; avoid: string[]; body: string }) => request<{ name: string; hash: string; approved: boolean }>("POST", "/api/methods", m),
   approveMethod: (name: string, hash: string) => request<{ approved: boolean }>("POST", "/api/methods/approve", { name, hash }),
   revokeMethod: (name: string) => request<{ revoked: boolean }>("POST", "/api/methods/revoke", { name }),
+  methodHistory: (name: string) => request<{ name: string; versions: MethodVersion[]; max: number }>("POST", "/api/methods/history", { name }),
+  restoreMethod: (name: string, hash: string) => request<{ name: string; hash: string; approved: boolean }>("POST", "/api/methods/restore", { name, hash }),
   removeMethod: (name: string) => request<{ removed: boolean }>("POST", "/api/methods/remove", { name }),
   diagnostics: () => request<{ text: string; data: unknown }>("GET", "/api/diagnostics"),
   docIndex: () => request<{ vectors: number; models: { model: string; vectors: number; oldest: number; newest: number }[]; max: number }>("GET", "/api/documents/index"),

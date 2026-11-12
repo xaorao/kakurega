@@ -57,6 +57,10 @@ pub enum MethodAction {
         triggers: Vec<String>,
         text: String,
     },
+    /// The texts a method had before, numbered from the newest.
+    History(String),
+    /// Bring back earlier text number N (as `History` numbered it in this session).
+    Restore(String, usize),
 }
 
 /// What `/team` was asked to do. A run id left out means the run this terminal showed last.
@@ -447,7 +451,7 @@ pub fn usage(name: &str) -> &'static str {
         "forgetreview" => "/forgetreview JOB",
         "instructions" => "/instructions [set [in PROJECT:] TEXT | clear [PROJECT]]",
         "notesonly" => "/notesonly [on|off [PROJECT]]",
-        "method" => "/method [show|approve|revoke|remove NAME | add NAME WORD,WORD|- TEXT | suggestions | keep|dismiss NUMBER | bundled | take NAME]",
+        "method" => "/method [show|approve|revoke|remove|history NAME | restore NAME NUMBER | add NAME WORD,WORD|- TEXT | suggestions | keep|dismiss NUMBER | bundled | take NAME]",
         "mcp" => "/mcp [check NAME | allow|ask SERVER TOOL [knowingly] | off SERVER TOOL | pending | approve|deny ID | remove NAME | add NAME /full/path [ARGS]]",
         "pii" => "/pii [add ENTRY | remove ENTRY]",
         "find" => "/find WORDS",
@@ -1078,15 +1082,25 @@ pub fn parse(line: &str) -> Result<Command, String> {
                         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
             };
             match sub {
-                "show" | "approve" | "revoke" | "remove" if plain_name(tail) => {
+                "show" | "approve" | "revoke" | "remove" | "history" if plain_name(tail) => {
                     let n = tail.to_string();
                     Ok(Command::Method(match sub {
                         "show" => MethodAction::Show(n),
                         "approve" => MethodAction::Approve(n),
                         "revoke" => MethodAction::Revoke(n),
+                        "history" => MethodAction::History(n),
                         _ => MethodAction::Remove(n),
                     }))
                 }
+                "restore" => match tail.split_once(char::is_whitespace) {
+                    Some((n, num)) if plain_name(n) => match num.trim().parse::<usize>() {
+                        Ok(k) if k > 0 => {
+                            Ok(Command::Method(MethodAction::Restore(n.to_string(), k)))
+                        }
+                        _ => bad(),
+                    },
+                    _ => bad(),
+                },
                 "suggestions" if tail.is_empty() => Ok(Command::Method(MethodAction::Suggestions)),
                 "bundled" if tail.is_empty() => Ok(Command::Method(MethodAction::Bundled)),
                 "take"

@@ -23858,3 +23858,145 @@ fn sv279_a_pack_suggests_outside_programs_that_are_shown_never_added_and_can_be_
     );
     assert!(!w.get("/api/mcp").1.to_string().contains("/usr/bin/evil"));
 }
+
+#[test]
+fn sv280_a_skill_keeps_its_earlier_texts_and_one_brought_back_waits_for_approval_again() {
+    let (_c, w, _seen, _root) = instructions_service("method-history");
+    let save = |body: &str| {
+        w.post("/api/methods", json!({"name": "contract-check", "description": "how I read contracts", "triggers": ["contract"], "body": body})).1
+    };
+    let first = save("Quote clause numbers.");
+    let h1 = first["hash"].as_str().unwrap().to_string();
+    assert_eq!(
+        w.post(
+            "/api/methods/approve",
+            json!({"name": "contract-check", "hash": h1})
+        )
+        .1["approved"],
+        true
+    );
+    let second = save("Quote clause numbers and dates.");
+    let h2 = second["hash"].as_str().unwrap().to_string();
+    assert_eq!(second["approved"], false, "an edit takes the approval away");
+    let hist = w
+        .post("/api/methods/history", json!({"name": "contract-check"}))
+        .1;
+    let v = hist["versions"].as_array().unwrap();
+    assert_eq!(v.len(), 2, "{hist}");
+    assert_eq!(
+        (
+            v[0]["hash"].as_str(),
+            v[0]["current"].as_bool(),
+            v[0]["was_approved"].as_bool()
+        ),
+        (Some(h2.as_str()), Some(true), Some(false))
+    );
+    assert_eq!(
+        (
+            v[1]["hash"].as_str(),
+            v[1]["body"].as_str(),
+            v[1]["was_approved"].as_bool()
+        ),
+        (Some(h1.as_str()), Some("Quote clause numbers."), Some(true))
+    );
+    // brought back, the earlier text is the method again and is not in use until approved again
+    let r = w
+        .post(
+            "/api/methods/restore",
+            json!({"name": "contract-check", "hash": h1}),
+        )
+        .1;
+    assert_eq!(
+        (r["hash"].as_str(), r["approved"].as_bool()),
+        (Some(h1.as_str()), Some(false)),
+        "{r}"
+    );
+    let now = w.get("/api/methods").1;
+    let m = now["methods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "contract-check")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (m["body"].as_str(), m["approved"].as_bool()),
+        (Some("Quote clause numbers."), Some(false))
+    );
+    // approved again, then brought back to its own current text: refused, and the approval stays
+    assert_eq!(
+        w.post(
+            "/api/methods/approve",
+            json!({"name": "contract-check", "hash": h1})
+        )
+        .1["approved"],
+        true
+    );
+    let (s, r) = w.post(
+        "/api/methods/restore",
+        json!({"name": "contract-check", "hash": h1}),
+    );
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (409, Some("ALREADY_CURRENT")),
+        "{r}"
+    );
+    assert!(w.get("/api/methods").1["methods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m["name"] == "contract-check" && m["approved"] == true));
+    // approved and then an earlier text brought back: no longer in use
+    let r = w
+        .post(
+            "/api/methods/restore",
+            json!({"name": "contract-check", "hash": h2}),
+        )
+        .1;
+    assert_eq!(r["approved"], false, "{r}");
+    // a text that never belonged to that method, or a method that is gone, cannot be brought back
+    assert_eq!(
+        w.post(
+            "/api/methods/restore",
+            json!({"name": "contract-check", "hash": "0".repeat(64)})
+        )
+        .0,
+        404
+    );
+    assert_eq!(
+        w.post("/api/methods/history", json!({"name": "nothing"})).0,
+        404
+    );
+    // at most twenty earlier texts are kept
+    for n in 0..25 {
+        save(&format!("Quote clause numbers, version {n}."));
+    }
+    assert_eq!(
+        w.post("/api/methods/history", json!({"name": "contract-check"}))
+            .1["versions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        20
+    );
+    // removing the method removes its earlier texts; a new one of the same name starts with no history
+    w.post("/api/methods/remove", json!({"name": "contract-check"}));
+    save("A fresh start.");
+    assert_eq!(
+        w.post("/api/methods/history", json!({"name": "contract-check"}))
+            .1["versions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        w.post(
+            "/api/methods/restore",
+            json!({"name": "contract-check", "hash": h1})
+        )
+        .0,
+        404,
+        "a removed method's old text is gone"
+    );
+}

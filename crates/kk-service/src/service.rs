@@ -478,6 +478,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS pack_seen(name TEXT NOT NULL, key_id TEXT NOT NULL, version TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(name, key_id));
              CREATE TABLE IF NOT EXISTS catalog_seen(key_id TEXT PRIMARY KEY, issued INTEGER NOT NULL, at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS methods(name TEXT PRIMARY KEY, body TEXT NOT NULL, hash TEXT NOT NULL, updated_at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS method_versions(name TEXT NOT NULL, hash TEXT NOT NULL, body TEXT NOT NULL, saved_at INTEGER NOT NULL, approved_at INTEGER, PRIMARY KEY(name, hash));
              CREATE TABLE IF NOT EXISTS method_approvals(name TEXT PRIMARY KEY, hash TEXT NOT NULL, approved_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS hidden_names(name TEXT PRIMARY KEY, added INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS projects(name TEXT PRIMARY KEY, folder TEXT, created INTEGER NOT NULL);
@@ -10219,6 +10220,8 @@ impl Extension for Routes {
             .route("/api/methods/bundled", post(methods::bundled_add))
             .route("/api/methods/revoke", post(methods::methods_revoke))
             .route("/api/methods/remove", post(methods::methods_remove))
+            .route("/api/methods/history", post(methods::methods_history))
+            .route("/api/methods/restore", post(methods::methods_restore))
             .route(
                 "/api/project-settings",
                 get(project_settings_get).post(project_settings_set),

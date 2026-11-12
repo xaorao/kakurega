@@ -169,6 +169,17 @@ impl Service {
             kk_vault::rusqlite::params![m.name, m.hash],
         )
         .map_err(|e| e.to_string())?;
+        // every text a method has had is kept, newest last, so an earlier one can be read and brought back
+        c.execute(
+            "INSERT INTO method_versions(name, hash, body, saved_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(name, hash) DO UPDATE SET saved_at = ?4",
+            kk_vault::rusqlite::params![m.name, m.hash, body.to_string(), now()],
+        )
+        .map_err(|e| e.to_string())?;
+        c.execute(
+            "DELETE FROM method_versions WHERE name = ?1 AND hash NOT IN (SELECT hash FROM method_versions WHERE name = ?1 ORDER BY saved_at DESC, rowid DESC LIMIT ?2)",
+            kk_vault::rusqlite::params![m.name, MAX_VERSIONS],
+        )
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 }
@@ -291,7 +302,12 @@ pub(super) async fn methods_approve(
     }
     let done = {
         let store = svc.store.lock().expect("lock");
-        store.connection().execute(
+        let c = store.connection();
+        let _ = c.execute(
+            "UPDATE method_versions SET approved_at = ?3 WHERE name = ?1 AND hash = ?2",
+            kk_vault::rusqlite::params![m.name, m.hash, now()],
+        );
+        c.execute(
             "INSERT INTO method_approvals(name, hash, approved_at) VALUES(?1, ?2, ?3) ON CONFLICT(name) DO UPDATE SET hash = ?2, approved_at = ?3",
             kk_vault::rusqlite::params![m.name, m.hash, now()],
         )
@@ -322,11 +338,113 @@ pub(super) async fn methods_remove(axum::Extension(svc): Svc, Json(b): Json<Name
         let store = svc.store.lock().expect("lock");
         let c = store.connection();
         let _ = c.execute("DELETE FROM method_approvals WHERE name = ?1", [&b.name]);
+        // removing a method removes every earlier text of it too
+        let _ = c.execute("DELETE FROM method_versions WHERE name = ?1", [&b.name]);
         c.execute("DELETE FROM methods WHERE name = ?1", [&b.name])
             .unwrap_or(0)
     };
     svc.log_event("method.removed", &b.name, &[]);
     Json(json!({"name": b.name, "removed": n > 0})).into_response()
+}
+
+/// The most earlier texts kept for one method.
+const MAX_VERSIONS: i64 = 20;
+
+/// Every text a method has had, newest first: when it was saved, whether it was ever approved, and the whole text.
+pub(super) async fn methods_history(
+    axum::Extension(svc): Svc,
+    Json(b): Json<NameBody>,
+) -> Response {
+    let current = svc
+        .methods_all()
+        .into_iter()
+        .find(|(m, _, _)| m.name == b.name)
+        .map(|(m, _, _)| m.hash);
+    let Some(current) = current else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "METHOD_NOT_FOUND",
+            "there is no method with that name",
+        );
+    };
+    let rows: Vec<(String, String, i64, Option<i64>)> = {
+        let store = svc.store.lock().expect("lock");
+        let c = store.connection();
+        c.prepare("SELECT hash, body, saved_at, approved_at FROM method_versions WHERE name = ?1 ORDER BY saved_at DESC, rowid DESC")
+            .and_then(|mut st| {
+                st.query_map([&b.name], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+                    .map(|it| it.flatten().collect())
+            })
+            .unwrap_or_default()
+    };
+    let versions: Vec<Value> = rows
+        .into_iter()
+        .filter_map(|(hash, body, saved_at, approved_at)| {
+            let m = method_from_row(&body, &hash)?;
+            let mut v = kk_methods::to_json(&m);
+            v["saved_at"] = json!(saved_at);
+            v["was_approved"] = json!(approved_at.is_some());
+            v["current"] = json!(hash == current);
+            Some(v)
+        })
+        .collect();
+    Json(json!({"name": b.name, "versions": versions, "max": MAX_VERSIONS})).into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RestoreBody {
+    name: String,
+    hash: String,
+}
+
+/// Brings back an earlier text of a method. It is saved as the method's text now and waits for the owner's approval again,
+/// like any change (an approval is of the text the method has now), even if that exact text was approved before.
+pub(super) async fn methods_restore(
+    axum::Extension(svc): Svc,
+    Json(b): Json<RestoreBody>,
+) -> Response {
+    let body: Option<String> = {
+        let store = svc.store.lock().expect("lock");
+        store
+            .connection()
+            .query_row(
+                "SELECT body FROM method_versions WHERE name = ?1 AND hash = ?2",
+                kk_vault::rusqlite::params![b.name, b.hash],
+                |r| r.get(0),
+            )
+            .ok()
+    };
+    let Some(m) = body.and_then(|body| method_from_row(&body, &b.hash)) else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "NO_VERSION",
+            "there is no such earlier text of that method",
+        );
+    };
+    match svc.methods_all().iter().find(|(x, _, _)| x.name == m.name) {
+        None => {
+            return error(
+                StatusCode::NOT_FOUND,
+                "METHOD_NOT_FOUND",
+                "there is no method with that name",
+            )
+        }
+        // the text it has now is not brought back: that would change nothing, or take an approval away for nothing
+        Some((x, _, _)) if x.hash == m.hash => {
+            return error(
+                StatusCode::CONFLICT,
+                "ALREADY_CURRENT",
+                "that is the text the method has now",
+            )
+        }
+        Some(_) => {}
+    }
+    if let Err(e) = svc.method_save(&m) {
+        return refuse(&e);
+    }
+    svc.log_event("method.restored", &m.name, &[]);
+    Json(json!({"name": m.name, "hash": m.hash, "approved": false})).into_response()
 }
 
 fn proposal_rows(svc: &Service) -> Vec<(i64, String, Method)> {

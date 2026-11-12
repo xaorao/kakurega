@@ -89,6 +89,20 @@ await shot("5-edited-waiting");
 body = await ask("Tell me about a pineapple orchard in one sentence.");
 check(!/Methods used/.test(body), "the edited method is not used until approved again");
 
+// the earlier text is kept: it can be read and brought back, and then waits for approval again
+await page.goto(origin + "/#/skills");
+await page.getByRole("heading", { name: "Methods" }).waitFor();
+await page.getByRole("button", { name: "Show text" }).first().click();
+await page.locator("details.history > summary").first().click();
+await page.getByText("you approved this text then").first().waitFor();
+const hist = await page.locator("details.history").first().innerText();
+check(/PINEAPPLE/.test(hist) && /you approved this text then/.test(hist) && !/MANGO/.test(hist), "the earlier text is listed with whether it was approved, and the text it has now is not", hist.slice(0, 300));
+await shot("5b-history");
+await page.getByRole("button", { name: "Bring this text back" }).first().click();
+await page.getByText("The earlier text is back. It waits for your approval again before it is used.").waitFor();
+await page.getByRole("button", { name: "Show text" }).first().click().catch(() => {});
+check(await page.getByText("Begin your answer with the single word PINEAPPLE").first().isVisible() && await page.getByText("Waiting for your approval: not in use").first().isVisible(), "brought back, it is the text again and waits for approval");
+
 const refused = await page.evaluate(async () => {
   const csrf = (await (await fetch("/api/session", { credentials: "same-origin" })).json()).csrf;
   const r = await fetch("/api/methods", { method: "POST", headers: { "Content-Type": "application/json", "x-kk-csrf": csrf }, credentials: "same-origin", body: JSON.stringify({ name: "x", description: "d", triggers: ["alpha"], body: "t", tools: ["shell"] }) });

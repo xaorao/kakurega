@@ -278,6 +278,7 @@ enum Intent {
     MethodList,
     MethodSuggestions,
     MethodShow(String),
+    MethodHistory(String),
     MethodDone(&'static str),
     MethodAdd,
     InstructionsSet,
@@ -399,6 +400,8 @@ pub struct App {
     pub chat_project: Option<String>,
     /// The text of each method as `/method show` displayed it: approving sends that hash, so the owner approves what they read.
     pub shown_methods: std::collections::HashMap<String, String>,
+    /// The earlier texts of each method that `/method history` listed, by number, so `/method restore` names what was seen.
+    pub method_versions: std::collections::HashMap<String, Vec<String>>,
     /// The pin of each outside tool as the last `/mcp` list showed it: allowing sends that pin, so the owner allows what they read.
     pub shown_mcp: std::collections::HashMap<(String, String), String>,
     /// How much of the model's window the last answer's question took, for the status line; empty until an answer comes.
@@ -556,6 +559,7 @@ impl App {
             session: None,
             chat_project: None,
             shown_methods: std::collections::HashMap::new(),
+            method_versions: std::collections::HashMap::new(),
             shown_mcp: std::collections::HashMap::new(),
             context_meter: None,
             pasted: Vec::new(),
@@ -3411,6 +3415,26 @@ impl App {
                             Vec::new()
                         }
                     },
+                    M::History(name) => vec![self.req(
+                        Intent::MethodHistory(name.clone()),
+                        false,
+                        Method::Post,
+                        "/api/methods/history",
+                        Some(json!({"name": name})),
+                    )],
+                    M::Restore(name, n) => match self.method_versions.get(&name).and_then(|v| v.get(n - 1)).cloned() {
+                        Some(hash) => vec![self.req(
+                            Intent::MethodDone("The earlier text is back. Read it with /method show NAME; it waits for your approval again."),
+                            false,
+                            Method::Post,
+                            "/api/methods/restore",
+                            Some(json!({"name": name, "hash": hash})),
+                        )],
+                        None => {
+                            self.say(Kind::Error, format!("List its earlier texts first with /method history {name}, then name one by its number."));
+                            Vec::new()
+                        }
+                    },
                     M::Revoke(name) => vec![self.req(
                         Intent::MethodDone("Approval taken away: it is not used."),
                         false,
@@ -5717,6 +5741,61 @@ impl App {
                 } else {
                     self.push(Kind::Info, Some("Your methods"), rows);
                 }
+                Vec::new()
+            }
+            Intent::MethodHistory(name) => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let earlier: Vec<Value> = body["versions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|v| v["current"] != true)
+                    .cloned()
+                    .collect();
+                self.method_versions.insert(
+                    name.clone(),
+                    earlier
+                        .iter()
+                        .filter_map(|v| v["hash"].as_str().map(String::from))
+                        .collect(),
+                );
+                let mut lines: Vec<String> = Vec::new();
+                if earlier.is_empty() {
+                    lines.push("This is the only text it has had.".into());
+                }
+                for (i, v) in earlier.iter().enumerate() {
+                    lines.push(format!(
+                        "{}. saved {}{}",
+                        i + 1,
+                        {
+                            let at = v["saved_at"].as_i64().unwrap_or(0);
+                            format!(
+                                "{}, {} ago",
+                                crate::picker::day_label(at, now_secs()),
+                                span_text(now_secs() - at)
+                            )
+                        },
+                        if v["was_approved"] == true {
+                            ", you approved this text then"
+                        } else {
+                            ""
+                        }
+                    ));
+                    for l in clean(v["body"].as_str().unwrap_or("")).lines().take(8) {
+                        lines.push(format!("     {l}"));
+                    }
+                }
+                if !earlier.is_empty() {
+                    lines.push(format!("/method restore {} NUMBER brings one back; it then waits for your approval again.", clean(&name)));
+                }
+                self.push(
+                    Kind::Info,
+                    Some(&format!("Earlier texts of {}", clean(&name))),
+                    lines,
+                );
                 Vec::new()
             }
             Intent::MethodShow(name) => {
