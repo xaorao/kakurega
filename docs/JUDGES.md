@@ -8,10 +8,10 @@ A model key that NEAR's own TDX verifier contract vouched for, read from a publi
 
 ```sh
 ARGS=$(printf '{"signer":"89154a43a47684742c3d1753252bb6f49f61da9d8c84fc9b1def2df130cb2d93"}' | base64)
-curl -s https://rpc.testnet.fastnear.com -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"query","params":{"request_type":"call_function","finality":"final","account_id":"kakurega-registry-5d26f9.testnet","method_name":"hardware","args_base64":"'"$ARGS"'"}}' | python3 -c "import json,sys; print(bytes(json.load(sys.stdin)['result']['result']).decode())"
+curl -s https://rpc.testnet.fastnear.com -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"query","params":{"request_type":"call_function","finality":"final","account_id":"kakurega-registry-1904f0.testnet","method_name":"hardware","args_base64":"'"$ARGS"'"}}' | python3 -c "import json,sys; print(bytes(json.load(sys.stdin)['result']['result']).decode())"
 ```
 
-Expected: JSON that starts `{"signer":"89154a43…","tcb_status":"UpToDate","advisory_ids":[],"mr_td":"df4d77c8…`. The transaction that wrote it: [`DfD1dMCX…`](https://testnet.nearblocks.io/txns/DfD1dMCXCvBp2ptHSJcNXC2YwpgxZkedohsQ68M3CaGg). In it our contract passed a fresh NEAR AI Cloud quote for `Qwen/Qwen3.8-27B` to `tee-verifier-2026-07-22.testnet`, and recorded the key only after that contract accepted it.
+Expected: JSON that starts `{"signer":"89154a43…","tcb_status":"UpToDate","advisory_ids":[],"mr_td":"df4d77c8…`. The transaction that wrote it: [`8y2xC8zh…`](https://testnet.nearblocks.io/txns/8y2xC8zhHajUggKWNX3rb9tuRLZuyMQjP3cSQNHVZXyz). In it our contract passed a fresh NEAR AI Cloud quote for `Qwen/Qwen3.8-27B` to `tee-verifier-2026-07-22.testnet`, and recorded the key only after that contract accepted it.
 
 What this does not show: which software ran (the measurements are recorded, none is approved by the contract), and nothing about the GPU.
 
@@ -27,7 +27,7 @@ scripts/judge-replay
 ```
 
 Expected, in order:
-- `Recorded at kakurega-registry-5d26f9.testnet on NEAR testnet:` then the key, `NEAR's verifier checked its Intel TDX quote against Intel's collateral on 2026-11-11 08:41:42 UTC`, `Intel patch level then: UpToDate`, and a list headed `This does not establish:`.
+- `Recorded at kakurega-registry-1904f0.testnet on NEAR testnet:` then the key, `NEAR's verifier checked its Intel TDX quote against Intel's collateral on 2026-11-12 23:36:36 UTC`, `Intel patch level then: UpToDate`, and a list headed `This does not establish:`.
 - `Signature: checks against the pinned key.` then `known shapes: 126 cases. … leaked 0.` and `beyond the detector: 42 cases. … leaked 10.` with each leak named. The leaks are real and listed on purpose: they are passwords and PINs written with no word saying what they are.
 - An example capsule the script makes on the spot, with made-up keys and made-up model answers, for the route `example`: accepted, with a list headed `Not established:` whose first line says it is an example. Then the same capsule with one receipt altered: `INVALID: receipt_signature`, then `Both results are as expected.` It prints the path of a one-file page to open from disk; drop either capsule on it. A capsule from a real review is made by `kaku` and checked the same way.
 
@@ -39,7 +39,7 @@ Needs `cargo near`.
 scripts/check-deployed
 ```
 
-Expected: two equal lines `built here : 161ea706…59e6` and `on testnet: 161ea706…59e6  (kakurega-registry-5d26f9.testnet)`, then `MATCH: the account runs exactly this build`. The build is not the reproducible Docker one, and the script says so: another machine may produce different bytes from the same source.
+Expected: two equal lines `built here : 0cfa5fd7…dce8` and `on testnet: 0cfa5fd7…dce8  (kakurega-registry-1904f0.testnet)`, then `MATCH: the account runs exactly this build`. The account has no access keys left, so nobody can replace that code or its fee: `kaku chain fees` shows the fee, 2% on top of the reviewer's amount, sent only to `kakurega-fees-d5de2a.testnet`. The build is not the reproducible Docker one, and the script says so: another machine may produce different bytes from the same source.
 
 ## 30 minutes: use it
 

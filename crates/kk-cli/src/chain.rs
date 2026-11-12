@@ -15,6 +15,9 @@ const USAGE: &str = "usage:
                                           publish a delivered review's capsule digest and model receipts on NEAR (testnet);
                                           with --order, for that order, which the contract then pays out
   kaku chain order ID                     what an order holds
+  kaku chain fees [--withdraw --key-file FILE [--account NAME] [--token]]
+                                          what the registry takes on each paid order and what it owes its fee account;
+                                          with --withdraw, send what it owes there (anyone may; testnet)
   kaku chain quote --pay-with SYMBOL@chain --usdc AMOUNT --refund-to ADDRESS --registry ACCOUNT
                    --reviewer ACCOUNT --reviewer-key KEY --scope DIGEST [--hours N] [--require-hardware]
                                           a price from NEAR Intents for paying an order from another chain; nothing is sent
@@ -91,6 +94,22 @@ fn amount(order: &Value) -> String {
         }
         (Some(u), Some(t)) => format!("{u} smallest units of token {}", clean(t)),
         (None, _) => "an unreadable amount".to_string(),
+    }
+}
+
+/// A raw amount in the order's unit, in words.
+fn units(order: &Value, key: &str) -> String {
+    let mut o = order.clone();
+    o["amount"] = order[key].clone();
+    amount(&o)
+}
+
+/// A share in hundredths of a percent, as a percentage.
+fn percent(bps: u64) -> String {
+    if bps.is_multiple_of(100) {
+        format!("{}%", bps / 100)
+    } else {
+        format!("{}.{:02}%", bps / 100, bps % 100)
     }
 }
 
@@ -193,7 +212,15 @@ pub fn run(args: &[String]) -> u8 {
             skip = true;
         } else if !a.starts_with("--") {
             words.push(a);
-        } else if a != "--json" && a != "--yes" && a != "--require-hardware" {
+        } else if ![
+            "--json",
+            "--yes",
+            "--require-hardware",
+            "--withdraw",
+            "--token",
+        ]
+        .contains(&a.as_str())
+        {
             eprintln!("unknown option `{a}`\n{USAGE}");
             return 2;
         }
@@ -455,26 +482,43 @@ pub fn run(args: &[String]) -> u8 {
                 let units = to_units(&usdc, arrive.decimals).ok_or_else(|| {
                     ChainError::Input("--usdc is a positive amount such as 25 or 25.50".into())
                 })?;
+                // the payer sends the registry's price for the reviewer's amount, read from the registry on mainnet; when it
+                // cannot be read the quote says its fee is not included
+                let fee = match Chain::new(Network::Mainnet, chain.registry()) {
+                    Ok(main) => main.price(units).await.ok(),
+                    Err(_) => None,
+                };
+                let mut sent_terms = terms.clone();
+                let arrive_units = match fee {
+                    Some((_, _, total)) => {
+                        sent_terms["amount"] = json!(units.to_string());
+                        total
+                    }
+                    None => units,
+                };
                 let ask = Ask {
                     pay,
                     arrive,
-                    arrive_units: units,
+                    arrive_units,
                     registry: chain.registry(),
                     refund_to: &refund_to,
-                    terms: &terms,
+                    terms: &sent_terms,
                     deadline_rfc3339: &rfc3339(now + 600),
                 };
-                intents::dry_quote(chain.http(), &ask).await
+                intents::dry_quote(chain.http(), &ask)
+                    .await
+                    .map(|q| (q, fee.map(|f| f.1), sent_terms))
             });
             match quoted {
                 Err(e) => fail(&e),
-                Ok(q) => {
+                Ok((q, fee, terms)) => {
                     if as_json {
                         println!(
                             "{}",
                             json!({"dry": true, "pay": q.pay, "pay_symbol": q.pay_symbol, "pay_chain": q.pay_chain,
                                 "arrive": q.arrive, "arrive_units": q.arrive_units, "seconds": q.seconds,
-                                "registry": chain.registry(), "terms": terms})
+                                "registry": chain.registry(), "terms": terms, "fee_known": fee.is_some(),
+                                "fee_units": fee.map(|f| f.to_string())})
                         );
                     } else {
                         println!(
@@ -489,11 +533,81 @@ pub fn run(args: &[String]) -> u8 {
                             clean(&q.pay_symbol),
                             clean(&q.pay_chain)
                         );
+                        match fee {
+                            Some(f) => println!(
+                                "That is {} USDC for the reviewer and the registry's fee of {f} smallest units on top.",
+                                clean(&usdc)
+                            ),
+                            None => println!(
+                                "The registry could not be read on NEAR mainnet, so its fee is not included in this price."
+                            ),
+                        }
                         println!(
                             "It would arrive in about {} seconds, carrying the order's terms as the transfer's message; the order would wait {hours} hours for the reviewer's capsule.",
                             q.seconds
                         );
                         println!("A real payment needs the registry on NEAR mainnet and the owner's word. This build does not send one.");
+                    }
+                    0
+                }
+            }
+        }
+        (Some("fees"), None) => {
+            if args.iter().any(|a| a == "--withdraw") {
+                let Some(file) = crate::flag(args, "--key-file") else {
+                    eprintln!("{USAGE}");
+                    return 2;
+                };
+                let payer = match Payer::from_key_file(
+                    std::path::Path::new(&file),
+                    crate::flag(args, "--account").as_deref(),
+                ) {
+                    Ok(p) => p,
+                    Err(e) => return fail(&e),
+                };
+                let in_token = args.iter().any(|a| a == "--token");
+                return match rt.block_on(chain.withdraw_fees(&payer, in_token)) {
+                    Err(e) => fail(&e),
+                    Ok(sent) => {
+                        if as_json {
+                            println!(
+                                "{}",
+                                json!({"transaction": sent.transaction, "gas_tgas": sent.gas_tgas, "in_token": in_token})
+                            );
+                        } else {
+                            println!(
+                                "Sent what {} owed its fee account, in transaction {}.",
+                                place, sent.transaction
+                            );
+                        }
+                        0
+                    }
+                };
+            }
+            match rt.block_on(async {
+                Ok::<_, ChainError>((chain.fee_terms().await?, chain.fees_owed().await?))
+            }) {
+                Err(e) => fail(&e),
+                Ok((terms, owed)) => {
+                    if as_json {
+                        println!("{}", json!({"terms": terms, "owed": owed}));
+                    } else {
+                        let bps = terms["bps"].as_u64().unwrap_or(0);
+                        if bps == 0 {
+                            println!("{place} takes no fee: the reviewer receives everything set aside for an order.");
+                        } else {
+                            println!(
+                                "{place} takes {} on top of the reviewer's amount for each paid order, sent only to {}.",
+                                percent(bps),
+                                clean(text(&terms["account"]))
+                            );
+                            println!("  The fee is earned when the reviewer registers the capsule, and returned to the client with the amount on a refund.");
+                            println!(
+                                "  Owed now: {} and {} smallest units of the accepted token.",
+                                units(&json!({"near": owed["near"]}), "near"),
+                                clean(text(&owed["token"]))
+                            );
+                        }
                     }
                     0
                 }
@@ -521,7 +635,13 @@ pub fn run(args: &[String]) -> u8 {
                             clean(text(&o["reviewer"])),
                             clean(text(&o["reviewer_key"]))
                         );
-                        println!("  Amount: {}", amount(&o));
+                        println!("  Amount: {} to the reviewer", amount(&o));
+                        if o["fee"].as_str().is_some_and(|f| f != "0") {
+                            println!(
+                                "  Fee on top: {} (earned when the capsule is registered, returned with the amount on a refund)",
+                                units(&o, "fee")
+                            );
+                        }
                         println!(
                             "  Opened {}, deadline {}",
                             when(&o["opened_at"]),
@@ -708,6 +828,19 @@ mod tests {
             "5000000 smallest units of token usdc.testnet"
         );
         assert_eq!(amount(&json!({"amount": "lots"})), "an unreadable amount");
+        let order = json!({"amount": "250000000000000000000000", "fee": "5000000000000000000000", "token": null});
+        assert_eq!(units(&order, "fee"), "0.00500 NEAR");
+        assert_eq!(
+            units(
+                &json!({"amount": "1", "fee": "100000", "token": "usdc.testnet"}),
+                "fee"
+            ),
+            "100000 smallest units of token usdc.testnet"
+        );
+        assert_eq!(
+            (percent(200), percent(250), percent(1000), percent(5)),
+            ("2%".into(), "2.50%".into(), "10%".into(), "0.05%".into())
+        );
     }
 
     #[test]
@@ -805,6 +938,12 @@ mod tests {
         assert_eq!(run(&["hardware"]), 2);
         assert_eq!(run(&["hardware", "XYZ"]), 2);
         assert_eq!(run(&["order", "seven"]), 2);
+        assert_eq!(
+            run(&["fees", "--withdraw"]),
+            2,
+            "a withdrawal names the key file that pays for it"
+        );
+        assert_eq!(run(&["fees", "extra"]), 2);
         assert_eq!(run(&["attest"]), 2);
         assert_eq!(run(&["attest", "--model", "m"]), 2);
         assert_eq!(run(&["hardware", &"ab".repeat(32), "--network", "moon"]), 2);

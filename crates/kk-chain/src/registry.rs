@@ -402,7 +402,45 @@ impl Chain {
         Ok((sent, record))
     }
 
-    /// Sets `amount` of NEAR aside for a review. Returns the transaction and the new order's number.
+    /// What the registry takes on top of each paid order, and the only account it sends that to.
+    pub async fn fee_terms(&self) -> Result<Value, ChainError> {
+        self.view("fee_terms", json!({})).await
+    }
+
+    /// What a client sets aside so the reviewer receives `amount` (yoctoNEAR, or the token's smallest unit): the amount,
+    /// the fee on it and their sum, as the registry computes them.
+    pub async fn price(&self, amount: u128) -> Result<(u128, u128, u128), ChainError> {
+        let p = self
+            .view("price", json!({"amount": amount.to_string()}))
+            .await?;
+        let num = |k: &str| {
+            p[k].as_str()
+                .and_then(|s| s.parse::<u128>().ok())
+                .ok_or_else(|| ChainError::Answer(format!("the registry's price has no {k}")))
+        };
+        Ok((num("amount")?, num("fee")?, num("total")?))
+    }
+
+    /// Fees earned and not yet sent to the fee account.
+    pub async fn fees_owed(&self) -> Result<Value, ChainError> {
+        self.view("fees_owed", json!({})).await
+    }
+
+    /// Sends the fees owed, in NEAR or in the token, to the registry's fee account. Anyone may send it; the money only goes there.
+    pub async fn withdraw_fees(&self, payer: &Payer, in_token: bool) -> Result<Sent, ChainError> {
+        self.send(
+            payer,
+            "withdraw_fees",
+            json!({"in_token": in_token}),
+            CALL_GAS,
+            NearToken::from_yoctonear(0),
+        )
+        .await
+    }
+
+    /// Opens an order that pays the reviewer `amount` of NEAR for a review. The registry's price for that amount (the amount
+    /// and its fee) is attached with room for the order's storage; the contract keeps exactly the price and the storage and
+    /// hands the rest back. Returns the transaction and the new order's number.
     pub async fn open_order(
         &self,
         payer: &Payer,
@@ -410,6 +448,13 @@ impl Chain {
         amount: NearToken,
     ) -> Result<(Sent, u64), ChainError> {
         self.writable()?;
+        let (_, _, total) = self.price(amount.as_yoctonear()).await?;
+        let mut terms = terms;
+        terms["amount"] = json!(amount.as_yoctonear().to_string());
+        let attach =
+            NearToken::from_yoctonear(total.saturating_add(
+                NearToken::from_millinear(STORAGE_DEPOSIT_MILLINEAR).as_yoctonear(),
+            ));
         let before: u64 = self
             .view("orders_total", json!({}))
             .await?
@@ -422,7 +467,7 @@ impl Chain {
                 "open_order",
                 json!({"terms": terms}),
                 CALL_GAS,
-                amount,
+                attach,
             )
             .await?;
         // the order is the newest one this account opened at or after the count read before sending

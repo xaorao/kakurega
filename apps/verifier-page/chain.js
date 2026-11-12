@@ -2,7 +2,7 @@
 // it sends the capsule's digest and the keys named in it to that RPC, and nothing else.
 
 export const NETWORKS = {
-  testnet: { rpc: "https://rpc.testnet.fastnear.com", registry: "kakurega-registry-5d26f9.testnet" },
+  testnet: { rpc: "https://rpc.testnet.fastnear.com", registry: "kakurega-registry-1904f0.testnet" },
   mainnet: { rpc: "https://rpc.mainnet.fastnear.com", registry: "" },
 };
 

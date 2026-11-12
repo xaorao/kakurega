@@ -20,6 +20,10 @@
 //!    if the client asked, carrying only model receipts whose signer's hardware quote this contract saw verified after the order
 //!    was opened. After the deadline an unpaid order goes back to the client.
 //!
+//! 6. **The fee**: a share of each order, fixed when the contract is created (at most 10%), is paid by the client on top of the
+//!    reviewer's amount. It is earned only when the reviewer registers the capsule, goes back to the client with the amount on a
+//!    refund, and can only ever be sent to the fee account named at creation.
+//!
 //! It does NOT judge which software a quote measured (the measurements are recorded, none is approved here), it does not check
 //! NVIDIA GPU evidence, and it says nothing about whether a claim in the capsule is true. There is no owner, no admin call and
 //! no upgrade; the verifier's account is fixed when the contract is created.
@@ -57,6 +61,28 @@ pub const MAX_ORDER_NANOS: u64 = 366 * 24 * 60 * 60 * 1_000_000_000;
 pub const MIN_ORDER_NANOS: u64 = 60 * 1_000_000_000;
 /// A registration for an order signs this after the usual binding message, so a capsule key commits to the order it is paid by.
 pub const ORDER_SUFFIX: &str = "order";
+/// The highest fee a registry can be created with, in hundredths of a percent of the reviewer's amount (10%).
+pub const MAX_FEE_BPS: u16 = 1_000;
+const BPS: u128 = 10_000;
+
+/// `value * num / den` rounded down, without the overflow `value * num` could reach.
+fn mul_div_down(value: u128, num: u128, den: u128) -> u128 {
+    value / den * num + value % den * num / den
+}
+
+/// How money set aside for an order divides: the reviewer's amount and the fee on top of it. The fee is
+/// `total * bps / (10000 + bps)` rounded down, so the reviewer is never given less than `price_of(amount)` promised.
+pub fn split(total: u128, bps: u16) -> (u128, u128) {
+    let fee = mul_div_down(total, u128::from(bps), BPS + u128::from(bps));
+    (total - fee, fee)
+}
+
+/// What a client sets aside so the reviewer receives at least `amount`: the amount and the fee on it, rounded up.
+pub fn price_of(amount: u128, bps: u16) -> Option<(u128, u128)> {
+    let b = u128::from(bps);
+    let fee = amount / BPS * b + (amount % BPS * b).div_ceil(BPS);
+    Some((amount, fee)).filter(|_| amount.checked_add(fee).is_some())
+}
 
 #[derive(BorshStorageKey)]
 #[near(serializers = [borsh])]
@@ -128,8 +154,10 @@ pub struct Order {
     pub reviewer_key: String,
     /// SHA-256 of what was asked, as the two agreed it. Recorded for a recipient to compare; not judged here.
     pub scope_sha256: String,
-    /// In yoctoNEAR, or in the token's smallest unit.
+    /// What the reviewer is paid, in yoctoNEAR or in the token's smallest unit.
     pub amount: U128,
+    /// The fee on top of it, in the same unit: earned when the capsule is registered, returned with the amount on a refund.
+    pub fee: U128,
     /// `None` for NEAR, or the accepted token's account.
     pub token: Option<AccountId>,
     pub opened_at: U64,
@@ -149,6 +177,36 @@ pub struct OrderTerms {
     pub scope_sha256: String,
     pub deadline: U64,
     pub require_hardware: bool,
+    /// What the reviewer is to receive. With it, exactly the price of that amount is kept and the rest is handed back; without
+    /// it, everything set aside is divided between the reviewer and the fee.
+    #[serde(default)]
+    pub amount: Option<U128>,
+}
+
+/// The fee a registry takes and where it goes; both fixed at creation.
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FeeTerms {
+    /// Hundredths of a percent of the reviewer's amount.
+    pub bps: u16,
+    pub account: Option<AccountId>,
+}
+
+/// What a client sets aside for a reviewer's amount.
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Price {
+    pub amount: U128,
+    pub fee: U128,
+    pub total: U128,
+}
+
+/// Fees earned and not yet sent to the fee account.
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FeesOwed {
+    pub near: U128,
+    pub token: U128,
 }
 
 #[near(contract_state)]
@@ -165,6 +223,12 @@ pub struct Registry {
     /// The one NEP-141 token orders may be paid in besides NEAR, and its smallest order. Fixed at creation.
     token: Option<AccountId>,
     min_token_order: u128,
+    /// The fee on each order and the only account fees are sent to. Fixed at creation.
+    fee_bps: u16,
+    fee_account: Option<AccountId>,
+    /// Fees earned and not yet sent: in yoctoNEAR, and in the token's smallest unit.
+    fees_near: u128,
+    fees_token: u128,
 }
 
 /// The key an entry is stored under: the capsule's digest and the key that signed it. Two parties registering the same digest with
@@ -279,10 +343,22 @@ impl Registry {
         verifier: AccountId,
         token: Option<AccountId>,
         min_token_order: Option<U128>,
+        fee_bps: Option<u16>,
+        fee_account: Option<AccountId>,
     ) -> Self {
         require!(
             token.is_none() || min_token_order.is_some_and(|m| m.0 > 0),
             "a token needs a smallest order above zero"
+        );
+        let fee_bps = fee_bps.unwrap_or(0);
+        require!(fee_bps <= MAX_FEE_BPS, "the fee is at most 10% (1000)");
+        require!(
+            fee_bps == 0 || fee_account.is_some(),
+            "a fee needs the account it is sent to"
+        );
+        require!(
+            fee_bps > 0 || fee_account.is_none(),
+            "a fee account is named only with a fee"
         );
         Self {
             entries: LookupMap::new(Key::Entries),
@@ -293,6 +369,38 @@ impl Registry {
             next_order: 0,
             token,
             min_token_order: min_token_order.map_or(0, |m| m.0),
+            fee_bps,
+            fee_account,
+            fees_near: 0,
+            fees_token: 0,
+        }
+    }
+
+    /// The fee each paid order carries, and the only account it is sent to.
+    pub fn fee_terms(&self) -> FeeTerms {
+        FeeTerms {
+            bps: self.fee_bps,
+            account: self.fee_account.clone(),
+        }
+    }
+
+    /// What to set aside so the reviewer receives `amount`: the amount, the fee on it and their sum. For a NEAR order, attach
+    /// the order's storage on top (it is handed back if not used).
+    pub fn price(&self, amount: U128) -> Price {
+        let (amount, fee) = price_of(amount.0, self.fee_bps)
+            .unwrap_or_else(|| env::panic_str("the amount is too large"));
+        Price {
+            amount: U128(amount),
+            fee: U128(fee),
+            total: U128(amount + fee),
+        }
+    }
+
+    /// Fees earned and not yet sent to the fee account.
+    pub fn fees_owed(&self) -> FeesOwed {
+        FeesOwed {
+            near: U128(self.fees_near),
+            token: U128(self.fees_token),
         }
     }
 
@@ -324,26 +432,52 @@ impl Registry {
         )
     }
 
-    /// Sets the attached NEAR aside for one review. The storage the order takes is paid from it; the rest is the order's amount.
+    /// Sets the attached NEAR aside for one review. The storage the order takes is paid from it. With `terms.amount`, the price
+    /// of that amount is kept and the rest is handed back; without it, the rest is divided between the reviewer and the fee.
     #[payable]
     pub fn open_order(&mut self, terms: OrderTerms) -> U64 {
         let client = env::predecessor_account_id();
         let paid = env::attached_deposit();
         let before = env::storage_usage();
         let id = self
-            .add_order(client, &terms, 0, None)
+            .add_order(client.clone(), &terms, 0, None)
             .unwrap_or_else(|e| env::panic_str(e));
         let used = env::storage_usage().saturating_sub(before);
         let cost = env::storage_byte_cost().saturating_mul(u128::from(used));
-        let amount = paid.saturating_sub(cost);
+        let left = paid.saturating_sub(cost).as_yoctonear();
         require!(
-            paid > cost && amount >= MIN_NEAR_ORDER,
+            paid > cost,
             "attach at least 0.01 NEAR beyond the storage the order takes"
         );
+        let (amount, fee, change) = match terms.amount {
+            Some(want) => {
+                let (amount, fee) = price_of(want.0, self.fee_bps)
+                    .unwrap_or_else(|| env::panic_str("the amount is too large"));
+                require!(
+                    left >= amount + fee,
+                    "attach the price of the amount (see price) and the order's storage"
+                );
+                (amount, fee, left - amount - fee)
+            }
+            None => {
+                let (amount, fee) = split(left, self.fee_bps);
+                (amount, fee, 0)
+            }
+        };
+        require!(
+            amount >= MIN_NEAR_ORDER.as_yoctonear(),
+            "the reviewer's amount is at least 0.01 NEAR"
+        );
         if let Some(o) = self.orders.get_mut(&id) {
-            o.amount = U128(amount.as_yoctonear());
+            o.amount = U128(amount);
+            o.fee = U128(fee);
         }
         self.orders.flush();
+        if change > 0 {
+            Promise::new(client)
+                .transfer(NearToken::from_yoctonear(change))
+                .detach();
+        }
         U64(id)
     }
 
@@ -365,8 +499,18 @@ impl Registry {
         let Ok(terms) = near_sdk::serde_json::from_str::<OrderTerms>(&msg) else {
             return PromiseOrValue::Value(amount);
         };
-        match self.add_order(sender_id, &terms, amount.0, Some(from_token)) {
-            Ok(_) => PromiseOrValue::Value(U128(0)),
+        // with an amount named, its price is kept and the rest goes back through the token's own refund
+        let (kept, change) = match terms.amount {
+            Some(want) => match price_of(want.0, self.fee_bps) {
+                Some((a, f)) if a + f <= amount.0 && a + f >= self.min_token_order => {
+                    (a + f, amount.0 - a - f)
+                }
+                _ => return PromiseOrValue::Value(amount),
+            },
+            None => (amount.0, 0),
+        };
+        match self.add_order(sender_id, &terms, kept, Some(from_token)) {
+            Ok(_) => PromiseOrValue::Value(U128(change)),
             Err(_) => PromiseOrValue::Value(amount),
         }
     }
@@ -399,6 +543,7 @@ impl Registry {
         }
         let id = self.next_order;
         self.next_order += 1;
+        let (amount, fee) = split(amount, self.fee_bps);
         self.orders.insert(
             id,
             Order {
@@ -407,6 +552,7 @@ impl Registry {
                 reviewer_key: terms.reviewer_key.clone(),
                 scope_sha256: terms.scope_sha256.clone(),
                 amount: U128(amount),
+                fee: U128(fee),
                 token,
                 opened_at: U64(now),
                 deadline: terms.deadline,
@@ -480,6 +626,12 @@ impl Registry {
             o.capsule_sha256 = Some(capsule_sha256);
         }
         self.orders.flush();
+        // the service was delivered, so the fee is earned now, whether or not the reviewer's transfer needs a retry
+        if order.token.is_some() {
+            self.fees_token += order.fee.0;
+        } else {
+            self.fees_near += order.fee.0;
+        }
         self.pay_out(order_id.0);
         entry
     }
@@ -506,13 +658,76 @@ impl Registry {
             env::block_timestamp() > order.deadline.0,
             "the order's deadline has not passed"
         );
+        // nothing was delivered, so the fee goes back too
         self.send(
             order_id.0,
             &order,
             order.client.clone(),
+            order.amount.0 + order.fee.0,
             OrderState::Refunded,
             OrderState::Open,
         );
+    }
+
+    /// Sends the fees earned so far, in NEAR or in the token, to the fee account. Anyone may call it; the money only ever goes
+    /// there. The balance is taken off before the transfer and put back if the transfer fails.
+    pub fn withdraw_fees(&mut self, in_token: bool) {
+        let to = self
+            .fee_account
+            .clone()
+            .unwrap_or_else(|| env::panic_str("this registry takes no fee"));
+        let owed = if in_token {
+            require!(self.token.is_some(), "this registry takes no token");
+            std::mem::take(&mut self.fees_token)
+        } else {
+            std::mem::take(&mut self.fees_near)
+        };
+        require!(owed > 0, "no fees are waiting");
+        let transfer = match (&self.token, in_token) {
+            (Some(token), true) => Promise::new(token.clone()).function_call(
+                "ft_transfer".to_string(),
+                near_sdk::serde_json::json!({"receiver_id": to, "amount": U128(owed)})
+                    .to_string()
+                    .into_bytes(),
+                NearToken::from_yoctonear(1),
+                TOKEN_TRANSFER_GAS,
+            ),
+            _ => Promise::new(to).transfer(NearToken::from_yoctonear(owed)),
+        };
+        transfer
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(PAYOUT_CALLBACK_GAS)
+                    .on_fees_sent(in_token, U128(owed)),
+            )
+            .detach();
+    }
+
+    /// After a fee withdrawal. A failed transfer leaves the money here, so it is owed again. Never panics.
+    #[private]
+    pub fn on_fees_sent(
+        &mut self,
+        in_token: bool,
+        amount: U128,
+        #[callback_result] result: Result<(), PromiseError>,
+    ) -> bool {
+        if result.is_ok() {
+            env::log_str(&format!(
+                "EVENT_JSON:{{\"standard\":\"kakurega\",\"version\":\"1.0.0\",\"event\":\"fees_sent\",\"data\":[{{\"amount\":\"{}\",\"in_token\":{in_token}}}]}}",
+                amount.0
+            ));
+            return true;
+        }
+        if in_token {
+            self.fees_token = self.fees_token.saturating_add(amount.0);
+        } else {
+            self.fees_near = self.fees_near.saturating_add(amount.0);
+        }
+        env::log_str(&format!(
+            "EVENT_JSON:{{\"standard\":\"kakurega\",\"version\":\"1.0.0\",\"event\":\"fees_transfer_failed\",\"data\":[{{\"amount\":\"{}\",\"in_token\":{in_token}}}]}}",
+            amount.0
+        ));
+        false
     }
 
     fn pay_out(&mut self, id: u64) {
@@ -523,22 +738,31 @@ impl Registry {
             id,
             &order,
             order.reviewer.clone(),
+            order.amount.0,
             OrderState::Paid,
             OrderState::Earned,
         );
     }
 
     /// Marks the order `done` first, then sends its money; if the transfer fails, the callback puts `back` the earlier state.
-    fn send(&mut self, id: u64, order: &Order, to: AccountId, done: OrderState, back: OrderState) {
+    fn send(
+        &mut self,
+        id: u64,
+        order: &Order,
+        to: AccountId,
+        value: u128,
+        done: OrderState,
+        back: OrderState,
+    ) {
         if let Some(o) = self.orders.get_mut(&id) {
             o.state = done;
         }
         self.orders.flush();
         let transfer = match &order.token {
-            None => Promise::new(to).transfer(NearToken::from_yoctonear(order.amount.0)),
+            None => Promise::new(to).transfer(NearToken::from_yoctonear(value)),
             Some(token) => Promise::new(token.clone()).function_call(
                 "ft_transfer".to_string(),
-                near_sdk::serde_json::json!({"receiver_id": to, "amount": order.amount})
+                near_sdk::serde_json::json!({"receiver_id": to, "amount": U128(value)})
                     .to_string()
                     .into_bytes(),
                 NearToken::from_yoctonear(1),
@@ -883,6 +1107,8 @@ mod tests {
             "verifier.testnet".parse().unwrap(),
             Some("usdc.testnet".parse().unwrap()),
             Some(U128(1_000_000)),
+            None,
+            None,
         )
     }
     /// Registers `receipts` for `digest` as `who`, signed by `cap`.
@@ -1536,6 +1762,7 @@ mod tests {
             scope_sha256: h('5'),
             deadline: U64(T0 + HOUR),
             require_hardware: hardware,
+            amount: None,
         }
     }
     /// A registry with one NEAR order from carl to rita, opened at T0.
@@ -2000,5 +2227,258 @@ mod tests {
         let b = r.order_binding_message(U64(1), DIGEST.into(), vec![], who);
         assert!(a.starts_with(&plain) && a != plain && a != b && a.ends_with(":order:0"));
         assert_eq!(r.token().unwrap().as_str(), "usdc.testnet");
+    }
+
+    /// A registry that takes 2% on each paid order, sent to fees.testnet.
+    fn with_fee() -> Registry {
+        as_account("alice.testnet", DEPOSIT);
+        Registry::new(
+            "verifier.testnet".parse().unwrap(),
+            Some("usdc.testnet".parse().unwrap()),
+            Some(U128(1_000_000)),
+            Some(200),
+            Some("fees.testnet".parse().unwrap()),
+        )
+    }
+
+    #[test]
+    fn fe01_the_price_of_an_amount_always_leaves_the_reviewer_that_amount_and_nothing_overflows() {
+        for a in [
+            0u128,
+            1,
+            49,
+            50,
+            9_999,
+            10_000,
+            123_456_789,
+            ONE_NEAR,
+            u128::MAX / 2,
+        ] {
+            let (amount, fee) = price_of(a, 200).unwrap();
+            assert_eq!(amount, a);
+            assert_eq!(fee, a.div_ceil(50), "2% rounded up for {a}");
+            let (to_reviewer, kept) = split(amount + fee, 200);
+            assert!(
+                to_reviewer >= a && to_reviewer + kept == amount + fee,
+                "{a}"
+            );
+        }
+        assert_eq!(price_of(10_000, 200), Some((10_000, 200)));
+        assert_eq!(split(10_200, 200), (10_000, 200));
+        assert_eq!(split(777, 0), (777, 0));
+        assert_eq!(price_of(777, 0), Some((777, 0)));
+        assert_eq!(
+            price_of(u128::MAX, 200),
+            None,
+            "a price that cannot be held is refused"
+        );
+        let (r, f) = split(u128::MAX, MAX_FEE_BPS);
+        assert_eq!(r + f, u128::MAX);
+    }
+
+    #[test]
+    #[should_panic(expected = "at most 10%")]
+    fn fe02_a_fee_above_ten_percent_is_refused() {
+        as_account("alice.testnet", DEPOSIT);
+        Registry::new(
+            "verifier.testnet".parse().unwrap(),
+            None,
+            None,
+            Some(1_001),
+            Some("fees.testnet".parse().unwrap()),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "needs the account")]
+    fn fe03_a_fee_without_its_account_is_refused() {
+        as_account("alice.testnet", DEPOSIT);
+        Registry::new(
+            "verifier.testnet".parse().unwrap(),
+            None,
+            None,
+            Some(200),
+            None,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "only with a fee")]
+    fn fe04_a_fee_account_without_a_fee_is_refused() {
+        as_account("alice.testnet", DEPOSIT);
+        Registry::new(
+            "verifier.testnet".parse().unwrap(),
+            None,
+            None,
+            None,
+            Some("fees.testnet".parse().unwrap()),
+        );
+    }
+
+    #[test]
+    fn fe05_an_order_for_an_amount_keeps_its_price_and_hands_the_rest_back() {
+        let cap = key(1);
+        let mut r = with_fee();
+        let quoted = r.price(U128(ONE_NEAR));
+        assert_eq!(
+            (quoted.amount.0, quoted.fee.0, quoted.total.0),
+            (ONE_NEAR, ONE_NEAR / 50, ONE_NEAR + ONE_NEAR / 50)
+        );
+        at("carl.testnet", 2 * ONE_NEAR, T0);
+        let mut t = terms(&cap, false);
+        t.amount = Some(U128(ONE_NEAR));
+        let id = r.open_order(t);
+        let o = r.order(id).unwrap();
+        assert_eq!((o.amount.0, o.fee.0), (ONE_NEAR, ONE_NEAR / 50));
+        let out = sent();
+        let change: u128 = out
+            .lines()
+            .find(|l| l.ends_with("to carl.testnet"))
+            .and_then(|l| l.split(' ').nth(1))
+            .and_then(|v| v.parse().ok())
+            .expect("the rest is handed back");
+        assert!(
+            change < ONE_NEAR - ONE_NEAR / 50 && change > ONE_NEAR - ONE_NEAR / 50 - ONE_NEAR / 100,
+            "{change}"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "attach the price")]
+    fn fe06_an_order_for_an_amount_with_too_little_attached_is_refused() {
+        let cap = key(1);
+        let mut r = with_fee();
+        // enough for the amount and the order's storage, not for the fee on top
+        at("carl.testnet", ONE_NEAR + ONE_NEAR / 100, T0);
+        let mut t = terms(&cap, false);
+        t.amount = Some(U128(ONE_NEAR));
+        r.open_order(t);
+    }
+
+    #[test]
+    fn fe07_the_fee_is_earned_with_the_capsule_and_given_back_with_a_refund() {
+        let cap = key(1);
+        let mut r = with_fee();
+        at("carl.testnet", ONE_NEAR, T0);
+        let paid = r.open_order(terms(&cap, false));
+        let o = r.order(paid).unwrap();
+        assert!(
+            o.fee.0 > 0 && o.amount.0 + o.fee.0 < ONE_NEAR,
+            "the deposit less its storage is divided"
+        );
+        assert_eq!(split(o.amount.0 + o.fee.0, 200), (o.amount.0, o.fee.0));
+        assert_eq!(
+            r.fees_owed().near.0,
+            0,
+            "nothing is earned before the capsule"
+        );
+        deliver(&mut r, &cap, paid, vec![], T0 + 10);
+        assert_eq!(r.fees_owed().near.0, o.fee.0);
+        assert!(
+            sent().contains(&format!("transfer {} to rita.testnet", o.amount.0)),
+            "the reviewer gets the amount, not the fee"
+        );
+
+        at("carl.testnet", ONE_NEAR, T0);
+        let unmet = r.open_order(terms(&cap, false));
+        let u = r.order(unmet).unwrap();
+        at("anyone.testnet", 0, T0 + HOUR + 1);
+        r.refund_order(unmet);
+        assert!(
+            sent().contains(&format!(
+                "transfer {} to carl.testnet",
+                u.amount.0 + u.fee.0
+            )),
+            "the client gets the fee back too"
+        );
+        assert_eq!(r.fees_owed().near.0, o.fee.0, "a refund earns nothing");
+    }
+
+    #[test]
+    fn fe08_fees_go_only_to_the_fee_account_and_are_owed_again_if_the_transfer_fails() {
+        let cap = key(1);
+        let mut r = with_fee();
+        at("carl.testnet", ONE_NEAR, T0);
+        let id = r.open_order(terms(&cap, false));
+        deliver(&mut r, &cap, id, vec![], T0 + 10);
+        let fee = r.fees_owed().near.0;
+        at("mallory.testnet", 0, T0 + 11);
+        r.withdraw_fees(false);
+        assert_eq!(r.fees_owed().near.0, 0, "taken off before the transfer");
+        let out = sent();
+        assert!(
+            out.contains(&format!("transfer {fee} to fees.testnet"))
+                && !out.contains("to mallory.testnet"),
+            "{out}"
+        );
+        at("registry.testnet", 0, T0 + 12);
+        assert!(!r.on_fees_sent(false, U128(fee), Err(PromiseError::Failed)));
+        assert_eq!(
+            r.fees_owed().near.0,
+            fee,
+            "a failed transfer leaves them owed"
+        );
+        at("anyone.testnet", 0, T0 + 13);
+        r.withdraw_fees(false);
+        at("registry.testnet", 0, T0 + 14);
+        assert!(r.on_fees_sent(false, U128(fee), Ok(())));
+        assert_eq!(r.fees_owed().near.0, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "no fees are waiting")]
+    fn fe09_nothing_is_sent_when_no_fee_is_owed() {
+        let mut r = with_fee();
+        at("anyone.testnet", 0, T0);
+        r.withdraw_fees(false);
+    }
+
+    #[test]
+    #[should_panic(expected = "takes no fee")]
+    fn fe10_a_registry_without_a_fee_pays_the_whole_amount_and_has_nothing_to_withdraw() {
+        let cap = key(1);
+        let (mut r, id) = with_order(&cap, false);
+        assert_eq!(r.order(id).unwrap().fee.0, 0);
+        at("anyone.testnet", 0, T0 + 1);
+        r.withdraw_fees(false);
+    }
+
+    #[test]
+    fn fe11_a_token_order_for_an_amount_keeps_its_price_and_the_token_hands_the_rest_back() {
+        let cap = key(1);
+        let mut r = with_fee();
+        let carl: AccountId = "carl.testnet".parse().unwrap();
+        let msg = near_sdk::serde_json::json!({"reviewer": "rita.testnet", "reviewer_key": signer_hex(&cap), "scope_sha256": h('5'),
+            "deadline": U64(T0 + HOUR), "require_hardware": false, "amount": "5000000"})
+        .to_string();
+        let back = |v: PromiseOrValue<U128>| match v {
+            PromiseOrValue::Value(u) => u.0,
+            PromiseOrValue::Promise(_) => panic!("no promise expected"),
+        };
+        at("usdc.testnet", 0, T0);
+        assert_eq!(
+            back(r.ft_on_transfer(carl.clone(), U128(5_000_000), msg.clone())),
+            5_000_000,
+            "less than the price comes back"
+        );
+        assert_eq!(
+            back(r.ft_on_transfer(carl.clone(), U128(6_000_000), msg)),
+            900_000,
+            "the price is kept, the rest goes back"
+        );
+        let o = r.order(U64(0)).unwrap();
+        assert_eq!(
+            (o.amount.0, o.fee.0, o.token.as_ref().map(|t| t.as_str())),
+            (5_000_000, 100_000, Some("usdc.testnet"))
+        );
+        deliver(&mut r, &cap, U64(0), vec![], T0 + 10);
+        assert_eq!((r.fees_owed().token.0, r.fees_owed().near.0), (100_000, 0));
+        at("anyone.testnet", 0, T0 + 11);
+        r.withdraw_fees(true);
+        assert!(
+            sent().contains("ft_transfer")
+                && sent().contains("fees.testnet")
+                && sent().contains("100000")
+        );
     }
 }

@@ -11,7 +11,7 @@ pub mod registry;
 pub use registry::{Chain, ChainError, ModelQuote, Network, Payer, Sent};
 
 /// The registry this build knows on NEAR testnet.
-pub const TESTNET_REGISTRY: &str = "kakurega-registry-5d26f9.testnet";
+pub const TESTNET_REGISTRY: &str = "kakurega-registry-1904f0.testnet";
 /// NEAR AI Cloud's public address for hardware reports.
 pub const NEAR_AI: &str = "https://cloud-api.near.ai/v1";
 

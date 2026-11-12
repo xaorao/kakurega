@@ -99,7 +99,8 @@ function showChain(box, place, found) {
     box.append(
       list(`Registered for order ${plain(order.id)}`, [
         `State: ${plain(o.state)}`,
-        `Amount: ${plain(amount(o))}`,
+        `Amount: ${plain(amount(o))} to the reviewer`,
+        ...(o.fee && o.fee !== "0" ? [`Fee on top: ${plain(amount({ ...o, amount: o.fee }))}, to the registry's fee account`] : []),
         `Client: ${plain(o.client)}`,
         `Reviewer: ${plain(o.reviewer)}`,
       ]),

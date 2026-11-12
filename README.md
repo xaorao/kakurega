@@ -24,20 +24,37 @@ Screenshots from a run with a local model (`tests/e2e/used_flagship.mjs`).
 
 ## Who it is for
 
-People who must give an outside party a result from private material: a security reviewer sending findings to a client, a lawyer answering from a contract set, a founder sharing diligence answers. The client pays for one verified review; the money is held by a NEAR contract and released when the capsule for that order is registered, not when either side says so. That order flow runs on testnet. Nothing is charged today.
+People who must give an outside party a result from private material: a security reviewer sending findings to a client, a lawyer answering from a contract set, a founder sharing diligence answers.
+
+**What they pay.** The workspace is free for personal and work use, with no account: it runs on your own computer with a local model. A model on NEAR AI Cloud is paid to NEAR AI by use, from your own account. A review sold to a client is paid through an order on NEAR: the client sets aside the agreed amount and names the reviewer, the key that will sign the capsule, the scope and a deadline. The contract pays the reviewer the whole amount only when that reviewer registers a capsule for that order, signed by that key, before the deadline. Kakurega's fee is 2% on top, paid by the client and earned only then; if the deadline passes, anyone can send the amount and the fee back to the client. The rate and the one account fees can go to are fixed when the contract is created: there is no admin and no upgrade, so the fee cannot be raised later. Orders run on testnet; nothing is charged today.
+
+Why this price: local AI workspaces are free to run (LM Studio is free for work, AnythingLLM's desktop app is free), so the workspace is free too. The fee sits where Kakurega adds what others cannot: a payment released by checked evidence. It is lower than marketplaces that also triage and settle disputes (Immunefi and Sherlock charge 10% on bounty payouts, Upwork about 5% to clients plus a fee to freelancers) and close to escrow services (Escrow.com, about 0.9% to 3.25%), because nobody here judges quality or settles disputes. A paid plan for teams waits for hosted mode, which is not built.
 
 ## Why NEAR
 
 | NEAR piece | What it does here | State |
 | --- | --- | --- |
 | NEAR AI Cloud attestation | Intel TDX quote, NVIDIA evidence, the model's signing key bound to a fresh challenge, the deployment compared with NEAR's own releases | Live, no key needed: the proof panel in chat, and `/proof` in the terminal workspace |
-| NEAR's on-chain TDX verifier | Our registry contract hands a model's quote to NEAR's verifier contract and records the key it vouched for | Live on testnet: [`DfD1dMCX…`](https://testnet.nearblocks.io/txns/DfD1dMCXCvBp2ptHSJcNXC2YwpgxZkedohsQ68M3CaGg) (184 Tgas) |
-| Capsule registry contract | Who registered a capsule and when, readable by anyone from a public RPC | Live on testnet: `kakurega-registry-5d26f9.testnet` |
-| Orders | Money for a review is held and paid only when the named reviewer registers a capsule for that order | Live on testnet in NEAR; a USDC order is tested on a local node only |
+| NEAR's on-chain TDX verifier | Our registry contract hands a model's quote to NEAR's verifier contract and records the key it vouched for | Live on testnet: [`8y2xC8zh…`](https://testnet.nearblocks.io/txns/8y2xC8zhHajUggKWNX3rb9tuRLZuyMQjP3cSQNHVZXyz) (185.8 Tgas) |
+| Capsule registry contract | Who registered a capsule and when, readable by anyone from a public RPC | Live on testnet: `kakurega-registry-1904f0.testnet`, with no access keys left, so its code and fee cannot be changed |
+| Orders | Money for a review is held and paid only when the named reviewer registers a capsule for that order; 2% on top goes to a fee account fixed in the contract, and comes back with the money if the deadline passes | Live on testnet in NEAR: an order opened ([`BfcFzcc1…`](https://testnet.nearblocks.io/txns/BfcFzcc1aqAT7UbSJxU3t7qJuaJK88JkjSfCnKRMXbrn)), paid on the registered capsule ([`GyjbKMA2…`](https://testnet.nearblocks.io/txns/GyjbKMA2CdNT2d5aU1ZfT7fCBTbo4eusMGi1rqB2BbzV)), fee sent ([`HhNsiz5Z…`](https://testnet.nearblocks.io/txns/HhNsiz5Z2t32jrMw8uko77PR5P9hQ5sH7DCs7a4SypVW)); a USDC order is tested on a local node only |
 | NEAR AI Cloud inference | Encrypted questions to a model in a TEE, each answer's signature checked against the attested key | Built and tested against recorded answers. Not run live: it needs an account key we do not have yet |
 | NEAR Intents | A price for paying an order from another chain | Dry quotes only (`kaku chain quote`); nothing is sent |
 
 Take NEAR away and the recipient is left trusting us about the hardware. That is the capability it adds.
+
+## What you still have to trust
+
+Kakurega narrows what you take on faith; it does not remove it.
+
+- **Your computer and your account.** The service, its keys and its log live there. A program running as you, an agent with a shell included, can read the service's files. An approval key that asks for Touch ID (`kaku approver enroll --enclave`) keeps approvals yours; the real Touch ID prompt has been tested only with the system prompt stubbed.
+- **The secret detector.** Shapes it knows did not leak in the benchmark (0 of 126). A password or a code written with no word saying what it is can (10 of 42 did, each named in the signed results). Names are hidden from a model elsewhere only when you listed them.
+- **The sandbox on a Mac.** Reviews run in a Linux virtual machine with no network. That is a development arrangement, not a hardened macOS sandbox.
+- **Confidential hardware, when you choose it.** For a model on NEAR AI Cloud, Kakurega checks the Intel TDX and NVIDIA evidence against a fresh challenge, and each answer's signature. It cannot inspect the chips, and it relies on Intel's and NVIDIA's published collateral and verification services. Live answers from NEAR AI Cloud have not been run: the account key does not exist yet.
+- **What a capsule proves.** Who signed it, that every file is exactly what was approved, who it was made for, and each finding's check for re-running. It does not prove that nothing was missed.
+- **Our code.** Reviewed by the builder and by separate reviewers given the code and no conclusions; every finding and its fix is in `docs/engineering-decisions/audit-validation.md`. No outside audit yet.
+
+Every limit, with the reason, is in [docs/LIMITS.md](docs/LIMITS.md).
 
 ## Check it yourself
 

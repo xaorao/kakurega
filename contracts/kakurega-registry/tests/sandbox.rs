@@ -860,6 +860,149 @@ async fn orders_pay_the_reviewer_for_the_capsule_and_return_unmet_ones_on_a_real
     Ok(())
 }
 
+#[tokio::test]
+async fn a_fee_on_top_is_paid_to_the_fee_account_only_for_a_delivered_review_on_a_real_runtime()
+-> testresult::TestResult {
+    let wasm = std::fs::read(cargo_near_build::build_with_cli(Default::default())?)?;
+    let e = start().await?;
+    let contract = e.account("registry.sandbox", 20).await;
+    let fees = e.account("fees.sandbox", 1).await;
+    near_api::Contract::deploy(contract.clone())
+        .use_code(wasm)
+        .with_init_call(
+            "new",
+            json!({"verifier": "verifier.sandbox", "token": null, "min_token_order": null, "fee_bps": 200, "fee_account": "fees.sandbox"}),
+        )?
+        .with_signer(e.key.clone())
+        .send_to(&e.net)
+        .await?
+        .assert_success();
+    assert_eq!(
+        e.view(&contract, "fee_terms", json!({})).await,
+        json!({"bps": 200, "account": "fees.sandbox"})
+    );
+    let carl = e.account("carl.sandbox", 10).await;
+    let rita = e.account("rita.sandbox", 10).await;
+    let cap = key(1);
+
+    // Carl asks for one NEAR to reach Rita: the price is one NEAR and 2% on top; what he attaches beyond it and the
+    // storage comes back.
+    let price = e
+        .view(&contract, "price", json!({"amount": NEAR.to_string()}))
+        .await;
+    assert_eq!(price["fee"], (NEAR / 50).to_string());
+    let mut terms = order_terms("rita.sandbox", &cap, 62);
+    terms["amount"] = json!(NEAR.to_string());
+    let carl_before = e.balance(&carl).await;
+    e.call(
+        &contract,
+        &carl,
+        "open_order",
+        json!({"terms": terms}),
+        2 * NEAR,
+    )
+    .await
+    .map_err(|x| format!("open_order: {x}"))?;
+    let spent = carl_before - e.balance(&carl).await;
+    assert!(
+        spent > NEAR + NEAR / 50 && spent < NEAR + NEAR / 50 + NEAR / 50,
+        "Carl paid the price, the order's storage and gas, and got the rest back: {spent}"
+    );
+    let o = e.view(&contract, "order", json!({"order_id": "0"})).await;
+    assert_eq!(
+        (o["amount"].as_str(), o["fee"].as_str()),
+        (
+            Some(NEAR.to_string().as_str()),
+            Some((NEAR / 50).to_string().as_str())
+        )
+    );
+
+    // Rita delivers: she receives the whole amount; the fee is owed to the fee account and sent there by anyone's call.
+    let rita_before = e.balance(&rita).await;
+    let digest = "cd".repeat(32);
+    e.call(
+        &contract,
+        &rita,
+        "register_for_order",
+        delivery(&cap, &digest, "rita.sandbox", 0),
+        NEAR / 10,
+    )
+    .await
+    .map_err(|x| format!("register_for_order: {x}"))?;
+    let gained = e.balance(&rita).await as i128 - rita_before as i128;
+    assert!(
+        gained > (NEAR - NEAR / 50) as i128 && gained < NEAR as i128,
+        "Rita received the amount, less her own gas and storage: {gained}"
+    );
+    assert_eq!(
+        e.view(&contract, "fees_owed", json!({})).await["near"],
+        (NEAR / 50).to_string()
+    );
+    let fees_before = e.balance(&fees).await;
+    e.call(
+        &contract,
+        &carl,
+        "withdraw_fees",
+        json!({"in_token": false}),
+        0,
+    )
+    .await
+    .map_err(|x| format!("withdraw_fees: {x}"))?;
+    assert_eq!(
+        e.balance(&fees).await - fees_before,
+        NEAR / 50,
+        "the fee reached the fee account, whoever asked"
+    );
+    assert_eq!(e.view(&contract, "fees_owed", json!({})).await["near"], "0");
+    assert!(
+        e.call(
+            &contract,
+            &carl,
+            "withdraw_fees",
+            json!({"in_token": false}),
+            0
+        )
+        .await
+        .unwrap_err()
+        .contains("no fees are waiting")
+    );
+
+    // An order nobody delivers goes back whole, fee included.
+    let mut terms = order_terms("rita.sandbox", &cap, 62);
+    terms["amount"] = json!(NEAR.to_string());
+    e.call(
+        &contract,
+        &carl,
+        "open_order",
+        json!({"terms": terms}),
+        2 * NEAR,
+    )
+    .await
+    .map_err(|x| format!("open_order 2: {x}"))?;
+    tokio::time::sleep(std::time::Duration::from_secs(66)).await;
+    let carl_before = e.balance(&carl).await;
+    e.call(
+        &contract,
+        &rita,
+        "refund_order",
+        json!({"order_id": "1"}),
+        0,
+    )
+    .await
+    .map_err(|x| format!("refund_order: {x}"))?;
+    assert_eq!(
+        e.balance(&carl).await - carl_before,
+        NEAR + NEAR / 50,
+        "the amount and the fee came back"
+    );
+    assert_eq!(
+        e.view(&contract, "fees_owed", json!({})).await["near"],
+        "0",
+        "a refund earns nothing"
+    );
+    Ok(())
+}
+
 async fn testnet_code(http: &reqwest::Client, account: &str) -> Vec<u8> {
     let code: Value = http
         .post(TESTNET_RPC)
@@ -899,7 +1042,7 @@ async fn live_a_token_order_is_opened_by_a_transfer_paid_in_the_token_and_surviv
         .assert_success();
     let contract = e.account("registry.sandbox", 20).await;
     near_api::Contract::deploy(contract.clone())
-        .use_code(wasm)
+        .use_code(wasm.clone())
         .with_init_call(
             "new",
             json!({"verifier": "verifier.sandbox", "token": "token.sandbox", "min_token_order": (NEAR / 10).to_string()}),
@@ -1043,6 +1186,118 @@ async fn live_a_token_order_is_opened_by_a_transfer_paid_in_the_token_and_surviv
             .is_err()
     );
     assert_eq!(balance("rita.sandbox").await, NEAR);
+
+    // A second registry takes 2% on top, in the token too. Carl names Rita's amount and sends more than its price: the
+    // price is kept and the rest comes back through the token's own refund.
+    let fees_registry = e.account("fee-registry.sandbox", 20).await;
+    e.account("fees.sandbox", 1).await;
+    near_api::Contract::deploy(fees_registry.clone())
+        .use_code(wasm.clone())
+        .with_init_call(
+            "new",
+            json!({"verifier": "verifier.sandbox", "token": "token.sandbox", "min_token_order": (NEAR / 10).to_string(),
+                "fee_bps": 200, "fee_account": "fees.sandbox"}),
+        )?
+        .with_signer(e.key.clone())
+        .send_to(&e.net)
+        .await?
+        .assert_success();
+    e.call(
+        &token,
+        &carl,
+        "storage_deposit",
+        register("fee-registry.sandbox"),
+        NEAR / 100,
+    )
+    .await?;
+    let carl_before = balance("carl.sandbox").await;
+    let mut terms = order_terms("rita.sandbox", &cap, 600);
+    terms["amount"] = json!(NEAR.to_string());
+    e.call(
+        &token,
+        &carl,
+        "ft_transfer_call",
+        json!({"receiver_id": "fee-registry.sandbox", "amount": (2 * NEAR).to_string(), "msg": terms.to_string()}),
+        1,
+    )
+    .await?;
+    assert_eq!(
+        carl_before - balance("carl.sandbox").await,
+        NEAR + NEAR / 50,
+        "the price was kept, the rest came back"
+    );
+    let o = e
+        .view(&fees_registry, "order", json!({"order_id": "0"}))
+        .await;
+    assert_eq!(
+        (o["amount"].as_str(), o["fee"].as_str()),
+        (
+            Some(NEAR.to_string().as_str()),
+            Some((NEAR / 50).to_string().as_str())
+        )
+    );
+    let rita_before = balance("rita.sandbox").await;
+    e.call(
+        &fees_registry,
+        &rita,
+        "register_for_order",
+        delivery(&cap, &"ab".repeat(32), "rita.sandbox", 0),
+        NEAR / 10,
+    )
+    .await?;
+    assert_eq!(
+        balance("rita.sandbox").await - rita_before,
+        NEAR,
+        "Rita received the whole amount in the token"
+    );
+    assert_eq!(
+        e.view(&fees_registry, "fees_owed", json!({})).await["token"],
+        (NEAR / 50).to_string()
+    );
+    // The fee account cannot hold the token yet: the transfer fails and the fee stays owed, not lost.
+    e.call(
+        &fees_registry,
+        &carl,
+        "withdraw_fees",
+        json!({"in_token": true}),
+        0,
+    )
+    .await?;
+    assert_eq!(
+        e.view(&fees_registry, "fees_owed", json!({})).await["token"],
+        (NEAR / 50).to_string()
+    );
+    assert_eq!(
+        balance("fee-registry.sandbox").await,
+        NEAR / 50,
+        "the fee is still held by the registry"
+    );
+    e.call(
+        &token,
+        &carl,
+        "storage_deposit",
+        register("fees.sandbox"),
+        NEAR / 100,
+    )
+    .await?;
+    e.call(
+        &fees_registry,
+        &rita,
+        "withdraw_fees",
+        json!({"in_token": true}),
+        0,
+    )
+    .await?;
+    assert_eq!(
+        balance("fees.sandbox").await,
+        NEAR / 50,
+        "the fee reached the fee account"
+    );
+    assert_eq!(
+        e.view(&fees_registry, "fees_owed", json!({})).await["token"],
+        "0"
+    );
+    assert_eq!(balance("fee-registry.sandbox").await, 0);
     Ok(())
 }
 
@@ -1115,19 +1370,43 @@ async fn testnet_an_order_is_opened_and_paid_for_the_reviewers_capsule() -> test
     let seed: [u8; 32] = <sha2::Sha256 as sha2::Digest>::digest(now_nanos().to_le_bytes()).into();
     let cap = SigningKey::from_bytes(&seed);
     let digest = hex(&<sha2::Sha256 as sha2::Digest>::digest(seed));
+    // the client asks for a quarter NEAR to reach the reviewer; the registry's fee goes on top and the rest comes back
+    let fee_terms = view("fee_terms", json!({})).await;
+    println!("fee terms: {fee_terms}");
+    let mut terms = order_terms(reviewer.as_str(), &cap, 900);
+    terms["amount"] = json!((NEAR / 4).to_string());
     send(
         client.clone(),
-        client_key,
+        client_key.clone(),
         "open_order",
-        json!({"terms": order_terms(reviewer.as_str(), &cap, 900)}),
+        json!({"terms": terms}),
         NEAR / 2,
     )
     .await?;
     let o = view("order", json!({"order_id": id.to_string()})).await;
     assert_eq!(
-        (o["state"].as_str(), o["client"].as_str()),
-        (Some("Open"), Some(client.as_str()))
+        (
+            o["state"].as_str(),
+            o["client"].as_str(),
+            o["amount"].as_str()
+        ),
+        (
+            Some("Open"),
+            Some(client.as_str()),
+            Some((NEAR / 4).to_string().as_str())
+        )
     );
+    let fee: u128 = o["fee"].as_str().unwrap().parse()?;
+    let bps = u128::from(fee_terms["bps"].as_u64().unwrap_or(0) as u16);
+    assert_eq!(
+        fee,
+        (NEAR / 4 * bps).div_ceil(10_000),
+        "the fee on top is the registry's share of the amount"
+    );
+    let owed_before: u128 = view("fees_owed", json!({})).await["near"]
+        .as_str()
+        .unwrap()
+        .parse()?;
     let before = near_api::Tokens::account(reviewer.clone())
         .near_balance()
         .fetch_from(&net)
@@ -1157,5 +1436,44 @@ async fn testnet_an_order_is_opened_and_paid_for_the_reviewers_capsule() -> test
         after as i128 - before as i128
     );
     assert!(after > before + amount - NEAR / 20);
+    let owed: u128 = view("fees_owed", json!({})).await["near"]
+        .as_str()
+        .unwrap()
+        .parse()?;
+    assert_eq!(
+        owed,
+        owed_before + fee,
+        "the fee was earned with the capsule"
+    );
+    if fee > 0 {
+        let fees_account: AccountId = fee_terms["account"].as_str().unwrap().parse()?;
+        let balance = |who: AccountId| {
+            let net = net.clone();
+            async move {
+                near_api::Tokens::account(who)
+                    .near_balance()
+                    .fetch_from(&net)
+                    .await
+                    .unwrap()
+                    .total
+                    .as_yoctonear()
+            }
+        };
+        let before = balance(fees_account.clone()).await;
+        send(
+            client.clone(),
+            client_key,
+            "withdraw_fees",
+            json!({"in_token": false}),
+            0,
+        )
+        .await?;
+        let gained = balance(fees_account.clone()).await - before;
+        println!("fee account {fees_account} gained {gained} yoctoNEAR");
+        assert_eq!(
+            gained, owed,
+            "everything owed reached the fee account, sent by the client"
+        );
+    }
     Ok(())
 }
