@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Makes the sandbox virtual machine reviews run in on macOS, from nothing: a Lima machine from the standard Ubuntu template
+# (the home folder is mounted read-only, which is all the sandbox needs to see), then inside it bubblewrap, the Rust
+# toolchain this repository pins, the official Node.js with TypeScript support, rustc and gcc under /usr for Rust checks, and
+# finally the review worker and the sandbox launcher built for it. Each step checks first and does nothing when it is
+# already done, so running it again is safe.
+set -euo pipefail
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+vm="${KK_VM:-kak}"
+command -v limactl >/dev/null || { echo "Lima is needed: brew install lima" >&2; exit 1; }
+toolchain="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$repo/rust-toolchain.toml")"
+[ -n "$toolchain" ] || { echo "no toolchain channel in rust-toolchain.toml" >&2; exit 1; }
+
+if ! limactl list -q 2>/dev/null | grep -qx "$vm"; then
+  echo "== making the machine $vm (Ubuntu, 4 CPUs, 4 GiB, the home folder read-only)"
+  limactl create --name="$vm" --tty=false --cpus=4 --memory=4 --vm-type=vz template:default
+fi
+limactl start "$vm" >/dev/null 2>&1 || true
+
+echo "== bubblewrap and build tools"
+limactl shell "$vm" -- bash -s <<'INNER'
+set -euo pipefail
+need=()
+for p in bubblewrap build-essential curl ca-certificates xz-utils python3; do
+  dpkg -s "$p" >/dev/null 2>&1 || need+=("$p")
+done
+if [ "${#need[@]}" -gt 0 ]; then
+  sudo DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${need[@]}" >/dev/null
+fi
+bwrap --version
+INNER
+
+echo "== Rust $toolchain"
+limactl shell "$vm" -- bash -s "$toolchain" <<'INNER'
+set -euo pipefail
+toolchain="$1"
+if [ ! -x "$HOME/.cargo/bin/rustup" ]; then
+  # rustup's own installer, fetched over https from the Rust project and run with the toolchain named, no prompts
+  curl -fsSL --proto '=https' --tlsv1.2 https://sh.rustup.rs -o /tmp/rustup-init.sh
+  sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain "$toolchain" >/dev/null
+fi
+. "$HOME/.cargo/env"
+rustup toolchain install "$toolchain" --profile minimal >/dev/null
+rustc +"$toolchain" --version
+INNER
+
+echo "== Node.js with TypeScript support, and rustc and gcc under /usr"
+KK_VM="$vm" "$repo/scripts/provision-lima-node"
+KK_VM="$vm" "$repo/scripts/provision-lima-rust"
+
+echo "== the review worker and the sandbox launcher, built in the machine"
+limactl shell "$vm" -- bash -lc ". \$HOME/.cargo/env; cd '$repo' && export CARGO_TARGET_DIR=\$HOME/kk-target RUSTUP_TOOLCHAIN=$toolchain; cargo build --locked -p kk-worker -p kk-sandbox"
+echo "the sandbox machine $vm is ready"

@@ -38,9 +38,84 @@ pub struct Setup {
     pub worker_binary: PathBuf,
 }
 
+/// The model to use when none is named: the first of these that is installed, in order of how well it reviews and answers
+/// (measured on the sample project: the 7B coder model finds the planted defect 3 of 3 times), else any installed chat
+/// model, else the one the README asks to pull.
+pub const PREFERRED_MODELS: [&str; 5] = [
+    "qwen2.5-coder:7b",
+    "qwen2.5:7b",
+    "qwen2.5-coder:3b",
+    "qwen2.5:3b",
+    "qwen2.5:1.5b",
+];
+
+fn default_model(ollama: &str) -> String {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(2)))
+        .proxy(None)
+        .build()
+        .into();
+    let installed: Vec<String> = agent
+        .get(&format!("{}/api/tags", ollama.trim_end_matches('/')))
+        .call()
+        .ok()
+        .and_then(|mut r| r.body_mut().read_json::<serde_json::Value>().ok())
+        .and_then(|v| {
+            v["models"].as_array().map(|a| {
+                a.iter()
+                    .filter_map(|m| m["name"].as_str().map(str::to_string))
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
+    choose_default(&installed)
+}
+
+/// See `default_model`; embedding models are never chosen to answer.
+pub fn choose_default(installed: &[String]) -> String {
+    let has = |m: &str| {
+        installed
+            .iter()
+            .any(|i| i == m || i.strip_suffix(":latest") == Some(m))
+    };
+    if let Some(m) = PREFERRED_MODELS.iter().find(|m| has(m)) {
+        return (*m).to_string();
+    }
+    installed
+        .iter()
+        .find(|m| !m.contains("embed"))
+        .cloned()
+        .unwrap_or_else(|| PREFERRED_MODELS[0].to_string())
+}
+
+#[cfg(test)]
+mod default_model_tests {
+    #[test]
+    fn the_best_installed_model_is_chosen_and_a_missing_one_is_the_one_to_pull() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            super::choose_default(&s(&[
+                "qwen2.5:1.5b",
+                "qwen2.5-coder:7b",
+                "nomic-embed-text:latest"
+            ])),
+            "qwen2.5-coder:7b"
+        );
+        assert_eq!(
+            super::choose_default(&s(&["qwen2.5:3b:latest", "qwen2.5:3b"])),
+            "qwen2.5:3b"
+        );
+        assert_eq!(
+            super::choose_default(&s(&["nomic-embed-text:latest", "llama3.2:3b"])),
+            "llama3.2:3b"
+        );
+        assert_eq!(super::choose_default(&[]), "qwen2.5-coder:7b");
+    }
+}
+
 pub fn setup_from_flags(args: &[String], quiet: bool) -> Result<Setup, String> {
-    let model = crate::flag(args, "--model").unwrap_or_else(|| "qwen2.5:1.5b".into());
     let ollama = crate::flag(args, "--ollama").unwrap_or_else(|| "http://127.0.0.1:11434".into());
+    let model = crate::flag(args, "--model").unwrap_or_else(|| default_model(&ollama));
     let default_transport = if cfg!(target_os = "linux") {
         "local"
     } else {

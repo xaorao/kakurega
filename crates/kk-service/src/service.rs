@@ -1336,7 +1336,13 @@ impl Service {
                         job.state = JobState::Failed("the review stopped unexpectedly".into())
                     }
                 }
-                job.events.push(Event::new("finished", ""));
+                let how = match &job.state {
+                    JobState::Running => "",
+                    JobState::Ready => "ready",
+                    JobState::NothingToRelease(_) => "nothing_to_release",
+                    JobState::Failed(_) => "failed",
+                };
+                job.events.push(Event::new("finished", how));
                 let job = job.clone();
                 if let Some(s) = &snap_out {
                     g.snaps.insert(jid.clone(), s.clone());

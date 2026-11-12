@@ -56,7 +56,7 @@ The first row asks a public NEAR RPC and nothing of ours. The benchmark can be r
 
 ## Proof of protection
 
-- **Leaks.** 168 cases through seven doors against a model that repeats every secret it is shown (`benchmarks/leak/METHOD.md`). For the secret shapes the detector knows: 0 of 126 reached the model. For shapes it does not know (a password or a PIN written with no word saying what it is, or made of ordinary words): 10 of 42 did, and the signed results name each one.
+- **Leaks.** 168 cases through seven doors against a model that repeats every secret it is shown (`benchmarks/leak/METHOD.md`). For the secret shapes the detector knows: 0 of 126 leaked (90 were held back, 18 refused before any model was asked, and 18 were typed into a message by the owner, which is sent as written to a model on this computer). For shapes it does not know (a password or a PIN written with no word saying what it is, or made of ordinary words): 10 of 42 did, and the signed results name each one.
 - **Planted instructions, real models.** A file with a made-up key and one planted instruction, summary asked for (`benchmarks/injection/METHOD.md`). A plain prompt repeated the key in 4 of 16 attack runs. With the file attached in Kakurega the key was sent 0 of 18 times, because its line is withheld. Small sample, two different models; the limits are in the method.
 - **Review quality.** On a small project with one planted defect and a 7B local model (`benchmarks/quality/METHOD.md`): the plain model found it 3 of 3 with 13 false findings; the verified loop found it 3 of 3 with 0 false findings, at about 150 seconds a review.
 - **Try to break it.** The app has a box where you write your own attack next to two fresh secrets and see exactly what the model was sent.
@@ -103,10 +103,11 @@ Each component has a record of what was read, decided and tested, and what is no
 ## Run it (macOS)
 
 ```
-scripts/setup                        # dependencies, web build
-ollama serve &                       # and: ollama pull qwen2.5:3b
-limactl start kak                    # Linux VM with bubblewrap and Rust (the sandbox on macOS)
-cargo build -p kk-cli
+scripts/setup                        # dependencies, the web build and the kaku program
+ollama serve &                       # the local model service
+ollama pull qwen2.5-coder:7b         # the model reviews and answers use when none is named
+scripts/provision-vm                 # the sandbox machine reviews run in (Lima, Ubuntu); safe to run again
+target/debug/kaku doctor             # every check should say ok
 target/debug/kaku                    # full-screen workspace; starts the service if needed
 target/debug/kaku serve              # or the browser workspace: prints a one-time pairing link
 ```

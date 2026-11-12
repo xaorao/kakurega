@@ -182,7 +182,17 @@ pub(super) async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -
                         .iter()
                         .filter(|c| c.found.checked())
                         .count();
-                    item.state = State::Answered;
+                    item.state = match &o.report.ending {
+                        kk_review::explore::Ending::ModelFailed(why)
+                            if o.report.answer.trim().is_empty() =>
+                        {
+                            State::Failed(format!(
+                                "The model stopped answering: {}",
+                                why.chars().take(400).collect::<String>()
+                            ))
+                        }
+                        _ => State::Answered,
+                    };
                     item.outcome = Some(o);
                 }
                 Err(m) => item.state = State::Failed(m.chars().take(500).collect()),

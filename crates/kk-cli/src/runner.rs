@@ -165,7 +165,7 @@ impl ReviewRunner {
                 other => format!("the outside model did not answer: {other}"),
             }
         } else {
-            model_failure(e)
+            model_failure(e, &self.model_name())
         }
     }
 
@@ -230,8 +230,12 @@ fn remote_failure(e: kk_route::RouteError) -> String {
 }
 
 /// What the owner is told when the local model fails. A conversation larger than the model's window gets advice, not a status.
-fn model_failure(e: kk_route::RouteError) -> String {
+fn model_failure(e: kk_route::RouteError, model: &str) -> String {
     match e {
+        // the model is not there: say which one, and how to install it
+        kk_route::RouteError::NotFound => format!(
+            "the model {model} is not installed: run `ollama pull {model}`, or choose an installed model in Settings"
+        ),
         kk_route::RouteError::ContextTooLong { requested, window } => format!(
             "this conversation is too long for the model: it needs about {requested} tokens and the model's window holds {window}. Start a new conversation, send a shorter message, or choose fewer notes and web pages"
         ),
@@ -458,7 +462,7 @@ cut_short: false,
                 },
                 on_chunk,
             )
-            .map_err(model_failure)?;
+            .map_err(|e| model_failure(e, &self.model_name()))?;
         Ok(kk_service::StreamedReply {
             reply: kk_service::ChatReply {
                 prompt_tokens: (done.prompt_tokens > 0).then_some(done.prompt_tokens),
@@ -766,7 +770,13 @@ cut_short: false,
             );
         }
         // once the owner asks for a stop the model is not asked again, so the task ends at its next step
-        let route = Stoppable::wrap(Box::new(self.route().map_err(model_failure)?), stop);
+        let route = Stoppable::wrap(
+            Box::new(
+                self.route()
+                    .map_err(|e| model_failure(e, &self.model_name()))?,
+            ),
+            stop,
+        );
         let (mut ws, left) = Workspace::from_imported(files);
         let runner = detect_runner(ws.files());
         let tester = runner.map(|r| SandboxTester {
@@ -833,7 +843,13 @@ cut_short: false,
         let route: Box<dyn kk_route::Route> = if self.scripted.is_some() {
             Box::new(scripted_question_route(&ws))
         } else {
-            Stoppable::wrap(Box::new(self.route().map_err(model_failure)?), stop)
+            Stoppable::wrap(
+                Box::new(
+                    self.route()
+                        .map_err(|e| model_failure(e, &self.model_name()))?,
+                ),
+                stop,
+            )
         };
         progress(&match left.restricted {
             0 => format!("the model reads {} files", ws.files().len()),
@@ -859,7 +875,9 @@ cut_short: false,
         if asked_to_stop() {
             return Err(kk_review::job::STOPPED_BY_OWNER.into());
         }
-        progress("the places the answer rests on were checked against the files");
+        if !report.citations.is_empty() {
+            progress("the places the answer rests on were checked against the files");
+        }
         Ok(kk_service::questions::QuestionOutcome {
             report,
             route: if self.scripted.is_some() {
