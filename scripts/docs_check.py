@@ -18,7 +18,7 @@ from pathlib import Path
 repo = Path(__file__).resolve().parent.parent
 args = sys.argv[1:]
 kaku = repo / (args[args.index("--kaku") + 1] if "--kaku" in args else "target/debug/kaku")
-DOCS = [repo / "README.md", repo / "docs/mcp.md", repo / "docs/LIMITS.md"]
+DOCS = [repo / "README.md", repo / "docs/mcp.md", repo / "docs/LIMITS.md", repo / "docs/FEATURES.md"]
 problems = []
 checked = 0
 
@@ -45,7 +45,7 @@ for doc in DOCS:
         checked += 1
         if not (doc.parent / target).exists() and not (repo / target).exists():
             bad(rel(doc), f"the link {target} does not exist")
-    for m in re.finditer(r"`((?:docs|scripts|program|crates|apps|packages|fixtures|tests)/[A-Za-z0-9_./-]+)`", body):
+    for m in re.finditer(r"`((?:docs|scripts|program|crates|apps|packages|fixtures|tests|contracts|benchmarks)/[A-Za-z0-9_./-]+)`", body):
         target = m.group(1).rstrip("/.")
         if "*" in target or "{" in target:
             continue
