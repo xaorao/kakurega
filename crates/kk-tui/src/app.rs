@@ -784,13 +784,32 @@ impl App {
             } else {
                 "ended with an error"
             };
+            // the script is shown with what it printed: output alone says nothing about what was asked of the files
             lines.push(format!(
-                "Check {} ({}), run in the sealed sandbox: {how}. It printed:",
+                "Check {} ({}), run in the sealed sandbox: {how}. Script:",
                 i + 1,
                 clean(k["language"].as_str().unwrap_or(""))
             ));
-            for l in run["output"].as_str().unwrap_or("").lines().take(12) {
+            let script: Vec<&str> = k["script"].as_str().unwrap_or("").lines().collect();
+            for l in script.iter().take(30) {
                 lines.push(format!("      {}", clean(l)));
+            }
+            if script.len() > 30 {
+                lines.push(counted(&format!(
+                    "      ({} more line(s) of the script are not shown here)",
+                    script.len() - 30
+                )));
+            }
+            lines.push("  It printed:".into());
+            let output: Vec<&str> = run["output"].as_str().unwrap_or("").lines().collect();
+            for l in output.iter().take(12) {
+                lines.push(format!("      {}", clean(l)));
+            }
+            if output.len() > 12 {
+                lines.push(counted(&format!(
+                    "      ({} more line(s) of output are not shown here)",
+                    output.len() - 12
+                )));
             }
         }
         let read = a["files_read"].as_array().map_or(0, Vec::len);
@@ -807,6 +826,16 @@ impl App {
                 String::new()
             }
         )));
+        let names: Vec<String> = a["withheld_files"]
+            .as_array()
+            .map(|v| v.iter().filter_map(|x| x.as_str().map(clean)).collect())
+            .unwrap_or_default();
+        if !names.is_empty() {
+            lines.push(format!(
+                "Withheld (their name or content says they hold secrets or private data): {}",
+                names.join(", ")
+            ));
+        }
         let kind =
             if ending == "answered" && a["unchecked"].as_u64() == Some(0) && !places.is_empty() {
                 Kind::Ok
@@ -5177,6 +5206,20 @@ impl App {
                 }
                 let id = clean(body["id"].as_str().unwrap_or(""));
                 self.say(Kind::Info, format!("{id}: the agent reads the project on this computer. Nothing is changed and nothing leaves."));
+                // 100 questions are kept: the owner is told which older ones made room
+                let forgotten: Vec<String> = body["forgotten"]
+                    .as_array()
+                    .map(|v| v.iter().filter_map(|x| x.as_str().map(clean)).collect())
+                    .unwrap_or_default();
+                if !forgotten.is_empty() {
+                    self.say(
+                        Kind::Info,
+                        format!(
+                            "100 questions are kept: {} was forgotten to make room.",
+                            forgotten.join(", ")
+                        ),
+                    );
+                }
                 self.explore_watch = Some((id, false, 0));
                 Vec::new()
             }

@@ -466,3 +466,120 @@ fn ex09_only_lines_that_hold_places_leave_a_text_answer_and_scraps_of_text_are_n
         Found::Withheld
     );
 }
+
+#[test]
+fn ex10_quotes_in_quotation_marks_ambiguous_places_long_lines_and_mixed_notations() {
+    let w = ws();
+    // a model that wraps the line in quotation marks or backticks quoted it correctly
+    assert_eq!(
+        check_citation(&w, "app/session.py", 14, "\"    return True\"").found,
+        Found::AtLine
+    );
+    assert_eq!(
+        check_citation(&w, "app/session.py", 14, "`return True`").found,
+        Found::AtLine
+    );
+    // part of a line is found only when it is most of the line, and never inside a comment it leaves the mark of out
+    let code = Workspace::from_imported(&[file(
+        "auth.py",
+        "# never call disable_auth() in production code\ndef check(user):\n    return is_admin(user) and not user.locked and user.active\nx = 1\ny = 2\nx = 1\n",
+        Level::Internal,
+    )])
+    .0;
+    assert!(!check_citation(&code, "auth.py", 1, "disable_auth()")
+        .found
+        .checked());
+    assert!(
+        !check_citation(&code, "auth.py", 3, "is_admin(user)")
+            .found
+            .checked(),
+        "a third of the line, the rest reverses it"
+    );
+    assert_eq!(
+        check_citation(
+            &code,
+            "auth.py",
+            3,
+            "return is_admin(user) and not user.locked"
+        )
+        .found,
+        Found::AtLine
+    );
+    // text that stands at two places and not at the cited line is not placed by guessing the nearer one
+    let twice = Workspace::from_imported(&[file(
+        "dup.py",
+        "value = compute()\nother = 1\nvalue = compute()\n",
+        Level::Internal,
+    )])
+    .0;
+    assert!(!check_citation(&twice, "dup.py", 2, "value = compute()")
+        .found
+        .checked());
+    assert_eq!(
+        check_citation(&twice, "dup.py", 3, "value = compute()").found,
+        Found::AtLine
+    );
+    // short whole lines that fit at several places are not a place, however many of them are quoted
+    let short = Workspace::from_imported(&[file(
+        "s.py",
+        "a\nb\nc\nzzzzzzzzzz\na\nb\nc\n",
+        Level::Internal,
+    )])
+    .0;
+    assert!(!check_citation(&short, "s.py", 1, "a\nb\nc").found.checked());
+    // a quote longer than what is kept for showing is compared whole: a wrong ending is not found
+    let long_line = format!("key = \"{}\"", "a".repeat(600));
+    let long =
+        Workspace::from_imported(&[file("l.py", &format!("{long_line}\n"), Level::Internal)]).0;
+    assert_eq!(
+        check_citation(&long, "l.py", 1, &long_line).found,
+        Found::AtLine
+    );
+    let wrong_end = format!("key = \"{}b\"", "a".repeat(599));
+    assert!(!check_citation(&long, "l.py", 1, &wrong_end).found.checked());
+    // a text answer with a labelled place whose text is in a code block, a `path:line:` place, a sentence that only looks
+    // like a place, and its own closing line with a colon
+    let text = "Logout does not revoke the token.\nFile: app/session.py\nLine: 14\nText:\n```python\n    return True\n```\n- app/session.py:11: def logout(token):\napp/session.py:9 is where the token is returned.\nIn short: nothing is removed:";
+    let r = route(vec![
+        calls(&[("read_file", json!({"path": "app/session.py"}))]),
+        ChatMessage::new("assistant", text),
+    ]);
+    let rep = run_question(
+        &r,
+        &mut ws(),
+        "Does logout revoke the token?",
+        Depth::Normal,
+        None,
+        NEVER,
+    );
+    assert_eq!(rep.citations.len(), 2, "{rep:?}");
+    assert!(rep.citations.iter().all(|c| c.found.checked()), "{rep:?}");
+    assert_eq!(rep.answer, "Logout does not revoke the token.\napp/session.py:9 is where the token is returned.\nIn short: nothing is removed:", "{rep:?}");
+    // two answers in one reply: the first is read, and nothing is called corrected when the agent was never told
+    let r = route(vec![
+        calls(&[("read_file", json!({"path": "app/session.py"}))]),
+        calls(&[
+            (
+                "answer",
+                json!({"answer": "It returns True.", "places": [{"file": "app/session.py", "line": 14, "text": "return True"}, {"file": "app/session.py", "line": 14, "text": "return True"}]}),
+            ),
+            (
+                "answer",
+                json!({"answer": "It deletes the token.", "places": [{"file": "app/session.py", "line": 14, "text": "return True"}]}),
+            ),
+        ]),
+    ]);
+    let rep = run_question(
+        &r,
+        &mut ws(),
+        "What does logout return?",
+        Depth::Normal,
+        None,
+        NEVER,
+    );
+    assert_eq!(
+        (rep.answer.as_str(), rep.corrected, rep.citations.len()),
+        ("It returns True.", false, 1),
+        "{rep:?}"
+    );
+}

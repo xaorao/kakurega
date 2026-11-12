@@ -94,3 +94,21 @@ fn pw03_names_templates_paths_and_placeholders_after_a_password_key_are_not_held
         );
     }
 }
+
+#[test]
+fn pw04_a_passphrase_of_words_after_a_password_key_is_held() {
+    for text in [
+        "db_password = \"correct-horse-battery-staple\"\n",
+        "{\"password\": \"purple-monkey-dishwasher-nine\"}\n",
+    ] {
+        assert!(!kk_secrets::scan(text).is_empty(), "{text:?}");
+    }
+    for text in [
+        "password = \"enter-your-password-here\"\n",
+        "password: test-password\n",
+        "password = \"new-user-flow\"\n",
+        "label = \"correct-horse-battery-staple\"\n",
+    ] {
+        assert!(kk_secrets::scan(text).is_empty(), "{text:?}");
+    }
+}

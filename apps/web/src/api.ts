@@ -294,7 +294,7 @@ export interface QuestionRow { id: string; question: string; project: string | n
 export interface Question {
   id: string; folder: string; project: string | null; question: string; depth: QuestionDepth; created: number;
   state: "running" | "answered" | "failed"; failure: string; progress: string[];
-  answer?: { ending: "answered" | "unchecked" | "turn_limit" | "stuck" | "model_failed" | "stopped"; note: string; text: string; not_found: string; places: QuestionPlace[]; checked: number; unchecked: number; checks: QuestionCheck[]; files_read: string[]; steps: string[]; turns: number; withheld: number; corrected: boolean; route: string; elapsed_ms: number };
+  answer?: { ending: "answered" | "unchecked" | "turn_limit" | "stuck" | "model_failed" | "stopped"; note: string; text: string; not_found: string; places: QuestionPlace[]; checked: number; unchecked: number; checks: QuestionCheck[]; files_read: string[]; steps: string[]; turns: number; withheld: number; corrected: boolean; route: string; elapsed_ms: number; withheld_files?: string[] };
 }
 export type CodeTask = {
   id: string;

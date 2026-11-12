@@ -189,6 +189,13 @@ export function Explore() {
                     </details>
                   </Show>
                   <p class="muted">{t("ex.footer", { turns: a().turns, seconds: Math.max(1, Math.round(a().elapsed_ms / 1000)), route: a().route })}{a().withheld > 0 ? ` ${t(a().withheld === 1 ? "ex.withheld.one" : "ex.withheld", { n: a().withheld })}` : ""}</p>
+                  <Show when={(a().withheld_files ?? []).length > 0}>
+                    <details>
+                      <summary>{t("ex.withheldWhich")}</summary>
+                      <p class="muted">{t("ex.withheldWhy")}</p>
+                      <ul class="plain"><For each={a().withheld_files}>{(f) => <li><code>{visible(f)}</code></li>}</For></ul>
+                    </details>
+                  </Show>
                 </>
               )}
             </Show>

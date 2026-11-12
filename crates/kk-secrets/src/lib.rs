@@ -1905,6 +1905,53 @@ fn password_value(raw: &str, quoted: bool) -> bool {
         || x_placeholder(core)
         || core.ends_with(['.', ':'])
         || core.starts_with(['.', ':', '-']);
+    // a passphrase: three or more plain words joined by dashes, sixteen characters or more, none of
+    // them saying what it is (`"correct-horse-battery-staple"`). A name such as `enter-your-password-here` says so.
+    let words: Vec<&str> = core.split('-').collect();
+    let _ = quoted;
+    // words that say the value is a stand-in or name what it is, as whole words (`monkey` is not `key`)
+    let telling = [
+        "your",
+        "here",
+        "enter",
+        "insert",
+        "todo",
+        "none",
+        "null",
+        "test",
+        "fake",
+        "demo",
+        "mock",
+        "fixture",
+        "synthetic",
+        "should",
+        "must",
+        "not",
+        "password",
+        "passphrase",
+        "passwd",
+        "pwd",
+        "keychain",
+        "credential",
+        "pass",
+        "secret",
+        "token",
+        "key",
+        "value",
+        "fallback",
+        "local",
+        "private",
+    ];
+    if !says_so
+        && core.len() >= 16
+        && words.len() >= 3
+        && words
+            .iter()
+            .all(|w| w.len() >= 3 && w.chars().all(|c| c.is_ascii_lowercase()))
+        && !telling.iter().any(|m| words.contains(m))
+    {
+        return true;
+    }
     if says_so
         || env_name
         || camel_identifier(core)
@@ -1931,7 +1978,6 @@ fn password_value(raw: &str, quoted: bool) -> bool {
     .iter()
     .filter(|k| **k)
     .count();
-    let _ = quoted;
     kinds >= 2 && entropy(core) >= 3.0
 }
 
@@ -3424,7 +3470,7 @@ pub fn scan(text: &str) -> Vec<Hit> {
 /// Which generation of the detector this is. Bump it whenever a rule is added, removed or changed, so stores that kept text under
 /// an older detector are checked again with this one (kk-memory does that at open). A test in `tests/corpus.rs` fails when the
 /// detector's answers over its corpus change and this number was not bumped.
-pub const DETECTOR_VERSION: u32 = 2;
+pub const DETECTOR_VERSION: u32 = 3;
 
 /// Whether the text holds a credential in any form the detector knows. Used for every stored or shared piece of free text that
 /// has no reason to hold one: a recipient, a project name, a reason, a file name.

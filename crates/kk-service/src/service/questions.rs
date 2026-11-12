@@ -161,6 +161,16 @@ pub(super) async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -
         if svc2.stop_switch_done(&id2) {
             result = Err(kk_review::job::STOPPED_BY_OWNER.into());
         }
+        // which files the agent was not given, by name: an answer that says "I could not find it" may be about one of them
+        if let Ok(o) = &mut result {
+            o.report.withheld_files = imported
+                .files
+                .iter()
+                .filter(|f| f.label.level >= kk_types::label::Level::Restricted)
+                .map(|f| f.path.clone())
+                .take(50)
+                .collect();
+        }
         let mut g = svc2.questions.lock().expect("lock");
         let mut checked = 0usize;
         if let Some(item) = g.list.get_mut(&id2) {

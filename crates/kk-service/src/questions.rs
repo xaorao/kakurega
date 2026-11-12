@@ -157,6 +157,7 @@ pub fn view(q: &Question) -> Value {
             "steps": r.steps,
             "turns": r.turns,
             "withheld": r.withheld,
+            "withheld_files": r.withheld_files,
             "corrected": r.corrected,
             "route": o.route,
             "elapsed_ms": o.elapsed_ms,

@@ -41,6 +41,7 @@ fn positives() -> Vec<(&'static str, String)> {
         ("password starting with a symbol", "ADMIN_PASSWORD=!6HKZwa8ioGbBhqHRohX\n".into()),
         ("password ending with a percent sign", "ADMIN_PASSWORD=k3Rcu5l2z8CUsVrE9Kh%\n".into()),
         ("password with no digit", "ADMIN_PASSWORD=qcQkdMZphdsEsw%cajEK\n".into()),
+        ("passphrase of words", "db_password = \"correct-horse-battery-staple\"\n".into()),
         ("github fine-grained", j(&["github", "_pat_", &body(82, ALNUM, 3)])),
         ("aws id", j(&["AK", "IA", &body(16, B32, 4)])),
         ("aws temp id", j(&["AS", "IA", &body(16, B32, 5)])),
@@ -246,7 +247,7 @@ fn dv01_the_detector_version_is_bumped_whenever_its_answers_over_the_corpus_chan
         parts.push(format!("{name}={:?}", looks_secret(&text)));
     }
     let got = fnv(&parts);
-    const EXPECTED: (u32, u64) = (2, 5348829233021566607);
+    const EXPECTED: (u32, u64) = (3, 2725492394836766428);
     assert_eq!(
         (kk_secrets::DETECTOR_VERSION, got),
         EXPECTED,

@@ -1782,6 +1782,16 @@ fn print_question(v: &Value) {
             String::new()
         }
     );
+    let names: Vec<String> = a["withheld_files"]
+        .as_array()
+        .map(|v| v.iter().filter_map(|x| x.as_str().map(clean)).collect())
+        .unwrap_or_default();
+    if !names.is_empty() {
+        println!(
+            "Withheld (their name or content says they hold secrets or private data): {}",
+            names.join(", ")
+        );
+    }
 }
 
 /// `kaku explore DIR QUESTION`: an agent reads the project on this computer and answers; every line its answer rests on is

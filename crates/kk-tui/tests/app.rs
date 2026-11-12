@@ -8400,9 +8400,8 @@ fn tu_ex01_a_question_is_followed_to_its_answer_and_a_line_not_in_the_file_is_ne
         "{t}"
     );
     assert!(
-        t.contains(
-            "Check 1 (python), run in the sealed sandbox: ended without an error. It printed:"
-        ) && t.contains("still logged in: alice"),
+        t.contains("Check 1 (python), run in the sealed sandbox: ended without an error. Script:")
+            && t.contains("still logged in: alice"),
         "{t}"
     );
     assert!(

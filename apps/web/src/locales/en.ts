@@ -1700,6 +1700,8 @@ export const en = {
   "ex.ask": "Ask",
   "ex.madeRoom": "100 questions are kept: the {n} oldest answered ones were forgotten to make room.",
   "ex.madeRoom.one": "100 questions are kept: the oldest answered one was forgotten to make room.",
+  "ex.withheldWhich": "Which files were withheld",
+  "ex.withheldWhy": "The agent was not given these files, because their name or content says they hold secrets or private data. If the answer should be in one of them, it could not be found.",
   "ex.working": "The agent is reading the project. This can take a few minutes on a local model.",
   "ex.error": "The question could not be asked.",
   "ex.stopping": "Stopping at the next step. No answer will be offered.",
