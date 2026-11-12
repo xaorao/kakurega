@@ -294,8 +294,15 @@ fn serve(args: &[String]) -> Result<(), String> {
         companion.addr.port(),
         code
     );
-    println!("  New link later:                      kaku pair");
-    println!("  Approve a release in this terminal:  kaku approve");
+    // the commands name this data folder when it is not the default one, so they reach this service
+    let here =
+        if crate::flag(args, "--data-dir").is_some() || crate::flag(args, "--profile").is_some() {
+            format!(" --data-dir {}", data.display())
+        } else {
+            String::new()
+        };
+    println!("  New link later:                      kaku pair{here}");
+    println!("  Approve a release in this terminal:  kaku approve{here}");
     match &ui_dir {
         Some(d) => println!("  Web interface from:                  {}", d.display()),
         None => println!("  No web interface build found (apps/web/dist); only the API is served."),

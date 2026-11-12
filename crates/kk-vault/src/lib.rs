@@ -139,10 +139,37 @@ fn lift_guard(conn: &mut Connection) -> Result<(), VaultError> {
     Ok(conn.authorizer(None::<fn(AuthContext<'_>) -> Authorization>)?)
 }
 
+/// A store made before stores were made owner-only, and its journal files, become owner-only when it is opened: encrypted
+/// or not, other accounts on the computer have no reason to read them.
+fn owner_only(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let name = path.as_os_str().to_owned();
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        let mut p = name.clone();
+        p.push(suffix);
+        let p = std::path::PathBuf::from(p);
+        if let Ok(m) = std::fs::metadata(&p) {
+            if m.permissions().mode() & 0o077 != 0 {
+                let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
+}
+
 impl Vault {
     pub fn create(path: &Path, key: &VaultKey) -> Result<Vault, VaultError> {
         if path.exists() {
             return Err(VaultError::AlreadyExists);
+        }
+        // the store is made readable by its owner only; SQLite gives its journal files the same permissions
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(path)
+                .map_err(VaultError::Io)?;
         }
         let mut conn = Connection::open(path)?;
         configure(&conn, key)?;
@@ -154,6 +181,7 @@ impl Vault {
         if !path.exists() {
             return Err(VaultError::Missing);
         }
+        owner_only(path);
         let mut conn = Connection::open(path)?;
         configure(&conn, key)?;
         install_guard(&mut conn)?;

@@ -609,7 +609,7 @@ try {
     await glance.getByRole("status").waitFor();
     const shownNotes = await page.locator(".mem").count();
     const line = await glance.getByRole("status").innerText();
-    check("the notes at a glance count what the list shows, from untrusted text, never used and ending soon", new RegExp(`^Notes: ${shownNotes}\\. From untrusted text: \\d+\\. Never given to a model: \\d+\\. Ending within 14 days: \\d+\\. Held back for a check: \\d+\\.$`).test(line), `${shownNotes} vs ${line}`);
+    check("the notes at a glance count what the list shows, from untrusted text, never used and ending soon", new RegExp(`^Notes: ${shownNotes}\\. From untrusted text: \\d+\\. Not used in any answer yet: \\d+\\. Ending within 14 days: \\d+\\. Held back for a check: \\d+\\.$`).test(line), `${shownNotes} vs ${line}`);
     await glance.getByLabel("Project").selectOption("payments-service");
     await page.locator(".mem", { hasText: "rounded half up" }).waitFor();
     await page.waitForFunction(() => document.querySelectorAll(".mem").length === 1);

@@ -20,6 +20,12 @@ export function Welcome(props: { onDone: () => void }) {
     if (n === null) {
       finish();
       location.hash = "#/";
+      // the first review starts on the page under the card: the owner is taken to it, with the sample offered first
+      queueMicrotask(() => {
+        const to = document.querySelector<HTMLElement>("#sample button, #h-new");
+        to?.scrollIntoView({ block: "start" });
+        (document.querySelector<HTMLElement>("#sample button") ?? document.getElementById("h-new"))?.focus();
+      });
       return;
     }
     setStep(n);

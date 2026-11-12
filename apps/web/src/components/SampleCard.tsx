@@ -24,6 +24,8 @@ export function SampleCard(props: { onReview: (folder: string) => void }) {
     setError("");
     try {
       mutate(await fn());
+      // the folders it made are listed on the review page at once
+      window.dispatchEvent(new Event("kk:folders-changed"));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : t("sample.error"));
     } finally {

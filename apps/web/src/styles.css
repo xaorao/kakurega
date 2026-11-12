@@ -530,4 +530,8 @@ button.danger:not(.linklike) { border-color: var(--redline); }
 .verdict.ok .verdict-word { color: var(--cipher-text); }
 .verdict.bad .verdict-word { color: var(--redline); }
 .verdict-summary { margin: 4px 0 0; font-family: var(--font-mono); font-size: 13px; color: var(--graphite); overflow-wrap: anywhere; }
+/* native controls (checkboxes, date pickers, scroll bars) follow the theme the owner chose */
+:root { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { color-scheme: dark; } }
 

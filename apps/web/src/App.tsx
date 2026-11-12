@@ -38,7 +38,13 @@ import { applyLocale, LOCALES, locale, rich, setLocale, t, type Locale } from ".
 
 function useHash() {
   const [hash, setHash] = createSignal(location.hash);
-  const on = () => setHash(location.hash);
+  const on = () => {
+    // another screen opens at its top, not where the last one was scrolled to; a link to a part of the same screen
+    // (#pv-model) moves the page itself
+    const screen = (h: string) => h.split("/").slice(0, 2).join("/");
+    if (screen(location.hash) !== screen(hash())) window.scrollTo(0, 0);
+    setHash(location.hash);
+  };
   window.addEventListener("hashchange", on);
   onCleanup(() => window.removeEventListener("hashchange", on));
   return hash;
