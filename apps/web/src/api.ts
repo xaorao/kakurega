@@ -154,7 +154,8 @@ export interface McpSuggested { pack: string; publisher: string; name: string; p
 export interface BreakResult { planted: { key: string; password: string }; asked: string; sent: { role: string; content: string }[]; reply: string; reached_model: number; in_reply: number; leaked: boolean; attack_was_sent: boolean; attempts: number; leaks: number; route: { stays_here: boolean; host: string | null }; limits: string }
 export interface HandoffProposal { id: string; text: string; sha256: string; chars: number; personal: string; tool: string; notice: string }
 export interface SampleState { possible: boolean; loaded: boolean; folder?: string; project?: string; documents?: string; transcript?: string | null; note?: string }
-export interface ProjectRow { name: string; folder: string | null; folder_available: boolean; conversations: number; notes_only: boolean; created: number; listed: boolean }
+export type ProjectFloor = "any" | "confidential" | "here";
+export interface ProjectRow { name: string; folder: string | null; folder_available: boolean; conversations: number; notes_only: boolean; created: number; listed: boolean; floor?: ProjectFloor }
 export interface GitHubStatus { available: boolean; problem?: string | null; client_set: boolean; client_id?: string | null; connected: boolean; account?: { login: string; id: number } | null; scopes?: string[]; pending?: { user_code: string; verification_uri: string; expires_in: number; interval: number; next_poll_in: number } | null; read_only?: boolean; note?: string }
 export interface OutboundRow { at: number; seq: number; what: "model" | "review" | "search" | "pages" | "tool" | "connector" | "release" | "held"; to: string; detail: Record<string, number | string> }
 export interface RouteOptions { changeable: boolean; current?: "local" | "near" | "outside" | "test"; local?: { model: string }; near?: { model: string | null; key_saved: boolean }; outside?: { in_use: boolean }; route: { stays_here: boolean; host: string | null; model?: string }; note: string }
@@ -355,7 +356,7 @@ export const api = {
   sampleLoad: () => request<SampleState>("POST", "/api/sample", {}),
   sampleRemove: () => request<SampleState>("POST", "/api/sample/remove", {}),
   projects: () => request<{ projects: ProjectRow[] }>("GET", "/api/projects"),
-  projectChange: (b: { name?: string; folder?: string; remove?: string }) => request<{ changed: boolean; projects: ProjectRow[]; kept?: string }>("POST", "/api/projects", b),
+  projectChange: (b: { name?: string; folder?: string; remove?: string; floor?: ProjectFloor }) => request<{ changed: boolean; projects: ProjectRow[]; kept?: string }>("POST", "/api/projects", b),
   githubStatus: () => request<GitHubStatus>("GET", "/api/connectors/github/status"),
   githubClient: (client_id: string) => request<GitHubStatus>("POST", "/api/connectors/github/client", { client_id }),
   githubStart: () => request<{ user_code: string; verification_uri: string; next_poll_in: number }>("POST", "/api/connectors/github/start", {}),

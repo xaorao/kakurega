@@ -16,6 +16,112 @@ pub(super) struct ProjectBody {
     folder: Option<String>,
     #[serde(default)]
     remove: Option<String>,
+    /// How far its material may go: "any" (the model you choose), "confidential" (confidential hardware or this computer),
+    /// "here" (only a model on this computer).
+    #[serde(default)]
+    floor: Option<String>,
+}
+
+/// The words for a level a project allows, and back.
+fn floor_word(level: i64) -> &'static str {
+    match level {
+        3 => "here",
+        2 => "confidential",
+        _ => "any",
+    }
+}
+
+fn floor_level(word: &str) -> Option<i64> {
+    match word {
+        "here" => Some(3),
+        "confidential" => Some(2),
+        "any" => Some(0),
+        _ => None,
+    }
+}
+
+/// What the owner is told when a project's material would go to a model less private than the project allows.
+pub(super) fn floor_words(project: &str) -> String {
+    format!("the project {project} is kept more privately than the model in use now allows, so none of its material is sent to it; choose a more private model in Settings, or change where the project's work may go under Projects")
+}
+
+impl Service {
+    /// The least private model a project's material may be given to, as a route level (see `route_level`): 0 any, 2
+    /// confidential hardware or this computer, 3 only this computer. A project with no choice made is 0.
+    pub(super) fn project_floor(&self, project: Option<&str>) -> i64 {
+        let Some(p) = project.filter(|p| !p.is_empty()) else {
+            return 0;
+        };
+        let store = self.store.lock().expect("lock");
+        store
+            .connection()
+            .query_row(
+                "SELECT level FROM project_floor WHERE project = ?1",
+                [p],
+                |r| r.get(0),
+            )
+            .unwrap_or(0)
+    }
+
+    /// The highest floor of the projects whose folder holds this path, with that project's name.
+    pub(super) fn folder_floor_named(&self, path: &std::path::Path) -> Option<(String, i64)> {
+        let rows: Vec<(String, String, i64)> = {
+            let store = self.store.lock().expect("lock");
+            let c = store.connection();
+            c.prepare("SELECT p.name, p.folder, f.level FROM projects p JOIN project_floor f ON f.project = p.name WHERE p.folder IS NOT NULL")
+                .and_then(|mut st| {
+                    st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                        .map(|it| it.flatten().collect())
+                })
+                .unwrap_or_default()
+        };
+        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        rows.into_iter()
+            .filter(|(_, folder, _)| {
+                let f = std::path::Path::new(folder);
+                let f = f.canonicalize().unwrap_or_else(|_| f.to_path_buf());
+                // the project's folder, anything inside it, or a folder that holds it all
+                path.starts_with(&f) || f.starts_with(&path)
+            })
+            .max_by_key(|(_, _, level)| *level)
+            .map(|(name, _, level)| (name, level))
+    }
+
+    pub(super) fn folder_floor(&self, path: &std::path::Path) -> i64 {
+        self.folder_floor_named(path).map_or(0, |(_, l)| l)
+    }
+
+    /// The project (by name, or by holding this folder) whose floor is above the route in use now, if any.
+    pub(super) fn floor_above_route(
+        &self,
+        project: Option<&str>,
+        folder: Option<&std::path::Path>,
+    ) -> Option<(String, i64)> {
+        let level = self.route_level();
+        if let Some(p) = project.filter(|p| !p.is_empty()) {
+            let f = self.project_floor(Some(p));
+            if f > level {
+                return Some((p.to_string(), f));
+            }
+        }
+        folder
+            .and_then(|d| self.folder_floor_named(d))
+            .filter(|(_, f)| *f > level)
+    }
+
+    pub(super) fn floor_refusal(
+        &self,
+        project: Option<&str>,
+        folder: Option<&std::path::Path>,
+    ) -> Option<Response> {
+        self.floor_above_route(project, folder).map(|(name, _)| {
+            error(
+                StatusCode::CONFLICT,
+                "PROJECT_KEPT_PRIVATELY",
+                &floor_words(&name),
+            )
+        })
+    }
 }
 
 fn all(svc: &Service) -> Vec<Value> {
@@ -61,7 +167,10 @@ fn all(svc: &Service) -> Vec<Value> {
                 .unwrap_or(false);
             // a folder that has since gone, or is no longer inside an allowed folder, is said to be gone and not used
             let folder_ok = folder.as_deref().is_some_and(|f| svc.allowed_dir(f).is_some());
-            json!({"name": name, "folder": folder, "folder_available": folder_ok, "conversations": conversations, "notes_only": notes_only, "created": created, "listed": listed})
+            let floor: i64 = c
+                .query_row("SELECT level FROM project_floor WHERE project = ?1", [&name], |r| r.get(0))
+                .unwrap_or(0);
+            json!({"name": name, "folder": folder, "folder_available": folder_ok, "conversations": conversations, "notes_only": notes_only, "created": created, "listed": listed, "floor": floor_word(floor)})
         })
         .collect()
 }
@@ -95,6 +204,40 @@ pub(super) async fn change(axum::Extension(svc): Svc, Json(b): Json<ProjectBody>
         (Some(name), None) => {
             if !valid(name) {
                 return refuse("a project name is a folder name of 1 to 80 plain characters");
+            }
+            let floor = match b.floor.as_deref() {
+                None => None,
+                Some(w) => match floor_level(w) {
+                    Some(l) => Some(l),
+                    None => {
+                        return refuse("where a project's work may go is any, confidential or here")
+                    }
+                },
+            };
+            if let Some(level) = floor {
+                let store = svc.store.lock().expect("lock");
+                let c = store.connection();
+                let done = if level == 0 {
+                    c.execute("DELETE FROM project_floor WHERE project = ?1", [name])
+                } else {
+                    c.execute(
+                        "INSERT INTO project_floor(project, level, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(project) DO UPDATE SET level = ?2, updated_at = ?3",
+                        kk_vault::rusqlite::params![name, level, now()],
+                    )
+                };
+                if done.is_err() {
+                    return refuse("where the project's work may go could not be saved");
+                }
+                drop(store);
+                svc.log_event(
+                    "project.floor_set",
+                    "owner",
+                    &[("level", (level as usize).into())],
+                );
+                // only the floor was asked for: the project is not made or changed otherwise
+                if b.folder.is_none() {
+                    return Json(json!({"changed": true, "projects": all(&svc)})).into_response();
+                }
             }
             let folder = match b.folder.as_deref().map(str::trim) {
                 None => None,

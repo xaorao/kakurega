@@ -1,6 +1,6 @@
 import { createResource, createSignal, For, Show } from "solid-js";
-import { api, ApiError, type ProjectRow } from "../api";
-import { t } from "../i18n";
+import { api, ApiError, type ProjectFloor, type ProjectRow } from "../api";
+import { t, type Key } from "../i18n";
 
 const leave = (key: string, value: string) => { try { sessionStorage.setItem(key, value); } catch { /* the screen then opens without it */ } };
 
@@ -11,7 +11,7 @@ export function Projects() {
   const [folder, setFolder] = createSignal("");
   const [said, setSaid] = createSignal("");
   const [bad, setBad] = createSignal("");
-  const change = async (body: { name?: string; folder?: string; remove?: string }, ok: string) => {
+  const change = async (body: { name?: string; folder?: string; remove?: string; floor?: ProjectFloor }, ok: string) => {
     setSaid("");
     setBad("");
     try {
@@ -53,6 +53,13 @@ export function Projects() {
                     <li>{t("proj.chats", { n: p.conversations })}</li>
                     <Show when={p.notes_only}><li>{t("proj.notesOnly")}</li></Show>
                   </ul>
+                  <label for={`proj-floor-${p.name}`}>{t("proj.floor")}</label>
+                  <select id={`proj-floor-${p.name}`} value={p.floor ?? "any"} onChange={(e) => void change({ name: p.name, floor: e.currentTarget.value as ProjectFloor }, t("proj.floorSaved"))}>
+                    <option value="any">{t("proj.floor.any")}</option>
+                    <option value="confidential">{t("proj.floor.confidential")}</option>
+                    <option value="here">{t("proj.floor.here")}</option>
+                  </select>
+                  <p class="muted">{t(`proj.floor.${p.floor ?? "any"}.hint` as Key)}</p>
                   <div class="actions">
                     <button type="button" onClick={() => chat(p)}>{t("proj.chat")}</button>
                     <Show when={p.folder && p.folder_available}><button type="button" onClick={() => ask(p)}>{t("proj.ask")}</button></Show>

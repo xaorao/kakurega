@@ -67,6 +67,16 @@ await page.waitForSelector("#chat-input");
 check((await page.locator("main").innerHTML()).includes('value="kestrel"') || (await page.locator('input[value="kestrel"]').count()) > 0 || (await page.evaluate(() => [...document.querySelectorAll("input")].some((i) => i.value === "kestrel"))), "the chat opens with the project already filled in");
 
 await page.getByRole("link", { name: "Projects", exact: true }).click();
+// where its work may go: kept on this computer, said in words, and still so after a reload
+await page.getByLabel("Where may its work go?").selectOption("here");
+await page.getByText("Saved where its work may go.").waitFor();
+check(await page.getByText(/With any model elsewhere in use, nothing of this project is sent/).isVisible(), "a project kept on this computer says what that means");
+await page.reload();
+await page.waitForSelector("#proj-list");
+check(await page.getByLabel("Where may its work go?").inputValue() === "here", "the choice is kept");
+await page.screenshot({ path: join(work, "2-floor.png"), fullPage: true });
+await page.getByLabel("Where may its work go?").selectOption("any");
+await page.getByText("Saved where its work may go.").waitFor();
 await page.getByRole("button", { name: /Take off the list/ }).click();
 await page.getByText("Taken off the list.").waitFor();
 check((await page.locator("#proj-list").innerText()).includes("No projects yet"), "taken off the list, and it says its conversations and notes were not deleted");

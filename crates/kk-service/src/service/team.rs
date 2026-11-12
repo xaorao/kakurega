@@ -899,6 +899,11 @@ impl Service {
             return "stopped";
         };
         // every task is asked with what an ordinary chat about the goal would have been given: the same notes, rules and route
+        // the run's project may allow only a more private model than the one in use now: said in its own words
+        if let Some((name, _)) = self.floor_above_route(run.project.as_deref(), None) {
+            self.team_set_final(id, None, &super::projects::floor_words(&name));
+            return "stopped";
+        }
         let body = ChatBody {
             message: run.goal.clone(),
             history: Vec::new(),
@@ -922,6 +927,12 @@ impl Service {
         };
         // a run that worked with a more private model holds notes, files and results that are not for a lesser one
         let mut need = self.route_level();
+        // the run's project may also allow only a more private model than the one in use now
+        if let Some((name, _)) = self.floor_above_route(run.project.as_deref(), None) {
+            self.team_set_final(id, None, &super::projects::floor_words(&name));
+            return "stopped";
+        }
+        need = need.max(self.project_floor(run.project.as_deref()));
         if run.held > need {
             self.team_set_final(id, None, MORE_PRIVATE);
             return "stopped";

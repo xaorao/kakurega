@@ -487,6 +487,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS break_counter(id INTEGER PRIMARY KEY CHECK (id = 1), attempts INTEGER NOT NULL, leaks INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS team_runs(id TEXT PRIMARY KEY, goal TEXT NOT NULL, project TEXT, status TEXT NOT NULL, final TEXT, final_note TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL, updated INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS team_tasks(run TEXT NOT NULL, n INTEGER NOT NULL, expert TEXT NOT NULL, expert_name TEXT NOT NULL, after TEXT NOT NULL, task TEXT NOT NULL, state TEXT NOT NULL, result TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', question TEXT NOT NULL DEFAULT '', asked TEXT NOT NULL DEFAULT '[]', attempts INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(run, n));
+             CREATE TABLE IF NOT EXISTS project_floor(project TEXT PRIMARY KEY, level INTEGER NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS project_settings(project TEXT PRIMARY KEY, notes_only INTEGER NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS secrets(name TEXT PRIMARY KEY, value BLOB NOT NULL, stored_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);
@@ -1176,6 +1177,9 @@ impl Service {
         let dir = self
             .allowed_dir(repo)
             .ok_or("that folder is not available")?;
+        if let Some((name, _)) = self.floor_above_route(None, Some(&dir)) {
+            return Err(projects::floor_words(&name));
+        }
         if recipient.is_empty()
             || recipient.len() > 128
             || recipient.chars().any(|c| c.is_control())
@@ -3631,6 +3635,10 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
     } else {
         format!("{}\n[attached: {}]", b.message, attached_names.join(", "))
     };
+    if let Some(refusal) = svc.floor_refusal(b.project.as_deref(), None) {
+        return Err(Box::new(refusal));
+    }
+    let floor = svc.project_floor(b.project.as_deref());
     let Some(id) = b.session.clone() else {
         let need = if b.history.is_empty() {
             0
@@ -3638,7 +3646,8 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
             // earlier messages a client sends without saying how privately they were held are treated as held on this
             // computer: the safe reading, so a client that forgets cannot send them down
             b.held.unwrap_or(3).clamp(0, 3)
-        };
+        }
+        .max(floor);
         return Ok(ChatRun {
             started: std::time::Instant::now(),
             body: b,
@@ -4785,15 +4794,19 @@ const MAX_SESSION_TURNS: i64 = 400;
 /// The most private route level any answer of this kept conversation was made at; 0 for one with no turns. A conversation
 /// from before levels were recorded counts as made on this computer.
 fn kept_level(svc: &Service, id: &str) -> i64 {
-    let store = svc.store.lock().expect("lock");
-    store
-        .connection()
-        .query_row(
-            "SELECT CASE WHEN (SELECT count(*) FROM session_turns t WHERE t.session = s.id) = 0 THEN 0 ELSE coalesce(s.held, 3) END FROM sessions s WHERE s.id = ?1",
-            [id],
-            |r| r.get(0),
-        )
-        .unwrap_or(0)
+    let (held, project): (i64, Option<String>) = {
+        let store = svc.store.lock().expect("lock");
+        store
+            .connection()
+            .query_row(
+                "SELECT CASE WHEN (SELECT count(*) FROM session_turns t WHERE t.session = s.id) = 0 THEN 0 ELSE coalesce(s.held, 3) END, s.project FROM sessions s WHERE s.id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap_or((0, None))
+    };
+    // a conversation in a project is never given to a model less private than the project allows
+    held.max(svc.project_floor(project.as_deref()))
 }
 
 /// The refusal for reading a kept conversation with a model less private than the one it was held with.
@@ -7716,11 +7729,15 @@ async fn ask(axum::Extension(svc): Svc, Json(b): Json<AskBody>) -> Response {
             "that folder is not available",
         );
     };
+    if let Some(refusal) = svc.floor_refusal(None, Some(&dir)) {
+        return refusal;
+    }
+    let floor = svc.folder_floor(&dir);
     let svc2 = svc.clone();
     let out = tokio::task::spawn_blocking(move || {
         // the documents are read for the route in use now; if the model is changed to a less private one while they are
-        // read, what was gathered is not sent to it
-        let need = svc2.route_level();
+        // read, what was gathered is not sent to it; and never below what the project allows
+        let need = svc2.route_level().max(floor);
         let imported = kk_review::import::scan_tree(&dir, kk_types::label::Level::Internal);
         let meaning = svc2.runner.embedder().map(|embedder| CachedMeaning {
             svc: svc2.clone(),

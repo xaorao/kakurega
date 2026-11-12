@@ -24000,3 +24000,194 @@ fn sv280_a_skill_keeps_its_earlier_texts_and_one_brought_back_waits_for_approval
         "a removed method's old text is gone"
     );
 }
+
+#[test]
+fn sv281_a_project_kept_on_this_computer_sends_nothing_of_its_own_to_a_model_elsewhere() {
+    let (c, w, runner) = switch_service("project-floor");
+    let away = |on: bool| runner.away.store(on, std::sync::atomic::Ordering::SeqCst);
+    let root = w.get("/api/fs").1["path"].as_str().unwrap().to_string();
+    let folder = format!("{root}/repo");
+    w.post("/api/projects", json!({"name": "acme", "folder": folder}));
+    // a word that is not a level is refused; the levels are listed back
+    assert_eq!(
+        w.post("/api/projects", json!({"name": "acme", "floor": "nowhere"}))
+            .0,
+        422
+    );
+    let (s, v) = w.post("/api/projects", json!({"name": "acme", "floor": "here"}));
+    assert_eq!(s, 200, "{v}");
+    assert!(
+        v["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == "acme" && p["floor"] == "here" && p["folder"].is_string()),
+        "{v}"
+    );
+    // with the model on this computer the project works as ever, and a kept conversation in it is made
+    let id = w
+        .post("/api/sessions", json!({"title": "", "project": "acme"}))
+        .1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        w.post(
+            "/api/chat",
+            json!({"message": "What is the acme plan?", "session": id})
+        )
+        .0,
+        200
+    );
+    let before = runner.asked();
+    // with a model elsewhere: the project's chats, kept or not, its document questions and its reviews are refused
+    away(true);
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "Acme again?", "project": "acme"}),
+    );
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (409, Some("PROJECT_KEPT_PRIVATELY")),
+        "{r}"
+    );
+    assert!(r["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("the project acme"));
+    let (s, r) = w.post("/api/chat", json!({"message": "And then?", "session": id}));
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (409, Some("KEPT_MORE_PRIVATELY")),
+        "{r}"
+    );
+    let (s, r) = w.post(
+        "/api/ask",
+        json!({"folder": folder, "question": "What does the project do?"}),
+    );
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (409, Some("PROJECT_KEPT_PRIVATELY")),
+        "{r}"
+    );
+    let (s, r) = w.post("/api/jobs", json!({"repo": folder, "recipient": "auditor"}));
+    assert_ne!(s, 202, "{r}");
+    assert!(r.to_string().contains("the project acme"), "{r}");
+    assert_eq!(
+        runner.asked(),
+        before,
+        "nothing of the project reached the model elsewhere"
+    );
+    // what is not the project's still works there
+    assert_eq!(
+        w.post("/api/chat", json!({"message": "A general question."}))
+            .0,
+        200
+    );
+    // a conversation held elsewhere before the project was kept here is not continued elsewhere once it is
+    w.post("/api/projects", json!({"name": "beta", "floor": "any"}));
+    let id2 = w
+        .post("/api/sessions", json!({"title": "", "project": "beta"}))
+        .1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        w.post(
+            "/api/chat",
+            json!({"message": "Beta, elsewhere.", "session": id2})
+        )
+        .0,
+        200
+    );
+    w.post("/api/projects", json!({"name": "beta", "floor": "here"}));
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "Beta again?", "session": id2}),
+    );
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (409, Some("KEPT_MORE_PRIVATELY")),
+        "{r}"
+    );
+    // confidential hardware is enough for a project kept that way, and "any" takes the floor away
+    w.post(
+        "/api/projects",
+        json!({"name": "acme", "floor": "confidential"}),
+    );
+    assert_eq!(
+        w.post(
+            "/api/chat",
+            json!({"message": "Acme on confidential hardware?", "project": "acme"})
+        )
+        .0,
+        200
+    );
+    w.post("/api/projects", json!({"name": "acme", "floor": "any"}));
+    assert!(w.get("/api/projects").1["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["name"] == "acme" && p["floor"] == "any"));
+    drop(c);
+}
+
+#[test]
+fn sv282_a_team_run_of_a_project_kept_on_this_computer_does_not_start_with_a_model_elsewhere() {
+    let (root, _repo) = repo_copy("team-floor");
+    let runner = team_runner(TEAM_PLAN);
+    let (_c, w) = team_service(&root, runner.clone());
+    w.post(
+        "/api/projects",
+        json!({"name": "kestrel", "folder": root.join("repo").to_string_lossy(), "floor": "here"}),
+    );
+    w.post("/api/projects", json!({"name": "kestrel", "floor": "here"}));
+    // planned with a model elsewhere: refused at once, nothing asked
+    runner.away.store(true, std::sync::atomic::Ordering::SeqCst);
+    let (s, v) = w.post(
+        "/api/team",
+        json!({"goal": "Decide where the payment key lives.", "project": "kestrel"}),
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("PROJECT_KEPT_PRIVATELY")),
+        "{v}"
+    );
+    // planned here, then the model moves elsewhere before it starts: it does not start
+    runner
+        .away
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let (s, v) = w.post(
+        "/api/team",
+        json!({"goal": "Decide where the payment key lives.", "project": "kestrel"}),
+    );
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    runner.away.store(true, std::sync::atomic::Ordering::SeqCst);
+    let asked = runner.seen.lock().unwrap().len();
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(
+        &w,
+        &id,
+        &[
+            "stopped",
+            "waiting",
+            "interrupted",
+            "done",
+            "partial",
+            "failed",
+        ],
+    );
+    assert!(
+        v["final_note"]
+            .as_str()
+            .unwrap_or("")
+            .contains("the project kestrel"),
+        "{v}"
+    );
+    assert_eq!(
+        runner.seen.lock().unwrap().len(),
+        asked,
+        "no task of the run reached the model elsewhere"
+    );
+}
