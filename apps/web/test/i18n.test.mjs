@@ -20,7 +20,8 @@ test("i18n02 placeholders and markup tags match the English text in every key", 
 test("i18n03 no translation is empty or left identical to English except names and codes", () => {
   const same = Object.keys(en).filter((k) => hi[k] === en[k]);
   assert.deepEqual(same.filter((k) => hi[k].trim() === ""), []);
-  // names that are the same in every language: a search example, and the names of the two programming languages
-  const allowed = new Set(["nav.search.placeholder", "find.lang.python", "find.lang.javascript", "find.lang.typescript", "find.lang.rust"]);
+  // names that are the same in every language: a search example, the names of the programming languages, and a check
+  // mark before a folder's own name
+  const allowed = new Set(["nav.search.placeholder", "find.lang.python", "find.lang.javascript", "find.lang.typescript", "find.lang.rust", "folder.chosen"]);
   assert.deepEqual(same.filter((k) => !allowed.has(k)), []);
 });

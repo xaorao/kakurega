@@ -1,4 +1,5 @@
 import { LoadState } from "../components/LoadState";
+import { ChosenFolder } from "../components/ChosenFolder";
 import { SampleCard } from "../components/SampleCard";
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError, type Config, type Readiness } from "../api";
@@ -74,7 +75,7 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
             <h2>{r().ready ? t("setup.ready") : t("setup.finish")}</h2>
             {/* when every check passed the list is folded away: it is there to read, not in the way */}
             <details class="checks-fold" open={!r().checks.every((c) => c.ok)}>
-            <summary>{r().checks.every((c) => c.ok) ? t("setup.allOk", { n: r().checks.length }) : t("setup.someNot")}</summary>
+            <summary>{r().checks.every((c) => c.ok) ? <span class="ok-text">✓ {t("setup.allOk", { n: r().checks.length })}</span> : t("setup.someNot")}</summary>
             <ul class="checks">
               <For each={r().checks}>
                 {(c) => (
@@ -99,7 +100,7 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
       </Show>
       <div class="card stack">
         <h2>{t("new.step1")}</h2>
-        <p class="path" aria-live="polite">{chosen() || (listing.loading ? t("new.loading") : "")}</p>
+        <ChosenFolder path={chosen()} loading={listing.loading} />
         <div class="browser" role="group" aria-label={t("new.folders")}>
           <Show when={listing()} fallback={<LoadState loading={listing.loading} retry={() => void refetchListing()} />}>
             {(l) => (

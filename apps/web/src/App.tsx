@@ -362,6 +362,7 @@ export function App() {
             <nav id="side-nav" class={menuOpen() ? "side open" : "side"} aria-label={t("nav.label")}>
               <a class="primary" href="#/">{t("nav.new")}</a>
               <a href="#/inbox" class={hash() === "#/inbox" ? "navlink active" : "navlink"}>{t("nav.inbox")}{waiting() > 0 ? <span class="count" aria-label={t("nav.inboxCount", { n: waiting() })}> ({waiting()})</span> : null}</a>
+              <a href="#/privacy" class={hash() === "#/privacy" ? "navlink active" : "navlink"}>{t("nav.privacy")}</a>
               <h2>{t("nav.group.work")}</h2>
               <a href="#/projects" class={hash() === "#/projects" ? "navlink active" : "navlink"}>{t("nav.projects")}</a>
               <a href="#/chat" class={hash() === "#/chat" ? "navlink active" : "navlink"}>{t("nav.chat")}</a>
@@ -377,7 +378,6 @@ export function App() {
               <a href="#/instructions" class={hash() === "#/instructions" ? "navlink active" : "navlink"}>{t("nav.instructions")}</a>
               <a href="#/skills" class={hash() === "#/skills" ? "navlink active" : "navlink"}>{t("nav.skills")}</a>
               <h2>{t("nav.group.trust")}</h2>
-              <a href="#/privacy" class={hash() === "#/privacy" ? "navlink active" : "navlink"}>{t("nav.privacy")}</a>
               <a href="#/break" class={hash() === "#/break" ? "navlink active" : "navlink"}>{t("break.title")}</a>
               <a href="#/agent" class={hash() === "#/agent" ? "navlink active" : "navlink"}>{t("nav.agent")}</a>
               <a href="#/activity" class={hash() === "#/activity" ? "navlink active" : "navlink"}>{t("nav.activity")}</a>

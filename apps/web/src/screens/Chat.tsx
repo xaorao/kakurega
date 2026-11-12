@@ -923,63 +923,8 @@ export function Chat() {
         <Show when={busy() && !live()}><li class="muted" role="status">{t("chat.thinking")}</li></Show>
       </ul>
       <Show when={unseen()}><button type="button" class="jump" onClick={jump}>{t("chat.jump")}</button></Show>
-      <form ref={formEl} class="card stack" onSubmit={send}>
-        <label for="chat-input">{t("chat.input")}</label>
-        <div
-          class={dragging() ? "stack attach drop" : "stack attach"}
-        >
-          <div class="actions">
-            <input ref={picker} type="file" multiple hidden aria-label={t("files.attach")} onChange={(e) => {
-              void addFiles(Array.from(e.currentTarget.files ?? []));
-              e.currentTarget.value = "";
-            }} />
-            <button type="button" disabled={busy() || !!reading()} onClick={() => picker?.click()}>{t("files.attach")}</button>
-            <span class="muted">{t("files.drop")}</span>
-            <Show when={dragging()}><strong role="status">{t("files.dropNow")}</strong></Show>
-            <Show when={reading()}><span role="status" class="muted">{reading()}</span></Show>
-          </div>
-          <p class="muted">{t("files.attachHelp")}</p>
-          <Show when={fileInfo()}><p role="alert" class="bad">{fileInfo()}</p></Show>
-          <Show when={files().length > 0}>
-            <ul class="plain stack" aria-label={t("files.attach")}>
-              <For each={files()}>
-                {(f) => (
-                  <li class="card stack file-chip">
-                    <p><strong>{f.name}</strong> <span class="chip">{f.kind_label}</span> <span class="muted">{sizeText(f.bytes)} · {t("files.chars", { n: f.chars })} · {t("files.passages", { n: f.passages })}</span></p>
-                    <Show when={f.truncated}><p class="muted">{t("files.truncated")}</p></Show>
-                    <For each={f.notes}>{(n) => <p class="muted">{n}</p>}</For>
-                    <Show when={f.flagged.instruction_like > 0}><p class="bad">{t("files.flaggedInstructions", { n: f.flagged.instruction_like })}</p></Show>
-                    <Show when={f.flagged.secret > 0}><p class="bad">{t("files.flaggedSecrets", { n: f.flagged.secret })}</p></Show>
-                    <Show when={f.passages === 0}><p class="muted">{t("files.noText")}</p></Show>
-                    <div class="actions">
-                      <button type="button" class="linklike" onClick={() => void toggleRead(f.id)}>{shown()[f.id] && shown()[f.id] !== "loading" ? t("files.hide") : t("files.show")}</button>
-                      <button type="button" class="linklike" onClick={() => void dropFile(f.id)}>{t("files.remove")}</button>
-                    </div>
-                    <Show when={shown()[f.id] && shown()[f.id] !== "loading"}>
-                      <ul class="plain stack read-passages">
-                        <For each={(shown()[f.id] as AttachmentRead).read.slice(0, 60)}>
-                          {(p) => (
-                            <li>
-                              <code>{p.anchor}</code>
-                              <For each={p.lines.slice(0, 40)}>
-                                {(l) => (
-                                  <p class={l.flagged ? "mem-text muted struck" : "mem-text"}>
-                                    {visible(l.text.length > 300 ? l.text.slice(0, 300) + "…" : l.text)}
-                                    <Show when={l.flagged}> <span class="chip">{t(l.flagged === "secret" ? "files.passageFlagSecret" : "files.passageFlag")}</span></Show>
-                                  </p>
-                                )}
-                              </For>
-                            </li>
-                          )}
-                        </For>
-                      </ul>
-                    </Show>
-                  </li>
-                )}
-              </For>
-            </ul>
-          </Show>
-        </div>
+      <form ref={formEl} class="card stack composer" onSubmit={send}>
+        <label for="chat-input" class="sr">{t("chat.input")}</label>
         <textarea
           ref={box}
           id="chat-input"
@@ -1087,6 +1032,61 @@ export function Chat() {
           <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
           <Show when={sendFailed() && error() && !busy() && text().trim().length > 0}><button type="button" onClick={() => void send()}>{t("chat.retry")}</button></Show>
           <Show when={recovered()}><span role="status" class="muted">{t("chat.recovered")}</span></Show>
+        </div>
+        <div
+          class={dragging() ? "stack attach drop" : "stack attach"}
+        >
+          <div class="actions">
+            <input ref={picker} type="file" multiple hidden aria-label={t("files.attach")} onChange={(e) => {
+              void addFiles(Array.from(e.currentTarget.files ?? []));
+              e.currentTarget.value = "";
+            }} />
+            <button type="button" title={t("files.attachHelp")} aria-describedby="attach-help" disabled={busy() || !!reading()} onClick={() => picker?.click()}>{t("files.attach")}</button>
+            <span id="attach-help" class="sr">{t("files.attachHelp")}</span>
+            <span class="muted">{t("files.drop")}</span>
+            <Show when={dragging()}><strong role="status">{t("files.dropNow")}</strong></Show>
+            <Show when={reading()}><span role="status" class="muted">{reading()}</span></Show>
+          </div>
+          <Show when={fileInfo()}><p role="alert" class="bad">{fileInfo()}</p></Show>
+          <Show when={files().length > 0}>
+            <ul class="plain stack" aria-label={t("files.attach")}>
+              <For each={files()}>
+                {(f) => (
+                  <li class="card stack file-chip">
+                    <p><strong>{f.name}</strong> <span class="chip">{f.kind_label}</span> <span class="muted">{sizeText(f.bytes)} · {t("files.chars", { n: f.chars })} · {t("files.passages", { n: f.passages })}</span></p>
+                    <Show when={f.truncated}><p class="muted">{t("files.truncated")}</p></Show>
+                    <For each={f.notes}>{(n) => <p class="muted">{n}</p>}</For>
+                    <Show when={f.flagged.instruction_like > 0}><p class="bad">{t("files.flaggedInstructions", { n: f.flagged.instruction_like })}</p></Show>
+                    <Show when={f.flagged.secret > 0}><p class="bad">{t("files.flaggedSecrets", { n: f.flagged.secret })}</p></Show>
+                    <Show when={f.passages === 0}><p class="muted">{t("files.noText")}</p></Show>
+                    <div class="actions">
+                      <button type="button" class="linklike" onClick={() => void toggleRead(f.id)}>{shown()[f.id] && shown()[f.id] !== "loading" ? t("files.hide") : t("files.show")}</button>
+                      <button type="button" class="linklike" onClick={() => void dropFile(f.id)}>{t("files.remove")}</button>
+                    </div>
+                    <Show when={shown()[f.id] && shown()[f.id] !== "loading"}>
+                      <ul class="plain stack read-passages">
+                        <For each={(shown()[f.id] as AttachmentRead).read.slice(0, 60)}>
+                          {(p) => (
+                            <li>
+                              <code>{p.anchor}</code>
+                              <For each={p.lines.slice(0, 40)}>
+                                {(l) => (
+                                  <p class={l.flagged ? "mem-text muted struck" : "mem-text"}>
+                                    {visible(l.text.length > 300 ? l.text.slice(0, 300) + "…" : l.text)}
+                                    <Show when={l.flagged}> <span class="chip">{t(l.flagged === "secret" ? "files.passageFlagSecret" : "files.passageFlag")}</span></Show>
+                                  </p>
+                                )}
+                              </For>
+                            </li>
+                          )}
+                        </For>
+                      </ul>
+                    </Show>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </Show>
         </div>
         <p class="muted">{t("chat.pick.hint")}</p>
         <Show when={turns().length > 0}>
@@ -1200,7 +1200,7 @@ export function Chat() {
                   <button type="button" onClick={() => openKept(k.id)}>{t("chat.open")}</button>
                   <button type="button" onClick={() => void flagKept(k.id, "pin", !k.pinned)}>{k.pinned ? t("chat.unpin") : t("chat.pin")}</button>
                   <button type="button" onClick={() => void flagKept(k.id, "archive", !k.archived)}>{k.archived ? t("chat.unarchive") : t("chat.archive")}</button>
-                  <button type="button" onClick={() => forget(k.id)}>{confirmForget() === k.id ? t("chat.forgetSure") : t("chat.forget")}</button>
+                  <button type="button" class={confirmForget() === k.id ? "danger" : "linklike danger"} onClick={() => forget(k.id)}>{confirmForget() === k.id ? t("chat.forgetSure") : t("chat.forget")}</button>
                 </li>
               )}
             </For>

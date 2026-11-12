@@ -1,4 +1,5 @@
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { ChosenFolder } from "../components/ChosenFolder";
 import { api, ApiError, type CodeTask as Task } from "../api";
 import { DiffView } from "../components/DiffView";
 import { LoadState } from "../components/LoadState";
@@ -95,7 +96,7 @@ export function CodeTask() {
       <p class="lead">{t("code.lead")}</p>
       <div class="card stack">
         <h2>{t("code.step1")}</h2>
-        <p class="path" aria-live="polite">{chosen() || (listing.loading ? t("new.loading") : "")}</p>
+        <ChosenFolder path={chosen()} loading={listing.loading} />
         <div class="browser" role="group" aria-label={t("new.folders")}>
           <Show when={listing()} fallback={<LoadState loading={listing.loading} retry={() => void refetchListing()} />}>
             {(l) => (

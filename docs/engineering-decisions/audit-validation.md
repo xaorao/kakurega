@@ -112,3 +112,28 @@ Each finding was checked against the code before anything was changed.
 Accepted, with the reason: a hard link to a file inside the data folder, made in an allowed folder, is not recognised as the program's own data. Making one needs the owner's own account on this computer, which can read that folder directly. A password that is an ordinary word, a login written as "admin / value" and a code said with no word for what it is stay unrecognised and are in `LIMITS.md`.
 
 Found while re-running the leak benchmark for these fixes: a random 32-character token with fewer than two digits (about one in forty) was not recognised when no word named it, so one benchmark case flipped by chance. Such a token is now recognised by how its capitals and small letters fall; measured on 200,000 random tokens the miss went from 2.56% to 0.15% (kk-secrets sp08, with seven long program names that must stay ordinary).
+
+## Independent UX review (one read-only helper, given the 160-screen matrix, Ghast's saved first-run screens and the brand direction, no conclusions)
+
+| # | Finding | Verdict | What was done |
+|---|---|---|---|
+| 1 | Seventeen menu items of equal weight; the product's point (where your data goes) at the bottom | CONFIRMED | "Where your data goes" moved to the top, under "Waiting for you". The task entries stay: each is a distinct thing a person can do, and they are grouped. NOT CHANGED: cutting the menu to six |
+| 2 | The chat reads as a form: help paragraphs above the box, "It cannot read your files" next to Attach files, Forget drawn like Open | CONFIRMED | The message box comes first, then Send, then attaching (its help moved into the button's description); the intro now says what it reads and that it sends nothing, true for any model; Forget is drawn as removing. A sticky box was tried and dropped: it hid the newest line (`run.mjs` caught it). NOT CHANGED: kept conversations stay in the page, not the menu |
+| 3 | Proof results in small grey type; green unused for proof | CONFIRMED | "Nothing has left this computer", a break-it count with no leak and "All checks passed" lead in green with a check; the method follows in grey |
+| 4 | Phone review: Release tab off screen; names and digests broken mid-word; finding cut off | CONFIRMED | The chosen tab is scrolled into view; the file table scrolls sideways and never breaks a name or digest (12 characters shown, the whole one in the title); the finding is shown whole |
+| 5 | Header wraps to two rows; "sandbox in the kak virtual machine", "Releases ask you" | CONFIRMED | One row, a badge that does not fit is cut short with its words in its title; "Sealed sandbox", "You approve every release" |
+| 6 | The hand-over page warns "not private" in the test-mode yellow under a green "Private" badge | CONFIRMED | The warning is drawn in the redline colour. The badge still describes the model, which is on this computer, so it is left |
+| 7 | The owner's user name in folder paths | CONFIRMED | Paths are shown with the home folder as ~, the whole path in the title |
+| 8 | Buttons drawn many ways; full-width actions on desktop | CONFIRMED | On a wide screen an action is as wide as its words. NOT CHANGED: the disabled style |
+| 9 | Hindi pages show the service's English | CONFIRMED | The release's fixed sentences (what it does not establish, what was held back, the disclosure checks and reasons) and the time units are shown in Hindi on a Hindi page (`servertext.test.mjs`); the released files themselves stay as they are |
+| 10 | Menu labels differ from page titles | CONFIRMED | Each now says the same: Ask your documents, Ask a project, Change a project, Ask Claude Code, Standing instructions |
+| 11 | "Waiting for you (2)" missing on some screens | UNKNOWN | INFERRED to be the screenshot taken before the first count arrives; not changed |
+| 12 | The chosen folder is not marked | CONFIRMED | The chosen folder's name is shown with a check above its path |
+| 13 | Browser-blue controls; labels off the box | CONFIRMED | Controls take the ink colour; checkbox labels are body text in a row. The 24-pixel size stays: the screen matrix flags anything smaller as too small a target |
+| 14 | Long pages of equal cards (memory, privacy, skills, settings) | CONFIRMED | Settings rows now hold short actions. NOT CHANGED yet: memory and privacy layouts |
+| 15 | Contradictory placeholder on Instructions, a changelog line, a malformed fold arrow | CONFIRMED | Own placeholder; the line says where skills and outside tools are; the double arrow on Team and Skills removed |
+| first screen | The promise is the third sentence; the sample is a secondary button | CONFIRMED | The promise is the first line, in ink; loading the sample is the primary action |
+| release | Request approval is far below; no verdict line | CONFIRMED | A one-line summary at the top of the release tab (files and size, findings the kernel reproduced, what was held back, the disclosure verdict) with a button to the approval |
+
+Evidence: `run.mjs` 512, screen matrix 160 cells with nothing flagged (it flagged two new problems during this round, scroll areas a keyboard could not reach and a link button too small, both fixed), web unit tests 198.
+

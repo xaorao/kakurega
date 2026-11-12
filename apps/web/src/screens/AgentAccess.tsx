@@ -85,9 +85,9 @@ export function AgentAccess() {
           <option value="request_approval">{toolLabel("request_approval")}</option>
         </select>
         <label for="agent-uses">{t("agent.uses")}</label>
-        <input id="agent-uses" inputmode="numeric" value={uses()} onInput={(e) => setUses(e.currentTarget.value)} />
+        <input id="agent-uses" class="short" inputmode="numeric" value={uses()} onInput={(e) => setUses(e.currentTarget.value)} />
         <label for="agent-minutes">{t("agent.minutes")}</label>
-        <input id="agent-minutes" inputmode="numeric" value={minutes()} onInput={(e) => setMinutes(e.currentTarget.value)} />
+        <input id="agent-minutes" class="short" inputmode="numeric" value={minutes()} onInput={(e) => setMinutes(e.currentTarget.value)} />
         <div class="actions">
           <button class="primary" type="submit" disabled={busy()}>{t("agent.grant")}</button>
           <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>

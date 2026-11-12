@@ -933,7 +933,7 @@ try {
   };
   const badgeLocal = await withRoute({ simulated: false, host: "127.0.0.1", stays_here: true });
   check("the badge says the model runs on this computer when its address is this computer", badgeLocal.includes("Private: model runs on this computer"), badgeLocal);
-  const approvalsBadge = page.locator(".badge", { hasText: "Releases ask you" });
+  const approvalsBadge = page.locator(".badge", { hasText: "You approve every release" });
   check("a badge in the header says every release asks you and that nothing turns it off", (await approvalsBadge.count()) === 1 && ((await approvalsBadge.getAttribute("title")) ?? "").includes("There is no setting that turns this off."), (await approvalsBadge.allInnerTexts()).join("|"));
   const badgeRemote = await withRoute({ simulated: false, host: "models.example.com", stays_here: false, class: "device_only" });
   check("a route that calls itself device-only but is elsewhere gets a badge naming the host, not the private one", badgeRemote.includes("Model at models.example.com, not on this computer") && !badgeRemote.includes("Private: model runs on this computer"), badgeRemote);
@@ -2186,14 +2186,14 @@ try {
   check("a range longer than 366 days is refused", (await usageCard.getByRole("alert").innerText()).includes("366"));
   // the owner's standing instructions: written once, kept, sent with chat questions, and refused if they hold a secret
   await page.getByRole("link", { name: "Instructions" }).click();
-  await page.getByRole("heading", { name: "Your standing instructions", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Standing instructions", exact: true }).waitFor();
   await page.getByLabel("Instructions for every conversation").fill("Answer in short bullet points.");
   await page.getByRole("button", { name: "Save" }).first().click();
   await page.getByText("Saved.").first().waitFor();
   await axeCheck(page, "instructions screen");
   await page.screenshot({ path: join(shots, "14b-instructions.png") });
   await page.reload();
-  await page.getByRole("heading", { name: "Your standing instructions", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Standing instructions", exact: true }).waitFor();
   check("a saved instruction is still there after the page is reloaded", (await page.getByLabel("Instructions for every conversation").inputValue()) === "Answer in short bullet points.");
   instructionRefusals = 1;
   await page.getByLabel("Instructions for every conversation").fill("Use this key " + "sk_li" + "ve_abcdefghijklmnop0123");

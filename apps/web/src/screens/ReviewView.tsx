@@ -1,10 +1,12 @@
 import { Code } from "../components/Code";
+import { serverText as serverTextIn } from "../serverText";
+import { sizeText } from "../attach";
 import { baseName, filterFiles, groupByDir, languageOf, lineCount, MAX_SHOWN } from "../filetree";
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { clockOffset, formatSpan, timeLeft } from "../expiry";
 import { DiffView } from "../components/DiffView";
 import { api, ApiError, type Config, type Fix, type Job } from "../api";
-import { rich, t, type Key } from "../i18n";
+import { locale, rich, t, type Key } from "../i18n";
 
 type Tab = "progress" | "protected" | "source" | "findings" | "release";
 
@@ -384,6 +386,9 @@ function Findings(props: { job: Job }) {
   );
 }
 
+/** A sentence the service wrote, in the page's language when the page knows it. */
+const serverText = (x: string) => serverTextIn(x, locale() === "en", (k, p) => t(k as Key, p));
+
 function ReleaseTab(props: { job: Job; onChange: () => void }) {
   const [release, { refetch }] = createResource(() => props.job.id, (id) => api.release(id));
   const [approval, setApproval] = createSignal<{ state: string; digest?: string; approval?: string }>({ state: "none" });
@@ -460,16 +465,29 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
               <For each={r().not_confirmed}>{(n) => <p class="muted">{n.title}: {n.why}</p>}</For>
             </div>
           }>
+            <div class="card release-summary" role="region" aria-label={t("rel.summary.label")}>
+              <p>
+                <strong>{t((r().files ?? []).length === 1 ? "rel.summary.files.one" : "rel.summary.files", { n: (r().files ?? []).length, size: sizeText((r().files ?? []).reduce((a, f) => a + f.bytes, 0)), recipient: r().recipient ?? "" })}</strong>
+                {" · "}<span class="ok-text">✓ {t((r().files ?? []).filter((f) => f.name.startsWith("finding-")).length === 1 ? "rel.summary.findings.one" : "rel.summary.findings", { n: (r().files ?? []).filter((f) => f.name.startsWith("finding-")).length })}</span>
+                {" · "}{t((r().removed ?? []).length === 1 ? "rel.summary.held.one" : "rel.summary.held", { n: (r().removed ?? []).length })}
+                <Show when={r().disclosure}>{(d) => <>{" · "}<span class={d().verdict === "allow" ? "chip ok" : d().verdict === "block" ? "chip bad" : "chip warn"}>{t(`rel.summary.disc.${d().verdict}` as Key)}</span></>}</Show>
+              </p>
+              <Show when={!props.job.delivered}>
+                <button type="button" class="primary" onClick={() => document.getElementById("approval-card")?.scrollIntoView({ behavior: "smooth", block: "start" })}>{t("rel.summary.go")}</button>
+              </Show>
+            </div>
             <div class="card stack">
               <h2>{t("rel.exact")}</h2>
               <p>{rich("rel.for", { recipient: r().recipient ?? "", digest: r().digest ?? "" })}</p>
-              <table>
-                <thead><tr><th scope="col">{t("rel.col.file")}</th><th scope="col">{t("rel.col.size")}</th><th scope="col">SHA-256</th></tr></thead>
-                <tbody><For each={r().files}>{(f) => <tr><td><code>{f.name}</code></td><td>{t("rel.bytes", { n: f.bytes })}</td><td><code>{f.sha256.slice(0, 16)}</code></td></tr>}</For></tbody>
-              </table>
-              <For each={r().files!.filter((f) => f.name.startsWith("finding-"))}>{(f) => <details open><summary>{f.name}</summary><pre tabindex="0"><code>{f.text}</code></pre></details>}</For>
+              <div class="release-files" tabindex="0" role="region" aria-label={t("rel.exact")}>
+                <table>
+                  <thead><tr><th scope="col">{t("rel.col.file")}</th><th scope="col">{t("rel.col.size")}</th><th scope="col">SHA-256</th></tr></thead>
+                  <tbody><For each={r().files}>{(f) => <tr><td><code>{f.name}</code></td><td>{t("rel.bytes", { n: f.bytes })}</td><td><code title={f.sha256}>{f.sha256.slice(0, 12)}</code></td></tr>}</For></tbody>
+                </table>
+              </div>
+              <For each={r().files!.filter((f) => f.name.startsWith("finding-"))}>{(f) => <details open><summary>{f.name}</summary><pre class="finding-text" tabindex="0"><code>{f.text}</code></pre></details>}</For>
               <h3>{t("rel.heldBack")}</h3>
-              <ul class="plain"><For each={r().removed} fallback={<li class="muted">{t("rel.nothingHeld")}</li>}>{(x) => <li>{x.what}: <span class="muted">{x.why}</span></li>}</For></ul>
+              <ul class="plain"><For each={r().removed} fallback={<li class="muted">{t("rel.nothingHeld")}</li>}>{(x) => <li>{serverText(x.what)}: <span class="muted">{serverText(x.why)}</span></li>}</For></ul>
               <Show when={(r().personal_data ?? []).length > 0}>
                 <h3>{t("rel.personal")}</h3>
                 <p class="muted">{t("rel.personalLead")}</p>
@@ -480,7 +498,7 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
                 <ul class="plain"><For each={r().not_confirmed}>{(x) => <li>{x.title} <span class="muted">({x.why})</span></li>}</For></ul>
               </Show>
               <h3>{t("rel.notEstablished")}</h3>
-              <ul class="plain"><For each={r().not_established}>{(x) => <li>{x}</li>}</For></ul>
+              <ul class="plain"><For each={r().not_established}>{(x) => <li>{serverText(x)}</li>}</For></ul>
             </div>
             <Show when={r().disclosure}>
               {(d) => (
@@ -488,27 +506,27 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
                   <h2>{t("disc.heading")}</h2>
                   <p>{t("disc.summary", { files: d().files_after, total: d().project_files, before: d().releases_before })}</p>
                   <p class={d().verdict === "allow" ? "ok" : d().verdict === "block" ? "bad" : "warn"}><strong>{t(`disc.${d().verdict}` as Key)}</strong></p>
-                  <For each={d().reasons}>{(x) => <p class="warn">{x}</p>}</For>
+                  <For each={d().reasons}>{(x) => <p class="warn">{serverText(x)}</p>}</For>
                   <details>
                     <summary>{t("disc.checked")}</summary>
-                    <ul class="plain"><For each={d().checked}>{(x) => <li>{x}</li>}</For></ul>
+                    <ul class="plain"><For each={d().checked}>{(x) => <li>{serverText(x)}</li>}</For></ul>
                     <p class="muted">{t("disc.notChecked")}</p>
-                    <ul class="plain"><For each={d().not_checked}>{(x) => <li>{x}</li>}</For></ul>
+                    <ul class="plain"><For each={d().not_checked}>{(x) => <li>{serverText(x)}</li>}</For></ul>
                   </details>
                 </div>
               )}
             </Show>
-            <div class="card stack" aria-live="polite">
+            <div class="card stack" id="approval-card" aria-live="polite">
               <h2>{t("appr.title")}</h2>
               <Show when={!props.job.delivered && (approval().state === "none" || approval().state === "waiting" || approval().state === "approved")}>
                 <Show when={left().state === "expired"}>
                   <p role="alert" class="bad">{t("appr.expired")}</p>
                 </Show>
                 <Show when={left().state === "soon"}>
-                  <p class="warn" role="status">{t("appr.soon", { time: formatSpan((left() as { secs: number }).secs) })}</p>
+                  <p class="warn" role="status">{t("appr.soon", { time: formatSpan((left() as { secs: number }).secs, { h: t("unit.h"), min: t("unit.min"), s: t("unit.s") }) })}</p>
                 </Show>
                 <Show when={left().state === "valid"}>
-                  <p class="muted">{t("appr.validFor", { time: formatSpan((left() as { secs: number }).secs) })}</p>
+                  <p class="muted">{t("appr.validFor", { time: formatSpan((left() as { secs: number }).secs, { h: t("unit.h"), min: t("unit.min"), s: t("unit.s") }) })}</p>
                 </Show>
               </Show>
               <Show when={approval().state === "none"}>
@@ -592,6 +610,12 @@ export function ReviewView(props: { id: string; config: Config; onUpdate?: () =>
           <div
             class="tabs"
             role="tablist"
+            ref={(el) => {
+              createEffect(() => {
+                tab();
+                queueMicrotask(() => el.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" }));
+              });
+            }}
             onKeyDown={(e) => {
               const keys = tabs.map(([k]) => k);
               const i = keys.indexOf(tab());

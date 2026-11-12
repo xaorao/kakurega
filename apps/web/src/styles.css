@@ -84,7 +84,10 @@ a { color: inherit; }
 .shell { min-height: 100vh; display: flex; flex-direction: column; }
 .top { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: var(--paper); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; }
 .brand { font-weight: 600; letter-spacing: 0.02em; text-decoration: none; font-size: 17px; }
-.badges { display: flex; gap: 8px; flex-wrap: wrap; flex: 1; }
+/* one row: a badge that does not fit is cut short with its full words in its title, never pushed to a second line */
+.badges { display: flex; gap: 8px; flex-wrap: nowrap; flex: 1; min-width: 0; overflow: hidden; }
+.badges .badge { white-space: nowrap; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.badges .badge.ok, .badges .badge.warn { flex-shrink: 0; }
 .badge { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 12.5px; color: var(--graphite); background: var(--paper); }
 .badge.ok { color: var(--cipher-text); border-color: var(--cipher); background: var(--cipher-bg); }
 .badge.warn { color: var(--ink); border-color: var(--redline); background: var(--redline-bg); }
@@ -133,6 +136,8 @@ button.link:hover { color: var(--ink); }
 .row:hover { background: var(--veil); }
 .row.active { background: var(--veil); box-shadow: inset 2px 0 0 var(--ink); }
 .path { color: var(--graphite); word-break: break-all; }
+.chosen { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.chosen-name { font-weight: 600; color: var(--ink); }
 
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: thin; }
 .tabs .tab { flex: none; white-space: nowrap; }
@@ -165,7 +170,9 @@ td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top
 tr.refused td { color: var(--redline); background: var(--redline-bg); }
 ul.plain { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
 details summary { cursor: pointer; font-weight: 500; margin-bottom: 6px; min-height: 28px; display: flex; align-items: center; }
-input[type="checkbox"], input[type="radio"] { width: 24px; height: 24px; flex: none; }
+input[type="checkbox"], input[type="radio"] { width: 24px; height: 24px; flex: none; accent-color: var(--ink); margin: 0; }
+/* short numbers are short boxes */
+input.short { width: 8ch; }
 input[type="date"], input[type="number"] { min-height: 36px; }
 pre.cmd { font-size: 15px; }
 
@@ -210,7 +217,7 @@ pre.cmd { font-size: 15px; }
 .theme select { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--paper); color: var(--ink); }
 input[type="search"] { font: inherit; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--paper); color: var(--ink); width: 100%; box-sizing: border-box; }
 input[type="search"]:focus { border-color: var(--ink); }
-.greeting { margin: -4px 0 0; color: var(--graphite); font-size: 16px; }
+.greeting { margin: -4px 0 0; color: var(--ink); font-size: 17px; font-weight: 500; max-width: 62ch; }
 
 textarea { font: inherit; padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--paper); color: var(--ink); width: 100%; box-sizing: border-box; resize: vertical; }
 textarea:focus { border-color: var(--ink); }
@@ -266,7 +273,7 @@ kbd { font-family: var(--mono, monospace); font-size: 0.8125rem; padding: 1px 6p
 .jump { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 3; background: var(--paper); color: var(--ink); box-shadow: 0 2px 10px rgb(0 0 0 / 0.18); }
 
 .msg-actions { gap: 4px 14px; flex-wrap: wrap; }
-button.linklike { background: none; border: 0; padding: 2px 0; min-height: 0; color: var(--graphite); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+button.linklike { background: none; border: 0; padding: 2px 0; min-height: 24px; min-width: 24px; color: var(--graphite); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 button.linklike:hover { color: var(--ink); }
 .row-wrap { display: flex; flex-wrap: wrap; gap: 6px 16px; }
 .branches p { margin: 0; }
@@ -343,7 +350,7 @@ button.linklike:hover { color: var(--ink); }
   ::highlight(find-current) { background: Mark; color: MarkText; }
 }
 
-.row-check { display: flex; align-items: center; gap: 8px; font-weight: 400; }
+.row-check { display: flex; align-items: center; gap: 10px; font-weight: 400; font-size: inherit; color: var(--ink); }
 
 .slash { list-style: none; margin: 0; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius-s); max-height: 14rem; overflow-y: auto; }
 .slash-row { padding: 6px 8px; border-radius: var(--radius-s); cursor: pointer; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
@@ -399,8 +406,6 @@ details.steps li code { white-space: normal; }
 ol.team-tasks { list-style: none; padding: 0; margin: 0; }
 .team-allow > summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 .team-allow[open] > summary { margin-bottom: 8px; }
-.team-allow > summary::before { content: "▸"; margin-right: 6px; color: var(--graphite); }
-.team-allow[open] > summary::before { content: "▾"; }
 .team-ask { border-left: 3px solid var(--amber); padding-left: 10px; }
 .team-qa { overflow-wrap: anywhere; }
 .team-runs { gap: 0; border: 1px solid var(--line); border-radius: 8px; }
@@ -432,6 +437,8 @@ pre.wrap, code.wrap { white-space: pre-wrap; overflow-wrap: anywhere; word-break
 .saved-prompts ul { margin: 8px 0; }
 .saved-prompts .prompt-use { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .banner-note { background: var(--amber-bg); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 10px 14px; }
+/* what leaves this computer is said in the redline colour, apart from the test-mode band */
+.banner-note.leaves { background: var(--redline-bg); border-color: var(--redline); }
 #hand-text { width: 100%; font-family: var(--mono, monospace); font-size: 0.9em; }
 .gh-code { font-size: 1.6em; letter-spacing: 0.12em; padding: 6px 12px; border: 1px solid var(--line); border-radius: var(--radius-s); }
 .gh-text { max-height: 320px; overflow: auto; }
@@ -465,4 +472,19 @@ details > summary > h3, details > summary > h2 { margin: 0; }
 @media (max-width: 640px) {
   .badges .badge:not(.ok):not(.warn) { display: none; }
   .attach .actions > .muted { display: none; }
+}
+/* the files of a release: names and digests are never broken mid-word; on a narrow screen the table scrolls sideways */
+.release-files, .table-scroll { overflow-x: auto; }
+.release-files td { white-space: nowrap; }
+@media (max-width: 640px) { .table-scroll td, .table-scroll th { white-space: nowrap; } }
+pre.finding-text { max-height: none; }
+/* the release in one line at the top of its tab, with the way to the approval */
+.release-summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; border-color: var(--ink); }
+.release-summary p { margin: 0; }
+/* what removes something is told apart from what only changes the view */
+.danger { color: var(--redline); }
+button.danger:not(.linklike) { border-color: var(--redline); }
+/* on a wide screen an action is as wide as its words, not the width of its card */
+@media (min-width: 641px) {
+  .stack > button:not(.row):not(.linklike), .stack > a.button { align-self: flex-start; }
 }

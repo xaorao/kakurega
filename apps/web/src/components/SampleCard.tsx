@@ -37,7 +37,7 @@ export function SampleCard(props: { onReview: (folder: string) => void }) {
         <Show when={state()?.loaded} fallback={
           <>
             <p>{t("sample.lead")}</p>
-            <div class="actions"><button type="button" disabled={busy()} onClick={() => void act(api.sampleLoad)}>{t("sample.load")}</button></div>
+            <div class="actions"><button class="primary" type="button" disabled={busy()} onClick={() => void act(api.sampleLoad)}>{t("sample.load")}</button></div>
           </>
         }>
           <p>{t("sample.loaded", { folder: state()?.folder ?? "" })}</p>

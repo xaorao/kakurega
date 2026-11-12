@@ -38,12 +38,12 @@ function Outbound() {
       <Show when={list()} fallback={<p class="muted" role="status">{list.loading ? t("inbox.loading") : t("privacy.unavailable")}</p>}>
         {(o) => (
           <>
-            <p class="muted">{o().note}</p>
             <ul class="plain stack" aria-live="polite">
-              <For each={o().rows} fallback={<li class="muted">{t("out.none")}</li>}>
+              <For each={o().rows} fallback={<li class="ok-text">✓ {t("out.none")}</li>}>
                 {(r) => <li class={r.what === "held" ? "out-row held" : "out-row"}><time class="muted">{new Date(r.at * 1000).toLocaleTimeString()}</time> <span class={r.what === "held" ? "chip ok" : "chip"}>{t(`out.kind.${r.what}`)}</span> {line(r)}</li>}
               </For>
             </ul>
+            <p class="muted">{o().note}</p>
           </>
         )}
       </Show>

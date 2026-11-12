@@ -37,7 +37,7 @@ export function BreakIt() {
       <h1 id="h-break">{t("break.title")}</h1>
       <p class="lead">{t("break.lead")}</p>
       <Show when={stats()}>
-        {(s) => <p id="break-count" class="muted">{t("break.count", { attempts: s().attempts, leaks: s().leaks })}</p>}
+        {(s) => <p id="break-count" class={s().leaks > 0 ? "bad" : s().attempts > 0 ? "ok-text" : "muted"}>{s().leaks === 0 && s().attempts > 0 ? "✓ " : ""}{t("break.count", { attempts: s().attempts, leaks: s().leaks })}</p>}
       </Show>
       <form class="card stack" onSubmit={(e) => void run(e)}>
         <label for="break-attack">{t("break.attack")}</label>

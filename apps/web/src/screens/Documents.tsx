@@ -1,4 +1,5 @@
 import { LoadState } from "../components/LoadState";
+import { ChosenFolder } from "../components/ChosenFolder";
 import { takeHint } from "../components/SampleCard";
 import { visible } from "../visible";
 import { createResource, createSignal, For, Show } from "solid-js";
@@ -105,7 +106,7 @@ export function Documents() {
       <p class="lead">{t("docs.lead")}</p>
       <div class="card stack">
         <h2>{t("docs.step1")}</h2>
-        <p class="path" aria-live="polite">{chosen() || (listing.loading ? t("new.loading") : "")}</p>
+        <ChosenFolder path={chosen()} loading={listing.loading} />
         <div class="browser" role="group" aria-label={t("new.folders")}>
           <Show when={listing()} fallback={<LoadState loading={listing.loading} retry={() => void refetchListing()} />}>
             {(l) => (

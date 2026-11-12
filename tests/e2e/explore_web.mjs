@@ -53,7 +53,7 @@ try {
   await page.locator("#proj-folder").fill(shop);
   await page.getByRole("button", { name: "Save the project" }).click();
   await page.getByRole("button", { name: "Ask about its code" }).click();
-  await page.getByRole("heading", { name: "Ask about a project's code" }).waitFor();
+  await page.getByRole("heading", { name: "Ask a project", exact: true }).waitFor();
   await page.waitForFunction((p) => document.querySelector(".path")?.textContent?.endsWith(p), "/shop");
   check((await page.locator(".path").innerText()).endsWith("/shop"), "the project's folder is already chosen");
   const ask = page.getByRole("button", { name: "Ask", exact: true });

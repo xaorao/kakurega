@@ -19,14 +19,14 @@ export function timeLeft(expires: number | undefined | null, now: number): Left 
 }
 
 /** "2 h 5 min", "4 min 12 s", "40 s": the two largest units that are not zero, never more. */
-export function formatSpan(secs: number): string {
+export function formatSpan(secs: number, u: { h: string; min: string; s: string } = { h: "h", min: "min", s: "s" }): string {
   const s = Math.max(0, Math.floor(secs));
-  if (s < 60) return `${s} s`;
+  if (s < 60) return `${s} ${u.s}`;
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
-  if (h > 0) return m > 0 ? `${h} h ${m} min` : `${h} h`;
+  if (h > 0) return m > 0 ? `${h} ${u.h} ${m} ${u.min}` : `${h} ${u.h}`;
   const r = s % 60;
-  return r > 0 ? `${m} min ${r} s` : `${m} min`;
+  return r > 0 ? `${m} ${u.min} ${r} ${u.s}` : `${m} ${u.min}`;
 }
 
 /** The difference between the service's clock and this page's, in seconds, to add to the page's clock. Zero when the service did not say. */

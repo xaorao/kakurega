@@ -114,6 +114,7 @@ function UsageCard() {
         {(u) => (
           <>
           <Show when={u().routes.length > 0} fallback={<p>{t("use.none")}</p>}>
+            <div class="table-scroll" tabindex="0" role="region" aria-label={t("use.col.route")}>
             <table>
               <thead><tr><th scope="col">{t("use.col.route")}</th><th scope="col">{t("use.col.replies")}</th><th scope="col">{t("use.col.in")}</th><th scope="col">{t("use.col.out")}</th><th scope="col">{t("use.col.speed")}</th><Show when={u().routes.some((r) => r.cost)}><th scope="col">{t("use.col.cost")}</th></Show></tr></thead>
               <tbody>
@@ -132,6 +133,7 @@ function UsageCard() {
                 <tr><th scope="row">{t("use.total")}</th><td>{u().total.turns}</td><td>{u().total.prompt_tokens}</td><td>{u().total.reply_tokens}</td><td></td><Show when={u().routes.some((r) => r.cost)}><td>{u().total.cost.map((c) => money(c.amount, c.currency)).join(", ")}</td></Show></tr>
               </tbody>
             </table>
+            </div>
             <p class="muted">{t("use.note")}</p>
           </Show>
           <Prices routes={u().routes.filter((r) => !r.simulated).map((r) => r.route)} onChange={() => void refetchUsage()} />
@@ -207,7 +209,7 @@ export function Activity() {
               <p><a class="button" href="/api/log/export" download="kakurega-event-log.json">{t("act.download")}</a></p>
               <p class="muted">{rich("act.verify", { key: l().public_key })}</p>
             </div>
-            <div class="card">
+            <div class="card table-scroll" tabindex="0" role="region" aria-label={t("act.col.event")}>
               <table>
                 <thead><tr><th scope="col">{t("act.col.when")}</th><th scope="col">{t("act.col.event")}</th><th scope="col">{t("act.col.subject")}</th></tr></thead>
                 <tbody>

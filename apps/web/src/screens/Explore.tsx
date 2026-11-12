@@ -1,4 +1,5 @@
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { ChosenFolder } from "../components/ChosenFolder";
 import { api, ApiError, type Question, type QuestionDepth, type QuestionPlace } from "../api";
 import { LoadState } from "../components/LoadState";
 import { t, type Key } from "../i18n";
@@ -93,7 +94,7 @@ export function Explore() {
       <p class="lead">{t("ex.lead")}</p>
       <div class="card stack">
         <h2>{t("ex.step1")}</h2>
-        <p class="path" aria-live="polite">{chosen() || (listing.loading ? t("new.loading") : "")}</p>
+        <ChosenFolder path={chosen()} loading={listing.loading} />
         <div class="browser" role="group" aria-label={t("new.folders")}>
           <Show when={listing()} fallback={<LoadState loading={listing.loading} retry={() => void refetchListing()} />}>
             {(l) => (

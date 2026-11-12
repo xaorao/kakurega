@@ -105,7 +105,7 @@ export function Instructions() {
                 </For>
               </ul>
               <label for="ins-new">{t("ins.project.new")}</label>
-              <input id="ins-new" value={newProject()} maxlength="80" placeholder={t("mem.add.projectHint")} onInput={(e) => setNewProject(e.currentTarget.value)} />
+              <input id="ins-new" value={newProject()} maxlength="80" placeholder={t("ins.project.placeholder")} onInput={(e) => setNewProject(e.currentTarget.value)} />
               <Show when={newProject().trim() !== ""}>
                 <NotesOnly project={newProject().trim()} on={notesOnly().has(newProject().trim())} onChanged={(m) => { setTouched([...touched(), newProject().trim()]); setNewProject(""); setChanged(m); void refetchSettings(); }} />
                 <Editor id="ins-new-text" label={t("ins.project.label", { name: newProject().trim() })} initial="" project={newProject().trim()} max={d().max_chars} onSaved={() => { setNewProject(""); void refetch(); }} />
