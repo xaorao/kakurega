@@ -323,3 +323,4 @@ Performance of Solid with long streaming transcripts at our scale; accessibility
   - A fold's arrow sat on its words where the summary was not a row; every summary is a row with a gap now.
   - Activity showed raw names for many entries (`session.kept`). All 120 kinds the service writes now have a plain label in both languages, and `scripts/check_log_labels.py` (run by `scripts/test` and the fast check) fails when a new kind has none: it found 75 on its first run.
   Evidence: `run.mjs` 512, `packs_web.mjs` 16, `bundled_web.mjs` 9, `team_web.mjs` 37.
+- On a phone the top of the page is kept short: only the badge that says where the model runs is shown there, and the hint about dropping files is gone (a phone has nothing to drop). The screen matrix, 152 cells, flags nothing.

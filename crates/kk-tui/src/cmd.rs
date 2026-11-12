@@ -154,6 +154,8 @@ pub enum Command {
     Copy(bool),
     Export(String),
     Usage(u32),
+    /// `/where` (also `/route`): where the model runs, which doors are open, and how much left this computer.
+    Where,
     /// `/code FOLDER : TASK`: a local model changes a copy of the folder and its tests run in the sandbox; nothing on disk changes.
     Code {
         folder: String,
@@ -253,6 +255,8 @@ pub const NAMES: &[&str] = &[
     "copy",
     "export",
     "usage",
+    "where",
+    "route",
     "branch",
     "rename",
     "conflicts",
@@ -326,6 +330,10 @@ pub fn describe(name: &str) -> &'static str {
         "copy" => "copy the last reply (or all) to the clipboard, after asking",
         "export" => "write this conversation to a file in the exports folder",
         "usage" => "what each model route answered over some days",
+        "where" => {
+            "where your data goes: the model that answers, every open door, what left this computer"
+        }
+        "route" => "the same as /where",
         "model" => "show the models installed on this computer, or choose which one answers",
         "branch" => "start a copy of this kept conversation, optionally cut after message N",
         "rename" => "rename a kept conversation",
@@ -433,6 +441,8 @@ pub fn usage(name: &str) -> &'static str {
         "copy" => "/copy [all]",
         "export" => "/export NAME",
         "usage" => "/usage [DAYS]",
+        "where" => "/where",
+        "route" => "/route",
         "model" => "/model [NAME]",
         "branch" => "/branch [N | pick]",
         "rename" => "/rename ID NEW TITLE",
@@ -839,6 +849,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 Ok(Command::Forget(rest.to_string()))
             }
         }
+        "where" | "route" => Ok(Command::Where),
         "usage" => {
             if rest.is_empty() {
                 Ok(Command::Usage(30))

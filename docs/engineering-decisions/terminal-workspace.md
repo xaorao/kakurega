@@ -23,3 +23,8 @@ Command parsing including hostile input; the reducer for every command with fake
 
 ## Not covered by this component yet
 Free-form chat with a model (H9 is not built: the composer accepts commands, not conversation), markdown rendering of model text, mouse support, themes, a command palette, Windows terminals, screen-reader testing.
+- Test as used, with the real local model and the real sandbox, in a real pseudo-terminal (`tests/e2e/used_terminal.py`, run by hand; qwen2.5-coder:7b): open, `/model`, a question answered in 1.3 s, `/where`, a review of the sample project finished ready after 146 s with no key pressed, `/findings`, `/approve` with the digest's first characters, `/deliver`, `/where` again counting one release and nothing else, quit with the terminal given back. 12 of 12.
+- Found by that walk and fixed:
+  - `/where` did not exist, although the owner's description of this workspace names it. It is built (`/route` is the same): the model and where it runs, each door (web search, Telegram, the extension, GitHub, the coding agent), the notes, and, from the signed log, what left this computer and what was held back. Evidence: `tui_pty.py` 118 (2 new), the real walk.
+  - `/findings` listed the kernel's confirmed findings first, so they scrolled away and the screen ended on suspicions marked "NOT reproduced". A count line now comes first and the confirmed findings are listed last, where the eye is.
+- The walk's own first version had two false passes (it matched "ready" in the status line and "this computer" in the greeting); its waits now name the exact lines.

@@ -285,6 +285,8 @@ enum Intent {
     FindChats,
     ExportTranscript,
     UsageShow,
+    WhereFacts,
+    WhereLeft,
     ModelList,
     ModelChoose(String),
     RenameChat,
@@ -2890,6 +2892,10 @@ impl App {
                 &format!("/api/memories/{id}/correct"),
                 Some(json!({"text": text, "reason": "you corrected it in the terminal"})),
             )],
+            Command::Where => vec![
+                self.req(Intent::WhereFacts, false, Method::Get, "/api/privacy", None),
+                self.req(Intent::WhereLeft, false, Method::Get, "/api/outbound", None),
+            ],
             Command::Usage(days) => {
                 let to = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -4167,6 +4173,22 @@ impl App {
                 if list.is_empty() {
                     self.push(Kind::Info, Some("Findings"), vec!["The agent reported no findings. That is not proof the project is free of defects.".into()]);
                 }
+                // what the kernel confirmed is listed last, so it is what stays on the screen; the suspicions it could not
+                // confirm come before it and scroll away
+                let mut list = list;
+                list.sort_by_key(|f| f["status"] == "reproduced");
+                let confirmed = list.iter().filter(|f| f["status"] == "reproduced").count();
+                let total = list.len();
+                if total > 0 {
+                    self.push(
+                        Kind::Info,
+                        Some("Findings"),
+                        vec![format!(
+                            "{confirmed} confirmed by the kernel, {} not confirmed. Only a confirmed finding can be released; the confirmed ones are listed last.",
+                            total - confirmed
+                        )],
+                    );
+                }
                 for f in list {
                     let status = f["status"].as_str().unwrap_or("");
                     let label = if status == "reproduced" {
@@ -4868,6 +4890,103 @@ impl App {
                 self.say(
                     Kind::Info,
                     format!("{} will answer from now on. A review already running keeps the model it started with.", clean(&name)),
+                );
+                Vec::new()
+            }
+            Intent::WhereFacts => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let m = &body["model"];
+                let name = clean(m["name"].as_str().or(m["id"].as_str()).unwrap_or("?"));
+                let mut lines = vec![if m["simulated"] == true {
+                    "Model: a scripted test model; nothing is sent to any model.".to_string()
+                } else if m["stays_here"] == true {
+                    format!("Model: {name}, on this computer. Your questions do not leave it.")
+                } else if m["class"] == "verified_tee" {
+                    format!("Model: {name}, in confidential hardware at {}. Questions go there encrypted; /proof checks the hardware.", clean(m["host"].as_str().unwrap_or("another computer")))
+                } else {
+                    format!("Model: {name}, at {}. NOT private: this is a hosted model with no hardware proof.", clean(m["host"].as_str().unwrap_or("another computer")))
+                }];
+                let on = |v: &Value| v["on"] == true;
+                lines.push(if on(&body["search"]) {
+                    format!(
+                        "Web search: on, through {}; only the words you approve are sent.",
+                        clean(
+                            body["search"]["host"]
+                                .as_str()
+                                .unwrap_or("your search site")
+                        )
+                    )
+                } else {
+                    "Web search: off. Nothing is searched or fetched.".to_string()
+                });
+                lines.push(
+                    if on(&body["telegram"]) {
+                        "Telegram: a chat is paired; it gets counts and review numbers only."
+                    } else {
+                        "Telegram: not paired."
+                    }
+                    .to_string(),
+                );
+                lines.push(
+                    if on(&body["extension"]) {
+                        "Browser extension: paired."
+                    } else {
+                        "Browser extension: not paired."
+                    }
+                    .to_string(),
+                );
+                lines.push(
+                    if body["github"]["connected"] == true {
+                        "GitHub: signed in, read only; contacted only when you ask."
+                    } else {
+                        "GitHub: not signed in."
+                    }
+                    .to_string(),
+                );
+                lines.push(match body["coding_agent"]["installed"].as_str() {
+                    Some(tool) => format!("Coding agent: {} is installed; text goes to it only after your yes on the exact text (not private).", clean(tool)),
+                    None => "Coding agent: none installed.".to_string(),
+                });
+                lines.push(format!(
+                    "Notes: {}, stored encrypted on this computer.",
+                    body["notes"]["count"].as_i64().unwrap_or(0)
+                ));
+                lines.push(
+                    "Releases: nothing leaves without your approval of the exact files."
+                        .to_string(),
+                );
+                self.say(
+                    Kind::Info,
+                    format!("Where your data goes\n{}", lines.join("\n")),
+                );
+                Vec::new()
+            }
+            Intent::WhereLeft => {
+                if !ok {
+                    return Vec::new();
+                }
+                let t = &body["totals"];
+                let n = |k: &str| t[k].as_i64().unwrap_or(0);
+                let left = n("model")
+                    + n("review")
+                    + n("search")
+                    + n("pages")
+                    + n("tool")
+                    + n("connector")
+                    + n("release");
+                self.say(
+                    Kind::Info,
+                    if left == 0 {
+                        format!("Left this computer (from the signed log): nothing. Held back from a model: {}.", n("held"))
+                    } else {
+                        format!(
+                            "Left this computer (from the signed log): questions to a model elsewhere {}, reviews with a model elsewhere {}, searches {}, page fetches {}, tool calls {}, reads from GitHub {}, releases {}. Held back from a model: {}.",
+                            n("model"), n("review"), n("search"), n("pages"), n("tool"), n("connector"), n("release"), n("held")
+                        )
+                    },
                 );
                 Vec::new()
             }

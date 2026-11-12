@@ -1462,7 +1462,7 @@ fn tu31_typing_a_slash_offers_matching_commands_that_can_be_chosen_completed_or_
     assert_eq!(r[0].path, "/api/jobs", "/reviews ran");
     // Esc hides the list until the line changes; the arrow keys still walk history then
     typed(&mut a, "/he");
-    assert_eq!(a.completions(), ["help"]);
+    assert_eq!(a.completions(), ["help", "where"]);
     a.handle(key(KeyCode::Esc));
     assert!(a.completions().is_empty() && a.input == "/he");
     typed(&mut a, "l");
@@ -1477,7 +1477,7 @@ fn tu31_typing_a_slash_offers_matching_commands_that_can_be_chosen_completed_or_
     a.handle(key(KeyCode::Up));
     a.handle(key(KeyCode::Tab));
     assert_eq!(
-        a.input, "/web ",
+        a.input, "/where ",
         "Up from the first wraps to the last alphabetical command that is not quit... "
     );
 }
