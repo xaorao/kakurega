@@ -23,9 +23,10 @@ export function SampleCard(props: { onReview: (folder: string) => void }) {
     setBusy(true);
     setError("");
     try {
+      const folder = state()?.folder;
       mutate(await fn());
-      // the folders it made are listed on the review page at once
-      window.dispatchEvent(new Event("kk:folders-changed"));
+      // the folders it made are listed on the review page at once, and a page showing a folder it removed steps out of it
+      window.dispatchEvent(new CustomEvent("kk:folders-changed", { detail: { removed: fn === api.sampleRemove ? folder : undefined } }));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : t("sample.error"));
     } finally {

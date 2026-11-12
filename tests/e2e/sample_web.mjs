@@ -36,6 +36,7 @@ const browser = await chromium.launch({ executablePath: chrome, headless: true }
 const page = await (await browser.newContext({ viewport: { width: 1280, height: 1300 } })).newPage();
 const errors = [];
 page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+page.on("response", (r) => { if (r.status() >= 400) errors.push(`${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}${new URL(r.url()).search}`); });
 page.on("pageerror", (e) => errors.push(String(e)));
 const check = (cond, what) => { console.log(cond ? "PASS" : "FAIL", what); if (!cond) process.exitCode = 1; };
 

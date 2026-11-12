@@ -8,7 +8,12 @@ import { rich, t } from "../i18n";
 export function NewReview(props: { config: Config; onStarted: (id: string) => void }) {
   const [dir, setDir] = createSignal<string | undefined>(undefined);
   const [listing, { refetch: refetchListing }] = createResource(() => dir() ?? "", (d) => api.fs(d || undefined).catch(() => null));
-  const foldersChanged = () => void refetchListing();
+  const foldersChanged = (e: Event) => {
+    const removed = (e as CustomEvent<{ removed?: string }>).detail?.removed;
+    const d = dir();
+    if (removed && d && (d === removed || d.startsWith(removed + "/"))) setDir(undefined);
+    else void refetchListing();
+  };
   window.addEventListener("kk:folders-changed", foldersChanged);
   onCleanup(() => window.removeEventListener("kk:folders-changed", foldersChanged));
   const [recipient, setRecipient] = createSignal("");
