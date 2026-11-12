@@ -25,7 +25,7 @@ export function Inbox() {
       <p class="lead">{t("inbox.lead")}</p>
       <div class="card stack">
         <Show when={notify() !== "unsupported"} fallback={<p class="muted">{t("inbox.notify.unsupported")}</p>}>
-          <label class="row">
+          <label class="row-check">
             <input type="checkbox" checked={notify() === "on"} onChange={(e) => void flip(e.currentTarget.checked)} aria-describedby="notify-help" />
             <span>{t("inbox.notify.label")}</span>
           </label>
@@ -42,7 +42,8 @@ export function Inbox() {
                     <Show when={i.team} fallback={<p><span class="chip">{t(`inbox.kind.${i.kind}` as Key)}</span> <strong>{i.recipient}</strong> · <code>{i.job}</code></p>}>
                       <p><span class="chip">{t(`inbox.kind.${i.kind}` as Key)}</span> <strong>{i.title}</strong></p>
                     </Show>
-                    <p>{i.what}</p>
+                    {/* said by the page in its own language; an expert's question is the expert's words and is shown as it came */}
+                    <p>{i.kind === "team_question" ? i.what : t(`inbox.what.${i.kind}` as Key, { n: i.count ?? 0 })}</p>
                     <div class="actions"><a class="primary" href={i.team ? `#/team/${i.team}` : `#/job/${i.job}`}>{t("inbox.open")}</a></div>
                   </li>
                 )}

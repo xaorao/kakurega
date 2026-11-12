@@ -8150,7 +8150,7 @@ async fn inbox(axum::Extension(svc): Svc) -> Json<Value> {
             .map(|p| p.len())
             .unwrap_or(0);
         if pending > 0 {
-            items.push(json!({"kind": "suggestions", "job": id, "recipient": recipient, "since": created, "count": pending, "what": format!("{pending} suggested note(s) to keep or dismiss.")}));
+            items.push(json!({"kind": "suggestions", "job": id, "recipient": recipient, "since": created, "count": pending, "what": format!("{pending} suggested {} to keep or dismiss.", if pending == 1 { "note" } else { "notes" })}));
         }
     }
     items.extend(svc.team_inbox());

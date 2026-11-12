@@ -218,7 +218,7 @@ function Control(props: { s: Setting }) {
       )}
       {props.s.kind === "notify" && (
         <Show when={notify() !== "unsupported"} fallback={<p class="muted">{t("inbox.notify.unsupported")}</p>}>
-          <label class="row">
+          <label class="row-check">
             <input id={`set-${props.s.id}`} type="checkbox" checked={notify() === "on"} onChange={(e) => void flip(e.currentTarget.checked)} />
             <span>{notify() === "denied" ? t("inbox.notify.denied") : t("inbox.notify.label")}</span>
           </label>
@@ -229,7 +229,7 @@ function Control(props: { s: Setting }) {
       {props.s.kind === "route" && <RouteChoice />}
       {props.s.kind === "model" && <ModelChoice id={props.s.id} />}
       {props.s.kind === "singlekeys" && (
-        <label class="row">
+        <label class="row-check">
           <input id={`set-${props.s.id}`} type="checkbox" checked={singleKeys()} onChange={(e) => chooseSingleKeys(e.currentTarget.checked)} />
           <span>{t("set.single.on")}</span>
         </label>
