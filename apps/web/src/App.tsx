@@ -227,6 +227,23 @@ export function App() {
   window.addEventListener("kk-config-stale", configStale);
   onCleanup(() => window.removeEventListener("kk-config-stale", configStale));
 
+  // any request that found the service gone, or found that it no longer knows this browser, brings the app to the one
+  // screen that says so and what to do, whatever screen was open
+  const gone = () => {
+    if (paired() !== true) return;
+    setUnreachable(true);
+    setPaired(false);
+  };
+  const forgotten = () => {
+    if (paired() === true) setPaired(false);
+  };
+  window.addEventListener("kk-unreachable", gone);
+  window.addEventListener("kk-unpaired", forgotten);
+  onCleanup(() => {
+    window.removeEventListener("kk-unreachable", gone);
+    window.removeEventListener("kk-unpaired", forgotten);
+  });
+
   const load = async () => {
     try {
       const s = await api.session();

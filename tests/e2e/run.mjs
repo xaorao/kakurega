@@ -106,6 +106,7 @@ let injectedResets = 0;
 let excusedRequests = 0;
 let excusedConsole = 0;
 // The one lease the script asks for with zero uses, to see the service's refusal shown in words: the browser logs its 400.
+let sessionEnded = false;
 let leaseRefusals = 1;
 let sealedRefusals = 1;
 let instructionRefusals = 0; // the one deliberate 422 when an instruction holds a secret
@@ -158,6 +159,8 @@ page.on("console", (m) => {
     sealedRefusals--;
     return;
   }
+  // after the test ends the session on purpose, the service answers 401 until the browser is paired again
+  if (sessionEnded && /status of 401/.test(m.text())) return;
   if (m.location().url.endsWith("/api/agent-access/grant") && /status of 400/.test(m.text()) && leaseRefusals > 0) {
     leaseRefusals--;
     return;
@@ -2624,6 +2627,17 @@ try {
 } catch (e) {
   check("journey completed", false, String(e).slice(0, 400));
   await page.screenshot({ path: join(shots, "failure.png"), fullPage: true }).catch(() => {});
+}
+// an open tab whose session ended (the service was started again, or eight hours passed): the next thing the owner
+// opens brings the pairing screen, not a screen that says it hit an error; and with the service gone, the tab says so
+try {
+  sessionEnded = true;
+  await page.context().clearCookies();
+  await page.getByRole("link", { name: "Memory" }).click();
+  await page.getByRole("heading", { name: "Pair this browser" }).waitFor({ timeout: 15000 });
+  check("an open tab whose session ended is brought to the pairing screen by the next request", (await page.getByText("This screen hit an error").count()) === 0);
+} catch (e) {
+  check("an open tab whose session ended is brought to the pairing screen by the next request", false, String(e).slice(0, 300));
 }
 const unreach = await browser.newContext();
 const up = await unreach.newPage();

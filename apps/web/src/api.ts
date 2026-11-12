@@ -15,7 +15,17 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const headers: Record<string, string> = {};
   if (body !== undefined) headers["content-type"] = "application/json";
   if (method !== "GET") headers["x-kk-csrf"] = csrf;
-  const res = await fetch(path, { method, headers, credentials: "same-origin", body: body === undefined ? undefined : JSON.stringify(body) });
+  let res: Response;
+  try {
+    res = await fetch(path, { method, headers, credentials: "same-origin", body: body === undefined ? undefined : JSON.stringify(body) });
+  } catch (e) {
+    // no answer at all: the service is not there (stopped, or started again elsewhere). The app says so in one place
+    // instead of every screen failing in its own words
+    window.dispatchEvent(new Event("kk-unreachable"));
+    throw e;
+  }
+  // the service no longer knows this browser (it was started again, or the session ended): the app asks to pair again
+  if (res.status === 401 && path !== "/api/pair") window.dispatchEvent(new Event("kk-unpaired"));
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   let data: any = null;
