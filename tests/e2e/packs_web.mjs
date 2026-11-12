@@ -18,8 +18,8 @@ const root = join(work, "root");
 mkdirSync(root, { recursive: true });
 const kaku = join(repo, "target/debug/kaku");
 const run = (...args) => { const r = spawnSync(kaku, args, { encoding: "utf8" }); if (r.status !== 0) throw new Error(args.join(" ") + ": " + r.stderr); return r.stdout; };
-const makePack = (tag, keyFile, name, version, methods) => {
-  const draft = { format: "kakurega-pack", version: 1, name, pack_version: version, not_after: 4000000000, methods: methods.map((m) => ({ name: m, description: "How to read a contract", triggers: ["contract"], avoid: [], body: "Quote clause numbers." })) };
+const makePack = (tag, keyFile, name, version, methods, servers) => {
+  const draft = { format: "kakurega-pack", version: 1, name, pack_version: version, not_after: 4000000000, methods: methods.map((m) => ({ name: m, description: "How to read a contract", triggers: ["contract"], avoid: [], body: "Quote clause numbers." })), ...(servers ? { servers } : {}) };
   writeFileSync(join(work, `${tag}.json`), JSON.stringify(draft));
   run("pack", "sign", "--key", keyFile, "--pack", join(work, `${tag}.json`), "--out", join(work, `${tag}.kkp`));
   return readFileSync(join(work, `${tag}.kkp`), "utf8");
@@ -82,6 +82,24 @@ check((await page.getByText("Waiting for your approval: not in use").count()) >=
 await importPack(good);
 await page.getByRole("alert").filter({ hasText: /already exists; nothing was imported/ }).waitFor();
 check(true, "importing the same pack again is refused and replaces nothing");
+// ---- a pack that suggests an outside program: shown, never added; it fills the form when asked, and can be put away ----
+{
+  const tools = makePack("tools", join(work, "pub.key"), "scan-kit", "1.0.0", ["scan-notes"], [{ name: "semgrep", program: "/usr/local/bin/semgrep-mcp", args: ["--stdio"], env: ["SEMGREP_APP_TOKEN"], why: "Pattern rules for reviews" }]);
+  await importPack(tools);
+  await page.getByText(/Imported 1 method from scan-kit 1.0.0. Read it and approve it if you want it. It also suggests 1 outside program \(semgrep\); nothing was added/).waitFor();
+  const suggested = page.locator("section[aria-labelledby='h-mcp-suggested']");
+  await suggested.waitFor();
+  const card = await suggested.innerText();
+  check(/semgrep/.test(card) && /from the pack scan-kit/.test(card) && card.includes("/usr/local/bin/semgrep-mcp --stdio") && /SEMGREP_APP_TOKEN/.test(card) && /Pattern rules for reviews/.test(card), "the suggested program is shown exactly: its path, its arguments, the variables it needs and why", card);
+  check(await page.getByText("No outside programs yet.").isVisible(), "nothing was added by importing the pack");
+  await suggested.getByRole("button", { name: "Fill the form with it" }).click();
+  check(await page.locator("#mcp-name").inputValue() === "semgrep" && await page.locator("#mcp-program").inputValue() === "/usr/local/bin/semgrep-mcp" && await page.locator("#mcp-args").inputValue() === "--stdio" && await page.locator("#mcp-env").inputValue() === "SEMGREP_APP_TOKEN=", "the form is filled with it and the value is left for you");
+  await suggested.scrollIntoViewIfNeeded();
+  await shot("1b-suggested");
+  await suggested.getByRole("button", { name: /Dismiss/ }).click();
+  await page.getByRole("heading", { name: "Suggested by packs you imported" }).waitFor({ state: "detached" });
+  check(true, "a dismissed suggestion is put away");
+}
 // ---- the publisher's signed catalog ----
 {
   const shelf = join(work, "shelf");

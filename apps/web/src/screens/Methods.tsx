@@ -127,7 +127,7 @@ function Packs(props: { onChanged: (message: string) => void }) {
       // the file's text exactly as it is: the catalog lists its SHA-256
       const r = await api.packImport(await file.text(), catalogText());
       setCatalog(await api.packCatalog(catalogText()));
-      return t("pack.imported", { n: r.imported.length, name: r.pack, version: r.version });
+      return importedSaid(r);
     });
   };
   return (
@@ -157,7 +157,7 @@ function Packs(props: { onChanged: (message: string) => void }) {
       <textarea id="pack-text" rows="4" value={pack()} onInput={(e) => setPack(e.currentTarget.value)} />
       <input type="file" aria-label={t("pack.paste")} onChange={(e) => void choose(e.currentTarget.files?.[0])} />
       <div class="actions">
-        <button class="primary" type="button" disabled={!pack().trim()} onClick={() => void act(async () => { const r = await api.packImport(pack().trim()); setPack(""); return t("pack.imported", { n: r.imported.length, name: r.pack, version: r.version }); })}>{t("pack.import")}</button>
+        <button class="primary" type="button" disabled={!pack().trim()} onClick={() => void act(async () => { const r = await api.packImport(pack().trim()); setPack(""); return importedSaid(r); })}>{t("pack.import")}</button>
       </div>
       <h4>{t("pack.cat.heading")}</h4>
       <p class="muted">{t("pack.cat.lead")}</p>
@@ -282,6 +282,15 @@ function Bundled(props: { list: BundledMethod[]; onChanged: (message: string) =>
     </details>
   );
 }
+
+/** What an import did, in words: the methods it brought, and the outside programs it only suggests. */
+const importedSaid = (r: { pack: string; version: string; imported: string[]; suggested_programs?: string[] }) => {
+  const said = t("pack.imported", { n: r.imported.length, name: r.pack, version: r.version });
+  const programs = r.suggested_programs ?? [];
+  // the outside-tools list on the same screen shows what the pack suggests at once
+  if (programs.length > 0) window.dispatchEvent(new CustomEvent("kk:pack-suggested"));
+  return programs.length > 0 ? `${said} ${t("pack.suggests", { n: programs.length, names: programs.join(", ") })}` : said;
+};
 
 export function Methods() {
   const [data, { refetch }] = createResource(() => api.methods().catch(() => null));

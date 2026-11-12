@@ -114,6 +114,9 @@ export function McpPending() {
 
 export function Mcp() {
   const [data, { refetch }] = createResource(() => api.mcp().catch(() => null));
+  const again = () => void refetch();
+  window.addEventListener("kk:pack-suggested", again);
+  onCleanup(() => window.removeEventListener("kk:pack-suggested", again));
   const [status, setStatus] = createSignal("");
   const [name, setName] = createSignal("");
   const [program, setProgram] = createSignal("");
@@ -143,6 +146,28 @@ export function Mcp() {
           <>
             <Show when={d().servers.length === 0}><p class="muted">{t("mcp.none")}</p></Show>
             <ul class="plain stack"><For each={d().servers}>{(s) => <Server s={s} onChanged={changed} />}</For></ul>
+            <Show when={(d().suggested ?? []).length > 0}>
+              <section class="stack" aria-labelledby="h-mcp-suggested">
+                <h3 id="h-mcp-suggested">{t("mcp.suggested")}</h3>
+                <p class="muted">{t("mcp.suggestedLead")}</p>
+                <ul class="plain stack">
+                  <For each={d().suggested}>
+                    {(g) => (
+                      <li class="card stack">
+                        <p><strong>{g.name}</strong> <span class="muted">{t("mcp.suggestedFrom", { pack: g.pack })}</span></p>
+                        <Show when={g.why}><p>{g.why}</p></Show>
+                        <pre class="passage" tabindex="0">{[g.program, ...(g.args ?? [])].join(" ")}</pre>
+                        <Show when={(g.env ?? []).length > 0}><p class="muted">{t("mcp.suggestedEnv", { names: (g.env ?? []).join(", ") })}</p></Show>
+                        <div class="actions">
+                          <button type="button" onClick={() => { setName(g.name); setProgram(g.program); setArgs((g.args ?? []).join("\n")); setEnv((g.env ?? []).map((n) => `${n}=`).join("\n")); setStatus(t("mcp.suggestedFilled")); document.getElementById("mcp-name")?.focus(); }}>{t("mcp.suggestedUse")}</button>
+                          <button type="button" class="linklike" onClick={async () => { try { await api.mcpDismissSuggested(g.pack, g.name); changed(""); } catch (e) { setProblem(e instanceof ApiError ? e.message : t("mcp.error")); } }}>{t("mcp.suggestedDismiss")} <span class="sr">{g.name}</span></button>
+                        </div>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </section>
+            </Show>
             <label for="mcp-name">{t("mcp.name")}</label>
             <input id="mcp-name" value={name()} maxlength="64" onInput={(e) => setName(e.currentTarget.value)} />
             <label for="mcp-program">{t("mcp.program")}</label>

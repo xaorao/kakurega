@@ -229,6 +229,12 @@ pub(super) async fn packs_import(axum::Extension(svc): Svc, Json(b): Json<Import
         .methods
         .iter()
         .map(|m| format!("{}\n{}\n", m.description, m.body))
+        .chain(
+            checked
+                .servers
+                .iter()
+                .map(|s| format!("{}\n{}\n{}\n", s.args.join("\n"), s.program, s.why)),
+        )
         .collect();
     if !kk_secrets::scan(&text_all).is_empty() || kk_secrets::looks_secret(&text_all).is_some() {
         return refuse("a method in the pack looks like it holds a secret, so the pack is refused");
@@ -272,6 +278,20 @@ pub(super) async fn packs_import(axum::Extension(svc): Svc, Json(b): Json<Import
             return refuse(&e);
         }
     }
+    // the outside programs the pack suggests are kept as suggestions; nothing is added or run
+    {
+        let store = svc.store.lock().expect("lock");
+        let c = store.connection();
+        let _ = c.execute("DELETE FROM pack_servers WHERE pack = ?1", [&checked.name]);
+        for s in &checked.servers {
+            let body = json!({"program": s.program, "args": s.args, "env": s.env, "why": s.why})
+                .to_string();
+            let _ = c.execute(
+                "INSERT INTO pack_servers(pack, name, key_id, body, dismissed, at) VALUES (?1, ?2, ?3, ?4, 0, ?5)",
+                kk_vault::rusqlite::params![checked.name, s.name, checked.key_id.as_str(), body, now()],
+            );
+        }
+    }
     {
         let store = svc.store.lock().expect("lock");
         let _ = store.connection().execute(
@@ -282,13 +302,17 @@ pub(super) async fn packs_import(axum::Extension(svc): Svc, Json(b): Json<Import
     svc.log_event(
         "pack.imported",
         &checked.name,
-        &[("methods", checked.methods.len().into())],
+        &[
+            ("methods", checked.methods.len().into()),
+            ("suggested_programs", checked.servers.len().into()),
+        ],
     );
     let _: &KeyId = &checked.key_id;
     Json(json!({
         "pack": checked.name,
         "version": checked.version.to_string(),
         "imported": checked.methods.iter().map(|m| m.name.clone()).collect::<Vec<_>>(),
+        "suggested_programs": checked.servers.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
     }))
     .into_response()
 }

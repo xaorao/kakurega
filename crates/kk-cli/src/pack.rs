@@ -82,8 +82,21 @@ fn check(args: &[String]) -> Result<(), String> {
             }
         );
     }
+    for sv in &c.servers {
+        println!(
+            "  suggests the outside program {}: {} {}{}",
+            sv.name,
+            sv.program,
+            sv.args.join(" "),
+            if sv.env.is_empty() {
+                String::new()
+            } else {
+                format!(" (needs {}; the pack holds no value)", sv.env.join(", "))
+            }
+        );
+    }
     println!(
-        "Importing is done in the web page, under Instructions. Every method arrives unapproved."
+        "Importing is done in the web page, under Skills. Every method arrives unapproved, and a suggested program is only shown, never added."
     );
     Ok(())
 }

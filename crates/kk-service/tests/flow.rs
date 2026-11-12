@@ -23764,3 +23764,97 @@ fn sv278_a_run_that_began_elsewhere_and_then_read_the_project_on_this_computer_d
         "no question holding the reader's answer reached a model"
     );
 }
+
+fn pack_with_servers(seed: u8, name: &str, servers: Value) -> String {
+    let signer = kk_evidence::keys::Signer::from_seed([seed; 32]);
+    let draft = json!({"format": "kakurega-pack", "version": 1, "name": name, "pack_version": "1.0.0", "not_after": 4_000_000_000i64,
+        "methods": [{"name": format!("{name}-notes"), "description": "d", "triggers": ["scan"], "avoid": [], "body": "Read the scan report first."}],
+        "servers": servers});
+    kk_packs::sign_pack(&draft, &signer, 1_000).unwrap()
+}
+
+#[test]
+fn sv279_a_pack_suggests_outside_programs_that_are_shown_never_added_and_can_be_put_away() {
+    let (_c, w, _seen, _root) = instructions_service("packs-servers");
+    assert_eq!(pin_publisher(&w, 7, "tools").0, 200);
+    let pack = pack_with_servers(
+        7,
+        "scan-kit",
+        json!([
+            {"name": "semgrep", "program": "/usr/local/bin/semgrep-mcp", "args": ["--stdio"], "env": ["SEMGREP_APP_TOKEN"], "why": "pattern rules"},
+            {"name": "osv", "program": "/usr/local/bin/osv-mcp"}
+        ]),
+    );
+    let (s, v) = w.post("/api/packs/import", json!({"pack": pack}));
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["suggested_programs"], json!(["semgrep", "osv"]));
+    let m = w.get("/api/mcp").1;
+    assert_eq!(m["servers"], json!([]), "nothing was added");
+    let suggested = m["suggested"].as_array().unwrap();
+    assert_eq!(suggested.len(), 2, "{m}");
+    let semgrep = suggested.iter().find(|x| x["name"] == "semgrep").unwrap();
+    assert_eq!(
+        (semgrep["program"].as_str(), semgrep["pack"].as_str()),
+        (Some("/usr/local/bin/semgrep-mcp"), Some("scan-kit"))
+    );
+    assert_eq!(
+        (semgrep["args"].clone(), semgrep["env"].clone()),
+        (json!(["--stdio"]), json!(["SEMGREP_APP_TOKEN"]))
+    );
+    // put away, it stays away
+    assert_eq!(
+        w.post(
+            "/api/mcp/suggested/dismiss",
+            json!({"pack": "scan-kit", "name": "osv"})
+        )
+        .1["dismissed"],
+        true
+    );
+    assert_eq!(
+        w.post(
+            "/api/mcp/suggested/dismiss",
+            json!({"pack": "scan-kit", "name": "nothing"})
+        )
+        .0,
+        404
+    );
+    let m = w.get("/api/mcp").1;
+    assert_eq!(m["suggested"].as_array().unwrap().len(), 1);
+    // once the owner adds a program under that name, the suggestion is no longer shown
+    let (s, v) = w.post(
+        "/api/mcp/servers",
+        json!({"name": "semgrep", "program": "/bin/echo", "args": [], "env": {}}),
+    );
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(w.get("/api/mcp").1["suggested"], json!([]));
+    // a pack whose suggestion carries a key in its arguments is refused whole
+    let leaky = pack_with_servers(
+        7,
+        "leaky-kit",
+        json!([{"name": "x", "program": "/usr/bin/x", "args": [format!("--token={}{}", "sk_li", "ve_abcdefghijklmnop0123")]}]),
+    );
+    let (s, v) = w.post("/api/packs/import", json!({"pack": leaky}));
+    assert_eq!(s, 422, "{v}");
+    assert!(
+        w.get("/api/methods")
+            .1
+            .to_string()
+            .contains("scan-kit-notes")
+            && !w
+                .get("/api/methods")
+                .1
+                .to_string()
+                .contains("leaky-kit-notes")
+    );
+    // a suggestion from a pack that is not signed by a pinned key never appears
+    let stranger = pack_with_servers(
+        9,
+        "stranger-kit",
+        json!([{"name": "evil", "program": "/usr/bin/evil"}]),
+    );
+    assert_ne!(
+        w.post("/api/packs/import", json!({"pack": stranger})).0,
+        200
+    );
+    assert!(!w.get("/api/mcp").1.to_string().contains("/usr/bin/evil"));
+}

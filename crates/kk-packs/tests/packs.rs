@@ -356,3 +356,75 @@ fn pk10_signing_a_draft_makes_a_pack_that_checks_and_refuses_an_invalid_draft() 
         "nor one that is already expired"
     );
 }
+
+fn with_servers(servers: Value) -> Value {
+    let mut p = payload(
+        "tool-kit",
+        "1.0.0",
+        2_000_000_000,
+        vec![method("scan-notes")],
+    );
+    p["servers"] = servers;
+    p
+}
+
+#[test]
+fn pk11_a_pack_may_suggest_outside_programs_by_full_path_and_variable_names_only() {
+    let s = signer(1);
+    let t = trusted(&s);
+    let c = check_pack(
+        &sign_value(
+            &with_servers(json!([{"name": "semgrep", "program": "/usr/local/bin/semgrep-mcp", "args": ["--stdio"], "env": ["SEMGREP_APP_TOKEN"], "why": "pattern rules for the review"}])),
+            &s,
+        ),
+        &ctx(&t),
+    )
+    .unwrap();
+    assert_eq!(
+        c.servers,
+        vec![SuggestedServer {
+            name: "semgrep".into(),
+            program: "/usr/local/bin/semgrep-mcp".into(),
+            args: vec!["--stdio".into()],
+            env: vec!["SEMGREP_APP_TOKEN".into()],
+            why: "pattern rules for the review".into(),
+        }]
+    );
+    // a pack without the field still reads, with nothing suggested
+    assert!(check_pack(&good(&s), &ctx(&t)).unwrap().servers.is_empty());
+}
+
+#[test]
+fn pk12_a_suggestion_that_could_choose_what_runs_or_carry_a_value_is_refused_whole() {
+    let s = signer(1);
+    let t = trusted(&s);
+    let refused =
+        |servers: Value| check_pack(&sign_value(&with_servers(servers), &s), &ctx(&t)).is_err();
+    for bad in [
+        json!([{"name": "x", "program": "semgrep-mcp"}]),
+        json!([{"name": "x", "program": "/usr/local/bin/../../tmp/evil"}]),
+        json!([{"name": "x", "program": "/usr/bin/x", "env": ["PATH"]}]),
+        json!([{"name": "x", "program": "/usr/bin/x", "env": ["LD_PRELOAD"]}]),
+        json!([{"name": "x", "program": "/usr/bin/x", "env": ["DYLD_INSERT_LIBRARIES"]}]),
+        json!([{"name": "x", "program": "/usr/bin/x", "env": ["NODE_OPTIONS"]}]),
+        json!([{"name": "x", "program": "/usr/bin/x", "env": ["token"]}]),
+        json!([{"name": "x", "program": "/usr/bin/x", "env": {"TOKEN": "abc"}}]),
+        json!([{"name": "x", "program": "/usr/bin/x", "env_values": {"TOKEN": "abc"}}]),
+        json!([{"name": "x", "program": "/usr/bin/x", "args": ["ok\nrm -rf /"]}]),
+        json!([{"name": "x", "program": "/usr/bin/x"}, {"name": "X", "program": "/usr/bin/y"}]),
+        json!([{"name": "../x", "program": "/usr/bin/x"}]),
+        json!([{"program": "/usr/bin/x"}]),
+        json!([{"name": "x", "program": "/usr/bin/x", "env": ["A", "A"]}]),
+        json!([{"name": "a", "program": "/a"}, {"name": "b", "program": "/b"}, {"name": "c", "program": "/c"}, {"name": "d", "program": "/d"}, {"name": "e", "program": "/e"}, {"name": "f", "program": "/f"}]),
+        json!("semgrep"),
+    ] {
+        assert!(refused(bad.clone()), "{bad}");
+    }
+    // the same rules hold when a publisher signs
+    assert!(sign_pack(
+        &with_servers(json!([{"name": "x", "program": "relative"}])),
+        &s,
+        1_700_000_000
+    )
+    .is_err());
+}

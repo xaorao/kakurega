@@ -147,6 +147,8 @@ export interface PackCatalog { publisher: string; key_id: string; issued: number
 export interface MethodProposal { id: number; job: string; name: string; description: string; triggers: string[]; body: string }
 export interface McpTool { name: string; description: string; pin: string; mode: "off" | "allow" | "ask"; effect: "read_only" | "may_change" | "unknown"; schema?: string }
 export interface McpServer { name: string; program: string; args: string[]; env_names: string[] | null; tools: McpTool[] }
+/** An outside program a pack the owner imported suggests: never added or run by itself. */
+export interface McpSuggested { pack: string; publisher: string; name: string; program: string; args: string[] | null; env: string[] | null; why: string }
 export interface BreakResult { planted: { key: string; password: string }; asked: string; sent: { role: string; content: string }[]; reply: string; reached_model: number; in_reply: number; leaked: boolean; attack_was_sent: boolean; attempts: number; leaks: number; route: { stays_here: boolean; host: string | null }; limits: string }
 export interface HandoffProposal { id: string; text: string; sha256: string; chars: number; personal: string; tool: string; notice: string }
 export interface SampleState { possible: boolean; loaded: boolean; folder?: string; project?: string; documents?: string; transcript?: string | null; note?: string }
@@ -402,12 +404,13 @@ export const api = {
   packs: () => request<{ publishers: { key_id: string; public: string | null; label: string; added: number }[]; imported: { name: string; version: string; at: number }[]; limits: { publishers: number } }>("GET", "/api/packs"),
   packPin: (publicKey: string, label: string) => request<{ key_id: string }>("POST", "/api/packs/publishers", { public: publicKey, label }),
   packUnpin: (key_id: string) => request<{ removed: boolean }>("POST", "/api/packs/publishers/remove", { key_id }),
-  packImport: (pack: string, catalog?: string) => request<{ pack: string; version: string; imported: string[] }>("POST", "/api/packs/import", catalog ? { pack, catalog } : { pack }),
+  packImport: (pack: string, catalog?: string) => request<{ pack: string; version: string; imported: string[]; suggested_programs?: string[] }>("POST", "/api/packs/import", catalog ? { pack, catalog } : { pack }),
   packCatalog: (catalog: string) => request<PackCatalog>("POST", "/api/packs/catalog", { catalog }),
   methodProposals: () => request<{ proposals: MethodProposal[] }>("GET", "/api/method-proposals"),
   keepProposal: (id: number) => request<{ name: string; approved: boolean }>("POST", "/api/method-proposals/keep", { id }),
   dismissProposal: (id: number) => request<{ dismissed: boolean }>("POST", "/api/method-proposals/dismiss", { id }),
-  mcp: () => request<{ servers: McpServer[]; limits: { servers: number } }>("GET", "/api/mcp"),
+  mcp: () => request<{ servers: McpServer[]; suggested?: McpSuggested[]; limits: { servers: number } }>("GET", "/api/mcp"),
+  mcpDismissSuggested: (pack: string, name: string) => request<{ dismissed: boolean }>("POST", "/api/mcp/suggested/dismiss", { pack, name }),
   mcpAdd: (b: { name: string; program: string; args: string[]; env: Record<string, string> }) => request<{ saved: boolean }>("POST", "/api/mcp/servers", b),
   mcpRemove: (name: string) => request<{ removed: boolean }>("POST", "/api/mcp/servers/remove", { name }),
   mcpDiscover: (name: string) => request<{ tools: number; changed: string[] }>("POST", "/api/mcp/discover", { name }),

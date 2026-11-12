@@ -415,7 +415,60 @@ pub(super) async fn mcp_get(axum::Extension(svc): Svc) -> Response {
             json!({"name": name, "program": program, "args": serde_json::from_str::<Value>(args).unwrap_or(json!([])), "env_names": env_names.get(name), "tools": tools})
         })
         .collect();
-    Json(json!({"servers": list, "limits": {"servers": MAX_SERVERS}})).into_response()
+    // what packs the owner imported suggest, minus what is already added under that name and what the owner dismissed
+    let have: Vec<String> = servers.iter().map(|(n, _, _)| n.to_lowercase()).collect();
+    let suggested: Vec<Value> = c
+        .prepare("SELECT pack, name, key_id, body FROM pack_servers WHERE dismissed = 0 ORDER BY pack, name")
+        .ok()
+        .map(|mut st| {
+            st.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))
+            })
+            .map(|it| it.flatten().collect::<Vec<_>>())
+            .unwrap_or_default()
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, name, _, _)| !have.contains(&name.to_lowercase()))
+        .map(|(pack, name, key_id, body)| {
+            let b: Value = serde_json::from_str(&body).unwrap_or(json!({}));
+            json!({"pack": pack, "publisher": key_id, "name": name, "program": b["program"], "args": b["args"], "env": b["env"], "why": b["why"]})
+        })
+        .collect();
+    Json(json!({"servers": list, "suggested": suggested, "limits": {"servers": MAX_SERVERS}}))
+        .into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DismissBody {
+    pack: String,
+    name: String,
+}
+
+/// Puts away a program a pack suggested. It is not shown again until the pack is imported again.
+pub(super) async fn suggested_dismiss(
+    axum::Extension(svc): Svc,
+    Json(b): Json<DismissBody>,
+) -> Response {
+    let changed = {
+        let store = svc.store.lock().expect("lock");
+        store
+            .connection()
+            .execute(
+                "UPDATE pack_servers SET dismissed = 1 WHERE pack = ?1 AND name = ?2",
+                kk_vault::rusqlite::params![b.pack, b.name],
+            )
+            .unwrap_or(0)
+    };
+    if changed != 1 {
+        return error(
+            StatusCode::NOT_FOUND,
+            "NO_SUGGESTION",
+            "there is no such suggestion",
+        );
+    }
+    Json(json!({"dismissed": true})).into_response()
 }
 
 pub(super) async fn mcp_add(axum::Extension(svc): Svc, Json(b): Json<AddBody>) -> Response {
