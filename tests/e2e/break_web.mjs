@@ -82,7 +82,7 @@ check(modelLog.includes("planted-notes.txt") && !planted.some((p) => modelLog.in
 await page.getByRole("link", { name: "Where your data goes" }).click();
 await page.waitForSelector("#outbound li.out-row");
 const out = await page.locator("#outbound").innerText();
-check(/held back/i.test(out) && out.includes("Kept from the model in try to break it: 2 parts holding a secret"), "the privacy page lists the two secrets held back in each attempt");
+check(/held back/i.test(out) && out.includes("Kept from the model in try to break it. Parts holding a secret: 2."), "the privacy page lists the two secrets held back in each attempt");
 check(!/A question went to the model at/.test(out), "nothing is listed as having left: the model is on this computer");
 await page.screenshot({ path: join(work, "3-outbound.png"), fullPage: true });
 await page.goto(new URL(link).origin + "/#/break");

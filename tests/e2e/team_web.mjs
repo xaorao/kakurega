@@ -53,7 +53,7 @@ page.on("pageerror", (e) => problems.push("pageerror: " + e.message));
 page.on("requestfailed", (r) => { if (!/ERR_ABORTED/.test(r.failure()?.errorText ?? "")) problems.push("requestfailed: " + r.url()); });
 const shot = (p, n) => p.screenshot({ path: join(work, `${n}.png`), fullPage: true });
 const check = (cond, what) => { console.log(cond ? "PASS" : "FAIL", what); if (!cond) process.exitCode = 1; };
-const long = real ? 900000 : 30000;
+const long = real ? 240000 : 30000;
 
 await page.goto(link);
 await page.waitForSelector("nav");
@@ -67,7 +67,8 @@ check(await plan.isDisabled(), "a plan cannot be asked for without a goal");
 check(/No runs yet/.test(await page.locator("main").innerText()), "an empty list says so");
 await page.getByLabel("The goal").fill("Decide where our payment key should live and tell the board.");
 await plan.click();
-await page.getByRole("heading", { name: /This run/ }).waitFor({ timeout: long });
+// what the page shows if the plan never comes is saved, so a slow or refused plan can be told apart
+await page.getByRole("heading", { name: /This run/ }).waitFor({ timeout: long }).catch(async (e) => { await shot(page, "0-no-plan"); console.log("NO PLAN: " + (await page.locator("main").innerText()).replace(/\s+/g, " ").slice(0, 600) + " | " + problems.join(" ; ")); throw e; });
 const status = () => page.locator("#team-run [data-status]").getAttribute("data-status");
 const states = () => page.locator(".team-tasks > li").evaluateAll((els) => els.map((e) => e.getAttribute("data-state")));
 check((await status()) === "planned" && /Not started/.test(await page.locator("#team-run").innerText()), "the plan is shown and is not started");

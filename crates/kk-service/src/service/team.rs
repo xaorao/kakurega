@@ -241,13 +241,15 @@ impl Service {
                     } else {
                         f.title.trim()
                     };
+                    // one line per finding, so the list keeps its numbers wherever it is shown
+                    let why_line: String = why.split_whitespace().collect::<Vec<_>>().join(" ");
                     text.push_str(&format!(
-                        "{}. {} ({}:{})\n   {}\n",
+                        "{}. {} ({}:{}): {}\n",
                         i + 1,
                         title,
                         f.file,
                         f.line,
-                        why
+                        why_line
                     ));
                 }
                 if findings.is_empty() {

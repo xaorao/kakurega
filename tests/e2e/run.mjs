@@ -1869,7 +1869,7 @@ try {
   await page.getByRole("button", { name: "Ask", exact: true }).click();
   await page.getByRole("heading", { name: "Answer", exact: true }).waitFor();
   const ans = await page.locator("#h-answer").locator("xpath=..").innerText();
-  check("the answer says it is not proof and shows one quote found with its line and one not found", ans.includes("not proof") && ans.includes("1 of 2 quote(s) found") && ans.includes("Found in the file (line 1)") && ans.includes("Not found: the file does not contain this text"), ans.replace(/\n/g, " | ").slice(0, 200));
+  check("the answer says it is not proof and shows one quote found with its line and one not found", ans.includes("not proof") && ans.includes("1 of 2 quotes found") && ans.includes("Found in the file (line 1)") && ans.includes("Not found: the file does not contain this text"), ans.replace(/\n/g, " | ").slice(0, 200));
   check("the secret file is reported as not sent and its content is nowhere", ans.includes("Not sent to the model") && ans.includes(".env") && !ans.includes("sk_live"));
   const showBtn = page.getByRole("button", { name: "Show in file" });
   check("only a quote that was found offers to be shown in its file", (await showBtn.count()) === 1);
@@ -1930,7 +1930,7 @@ try {
   await page.getByText("The folder is bigger than the model can read at once").waitFor({ timeout: 60000 });
   const bigAns = await page.locator("#h-answer").locator("xpath=..").innerText();
   check("for a folder too big to read at once the page says the matching passages were chosen and names the file read in part", bigAns.includes("passages that best match your question were chosen") && bigAns.includes("matched by words only, because the meaning model is not available") && bigAns.includes("Only the matching passages were read from: zz_terms.txt"), bigAns.replace(/\n/g, " | ").slice(0, 300));
-  check("the quote from the chosen passage is checked against the real file and found", bigAns.includes("1 of 2 quote(s) found") && bigAns.includes("Found in the file (line 201)"), bigAns.replace(/\n/g, " | ").slice(0, 300));
+  check("the quote from the chosen passage is checked against the real file and found", bigAns.includes("1 of 2 quotes found") && bigAns.includes("Found in the file (line 201)"), bigAns.replace(/\n/g, " | ").slice(0, 300));
   await axeCheck(page, "documents screen with a searched folder");
   {
     // what the page says when the model gave nothing, and when it had to be asked again with fewer passages (stood in for)
