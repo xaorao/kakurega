@@ -556,7 +556,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 _ => match rest.split_once(" : ") {
                     Some((f, t)) if !f.trim().is_empty() && !t.trim().is_empty() => {
                         Ok(Command::Code {
-                            folder: f.trim().to_string(),
+                            folder: typed_folder(f),
                             task: t.trim().to_string(),
                         })
                     }
@@ -614,7 +614,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
                         Some((f, q)) if !f.trim().is_empty() && !q.trim().is_empty() => {
                             Ok(Command::Explore {
                                 depth,
-                                folder: f.trim().to_string(),
+                                folder: typed_folder(f),
                                 question: q.trim().to_string(),
                             })
                         }
@@ -762,7 +762,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 return Err(format!("usage: {}", usage("review")));
             }
             Ok(Command::Review {
-                folder: folder.to_string(),
+                folder: typed_folder(folder),
                 recipient: recipient.to_string(),
             })
         }
@@ -803,7 +803,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
         })),
         "ask" => match rest.split_once(" : ") {
             Some((f, q)) if !f.trim().is_empty() && !q.trim().is_empty() => Ok(Command::Ask {
-                folder: f.trim().to_string(),
+                folder: typed_folder(f),
                 question: q.trim().to_string(),
             }),
             _ => Err(format!("usage: {}", usage("ask"))),
@@ -1278,5 +1278,44 @@ pub fn complete(prefix: &str) -> Option<String> {
                 None
             }
         }
+    }
+}
+
+/// A folder as the owner typed it, made into the folder they mean: `~` and `~/x` are in their home folder, and `./x` and
+/// `../x` are counted from the folder the workspace was opened in. A bare name is left as it is: the service looks for it
+/// in the folders it may read.
+pub fn typed_folder(text: &str) -> String {
+    let t = text.trim();
+    let home = std::env::var("HOME").unwrap_or_default();
+    if !home.is_empty() && (t == "~" || t.starts_with("~/")) {
+        return format!("{}{}", home.trim_end_matches('/'), &t[1..]);
+    }
+    if t == "." || t == ".." || t.starts_with("./") || t.starts_with("../") {
+        if let Ok(cwd) = std::env::current_dir() {
+            return cwd.join(t).to_string_lossy().into_owned();
+        }
+    }
+    t.to_string()
+}
+
+#[cfg(test)]
+mod typed_folder_tests {
+    #[test]
+    fn home_and_dot_paths_are_made_whole_and_bare_names_are_left() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        if !home.is_empty() {
+            assert_eq!(
+                super::typed_folder("~/work/api"),
+                format!("{}/work/api", home.trim_end_matches('/'))
+            );
+            assert_eq!(super::typed_folder(" ~ "), home.trim_end_matches('/'));
+        }
+        assert!(
+            super::typed_folder("./api").ends_with("/./api")
+                && super::typed_folder("./api").starts_with('/')
+        );
+        assert_eq!(super::typed_folder("payments-service"), "payments-service");
+        assert_eq!(super::typed_folder("/abs/path"), "/abs/path");
+        assert_eq!(super::typed_folder("~user/x"), "~user/x");
     }
 }

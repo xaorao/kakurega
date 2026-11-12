@@ -8555,3 +8555,30 @@ fn tu_hdr_the_header_calls_only_a_model_on_this_computer_private() {
         header(json!({"model": "m", "simulated": false, "stays_here": false, "class": "public"}));
     assert!(hosted.contains("NOT private · m"), "{hosted}");
 }
+
+#[test]
+fn tu_quit_one_ctrl_c_does_not_end_running_work_and_a_second_one_quits() {
+    let mut app = booted();
+    // idle: one press quits, as before
+    app.handle(ctrl('c'));
+    assert!(app.quit);
+    let mut app = booted();
+    app.chat_waiting = true;
+    app.handle(ctrl('c'));
+    assert!(!app.quit, "an answer is on its way");
+    assert!(
+        text(&app).contains("Still working: an answer"),
+        "{}",
+        text(&app)
+    );
+    app.handle(ctrl('c'));
+    assert!(app.quit);
+    // an unknown @file is announced, and ~ is the home folder
+    let mut app = booted();
+    enter(&mut app, "Read @./no/such/file.md please");
+    assert!(
+        text(&app).contains("Not attached, because there is no such file here: ./no/such/file.md"),
+        "{}",
+        text(&app)
+    );
+}

@@ -339,10 +339,56 @@ pub fn window_lines(
     (visible, back)
 }
 
+/// The message as the rows it is drawn in, and the row and column of the cursor: a line break starts a row, and so does
+/// text that reaches the width of the box (counted by how wide each character is drawn). `cursor` counts characters.
+pub fn wrap_input(input: &str, cursor: usize, width: usize) -> (Vec<String>, usize, usize) {
+    let width = width.max(1);
+    let mut rows: Vec<String> = vec![String::new()];
+    let mut col = 0usize;
+    let (mut cur_row, mut cur_col) = (0usize, 0usize);
+    for (i, c) in input.chars().enumerate() {
+        if i == cursor {
+            (cur_row, cur_col) = (rows.len() - 1, col);
+        }
+        if c == '\n' {
+            rows.push(String::new());
+            col = 0;
+            continue;
+        }
+        let w = c.width().unwrap_or(0);
+        if col + w > width && col > 0 {
+            rows.push(String::new());
+            col = 0;
+            if i == cursor {
+                (cur_row, cur_col) = (rows.len() - 1, 0);
+            }
+        }
+        rows.last_mut().expect("a row").push(c);
+        col += w;
+    }
+    if cursor >= input.chars().count() {
+        // after the last character: on a new row when this one is full
+        if col >= width {
+            rows.push(String::new());
+            col = 0;
+        }
+        (cur_row, cur_col) = (rows.len() - 1, col);
+    }
+    (rows, cur_row, cur_col)
+}
+
 pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
     EXPAND.with(|e| e.set(app.expand_all));
     let area = f.area();
-    let input_lines = app.input.split('\n').count().clamp(1, 6) as u16;
+    // the message box grows with what is typed, counted as it is drawn: a long line takes the rows it wraps to
+    let input_lines = wrap_input(
+        &app.input,
+        app.cursor,
+        area.width.saturating_sub(2) as usize,
+    )
+    .0
+    .len()
+    .clamp(1, 6) as u16;
     let rows = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(3),
@@ -437,19 +483,8 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
     } else {
         ""
     };
-    let all: Vec<&str> = app.input.split('\n').collect();
-    let (cur_row, cur_col) = {
-        let before: String = app.input.chars().take(app.cursor).collect();
-        let row = before.matches('\n').count();
-        let col: usize = before
-            .rsplit('\n')
-            .next()
-            .unwrap_or("")
-            .chars()
-            .map(|c| c.width().unwrap_or(0))
-            .sum();
-        (row, col)
-    };
+    // text wider than the box wraps to the next row, so everything typed and the place of the cursor can be seen
+    let (all, cur_row, cur_col) = wrap_input(&app.input, app.cursor, inner.width as usize);
     let h = inner.height as usize;
     let first = (cur_row + 1)
         .saturating_sub(h)
@@ -460,7 +495,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
         all.iter()
             .skip(first)
             .take(h)
-            .map(|l| Line::raw((*l).to_string()))
+            .map(|l| Line::raw(l.clone()))
             .collect()
     };
     f.render_widget(Paragraph::new(shown), inner);
@@ -676,5 +711,30 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
         } else if let Some(n) = &p.scope_note {
             f.render_widget(Paragraph::new(Span::styled(n.clone(), th.dim())), parts[2]);
         }
+    }
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    use super::wrap_input;
+
+    #[test]
+    fn long_text_wraps_and_the_cursor_follows() {
+        let (rows, r, c) = wrap_input("abcdefghij", 10, 4);
+        assert_eq!(rows, vec!["abcd", "efgh", "ij"]);
+        assert_eq!((r, c), (2, 2));
+        let (rows, r, c) = wrap_input("abcd", 4, 4);
+        assert_eq!(
+            (rows.len(), r, c),
+            (2, 1, 0),
+            "a full row puts the cursor on the next one"
+        );
+        let (rows, r, c) = wrap_input("ab\ncdefg", 5, 4);
+        assert_eq!(rows, vec!["ab", "cdef", "g"]);
+        assert_eq!((r, c), (1, 2));
+        // a wide character takes two columns and is never cut in half
+        let (rows, _, _) = wrap_input("a\u{65e5}\u{672c}b", 0, 3);
+        assert_eq!(rows, vec!["a\u{65e5}", "\u{672c}b"]);
+        assert_eq!(wrap_input("", 0, 10), (vec![String::new()], 0, 0));
     }
 }

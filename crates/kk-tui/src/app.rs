@@ -55,10 +55,12 @@ pub fn mentioned_files(message: &str, cwd: &std::path::Path) -> Vec<(String, Str
             }
             if !tok.is_empty() && !tok.chars().any(char::is_control) {
                 let (base, range) = split_lines_suffix(&tok);
-                let path = if std::path::Path::new(base).is_absolute() {
-                    std::path::PathBuf::from(base)
+                // `~/notes.md` is in the home folder, as it is everywhere else the owner types a path
+                let whole = crate::cmd::typed_folder(base);
+                let path = if std::path::Path::new(&whole).is_absolute() {
+                    std::path::PathBuf::from(&whole)
                 } else {
-                    cwd.join(base)
+                    cwd.join(&whole)
                 };
                 if path.is_file() && !out.iter().any(|(t, _)| *t == tok) && out.len() < 5 {
                     let mut shown = path.to_string_lossy().into_owned();
@@ -75,6 +77,31 @@ pub fn mentioned_files(message: &str, cwd: &std::path::Path) -> Vec<(String, Str
         }
         prev = Some(c);
         i += 1;
+    }
+    out
+}
+
+/// The `@words` of a message that read like a file's path (they hold a `/`, or start with `~` or `.`) and are not a file
+/// here: the owner meant to attach them, so they are told, instead of the words going to the model as text.
+pub fn mentions_not_found(message: &str, cwd: &std::path::Path) -> Vec<String> {
+    let found: Vec<String> = mentioned_files(message, cwd)
+        .into_iter()
+        .map(|(t, _)| t)
+        .collect();
+    let mut out: Vec<String> = Vec::new();
+    for word in message.split_whitespace() {
+        let Some(tok) = word.strip_prefix('@') else {
+            continue;
+        };
+        let tok = tok.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}', '\'', '"']);
+        let pathlike = tok.contains('/') || tok.starts_with('~') || tok.starts_with('.');
+        if pathlike
+            && !tok.is_empty()
+            && !found.iter().any(|f| f == tok)
+            && !out.iter().any(|o| o == tok)
+        {
+            out.push(tok.to_string());
+        }
     }
     out
 }
@@ -453,6 +480,8 @@ pub struct App {
     pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     live: Option<(usize, String)>,
     pub chat_waiting: bool,
+    /// When Ctrl-C was pressed while work was running: a second press soon after quits.
+    quit_asked: Option<i64>,
     /// The names of the experts at the running roundtable, by id.
     pub table_names: std::collections::BTreeMap<String, String>,
     /// The team run this terminal showed last; `/team start`, `stop`, `show` and `answer` mean this one.
@@ -553,6 +582,7 @@ impl App {
             watching: BTreeMap::new(),
             inflight_polls: BTreeSet::new(),
             code_watch: None,
+            quit_asked: None,
             explore_watch: None,
             explore_shown: None,
             code_shown: None,
@@ -2276,7 +2306,32 @@ impl App {
         match k.code {
             KeyCode::Char('c') | KeyCode::Char('d') if ctrl => {
                 if self.input.is_empty() {
-                    self.quit = true;
+                    // work in progress ends when the workspace goes (a service it started stops with it): the first
+                    // press says so, a second one within five seconds quits
+                    let running: Vec<&str> = [
+                        (self.chat_waiting, "an answer"),
+                        (self.explore_watch.is_some(), "a question about a project"),
+                        (self.code_watch.is_some(), "a coding task"),
+                        (self.team_watch.is_some(), "a team run"),
+                        (self.jobs.iter().any(|j| j.state == "running"), "a review"),
+                    ]
+                    .iter()
+                    .filter(|(on, _)| *on)
+                    .map(|(_, what)| *what)
+                    .collect();
+                    let asked = self.quit_asked.is_some_and(|at| now_secs() - at <= 5);
+                    if running.is_empty() || asked {
+                        self.quit = true;
+                    } else {
+                        self.quit_asked = Some(now_secs());
+                        self.say(
+                            Kind::Warn,
+                            format!(
+                                "Still working: {}. Quitting may end it (a service this workspace started stops with it). Press Ctrl-C again to quit.",
+                                running.join(", ")
+                            ),
+                        );
+                    }
                 } else {
                     self.input.clear();
                     self.cursor = 0;
@@ -2513,32 +2568,24 @@ impl App {
         };
         match cmd {
             Command::Help => {
-                self.push(
-                    Kind::Info,
-                    Some("Commands"),
-                    vec![
-                        "/review FOLDER for RECIPIENT   start a private review".into(),
-                        "/reviews                       list reviews".into(),
-                        "/open [JOB]                    show a review's progress".into(),
-                        "/findings [JOB]  /release [JOB]   what the kernel confirmed, and what would be sent".into(),
-                        "/fixes [JOB]  /applyfix N  /undofix N   proposed fixes, checked against the reproducer".into(),
-                        "/approve [JOB]                 look at the exact files, then approve or refuse".into(),
-                        "/deliver [JOB]                 sign and deliver an approved release".into(),
-                        "/memory [WORDS]  /remember TEXT  /correct ID TEXT  /forget ID".into(),
-                        "/ask FOLDER : QUESTION         ask about documents; every quote is checked".into(),
-                        "/proof [MODEL]  /gateway       check a NEAR confidential model's or the gateway's hardware proof".into(),
-                        "/log                           the signed activity log".into(),
-                        "/verify FILE                   check a capsule offline".into(),
-                        "/stash  /pop                   put the line you are typing aside; bring it back (Ctrl-S, Ctrl-R)".into(),
-                        "Ctrl-G                         write the message in your editor ($VISUAL or $EDITOR)".into(),
-                        "Ctrl-O                         show long results whole, or fold them again".into(),
-                        "/keep                          save this conversation in the encrypted store (otherwise it is never saved)".into(),
-                        "/sessions                      pick a kept conversation or a review (type to filter, Ctrl-D twice forgets a chat)".into(),
-                        "/newchat  /clear               leave this conversation and start a fresh one".into(),
-                        "/status  /help  /quit          Tab completes, Up/Down recall, PageUp/PageDown scroll".into(),
-                        "Anything else you type is a message to the private assistant on this computer.".into(),
-                    ],
-                );
+                // every command the workspace has, from the same table the completion list uses, so none is left out
+                let mut lines: Vec<String> = vec![
+                    "Anything you type that does not start with / is a message to the assistant. /where says where the model runs and what can leave.".into(),
+                    String::new(),
+                ];
+                for name in cmd::NAMES {
+                    let usage = cmd::usage(name);
+                    let what = cmd::describe(name);
+                    if usage.chars().count() <= 30 {
+                        lines.push(format!("{usage:<30}  {what}"));
+                    } else {
+                        lines.push(usage.to_string());
+                        lines.push(format!("{:<30}  {what}", ""));
+                    }
+                }
+                lines.push(String::new());
+                lines.push("Keys: Tab completes, Up/Down recall, PageUp/PageDown scroll, Ctrl-G writes in your editor ($VISUAL or $EDITOR), Ctrl-O shows long results whole, Ctrl-S and Ctrl-R put the line aside and bring it back.".into());
+                self.push(Kind::Info, Some("Commands"), lines);
                 Vec::new()
             }
             Command::Quit => {
@@ -3791,6 +3838,16 @@ impl App {
             return Vec::new();
         }
         let cwd = std::env::current_dir().unwrap_or_default();
+        let missing = mentions_not_found(message, &cwd);
+        if !missing.is_empty() {
+            self.say(
+                Kind::Warn,
+                format!(
+                    "Not attached, because there is no such file here: {}. The message is sent without it.",
+                    missing.iter().map(|m| clean(m)).collect::<Vec<_>>().join(", ")
+                ),
+            );
+        }
         let todo = mentioned_files(message, &cwd);
         if !todo.is_empty() {
             self.chat_waiting = true;
@@ -3888,9 +3945,10 @@ impl App {
                     }
                     blocks.push(format!("You: {line}"));
                 }
-                // what a search found is about the conversation, not part of it
+                // what a search found is about the conversation, not part of it; nor is the list of commands
                 (_, Some(t))
                     if t == SEARCH_TITLE
+                        || t == "Commands"
                         || t == ASIDE_TITLE
                         || t.starts_with(TABLE_TITLE)
                         || t.starts_with(TEAM_TITLE) => {}

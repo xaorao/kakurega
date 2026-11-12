@@ -216,7 +216,11 @@ function launchCompanion() {
         state.stopped = false;
         syncShortcut();
         refreshTray();
+        // the new service usually has the address the old one had, and a link that differs only after the # does not
+        // load the page again: the page is loaded anew so it pairs with the new service
+        const before = window?.webContents.getURL() ?? "";
         await window?.loadURL(`${current.admin.origin}/#pair=${current.code}`);
+        if (before.startsWith(`${current.admin.origin}/`)) window?.webContents.reload();
         tell(t("notice.restarted.title"), t("notice.restarted.body"));
       } catch (e) {
         dialog.showErrorBox(t("error.stopped.title"), t("error.stopped.restart", { why: e.message ?? e }));

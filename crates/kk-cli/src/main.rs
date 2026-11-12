@@ -201,6 +201,13 @@ fn main() -> ExitCode {
         {
             tui::run(&args)
         }
+        // the workspace's own options without the word `tui`, as the usage line writes them: `kaku --resume`,
+        // `kaku --linear`, `kaku --data-dir DIR`; and plain-line mode asked for by its variable, which needs no terminal
+        Some(
+            "--resume" | "--linear" | "--fork" | "--data-dir" | "--root" | "--model" | "--ollama"
+            | "--profile",
+        ) => tui::run(&args),
+        None if std::env::var("KAKU_LINEAR").is_ok_and(|v| v == "1") => tui::run(&args),
         Some("--help") | Some("-h") | None => {
             println!("{USAGE}");
             0
