@@ -1,6 +1,7 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, type ProjectFloor, type ProjectRow } from "../api";
 import { t, type Key } from "../i18n";
+import { shortPath } from "../components/ChosenFolder";
 
 const leave = (key: string, value: string) => { try { sessionStorage.setItem(key, value); } catch { /* the screen then opens without it */ } };
 
@@ -49,7 +50,7 @@ export function Projects() {
                 <li class="card stack">
                   <h2>{p.name}</h2>
                   <ul class="plain muted">
-                    <li>{p.folder ? (p.folder_available ? t("proj.docsIn", { folder: p.folder }) : t("proj.docsGone", { folder: p.folder })) : t("proj.noFolder")}</li>
+                    <li>{p.folder ? (p.folder_available ? t("proj.docsIn", { folder: shortPath(p.folder) }) : t("proj.docsGone", { folder: shortPath(p.folder) })) : t("proj.noFolder")}</li>
                     <li>{t("proj.chats", { n: p.conversations })}</li>
                     <Show when={p.notes_only}><li>{t("proj.notesOnly")}</li></Show>
                   </ul>

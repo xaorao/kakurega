@@ -542,7 +542,7 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
               </Show>
               <Show when={approval().state === "none"}>
                 <p>{t("appr.intro")}</p>
-                <button class="primary" disabled={busy() || expired()} onClick={ask}>{t("appr.request")}</button>
+                <button class="primary" disabled={busy() || expired() || r().disclosure?.verdict === "block"} onClick={ask}>{t("appr.request")}</button>
               </Show>
               <Show when={approval().state === "waiting"}>
                 <p>{rich("appr.waiting")}</p>

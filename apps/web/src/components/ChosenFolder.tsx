@@ -6,7 +6,9 @@ import { t } from "../i18n";
  *  is known nothing is shortened. */
 let home: string | null = null;
 export const learnHome = (p: string | null | undefined) => {
-  home = p && p.startsWith("/") && p.length > 1 ? p.replace(/\/+$/, "") : null;
+  const h = p && p.startsWith("/") ? p.replace(/\/+$/, "") : "";
+  // a home of "/" or "//" would make every path look like it is inside it
+  home = h.length > 1 ? h : null;
 };
 export const shortPath = (p: string) => (home !== null && (p === home || p.startsWith(`${home}/`)) ? `~${p.slice(home.length)}` : p);
 

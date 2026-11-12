@@ -790,9 +790,9 @@ cut_short: false,
             },
         });
         progress(&match left.restricted {
-            0 => format!("the model works on {} files", ws.files().len()),
-            1 => format!("the model works on {} files; 1 is withheld because it holds secrets or private data", ws.files().len()),
-            n => format!("the model works on {} files; {n} are withheld because they hold secrets or private data", ws.files().len()),
+            0 => kk_types::words::counted(&format!("the model works on {} file(s)", ws.files().len())),
+            1 => kk_types::words::counted(&format!("the model works on {} file(s); 1 is withheld because it holds secrets or private data", ws.files().len())),
+            n => kk_types::words::counted(&format!("the model works on {} file(s); {n} are withheld because they hold secrets or private data", ws.files().len())),
         });
         let report = run_task_with(
             route.as_ref(),
@@ -852,9 +852,9 @@ cut_short: false,
             )
         };
         progress(&match left.restricted {
-            0 => format!("the model reads {} files", ws.files().len()),
-            1 => format!("the model reads {} files; 1 is withheld because it holds secrets or private data", ws.files().len()),
-            n => format!("the model reads {} files; {n} are withheld because they hold secrets or private data", ws.files().len()),
+            0 => kk_types::words::counted(&format!("the model reads {} file(s)", ws.files().len())),
+            1 => kk_types::words::counted(&format!("the model reads {} file(s); 1 is withheld because it holds secrets or private data", ws.files().len())),
+            n => kk_types::words::counted(&format!("the model reads {} file(s); {n} are withheld because they hold secrets or private data", ws.files().len())),
         });
         let scripts = SandboxScripts {
             transport: &self.transport,
