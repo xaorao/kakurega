@@ -1165,10 +1165,10 @@ fn refusal(a: &Answer) -> Value {
             .unwrap_or(at + 60);
         let mut v = fail(
             "RATE_LIMITED",
-            &format!(
+            &kk_types::words::counted(&format!(
                 "GitHub's limit on requests is reached; it can be asked again in about {} second(s). This program does not retry on its own.",
                 (until - at).max(1)
-            ),
+            )),
         );
         v["retry_at"] = json!(until);
         return v;

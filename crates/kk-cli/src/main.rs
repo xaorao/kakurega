@@ -89,14 +89,28 @@ Usage:
 
   kaku profile [list] | new NAME | use NAME | current | remove NAME [--confirm NAME]   separate sets of keys, memory, skills and settings
 
-Options for every command: --profile NAME (a profile made with `kaku profile new`), or --data-dir DIR (default ~/.kakurega, the profile `default`)";
+Options for every command: --profile NAME (a profile made with `kaku profile new`; with ask, chat, roundtable, team, code and notes put it before the command or right after it, since what follows is your own text), or --data-dir DIR (default ~/.kakurega, the profile `default`)";
+
+/// Where `--profile` stands as an option. After a command that takes free text ("kaku chat explain the --profile flag")
+/// the words are the owner's: there it is an option only when it stands before the command or right after it.
+fn profile_option(args: &[String]) -> Option<usize> {
+    let free_text = args.first().is_some_and(|c| {
+        matches!(
+            c.as_str(),
+            "ask" | "chat" | "roundtable" | "team" | "code" | "notes"
+        )
+    });
+    args.iter()
+        .position(|a| a == "--profile")
+        .filter(|i| *i <= 1 || !free_text)
+}
 
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     // `--profile NAME` may stand anywhere. It is taken out of the arguments here, checked, and handed on as the
     // KAKU_PROFILE variable, which `data_dir` reads: no command sees an extra word among its own, and a service this
     // command starts works in the same profile. `--data-dir` still wins over it.
-    if let Some(i) = args.iter().position(|a| a == "--profile") {
+    if let Some(i) = profile_option(&args) {
         let Some(name) = args.get(i + 1).cloned() else {
             eprintln!("--profile needs a profile's name");
             return ExitCode::from(2);
@@ -225,5 +239,24 @@ pub fn data_dir(args: &[String]) -> std::path::PathBuf {
             eprintln!("{why}");
             std::process::exit(2);
         }
+    }
+}
+
+#[cfg(test)]
+mod profile_option_tests {
+    use super::profile_option;
+
+    #[test]
+    fn the_option_is_read_anywhere_except_inside_a_free_text_command() {
+        let of =
+            |line: &str| profile_option(&line.split(' ').map(String::from).collect::<Vec<_>>());
+        assert_eq!(of("--profile work config path"), Some(0));
+        assert_eq!(of("config --profile work path"), Some(1));
+        assert_eq!(of("serve --profile work"), Some(1));
+        assert_eq!(of("--profile work chat hello there"), Some(0));
+        assert_eq!(of("chat --profile work hello there"), Some(1));
+        assert_eq!(of("chat explain the --profile flag"), None);
+        assert_eq!(of("ask what does --profile work do"), None);
+        assert_eq!(of("status"), None);
     }
 }

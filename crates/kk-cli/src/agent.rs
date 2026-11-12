@@ -41,12 +41,12 @@ fn usage_grant() -> String {
 fn describe(lease: &Value, now: i64) -> String {
     let left = lease["expires_at"].as_i64().unwrap_or(now) - now;
     let minutes = (left + 59) / 60;
-    format!(
+    kk_types::words::counted(&format!(
         "  {}: {} use(s) left, {} minute(s) remaining",
         lease["tool"].as_str().unwrap_or("?"),
         lease["remaining"].as_i64().unwrap_or(0),
         minutes.max(0)
-    )
+    ))
 }
 
 pub fn run(args: &[String]) -> u8 {
@@ -84,7 +84,7 @@ pub fn run(args: &[String]) -> u8 {
                 json!({"tool": tool, "uses": uses, "minutes": minutes}),
             ) {
                 Ok((200, _)) => {
-                    println!("An agent started with `kaku mcp --leased` may now use {tool} {uses} time(s) in the next {minutes} minute(s).");
+                    println!("{}", kk_types::words::counted(&format!("An agent started with `kaku mcp --leased` may now use {tool} {uses} time(s) in the next {minutes} minute(s).")));
                     println!("Revoke it at any time with: kaku agent revoke {tool}");
                     0
                 }
@@ -187,10 +187,10 @@ mod tests {
     #[test]
     fn ag02_the_time_left_rounds_up_and_never_goes_negative() {
         let l = json!({"tool": "start_review", "remaining": 2, "expires_at": 1000});
-        assert!(describe(&l, 1000 - 61).contains("2 minute(s)"));
-        assert!(describe(&l, 1000 - 60).contains("1 minute(s)"));
-        assert!(describe(&l, 1000 - 1).contains("1 minute(s)"));
-        assert!(describe(&l, 5000).contains("0 minute(s)"));
-        assert!(describe(&l, 0).contains("2 use(s) left"));
+        assert!(describe(&l, 1000 - 61).contains("2 minutes"));
+        assert!(describe(&l, 1000 - 60).contains("1 minute"));
+        assert!(describe(&l, 1000 - 1).contains("1 minute"));
+        assert!(describe(&l, 5000).contains("0 minutes"));
+        assert!(describe(&l, 0).contains("2 uses left"));
     }
 }

@@ -98,7 +98,7 @@ fn ee01_show_lists_every_setting_with_its_value_and_where_the_value_came_from() 
     // the plain text says the same in words
     let t = out(&kaku(&home, &["config", "--data-dir", &d], &[]));
     assert!(
-        t.contains("applied, 3 setting(s) set")
+        t.contains("applied, 3 settings set")
             && t.contains("from config.toml")
             && t.contains("from the default"),
         "{t}"
@@ -130,7 +130,7 @@ fn ee02_check_is_ok_for_no_file_and_a_correct_file_and_lists_every_problem_with_
     let o = kaku(&home, &["config", "check", "--data-dir", &d], &[]);
     assert_eq!(o.status.code(), Some(1));
     let t = out(&o);
-    assert!(t.contains("4 problem(s), so none of it is applied"), "{t}");
+    assert!(t.contains("4 problems, so none of it is applied"), "{t}");
     for part in [
         "quite: unknown setting (did you mean `quiet`?)",
         "notify: must be one of",

@@ -6,6 +6,7 @@ publish.workspace = true
 description = "One shared secret detector for import, memory and release: provider token formats, keyword assignments with false-positive filters, URL passwords, wallet keys, and decoded segments"
 
 [dependencies]
+sha2 = "0.10"
 
 [lints]
 workspace = true

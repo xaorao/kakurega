@@ -188,10 +188,10 @@ pub fn run(args: &[String]) -> u8 {
         }
     }
     if let Some(dis) = d.get("disclosure").filter(|v| v.is_object()) {
-        println!(
+        println!("{}", kk_types::words::counted(&format!(
             "\nCumulative disclosure: {} of {} project files would have been shown to this recipient ({} earlier release(s)).",
             dis["files_after"], dis["project_files"], dis["releases_before"]
-        );
+        )));
         for r in dis["reasons"].as_array().into_iter().flatten() {
             println!("  ! {}", r.as_str().unwrap_or(""));
         }

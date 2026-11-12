@@ -462,11 +462,11 @@ impl Workspace {
         Ok(if places > 1 {
             format!("{path} changed in {places} places")
         } else {
-            format!(
+            kk_types::words::counted(&format!(
                 "{path} changed ({} line(s) replaced by {})",
                 old.lines().count().max(1),
                 new.lines().count()
-            )
+            ))
         })
     }
 

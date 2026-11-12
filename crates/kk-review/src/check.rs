@@ -1105,7 +1105,7 @@ pub enum TestRun {
 impl TestRun {
     pub fn describe(&self) -> String {
         match self {
-            TestRun::Passed(n) => format!("{n} test(s) passed"),
+            TestRun::Passed(n) => kk_types::words::counted(&format!("{n} test(s) passed")),
             TestRun::Failed(m) => format!("tests failed: {m}"),
             TestRun::NoTests => "the project has no unittest tests that could run".into(),
             TestRun::Unavailable(m) => format!("the tests could not be run: {m}"),
@@ -1192,12 +1192,12 @@ pub fn compare_test_runs(before: &TestRun, after: &TestRun) -> TestVerdict {
         return TestVerdict::NotComparable(format!("before the change: {}", before.describe()));
     };
     match after {
-        TestRun::Passed(now) if now >= had => TestVerdict::Maintained(format!(
-            "the project's {now} test(s) passed before and after this change"
+        TestRun::Passed(now) if now >= had => TestVerdict::Maintained(kk_types::words::counted(
+            &format!("the project's {now} test(s) passed before and after this change"),
         )),
-        TestRun::Passed(now) => TestVerdict::Broken(format!(
+        TestRun::Passed(now) => TestVerdict::Broken(kk_types::words::counted(&format!(
             "{had} test(s) passed before this change but only {now} ran after it"
-        )),
+        ))),
         TestRun::Failed(m) => TestVerdict::Broken(format!(
             "the project's tests passed before this change and fail after it: {m}"
         )),
@@ -1595,9 +1595,9 @@ pub fn parse_node_test(exit: &Exit, stdout: &str) -> TestRun {
         return TestRun::Failed("the test summary does not add up".into());
     }
     if fail > 0 || cancelled > 0 {
-        return TestRun::Failed(format!(
+        return TestRun::Failed(kk_types::words::counted(&format!(
             "{fail} test(s) failed and {cancelled} were cancelled{hint}"
-        ));
+        )));
     }
     let uncounted_failure = lines.iter().any(|l| {
         let l = l.trim_start();

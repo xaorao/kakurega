@@ -489,7 +489,7 @@ fn n04_the_crates_own_tests_are_run_and_a_fix_is_held_to_the_reproducer_the_test
     // the real fix: the reproducer stops reproducing and the tests still pass
     let (status, note) = verify_fix_with_tests(&f, &before, &fix(REAL_FIX.0, REAL_FIX.1), &idx, &e);
     assert_eq!(status, FixStatus::FixesTheReproducer, "{note}");
-    assert!(note.contains("3 test(s) passed before and after"), "{note}");
+    assert!(note.contains("3 tests passed before and after"), "{note}");
     // a cosmetic change leaves the defect
     let cosmetic = fix(
         "let _copy = token.to_string();",

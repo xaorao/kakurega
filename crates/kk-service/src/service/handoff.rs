@@ -6,7 +6,7 @@ use super::*;
 
 const MAX_CHARS: usize = 20_000;
 const KEEP_SECS: i64 = 600;
-pub(super) const NOTICE: &str = "This is not private. The text below goes to the coding agent installed on this computer, which sends it to its maker under your own account, together with its own instructions and your own settings for it. It is run for one answer with all of its tools switched off, in an empty folder: it is given this text and nothing else from this program.";
+pub(super) const NOTICE: &str = "This is not private. The text below goes to the coding agent installed on this computer, which sends it to its maker under your own account, together with its own instructions. Your settings, hooks and instruction files for it are not loaded. It is run for one answer with all of its tools switched off, in an empty folder: it is given this text and nothing else from this program.";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

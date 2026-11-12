@@ -941,7 +941,9 @@ pub fn parse_rust_tests(exit: &Exit, stdout: &str) -> TestRun {
         return TestRun::Failed("the lines that report each test do not match the summary".into());
     }
     if failed > 0 {
-        return TestRun::Failed(format!("{failed} test(s) failed"));
+        return TestRun::Failed(kk_types::words::counted(&format!(
+            "{failed} test(s) failed"
+        )));
     }
     if *exit != Exit::Code(0) {
         return TestRun::Failed(format!("the test run ended with {exit:?}"));

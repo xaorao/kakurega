@@ -19,7 +19,7 @@ export const en = {
   "badge.remote": "Model at {host}, not on this computer",
   "badge.remote.title": "Your questions are sent to {host}. Open Where your data goes to see exactly what.",
   "badge.unknown": "Where the model runs is not reported",
-  "hand.notice": "This is not private. The text below goes to the coding agent installed on this computer, which sends it to its maker under your own account, together with its own instructions and your own settings for it. It is run for one answer with all of its tools switched off, in an empty folder: it is given this text and nothing else from this program.",
+  "hand.notice": "This is not private. The text below goes to the coding agent installed on this computer, which sends it to its maker under your own account, together with its own instructions. Your settings, hooks and instruction files for it are not loaded. It is run for one answer with all of its tools switched off, in an empty folder: it is given this text and nothing else from this program.",
   "badge.sandbox.vm": "sandbox in the {vm} virtual machine",
   "badge.sandbox.local": "local sandbox",
   "badge.model.scripted": "scripted test model",

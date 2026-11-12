@@ -382,6 +382,10 @@ pub struct App {
     code_shown: Option<(String, String)>,
     approval_watch_inflight: bool,
     pub chat_history: Vec<(String, String)>,
+    /// How privately the messages in `chat_history` were held: the most private route any of them was answered on (3 this
+    /// computer, 2 confidential hardware elsewhere, 1 hosted). Sent with them, so the service refuses to hand them to a
+    /// less private model.
+    pub held_level: i64,
     pub session: Option<String>,
     /// The project this conversation is about: its notes are offered, and no other project's. Set from the repository the
     /// terminal was started in, by `/project`, or by a kept conversation.
@@ -463,50 +467,7 @@ pub fn percent_encode(s: &str) -> String {
     out
 }
 
-/// "1 file(s)" becomes "1 file", "3 file(s)" becomes "3 files", and "1 note(s) were" becomes "1 note was". The count is
-/// the nearest number within the three words before the counted word; with no number in reach the word is made plural.
-pub fn counted(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut rest = line;
-    while let Some(at) = rest.find("(s)") {
-        let before = &rest[..at];
-        let one = before
-            .split_whitespace()
-            .rev()
-            .take(4)
-            .find_map(|w| {
-                let digits: String = w
-                    .chars()
-                    .filter(|c| c.is_ascii_digit() || *c == ',')
-                    .collect();
-                let plain = w.trim_matches(|c: char| !c.is_ascii_alphanumeric());
-                (!digits.is_empty() && plain.chars().all(|c| c.is_ascii_digit() || c == ','))
-                    .then(|| digits == "1")
-            })
-            .unwrap_or(false);
-        out.push_str(before);
-        if !one {
-            out.push('s');
-        }
-        let mut after = &rest[at + 3..];
-        if one {
-            for (many, single) in [
-                (" were ", " was "),
-                (" are ", " is "),
-                (" hold ", " holds "),
-            ] {
-                if let Some(tail) = after.strip_prefix(many) {
-                    out.push_str(single);
-                    after = tail;
-                    break;
-                }
-            }
-        }
-        rest = after;
-    }
-    out.push_str(rest);
-    out
-}
+pub use kk_types::words::counted;
 
 pub fn clean(s: &str) -> String {
     s.chars()
@@ -582,6 +543,7 @@ impl App {
             code_shown: None,
             approval_watch_inflight: false,
             chat_history: Vec::new(),
+            held_level: 0,
             session: None,
             chat_project: None,
             shown_methods: std::collections::HashMap::new(),
@@ -645,12 +607,6 @@ impl App {
     }
 
     fn push(&mut self, kind: Kind, title: Option<&str>, mut lines: Vec<String>) {
-        // counted words are written "file(s)" where they are made; here, in one place, they get their real form
-        for l in lines.iter_mut() {
-            if l.contains("(s)") {
-                *l = counted(l);
-            }
-        }
         if lines.len() > MAX_CARD_LINES {
             let cut = lines.len() - MAX_CARD_LINES;
             lines.truncate(MAX_CARD_LINES);
@@ -945,10 +901,10 @@ impl App {
             None => {
                 self.say(
                     Kind::Error,
-                    format!(
+                    counted(&format!(
                         "This conversation has {} message(s); choose a number up to that.",
                         self.chat_history.len()
-                    ),
+                    )),
                 );
                 return Vec::new();
             }
@@ -2390,6 +2346,7 @@ impl App {
             }
             Command::Clear | Command::NewChat => {
                 self.chat_history.clear();
+                self.held_level = 0;
                 self.context_meter = None;
                 self.web_pages.clear();
                 self.search_hits.clear();
@@ -2567,9 +2524,9 @@ impl App {
                 if at > total {
                     self.say(
                         Kind::Error,
-                        format!(
+                        counted(&format!(
                             "This conversation has {total} message(s); choose a number up to that."
-                        ),
+                        )),
                     );
                     return Vec::new();
                 }
@@ -3496,6 +3453,9 @@ impl App {
                     .collect();
                 // no session id is sent, so the service has nothing to append the exchange to
                 let mut body = json!({"message": text, "history": history});
+                if !self.chat_history.is_empty() {
+                    body["held"] = json!(self.held_level);
+                }
                 if let Some(p) = &self.chat_project {
                     body["project"] = json!(p);
                 }
@@ -3576,6 +3536,10 @@ impl App {
             "/api/chat/stream",
             Some({
                 let mut body = json!({"message": message, "history": history});
+                // one message is this question; anything before it was answered earlier
+                if self.session.is_none() && self.chat_history.len() > 1 {
+                    body["held"] = json!(self.held_level);
+                }
                 if !attachments.is_empty() {
                     body["attachments"] = json!(attachments);
                 }
@@ -4298,10 +4262,10 @@ impl App {
                 match scan["status"].as_str() {
                     Some("ran") => self.say(
                         Kind::Info,
-                        format!(
+                        counted(&format!(
                             "Pattern rules ran over {} files and matched {} place(s). A match is not a reproduction, and no match does not mean the code is safe.",
                             scan["files"], scan["matches"]
-                        ),
+                        )),
                     ),
                     Some("failed") => self.say(
                         Kind::Warn,
@@ -4863,10 +4827,10 @@ impl App {
                 if ok {
                     self.say(
                         Kind::Ok,
-                        format!(
+                        counted(&format!(
                             "Applied {id} to {} file(s). /code undo puts them back.",
                             body["files"]
-                        ),
+                        )),
                     );
                 } else {
                     self.say(Kind::Error, err_text(status, &body));
@@ -5258,7 +5222,7 @@ impl App {
                             "Could not attach @{}: {} The message was not sent; it is back in the box.{}",
                             clean(&token),
                             err_text(status, &body),
-                            if dropped > 0 { format!(" {dropped} queued message(s) were dropped.") } else { String::new() }
+                            if dropped > 0 { counted(&format!(" {dropped} queued message(s) were dropped.")) } else { String::new() }
                         ),
                     );
                     if let Some(f) = flow {
@@ -5819,12 +5783,12 @@ impl App {
                     }
                 }
                 lines.push(String::new());
-                lines.push(format!(
+                lines.push(counted(&format!(
                     "{} file(s) read, {} withheld, {} too large",
                     body["files_used"].as_array().map_or(0, |a| a.len()),
                     body["files_withheld"].as_array().map_or(0, |a| a.len()),
                     body["files_skipped"].as_array().map_or(0, |a| a.len())
-                ));
+                )));
                 if body["injection_suspects"]
                     .as_array()
                     .is_some_and(|a| !a.is_empty())
@@ -6032,10 +5996,10 @@ impl App {
                 let mut lines = if list.is_empty() {
                     vec!["Nothing is on your list: every value that looks like personal data is counted in release notices.".to_string()]
                 } else {
-                    let mut v = vec![format!(
+                    let mut v = vec![counted(&format!(
                         "{} value(s) you said are not personal data:",
                         list.len()
-                    )];
+                    ))];
                     v.extend(list);
                     v
                 };
@@ -6289,7 +6253,7 @@ impl App {
                     self.chat_history.pop();
                     let dropped = std::mem::take(&mut self.queued).len();
                     if dropped > 0 {
-                        self.say(Kind::Warn, format!("{dropped} queued message(s) were not sent because the answer did not finish. Type them again."));
+                        self.say(Kind::Warn, counted(&format!("{dropped} queued message(s) were not sent because the answer did not finish. Type them again.")));
                     }
                     if let Some((i, partial)) = live {
                         if let Some(c) = self.cards.get_mut(i) {
@@ -6314,8 +6278,9 @@ impl App {
                 }
                 let reply = body["reply"].as_str().unwrap_or("").to_string();
                 self.chat_history.push(("assistant".into(), reply.clone()));
+                self.held_level = self.held_level.max(body["level"].as_i64().unwrap_or(3));
                 let no_model = body["route"]["id"] == "none";
-                let mut foot = vec![format!(
+                let mut foot = vec![counted(&format!(
                     "{} · {} note(s) used",
                     if no_model {
                         "no model was asked: this project answers only from its own notes and files, and none fit"
@@ -6325,7 +6290,7 @@ impl App {
                         "private, on this computer"
                     },
                     body["notes_used"]
-                )];
+                ))];
                 if let Some(p) = body["project"].as_str() {
                     foot[0].push_str(&format!(" · project {}", clean(p)));
                 }
@@ -6335,12 +6300,12 @@ impl App {
                 {
                     let u = &body["usage"];
                     // the model's own count when it gave one, otherwise the estimate; the window only if the service sent it
-                    let counted = u["estimate"] == false
+                    let measured = u["estimate"] == false
                         && u["context_tokens"].as_u64().is_some_and(|n| n > 0);
                     let n = u["context_tokens"].as_u64().unwrap_or(estimated);
                     self.context_meter =
-                        Some(context_meter(n, u["context_window"].as_u64(), counted));
-                    let how = if counted {
+                        Some(context_meter(n, u["context_window"].as_u64(), measured));
+                    let how = if measured {
                         ", counted by the model"
                     } else {
                         ""
@@ -6348,7 +6313,7 @@ impl App {
                     match u["context_window"].as_u64().filter(|w| *w > 0) {
                         Some(max) => {
                             let pct = (n.saturating_mul(100) / max).min(999);
-                            foot.push(if counted {
+                            foot.push(if measured {
                                 format!("{n} of {max} tokens of context used ({pct}%{how})")
                             } else {
                                 format!("about {n} of {max} tokens of context used ({pct}%)")
@@ -6357,7 +6322,7 @@ impl App {
                                 foot.push("This conversation is close to the model's limit. Start a new conversation soon.".into());
                             }
                         }
-                        None if counted => {
+                        None if measured => {
                             foot.push(format!("{n} tokens of context sent (counted by the model)"))
                         }
                         None => foot.push(format!("about {n} tokens of context sent")),
@@ -6389,7 +6354,7 @@ impl App {
                     }
                     let dropped = body["usage"]["history_turns_dropped"].as_u64().unwrap_or(0);
                     if dropped > 0 {
-                        foot.push(format!("{dropped} older message(s) were not sent because the conversation is long"));
+                        foot.push(counted(&format!("{dropped} older message(s) were not sent because the conversation is long")));
                     }
                 }
                 if body["cut_short"] == true {
@@ -6421,54 +6386,57 @@ impl App {
                     ));
                 }
                 if body["notes_withheld"].as_u64().unwrap_or(0) > 0 {
-                    foot.push(format!("{} note(s) were not given to the model because they look like instructions.", body["notes_withheld"]));
+                    foot.push(counted(&format!("{} note(s) were not given to the model because they look like instructions.", body["notes_withheld"])));
                 }
                 if body["notes_left_out"].as_u64().unwrap_or(0) > 0 {
-                    foot.push(format!(
+                    foot.push(counted(&format!(
                         "{} matching note(s) left out: no room in the model's window",
                         body["notes_left_out"]
-                    ));
+                    )));
                 }
                 let pages = |k: &str| body[k].as_u64().unwrap_or(0);
                 if pages("web_sources_used") > 0 {
-                    foot.push(format!("{} web page(s) used", pages("web_sources_used")));
+                    foot.push(counted(&format!(
+                        "{} web page(s) used",
+                        pages("web_sources_used")
+                    )));
                 }
                 if pages("web_sources_trimmed") > 0 {
-                    foot.push(format!(
+                    foot.push(counted(&format!(
                         "{} page(s) cut short to fit the model's window",
                         pages("web_sources_trimmed")
-                    ));
+                    )));
                 }
                 if pages("web_sources_left_out") > 0 {
-                    foot.push(format!(
+                    foot.push(counted(&format!(
                         "{} page(s) left out: no room in the model's window",
                         pages("web_sources_left_out")
-                    ));
+                    )));
                 }
                 let files = |k: &str| body["files"][k].as_u64().unwrap_or(0);
                 if files("used") > 0 {
-                    foot.push(format!(
+                    foot.push(counted(&format!(
                         "{} attached file(s) read for this answer",
                         files("used")
-                    ));
+                    )));
                 }
                 if files("trimmed") > 0 {
-                    foot.push(format!(
+                    foot.push(counted(&format!(
                         "{} attached file(s) cut short to fit the model's window",
                         files("trimmed")
-                    ));
+                    )));
                 }
                 if files("left_out") > 0 {
-                    foot.push(format!(
+                    foot.push(counted(&format!(
                         "{} attached file(s) left out: no room in the model's window",
                         files("left_out")
-                    ));
+                    )));
                 }
                 if files("withheld_instructions") + files("withheld_secrets") > 0 {
-                    foot.push(format!(
+                    foot.push(counted(&format!(
                         "{} passage(s) of attached files were not given to the model (they read like instructions or hold a secret)",
                         files("withheld_instructions") + files("withheld_secrets")
-                    ));
+                    )));
                 }
                 // the answer is a card of its own so it can be shown as formatted text; what the answer cost and used follows as a plain card
                 let lines = text_lines(&reply);
@@ -6775,14 +6743,14 @@ impl App {
                                 } else {
                                     title
                                 },
-                                detail: format!(
+                                detail: counted(&format!(
                                     "{} message(s){}",
                                     k["turns"].as_u64().unwrap_or(0),
                                     k["project"].as_str().map_or(String::new(), |p| format!(
                                         " · project {}",
                                         clean(p)
                                     ))
-                                ),
+                                )),
                                 when: k["updated"].as_i64().unwrap_or(0),
                                 kind: crate::picker::ItemKind::Chat,
                                 project: k["project"].as_str().map(clean),
@@ -6805,10 +6773,13 @@ impl App {
                     return Vec::new();
                 }
                 self.chat_history.clear();
+                self.held_level = 0;
                 self.context_meter = None;
                 self.cards.clear();
                 self.live = None;
                 self.chat_project = body["project"].as_str().map(clean);
+                // a kept conversation says how privately it was held; a service that does not say is read as the most private
+                self.held_level = body["held"].as_i64().unwrap_or(3);
                 for t in body["turns"].as_array().into_iter().flatten() {
                     let (role, content) = (
                         t["role"].as_str().unwrap_or(""),
@@ -6864,6 +6835,7 @@ impl App {
                 if ok && self.session.as_deref() == Some(id.as_str()) {
                     self.session = None;
                     self.chat_history.clear();
+                    self.held_level = 0;
                     self.context_meter = None;
                 }
                 Vec::new()
@@ -7003,10 +6975,10 @@ pub fn release_lines_at(d: &Value, now: i64) -> Vec<String> {
     }
     if let Some(dis) = d.get("disclosure").filter(|v| v.is_object()) {
         lines.push(String::new());
-        lines.push(format!(
+        lines.push(counted(&format!(
             "Cumulative disclosure: {} of {} project files would have been shown to this recipient ({} earlier release(s)).",
             dis["files_after"], dis["project_files"], dis["releases_before"]
-        ));
+        )));
         for r in dis["reasons"].as_array().into_iter().flatten() {
             lines.push(format!("  [!] {}", clean(r.as_str().unwrap_or(""))));
         }

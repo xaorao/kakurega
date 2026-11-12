@@ -101,6 +101,11 @@ fn classify(
             }
             secret = true;
         }
+        // a password written out in words ("the router password is ...") has no shape the main detector knows
+        if !secret && kk_secrets::spoken::holds(t) {
+            notes.push("content holds a password or code written out in words".into());
+            secret = true;
+        }
         let read = kk_types::injection::scan(t);
         if read.instruction_like() {
             notes.push("contains text addressed to AI tools (possible prompt injection)".into());

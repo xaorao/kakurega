@@ -175,8 +175,11 @@ fn catalog(args: &[String]) -> Result<(), String> {
         .and_then(|mut f| f.write_all(signed.as_bytes()))
         .map_err(|e| format!("cannot write {out}: {e} (an existing file is never overwritten)"))?;
     println!(
-        "signed catalog of {} pack(s) written to {out}; it expires in {days} days",
-        packs.len()
+        "{}",
+        kk_types::words::counted(&format!(
+            "signed catalog of {} pack(s) written to {out}; it expires in {days} days",
+            packs.len()
+        ))
     );
     println!("publisher key id: {}", signer.key_id());
     Ok(())
@@ -197,9 +200,12 @@ fn check_catalog(args: &[String]) -> Result<(), String> {
                 )
             })?;
     println!(
-        "OK: catalog of {} pack(s) signed by {}",
-        c.entries.len(),
-        keys::KeyId::of(&public).as_str()
+        "{}",
+        kk_types::words::counted(&format!(
+            "OK: catalog of {} pack(s) signed by {}",
+            c.entries.len(),
+            keys::KeyId::of(&public).as_str()
+        ))
     );
     let dir = crate::flag(args, "--dir");
     let mut wrong = 0;
@@ -223,9 +229,9 @@ fn check_catalog(args: &[String]) -> Result<(), String> {
         println!("  {} {}  {}{}", e.name, e.version, e.file, state);
     }
     if wrong > 0 {
-        return Err(format!(
+        return Err(kk_types::words::counted(&format!(
             "{wrong} file(s) are missing or are not the ones the catalog lists"
-        ));
+        )));
     }
     Ok(())
 }

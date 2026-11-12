@@ -2366,34 +2366,149 @@ fn scan_wallets(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
     ] {
         let mut f = 0;
         while let Some(i) = lower[f..].find(kw) {
-            let after =
-                text[f + i + kw.len()..].trim_start_matches([' ', ':', '=', '"', '\'', '-']);
+            // the phrase may follow a sign, a dash, a quote, or stand on the next line
+            let lead = [
+                ' ', '\t', ':', '=', '"', '\'', '-', '\r', '\n', '“', '‘', '(', '[', '`', '>',
+            ];
+            let mut after = text[f + i + kw.len()..].trim_start_matches(lead);
+            for link in ["is ", "was ", "are ", "is: ", "is:\n"] {
+                if let Some(rest) = after.strip_prefix(link) {
+                    after = rest.trim_start_matches(lead);
+                    break;
+                }
+            }
+            let start = text.len() - after.len();
             f = f + i + kw.len();
             let line = after.lines().next().unwrap_or("");
-            let words: Vec<&str> = line.split_whitespace().take(24).collect();
-            let plain = words
+            // each word without what may be wrapped around it or follow it ("abandon," or abandon")
+            let bare = |w: &str| -> String {
+                w.trim_matches(['"', '\'', ',', '.', ';', '”', '’', ')', ']', '`'])
+                    .to_ascii_lowercase()
+            };
+            let raw: Vec<&str> = line.split_whitespace().collect();
+            let plain = raw
                 .iter()
                 .take_while(|w| {
-                    w.len() >= 3 && w.len() <= 8 && w.chars().all(|c| c.is_ascii_lowercase())
+                    let b = bare(w);
+                    b.len() >= 3 && b.len() <= 8 && b.chars().all(|c| c.is_ascii_lowercase())
                 })
                 .count();
+            // words not on the standard list: only a run of exactly a standard length is taken for a phrase (a run of
+            // standard words is found below, whatever follows it)
+            let len = plain;
+            if ![12, 15, 18, 21, 24].contains(&len) {
+                continue;
+            }
             // No embedded word list yet: ordinary sentences are told apart by repeated words and common function words.
-            let phrase = &words[..plain.min(words.len())];
+            let phrase: Vec<String> = raw[..len].iter().map(|w| bare(w)).collect();
             const COMMON: &[&str] = &[
                 "the", "and", "over", "with", "that", "this", "for", "are", "was", "were", "you",
                 "your", "not", "but", "have", "from", "will", "all", "can",
             ];
-            let distinct: std::collections::BTreeSet<&&str> = phrase.iter().collect();
+            let distinct: std::collections::BTreeSet<&String> = phrase.iter().collect();
             if distinct.len() != phrase.len()
-                || phrase.iter().filter(|w| COMMON.contains(w)).count() >= 2
+                || phrase
+                    .iter()
+                    .filter(|w| COMMON.contains(&w.as_str()))
+                    .count()
+                    >= 2
             {
                 continue;
             }
-            if plain == 12 || plain == 15 || plain == 18 || plain == 21 || plain == 24 {
-                push(hits, "recovery phrase", f, f + line.len(), decoded);
+            // exactly the phrase: from its first word to the end of its last
+            let last = raw[len - 1];
+            let end = start + (last.as_ptr() as usize - line.as_ptr() as usize) + last.len();
+            push(hits, "recovery phrase", start, end, decoded);
+        }
+    }
+    // words in a row from the standard recovery-phrase list (BIP-39, English) that pass the list's own checksum at a
+    // standard length, with or without a name before them. The checksum is what a wallet checks; a run of list words
+    // that fails it everywhere ("word word word ...") is not a phrase
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        let mut run: Vec<(usize, usize)> = Vec::new();
+        let mut indexes: Vec<u16> = Vec::new();
+        let close = |run: &mut Vec<(usize, usize)>, indexes: &mut Vec<u16>, hits: &mut Vec<Hit>| {
+            if recovery_checksum_anywhere(indexes) {
+                let (from, to) = (run[0].0, run[run.len() - 1].1);
+                // the same phrase may already have been found after its name
+                let known = hits
+                    .iter()
+                    .any(|h| h.rule == "recovery phrase" && h.start <= from && to <= h.end);
+                if !known {
+                    push(hits, "recovery phrase", from, to, decoded);
+                }
+            }
+            run.clear();
+            indexes.clear();
+        };
+        for w in line.split_whitespace() {
+            let core = w.trim_matches([
+                '"', '\'', ',', '.', ';', '“', '”', '‘', '’', '(', ')', '[', ']', '`',
+            ]);
+            let s = at + (core.as_ptr() as usize - line.as_ptr() as usize);
+            let bare = core.to_ascii_lowercase();
+            // a numbered list of words ("1. abandon 2. ability") keeps its run
+            if !bare.is_empty() && bare.chars().all(|c| c.is_ascii_digit()) {
+                continue;
+            }
+            if let Some(index) = recovery_word(&bare) {
+                indexes.push(index);
+                run.push((s, s + core.len()));
+            } else {
+                close(&mut run, &mut indexes, hits);
+            }
+        }
+        close(&mut run, &mut indexes, hits);
+        at += line.len();
+    }
+}
+
+/// The place of this lowercase word on the BIP-39 English list (2048 words, in alphabetical order), if it is on it.
+fn recovery_word(w: &str) -> Option<u16> {
+    static LIST: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    let list = LIST.get_or_init(|| include_str!("bip39_english.txt").lines().collect());
+    if !(3..=8).contains(&w.len()) {
+        return None;
+    }
+    list.binary_search(&w).ok().map(|i| i as u16)
+}
+
+/// Whether some stretch of these list words, of a standard length, is a valid recovery phrase: each word is 11 bits, the
+/// last bits are the first bits of the SHA-256 of the ones before them (BIP-39). A stretch with few different words is
+/// not taken even if it passes, since a phrase is random.
+fn recovery_checksum_anywhere(indexes: &[u16]) -> bool {
+    use sha2::{Digest, Sha256};
+    for len in [24usize, 21, 18, 15, 12] {
+        if indexes.len() < len {
+            continue;
+        }
+        for window in indexes.windows(len) {
+            let distinct: std::collections::BTreeSet<&u16> = window.iter().collect();
+            if distinct.len() * 2 < len {
+                continue;
+            }
+            let mut bits: Vec<bool> = Vec::with_capacity(len * 11);
+            for w in window {
+                for b in (0..11).rev() {
+                    bits.push((w >> b) & 1 == 1);
+                }
+            }
+            let check = len / 3;
+            let entropy_bits = len * 11 - check;
+            let entropy: Vec<u8> = bits[..entropy_bits]
+                .chunks(8)
+                .map(|c| c.iter().fold(0u8, |a, b| (a << 1) | u8::from(*b)))
+                .collect();
+            let hash = Sha256::digest(&entropy);
+            let ok = (0..check)
+                .all(|i| bits[entropy_bits + i] == ((hash[i / 8] >> (7 - i % 8)) & 1 == 1));
+            if ok {
+                return true;
             }
         }
     }
+    false
 }
 
 /// Shapes with a fixed layout but no prefix to search for: a Telegram bot token (`123456789:A` and 34 more characters)

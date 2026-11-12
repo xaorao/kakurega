@@ -449,7 +449,7 @@ fn rs08_a_test_run_is_read_strictly_from_the_real_output_of_the_test_runner() {
     // outputs captured from rustc 1.94.1 and 1.93.1
     assert_eq!(parse_rust_tests(&Exit::Code(0), PASS), TestRun::Passed(3));
     assert!(
-        matches!(parse_rust_tests(&Exit::Code(101), FAIL), TestRun::Failed(m) if m.contains("1 test(s) failed"))
+        matches!(parse_rust_tests(&Exit::Code(101), FAIL), TestRun::Failed(m) if m.contains("1 test failed"))
     );
     assert_eq!(parse_rust_tests(&Exit::Code(0), NONE), TestRun::NoTests);
     // everything ignored is no evidence

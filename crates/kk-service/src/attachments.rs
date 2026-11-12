@@ -304,11 +304,11 @@ pub fn block(p: &Parsed, runs_here: bool) -> Block {
     }
     if !left.is_empty() {
         let shown: Vec<&str> = left.iter().copied().take(10).collect();
-        body.push_str(&format!(
+        body.push_str(&kk_types::words::counted(&format!(
             "[left out: {} part(s) at {} were not given to you because they read like instructions or hold a secret]\n",
             instr + secrets,
             shown.join("; ")
-        ));
+        )));
     }
     Block {
         header: format!("[file: {} ({})]", p.name, p.kind.label()),
@@ -417,7 +417,7 @@ mod tests {
                 b.body
             );
             assert!(
-                b.body.contains("[left out: 1 part(s) at paragraph 2"),
+                b.body.contains("[left out: 1 part at paragraph 2"),
                 "{}",
                 b.body
             );
@@ -448,7 +448,7 @@ mod tests {
             away.body
         );
         assert!(
-            away.body.contains("[left out: 1 part(s) at paragraph 2"),
+            away.body.contains("[left out: 1 part at paragraph 2"),
             "{}",
             away.body
         );
@@ -488,7 +488,7 @@ mod tests {
         );
         let b = block(&parsed(&[text]), true);
         assert!(
-            b.body.starts_with("[left out: 1 part(s) at paragraph 1"),
+            b.body.starts_with("[left out: 1 part at paragraph 1"),
             "{}",
             b.body
         );

@@ -83,3 +83,30 @@ OPEN from this audit: none critical or high. Not done: a test that drives M4 thr
 | 8 | A help flag after `chat`, `roundtable` or `team` printed usage | CONFIRMED, harmless | Those take free text and are left alone | read |
 
 Not covered by sv271: a review of an allowed folder that itself contains the data folder still walks into it; the secret detector and the label rules are what stand in the way there. Written as a limit.
+
+## Fourth independent audit (one read-only reviewer given the fixes above and told to break them)
+
+Each finding was checked against the code before anything was changed.
+
+| # | Finding | Verdict | Fix | Evidence |
+|---|---|---|---|---|
+| 1 | The terminal sent earlier messages without saying how privately they were held, so they could go to a less private model after a switch; `/aside` in a reopened conversation too | CONFIRMED by reading | The terminal keeps the level and sends it; a reopened conversation gives its level; earlier messages sent with no level are read by the service as held on this computer | sv272 (mutation-checked); kk-tui `tu_shown_data...` |
+| 2 | The roundtable's lead question, which holds the experts' answers, was asked with no level after the route was let go | CONFIRMED by reading | The lead is asked at the level the experts answered on | sv273 (mutation-checked) |
+| 3 | The summary of older turns was asked with no level, before the route was held | CONFIRMED by reading | It is asked at the conversation's level, checked while the route is held | read; NOT TESTED by a run of its own |
+| 4 | A team run started with a model elsewhere could run a review after a switch and then carry its findings back out | CONFIRMED | A review marks the run as held on this computer and raises the level of the pass in progress | sv274 (mutation-checked) |
+| 5 | A kept conversation's level was read after the route was let go, so a switch asked for during the answer lowered it | CONFIRMED | The level is taken while the route is held and used for the reply and the record | sv272 (two mutations) |
+| 6 | Findings reached the hand-over text through an expert that had read them | CONFIRMED | Any task that follows a review, directly or through others, is not offered | sv274 (mutation-checked) |
+| 7 | "tokens: 4096" and "the secret is straightforwardness" were taken for secrets; "the password for the router is ...", "password - ...", "pw: ...", a wifi or licence key, `mysql -p...` and labels in four other languages were missed | CONFIRMED (the reviewer's lists were run) | Digits or a plain long word count only after a word that means a password; plain words may stand before the linking word; a sentence end or another label ends the search; new names | kk-secrets sp07 (17 ordinary lines, 14 secrets) |
+| 8 | The recovery-phrase rule marked the wrong range, so the last words went out; a phrase after "is", in quotes, on the next line or followed by more words was missed | CONFIRMED | The range is exactly the words; the standard word list (BIP-39, MIT) is embedded and a run that passes its checksum is found with or without a name | kk-secrets `recovery.rs` rp01 to rp03 |
+| 9 | The terminal's plural rule rewrote shown data (`len(s)` became `lens`), and `/copy` and `/export` wrote the changed text | CONFIRMED | The rule is applied only where the program writes its own sentences | kk-tui `tu_shown_data...` |
+| 10 | The README said spoken passwords are withheld in reviews; the review import did not use that reader | CONFIRMED | A file holding a password written out in words is withheld from a review | kk-review `spoken_secret.rs` |
+| 11a | A refused question was recorded as sent | CONFIRMED | The refusal comes before anything is hidden, logged or recorded | read |
+| 11b | Break-it chose what to read before holding the route; document questions asked with no level | CONFIRMED by reading | Break-it holds the route first; a document question is asked at the level it was prepared for | read |
+| 11c | Team runs from before the level column counted as not private | CONFIRMED | One with any stored result counts as held on this computer | read |
+| 11d | `--profile` inside free text was taken as the option | CONFIRMED | With commands that take the owner's text it is read only before the command or right after it | kk-cli `profile_option_tests` |
+| 11e | A screen-capture preview folder stayed after a crash | CONFIRMED by reading | Removed at every start | read; NOT TESTED by killing the app |
+| 11f | The hand-over notice still said the owner's settings are used | CONFIRMED | Corrected in the service, the page (both languages) and the source note | read |
+| 11g | With a data folder outside the default home, the default home's profiles were not guarded | CONFIRMED by reading | The default home is always refused as a file or project | read |
+| 11h | `/newchat` in an unkept chat kept the old level | CONFIRMED | Reset | read |
+
+Accepted, with the reason: a hard link to a file inside the data folder, made in an allowed folder, is not recognised as the program's own data. Making one needs the owner's own account on this computer, which can read that folder directly. A password that is an ordinary word, a login written as "admin / value" and a code said with no word for what it is stay unrecognised and are in `LIMITS.md`.

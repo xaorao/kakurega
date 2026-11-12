@@ -91,7 +91,7 @@ check(true, "importing the same pack again is refused and replaces nothing");
   writeFileSync(join(shelf, "notes-kit-2.1.0.kkp"), notes);
   run("pack", "catalog", "--key", join(work, "pub.key"), "--dir", shelf, "--out", join(work, "catalog.kkc"));
   const checked = run("pack", "check-catalog", "--catalog", join(work, "catalog.kkc"), "--trusted", publicKey, "--dir", shelf);
-  check(/catalog of 2 pack\(s\)/.test(checked) && (checked.match(/file matches/g) ?? []).length === 2, "a publisher makes a signed catalog of a folder of packs, and anyone with the key can check it against the files");
+  check(/catalog of 2 packs/.test(checked) && (checked.match(/file matches/g) ?? []).length === 2, "a publisher makes a signed catalog of a folder of packs, and anyone with the key can check it against the files");
   writeFileSync(join(shelf, "notes-kit-2.1.0.kkp"), notes + " ");
   const wrong = spawnSync(kaku, ["pack", "check-catalog", "--catalog", join(work, "catalog.kkc"), "--trusted", publicKey, "--dir", shelf], { encoding: "utf8" });
   check(wrong.status !== 0 && /FILE DOES NOT MATCH/.test(wrong.stdout), "a file changed after the catalog was made is called out");

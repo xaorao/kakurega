@@ -799,7 +799,7 @@ fn j09_a_javascript_review_goes_from_the_models_tool_call_to_a_checked_fix_and_a
         fx.tests
     );
     assert!(
-        fx.tests.contains("3 test(s) passed before and after"),
+        fx.tests.contains("3 tests passed before and after"),
         "the project's own Node tests were held to: {}",
         fx.tests
     );
@@ -1223,7 +1223,7 @@ fn j15_a_typescript_review_goes_from_the_models_tool_call_to_a_checked_fix_and_a
         fx.tests
     );
     assert!(
-        fx.tests.contains("3 test(s) passed before and after"),
+        fx.tests.contains("3 tests passed before and after"),
         "the project's own TypeScript tests were held to: {}",
         fx.tests
     );
@@ -1332,7 +1332,7 @@ fn j17_a_rust_review_goes_from_the_models_tool_call_to_a_checked_fix_and_a_relea
         fx.tests
     );
     assert!(
-        fx.tests.contains("3 test(s) passed before and after"),
+        fx.tests.contains("3 tests passed before and after"),
         "the crate's own tests were held to: {}",
         fx.tests
     );

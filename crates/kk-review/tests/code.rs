@@ -489,7 +489,7 @@ fn cw11_replace_all_changes_every_place_and_is_needed_for_more_than_one() {
     assert!(w
         .call("edit_file", &json!({"path": "m.py", "old_text": "print(count)", "new_text": "print(count, 1)", "replace_all": true}))
         .unwrap()
-        .contains("line(s) replaced"));
+        .contains(" replaced by "));
     assert!(w
         .call(
             "edit_file",

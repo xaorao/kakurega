@@ -336,16 +336,16 @@ pub fn run(args: &[String]) -> u8 {
                 "  the key that signed it {}",
                 clean(text(&ticket["capsule_signer"]))
             );
-            println!("  {count} model receipt(s): each model's name and signing key, and the digests of its request and answer");
+            println!("{}", kk_types::words::counted(&format!("  {count} model receipt(s): each model's name and signing key, and the digests of its request and answer")));
             println!("  the account {} and the time", payer.account);
             if let Some(id) = order {
                 println!("  that it is delivered for order {id}");
             }
             if ticket["receipts_left_out"].as_u64().unwrap_or(0) > 0 {
-                println!(
+                println!("{}", kk_types::words::counted(&format!(
                     "  ({} further receipt(s) in the capsule are not published: a registration carries at most 16)",
                     ticket["receipts_left_out"]
-                );
+                )));
             }
             println!(
                 "Not published: the capsule itself, or any file, finding, question or answer."

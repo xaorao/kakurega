@@ -211,7 +211,12 @@ pub fn run(args: &[String]) -> u8 {
         }
     };
     if notes.is_empty() {
-        eprintln!("no notes found in {dir} ({skipped} file(s) skipped)");
+        eprintln!(
+            "{}",
+            kk_types::words::counted(&format!(
+                "no notes found in {dir} ({skipped} file(s) skipped)"
+            ))
+        );
         return 1;
     }
     let http = match kk_tui::http::Http::connect(&crate::data_dir(args)) {
@@ -236,8 +241,11 @@ pub fn run(args: &[String]) -> u8 {
     match http.run(&req).result {
         Ok((200, v)) => {
             println!(
-                "Read {} note(s) from {dir} ({skipped} file(s) skipped).",
-                notes.len()
+                "{}",
+                kk_types::words::counted(&format!(
+                    "Read {} note(s) from {dir} ({skipped} file(s) skipped).",
+                    notes.len()
+                ))
             );
             println!("Added {}, already known {}, refused {} (secrets or empty), {} read like instructions and will never be given to a model.", v["added"], v["already_known"], v["refused"], v["instruction_like"]);
             println!("They are marked untrusted and labelled Internal. Review them with /memory, and correct or forget any.");

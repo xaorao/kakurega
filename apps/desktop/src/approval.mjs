@@ -7,7 +7,7 @@ export function describe(a, t = english) {
   const notEstablished = (a.not_established ?? []).map((n) => `  - ${n}`);
   const d = a.disclosure;
   const disclosure = d
-    ? [t("desc.disclosure", { after: d.files_after, total: d.project_files, before: d.releases_before }), ...(d.reasons ?? []).map((r) => `  ! ${r}`), t("desc.notChecked", { list: (d.not_checked ?? []).join(" ") }), ""]
+    ? [t(d.releases_before === 1 ? "desc.disclosure.one" : "desc.disclosure", { after: d.files_after, total: d.project_files, before: d.releases_before }), ...(d.reasons ?? []).map((r) => `  ! ${r}`), t("desc.notChecked", { list: (d.not_checked ?? []).join(" ") }), ""]
     : [];
   return [
     t("desc.recipient", { recipient: a.recipient }),

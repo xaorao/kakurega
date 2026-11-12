@@ -116,6 +116,8 @@ pub(super) async fn attempt(axum::Extension(svc): Svc, Json(b): Json<BreakBody>)
             project: None,
             held: None,
         };
+        // the route is held from choosing what the model may read to the answer
+        let _hold = svc2.route_hold();
         let mut ctx = chat_context(&svc2, &body, None);
         svc2.attachments.lock().expect("lock").remove(&id);
         svc2.log_held_back(
@@ -123,7 +125,6 @@ pub(super) async fn attempt(axum::Extension(svc): Svc, Json(b): Json<BreakBody>)
             ctx.files_withheld_secrets,
             ctx.files_withheld_instructions,
         );
-        let _hold = svc2.route_hold();
         let swap = svc2.hide_messages(&mut ctx.messages);
         let sent = ctx.messages.clone();
         let reply = svc2.runner.chat(ctx.messages.clone()).map(|mut r| {

@@ -25,9 +25,39 @@ const NAMES: &[&str] = &[
     "private key",
     "auth key",
     "pwd",
+    "pw",
+    "pass",
+    "wifi key",
+    "wi-fi key",
+    "wpa key",
+    "network key",
+    "license key",
+    "licence key",
+    "product key",
+    "encryption key",
+    "master key",
+    "recovery key",
+    "passwort",
+    "kennwort",
+    "mot de passe",
+    "contraseña",
+    "senha",
+    "wachtwoord",
 ];
 /// Names after which a value may follow at once, with no "is" or sign between ("root password hunter2").
-const DIRECT: &[&str] = &["password", "passwd", "passphrase", "pwd"];
+const DIRECT: &[&str] = &[
+    "password",
+    "passwd",
+    "passphrase",
+    "pwd",
+    "pw",
+    "passwort",
+    "kennwort",
+    "mot de passe",
+    "contraseña",
+    "senha",
+    "wachtwoord",
+];
 /// The words that may stand between the name and its value. Any other word ends the search: "the token count for gpt-4o"
 /// and "pin the version to node20" are not a name and its value.
 const BETWEEN: &[&str] = &[
@@ -159,8 +189,17 @@ fn plain_password(t: &str) -> bool {
     let n = t.chars().count();
     let digits = (4..=64).contains(&n) && t.chars().all(|c| c.is_ascii_digit());
     let letters = (16..=200).contains(&n) && t.chars().all(|c| c.is_ascii_alphabetic());
-    digits || letters
+    // too short for `password_like`, and still no ordinary word: four or five characters with a letter and a digit or sign
+    let short = (4..=5).contains(&n)
+        && t.chars().any(|c| c.is_alphabetic())
+        && t.chars()
+            .any(|c| c.is_ascii_digit() || "!@#$%^&*+=~|\\".contains(c))
+        && !t.contains(['.', ':', '/']);
+    digits || letters || short
 }
+
+/// Programs whose `-pVALUE` is a password given on the command line.
+const DASH_P: &[&str] = &["mysql", "mysqldump", "mysqladmin", "mariadb"];
 
 fn code_like(t: &str) -> bool {
     let d: String = t.chars().filter(|c| !matches!(c, '-' | ' ')).collect();
@@ -208,6 +247,16 @@ pub fn find(text: &str) -> Vec<(usize, usize)> {
                 let s = line_start + at + raw.find(t).unwrap_or(0);
                 out.push((s, s + t.len()));
             }
+            // mysql -pVALUE
+            if let Some(value) = t.strip_prefix("-p") {
+                let named = tokens
+                    .iter()
+                    .any(|(_, w)| DASH_P.contains(&w.to_ascii_lowercase().as_str()));
+                if named && (password_like(value) || plain_password(value)) {
+                    let s = line_start + at + raw.find(value).unwrap_or(0);
+                    out.push((s, s + value.len()));
+                }
+            }
         }
         for (names, digits_ok) in [(NAMES, false), (CODES, true)] {
             for name in names {
@@ -215,18 +264,26 @@ pub fn find(text: &str) -> Vec<(usize, usize)> {
                 while let Some(found) = lower[from..].find(name) {
                     let (s, e) = (from + found, from + found + name.len());
                     from = e;
+                    // "max_tokens" and "token_count" are names in a program, not the word
                     let before_ok = lower[..s]
                         .chars()
                         .next_back()
-                        .is_none_or(|c| !c.is_alphanumeric());
+                        .is_none_or(|c| !c.is_alphanumeric() && c != '_');
                     // "passwords", "tokens", "PINs" are still the word
                     let after = lower[e..].trim_start_matches('s');
-                    let after_ok = after.chars().next().is_none_or(|c| !c.is_alphanumeric());
+                    let after_ok = after
+                        .chars()
+                        .next()
+                        .is_none_or(|c| !c.is_alphanumeric() && c != '_');
                     if !before_ok || !after_ok {
                         continue;
                     }
                     // a sign right after the name, or a linking word on the way, says a value follows
                     let mut linked = after.starts_with(['=', ':']);
+                    let direct = DIRECT.contains(name);
+                    // other words came between the name and here ("the password for the router is ..."): from then on
+                    // only a linking word makes what follows a value
+                    let mut strayed = false;
                     for (at, raw) in tokens
                         .iter()
                         .filter(|(at, raw)| at + raw.len() > e)
@@ -264,13 +321,21 @@ pub fn find(text: &str) -> Vec<(usize, usize)> {
                         if t.is_empty() {
                             continue;
                         }
+                        // a dash or an arrow between the name and its value ("password - ...", "password -> ...")
+                        if !t.chars().any(char::is_alphanumeric) {
+                            linked = true;
+                            continue;
+                        }
                         let word = t.to_lowercase();
-                        let direct = DIRECT.contains(name);
                         let is_value = if digits_ok {
                             code_like(t) || (linked && password_like(t))
                         } else {
-                            (password_like(t) && (linked || direct))
-                                || (linked && plain_password(t))
+                            (password_like(t) && (linked || (direct && !strayed)))
+                                // digits alone, or one long plain word, only after a word that means a password: "tokens:
+                                // 4096" and "the secret is straightforwardness" are ordinary
+                                || (linked && direct && plain_password(t))
+                                // after "secret" or "token", only a run of letters longer than any ordinary word
+                                || (linked && (24..=200).contains(&t.len()) && t.chars().all(|c| c.is_ascii_alphabetic()))
                         };
                         if is_value && !NAMES.iter().chain(CODES).any(|w| t.eq_ignore_ascii_case(w))
                         {
@@ -278,10 +343,35 @@ pub fn find(text: &str) -> Vec<(usize, usize)> {
                             out.push((s, s + t.len()));
                             break;
                         }
+                        // the sentence ended without a value: what the next one says belongs to something else
+                        if raw
+                            .trim_end_matches(['"', '\'', ')', ']', '”', '’'])
+                            .ends_with(['.', '!', '?'])
+                        {
+                            break;
+                        }
+                        // a label of its own after other words ("... max_tokens: 4096") names another thing
+                        let own_label = strayed
+                            && raw.ends_with([':', '='])
+                            && !t
+                                .chars()
+                                .all(|c| c.is_alphabetic() || c == '-' || c == '\'');
+                        if own_label {
+                            break;
+                        }
                         if LINKS.contains(&word.as_str()) || raw.ends_with([':', '=']) {
                             linked = true;
                         } else if !BETWEEN.contains(&word.as_str()) {
-                            break;
+                            // after a word that means a password, plain words may come before the linking word
+                            if direct
+                                && t.chars()
+                                    .all(|c| c.is_alphabetic() || c == '-' || c == '\'')
+                            {
+                                strayed = true;
+                                linked = false;
+                            } else {
+                                break;
+                            }
                         }
                     }
                 }
@@ -468,6 +558,63 @@ mod tests {
             "reset your password in 3 steps",
         ] {
             assert!(find(text).is_empty(), "{text}: {:?}", find(text));
+        }
+    }
+
+    #[test]
+    fn sp07_ordinary_numbers_and_long_words_are_left_alone_and_passwords_said_other_ways_are_found()
+    {
+        for ordinary in [
+            "max_tokens: 4096",
+            "tokens: 2000",
+            "context window tokens: 128000",
+            "Set the token to 3600 seconds",
+            "the secret is 1984",
+            "Our secret: 2025",
+            "The secret is straightforwardness",
+            "The secret is misunderstanding everything",
+            "the secret to internationalization is patience",
+            "the token is counterintelligence",
+            "token_count = 4096",
+            "The password policy requires twelve characters",
+            "password for the router was changed yesterday",
+            "the pass is valid until 2026-05-01",
+            "we pass the value to node20",
+            "mysql -p then type it when asked",
+            "psql -p5432 -h localhost",
+        ] {
+            assert!(
+                values(ordinary).is_empty(),
+                "{ordinary}: {:?}",
+                values(ordinary)
+            );
+        }
+        for (text, value) in [
+            (
+                "the password for the router is Blue42Harbor",
+                "Blue42Harbor",
+            ),
+            (
+                "the database password for prod is Kestrel7Lantern",
+                "Kestrel7Lantern",
+            ),
+            (
+                "the password, as discussed, is Blue42Harbor",
+                "Blue42Harbor",
+            ),
+            ("password - Blue42Harbor", "Blue42Harbor"),
+            ("password -> Blue42Harbor", "Blue42Harbor"),
+            ("The wifi key is Sunflower2024", "Sunflower2024"),
+            ("pw: S3cret!x", "S3cret!x"),
+            ("my pass is Harbor77", "Harbor77"),
+            ("mysql -u root -pBlue42Harbor shop", "Blue42Harbor"),
+            ("the password is P@ss", "P@ss"),
+            ("license key: 7HJ9-KQ2M-44XZ", "7HJ9-KQ2M-44XZ"),
+            ("Passwort: Blue42Harbor", "Blue42Harbor"),
+            ("mot de passe : Blue42Harbor", "Blue42Harbor"),
+            ("the password is 48213377", "48213377"),
+        ] {
+            assert_eq!(values(text), [value], "{text}");
         }
     }
 }

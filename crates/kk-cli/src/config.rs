@@ -447,14 +447,14 @@ fn show(dir: &Path, args: &[String]) -> u8 {
         Loaded::Absent => (None, "not present, so the defaults are in use".to_string()),
         Loaded::Valid(f) => (
             Some(f),
-            format!("applied, {} setting(s) set", f.values.len()),
+            kk_types::words::counted(&format!("applied, {} setting(s) set", f.values.len())),
         ),
         Loaded::Invalid(p) => (
             None,
-            format!(
+            kk_types::words::counted(&format!(
                 "NOT APPLIED, {} problem(s): run `kaku config check`",
                 p.len()
-            ),
+            )),
         ),
     };
     let eff = resolve(file, &|k| std::env::var_os(k), args);
@@ -524,8 +524,11 @@ fn check(dir: &Path, args: &[String]) -> u8 {
         }
         Loaded::Invalid(problems) => {
             println!(
-                "{FILE} has {} problem(s), so none of it is applied:",
-                problems.len()
+                "{}",
+                kk_types::words::counted(&format!(
+                    "{FILE} has {} problem(s), so none of it is applied:",
+                    problems.len()
+                ))
             );
             for p in &problems {
                 println!("  {}: {}", clean(&p.at), clean(&p.message));

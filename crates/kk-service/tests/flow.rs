@@ -1835,7 +1835,7 @@ fn sv17_chat_is_bounded_uses_notes_as_data_and_logs_no_text() {
         "/api/memories",
         json!({"text": "Acme pays invoices on the 20th", "level": "confidential"}),
     );
-    let (st, r) = w.post("/api/chat", json!({"message": "When does Acme pay invoices?", "history": [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]}));
+    let (st, r) = w.post("/api/chat", json!({"message": "When does Acme pay invoices?", "held": 2, "history": [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]}));
     assert_eq!(st, 200, "{r}");
     let seen = r["reply"].as_str().unwrap();
     assert!(
@@ -10249,7 +10249,7 @@ fn sv98_attached_files_go_to_the_model_as_labelled_data_and_what_is_left_out_is_
         !sent.contains("evil@example.com") && !sent.contains("Ignore all previous"),
         "{sent}"
     );
-    assert!(sent.contains("[left out: 2 part(s) at lines 1-"), "{sent}");
+    assert!(sent.contains("[left out: 2 parts at lines 1-"), "{sent}");
 
     // no file, or an unknown, stale or malformed one
     let (s, r) = w.post("/api/chat", json!({"message": "again"}));
@@ -10298,7 +10298,7 @@ fn sv99_a_model_that_does_not_run_here_is_not_given_a_secret_from_a_file() {
     let sent = runner.sent();
     assert!(!sent.contains("sk-ant") && !sent.contains(&key), "{sent}");
     assert!(
-        sent.contains("[left out: 1 part(s)"),
+        sent.contains("[left out: 1 part"),
         "the model is told something was left out: {sent}"
     );
 }
@@ -11033,7 +11033,7 @@ fn sv108_a_chat_sent_without_a_session_leaves_every_kept_conversation_and_the_se
     let before = w.get(&format!("/api/sessions/{id}")).1;
     let (st, r) = w.post(
         "/api/chat",
-        json!({"message": "Zephyrbloom private aside", "history": [{"role": "user", "content": "Quillfeather kept question"}, {"role": "assistant", "content": "ok"}]}),
+        json!({"message": "Zephyrbloom private aside", "held": 2, "history": [{"role": "user", "content": "Quillfeather kept question"}, {"role": "assistant", "content": "ok"}]}),
     );
     assert_eq!((st, &r["saved"]), (200, &json!(false)), "{r}");
     assert_eq!(
@@ -11196,10 +11196,7 @@ fn sv110_the_owners_allowlist_keeps_named_values_out_of_the_release_notice_and_s
         (None, 3),
         "everything on the list is counted as left out, not silently dropped"
     );
-    assert!(
-        ne.contains("3 value(s)") && ne.contains("allowlist"),
-        "{ne}"
-    );
+    assert!(ne.contains("3 values") && ne.contains("allowlist"), "{ne}");
     // removing one brings that kind back
     assert_eq!(
         w.post("/api/pii-allow", json!({"remove": "4111111111111111"}))
@@ -16718,7 +16715,7 @@ fn sv182_a_file_can_be_attached_by_lines_and_only_those_lines_reach_the_model() 
         ("99999999", "counted from 1"),
         ("1-5000", "at most 2000"),
         ("", "counted from 1"),
-        ("11", "the file has 10 line(s)"),
+        ("11", "the file has 10 lines"),
     ] {
         let (s, v) = attach(Some(spec));
         assert_eq!(
@@ -22696,6 +22693,8 @@ fn sv267_a_reviews_findings_are_not_handed_to_experts_whose_model_is_elsewhere()
 
 /// A model whose place can be switched while a test runs: on this computer, or in confidential hardware elsewhere.
 struct SwitchRunner {
+    /// When set, the model moves elsewhere while it answers: what a switch asked for during an answer looks like.
+    flip: std::sync::atomic::AtomicBool,
     away: std::sync::atomic::AtomicBool,
     asked: Mutex<Vec<String>>,
 }
@@ -22703,6 +22702,7 @@ struct SwitchRunner {
 impl SwitchRunner {
     fn new() -> Arc<SwitchRunner> {
         Arc::new(SwitchRunner {
+            flip: Default::default(),
             away: Default::default(),
             asked: Mutex::new(Vec::new()),
         })
@@ -22741,6 +22741,9 @@ impl JobRunner for SwitchRunner {
     }
     fn chat(&self, m: Vec<kk_types::chat::ChatMessage>) -> Result<kk_service::ChatReply, String> {
         self.note(&m);
+        if self.flip.load(std::sync::atomic::Ordering::SeqCst) {
+            self.away.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         Ok(kk_service::ChatReply {
             text: "The harbour-lantern plan is settled.".into(),
             route_id: "r".into(),
@@ -23024,4 +23027,177 @@ fn sv271_the_programs_own_data_folder_is_never_a_file_or_project_to_work_on_even
         json!({"path": root.join("notes.txt").to_string_lossy()}),
     );
     assert_eq!(s, 201, "{v}");
+}
+
+#[test]
+fn sv272_the_level_an_answer_was_given_at_is_the_one_recorded_and_unstated_history_is_private() {
+    let (_c, w, runner) = switch_service("level-recorded");
+    let set = |flag: &std::sync::atomic::AtomicBool, on: bool| {
+        flag.store(on, std::sync::atomic::Ordering::SeqCst)
+    };
+    // the model is changed to one elsewhere while a kept conversation is answered on this computer: the answer is still
+    // recorded as held here, so the conversation is not continued elsewhere
+    let id = w.post("/api/sessions", json!({"title": ""})).1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    set(&runner.flip, true);
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "What is the harbour-lantern plan?", "session": id}),
+    );
+    assert_eq!(
+        (s, r["level"].as_i64()),
+        (200, Some(3)),
+        "the reply says the level it was answered at: {r}"
+    );
+    set(&runner.flip, false);
+    assert_eq!(w.get(&format!("/api/sessions/{id}")).1["held"], 3);
+    let before = runner.asked();
+    let (s, r) = w.post("/api/chat", json!({"message": "And then?", "session": id}));
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (409, Some("KEPT_MORE_PRIVATELY")),
+        "{r}"
+    );
+    // earlier messages sent without saying how privately they were held are read as held on this computer
+    let hist = json!([{"role": "user", "content": "What is the harbour-lantern plan?"}, {"role": "assistant", "content": "The harbour-lantern plan is settled."}]);
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "And then?", "history": hist}),
+    );
+    assert_ne!(s, 200, "{r}");
+    assert!(
+        r["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("less private"),
+        "{r}"
+    );
+    // a client that says they were held elsewhere is answered
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "And then?", "history": hist, "held": 2}),
+    );
+    assert_eq!((s, r["level"].as_i64()), (200, Some(2)), "{r}");
+    assert_eq!(
+        runner.asked(),
+        before + 1,
+        "only that one reached the model elsewhere"
+    );
+}
+
+#[test]
+fn sv273_a_roundtables_lead_is_not_asked_elsewhere_when_the_experts_answered_on_this_computer() {
+    let (_c, w, runner) = switch_service("level-lead");
+    // the model moves elsewhere while the experts answer
+    runner.flip.store(true, std::sync::atomic::Ordering::SeqCst);
+    let (st, lines) = roundtable(
+        &w,
+        json!({"message": "Where should the payment key live?", "experts": ["security-reviewer", "software-architect"]}),
+    );
+    assert_eq!(st, 200, "{lines:?}");
+    let asked = runner.asked.lock().unwrap().clone();
+    assert!(!asked.is_empty(), "the experts were asked");
+    assert!(
+        !asked
+            .iter()
+            .any(|q| q.contains(kk_service::experts::LEAD_INSTRUCTION)),
+        "the lead's question, which holds the experts' answers, did not reach the model elsewhere"
+    );
+    assert!(
+        lines.iter().any(|l| l.to_string().contains("less private")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn sv274_a_review_makes_a_team_run_private_and_what_followed_it_is_not_handed_outside() {
+    const PLAN: &str = "1 | security-reviewer | after: - | List the risks (taint test).\n2 | project-review | after: - | Review the project.\n3 | plain-writer | after: 1, 2 | Explain the findings.\n4 | claude-code | after: 3 | Write a fix plan (taint test).\n";
+    let (root, _repo) = repo_copy("team-taint");
+    let runner = team_runner(PLAN);
+    let (_c, w) = team_service(&root, runner.clone());
+    use std::sync::atomic::Ordering::SeqCst;
+    w.post(
+        "/api/projects",
+        json!({"name": "kestrel", "folder": root.join("repo").to_string_lossy()}),
+    );
+    runner.answers.lock().unwrap().insert(
+        3,
+        vec![
+            Ok("NEEDS INPUT: For which reader?".into()),
+            Ok("In plain words: Token not revoked on logout.".into()),
+        ],
+    );
+    // the run starts with a model elsewhere; while its first task is answered the owner moves to this computer
+    runner.away.store(true, SeqCst);
+    runner.hold.store(true, SeqCst);
+    let (s, v) = w.post("/api/team", json!({"goal": "Review and explain (taint test).", "experts": ["security-reviewer", "project-review", "plain-writer", "claude-code"], "project": "kestrel"}));
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let started = std::time::Instant::now();
+    while w.get(&format!("/api/team/{id}")).1["tasks"][0]["state"] != "running" {
+        assert!(started.elapsed() < Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    runner.away.store(false, SeqCst);
+    runner.hold.store(false, SeqCst);
+    let v = team_wait(&w, &id, &["waiting"]);
+    assert_eq!(team_states(&v)[..3], ["done", "done", "needs_input"], "{v}");
+    assert!(
+        v["tasks"][1]["result"]
+            .as_str()
+            .unwrap()
+            .contains("Token not revoked"),
+        "{v}"
+    );
+    // back with the model elsewhere, the run does not go on: it holds a review's findings now
+    let asked = runner.seen.lock().unwrap().len();
+    runner.away.store(true, SeqCst);
+    w.post(
+        &format!("/api/team/{id}/answer"),
+        json!({"task": 3, "answer": "The board."}),
+    );
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(
+        &w,
+        &id,
+        &[
+            "stopped",
+            "waiting",
+            "interrupted",
+            "done",
+            "partial",
+            "failed",
+        ],
+    );
+    assert!(
+        v["final_note"]
+            .as_str()
+            .unwrap()
+            .contains("more private model"),
+        "{v}"
+    );
+    assert_eq!(
+        runner.seen.lock().unwrap().len(),
+        asked,
+        "nothing of the run reached the model elsewhere"
+    );
+    // on this computer it goes on; the writer's answer quotes the findings, so it is not offered to the outside agent
+    runner.away.store(false, SeqCst);
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(&w, &id, &["waiting"]);
+    assert_eq!(
+        team_states(&v),
+        ["done", "done", "done", "needs_input"],
+        "{v}"
+    );
+    let q = v["tasks"][3]["question"].as_str().unwrap();
+    assert!(
+        q.starts_with("[hand-over]")
+            && !q.contains("Token not revoked")
+            && q.contains("not handed to an agent outside"),
+        "{q}"
+    );
 }

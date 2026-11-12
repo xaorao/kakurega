@@ -1109,20 +1109,25 @@ impl Service {
         }
     }
 
+    /// Whether this path is inside the program's own data: the folder in use with its sibling profiles, and the default
+    /// home with all its profiles even when the service was started on a folder somewhere else.
+    fn in_private_home(&self, c: &Path) -> bool {
+        let default_home = std::env::var_os("HOME")
+            .map(|h| PathBuf::from(h).join(".kakurega"))
+            .and_then(|p| p.canonicalize().ok());
+        c.starts_with(self.private_home()) || default_home.is_some_and(|h| c.starts_with(h))
+    }
+
     fn allowed_file(&self, p: &str) -> Option<PathBuf> {
         let c = Path::new(p).canonicalize().ok()?;
-        (c.is_file()
-            && self.roots.iter().any(|r| c.starts_with(r))
-            && !c.starts_with(self.private_home()))
-        .then_some(c)
+        (c.is_file() && self.roots.iter().any(|r| c.starts_with(r)) && !self.in_private_home(&c))
+            .then_some(c)
     }
 
     fn allowed_dir(&self, p: &str) -> Option<PathBuf> {
         let c = Path::new(p).canonicalize().ok()?;
-        (c.is_dir()
-            && self.roots.iter().any(|r| c.starts_with(r))
-            && !c.starts_with(self.private_home()))
-        .then_some(c)
+        (c.is_dir() && self.roots.iter().any(|r| c.starts_with(r)) && !self.in_private_home(&c))
+            .then_some(c)
     }
 
     fn push_event(self: &Arc<Self>, id: &str, stage: &str, detail: &str) {
@@ -3611,7 +3616,9 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
         let need = if b.history.is_empty() {
             0
         } else {
-            b.held.unwrap_or(0).clamp(0, 3)
+            // earlier messages a client sends without saying how privately they were held are treated as held on this
+            // computer: the safe reading, so a client that forgets cannot send them down
+            b.held.unwrap_or(3).clamp(0, 3)
         };
         return Ok(ChatRun {
             started: std::time::Instant::now(),
@@ -3769,7 +3776,8 @@ fn prepare_history(svc: &Service, run: &mut ChatRun) {
     };
     let request = crate::compaction::summary_request(plan.previous.as_deref(), &plan.older);
     let written = svc
-        .ask_summary(request)
+        // the older turns are as private as the conversation: the level is checked while the route is held
+        .ask_summary_at(request, run.need)
         .map_err(|_| "unavailable")
         .and_then(|text| crate::compaction::accept(&text).map_err(|r| r.as_str()));
     let wait_for = plan.turns_now;
@@ -3836,9 +3844,12 @@ struct ChatContext {
     history_sent: usize,
     /// The project answers only from its own notes and files.
     notes_only: bool,
+    /// How private the route this was built for is. The callers build it while they hold the route, so this is the route
+    /// that answers; what is recorded about the answer uses this, never a later reading.
+    level: i64,
 }
 
-/// Gathers the notes and chosen web pages and builds the model's messages.
+/// Gathers the notes and chosen web pages and builds the model's messages. Call it while holding the route.
 fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatContext {
     // Notes get at most a third of the room the window leaves after the reply's reserve, in the order they were recalled.
     // A note that does not fit is left out whole: a note cut short can say something it never said.
@@ -4051,6 +4062,7 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
     }
     let history_sent = b.history.len();
     ChatContext {
+        level: svc.route_level(),
         notes_only,
         messages,
         swapped: 0,
@@ -4094,7 +4106,7 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
     let appended = run
         .kept
         .as_ref()
-        .map(|id| session_append(svc, id, &run.message_to_keep, &r.text));
+        .map(|id| session_append(svc, id, &run.message_to_keep, &r.text, ctx.level));
     let saved = appended == Some(Appended::Saved);
     // why an exchange in a kept conversation was not saved, so the screen never says "full" when it was not
     let not_saved = match appended {
@@ -4124,7 +4136,7 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
         );
     }
     let usage = json!({"elapsed_ms": elapsed_ms, "context_tokens": measured.unwrap_or(estimated), "context_tokens_estimate": estimated, "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "history_turns_summarized": run.summarized, "summary_text": run.summary, "compacted_now": run.compacted_now, "compaction_failed": run.compaction_failed, "estimate": measured.is_none()});
-    json!({"usage": usage, "reply": r.text, "level": svc.route_level(), "cut_short": r.cut_short, "swapped": ctx.swapped, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated, "stays_here": svc.route_for_owner()["stays_here"], "host": svc.route_for_owner()["host"]}, "instructions_used": ctx.instructions_used, "methods_used": ctx.methods_used, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "files": {"used": ctx.files_used, "trimmed": ctx.files_trimmed, "left_out": ctx.files_left_out, "withheld_instructions": ctx.files_withheld_instructions, "withheld_secrets": ctx.files_withheld_secrets}, "saved": saved, "not_saved": not_saved, "project": run.body.project})
+    json!({"usage": usage, "reply": r.text, "level": ctx.level, "cut_short": r.cut_short, "swapped": ctx.swapped, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated, "stays_here": svc.route_for_owner()["stays_here"], "host": svc.route_for_owner()["host"]}, "instructions_used": ctx.instructions_used, "methods_used": ctx.methods_used, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "files": {"used": ctx.files_used, "trimmed": ctx.files_trimmed, "left_out": ctx.files_left_out, "withheld_instructions": ctx.files_withheld_instructions, "withheld_secrets": ctx.files_withheld_secrets}, "saved": saved, "not_saved": not_saved, "project": run.body.project})
 }
 
 async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
@@ -4140,14 +4152,15 @@ async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
         // so notes chosen for one route are never sent to another
         let _hold = svc2.route_hold();
         let mut ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
-        let blocked = svc2.route_level() < run.need;
+        if ctx.level < run.need {
+            // refused before anything is hidden, logged or recorded as sent: nothing went anywhere
+            return (run, ctx, Err(swap::ROUTE_CHANGED.to_string()));
+        }
         // what is shown as "sent" is what was sent: with personal values hidden when the model is elsewhere
         let swap = svc2.hide_messages(&mut ctx.messages);
         ctx.swapped = swap.as_ref().map_or(0, |s| s.total());
         svc2.remember_sent(&ctx.messages, &ctx.excluded_notes);
-        let reply = if blocked {
-            Err(swap::ROUTE_CHANGED.to_string())
-        } else if ctx.nothing_to_read() {
+        let reply = if ctx.nothing_to_read() {
             Ok(no_model_reply())
         } else {
             svc2.runner.chat(ctx.messages.clone()).map(|mut r| {
@@ -4193,7 +4206,7 @@ async fn chat_stream(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Resp
         prepare_history(&svc2, &mut run);
         let _hold = svc2.route_hold();
         let mut ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
-        if svc2.route_level() < run.need {
+        if ctx.level < run.need {
             let _ = tx.send(line(
                 json!({"error": {"code": "NO_MODEL", "message": swap::ROUTE_CHANGED}}),
             ));
@@ -4389,7 +4402,7 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
         prepare_history(&svc2, &mut run);
         let hold = svc2.route_hold();
         let mut ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
-        if svc2.route_level() < run.need {
+        if ctx.level < run.need {
             let _ = tx.send(line(
                 json!({"error": {"code": "NO_MODEL", "message": swap::ROUTE_CHANGED}}),
             ));
@@ -4524,8 +4537,12 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
         ];
         let names: Vec<&str> = chosen.iter().map(|e| e.name.as_str()).collect();
         // the lead is asked as a question of its own, which holds the route for itself
+        // its question carries the experts' answers, so it goes only to a route as private as the one they were given on
         drop(hold);
-        match svc2.ask(lead) {
+        match svc2
+            .ask_counted_at(lead, ctx.level.max(run.need))
+            .map(|(r, _)| r)
+        {
             Ok(mut r) => {
                 let text = r.text.trim().to_string();
                 let parts = experts::read_resolution(&text);
@@ -4801,10 +4818,8 @@ enum Appended {
 
 /// Saves one finished exchange. A conversation that has reached its limit stops saving instead of dropping old turns, and
 /// one that was forgotten while its reply was being written saves nothing.
-fn session_append(svc: &Service, id: &str, user: &str, assistant: &str) -> Appended {
+fn session_append(svc: &Service, id: &str, user: &str, assistant: &str, level: i64) -> Appended {
     let t = now();
-    // read before the store is locked: how private the route that answered is
-    let level = svc.route_level();
     let store = svc.store.lock().expect("lock");
     let c = store.connection();
     // Forget deletes under this same lock, so checking here and inserting below cannot interleave with it.
@@ -5109,7 +5124,7 @@ async fn session_get(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) ->
                 })
                 .unwrap_or(None);
             let (parent, fork_at, branches) = session_branches(&svc, &id);
-            Json(json!({"id": id, "project": project, "parent": parent, "fork_at": fork_at, "branches": branches, "summary": summary, "turns": t.into_iter().map(|(role, content)| json!({"role": role, "content": content})).collect::<Vec<_>>()})).into_response()
+            Json(json!({"id": id, "held": kept_level(&svc, &id), "project": project, "parent": parent, "fork_at": fork_at, "branches": branches, "summary": summary, "turns": t.into_iter().map(|(role, content)| json!({"role": role, "content": content})).collect::<Vec<_>>()})).into_response()
         }
     }
 }
@@ -5476,7 +5491,10 @@ fn select_lines(
         .map_err(|_| "lines can be chosen only in a text file".to_string())?;
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
     if start > lines.len() {
-        return Err(format!("the file has {} line(s)", lines.len()));
+        return Err(kk_types::words::counted(&format!(
+            "the file has {} line(s)",
+            lines.len()
+        )));
     }
     let end = end.min(lines.len());
     let picked: String = lines[start - 1..end].concat();
@@ -7681,6 +7699,9 @@ async fn ask(axum::Extension(svc): Svc, Json(b): Json<AskBody>) -> Response {
     };
     let svc2 = svc.clone();
     let out = tokio::task::spawn_blocking(move || {
+        // the documents are read for the route in use now; if the model is changed to a less private one while they are
+        // read, what was gathered is not sent to it
+        let need = svc2.route_level();
         let imported = kk_review::import::scan_tree(&dir, kk_types::label::Level::Internal);
         let meaning = svc2.runner.embedder().map(|embedder| CachedMeaning {
             svc: svc2.clone(),
@@ -7707,7 +7728,7 @@ async fn ask(axum::Extension(svc): Svc, Json(b): Json<AskBody>) -> Response {
                 &format!("{}\nQuestion: {q}", meeting::hide_spoken(&ctx.text).0),
             ),
         ];
-        let mut reply = svc2.ask(messages)?;
+        let mut reply = svc2.ask_counted_at(messages, need)?.0;
         let mut ctx = ctx;
         let mut narrowed_to: Option<usize> = None;
         // a model that is given a window of passages and answers with nothing usable (an empty answer, the wrong shape) is
@@ -7734,7 +7755,7 @@ async fn ask(axum::Extension(svc): Svc, Json(b): Json<AskBody>) -> Response {
                         &format!("{}\nQuestion: {q}", meeting::hide_spoken(&tight.text).0),
                     ),
                 ];
-                if let Ok(second) = svc2.ask(again) {
+                if let Ok((second, _)) = svc2.ask_counted_at(again, need) {
                     if kk_review::ask::parse_answer(&second.text).is_some() {
                         reply = second;
                         ctx = tight;
@@ -8958,9 +8979,9 @@ fn draft_json(s: &Snapshot, allow: &kk_secrets::pii::Allow) -> Value {
             let hidden: usize = scans.iter().map(|(_, x)| x.allowed).sum();
             let mut not_established = kk_review::release::standard_not_established();
             if hidden > 0 {
-                not_established.push(format!(
+                not_established.push(kk_types::words::counted(&format!(
                     "{hidden} value(s) that look like personal data were not counted above because they match your own allowlist. The allowlist is yours; this release was not checked for them."
-                ));
+                )));
             }
             json!({
                 "available": true, "digest": d.digest, "recipient": d.recipient, "policy_version": d.policy_version, "expires": d.expires, "server_time": now(),

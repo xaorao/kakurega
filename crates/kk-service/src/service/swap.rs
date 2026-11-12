@@ -160,15 +160,7 @@ impl Service {
         Ok(out)
     }
 
-    /// A summary of earlier turns, asked the same way.
-    pub(super) fn ask_summary(
-        &self,
-        messages: Vec<kk_types::chat::ChatMessage>,
-    ) -> Result<String, String> {
-        self.ask_summary_at(messages, 0)
-    }
-
-    /// `ask_summary` for messages prepared for a route of at least this level.
+    /// A summary of earlier turns, for messages prepared for a route of at least this level.
     pub(super) fn ask_summary_at(
         &self,
         mut messages: Vec<kk_types::chat::ChatMessage>,

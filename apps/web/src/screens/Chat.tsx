@@ -118,6 +118,7 @@ export function Chat() {
       if (session()) show(null, []);
       else {
         setTurns([]);
+        heldLevel = 0;
         setError("");
         forgetSent(draftKey(session()));
         hist = idleHistory();
@@ -725,7 +726,7 @@ export function Chat() {
     setLive("");
     abort = new AbortController();
     try {
-      const r = await streamChat({ message, history, ...(heldLevel > 0 && history.length > 0 && !session() ? { held: heldLevel } : {}), ...(attached.length > 0 ? { attachments: attached.map((f) => f.id) } : {}), sources: pages().filter((p) => p.page_id && !p.looks_like_instructions).map((p) => p.page_id as string), ...(session() ? { session: session(), project: project().trim() } : project().trim() ? { project: project().trim() } : {}) }, (d) => setLive((x) => x + d), abort.signal);
+      const r = await streamChat({ message, history, ...(history.length > 0 && !session() ? { held: heldLevel } : {}), ...(attached.length > 0 ? { attachments: attached.map((f) => f.id) } : {}), sources: pages().filter((p) => p.page_id && !p.looks_like_instructions).map((p) => p.page_id as string), ...(session() ? { session: session(), project: project().trim() } : project().trim() ? { project: project().trim() } : {}) }, (d) => setLive((x) => x + d), abort.signal);
       if (myView !== view) {
         if ("stopped" in r) saveDraft(sentKey, message);
         return;

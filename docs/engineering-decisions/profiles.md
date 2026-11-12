@@ -37,3 +37,4 @@
 
 ## Owed
 - Make and remove from the desktop menu and the web settings (with the same typed confirmation); rename; a per-profile label and colour so a glance tells them apart.
+- `--profile` inside free text: `kaku chat explain the --profile flag` lost two words or changed profile. With the commands that take the owner's own text (ask, chat, roundtable, team, code, notes) the option is read only before the command or right after it. Evidence: `profile_option_tests`.

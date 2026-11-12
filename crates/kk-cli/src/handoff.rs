@@ -1,7 +1,8 @@
 //! Handing a piece of text to the Claude Code installed on this computer, when the owner has read that exact text and
 //! said yes. It is run for one answer with every tool switched off, no tool servers, nothing saved, in a new empty
 //! folder: what it can work on is the text and nothing else. It is not private: Claude Code sends the text to Anthropic
-//! under the owner's own account, together with its own instructions and the owner's own Claude Code settings.
+//! under the owner's own account, together with its own instructions. No settings source is loaded, so the owner's
+//! hooks and instruction files are not part of it.
 
 use std::io::Write;
 use std::path::PathBuf;

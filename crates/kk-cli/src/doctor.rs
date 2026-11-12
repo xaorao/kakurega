@@ -443,7 +443,7 @@ pub fn config_row(dir: &Path) -> Check {
                 sec,
                 Status::Warn,
                 "Settings file",
-                &format!("{FILE} is NOT applied ({} problem(s)): {list}", problems.len()),
+                &kk_types::words::counted(&format!("{FILE} is NOT applied ({} problem(s)): {list}", problems.len())),
             )
             .with_fix(
                 &format!("Correct {FILE} (kaku config check lists each problem) or remove it; until then none of it is applied."),
@@ -1733,7 +1733,7 @@ mod tests {
         );
         for part in [
             "NOT applied",
-            "3 problem(s)",
+            "3 problems",
             "quite",
             "did you mean `quiet`",
             "notify",

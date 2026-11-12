@@ -111,7 +111,7 @@ fn fb02_every_fix_status_gets_its_own_fixed_answer() {
             "not_checked",
         ),
         (
-            FixStatus::BreaksTests("3 test(s) passed before, 1 after".into()),
+            FixStatus::BreaksTests("3 tests passed before, 1 after".into()),
             "breaks_tests",
         ),
     ];

@@ -80,7 +80,7 @@ test("ds05 an approval is shown once, and a hostile id is never used in a path",
 
 test("ds06 the approval text lists exact files, withheld items and what is not established", () => {
   const t = describe({ ...sample, disclosure: { files_after: 5, project_files: 11, releases_before: 2, reasons: ["over the review threshold"], not_checked: ["combined excerpts"] } });
-  for (const s of ["5 of 11 project files", "2 earlier release(s)", "over the review threshold", "combined excerpts"]) assert.ok(t.includes(s), s);
+  for (const s of ["5 of 11 project files", "2 earlier releases", "over the review threshold", "combined excerpts"]) assert.ok(t.includes(s), s);
   for (const s of ["acme-audit", "abcdef0123456789ffff", "finding-1.txt", "secret.env (secret)", "model quality"]) assert.ok(t.includes(s), s);
 });
 

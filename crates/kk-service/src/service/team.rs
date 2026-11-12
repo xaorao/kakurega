@@ -143,7 +143,7 @@ pub(super) const OUTSIDE_SEAT: &str = "claude-code";
 /// worker, sandbox and broker every review uses; no expert reads files any other way.
 pub(super) const REVIEW_SEAT: &str = "project-review";
 pub(super) const REVIEW_NAME: &str = "Project reviewer";
-const REVIEW_NOT_HANDED: &str = "(the review's findings are not handed to an agent outside this program; open the review to read them)";
+const REVIEW_NOT_HANDED: &str = "(this answer is a review's findings, or was written after reading them; it is not handed to an agent outside this program. Open the run to read it)";
 pub(super) const REVIEW_SUMMARY: &str = "Reviews the files of the run's project folder in the sealed sandbox and reports only the defects it could reproduce. It is the same review as New review, whatever its task says, so give it the task of reviewing the project. It takes minutes, and it needs a project that has a folder.";
 const OUTSIDE_SUMMARY: &str = "The coding agent installed on this computer. Not private: each task for it is shown to the owner first and sent only on their yes. Give it only a task that needs none of the owner's files.";
 /// How a question to the owner about a hand-over begins, so it is told apart from an expert's own question.
@@ -185,6 +185,14 @@ impl Service {
             fail("the run's project has no folder this program may read; give the project a folder under Projects and plan again");
             return false;
         };
+        // from here the run holds words about the owner's files: it is marked as held on this computer, so neither a later
+        // task nor the closing answer goes to a model elsewhere, however the model is changed in between
+        {
+            let store = self.store.lock().expect("lock");
+            let _ = store
+                .connection()
+                .execute("UPDATE team_runs SET held = 3 WHERE id = ?1", [id]);
+        }
         let job = match self.start_job(&folder.to_string_lossy(), &format!("team run {id}")) {
             Ok(j) => j,
             Err(why) => {
@@ -456,7 +464,7 @@ impl Service {
         store
             .connection()
             .query_row(
-                "SELECT id, goal, project, status, final, final_note, created, updated, attachments, coalesce(held, 0) FROM team_runs WHERE id = ?1",
+                "SELECT id, goal, project, status, final, final_note, created, updated, attachments, coalesce(held, (SELECT CASE WHEN count(*) > 0 THEN 3 ELSE 0 END FROM team_tasks t WHERE t.run = team_runs.id AND t.result <> '')) FROM team_runs WHERE id = ?1",
                 [id],
                 |r| {
                     Ok(RunRow {
@@ -763,7 +771,7 @@ impl Service {
             return "stopped";
         };
         // a run that worked with a more private model holds notes, files and results that are not for a lesser one
-        let need = self.route_level();
+        let mut need = self.route_level();
         if run.held > need {
             self.team_set_final(id, None, MORE_PRIVATE);
             return "stopped";
@@ -846,12 +854,33 @@ impl Service {
             let question = team::task_question(&run.goal, n, total, &t.task, &earlier, &t.asked);
             // for the coding agent outside: a review's findings are words about the owner's files and leave this computer
             // only through a release, so they are not offered for hand-over at all
+            // that holds for an expert that read the findings too: its answer may quote them, so the answer of any task
+            // that follows a review, directly or through other tasks, is not offered either
+            let mut from_review: std::collections::BTreeSet<usize> = tasks
+                .iter()
+                .filter(|x| x.expert == REVIEW_SEAT)
+                .map(|x| x.n)
+                .collect();
+            loop {
+                let more: Vec<usize> = tasks
+                    .iter()
+                    .filter(|x| {
+                        !from_review.contains(&x.n)
+                            && x.after.iter().any(|d| from_review.contains(d))
+                    })
+                    .map(|x| x.n)
+                    .collect();
+                if more.is_empty() {
+                    break;
+                }
+                from_review.extend(more);
+            }
             let outside_owned: Vec<(String, String)> = t
                 .after
                 .iter()
                 .filter_map(|d| tasks.iter().find(|x| x.n == *d))
                 .map(|x| {
-                    if x.expert == REVIEW_SEAT {
+                    if from_review.contains(&x.n) {
                         (x.expert_name.clone(), REVIEW_NOT_HANDED.to_string())
                     } else {
                         (x.expert_name.clone(), experts::fit(&x.result, cap).0)
@@ -864,6 +893,7 @@ impl Service {
                 .collect();
             if t.expert == REVIEW_SEAT {
                 let stopped = self.team_review_task(id, n, &run);
+                need = need.max(self.team_run(id).map_or(0, |r| r.held));
                 self.log_event(
                     "team.task",
                     id,

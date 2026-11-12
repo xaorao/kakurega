@@ -490,7 +490,7 @@ fn f05_a_fix_that_stops_the_reproducer_but_breaks_the_projects_passing_tests_is_
     assert_eq!(before.status, CheckStatus::Reproduced);
     let (good, note) = verify_fix_with_tests(&f, &before, &fix(GOOD_OLD, GOOD_NEW), &idx, &env);
     assert_eq!(good, FixStatus::FixesTheReproducer);
-    assert!(note.contains("2 test(s) passed before and after"), "{note}");
+    assert!(note.contains("2 tests passed before and after"), "{note}");
     let sledgehammer = fix(GOOD_OLD, "    ACTIVE_TOKENS.clear()\n");
     let (bad, note) = verify_fix_with_tests(&f, &before, &sledgehammer, &idx, &env);
     assert!(matches!(bad, FixStatus::BreaksTests(_)), "{bad:?} {note}");
@@ -911,7 +911,7 @@ fn f09_a_fix_must_keep_every_passing_test_running_not_only_passing() {
         TestVerdict::Maintained(_)
     ));
     assert!(note(compare_test_runs(&n, &TestRun::Passed(5)))
-        .contains("5 test(s) passed before and after"));
+        .contains("5 tests passed before and after"));
     assert!(
         matches!(
             compare_test_runs(&n, &TestRun::Passed(7)),
@@ -1332,7 +1332,7 @@ fn n02_the_projects_javascript_tests_are_run_in_the_sandbox_and_a_fix_is_held_to
         &env,
     );
     assert_eq!(good, FixStatus::FixesTheReproducer, "{note}");
-    assert!(note.contains("3 test(s) passed before and after"), "{note}");
+    assert!(note.contains("3 tests passed before and after"), "{note}");
     let (bad, note) = verify_fix_with_tests(
         &jf,
         &before,
@@ -2509,7 +2509,7 @@ fn n03_the_projects_typescript_tests_are_run_in_the_sandbox_and_a_fix_is_held_to
         &env,
     );
     assert_eq!(good, FixStatus::FixesTheReproducer, "{note}");
-    assert!(note.contains("3 test(s) passed before and after"), "{note}");
+    assert!(note.contains("3 tests passed before and after"), "{note}");
     let (bad, note) = verify_fix_with_tests(
         &tf,
         &before,

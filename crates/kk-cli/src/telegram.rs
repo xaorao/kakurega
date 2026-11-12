@@ -93,9 +93,9 @@ fn parse_mute(arg: &str) -> Option<Option<Duration>> {
 fn describe_mute(d: Duration) -> String {
     let m = d.as_secs() / 60;
     if m.is_multiple_of(60) {
-        format!("{} hour(s)", m / 60)
+        kk_types::words::counted(&format!("{} hour(s)", m / 60))
     } else {
-        format!("{m} minute(s)")
+        kk_types::words::counted(&format!("{m} minute(s)"))
     }
 }
 
@@ -271,11 +271,11 @@ impl Bridge {
             if self.primed && prev.as_deref() != Some(state.as_str()) && state != "running" {
                 out.push(Out {
                     chat,
-                    text: format!(
+                    text: kk_types::words::counted(&format!(
                         "Review {id} {}. {} confirmed finding(s). Decide on your computer.",
                         state_word(&state),
                         j["findings_confirmed"].as_u64().unwrap_or(0)
-                    ),
+                    )),
                     ..Default::default()
                 });
             }
@@ -2172,8 +2172,8 @@ mod tests {
         ] {
             assert_eq!(parse_mute(bad), None, "{bad:?}");
         }
-        assert_eq!(describe_mute(Duration::from_secs(1800)), "30 minute(s)");
-        assert_eq!(describe_mute(Duration::from_secs(7200)), "2 hour(s)");
+        assert_eq!(describe_mute(Duration::from_secs(1800)), "30 minutes");
+        assert_eq!(describe_mute(Duration::from_secs(7200)), "2 hours");
     }
 
     #[test]
@@ -2183,7 +2183,7 @@ mod tests {
         b.poll_notifications(&mut f);
         let (out, _) = b.handle_update(&mut f, &msg(7, "/mute 1h"));
         assert!(
-            out[0].text.contains("without a sound for 1 hour(s)")
+            out[0].text.contains("without a sound for 1 hour")
                 && out[0].text.contains("they still arrive"),
             "{}",
             out[0].text

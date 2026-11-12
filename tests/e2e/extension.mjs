@@ -112,7 +112,7 @@ try {
   await app.locator(".mem").first().waitFor();
   check("accepting turns it into an untrusted memory", (await app.locator(".mem").first().innerText()).includes("from untrusted content"));
   await popup.reload();
-  await popup.getByText(/0 capture\(s\) waiting/).waitFor();
+  await popup.getByText(/0 captures waiting/).waitFor();
   check("the popup shows the queue is empty again", true);
 
   // hostile page

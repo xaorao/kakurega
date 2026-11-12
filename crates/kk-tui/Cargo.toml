@@ -6,6 +6,7 @@ publish.workspace = true
 description = "The kaku full-screen terminal workspace: a keyboard-first client of the local Kakurega service"
 
 [dependencies]
+kk-types = { path = "../kk-types" }
 kk-evidence = { path = "../kk-evidence" }
 ratatui = "0.29"
 crossterm = "0.28"

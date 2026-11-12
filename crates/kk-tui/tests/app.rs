@@ -8297,3 +8297,35 @@ fn tu_counted_words_get_their_real_form_wherever_the_count_stands() {
         assert_eq!(counted(written), shown, "{written}");
     }
 }
+
+#[test]
+fn tu_shown_data_is_never_reworded_and_earlier_messages_carry_their_level() {
+    // what a model, a file or the owner wrote is shown as it is, "(s)" and all
+    let mut a = booted();
+    let r = enter(&mut a, "what does len(s) do in 1 file(s)?");
+    assert!(
+        r[0].body.as_ref().unwrap().get("held").is_none(),
+        "a first message has nothing earlier to protect"
+    );
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "len(s) counts; print(s) shows 1 item(s) were returned", "level": 3, "route": {"simulated": false}, "notes_used": 0})));
+    let t = text(&a);
+    assert!(
+        t.contains("len(s) counts; print(s) shows 1 item(s) were returned"),
+        "{t}"
+    );
+    assert!(t.contains("what does len(s) do in 1 file(s)?"), "{t}");
+    // the next message says how privately the earlier ones were held; so does an aside
+    let r = enter(&mut a, "and then?");
+    assert_eq!(r[0].body.as_ref().unwrap()["held"], 3);
+    a.handle(ok(&r[0], 200, json!({"done": true, "reply": "then nothing", "level": 2, "route": {"simulated": false}, "notes_used": 0})));
+    let r = enter(&mut a, "/aside quick one");
+    assert_eq!(
+        (r[0].path.as_str(), &r[0].body.as_ref().unwrap()["held"]),
+        ("/api/chat", &json!(3)),
+        "the most private level any of them had"
+    );
+    // a new conversation starts with nothing held
+    enter(&mut a, "/new");
+    let r = enter(&mut a, "fresh");
+    assert!(r[0].body.as_ref().unwrap().get("held").is_none());
+}

@@ -570,7 +570,20 @@ if (!app.requestSingleInstanceLock()) {
   app.on("second-instance", () => showWindow());
 }
 
-app.whenReady().then(() => (app.isQuitting ? undefined : start())).catch((e) => {
+/** A preview folder left by a run that was killed while its dialog was open still holds a picture of the screen: at every
+ *  start, any such folder is removed before anything else happens. */
+function clearOldPreviews() {
+  try {
+    const temp = app.getPath("temp");
+    for (const name of readdirSync(temp)) {
+      if (name.startsWith("kakurega-preview-")) rmSync(join(temp, name), { recursive: true, force: true });
+    }
+  } catch {
+    // the temp folder could not be listed: nothing of ours can be removed from it
+  }
+}
+
+app.whenReady().then(() => { clearOldPreviews(); return app.isQuitting ? undefined : start(); }).catch((e) => {
   dialog.showErrorBox(t("error.start.title"), String(e.message ?? e));
   app.quit();
 });

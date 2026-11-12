@@ -21,7 +21,7 @@ async function render() {
     const r = await call(fetch, c, "GET", "/ext/status");
     if (r.status === 200) {
       $("state").className = "ok";
-      $("state").textContent = `Connected. ${r.body.pending_captures} capture(s) waiting for your review.`;
+      $("state").textContent = `Connected. ${r.body.pending_captures} ${r.body.pending_captures === 1 ? "capture" : "captures"} waiting for your review.`;
     } else {
       $("state").className = "";
       $("state").textContent = "The pairing is no longer valid.";

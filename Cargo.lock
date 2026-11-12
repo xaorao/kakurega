@@ -2986,6 +2986,7 @@ name = "kk-secrets"
 version = "0.0.1"
 dependencies = [
  "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -3031,6 +3032,7 @@ version = "0.0.1"
 dependencies = [
  "crossterm",
  "kk-evidence",
+ "kk-types",
  "ratatui",
  "serde_json",
  "unicode-width 0.2.0",

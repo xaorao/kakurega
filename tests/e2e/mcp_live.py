@@ -159,7 +159,7 @@ try:
     r0 = lstart()
     check("leased: a start without a lease is refused and says how to get one", r0["isError"] is True and "kaku agent grant start_review" in r0["content"][0]["text"], r0["content"][0]["text"][:120])
     g = owner("grant", "start_review", "--uses", "1", "--minutes", "5")
-    check("the owner grants one use from the terminal", g.returncode == 0 and "1 time(s)" in g.stdout, g.stdout + g.stderr)
+    check("the owner grants one use from the terminal", g.returncode == 0 and "1 time in" in g.stdout, g.stdout + g.stderr)
     check("leased: the granted tool appears at once, the other does not", "start_review" in lnames() and "request_approval" not in lnames())
     r1 = lstart()
     check("leased: the leased start really starts a review", r1["isError"] is False and r1["structuredContent"]["id"].startswith("job-"), json.dumps(r1)[:160])
