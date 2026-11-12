@@ -51,6 +51,8 @@ page.on("pageerror", (e) => problems.push("pageerror: " + e.message));
 page.on("requestfailed", (r) => { if (r.failure()?.errorText !== "net::ERR_ABORTED") problems.push(`requestfailed: ${r.url()} ${r.failure()?.errorText}`); });
 page.on("response", (r) => { if (r.status() >= 500) problems.push(`status ${r.status()}: ${r.url()}`); });
 const shot = (n) => page.screenshot({ path: join(work, `${n}.png`), fullPage: true });
+// the part of the page a person sees without scrolling, for the README
+const view = async (n) => { await page.evaluate(() => window.scrollTo(0, 0)); await page.screenshot({ path: join(work, `view-${n}.png`) }); };
 const t0 = Date.now();
 const secs = () => Math.round((Date.now() - t0) / 1000);
 try {
@@ -81,12 +83,14 @@ try {
   const prot = await page.locator('[role="tabpanel"]').innerText();
   check("the protection tab says the .env file was withheld from the model", prot.includes(".env"), prot.slice(0, 300));
   await shot("3-protection");
+  await view("protection");
   await page.getByRole("tab", { name: "Release" }).click();
   const digestLine = page.locator("p", { hasText: "Digest" }).first();
   await digestLine.waitFor({ timeout: 20000 });
   const digest = /[0-9a-f]{64}/.exec(await digestLine.innerText())?.[0] ?? "";
   check("the release shows its digest before anything is asked", digest.length === 64);
   await shot("4-release");
+  await view("release");
   await page.getByRole("button", { name: "Request approval" }).click();
   await page.getByText("Waiting for you.").waitFor({ timeout: 20000 });
   const approve = spawnSync(kaku, ["approve", "--data-dir", data], { input: digest.slice(0, 12) + "\n", encoding: "utf8" });
@@ -106,6 +110,7 @@ try {
   await v.setInputFiles("#file", capsule);
   await v.getByRole("heading", { name: "Valid" }).waitFor({ timeout: 20000 });
   await v.screenshot({ path: join(work, "6-verify.png"), fullPage: true });
+  await v.screenshot({ path: join(work, "view-verify.png") });
   check("the recipient's web page accepts the same capsule", /Not established/.test(await v.locator("main").innerText()));
   await v.close();
   const out = await page.evaluate(async () => (await (await fetch("/api/outbound")).json()));
@@ -127,6 +132,8 @@ try {
   check("the model answers the contract question correctly from the attached file", /\b(60|sixty)\b/i.test(answer), answer.slice(0, 300));
   console.log("answer: " + answer.replace(/\s+/g, " ").slice(0, 400));
   await shot("7-chat-answer");
+  await page.locator(".msg").last().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(work, "view-chat.png") });
   check("no console errors, page errors, failed requests or 5xx responses", problems.length === 0, problems.slice(0, 4).join(" | "));
 } catch (e) {
   check("the walk finished without an error", false, String(e?.stack ?? e).slice(0, 500));

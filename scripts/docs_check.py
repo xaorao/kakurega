@@ -18,7 +18,7 @@ from pathlib import Path
 repo = Path(__file__).resolve().parent.parent
 args = sys.argv[1:]
 kaku = repo / (args[args.index("--kaku") + 1] if "--kaku" in args else "target/debug/kaku")
-DOCS = [repo / "README.md", repo / "docs/mcp.md", repo / "docs/LIMITS.md", repo / "docs/FEATURES.md"]
+DOCS = [repo / "README.md", repo / "docs/mcp.md", repo / "docs/LIMITS.md", repo / "docs/FEATURES.md", repo / "docs/JUDGES.md"]
 problems = []
 checked = 0
 

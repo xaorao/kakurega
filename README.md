@@ -35,7 +35,7 @@ Take NEAR away and the recipient is left trusting us about the hardware. That is
 
 ## Check it yourself
 
-No keys and no funds are needed for any of these. Build once with `cargo build -p kk-cli` (Rust is pinned in `rust-toolchain.toml`).
+Step by step, with the exact output to expect: [docs/JUDGES.md](docs/JUDGES.md). No keys and no funds are needed for any of these. Build once with `cargo build -p kk-cli` (Rust is pinned in `rust-toolchain.toml`).
 
 | Time | Do | See |
 | --- | --- | --- |
