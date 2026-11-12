@@ -93,20 +93,20 @@ pub(super) async fn run(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>)
         );
     }
     // taken out of the store before it is sent, so a second yes cannot send it twice
-    let text: Option<String> = {
+    let kept: Option<(String, i64)> = {
         let store = svc.store.lock().expect("lock");
         let c = store.connection();
         let t = c
             .query_row(
-                "SELECT text FROM handoffs WHERE id = ?1 AND at >= ?2",
+                "SELECT text, at FROM handoffs WHERE id = ?1 AND at >= ?2",
                 kk_vault::rusqlite::params![id, now() - KEEP_SECS],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .ok();
         let _ = c.execute("DELETE FROM handoffs WHERE id = ?1", [&id]);
         t
     };
-    let Some(text) = text else {
+    let Some((text, shown_at)) = kept else {
         return error(StatusCode::NOT_FOUND, "NO_HANDOFF", "that hand-over was already sent, was cancelled, or is older than ten minutes; show the text again first");
     };
     let chars = text.chars().count();
@@ -120,7 +120,7 @@ pub(super) async fn run(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>)
             let store = svc.store.lock().expect("lock");
             let _ = store.connection().execute(
                 "INSERT INTO handoffs(id, text, at) VALUES(?1, ?2, ?3)",
-                kk_vault::rusqlite::params![id, text, now()],
+                kk_vault::rusqlite::params![id, text, shown_at],
             );
         }
         return error(

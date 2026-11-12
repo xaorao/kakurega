@@ -40,7 +40,7 @@ try {
     await new Promise((r) => setTimeout(r, 500)); // buttons animate their colours for 120 ms
     const text = await page.getByRole("region", { name: "Setup check" }).innerText();
     check(`[${scheme}] the screen names the model service problem and the exact fix`, /Local model service/.test(text) && /ollama serve/.test(text));
-    check(`[${scheme}] the screen names the sandbox problem and the exact fix`, /Sandbox virtual machine/.test(text) && /limactl start kk-no-such-vm/.test(text));
+    check(`[${scheme}] the screen names the missing sandbox machine and the script that makes it`, /Sandbox virtual machine/.test(text) && /Run scripts\/provision-vm/.test(text) && /makes the sandbox machine kk-no-such-vm/.test(text));
     check(`[${scheme}] the worker is reported as not checked, not as a bogus path`, /not checked: the virtual machine is not running/.test(text));
     check(`[${scheme}] Start review stays disabled while setup is incomplete`, await page.getByRole("button", { name: "Start review" }).isDisabled());
     await page.screenshot({ path: join(shots, `readiness-${scheme}.png`) });

@@ -659,7 +659,7 @@ impl Service {
     /// refuse (too long, or with a control character) is shortened and cleaned rather than lost.
     /// The values this program shows that are public by design: the signed log's public key and every fingerprint in it, and
     /// the release signing key with its id. Text is checked for secrets with these set aside.
-    fn public_values(&self) -> Vec<String> {
+    fn public_values(&self) -> std::collections::HashSet<String> {
         let mut out = vec![kk_evidence::b64::encode(&self.log.public_key())];
         let signer = self.signer_public();
         out.push(kk_evidence::b64::encode(&signer));
@@ -674,10 +674,7 @@ impl Service {
                 }
             }
         }
-        // longest first, so a value that holds another is set aside whole
-        out.sort_by_key(|v| std::cmp::Reverse(v.len()));
-        out.retain(|v| v.len() >= 16);
-        out
+        out.into_iter().filter(|v| v.len() >= 16).collect()
     }
 
     fn log_event(&self, kind: &str, subject: &str, data: &[(&str, kk_eventlog::Datum)]) -> bool {
@@ -2931,9 +2928,7 @@ async fn transcript_export(axum::Extension(svc): Svc, Json(b): Json<TranscriptEx
     }
     // this program's own public values are not secrets: they are set aside before the text is checked
     let mut checked = b.text.clone();
-    for public in svc.public_values() {
-        checked = checked.replace(&public, " ");
-    }
+    checked = set_aside(&checked, &svc.public_values());
     let secret_at =
         |t: &str| !kk_secrets::scan(t).is_empty() || kk_secrets::looks_secret(t).is_some();
     if secret_at(&checked) {
@@ -11074,4 +11069,48 @@ fn log_subject(subject: &str) -> String {
         out.push(c);
     }
     out
+}
+
+/// The text with every run of key-like characters (letters, digits, `-`, `_`, `:`) that is one of `public` replaced by a
+/// space, in one pass. A run also counts when it is a public value with a prefix such as `ed25519:` or a trailing `.`.
+fn set_aside(text: &str, public: &std::collections::HashSet<String>) -> String {
+    let key_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':');
+    let mut out = String::with_capacity(text.len());
+    let mut run = String::new();
+    let flush = |run: &mut String, out: &mut String| {
+        let bare = run.rsplit(':').next().unwrap_or(run.as_str());
+        if public.contains(run.as_str()) || public.contains(bare) {
+            out.push(' ');
+        } else {
+            out.push_str(run);
+        }
+        run.clear();
+    };
+    for c in text.chars() {
+        if key_char(c) {
+            run.push(c);
+        } else {
+            flush(&mut run, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut run, &mut out);
+    out
+}
+
+#[cfg(test)]
+mod set_aside_tests {
+    #[test]
+    fn public_values_go_in_one_pass_and_other_text_stays() {
+        let key = "QmFzZTY0dXJsLWVuY29kZWQtcHVibGljLWtleS0zMmJ5dGVz".to_string();
+        let head = "a".repeat(64);
+        let public: std::collections::HashSet<String> =
+            [key.clone(), head.clone()].into_iter().collect();
+        let text = format!("Signing key {key}\nlatest fingerprint {head}.\nsigned by ed25519:{head}\nthe key is sk_live_abc");
+        let out = super::set_aside(&text, &public);
+        assert_eq!(
+            out,
+            "Signing key  \nlatest fingerprint  .\nsigned by  \nthe key is sk_live_abc"
+        );
+    }
 }

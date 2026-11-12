@@ -131,6 +131,8 @@ function sandboxWords(transport: string | undefined): string {
 
 function Badge(props: { config: Config; modelDown: boolean }) {
   const r = () => props.config.route;
+  // the local model's check speaks only for the badge's model when that model is the one on this computer
+  const down = () => props.modelDown && r().stays_here !== false && !r().simulated;
   return (
     <div class="badges">
       <Show
@@ -153,9 +155,9 @@ function Badge(props: { config: Config; modelDown: boolean }) {
           {t(props.config.approvals?.signing_key_enrolled ? "badge.approvals.signed" : "badge.approvals")}
         </span>
       </Show>
-      <span class={props.modelDown ? "badge warn" : "badge"} title={props.modelDown ? t("badge.model.down.title") : undefined}>
+      <span class={down() ? "badge warn" : "badge"} title={down() ? t("badge.model.down.title") : undefined}>
         {r().model === "scripted test model" ? t("badge.model.scripted") : (r().model ?? r().id)}
-        <Show when={props.modelDown}> · {t("badge.model.down")}</Show>
+        <Show when={down()}> · {t("badge.model.down")}</Show>
       </span>
       <Show when={props.config.profile}>
         <span class="badge">{t("head.profile", { name: props.config.profile ?? "" })}</span>
