@@ -68,7 +68,11 @@ pub fn summarise(doc: &Value) -> (Value, Vec<String>) {
     }
     // the one check that is not a case: the local route pointed at another address must have refused it unasked
     let remote = &doc["local_route_pointed_elsewhere"];
-    if !remote.is_null() && (remote["model_was_asked"] != false || remote["http_status"] == 200) {
+    if !remote.is_null()
+        && (remote["model_was_asked"] != false
+            || remote["http_status"] == 200
+            || remote["exit_code"] == 0)
+    {
         problems.push("the local route accepted a model at another address".to_string());
     }
     let mut groups: BTreeMap<String, BTreeMap<&'static str, u64>> = BTreeMap::new();
@@ -336,6 +340,21 @@ mod tests {
         let mut accepted = good.clone();
         accepted["local_route_pointed_elsewhere"]["model_was_asked"] = json!(true);
         assert!(summarise(&accepted)
+            .1
+            .iter()
+            .any(|p| p.contains("accepted a model at another address")));
+        // a run where the service started with the address elsewhere is a failure even if nothing was asked yet
+        let mut started = good.clone();
+        started["local_route_pointed_elsewhere"] =
+            json!({"refused_at": "start", "exit_code": 0, "model_was_asked": false});
+        assert!(summarise(&started)
+            .1
+            .iter()
+            .any(|p| p.contains("accepted a model at another address")));
+        let mut refused = good.clone();
+        refused["local_route_pointed_elsewhere"] =
+            json!({"refused_at": "start", "exit_code": 1, "model_was_asked": false});
+        assert!(!summarise(&refused)
             .1
             .iter()
             .any(|p| p.contains("accepted a model at another address")));

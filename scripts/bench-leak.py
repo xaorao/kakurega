@@ -355,17 +355,28 @@ def main():
     chosen = [c for c in cases() if only in (None, c[0])]
     lan = subprocess.run(["sh", "-c", "ipconfig getifaddr en0 || ipconfig getifaddr en1 || hostname -I | cut -d' ' -f1"], capture_output=True, text=True).stdout.strip()
     rows = run_arm("here", "127.0.0.1", chosen)
-    # the local-model route must refuse a model that is not on this computer: checked once, as a case of its own
+    # a local model at an address that is not this computer is refused: the service will not start with it, and the model
+    # there is never asked anything. Checked once, as a case of its own.
     refused_remote = None
     if lan:
-        d, model, server, c, _, model_log, _ = start("lan", lan)
+        d = work / "lan"
+        shutil.rmtree(d, ignore_errors=True)
+        (d / "root").mkdir(parents=True)
+        canary_file, model_log = d / "canaries.json", d / "model.log"
+        canary_file.write_text('{"needles": []}')
+        model_log.write_text("")
+        port = 21000 + (os.getpid() % 500) + 500
+        model = subprocess.Popen([sys.executable, str(repo / "benchmarks/leak/adversary_model.py"), "0.0.0.0", str(port), str(canary_file), str(model_log)])
+        time.sleep(0.6)
         try:
-            status, v = c.req("/api/chat", {"message": "hello"})
-            refused_remote = {"http_status": status, "model_was_asked": len(chat_requests(settled(model_log))) > 0, "said": str(v.get("error", {}).get("code"))}
-            print(f"local route pointed at another address: status {status}, model asked: {refused_remote['model_was_asked']}")
+            r = subprocess.run([str(kaku), "serve", "--data-dir", str(d / "data"), "--root", str(d / "root"), "--model", "adversary", "--ollama", f"http://{lan}:{port}"], capture_output=True, text=True, timeout=60)
+            exit_code, said = r.returncode, (r.stderr or r.stdout).strip()[:200]
+        except subprocess.TimeoutExpired:
+            exit_code, said = 0, "the service started and kept running"
         finally:
-            server.kill()
             model.kill()
+        refused_remote = {"refused_at": "start", "exit_code": exit_code, "model_was_asked": len(chat_requests(settled(model_log))) > 0, "said": said}
+        print(f"local model at another address: exit {exit_code}, model asked: {refused_remote['model_was_asked']}")
     commit = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     dirty = bool(subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, text=True).stdout.strip())
     doc = {"type": "kakurega-leak-benchmark", "version": 1, "commit": commit, "tree_had_uncommitted_changes": dirty, "ran_at": int(time.time()),
@@ -380,7 +391,7 @@ def main():
     # for a script: a leak among the shapes the product says it knows, or a case that did not run, is a failure
     bad = [r["case"] for r in rows if r["verdict"] == "not_run" or (r["verdict"] == "LEAK" and r["group"] == "known shapes") or not r["plain_arm_leaked"]]
     # the local-model route must have refused the model at another address without asking it anything
-    if refused_remote is not None and (refused_remote["model_was_asked"] or refused_remote["http_status"] == 200):
+    if refused_remote is not None and (refused_remote["model_was_asked"] or refused_remote["exit_code"] == 0):
         bad.append("the local route accepted a model at another address")
     if bad:
         print("FAILED: " + ", ".join(bad[:20]))
