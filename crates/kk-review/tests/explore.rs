@@ -489,6 +489,25 @@ fn ex10_quotes_in_quotation_marks_ambiguous_places_long_lines_and_mixed_notation
     assert!(!check_citation(&code, "auth.py", 1, "disable_auth()")
         .found
         .checked());
+    // most of a comment line, with the comment mark left out, is still not code that runs
+    assert!(!check_citation(
+        &code,
+        "auth.py",
+        1,
+        "never call disable_auth() in production code"
+    )
+    .found
+    .checked());
+    assert_eq!(
+        check_citation(
+            &code,
+            "auth.py",
+            1,
+            "# never call disable_auth() in production code"
+        )
+        .found,
+        Found::AtLine
+    );
     assert!(
         !check_citation(&code, "auth.py", 3, "is_admin(user)")
             .found
