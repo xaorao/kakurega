@@ -9,6 +9,8 @@
     "test": "tsc --noEmit && node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@fontsource/jetbrains-mono": "5.3.0",
+    "@fontsource/outfit": "5.3.0",
     "@kakurega/verifier": "workspace:*",
     "solid-js": "1.9.9"
   },
