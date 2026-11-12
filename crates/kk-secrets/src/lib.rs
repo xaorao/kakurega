@@ -1783,6 +1783,158 @@ fn literal_credential(v: &str, quoted: bool, allow_identifier: bool) -> bool {
     credential_value_with(v, allow_identifier)
 }
 
+/// Symbols a password may start or end with that the general rule reads as something else: `!` as a negation in code, `%`
+/// as half of a `%NAME%` template, `@` and `#` as a mention or an anchor.
+const PASSWORD_EDGE: [char; 4] = ['!', '%', '@', '#'];
+
+/// A `%NAME%` reference (Windows, batch files): the whole value is capitals, digits and underscores between two percent
+/// signs. Inside a longer value a `%ABC%` is just characters of a password.
+fn percent_reference(v: &str) -> bool {
+    v.len() >= 3
+        && v.starts_with('%')
+        && v.ends_with('%')
+        && v[1..v.len() - 1]
+            .bytes()
+            .next()
+            .is_some_and(|c| c.is_ascii_uppercase())
+        && v[1..v.len() - 1]
+            .bytes()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'_')
+}
+
+/// A run of three or more x standing on its own (`pscale_pw_xxx`, `XXX-XXX`): not letters on either side. Inside random
+/// letters (`DjrXXXXTt`) such a run is chance.
+fn x_placeholder(v: &str) -> bool {
+    let b = v.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if !matches!(b[i], b'x' | b'X') {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < b.len() && matches!(b[i], b'x' | b'X') {
+            i += 1;
+        }
+        let alone = (start == 0 || !b[start - 1].is_ascii_alphabetic())
+            && (i == b.len() || !b[i].is_ascii_alphabetic());
+        if i - start >= 3 && alone {
+            return true;
+        }
+    }
+    false
+}
+
+/// After a key that names a password (`ADMIN_PASSWORD=`, `"db_pass":`, `pwd:`), the value is the password unless it is
+/// plainly something else. The general rule turns down a value that starts with `!` (a negation in code), starts or ends
+/// with `%` (half of a template), holds a run such as `XXXX`, or has no digit and less than very high entropy; after a
+/// password key those are passwords (`!6HKZwa8ioGbBhqHRohX`, `k3Rcu5l2z8CUsVrE9Kh%`, `qcQkdMZphdsEsw%cajEK`). Still not
+/// passwords: a template or reference (`${DB_PASS}`, `%DB_PASS%`, `$DB_PASS`, `{{ pass }}`), a placeholder, a run, a name
+/// (`!isEnabled`, `userPassword`, `DB_PASSWORD`, `user.password`), a path, code, and a value too plain to be one
+/// (`Password`, one kind of character).
+fn password_value(raw: &str, quoted: bool) -> bool {
+    let v = strip_quotes(raw);
+    if !v.is_ascii()
+        || v.len() < 8
+        || v.contains(char::is_whitespace)
+        || percent_reference(v)
+        || placeholder(v)
+        || sequential(v)
+    {
+        return false;
+    }
+    // the templates and references the general rule knows, except a single percent sign at an edge, and code
+    let unpercent = v.trim_start_matches('%').trim_end_matches('%');
+    if templated(unpercent)
+        || v.contains(['(', ')', '{', '}', '[', ']', '<', '>', '`', '\\', '$'])
+        || v.contains("::")
+        || v.contains("->")
+        || v.contains("=>")
+    {
+        return false;
+    }
+    let core = v.trim_matches(|c| PASSWORD_EDGE.contains(&c));
+    if core.len() < 8 {
+        return false;
+    }
+    let lower = core.to_ascii_lowercase();
+    let says_so = [
+        "dummy",
+        "example",
+        "sample",
+        "placeholder",
+        "changeme",
+        "redacted",
+        "lorem",
+        "default",
+    ]
+    .iter()
+    .any(|m| lower.contains(m));
+    let env_name = core
+        .chars()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        && core.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+        && (core.contains('_') || !core.chars().any(|c| c.is_ascii_digit()));
+    let path_like = core.starts_with('/')
+        || core.starts_with("./")
+        || core.starts_with("~/")
+        || core.chars().filter(|c| *c == '/').count() >= 2;
+    let member_path = core.contains('.')
+        && core.split('.').all(|p| {
+            !p.is_empty()
+                && p.chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        });
+    // a name made of words joined by `-`, `_` or `.` (`new_password`, `test-password`, `Password_From_Env`), a name that says
+    // what it holds (`vncPassword`, `sudo_pass`), or the end of a sentence or a piece of code (`configured.`, `a?.b`)
+    let slug = core.contains(['-', '_', '.', ':'])
+        && core.split(['-', '_', '.', ':']).all(|p| {
+            p.is_empty()
+                || p.chars().all(|c| c.is_ascii_digit())
+                || (p.len() <= 14 && p.chars().all(|c| c.is_ascii_alphabetic()))
+        });
+    let named = ["pass", "pwd", "secret", "token", "cred", "auth", "key"]
+        .iter()
+        .any(|w| lower.contains(w));
+    // also a path (`build/read-source`), an ellipsis (`ghp_abc...xyz`) and an x standing for the value (`pscale_pw_xxx`;
+    // inside random letters, as in `DjrXXXXTt`, it is chance)
+    let prose_or_code = core.contains(['?', '"', '\'', ',', ';', '=', '|', '*', '/'])
+        || core.contains("..")
+        || x_placeholder(core)
+        || core.ends_with(['.', ':'])
+        || core.starts_with(['.', ':', '-']);
+    if says_so
+        || env_name
+        || camel_identifier(core)
+        || path_like
+        || member_path
+        || slug
+        || named
+        || prose_or_code
+    {
+        return false;
+    }
+    // letters alone: random letters, not a word or a name made of words (`Wachtwoord`, `URLPatternComponentResult`)
+    if core.chars().all(|c| c.is_ascii_alphabetic()) {
+        return random_letters(core);
+    }
+    // a password mixes kinds of character; one kind alone is left to the general rule (a long run of letters there is a
+    // passphrase)
+    let kinds = [
+        core.chars().any(|c| c.is_ascii_lowercase()),
+        core.chars().any(|c| c.is_ascii_uppercase()),
+        core.chars().any(|c| c.is_ascii_digit()),
+        core.chars().any(|c| !c.is_ascii_alphanumeric()),
+    ]
+    .iter()
+    .filter(|k| **k)
+    .count();
+    let _ = quoted;
+    kinds >= 2 && entropy(core) >= 3.0
+}
+
 /// A password that is a run of 16 or more letters of both cases and no digit, such as `TFOgGskGPxoGXWOnWiqH`. Without a
 /// digit the general rule asks for very high entropy and turned down about half of such values; after a key that names a
 /// secret they are credentials. A name made of words must still pass: it is told from random letters by its words, because
@@ -2115,7 +2267,8 @@ fn scan_assignments(text: &str, decoded: bool, hits: &mut Vec<Hit>) {
                     .any(|w| key_name.contains(w));
                     // everything a value must satisfy to count, given how it was introduced
                     let accept = |tok: &str, quoted: bool, form: Form| -> bool {
-                        literal_credential(tok, quoted, !hash_named)
+                        (literal_credential(tok, quoted, !hash_named)
+                            || (password_class && !hash_named && password_value(tok, quoted)))
                             && (!is_key_suffix || key_value_strong(tok))
                             && (password_class || !word_slug(tok))
                             && match form {
@@ -3271,7 +3424,7 @@ pub fn scan(text: &str) -> Vec<Hit> {
 /// Which generation of the detector this is. Bump it whenever a rule is added, removed or changed, so stores that kept text under
 /// an older detector are checked again with this one (kk-memory does that at open). A test in `tests/corpus.rs` fails when the
 /// detector's answers over its corpus change and this number was not bumped.
-pub const DETECTOR_VERSION: u32 = 1;
+pub const DETECTOR_VERSION: u32 = 2;
 
 /// Whether the text holds a credential in any form the detector knows. Used for every stored or shared piece of free text that
 /// has no reason to hold one: a recipient, a project name, a reason, a file name.

@@ -38,6 +38,9 @@ fn positives() -> Vec<(&'static str, String)> {
     let pw = "Zk9fQ2x8Lm4vPq7R";
     vec![
         ("github token", format!("export GH={gh}\n")),
+        ("password starting with a symbol", "ADMIN_PASSWORD=!6HKZwa8ioGbBhqHRohX\n".into()),
+        ("password ending with a percent sign", "ADMIN_PASSWORD=k3Rcu5l2z8CUsVrE9Kh%\n".into()),
+        ("password with no digit", "ADMIN_PASSWORD=qcQkdMZphdsEsw%cajEK\n".into()),
         ("github fine-grained", j(&["github", "_pat_", &body(82, ALNUM, 3)])),
         ("aws id", j(&["AK", "IA", &body(16, B32, 4)])),
         ("aws temp id", j(&["AS", "IA", &body(16, B32, 5)])),
@@ -72,6 +75,9 @@ fn positives() -> Vec<(&'static str, String)> {
 fn negatives() -> Vec<(&'static str, String)> {
     vec![
         ("uuid", "id = 123e4567-e89b-12d3-a456-426614174000".into()),
+        ("password word in another language", "\"com_auth_password\": \"Wachtwoord\",".into()),
+        ("password reference", "PASSWORD=%DB_PASS%".into()),
+        ("password given by a name", "password: test-password".into()),
         ("sha256", "digest: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08".into()),
         ("git sha", "commit 4b825dc642cb6eb9a060e54bf8d69288fbee4904".into()),
         ("counter", "inputTokens += x;".into()),
@@ -240,7 +246,7 @@ fn dv01_the_detector_version_is_bumped_whenever_its_answers_over_the_corpus_chan
         parts.push(format!("{name}={:?}", looks_secret(&text)));
     }
     let got = fnv(&parts);
-    const EXPECTED: (u32, u64) = (1, 5040826748400983632);
+    const EXPECTED: (u32, u64) = (2, 5348829233021566607);
     assert_eq!(
         (kk_secrets::DETECTOR_VERSION, got),
         EXPECTED,
