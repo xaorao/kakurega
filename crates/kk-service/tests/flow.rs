@@ -9287,8 +9287,31 @@ fn sv91_a_transcript_is_exported_to_a_file_the_owner_names_inside_the_exports_fo
     assert!(
         !root.join("data").join("escape").exists() && !root.join("data").join("escape.md").exists()
     );
-    // what is refused in the text
+    // this program's own public values, as /log shows them, are not secrets: a transcript holding them is written
+    w.post("/api/chat", json!({"message": "one entry for the log"}));
+    let (_, log) = w.get("/api/log");
+    let shown = format!(
+        "You: /log\n\nKakurega: {} entries; latest fingerprint {}\nSigning key {}\n",
+        log["count"],
+        log["head"].as_str().unwrap(),
+        log["public_key"].as_str().unwrap()
+    );
+    let (s, v) = w.post(
+        "/api/exports/transcript",
+        json!({"name": "with-log", "text": shown}),
+    );
+    assert_eq!(s, 200, "{v}");
+    // what is refused in the text, and the refusal says which line without repeating it
     let secret = format!("the key is {}{}", "sk_li", "ve_abcdefghijklmnop0123");
+    let (s, v) = w.post(
+        "/api/exports/transcript",
+        json!({"name": "s0", "text": format!("You: hello\n\n{secret}\n")}),
+    );
+    let said = v["error"]["message"].as_str().unwrap_or("");
+    assert!(
+        s == 422 && said.starts_with("line 3 of the text") && !said.contains("abcdefghijklmnop"),
+        "{v}"
+    );
     assert_eq!(
         w.post(
             "/api/exports/transcript",

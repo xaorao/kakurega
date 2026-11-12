@@ -93,6 +93,36 @@ Usage:
 
 Options for every command: --profile NAME (a profile made with `kaku profile new`; with ask, chat, roundtable, team, code and notes put it before the command or right after it, since what follows is your own text), or --data-dir DIR (default ~/.kakurega, the profile `default`)";
 
+/// The usage lines of one command, with the lines that continue them, and the options for every command; `None` when the
+/// page has no line for it.
+fn usage_of(command: &str) -> Option<String> {
+    let start = format!("  kaku {command} ");
+    let start_bare = format!("  kaku {command}");
+    let mut out: Vec<&str> = Vec::new();
+    let mut taking = false;
+    for line in USAGE.lines() {
+        if line.starts_with("  kaku ") {
+            taking = line.starts_with(&start) || line == start_bare;
+        } else if !line.starts_with("    ") {
+            taking = false;
+        }
+        if taking {
+            out.push(line);
+        }
+    }
+    if out.is_empty() {
+        return None;
+    }
+    let every = USAGE
+        .lines()
+        .find(|l| l.starts_with("Options for every command"));
+    Some(format!(
+        "Usage:\n{}{}",
+        out.join("\n"),
+        every.map(|e| format!("\n\n{e}")).unwrap_or_default()
+    ))
+}
+
 /// Where `--profile` stands as an option. After a command that takes free text ("kaku chat explain the --profile flag")
 /// the words are the owner's: there it is an option only when it stands before the command or right after it.
 fn profile_option(args: &[String]) -> Option<usize> {
@@ -127,21 +157,24 @@ fn main() -> ExitCode {
     }
     // a help flag after a command asks for help, never for the command to run (`kaku serve --help` must not start a service).
     // Commands that take free text or run another program keep their arguments as they are.
-    let wants_help = args.len() > 1
-        && !matches!(
-            args[0].as_str(),
-            "parse-attachment"
-                | "crash-probe"
-                | "ask"
-                | "code"
-                | "notes"
-                | "mcp"
-                | "chat"
-                | "roundtable"
-                | "team"
-                | "explore"
-        )
-        && args[1..].iter().any(|a| a == "--help" || a == "-h");
+    // a free-text command given only a help flag asks for help: "--help" is not a question anyone means to send
+    let only_help = args.len() == 2 && matches!(args[1].as_str(), "--help" | "-h");
+    let wants_help = only_help
+        || args.len() > 1
+            && !matches!(
+                args[0].as_str(),
+                "parse-attachment"
+                    | "crash-probe"
+                    | "ask"
+                    | "code"
+                    | "notes"
+                    | "mcp"
+                    | "chat"
+                    | "roundtable"
+                    | "team"
+                    | "explore"
+            )
+            && args[1..].iter().any(|a| a == "--help" || a == "-h");
     let first = if wants_help {
         Some("--help")
     } else {
@@ -209,7 +242,14 @@ fn main() -> ExitCode {
         ) => tui::run(&args),
         None if std::env::var("KAKU_LINEAR").is_ok_and(|v| v == "1") => tui::run(&args),
         Some("--help") | Some("-h") | None => {
-            println!("{USAGE}");
+            match args
+                .first()
+                .filter(|_| wants_help)
+                .and_then(|c| usage_of(c))
+            {
+                Some(lines) => println!("{lines}"),
+                None => println!("{USAGE}"),
+            }
             0
         }
         Some(other) => {
@@ -269,5 +309,32 @@ mod profile_option_tests {
         assert_eq!(of("chat explain the --profile flag"), None);
         assert_eq!(of("ask what does --profile work do"), None);
         assert_eq!(of("status"), None);
+    }
+}
+
+#[cfg(test)]
+mod usage_tests {
+    #[test]
+    fn a_commands_help_is_its_own_lines() {
+        let chat = super::usage_of("chat").unwrap();
+        assert!(
+            chat.contains("kaku chat MESSAGE")
+                && !chat.contains("kaku review")
+                && chat.contains("Options for every command"),
+            "{chat}"
+        );
+        let serve = super::usage_of("serve").unwrap();
+        assert!(
+            serve.contains("--route near")
+                && serve.contains("--transport lima|local")
+                && !serve.contains("kaku review"),
+            "{serve}"
+        );
+        let explore = super::usage_of("explore").unwrap();
+        assert!(
+            explore.contains("kaku explore DIR") && explore.contains("kaku explore show ID"),
+            "{explore}"
+        );
+        assert!(super::usage_of("nonsense").is_none());
     }
 }

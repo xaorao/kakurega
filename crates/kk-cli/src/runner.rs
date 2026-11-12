@@ -596,7 +596,10 @@ cut_short: false,
                 }
             }
         }
-        let worker_fix = "Build it: cargo build -p kk-worker (for the virtual machine, scripts/e2e builds it there)";
+        let worker_fix = match &self.transport {
+            Transport::Local => "Run scripts/setup from the Kakurega folder: it builds the review worker beside kaku",
+            Transport::Lima { .. } => "Run scripts/provision-vm from the Kakurega folder: it builds the review worker inside the sandbox machine",
+        };
         match &self.transport {
             Transport::Local => {
                 out.push(check(
@@ -661,7 +664,11 @@ cut_short: false,
                     } else {
                         format!("{vm}: {status}")
                     },
-                    &format!("Start it with: limactl start {vm}"),
+                    &if status.is_empty() {
+                        format!("Run scripts/provision-vm from the Kakurega folder: it makes the sandbox machine {vm} and everything reviews need in it")
+                    } else {
+                        format!("Start it with: limactl start {vm}")
+                    },
                 ));
                 // the samples a check reads are written under the data folder on this computer and opened in the machine
                 // at the same path, and the machine sees only the home folder: a data folder elsewhere means no check can

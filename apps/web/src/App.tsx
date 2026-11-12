@@ -129,7 +129,7 @@ function sandboxWords(transport: string | undefined): string {
   return vm ? t("badge.sandbox.vm", { vm }) : transport;
 }
 
-function Badge(props: { config: Config }) {
+function Badge(props: { config: Config; modelDown: boolean }) {
   const r = () => props.config.route;
   return (
     <div class="badges">
@@ -153,7 +153,10 @@ function Badge(props: { config: Config }) {
           {t(props.config.approvals?.signing_key_enrolled ? "badge.approvals.signed" : "badge.approvals")}
         </span>
       </Show>
-      <span class="badge">{r().model === "scripted test model" ? t("badge.model.scripted") : (r().model ?? r().id)}</span>
+      <span class={props.modelDown ? "badge warn" : "badge"} title={props.modelDown ? t("badge.model.down.title") : undefined}>
+        {r().model === "scripted test model" ? t("badge.model.scripted") : (r().model ?? r().id)}
+        <Show when={props.modelDown}> · {t("badge.model.down")}</Show>
+      </span>
       <Show when={props.config.profile}>
         <span class="badge">{t("head.profile", { name: props.config.profile ?? "" })}</span>
       </Show>
@@ -309,7 +312,36 @@ export function App() {
   const onOnline = () => live?.online();
   document.addEventListener("visibilitychange", onVisible);
   window.addEventListener("online", onOnline);
-  const onFocus = () => void notifier.focusChanged();
+  // whether the model on this computer answers, from the readiness checks: read at load, when the page comes back to the
+  // front (at most once a minute) and after a reply fails
+  const [modelDown, setModelDown] = createSignal(false);
+  let modelChecked = 0;
+  const checkModel = async (force = false) => {
+    if (!paired() || (!force && Date.now() - modelChecked < 60_000)) return;
+    modelChecked = Date.now();
+    try {
+      const r = await api.readiness();
+      setModelDown(r.checks.some((c) => c.id === "ollama" && !c.ok));
+    } catch {
+      // the service did not answer: that is said elsewhere
+    }
+  };
+  createEffect(() => {
+    if (paired()) void checkModel(true);
+  });
+  const onModelCheck = () => void checkModel(true);
+  // a reply came from the model, so it answers
+  const onModelOk = () => setModelDown(false);
+  window.addEventListener("kk:model-check", onModelCheck);
+  window.addEventListener("kk:model-ok", onModelOk);
+  onCleanup(() => {
+    window.removeEventListener("kk:model-check", onModelCheck);
+    window.removeEventListener("kk:model-ok", onModelOk);
+  });
+  const onFocus = () => {
+    void notifier.focusChanged();
+    if (document.hasFocus()) void checkModel();
+  };
   window.addEventListener("focus", onFocus);
   window.addEventListener("blur", onFocus);
   onFocus();
@@ -372,7 +404,7 @@ export function App() {
         <div class="shell" inert={paletteOpen() || helpOpen()}>
           <header class="top">
             <a class="brand" href="#/">kakurega</a>
-            <Show when={config()}>{(c) => <Badge config={c()} />}</Show>
+            <Show when={config()}>{(c) => <Badge config={c()} modelDown={modelDown()} />}</Show>
             <LanguagePicker />
             <ThemePicker />
             <button class="link" onClick={() => setPaletteOpen(true)} aria-keyshortcuts="Control+Shift+P Meta+Shift+P">{t("palette.open")}</button>

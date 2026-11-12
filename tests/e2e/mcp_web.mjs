@@ -44,6 +44,7 @@ await page.getByRole("heading", { name: "Outside tools" }).waitFor();
 await page.getByText("No outside programs yet.").waitFor();
 check(true, "a new install has no outside programs and says so");
 
+await page.getByRole("button", { name: "Add an outside program" }).click();
 await page.getByLabel("A short name for it").fill("docs");
 await page.getByLabel("Full path of the program").fill("node");
 await page.getByRole("button", { name: "Add program" }).click();

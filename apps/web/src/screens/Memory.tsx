@@ -762,7 +762,16 @@ export function Memory() {
         <h2 id="h-mem-glance">{t("mem.glance.heading")}</h2>
         <Show when={stats()} fallback={<p class="muted">{t("mem.glance.unknown")}</p>}>
           {(s) => (
-            <p role="status">{t("mem.glance.line", { total: s().total, untrusted: s().untrusted, unused: s().never_used, soon: s().ending_within_14_days, held: s().held })}</p>
+            <>
+              <p role="status" class="sr">{t("mem.glance.line", { total: s().total, untrusted: s().untrusted, unused: s().never_used, soon: s().ending_within_14_days, held: s().held })}</p>
+              <dl class="tiles" aria-hidden="true">
+                <div class="tile"><dt>{t("mem.tile.total")}</dt><dd>{s().total}</dd></div>
+                <div class="tile"><dt>{t("mem.tile.untrusted")}</dt><dd>{s().untrusted}</dd></div>
+                <div class="tile"><dt>{t("mem.tile.unused")}</dt><dd>{s().never_used}</dd></div>
+                <div class="tile"><dt>{t("mem.tile.soon")}</dt><dd>{s().ending_within_14_days}</dd></div>
+                <div class={s().held > 0 ? "tile warn" : "tile"}><dt>{t("mem.tile.held")}</dt><dd>{s().held}</dd></div>
+              </dl>
+            </>
           )}
         </Show>
         <div class="actions">
@@ -812,12 +821,14 @@ export function Memory() {
         </div>
       </form>
       {/* the notes come first; looking after them (duplicates, disagreements, what was put away, bringing notes in, backups) comes after */}
+      <h2 class="mem-section">{t("mem.section.tidy")}</h2>
       <Similar onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />
       <Disagreements onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <Merged onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <Quiet onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <Archived onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />
       <ReviewSources onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
+      <h2 class="mem-section">{t("mem.section.bring")}</h2>
       <ImportNotes onDone={() => void refetch()} />
       <NotesBackup onDone={() => void refetch()} />
     </section>

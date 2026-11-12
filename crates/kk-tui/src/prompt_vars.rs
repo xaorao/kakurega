@@ -1,8 +1,8 @@
 //! Fields in a saved prompt, the same rules as the web page's (`apps/web/src/promptVars.ts`; both are checked against
 //! `apps/web/test/promptvars-cases.json`): `{{name}}`, `{{name:one|two}}` (the choices start after the first colon), one
 //! field per name (every place with that name takes the one value), and `{{current_date}}`, `{{current_datetime}}`,
-//! `{{iso_datetime}}` filled from the clock whatever follows a colon (in UTC here; the web page uses the computer's own time
-//! zone). A prompt is filled only when every field has a value.
+//! `{{iso_datetime}}` filled from the clock whatever follows a colon (the date and the date and time in this computer's time
+//! zone, as on the web page; the ISO form in UTC). A prompt is filled only when every field has a value.
 
 use std::collections::BTreeMap;
 
@@ -18,7 +18,8 @@ const AUTO: [&str; 3] = ["current_date", "current_datetime", "iso_datetime"];
 const MAX: usize = 80;
 
 fn trim(s: &str) -> &str {
-    s.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
+    // white space as the web page's JavaScript `\s` reads it: Unicode white space except U+0085, and U+FEFF
+    s.trim_matches(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
 }
 
 fn name_of(raw: &str) -> &str {
@@ -89,6 +90,7 @@ pub fn fill(
     text: &str,
     values: &BTreeMap<String, String>,
     now_secs: i64,
+    offset_secs: i64,
 ) -> Result<String, Vec<String>> {
     let missing: Vec<String> = fields(text)
         .iter()
@@ -98,9 +100,13 @@ pub fn fill(
     if !missing.is_empty() {
         return Err(missing);
     }
-    let (y, m, d) = crate::picker::civil(now_secs.div_euclid(86_400));
-    let secs = now_secs.rem_euclid(86_400);
-    let (hh, mm, ss) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+    let parts = |at: i64| {
+        let (y, m, d) = crate::picker::civil(at.div_euclid(86_400));
+        let secs = at.rem_euclid(86_400);
+        (y, m, d, secs / 3600, (secs % 3600) / 60, secs % 60)
+    };
+    let (y, m, d, hh, mm, _) = parts(now_secs + offset_secs);
+    let (uy, um, ud, uh, umin, us) = parts(now_secs);
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
     for (start, end, raw) in spots(text) {
@@ -108,12 +114,10 @@ pub fn fill(
         let name = name_of(raw);
         match name.to_lowercase().as_str() {
             "current_date" => out.push_str(&format!("{y:04}-{m:02}-{d:02}")),
-            "current_datetime" => {
-                out.push_str(&format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02} UTC"))
-            }
-            "iso_datetime" => {
-                out.push_str(&format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z"))
-            }
+            "current_datetime" => out.push_str(&format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02}")),
+            "iso_datetime" => out.push_str(&format!(
+                "{uy:04}-{um:02}-{ud:02}T{uh:02}:{umin:02}:{us:02}Z"
+            )),
             _ => match values.get(name).filter(|_| !name.is_empty()) {
                 Some(v) => out.push_str(trim(v)),
                 None => out.push_str(&text[start..end]),
@@ -125,32 +129,58 @@ pub fn fill(
     Ok(out)
 }
 
-/// `name=value` pairs, a value in double quotes when it holds spaces.
+/// One word: in double quotes (where \" and \\ stand for a quote and a backslash), or bare up to the first character that
+/// `stop` accepts. Returns the word and what follows it.
+fn word(s: &str, stop: impl Fn(char) -> bool) -> Result<(String, &str), String> {
+    let Some(q) = s.strip_prefix('"') else {
+        let end = s.find(stop).unwrap_or(s.len());
+        return Ok((s[..end].to_string(), &s[end..]));
+    };
+    let mut out = String::new();
+    let mut chars = q.char_indices();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' => match chars.next() {
+                Some((_, n)) => out.push(n),
+                None => return Err("a backslash ends it".into()),
+            },
+            '"' => return Ok((out, &q[i + 1..])),
+            c => out.push(c),
+        }
+    }
+    Err("its quote is not closed".into())
+}
+
+/// The way to write a field name on the command line: bare when it can be, else in quotes.
+pub fn quoted_name(name: &str) -> String {
+    if name.is_empty()
+        || name.contains(|c: char| c.is_whitespace() || c == '=' || c == '"' || c == '\\')
+    {
+        format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        name.to_string()
+    }
+}
+
+/// `name=value` pairs. A name or a value with spaces, `=` or quotes is written in double quotes: `"due date"="next \"big\" day"`.
 pub fn pairs(words: &str) -> Result<BTreeMap<String, String>, String> {
     let mut out = BTreeMap::new();
     let mut rest = words.trim();
     while !rest.is_empty() {
-        let Some(eq) = rest.find('=') else {
+        let (name, after) = word(rest, |c| c == '=' || c.is_whitespace())
+            .map_err(|e| format!("a field name: {e}"))?;
+        let Some(after) = after.strip_prefix('=') else {
             return Err(format!(
-                "give each field as name=value; \"{}\" is not one",
-                rest.split_whitespace().next().unwrap_or(rest)
+                "give each field as name=value (a name with spaces in double quotes, like \"due date\"=Friday); {} is not one",
+                quoted_name(&name)
             ));
         };
-        let name = rest[..eq].trim();
-        if name.is_empty() || name.contains(char::is_whitespace) {
+        if trim(&name).is_empty() {
             return Err("give each field as name=value".into());
         }
-        let after = &rest[eq + 1..];
-        let (value, tail) = if let Some(q) = after.strip_prefix('"') {
-            match q.find('"') {
-                Some(close) => (&q[..close], &q[close + 1..]),
-                None => return Err(format!("the value of {name} has no closing quote")),
-            }
-        } else {
-            let end = after.find(char::is_whitespace).unwrap_or(after.len());
-            (&after[..end], &after[end..])
-        };
-        out.insert(name.to_string(), value.to_string());
+        let (value, tail) = word(after, char::is_whitespace)
+            .map_err(|e| format!("the value of {}: {e}", quoted_name(&name)))?;
+        out.insert(trim(&name).to_string(), value);
         rest = tail.trim_start();
     }
     Ok(out)
@@ -182,7 +212,7 @@ mod shared_cases {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string()))
                 .collect();
-            let got = match super::fill(text, &values, 1_767_603_600) {
+            let got = match super::fill(text, &values, 1_767_603_600, 0) {
                 Ok(t) => serde_json::json!({"text": t}),
                 Err(m) => serde_json::json!({"missing": m}),
             };
@@ -192,11 +222,54 @@ mod shared_cases {
             "{{current_date:x}} {{ ISO_DATETIME }}",
             &BTreeMap::new(),
             1_767_604_023,
+            0,
         )
         .unwrap();
         assert!(
             !r.contains("{{") && r.ends_with("2026-01-05T09:07:03Z"),
             "{r}"
         );
+    }
+}
+
+#[cfg(test)]
+mod local_time {
+    #[test]
+    fn the_date_follows_this_computers_zone_and_the_iso_form_stays_utc() {
+        // 2026-01-05 23:30 UTC is already 2026-01-06 05:00 at +05:30
+        let r = super::fill(
+            "{{current_date}} | {{current_datetime}} | {{iso_datetime}}",
+            &Default::default(),
+            1_767_655_800,
+            5 * 3600 + 1800,
+        )
+        .unwrap();
+        assert_eq!(r, "2026-01-06 | 2026-01-06 05:00 | 2026-01-05T23:30:00Z");
+    }
+}
+
+#[cfg(test)]
+mod quoted_pairs {
+    #[test]
+    fn names_and_values_with_spaces_equals_and_quotes_can_be_given() {
+        let p =
+            super::pairs(r#""due date"=Friday "a=b"=1 "say \"hi\""="a \"b\" c" plain=x"#).unwrap();
+        assert_eq!(p.get("due date").map(String::as_str), Some("Friday"));
+        assert_eq!(p.get("a=b").map(String::as_str), Some("1"));
+        assert_eq!(p.get("say \"hi\"").map(String::as_str), Some("a \"b\" c"));
+        assert_eq!(p.get("plain").map(String::as_str), Some("x"));
+        assert!(
+            super::pairs(r#""due date"#).is_err()
+                && super::pairs("x=\"open").is_err()
+                && super::pairs("lonely").is_err()
+        );
+        assert_eq!(super::quoted_name("due date"), r#""due date""#);
+        assert_eq!(super::quoted_name(r#"say "hi""#), r#""say \"hi\"""#);
+        assert_eq!(super::quoted_name("tone"), "tone");
+        // a name written the way the hint writes it reads back as itself
+        for n in ["due date", "a=b", r#"say "hi""#, "back\\slash"] {
+            let p = super::pairs(&format!("{}=v", super::quoted_name(n))).unwrap();
+            assert_eq!(p.get(n).map(String::as_str), Some("v"), "{n}");
+        }
     }
 }

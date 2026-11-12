@@ -124,11 +124,13 @@ export function Mcp() {
   const [env, setEnv] = createSignal("");
   const [problem, setProblem] = createSignal("");
   const changed = (message: string) => { if (message) setStatus(message); void refetch(); };
+  const [adding, setAdding] = createSignal(false);
   const add = async () => {
     setProblem("");
     try {
       await api.mcpAdd({ name: name().trim(), program: program().trim(), args: lines(args()), env: envFrom(env()) });
       setName(""); setProgram(""); setArgs(""); setEnv("");
+      setAdding(false);
       changed(t("mcp.saved"));
     } catch (e) {
       setProblem(e instanceof ApiError ? e.message : t("mcp.error"));
@@ -154,7 +156,7 @@ export function Mcp() {
                   <For each={d().suggested}>
                     {(g) => (
                       <li class="card stack">
-                        <p><strong>{g.name}</strong> <span class="muted">{t("mcp.suggestedFrom", { pack: g.pack })}</span></p>
+                        <p><strong>{g.name}</strong> <span class="muted">{t("mcp.suggestedFrom", { pack: g.pack, publisher: g.publisher_label || "?", key: (g.publisher ?? "").replace(/^ed25519:/, "").slice(0, 8) })}</span></p>
                         <Show when={g.why}><p>{g.why}</p></Show>
                         <p class="muted">{t("mcp.suggestedProgram")}</p>
                         <pre class="passage" tabindex="0">{g.program}</pre>
@@ -167,7 +169,7 @@ export function Mcp() {
                         <Show when={(g.env ?? []).length > 0}><p class="muted">{t("mcp.suggestedEnv", { names: (g.env ?? []).join(", ") })}</p></Show>
                         <div class="actions">
                           <button type="button" onClick={() => { setName(g.name); setProgram(g.program); setArgs((g.args ?? []).join("\n")); setEnv((g.env ?? []).map((n) => `${n}=`).join("\n")); setStatus(t("mcp.suggestedFilled")); document.getElementById("mcp-name")?.focus(); }}>{t("mcp.suggestedUse")}</button>
-                          <button type="button" class="linklike" onClick={async () => { try { await api.mcpDismissSuggested(g.pack, g.publisher, g.name); changed(""); } catch (e) { setProblem(e instanceof ApiError ? e.message : t("mcp.error")); } }}>{t("mcp.suggestedDismiss")} <span class="sr">{g.name}</span></button>
+                          <button type="button" class="linklike" onClick={async () => { try { await api.mcpDismissSuggested(g.pack, g.publisher, g.name); changed(""); } catch (e) { setProblem(e instanceof ApiError ? e.message : t("mcp.error")); } }} aria-label={t("mcp.suggestedDismissLabel", { name: g.name, pack: g.pack, publisher: g.publisher_label || "?" })}>{t("mcp.suggestedDismiss")} <span class="sr">{g.name}</span></button>
                         </div>
                       </li>
                     )}
@@ -175,16 +177,22 @@ export function Mcp() {
                 </ul>
               </section>
             </Show>
-            <label for="mcp-name">{t("mcp.name")}</label>
-            <input id="mcp-name" value={name()} maxlength="64" onInput={(e) => setName(e.currentTarget.value)} />
-            <label for="mcp-program">{t("mcp.program")}</label>
-            <input id="mcp-program" value={program()} onInput={(e) => setProgram(e.currentTarget.value)} />
-            <label for="mcp-args">{t("mcp.args")}</label>
-            <textarea id="mcp-args" rows="2" value={args()} onInput={(e) => setArgs(e.currentTarget.value)} />
-            <label for="mcp-env">{t("mcp.env")}</label>
-            <textarea id="mcp-env" rows="2" value={env()} onInput={(e) => setEnv(e.currentTarget.value)} />
-            <p class="muted">{t("mcp.envHint")}</p>
-            <div class="actions"><button class="primary" type="button" disabled={!name().trim() || !program().trim()} onClick={() => void add()}>{t("mcp.add")}</button></div>
+            {/* the form opens on request, or filled in from a pack's suggestion */}
+            <Show when={adding() || name() !== "" || program() !== ""} fallback={<div class="actions"><button type="button" id="mcp-add-open" onClick={() => { setAdding(true); queueMicrotask(() => document.getElementById("mcp-name")?.focus()); }}>{t("mcp.addOpen")}</button></div>}>
+              <section class="card stack" aria-labelledby="h-mcp-new">
+                <h3 id="h-mcp-new">{t("mcp.new")}</h3>
+                <label for="mcp-name">{t("mcp.name")}</label>
+                <input id="mcp-name" value={name()} maxlength="64" onInput={(e) => setName(e.currentTarget.value)} />
+                <label for="mcp-program">{t("mcp.program")}</label>
+                <input id="mcp-program" value={program()} onInput={(e) => setProgram(e.currentTarget.value)} />
+                <label for="mcp-args">{t("mcp.args")}</label>
+                <textarea id="mcp-args" rows="2" value={args()} onInput={(e) => setArgs(e.currentTarget.value)} />
+                <label for="mcp-env">{t("mcp.env")}</label>
+                <textarea id="mcp-env" rows="2" value={env()} onInput={(e) => setEnv(e.currentTarget.value)} />
+                <p class="muted">{t("mcp.envHint")}</p>
+                <div class="actions"><button class="primary" type="button" disabled={!name().trim() || !program().trim()} onClick={() => void add()}>{t("mcp.add")}</button><button type="button" onClick={() => { setAdding(false); setName(""); setProgram(""); setArgs(""); setEnv(""); }}>{t("met.cancel")}</button></div>
+              </section>
+            </Show>
             <Show when={problem()}><span role="alert" class="bad">{problem()}</span></Show>
           </>
         )}

@@ -1,5 +1,5 @@
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
-import { ChosenFolder } from "../components/ChosenFolder";
+import { ChosenFolder, shortPath } from "../components/ChosenFolder";
 import { api, ApiError, type CodeTask as Task } from "../api";
 import { DiffView } from "../components/DiffView";
 import { LoadState } from "../components/LoadState";
@@ -183,7 +183,7 @@ export function CodeTask() {
                 <Show when={c().state === "ready" && !c().can_apply && c().changes.length > 0}><p class="bad">{t("code.cannot")}</p></Show>
                 <Show when={confirming()}>
                   <div role="alertdialog" aria-labelledby="code-confirm" class="stack">
-                    <p id="code-confirm"><strong>{t("code.confirm", { folder: c().folder })}</strong></p>
+                    <p id="code-confirm"><strong>{t("code.confirm", { folder: shortPath(c().folder) })}</strong></p>
                     <div class="actions">
                       <button class="primary" type="button" disabled={acting()} onClick={() => void act("apply")}>{t("code.confirmYes")}</button>
                       <button type="button" onClick={() => setConfirming(false)}>{t("code.cancel")}</button>

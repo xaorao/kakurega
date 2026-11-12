@@ -2,6 +2,7 @@ import { LoadState } from "../components/LoadState";
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, type Method, type MethodVersion, type BundledMethod, type PackCatalog, type PackCatalogEntry } from "../api";
 import { t, type Key } from "../i18n";
+import { hueOf, initials } from "../monogram";
 
 const words = (text: string) => text.split(",").map((w) => w.trim()).filter(Boolean);
 
@@ -296,22 +297,25 @@ function Bundled(props: { list: BundledMethod[]; onChanged: (message: string) =>
     }
   };
   return (
-    <details class="team-allow" id="bundled-methods">
-      <summary>{t("met.bundled.heading", { n: props.list.length })}</summary>
+    <section class="stack" id="bundled-methods" aria-labelledby="h-bundled">
+      <h3 id="h-bundled">{t("met.bundled.heading", { n: props.list.length })}</h3>
       <p class="muted">{t("met.bundled.lead")}</p>
       <Show when={problem()}><p role="alert" class="bad">{problem()}</p></Show>
       <For each={groups()}>
         {(g) => (
           <div class="rt-group">
             <h4>{g.group}</h4>
-            <ul class="plain bundled-list">
+            <ul class="plain gallery">
               <For each={g.items}>
                 {(b) => (
-                  <li class="work-item" data-bundled={b.name}>
-                    <span class="work-what"><strong>{b.name}</strong> <span class="muted">{b.description}</span></span>
-                    <Show when={!b.added} fallback={<span class="chip">{t("met.bundled.have")}</span>}>
-                      <button type="button" onClick={() => void add(b.name)}>{t("met.bundled.add")}</button>
-                    </Show>
+                  <li class="skill-card" data-bundled={b.name}>
+                    <span class={`monogram hue-${hueOf(b.name)}`} aria-hidden="true">{initials(b.name)}</span>
+                    <span class="skill-text"><strong>{b.name}</strong><span class="muted">{b.description}</span></span>
+                    <span class="skill-action">
+                      <Show when={!b.added} fallback={<span class="chip">{t("met.bundled.have")}</span>}>
+                        <button type="button" aria-label={t("met.bundled.addLabel", { name: b.name })} onClick={() => void add(b.name)}>{t("met.bundled.add")}</button>
+                      </Show>
+                    </span>
                   </li>
                 )}
               </For>
@@ -319,7 +323,7 @@ function Bundled(props: { list: BundledMethod[]; onChanged: (message: string) =>
           </div>
         )}
       </For>
-    </details>
+    </section>
   );
 }
 
@@ -335,6 +339,7 @@ const importedSaid = (r: { pack: string; version: string; imported: string[]; su
 export function Methods() {
   const [data, { refetch }] = createResource(() => api.methods().catch(() => null));
   const [status, setStatus] = createSignal("");
+  const [writing, setWriting] = createSignal(false);
   const changed = (message: string) => { setStatus(message); void refetch(); };
   return (
     <div class="card stack" aria-labelledby="h-met">
@@ -348,9 +353,13 @@ export function Methods() {
           <>
             <Show when={d().methods.length === 0}><p class="muted">{t("met.none")}</p></Show>
             <ul class="plain stack"><For each={d().methods}>{(m) => <Row m={m} onChanged={changed} />}</For></ul>
+            <Show when={writing()} fallback={<div class="actions"><button type="button" id="met-new-open" onClick={() => { setWriting(true); queueMicrotask(() => document.getElementById("met-new-name")?.focus()); }}>{t("met.write")}</button></div>}>
+              <section class="card stack" aria-labelledby="h-met-new">
+                <h3 id="h-met-new">{t("met.new")}</h3>
+                <Form onDone={(m) => { setWriting(false); changed(m); }} onCancel={() => setWriting(false)} />
+              </section>
+            </Show>
             <Show when={(d().bundled ?? []).length > 0}><Bundled list={d().bundled ?? []} onChanged={changed} /></Show>
-            <h3>{t("met.new")}</h3>
-            <Form onDone={changed} />
             {/* packs from publishers come last and folded: most people write their own or take one from the shelf */}
             <Packs onChanged={changed} />
           </>

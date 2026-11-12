@@ -4,6 +4,7 @@ import { MAX_BYTES, MAX_FILES, sizeText } from "../attach";
 import { LoadState } from "../components/LoadState";
 import { Markdown } from "../components/Markdown";
 import { t } from "../i18n";
+import { ExpertCard } from "../components/ExpertCard";
 
 /** A goal handed to a lead: the plan it wrote, each task as it runs, the questions it has for the owner, and the result. */
 export function Team(props: { id?: string }) {
@@ -188,14 +189,13 @@ export function Team(props: { id?: string }) {
               {(g) => (
                 <div class="rt-group">
                   <h2>{g.group}</h2>
-                  <For each={g.experts}>
-                    {(x) => (
-                      <label class="rt-expert">
-                        <input type="checkbox" checked={allowed().includes(x.id)} disabled={planning()} onChange={() => setAllowed((a) => (a.includes(x.id) ? a.filter((y) => y !== x.id) : [...a, x.id]))} />
-                        <span><strong>{x.name}</strong><span class="muted"> {x.summary}</span></span>
-                      </label>
-                    )}
-                  </For>
+                  <div class="rt-cards">
+                    <For each={g.experts}>
+                      {(x) => (
+                        <ExpertCard id={x.id} name={x.name} summary={x.summary} checked={allowed().includes(x.id)} disabled={planning()} onChange={() => setAllowed((a) => (a.includes(x.id) ? a.filter((y) => y !== x.id) : [...a, x.id]))} />
+                      )}
+                    </For>
+                  </div>
                 </div>
               )}
             </For>

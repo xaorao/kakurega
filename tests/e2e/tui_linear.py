@@ -108,6 +108,19 @@ try:
     check("a yes/no question says how to answer", wait_for(r"Type y and press Enter to say yes", 15) is not None)
     send("n")
     pump(0.5)
+    # what a command puts in the message line is read out, and an empty line sends it as it is
+    send("/prompt save greet : Say hello to {{name}}")
+    check("a saved prompt is kept", wait_for(r"Saved\. /prompt NAME puts it into the message line", 15) is not None)
+    send("/prompt greet name=Asha")
+    check("the filled prompt is read out from the message line", wait_for(r"In the message line now: Say hello to Asha", 15) is not None)
+    send("")
+    check("an empty line sends it as it is", wait_for(r"\[You\] Say hello to Asha", 30) is not None)
+    send("/undo")
+    check("a command name completed from a partial one is read out, not lost", wait_for(r"In the message line now: /undofix", 15) is not None)
+    send("/status")
+    pump(2.0)
+    after = out.decode().split("In the message line now: /undofix")[-1]
+    check("any other line replaces it", "[You] /undofix" not in out.decode() and "/undofix N" not in after)
     send("/quit")
     deadline = time.time() + 15
     while proc.poll() is None and time.time() < deadline:

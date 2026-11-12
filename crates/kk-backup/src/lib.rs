@@ -99,6 +99,10 @@ fn decode32(text: &str) -> Option<Vec<u8>> {
             out.push(((buf >> bits) & 0xff) as u8);
         }
     }
+    // the bits left over after the last whole byte are padding and must be zero: one text for one value
+    if buf & ((1u32 << bits) - 1) != 0 {
+        return None;
+    }
     Some(out)
 }
 
@@ -124,17 +128,17 @@ pub fn key_to_text(key: &[u8; 32]) -> String {
 }
 
 pub fn key_from_text(text: &str) -> Result<Zeroizing<[u8; 32]>, BackupError> {
-    let t = text.trim();
-    let body = t
-        .strip_prefix("KKRK-")
-        .or_else(|| t.strip_prefix("kkrk-"))
-        .ok_or(BackupError::BadKeyText)?;
-    let compact: String = body
+    // spaces and dashes are separators wherever they are typed
+    let compact: String = text
         .chars()
         .filter(|c| *c != '-' && !c.is_whitespace())
         .collect();
-    let raw = decode32(&compact).ok_or(BackupError::BadKeyText)?;
-    if raw.len() < 36 {
+    let body = compact
+        .strip_prefix("KKRK")
+        .or_else(|| compact.strip_prefix("kkrk"))
+        .ok_or(BackupError::BadKeyText)?;
+    let raw = decode32(body).ok_or(BackupError::BadKeyText)?;
+    if raw.len() != 36 {
         return Err(BackupError::BadKeyText);
     }
     let mut key = Zeroizing::new([0u8; 32]);
@@ -494,6 +498,23 @@ mod tests {
         for bad in ["", "KKRK-", "KKRK-AAAA", "ABCD-EFGH", "KKRK-!!!!-!!!!"] {
             assert!(key_from_text(bad).is_err(), "{bad}");
         }
+        // one spelling: the prefix may be followed by a space, but a changed last character or an extra one is refused
+        assert_eq!(
+            *key_from_text(&text.replacen("KKRK-", "KKRK ", 1)).unwrap(),
+            *key
+        );
+        let last = text.chars().last().unwrap();
+        for other in "ABCDEFGHJKMNPQRSTVWXYZ0123456789"
+            .chars()
+            .filter(|c| *c != last)
+        {
+            let changed = format!("{}{other}", &text[..text.len() - 1]);
+            assert!(key_from_text(&changed).is_err(), "{changed}");
+        }
+        assert!(
+            key_from_text(&format!("{text}A")).is_err()
+                && key_from_text(&format!("{text}AA")).is_err()
+        );
         assert_ne!(key_to_text(&key), key_to_text(&new_key()));
     }
 

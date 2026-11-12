@@ -9,5 +9,8 @@ pnpm install --frozen-lockfile
 cargo fetch
 pnpm --filter @kakurega/web run build
 cargo build -p kk-cli
+# on Linux reviews run in a sandbox on this computer, with the worker beside kaku; on macOS scripts/provision-vm builds it
+# inside the sandbox machine
+if [ "$(uname -s)" = Linux ]; then cargo build -p kk-worker; fi
 install -m 755 scripts/pre-commit .git/hooks/pre-commit
 echo "setup complete"

@@ -42,6 +42,7 @@ await page.waitForSelector("nav");
 await page.goto(origin + "/#/skills");
 await page.getByRole("heading", { name: "Methods" }).waitFor();
 check(await page.getByText("No methods yet.").isVisible(), "a new install has no methods and says so");
+await page.locator("#met-new-open").click();
 await page.locator("#met-new-name").fill("fruit-first");
 await page.locator("#met-new-desc").fill("Start answers with a fruit");
 await page.locator("#met-new-trig").fill("pineapple, orchard");

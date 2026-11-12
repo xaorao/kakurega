@@ -5118,7 +5118,7 @@ fn tu81_what_stopped_while_the_owner_was_away_is_shown_once_at_launch_and_marked
         {"id": "job-2", "recipient": "gamma", "state": "nothing_to_release", "note": "", "at": 120},
     ]})));
     let t = text(&a);
-    assert!(t.contains("Stopped while you were away"), "{t}");
+    assert!(t.contains("Finished while you were away"), "{t}");
     assert!(
         t.contains("job-4") && t.contains("acme-audit") && t.contains("ready for your approval"),
         "{t}"
@@ -5146,7 +5146,7 @@ fn tu81_what_stopped_while_the_owner_was_away_is_shown_once_at_launch_and_marked
         .find(|r| r.path == "/api/away")
         .unwrap();
     let next = b.handle(ok(&away, 200, json!({"since": null, "finished": []})));
-    assert!(!text(&b).contains("Stopped while you were away"));
+    assert!(!text(&b).contains("Finished while you were away"));
     assert_eq!(next[0].path, "/api/away/seen");
     // the service cannot be asked: no card, no error shown, no mark set
     let mut c = booted();
@@ -5160,7 +5160,7 @@ fn tu81_what_stopped_while_the_owner_was_away_is_shown_once_at_launch_and_marked
         500,
         json!({"error": {"code": "STORE", "message": "x"}}),
     ));
-    assert!(next.is_empty() && !text(&c).contains("Stopped while you were away"));
+    assert!(next.is_empty() && !text(&c).contains("Finished while you were away"));
     // leaving marks the list seen
     let last = a.leaving();
     assert_eq!(
@@ -8475,11 +8475,11 @@ fn tu_pr01_a_saved_prompt_goes_into_the_message_line_only_with_every_field_fille
     let v = pairs(r#"client="Acme Ltd" tone=formal"#).unwrap();
     // 2026-01-05 00:00:00 UTC
     assert_eq!(
-        fill(letter, &v, 1_767_571_200).unwrap(),
+        fill(letter, &v, 1_767_571_200, 0).unwrap(),
         "Write to Acme Ltd in a formal tone about Acme Ltd. Dated 2026-01-05."
     );
     assert_eq!(
-        fill(letter, &pairs("client=Acme").unwrap(), 0),
+        fill(letter, &pairs("client=Acme").unwrap(), 0, 0),
         Err(vec!["tone".to_string()])
     );
     assert!(pairs("client").is_err() && pairs(r#"client="open"#).is_err());
@@ -8501,6 +8501,18 @@ fn tu_pr01_a_saved_prompt_goes_into_the_message_line_only_with_every_field_fille
     assert!(
         text(&app)
             .contains("Client letter asks for tone. Give it as /prompt \"Client letter\" tone=..."),
+        "{}",
+        text(&app)
+    );
+    assert_eq!(app.input, "");
+    // a value that is not one of the field's choices is refused, naming them, and nothing is put in the message line
+    let r = enter(
+        &mut app,
+        r#"/prompt "Client letter" client=Acme tone=memory"#,
+    );
+    app.handle(ok(&r[0], 200, list.clone()));
+    assert!(
+        text(&app).contains("tone takes one of: formal, casual, very: polite"),
         "{}",
         text(&app)
     );
@@ -8581,4 +8593,133 @@ fn tu_quit_one_ctrl_c_does_not_end_running_work_and_a_second_one_quits() {
         "{}",
         text(&app)
     );
+}
+
+#[test]
+fn tu_ex02_explore_show_without_a_name_finds_the_running_question_then_the_newest_kept() {
+    let mut app = booted();
+    // nothing shown yet in this session: the service is asked for its newest question
+    let r = enter(&mut app, "/explore show");
+    assert_eq!((r.len(), r[0].path.as_str()), (1, "/api/questions"));
+    let next = app.handle(ok(
+        &r[0],
+        200,
+        json!({"questions": [{"id": "question-7", "state": "answered"}, {"id": "question-6"}]}),
+    ));
+    assert_eq!(next[0].path, "/api/questions/question-7");
+    // none kept: it says so
+    let r = enter(&mut app, "/explore show");
+    assert!(app
+        .handle(ok(&r[0], 200, json!({"questions": []})))
+        .is_empty());
+    assert!(text(&app).contains("No question yet"));
+    // a name that is not a plain name is never put in a path
+    let r = enter(&mut app, "/explore show");
+    assert!(app
+        .handle(ok(&r[0], 200, json!({"questions": [{"id": "../jobs"}]})))
+        .is_empty());
+    // while a question is being answered, that one is shown
+    let r = enter(
+        &mut app,
+        "/explore /home/u/shop : Does logout revoke the token?",
+    );
+    app.handle(ok(&r[0], 202, json!({"id": "question-8"})));
+    let r = enter(&mut app, "/explore show");
+    assert_eq!(r[0].path, "/api/questions/question-8");
+}
+
+#[test]
+fn tu_wd01_reviews_that_exist_but_cannot_be_approved_are_not_called_missing() {
+    let mut app = App::new();
+    let reqs = app.start();
+    app.handle(ok(&reqs[0], 200, json!({"route": {"model": "m", "simulated": false, "stays_here": true}, "roots": ["/home/u/projects"]})));
+    app.handle(ok(&reqs[1], 200, json!({"ready": true, "checks": []})));
+    app.handle(ok(&reqs[2], 200, json!({"jobs": [{"id": "job-1", "state": "running", "recipient": "acme"}, {"id": "job-2", "state": "failed", "recipient": "acme"}]})));
+    assert!(enter(&mut app, "/approve").is_empty());
+    let t = text(&app);
+    assert!(
+        t.contains("None of your 2 reviews is in a state to approve now")
+            && !t.contains("There is no review"),
+        "{t}"
+    );
+    // with no review at all, it says there is none and how to start one
+    let mut empty = booted();
+    assert!(enter(&mut empty, "/approve").is_empty());
+    assert!(text(&empty).contains("There is no review to approve yet"));
+}
+
+#[test]
+fn tu_rt01_route_shows_what_can_be_chosen_and_switches_without_a_key_ever_typed() {
+    assert_eq!(cmd::parse("/route"), Ok(Command::RouteShow));
+    assert_eq!(
+        cmd::parse("/route local qwen2.5-coder:7b"),
+        Ok(Command::RouteChoose {
+            route: "local".into(),
+            model: Some("qwen2.5-coder:7b".into())
+        })
+    );
+    assert_eq!(
+        cmd::parse("/route NEAR deepseek-ai/DeepSeek-V3.1"),
+        Ok(Command::RouteChoose {
+            route: "near".into(),
+            model: Some("deepseek-ai/DeepSeek-V3.1".into())
+        })
+    );
+    for bad in [
+        "/route near",
+        "/route outside x",
+        "/route local a b",
+        "/route local $(x)",
+        "/route near sk-key with spaces",
+    ] {
+        assert!(cmd::parse(bad).is_err(), "{bad}");
+    }
+    assert_eq!(cmd::parse("/where"), Ok(Command::Where));
+    let mut app = booted();
+    let r = enter(&mut app, "/route");
+    assert_eq!(r[0].path, "/api/route/options");
+    app.handle(ok(&r[0], 200, json!({"changeable": true, "current": "local", "local": {"model": "qwen2.5-coder:7b"}, "near": {"model": null, "key_saved": false}})));
+    let t = text(&app);
+    assert!(
+        t.contains("In use: qwen2.5-coder:7b, on this computer")
+            && t.contains("never asks you to type a key"),
+        "{t}"
+    );
+    let r = enter(&mut app, "/route near deepseek-ai/DeepSeek-V3.1");
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/route/choose", Method::Post)
+    );
+    assert_eq!(
+        r[0].body.as_ref().unwrap(),
+        &json!({"route": "near", "model": "deepseek-ai/DeepSeek-V3.1"})
+    );
+    let next = app.handle(ok(&r[0], 200, json!({"current": "near"})));
+    assert!(text(&app).contains("Answers now come from NEAR AI Cloud"));
+    assert_eq!(next[0].path, "/api/config", "the header is read again");
+}
+
+#[test]
+fn tu_br02_a_branch_in_the_conversation_list_says_it_is_a_branch_and_of_what() {
+    let mut app = booted();
+    let r = enter(&mut app, "/sessions");
+    let list = r
+        .iter()
+        .find(|q| q.path.starts_with("/api/sessions"))
+        .expect("the list is asked for");
+    app.handle(ok(list, 200, json!({"sessions": [
+        {"id": "s-1", "title": "Pricing page", "turns": 4, "updated": 2},
+        {"id": "s-2", "title": "Pricing page", "turns": 3, "updated": 3, "parent": "s-1", "fork_at": 2}
+    ]})));
+    let Mode::Picker(p) = &app.mode else {
+        panic!("the list opens")
+    };
+    let details: Vec<&str> = p.items.iter().map(|i| i.detail.as_str()).collect();
+    assert!(
+        details
+            .iter()
+            .any(|d| d.contains("branch at message 2 of Pricing page")),
+        "{details:?}"
+    );
+    assert!(details.iter().any(|d| !d.contains("branch")), "{details:?}");
 }

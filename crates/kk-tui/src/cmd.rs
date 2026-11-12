@@ -160,6 +160,13 @@ pub enum Command {
     Usage(u32),
     /// `/where` (also `/route`): where the model runs, which doors are open, and how much left this computer.
     Where,
+    /// The route in use and the routes that can be chosen.
+    RouteShow,
+    /// Switch to the model on this computer (optionally naming it) or to NEAR AI Cloud with the kept key.
+    RouteChoose {
+        route: String,
+        model: Option<String>,
+    },
     /// `/code FOLDER : TASK`: a local model changes a copy of the folder and its tests run in the sandbox; nothing on disk changes.
     Code {
         folder: String,
@@ -364,7 +371,7 @@ pub fn describe(name: &str) -> &'static str {
         "where" => {
             "where your data goes: the model that answers, every open door, what left this computer"
         }
-        "route" => "the same as /where",
+        "route" => "show where answers are made and what can be chosen, or switch: local (this computer) or near (NEAR AI Cloud)",
         "model" => "show the models installed on this computer, or choose which one answers",
         "branch" => "start a copy of this kept conversation, optionally cut after message N",
         "rename" => "rename a kept conversation",
@@ -476,7 +483,7 @@ pub fn usage(name: &str) -> &'static str {
         "export" => "/export NAME",
         "usage" => "/usage [DAYS]",
         "where" => "/where",
-        "route" => "/route",
+        "route" => "/route [local [MODEL] | near MODEL]",
         "model" => "/model [NAME]",
         "branch" => "/branch [N | pick]",
         "rename" => "/rename ID NEW TITLE",
@@ -942,7 +949,30 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 Ok(Command::Forget(rest.to_string()))
             }
         }
-        "where" | "route" => Ok(Command::Where),
+        "where" => Ok(Command::Where),
+        "route" if rest.is_empty() => Ok(Command::RouteShow),
+        "route" => {
+            let mut words = rest.split_whitespace();
+            let route = words.next().unwrap_or("").to_ascii_lowercase();
+            let model = words.next().map(str::to_string);
+            // a model is a plain name, the characters the service accepts, so nothing else is ever sent
+            let plain = |m: &str| {
+                m.len() <= 100
+                    && m.chars().all(|c| {
+                        c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '_' | '-' | '/')
+                    })
+            };
+            let fits = match (route.as_str(), model.as_deref(), words.next()) {
+                ("local", m, None) => m.is_none_or(plain),
+                ("near", Some(m), None) => plain(m),
+                _ => false,
+            };
+            if fits {
+                Ok(Command::RouteChoose { route, model })
+            } else {
+                Err(format!("usage: {}", usage("route")))
+            }
+        }
         "usage" => {
             if rest.is_empty() {
                 Ok(Command::Usage(30))

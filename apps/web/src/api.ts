@@ -162,7 +162,7 @@ export interface MethodProposal { id: number; job: string; name: string; descrip
 export interface McpTool { name: string; description: string; pin: string; mode: "off" | "allow" | "ask"; effect: "read_only" | "may_change" | "unknown"; schema?: string }
 export interface McpServer { name: string; program: string; args: string[]; env_names: string[] | null; tools: McpTool[] }
 /** An outside program a pack the owner imported suggests: never added or run by itself. */
-export interface McpSuggested { pack: string; publisher: string; name: string; program: string; args: string[] | null; env: string[] | null; why: string }
+export interface McpSuggested { pack: string; publisher: string; publisher_label?: string; name: string; program: string; args: string[] | null; env: string[] | null; why: string }
 export interface BreakResult { planted: { key: string; password: string }; asked: string; sent: { role: string; content: string }[]; reply: string; reached_model: number; in_reply: number; leaked: boolean; attack_was_sent: boolean; attempts: number; leaks: number; route: { stays_here: boolean; host: string | null }; limits: string }
 export interface HandoffProposal { id: string; text: string; sha256: string; chars: number; personal: string; tool: string; notice: string }
 export interface SampleState { possible: boolean; loaded: boolean; folder?: string; project?: string; documents?: string; transcript?: string | null; note?: string }

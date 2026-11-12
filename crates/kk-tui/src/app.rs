@@ -317,6 +317,8 @@ enum Intent {
     WhereLeft,
     ModelList,
     ModelChoose(String),
+    RouteShow,
+    RouteChosen,
     RenameChat,
     ChooseNote,
     BothRight,
@@ -331,6 +333,8 @@ enum Intent {
     CodeShow,
     ExploreStart,
     ExplorePoll(String),
+    /// The newest question the service keeps, to show when none was named.
+    ExploreNewest,
     ExploreShow,
     PromptList,
     PromptUse(String, String),
@@ -2548,8 +2552,14 @@ impl App {
     ) -> Option<String> {
         match given.or_else(|| self.latest(want)) {
             Some(j) => Some(j),
-            None => {
+            None if self.jobs.is_empty() => {
                 self.say(Kind::Warn, format!("There is no review to {what} yet. Start one with /review FOLDER for RECIPIENT."));
+                None
+            }
+            None => {
+                // there are reviews, just none in the state this needs: say so, and how to name one
+                let n = self.jobs.len();
+                self.say(Kind::Warn, format!("None of your {n} reviews is in a state to {what} now. /reviews lists them with their states; to choose one, put its name after the command."));
                 None
             }
         }
@@ -3114,12 +3124,18 @@ impl App {
                 Some(json!({"remove": name})),
             )],
             Command::ExploreShow(id) => {
-                let Some(id) = id.or_else(|| self.explore_shown.clone()) else {
-                    self.say(
-                        Kind::Warn,
-                        "No question yet. Ask one with /explore FOLDER : QUESTION.",
-                    );
-                    return Vec::new();
+                // the question named, else the one being answered, else the one shown last, else the newest one kept
+                let id = id
+                    .or_else(|| self.explore_watch.as_ref().map(|(id, _, _)| id.clone()))
+                    .or_else(|| self.explore_shown.clone());
+                let Some(id) = id else {
+                    return vec![self.req(
+                        Intent::ExploreNewest,
+                        false,
+                        Method::Get,
+                        "/api/questions",
+                        None,
+                    )];
                 };
                 vec![self.req(
                     Intent::ExploreShow,
@@ -3261,6 +3277,20 @@ impl App {
             Command::Model(None) => {
                 vec![self.req(Intent::ModelList, false, Method::Get, "/api/models", None)]
             }
+            Command::RouteShow => vec![self.req(
+                Intent::RouteShow,
+                false,
+                Method::Get,
+                "/api/route/options",
+                None,
+            )],
+            Command::RouteChoose { route, model } => vec![self.req(
+                Intent::RouteChosen,
+                false,
+                Method::Post,
+                "/api/route/choose",
+                Some(json!({ "route": route, "model": model })),
+            )],
             Command::Model(Some(name)) => vec![self.req(
                 Intent::ModelChoose(name.clone()),
                 false,
@@ -5204,7 +5234,7 @@ impl App {
                     ));
                 }
                 if !list.is_empty() {
-                    lines.push("/prompt NAME field=value ... puts one into the message line. A prompt may ask for {{field}}, {{field:one|two}} and {{current_date}} (UTC here).".into());
+                    lines.push("/prompt NAME field=value ... puts one into the message line. A prompt may ask for {{field}}, {{field:one|two}} and {{current_date}} (this computer's date).".into());
                 }
                 self.push(Kind::Info, Some("Saved prompts"), lines);
                 Vec::new()
@@ -5229,8 +5259,29 @@ impl App {
                     return Vec::new();
                 };
                 let given = crate::prompt_vars::pairs(&values).unwrap_or_default();
-                match crate::prompt_vars::fill(p["text"].as_str().unwrap_or(""), &given, now_secs())
-                {
+                let text = p["text"].as_str().unwrap_or("");
+                // a field with choices takes one of them, as the web page offers only those
+                let wrong: Vec<String> = crate::prompt_vars::fields(text)
+                    .iter()
+                    .filter(|f| !f.options.is_empty())
+                    .filter_map(|f| {
+                        let v = given.get(&f.name)?.trim();
+                        (!v.is_empty() && !f.options.iter().any(|o| o == v))
+                            .then(|| format!("{} takes one of: {}", f.name, f.options.join(", ")))
+                    })
+                    .collect();
+                if !wrong.is_empty() {
+                    self.say(
+                        Kind::Warn,
+                        format!(
+                            "{}: {}. Nothing was put in the message line.",
+                            clean(&name),
+                            clean(&wrong.join("; "))
+                        ),
+                    );
+                    return Vec::new();
+                }
+                match crate::prompt_vars::fill(text, &given, now_secs(), local_offset_secs()) {
                     Ok(text) => {
                         self.input = text;
                         self.cursor = self.input.chars().count();
@@ -5253,7 +5304,7 @@ impl App {
                             },
                             missing
                                 .iter()
-                                .map(|m| format!("{m}=..."))
+                                .map(|m| format!("{}=...", crate::prompt_vars::quoted_name(m)))
                                 .collect::<Vec<_>>()
                                 .join(" ")
                         ),
@@ -5327,6 +5378,31 @@ impl App {
                     self.say(Kind::Error, err_text(status, &body));
                 }
                 Vec::new()
+            }
+            Intent::ExploreNewest => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                // a name from the service is used in a path only when it is a plain name
+                match body["questions"][0]["id"].as_str().filter(|id| {
+                    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+                }) {
+                    Some(id) => vec![self.req(
+                        Intent::ExploreShow,
+                        false,
+                        Method::Get,
+                        &format!("/api/questions/{id}"),
+                        None,
+                    )],
+                    None => {
+                        self.say(
+                            Kind::Warn,
+                            "No question yet. Ask one with /explore FOLDER : QUESTION.",
+                        );
+                        Vec::new()
+                    }
+                }
             }
             Intent::CodeStart => {
                 if !ok {
@@ -5448,6 +5524,52 @@ impl App {
                 }
                 self.push(Kind::Info, Some("Model"), lines);
                 Vec::new()
+            }
+            Intent::RouteShow => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let current = body["current"].as_str().unwrap_or("?");
+                let local = clean(body["local"]["model"].as_str().unwrap_or("?"));
+                let near = body["near"]["model"].as_str().map(clean);
+                let mut lines = vec![match current {
+                    "local" => format!("In use: {local}, on this computer. Your questions do not leave it."),
+                    "near" => format!("In use: {} on NEAR AI Cloud, in confidential hardware; /proof checks the hardware.", near.clone().unwrap_or_else(|| "a model".into())),
+                    "outside" => "In use: the outside test model. NOT private; it was switched on when the service started.".into(),
+                    "test" => "In use: the scripted test model; nothing is sent to any model.".into(),
+                    other => format!("In use: {}", clean(other)),
+                }];
+                if body["changeable"] == true {
+                    lines.push(format!("/route local [MODEL] answers on this computer (now {local}); /model lists the models installed."));
+                    lines.push(if body["near"]["key_saved"] == true {
+                        format!("/route near MODEL answers on NEAR AI Cloud with the key kept here{}.", near.map(|m| format!(" (last chosen: {m})")).unwrap_or_default())
+                    } else {
+                        "NEAR AI Cloud needs an account key first: give it in the web workspace's Settings, or start the service with --near-key-file FILE. The terminal never asks you to type a key.".into()
+                    });
+                } else {
+                    lines.push(
+                        "This service was started with one fixed route; it cannot be changed here."
+                            .into(),
+                    );
+                }
+                self.push(Kind::Info, Some("Where answers are made"), lines);
+                Vec::new()
+            }
+            Intent::RouteChosen => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                self.say(
+                    Kind::Info,
+                    match body["current"].as_str() {
+                        Some("near") => "Answers now come from NEAR AI Cloud. A review already running keeps the model it started with.",
+                        _ => "Answers now come from the model on this computer. A review already running keeps the model it started with.",
+                    },
+                );
+                // the header names the model in use
+                vec![self.req(Intent::Config, false, Method::Get, "/api/config", None)]
             }
             Intent::ModelChoose(name) => {
                 if !ok {
@@ -7252,7 +7374,7 @@ impl App {
                         })
                         .collect();
                     lines.push("/open ID shows one.".into());
-                    self.push(Kind::Info, Some("Stopped while you were away"), lines);
+                    self.push(Kind::Info, Some("Finished while you were away"), lines);
                 }
                 // told once: the next launch reports only what stops from now on
                 vec![self.req(
@@ -7346,8 +7468,25 @@ impl App {
                 if let Mode::Picker(p) = &mut self.mode {
                     p.loading = false;
                     if ok {
-                        for k in body["sessions"].as_array().into_iter().flatten() {
+                        let all = body["sessions"].as_array().cloned().unwrap_or_default();
+                        let title_of = |id: &str| {
+                            all.iter()
+                                .find(|s| s["id"] == id)
+                                .and_then(|s| s["title"].as_str())
+                                .map(clean)
+                                .filter(|t| !t.is_empty())
+                                .unwrap_or_else(|| "an untitled conversation".into())
+                        };
+                        for k in &all {
                             let title = clean(k["title"].as_str().unwrap_or(""));
+                            // a branch shares its original's title: it says it is a branch, of what and where
+                            let branch =
+                                k["parent"].as_str().map(|p| match k["fork_at"].as_i64() {
+                                    Some(n) => {
+                                        format!(" · branch at message {n} of {}", title_of(p))
+                                    }
+                                    None => format!(" · branch of {}", title_of(p)),
+                                });
                             p.items.push(crate::picker::Item {
                                 id: clean(k["id"].as_str().unwrap_or("?")),
                                 label: if title.is_empty() {
@@ -7356,12 +7495,13 @@ impl App {
                                     title
                                 },
                                 detail: counted(&format!(
-                                    "{} message(s){}",
+                                    "{} message(s){}{}",
                                     k["turns"].as_u64().unwrap_or(0),
                                     k["project"].as_str().map_or(String::new(), |p| format!(
                                         " · project {}",
                                         clean(p)
-                                    ))
+                                    )),
+                                    branch.clone().unwrap_or_default()
                                 )),
                                 when: k["updated"].as_i64().unwrap_or(0),
                                 kind: crate::picker::ItemKind::Chat,
@@ -7495,6 +7635,25 @@ impl Default for App {
 }
 
 /// Seconds since 1970 on this computer, which is also the computer the service runs on.
+/// This computer's offset from UTC now, in seconds, as `date +%z` gives it (0 when it cannot be read).
+fn local_offset_secs() -> i64 {
+    std::process::Command::new("date")
+        .arg("+%z")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|z| {
+            let z = z.trim();
+            let sign = if z.starts_with('-') { -1 } else { 1 };
+            let d = z.trim_start_matches(['+', '-']);
+            if d.len() != 4 || !d.chars().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            Some(sign * (d[..2].parse::<i64>().ok()? * 3600 + d[2..].parse::<i64>().ok()? * 60))
+        })
+        .unwrap_or(0)
+}
+
 pub fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

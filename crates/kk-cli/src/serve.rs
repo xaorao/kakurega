@@ -115,6 +115,11 @@ mod default_model_tests {
 
 pub fn setup_from_flags(args: &[String], quiet: bool) -> Result<Setup, String> {
     let ollama = crate::flag(args, "--ollama").unwrap_or_else(|| "http://127.0.0.1:11434".into());
+    if !kk_route::is_loopback_http(&ollama) {
+        return Err(format!(
+            "--ollama {ollama} is not on this computer. The local model route sends to http://127.0.0.1, http://[::1] or http://localhost only. A model elsewhere is chosen with --route near (NEAR AI Cloud, on attested hardware) or --route outside (a test route that is not private)"
+        ));
+    }
     let model = crate::flag(args, "--model").unwrap_or_else(|| default_model(&ollama));
     let default_transport = if cfg!(target_os = "linux") {
         "local"

@@ -63,6 +63,7 @@ node tests/e2e/desktop_install.mjs
 node tests/e2e/hide_web.mjs
 node tests/e2e/verify_receipts.mjs
 node tests/e2e/diagnostics_web.mjs
+node tests/e2e/model_down_web.mjs
 node tests/e2e/desktop.mjs
 node tests/e2e/desktop_attack.mjs
 node tests/e2e/desktop_recovery.mjs

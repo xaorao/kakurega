@@ -418,21 +418,21 @@ pub(super) async fn mcp_get(axum::Extension(svc): Svc) -> Response {
     // what packs the owner imported suggest, minus what is already added under that name and what the owner dismissed
     let have: Vec<String> = servers.iter().map(|(n, _, _)| n.to_lowercase()).collect();
     let suggested: Vec<Value> = c
-        .prepare("SELECT pack, name, key_id, body FROM pack_suggestions WHERE dismissed = 0 AND key_id IN (SELECT key_id FROM pack_publishers) ORDER BY pack, key_id, name")
+        .prepare("SELECT s.pack, s.name, s.key_id, s.body, p.label FROM pack_suggestions s JOIN pack_publishers p ON p.key_id = s.key_id WHERE s.dismissed = 0 ORDER BY s.pack, p.label, s.key_id, s.name")
         .ok()
         .map(|mut st| {
             st.query_map([], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?))
             })
             .map(|it| it.flatten().collect::<Vec<_>>())
             .unwrap_or_default()
         })
         .unwrap_or_default()
         .into_iter()
-        .filter(|(_, name, _, _)| !have.contains(&name.to_lowercase()))
-        .map(|(pack, name, key_id, body)| {
+        .filter(|(_, name, _, _, _)| !have.contains(&name.to_lowercase()))
+        .map(|(pack, name, key_id, body, label)| {
             let b: Value = serde_json::from_str(&body).unwrap_or(json!({}));
-            json!({"pack": pack, "publisher": key_id, "name": name, "program": b["program"], "args": b["args"], "env": b["env"], "why": b["why"]})
+            json!({"pack": pack, "publisher": key_id, "publisher_label": label, "name": name, "program": b["program"], "args": b["args"], "env": b["env"], "why": b["why"]})
         })
         .collect();
     Json(json!({"servers": list, "suggested": suggested, "limits": {"servers": MAX_SERVERS}}))

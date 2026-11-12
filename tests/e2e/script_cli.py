@@ -70,6 +70,15 @@ try:
     rc, out, _ = k("explore", "forget", qid)
     rc2, out2, _ = k("explore", "list", "--json")
     check("explore forget removes it", rc == 0 and qid not in out2, out + out2)
+    check("explore list --json is one object, like the other lists", rc2 == 0 and isinstance(json.loads(out2).get("questions"), list), out2)
+    rc, out, _ = k("explore", "list")
+    check("an empty list says so in words", rc == 0 and out.strip() == "no questions yet", repr(out))
+    rc, out, err = k("explore", str(work / "root/payments-service"), "Where?", "--depth", "deep")
+    check("a wrong depth names the words it takes", rc == 2 and "--depth is quick, normal or thorough" in out + err, out + err)
+    rc, out, err = k("jobs", "everything")
+    check("a stray word is refused with the usage, not ignored", rc == 2 and "kaku jobs takes no" in out + err, out + err)
+    p = subprocess.run([kaku, "chat", "--help"], capture_output=True, text=True, timeout=30)
+    check("chat --help is chat's own usage, not a message", p.returncode == 0 and "kaku chat MESSAGE" in p.stdout and "kaku review" not in p.stdout, p.stdout[:300] + p.stderr)
 
     rc, out, _ = k("jobs", "--json")
     listed = json.loads(out)["jobs"]
@@ -281,6 +290,9 @@ try:
     # a second service on the same data folder says which process has it and what to do, in words
     second = subprocess.run([kaku, "serve", "--data-dir", str(data), "--root", str(work / "root"), "--scripted", str(repo / "tests/e2e/script.json")], capture_output=True, text=True, timeout=60)
     check("a second service on the same data folder names the running one and what to do", second.returncode == 1 and f"already running for this data folder (process {srv.pid})" in second.stderr and "--data-dir" in second.stderr, second.stderr)
+    # a model address that is not this computer is refused at the start, saying what to use instead
+    remote = subprocess.run([kaku, "serve", "--data-dir", str(work / "data-remote"), "--root", str(work / "root"), "--ollama", "http://0.0.0.0:11434"], capture_output=True, text=True, timeout=60)
+    check("a model address elsewhere is refused when the service starts, naming the routes for a model elsewhere", remote.returncode == 1 and "is not on this computer" in remote.stderr and "--route near" in remote.stderr, remote.stderr)
     # with the service gone, a command says it is not running and how to start it, not a socket error
     srv.kill()
     srv.wait(timeout=10)

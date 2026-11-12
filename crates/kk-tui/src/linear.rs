@@ -111,7 +111,10 @@ pub fn feed_line(app: &mut App, line: &str) -> Vec<Req> {
     let mut out = Vec::new();
     match &mut app.mode {
         Mode::Normal => {
-            app.input = line.to_string();
+            // an empty line sends what a command left in the message line; any other line replaces it
+            if !t.is_empty() || app.input.trim().is_empty() {
+                app.input = line.to_string();
+            }
             app.cursor = app.input.chars().count();
             out.extend(app.handle(key(KeyCode::Enter)));
         }
@@ -345,6 +348,8 @@ pub fn run_with(
         send(app.resume_at_start(r.id.as_deref(), r.fork));
     }
     send(app.drain_background());
+    // the message line as last said, so what a command puts there is read out once
+    let mut said_input = String::new();
     loop {
         let msg = rx.recv_timeout(Duration::from_millis(100));
         let mut ended = false;
@@ -359,6 +364,17 @@ pub fn run_with(
         if !text.is_empty() {
             let _ = out.write_all(text.as_bytes());
             let _ = out.flush();
+        }
+        if matches!(app.mode, Mode::Normal) && app.input != said_input {
+            said_input = app.input.clone();
+            if !app.input.trim().is_empty() {
+                let _ = writeln!(
+                    out,
+                    "In the message line now: {}\nPress Enter on an empty line to send it as it is, or type a whole new line instead.",
+                    app.input.trim_end()
+                );
+                let _ = out.flush();
+            }
         }
         if app.quit || ended {
             // say the list of stopped reviews was seen, and give the answer a moment

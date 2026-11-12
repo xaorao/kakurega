@@ -193,7 +193,14 @@ fn ee03_init_writes_an_owner_only_template_and_refuses_to_overwrite_and_path_and
     ] {
         let h = kaku(&home, cmd, &[]);
         assert_eq!(h.status.code(), Some(0), "{cmd:?}");
-        assert!(out(&h).starts_with("kaku: "), "{cmd:?}");
+        // the command's own usage lines, not the whole page
+        let said = out(&h);
+        assert!(
+            said.starts_with("Usage:\n  kaku ")
+                && said.contains(&format!("kaku {} ", cmd[0]))
+                && !said.contains("kaku pair "),
+            "{cmd:?}: {said}"
+        );
     }
     // a command that does not exist, and options before the command
     let bad = kaku(&home, &["config", "frobnicate"], &[]);

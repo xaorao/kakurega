@@ -764,6 +764,7 @@ export function Chat() {
       }
       heldLevel = Math.max(heldLevel, r.level ?? 0);
       const noModel = r.route.id === "none";
+      if (!noModel) window.dispatchEvent(new Event("kk:model-ok"));
       const foot = noModel ? [t("chat.noModel"), t("chat.notesUsed", { n: r.notes_used })] : [r.route.simulated ? t("chat.test") : r.route.stays_here === false ? (r.route.host ? t("chat.remote", { host: r.route.host }) : t("chat.unknownPlace")) : t("chat.private"), t("chat.notesUsed", { n: r.notes_used })];
       // said first: the text above stops before the model had finished
       if (r.cut_short) foot.unshift(t("chat.cutShort"));
@@ -821,6 +822,8 @@ export function Chat() {
       if (!aborted) {
         setError(err instanceof ApiError ? err.message : t("chat.error"));
         setSendFailed(true);
+        // the header looks again at whether the model answers
+        window.dispatchEvent(new Event("kk:model-check"));
       }
     } finally {
       setBusy(false);

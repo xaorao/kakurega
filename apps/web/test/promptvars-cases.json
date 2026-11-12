@@ -108,6 +108,23 @@
      "options": []
     }
    ]
+  },
+  {
+   "text": "{{a}} {{a\u0085}} {{ b　}}",
+   "want": [
+    {
+     "name": "a",
+     "options": []
+    },
+    {
+     "name": "a\u0085",
+     "options": []
+    },
+    {
+     "name": "b",
+     "options": []
+    }
+   ]
   }
  ],
  "fill": [
@@ -185,6 +202,15 @@
    "values": {},
    "want": {
     "text": "Plain prompt."
+   }
+  },
+  {
+   "text": "[{{a}}]",
+   "values": {
+    "a": "\u0085"
+   },
+   "want": {
+    "text": "[\u0085]"
    }
   }
  ]

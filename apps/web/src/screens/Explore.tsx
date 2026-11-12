@@ -1,5 +1,5 @@
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
-import { ChosenFolder } from "../components/ChosenFolder";
+import { ChosenFolder, shortPath } from "../components/ChosenFolder";
 import { api, ApiError, type Question, type QuestionDepth, type QuestionPlace } from "../api";
 import { LoadState } from "../components/LoadState";
 import { t, type Key } from "../i18n";
@@ -137,7 +137,7 @@ export function Explore() {
         {(c) => (
           <section class="card stack" aria-labelledby="h-ex-answer" aria-busy={running()}>
             <h2 id="h-ex-answer">{visible(c().question)}</h2>
-            <p class="muted">{c().project ?? c().folder} · {t(`ex.depth.${c().depth}` as Key)}</p>
+            <p class="muted">{c().project ?? shortPath(c().folder)} · {t(`ex.depth.${c().depth}` as Key)}</p>
             <Show when={c().state === "running"}>
               <ul class="plain stack" aria-live="polite"><For each={c().progress}>{(p) => <li class="muted">{p}</li>}</For></ul>
               <div class="actions">

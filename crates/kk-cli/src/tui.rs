@@ -21,8 +21,10 @@ impl Drop for Guard {
 pub fn with_service(args: &[String], f: impl FnOnce(&std::path::Path) -> u8) -> u8 {
     let dir = crate::data_dir(args);
     let mut guard = Guard(None);
-    if let Err(code) = ensure_service(&dir, args, &mut guard) {
-        return code;
+    match ensure_service(&dir, args, &mut guard) {
+        Err(code) => return code,
+        Ok(Some(notice)) => eprintln!("{notice}"),
+        Ok(None) => {}
     }
     let code = f(&dir);
     drop(guard);
@@ -32,15 +34,47 @@ pub fn with_service(args: &[String], f: impl FnOnce(&std::path::Path) -> u8) -> 
 pub fn run(args: &[String]) -> u8 {
     let dir = crate::data_dir(args);
     let mut guard = Guard(None);
-    if let Err(code) = ensure_service(&dir, args, &mut guard) {
-        return code;
+    match ensure_service(&dir, args, &mut guard) {
+        Err(code) => code,
+        Ok(running) => run_client(&dir, args, running),
     }
-    run_client(&dir, args)
 }
 
-fn ensure_service(dir: &std::path::Path, args: &[String], guard: &mut Guard) -> Result<(), u8> {
+/// The options on the command line that are for the service (`--root`, `--model`, `--route` and the rest), not for this
+/// workspace: they take effect only when the workspace starts the service.
+fn service_flags(args: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut value_next = false;
+    for a in args {
+        if value_next {
+            value_next = false;
+        } else if matches!(a.as_str(), "--data-dir" | "--profile") {
+            value_next = true;
+        } else if a.starts_with("--") && !matches!(a.as_str(), "--resume" | "--linear" | "--fork") {
+            out.push(a.clone());
+        }
+    }
+    out
+}
+
+/// Starts the service when none answers for the data folder. When one already runs, the service options given here
+/// cannot change it, and the words that say so are returned.
+fn ensure_service(
+    dir: &std::path::Path,
+    args: &[String],
+    guard: &mut Guard,
+) -> Result<Option<String>, u8> {
     let dir = dir.to_path_buf();
-    if !responsive(&dir) {
+    if responsive(&dir) {
+        let flags = service_flags(args);
+        return Ok((!flags.is_empty()).then(|| {
+            format!(
+                "A Kakurega service was already running for this data folder, so {} did not change it. To use them, quit every workspace and app on this folder, then start again with them.",
+                flags.join(", ")
+            )
+        }));
+    }
+    {
         let _ = kk_service::keys::ensure_private_dir(&dir);
         let log = std::fs::File::create(dir.join("serve.log")).ok();
         let exe = match std::env::current_exe() {
@@ -100,7 +134,7 @@ fn ensure_service(dir: &std::path::Path, args: &[String], guard: &mut Guard) -> 
             return Err(1);
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 /// `--resume` opens the newest kept conversation; `--resume ID` opens that one. The id is the word right after the flag, if it is not another flag.
@@ -112,7 +146,7 @@ pub fn resume_request(args: &[String]) -> Option<kk_tui::app::Resume> {
     })
 }
 
-fn run_client(dir: &std::path::Path, args: &[String]) -> u8 {
+fn run_client(dir: &std::path::Path, args: &[String], running: Option<String>) -> u8 {
     let dir = dir.to_path_buf();
     let resume = resume_request(args);
     // the display settings: a command-line option, then the environment, then config.toml, then the defaults; a file with a mistake
@@ -123,6 +157,11 @@ fn run_client(dir: &std::path::Path, args: &[String]) -> u8 {
         crate::config::Loaded::Invalid(problems) => {
             (None, Some(crate::config::notice_for(&problems)))
         }
+    };
+    // what was not applied to a service already running is said at the top too
+    let notice = match (notice, running) {
+        (Some(a), Some(b)) => Some(format!("{a} {b}")),
+        (a, b) => a.or(b),
     };
     let effective = crate::config::resolve(file.as_ref(), &|k| std::env::var_os(k), args);
     let linear = matches!(

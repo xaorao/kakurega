@@ -39,25 +39,55 @@ fn call(
 
 /// The flags that mean something to the service this command may have to start (where the data lives, which folders and model it
 /// uses), and nothing else: the command's own words are not the service's.
+/// The first word that is neither one of this command's own options nor a service option with its value.
+fn stray_word(args: &[String], own: &[&str]) -> Option<String> {
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if WITH_VALUE.contains(&a) || a == "--profile" {
+            i += 2;
+        } else if own.contains(&a) {
+            i += 1;
+        } else {
+            return Some(a.to_string());
+        }
+    }
+    None
+}
+
+fn refuse_stray(command: &str, args: &[String], own: &[&str], json_mode: bool) -> Option<u8> {
+    let w = stray_word(args, own)?;
+    Some(fail(
+        json_mode,
+        USAGE,
+        &format!(
+            "kaku {command} takes no {:?}: it takes {}. See kaku {command} --help",
+            clean(&w),
+            own.join(" ")
+        ),
+    ))
+}
+
+const WITH_VALUE: &[&str] = &[
+    "--data-dir",
+    "--root",
+    "--scripted",
+    "--ui-dir",
+    "--model",
+    "--ollama",
+    "--context",
+    "--transport",
+    "--vm",
+    "--worker-bin",
+    "--launcher",
+    "--route",
+    "--outside-model",
+    "--near-model",
+    "--near-url",
+    "--near-key-file",
+];
+
 fn serve_args(args: &[String]) -> Vec<String> {
-    const WITH_VALUE: &[&str] = &[
-        "--data-dir",
-        "--root",
-        "--scripted",
-        "--ui-dir",
-        "--model",
-        "--ollama",
-        "--context",
-        "--transport",
-        "--vm",
-        "--worker-bin",
-        "--launcher",
-        "--route",
-        "--outside-model",
-        "--near-model",
-        "--near-url",
-        "--near-key-file",
-    ];
     let mut out = Vec::new();
     let mut i = 0;
     while i < args.len() {
@@ -115,6 +145,9 @@ fn connect(dir: &std::path::Path, json_mode: bool) -> Result<Http, u8> {
 
 pub fn jobs(args: &[String]) -> u8 {
     let json_mode = args.iter().any(|a| a == "--json");
+    if let Some(code) = refuse_stray("jobs", args, &["--json"], json_mode) {
+        return code;
+    }
     crate::tui::with_service(&serve_args(args), |dir| {
         let http = match connect(dir, json_mode) {
             Ok(h) => h,
@@ -165,6 +198,9 @@ pub fn sessions(args: &[String]) -> u8 {
         return session_export(&args[1..]);
     }
     let json_mode = args.iter().any(|a| a == "--json");
+    if let Some(code) = refuse_stray("sessions", args, &["--json"], json_mode) {
+        return code;
+    }
     crate::tui::with_service(&serve_args(args), |dir| {
         let http = match connect(dir, json_mode) {
             Ok(h) => h,
@@ -731,29 +767,36 @@ fn code_id_ok(id: &str) -> bool {
         .is_some_and(|n| !n.is_empty() && n.len() <= 18 && n.chars().all(|c| c.is_ascii_digit()))
 }
 
-fn print_code(v: &Value) {
+fn code_text(v: &Value) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    macro_rules! put {
+        ($($a:tt)*) => {{
+            let _ = writeln!(out, $($a)*);
+        }};
+    }
     let id = clean(v["id"].as_str().unwrap_or(""));
-    println!("{id}  {}", clean(v["state"].as_str().unwrap_or("")));
+    put!("{id}  {}", clean(v["state"].as_str().unwrap_or("")));
     if let Some(e) = v["error"].as_str() {
-        println!("  {}", clean(e));
+        put!("  {}", clean(e));
     }
     if let Some(e) = v["ended"].as_str() {
-        println!("  {}", clean(e));
+        put!("  {}", clean(e));
     }
     if let Some(sm) = v["summary"].as_str().filter(|s| !s.is_empty()) {
-        println!("  the model says: {}", clean(sm));
+        put!("  the model says: {}", clean(sm));
     }
     if let Some(n) = v["withheld_files"].as_u64().filter(|n| *n > 0) {
-        println!(
+        put!(
             "  {n} {} withheld from the model",
             crate::script::plural(n, "file was", "files were")
         );
     }
     match &v["tests"] {
-        Value::Null => println!(
-            "  tests: none were found that can run here, so nothing was checked by running it"
-        ),
-        t => println!(
+        Value::Null => {
+            put!("  tests: none were found that can run here, so nothing was checked by running it")
+        }
+        t => put!(
             "  tests ({}): {}",
             clean(v["test_command"].as_str().unwrap_or("")),
             if t["ran"] == false {
@@ -766,10 +809,10 @@ fn print_code(v: &Value) {
         ),
     }
     for c in v["concerns"].as_array().into_iter().flatten() {
-        println!("  ! {}", clean(c.as_str().unwrap_or("")));
+        put!("  ! {}", clean(c.as_str().unwrap_or("")));
     }
     for c in v["changes"].as_array().into_iter().flatten() {
-        println!(
+        put!(
             "\n{} {}  (+{} -{})",
             clean(c["kind"].as_str().unwrap_or("")),
             clean(c["path"].as_str().unwrap_or("")),
@@ -777,12 +820,26 @@ fn print_code(v: &Value) {
             c["removed"]
         );
         for line in c["diff"].as_str().unwrap_or("").lines() {
-            println!("  {}", clean(line));
+            put!("  {}", clean(line));
         }
     }
     if v["changes"].as_array().is_some_and(|a| a.is_empty()) && v["state"] == "ready" {
-        println!("  the task changed no file");
+        put!("  the task changed no file");
     }
+    // the digest binds an apply to the patch read above, so a patch that changed since is not applied
+    if let Some(d) = v["digest"].as_str().filter(|d| {
+        v["state"] == "ready"
+            && v["changes"].as_array().is_some_and(|a| !a.is_empty())
+            && !d.is_empty()
+            && d.chars().all(|c| c.is_ascii_hexdigit())
+    }) {
+        put!("\ndigest of this patch: {d}\napply exactly this patch with: kaku code apply {id} --digest {d}");
+    }
+    out
+}
+
+fn print_code(v: &Value) {
+    print!("{}", code_text(v));
 }
 
 fn plural(n: u64, one: &str, many: &str) -> String {
@@ -1430,6 +1487,9 @@ pub fn stop(args: &[String]) -> u8 {
 /// no progress for a while. Exit 0 when nothing has gone quiet, 3 when something has.
 pub fn work(args: &[String]) -> u8 {
     let json_mode = args.iter().any(|a| a == "--json");
+    if let Some(code) = refuse_stray("work", args, &["--json"], json_mode) {
+        return code;
+    }
     crate::tui::with_service(&serve_args(args), |dir| {
         let http = match connect(dir, json_mode) {
             Ok(h) => h,
@@ -1836,7 +1896,14 @@ pub fn explore(args: &[String]) -> u8 {
     };
     let depth = crate::flag(args, "--depth").unwrap_or_else(|| "normal".into());
     if !matches!(depth.as_str(), "quick" | "normal" | "thorough") {
-        return fail(json_mode, USAGE, EXPLORE_USAGE);
+        return fail(
+            json_mode,
+            USAGE,
+            &format!(
+                "--depth is quick, normal or thorough, not {:?}",
+                clean(&depth)
+            ),
+        );
     }
     let timeout = crate::flag(args, "--timeout")
         .and_then(|t| t.parse::<u64>().ok())
@@ -1871,15 +1938,20 @@ pub fn explore(args: &[String]) -> u8 {
         match first.as_str() {
             "list" => match answer(call(&http, Method::Get, "/api/questions", None), 200) {
                 Ok(v) => {
-                    for q in v["questions"].as_array().into_iter().flatten() {
-                        say(json_mode, q, || {
-                            format!(
+                    let list = v["questions"].as_array().cloned().unwrap_or_default();
+                    if json_mode {
+                        println!("{}", json!({"questions": list}));
+                    } else if list.is_empty() {
+                        println!("no questions yet");
+                    } else {
+                        for q in &list {
+                            println!(
                                 "{}  {}  {}",
                                 clean(q["id"].as_str().unwrap_or("")),
                                 clean(q["state"].as_str().unwrap_or("")),
                                 clean(q["question"].as_str().unwrap_or(""))
-                            )
-                        });
+                            );
+                        }
                     }
                     OK
                 }
@@ -2063,5 +2135,28 @@ mod tests {
             "{md:?}"
         );
         assert_eq!(md.matches("## You").count(), 2);
+    }
+}
+
+#[cfg(test)]
+mod code_text_tests {
+    use serde_json::json;
+
+    #[test]
+    fn the_digest_and_the_command_that_applies_it_are_under_a_ready_patch_only() {
+        let ready = json!({"id": "code-3", "state": "ready", "tests": null, "digest": "ab12", "changes": [{"kind": "modified", "path": "a.py", "added": 1, "removed": 0, "diff": "+x"}]});
+        let t = super::code_text(&ready);
+        assert!(
+            t.contains("digest of this patch: ab12")
+                && t.contains("kaku code apply code-3 --digest ab12"),
+            "{t}"
+        );
+        for v in [
+            json!({"id": "code-3", "state": "running", "tests": null, "digest": "ab12", "changes": [{"path": "a.py"}]}),
+            json!({"id": "code-3", "state": "ready", "tests": null, "digest": "ab12", "changes": []}),
+            json!({"id": "code-3", "state": "ready", "tests": null, "digest": "ab 12; rm", "changes": [{"path": "a.py"}]}),
+        ] {
+            assert!(!super::code_text(&v).contains("--digest"), "{v}");
+        }
     }
 }

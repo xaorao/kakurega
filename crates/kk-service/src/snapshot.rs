@@ -90,8 +90,8 @@ pub struct SnapDraft {
     pub digest: String,
     pub files: BTreeMap<String, String>,
     pub removed: Vec<(String, String)>,
-    /// How many files each entry of `removed` holds back, in the same order. Releases kept before it was recorded have none,
-    /// and each of their entries counts as one.
+    /// How many files each entry of `removed` holds back, in the same order. Releases kept before it was recorded have none:
+    /// their count is read from the entry's own words (see `count_in_words`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub removed_files: Vec<usize>,
     pub not_confirmed: Vec<(String, String)>,
@@ -308,7 +308,11 @@ impl Snapshot {
                 .map(|(i, (a, b))| Removal {
                     what: a.clone(),
                     why: b.clone(),
-                    files: d.removed_files.get(i).copied().unwrap_or(1),
+                    files: d
+                        .removed_files
+                        .get(i)
+                        .copied()
+                        .unwrap_or_else(|| count_in_words(a)),
                 })
                 .collect(),
             not_confirmed: d.not_confirmed.clone(),
@@ -353,6 +357,27 @@ fn receipts_of(all: &[Value]) -> Vec<SnapReceipt> {
         });
     }
     out
+}
+
+/// The count an entry of an older release states in its own words ("3 withheld files"), else one.
+fn count_in_words(what: &str) -> usize {
+    what.split_whitespace()
+        .next()
+        .and_then(|n| n.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(1)
+}
+
+#[cfg(test)]
+mod older_release_tests {
+    #[test]
+    fn sn_old_a_release_kept_without_counts_reads_them_from_its_words() {
+        assert_eq!(super::count_in_words("3 withheld files"), 3);
+        assert_eq!(super::count_in_words("1 withheld file"), 1);
+        assert_eq!(super::count_in_words("a secret line"), 1);
+        assert_eq!(super::count_in_words("0 withheld files"), 1);
+        assert_eq!(super::count_in_words(""), 1);
+    }
 }
 
 #[cfg(test)]

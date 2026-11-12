@@ -2,7 +2,7 @@ use crate::app::{App, Card, Kind, Mode, DIGEST_ACK_LEN};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 use unicode_width::UnicodeWidthChar;
 
@@ -389,19 +389,53 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
     .0
     .len()
     .clamp(1, 6) as u16;
+    let footer = match &app.mode {
+        Mode::Confirm(c) => c.prompt.clone(),
+        Mode::Picker(_) => "Up/Down choose · Right previews · Enter opens · Ctrl-A puts away · Ctrl-R archived · Ctrl-D twice forgets · Esc closes".to_string(),
+        Mode::Approval(_) => {
+            "Type the digest prefix · Enter approves · Esc or Ctrl-C refuses".to_string()
+        }
+        Mode::Normal if app.chat_waiting && app.esc_armed > 0 => {
+            "Esc again to stop the answer · Ctrl-C quits".to_string()
+        }
+        Mode::Normal if app.chat_waiting => {
+            "Esc twice stops the answer · new messages wait their turn · Ctrl-C quits".to_string()
+        }
+        Mode::Normal => {
+            "Tab complete · Up/Down history · PgUp/PgDn scroll · /help · Ctrl-C quits".to_string()
+        }
+    };
+    // a question must be read whole: it wraps onto up to three rows; the hints drop whole parts to fit one
+    let footer_rows: Vec<String> = if matches!(app.mode, Mode::Confirm(_)) {
+        let mut r = wrap(&footer, area.width as usize);
+        r.truncate(3);
+        r
+    } else {
+        let parts: Vec<String> = footer.split(" · ").map(str::to_string).collect();
+        vec![fit_parts(&parts, area.width as usize, true)]
+    };
     let rows = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(3),
         Constraint::Length(input_lines + 2),
-        Constraint::Length(1),
+        Constraint::Length(footer_rows.len().max(1) as u16),
     ])
     .split(area);
+    let status = app.status_line();
+    let status_parts: Vec<String> = status.split(" · ").map(str::to_string).collect();
     let head = Line::from(vec![
         Span::styled(
             " kakurega ",
             Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED),
         ),
-        Span::raw(format!(" {}", app.status_line())),
+        Span::raw(format!(
+            " {}",
+            fit_parts(
+                &status_parts,
+                (area.width as usize).saturating_sub(12),
+                false
+            )
+        )),
     ]);
     f.render_widget(Paragraph::new(head), rows[0]);
 
@@ -506,23 +540,11 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
         ));
     }
 
-    let footer = match &app.mode {
-        Mode::Confirm(c) => c.prompt.clone(),
-        Mode::Picker(_) => "Up/Down choose · Right previews · Enter opens · Ctrl-A puts away · Ctrl-R archived · Ctrl-D twice forgets · Esc closes".to_string(),
-        Mode::Approval(_) => {
-            "Type the digest prefix · Enter approves · Esc or Ctrl-C refuses".to_string()
-        }
-        Mode::Normal if app.chat_waiting && app.esc_armed > 0 => {
-            "Esc again to stop the answer · Ctrl-C quits".to_string()
-        }
-        Mode::Normal if app.chat_waiting => {
-            "Esc twice stops the answer · new messages wait their turn · Ctrl-C quits".to_string()
-        }
-        Mode::Normal => {
-            "Tab complete · Up/Down history · PgUp/PgDn scroll · /help · Ctrl-C quits".to_string()
-        }
-    };
-    f.render_widget(Paragraph::new(Span::styled(footer, th.dim())), rows[3]);
+    let footer_lines: Vec<Line> = footer_rows
+        .into_iter()
+        .map(|r| Line::from(Span::styled(r, th.dim())))
+        .collect();
+    f.render_widget(Paragraph::new(footer_lines), rows[3]);
 
     if let Mode::Approval(v) = &app.mode {
         let pop = Rect {
@@ -575,7 +597,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
                 th.dim(),
             )));
         }
-        f.render_widget(Paragraph::new(prompt), parts[1]);
+        f.render_widget(Paragraph::new(prompt).wrap(Wrap { trim: false }), parts[1]);
     }
 
     if let Mode::Picker(p) = &app.mode {
@@ -711,6 +733,100 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
         } else if let Some(n) = &p.scope_note {
             f.render_widget(Paragraph::new(Span::styled(n.clone(), th.dim())), parts[2]);
         }
+    }
+}
+
+/// Parts joined by " · " that fit in `width` columns. With `keep_last`, the first and the last part stay (the last is the
+/// way out) and those between are kept in order while they fit; otherwise parts are dropped from the end. A part is never
+/// cut, except a lone one that cannot fit, which is shortened at a word with an ellipsis.
+pub fn fit_parts(parts: &[String], width: usize, keep_last: bool) -> String {
+    use unicode_width::UnicodeWidthStr;
+    let join = |v: &[&String]| v.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" · ");
+    let fits = |v: &[&String]| join(v).width() <= width;
+    let all: Vec<&String> = parts.iter().collect();
+    if fits(&all) || parts.is_empty() {
+        return join(&all);
+    }
+    let mut chosen: Vec<&String> = Vec::new();
+    if keep_last && parts.len() >= 2 {
+        let (first, last) = (&parts[0], &parts[parts.len() - 1]);
+        let mut middle: Vec<&String> = Vec::new();
+        for p in &parts[1..parts.len() - 1] {
+            let mut trial = vec![first];
+            trial.extend(middle.iter().copied());
+            trial.push(p);
+            trial.push(last);
+            if fits(&trial) {
+                middle.push(p);
+            }
+        }
+        let mut trial = vec![first];
+        trial.extend(middle);
+        trial.push(last);
+        if fits(&trial) {
+            chosen = trial;
+        } else if fits(&[last]) {
+            chosen = vec![last];
+        }
+    } else {
+        for p in parts {
+            let mut trial = chosen.clone();
+            trial.push(p);
+            if !fits(&trial) {
+                break;
+            }
+            chosen = trial;
+        }
+    }
+    if !chosen.is_empty() {
+        return join(&chosen);
+    }
+    // not even one part fits: the first is shortened at a word
+    let mut out = String::new();
+    for word in parts[0].split(' ') {
+        let next = if out.is_empty() {
+            word.to_string()
+        } else {
+            format!("{out} {word}")
+        };
+        if (next.width() + 1) > width {
+            break;
+        }
+        out = next;
+    }
+    // one word longer than the room: as much of it as fits
+    if out.is_empty() {
+        out = parts[0].chars().take(width.saturating_sub(1)).collect();
+    }
+    format!("{out}…")
+}
+
+#[cfg(test)]
+mod fit_tests {
+    use super::fit_parts;
+
+    fn v(s: &str) -> Vec<String> {
+        s.split(" · ").map(str::to_string).collect()
+    }
+
+    #[test]
+    fn whole_parts_are_dropped_never_cut_and_the_way_out_stays() {
+        let footer = v("Tab complete · Up/Down history · PgUp/PgDn scroll · /help · Ctrl-C quits");
+        assert_eq!(fit_parts(&footer, 200, true), footer.join(" · "));
+        let narrow = fit_parts(&footer, 50, true);
+        assert!(
+            narrow.starts_with("Tab complete")
+                && narrow.ends_with("Ctrl-C quits")
+                && narrow.chars().count() <= 50,
+            "{narrow}"
+        );
+        assert_eq!(fit_parts(&footer, 14, true), "Ctrl-C quits");
+        let head =
+            v("qwen2.5-coder:7b · setup needed (/status) · 3 reviews · 1 running · project acme");
+        let h = fit_parts(&head, 45, false);
+        assert_eq!(h, "qwen2.5-coder:7b · setup needed (/status)");
+        let tiny = fit_parts(&head, 12, false);
+        assert_eq!(tiny, "qwen2.5-cod…");
     }
 }
 

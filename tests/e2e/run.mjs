@@ -199,9 +199,9 @@ page.on("requestfailed", async (r) => {
     return;
   }
   // Also classified as a harness artifact: an idempotent GET that the browser cancelled because the page was reloaded or
-  // navigated while it was in flight (the screens poll /api/fs, /api/readiness and /api/jobs). A POST or any other failure
+  // navigated while it was in flight (the screens poll /api/fs, /api/readiness and /api/jobs, and the privacy page reads /api/projects; a typeface the page asks for when it first shows monospaced text is a read like these). A POST or any other failure
   // still counts.
-  if (r.method() === "GET" && r.failure()?.errorText === "net::ERR_ABORTED" && /\/(api\/(fs|readiness|jobs|sessions|memories|inbox|events|schedules)|favicon\.svg)(\?|$)/.test(new URL(r.url()).pathname + new URL(r.url()).search)) return;
+  if (r.method() === "GET" && r.failure()?.errorText === "net::ERR_ABORTED" && /\/(api\/(fs|readiness|jobs|sessions|memories|inbox|events|schedules|projects)|favicon\.svg|assets\/[\w.-]+\.woff2?)(\?|$)/.test(new URL(r.url()).pathname + new URL(r.url()).search)) return;
   problems.push("requestfailed: " + r.url() + " " + r.failure()?.errorText);
 });
 page.on("response", (r) => r.status() >= 500 && problems.push("http " + r.status() + " " + r.url()));
@@ -626,9 +626,9 @@ try {
     await glance.getByLabel("Where it came from").selectOption("owner");
     await page.waitForFunction((n) => document.querySelectorAll(".mem").length === n, shownNotes);
     check("every note listed so far was written by the owner", (await page.locator(".mem").count()) === shownNotes);
-    await glance.getByLabel("Never given to a model").check();
+    await glance.getByLabel("Not used in any answer yet").check();
     await page.waitForFunction((n) => document.querySelectorAll(".mem").length === n, shownNotes);
-    await glance.getByLabel("Never given to a model").uncheck();
+    await glance.getByLabel("Not used in any answer yet").uncheck();
     // a note that ends in three days shows up under "Ending within 14 days", and the glance counts it
     const made = await page.evaluate(async () => {
       const sess = await (await fetch("/api/session", { credentials: "same-origin" })).json();

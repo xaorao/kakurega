@@ -3,6 +3,7 @@ import { api, ApiError, streamRoundtable, type ExpertInfo, type RoundtableResolu
 import { LoadState } from "../components/LoadState";
 import { Markdown } from "../components/Markdown";
 import { t } from "../i18n";
+import { ExpertCard } from "../components/ExpertCard";
 
 type Seat = { id: string; name: string; state: "waiting" | "asking" | "answered" | "failed"; text: string; why: string; cut: boolean; short: boolean };
 
@@ -119,14 +120,13 @@ export function Roundtable() {
             {(g) => (
               <div class="rt-group">
                 <h2>{g.group}</h2>
-                <For each={g.experts}>
-                  {(x) => (
-                    <label class="rt-expert">
-                      <input type="checkbox" checked={chosen().includes(x.id)} disabled={busy() || (!chosen().includes(x.id) && chosen().length >= max())} onChange={() => toggle(x.id)} />
-                      <span><strong>{x.name}</strong><span class="muted"> {x.summary}</span></span>
-                    </label>
-                  )}
-                </For>
+                <div class="rt-cards">
+                  <For each={g.experts}>
+                    {(x) => (
+                      <ExpertCard id={x.id} name={x.name} summary={x.summary} checked={chosen().includes(x.id)} disabled={busy() || (!chosen().includes(x.id) && chosen().length >= max())} onChange={() => toggle(x.id)} />
+                    )}
+                  </For>
+                </div>
               </div>
             )}
           </For>

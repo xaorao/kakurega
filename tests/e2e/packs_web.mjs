@@ -91,6 +91,7 @@ check(true, "importing the same pack again is refused and replaces nothing");
   await suggested.waitFor();
   const card = await suggested.innerText();
   check(/semgrep/.test(card) && /from the pack scan-kit/.test(card) && card.includes("/usr/local/bin/semgrep-mcp") && (await suggested.locator("ol.args li").allInnerTexts()).join("|") === "--stdio" && /SEMGREP_APP_TOKEN/.test(card) && /Pattern rules for reviews/.test(card), "the suggested program is shown exactly: its path, its arguments, the variables it needs and why", card);
+  check(/from the pack scan-kit by Legal team \(key [0-9a-zA-Z_-]{8}…\)/.test(card), "the card names the publisher by the owner's label and the start of its key", card);
   check(await page.getByText("No outside programs yet.").isVisible(), "nothing was added by importing the pack");
   await suggested.getByRole("button", { name: "Fill the form with it" }).click();
   check(await page.locator("#mcp-name").inputValue() === "semgrep" && await page.locator("#mcp-program").inputValue() === "/usr/local/bin/semgrep-mcp" && await page.locator("#mcp-args").inputValue() === "--stdio" && await page.locator("#mcp-env").inputValue() === "SEMGREP_APP_TOKEN=", "the form is filled with it and the value is left for you");

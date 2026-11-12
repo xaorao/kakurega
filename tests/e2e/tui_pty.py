@@ -198,7 +198,7 @@ try:
     send("/where\r")
     check("/where says where the data goes and that nothing has left this computer", wait_for(r"Where your data goes", 30) is not None and wait_for(r"a scripted test model; nothing is sent to any model", 15) is not None and wait_for(r"Left this computer \(from the signed log\): nothing", 15) is not None, screen_text()[-500:].replace("\n", " | "))
     send("/route\r")
-    check("/route is the same list", wait_for(r"(Where your data goes[\s\S]*){2}", 30) is not None)
+    check("/route says which route is in use and that this service's route is fixed", wait_for(r"Where answers are made", 30) is not None and wait_for(r"scripted test model; nothing is sent to any model[\s\S]*fixed route", 15) is not None)
     send("/explore quick payments-service : Where is the session checked?\r")
     check("/explore answers about a project, with each line it rests on checked against the file", wait_for(r"of the 2 lines it rests on were found in the files", 120) is not None and wait_for(r"NOT in the file; the agent wrote:", 15) is not None, screen_text()[-600:].replace("\n", " | "))
     send("a plain question about rounding\r")
@@ -717,14 +717,14 @@ try:
         return pr.returncode, seen5
 
 
-    rc, _ = open_close("the first launch reports nothing (there is no earlier mark)", absent="Stopped while you were away")
+    rc, _ = open_close("the first launch reports nothing (there is no earlier mark)", absent="Finished while you were away")
     check("and the workspace exits cleanly", rc == 0, f"exit={rc}")
     time.sleep(1.2)
     done = subprocess.run([str(kaku), "review", str(work / "root/payments-service"), "--for", "away-audit", "--data-dir", str(data5), "--json"], capture_output=True, text=True, timeout=300)
     check("a review finishes while no workspace is open", done.returncode in (0, 3), done.stdout[:200] + done.stderr[:200])
-    _, card = open_close("the next launch reports it (and is then killed, with no chance to say it left)", want="Stopped while you were away", kill=True)
-    check("the card names the review, who it was for and how it ended", "job-1" in card.split("Stopped while you were away")[-1] and "away-audit" in card.split("Stopped while you were away")[-1] and ("ready for your approval" in card or "nothing to release" in card), card[-700:])
-    open_close("and the launch after that does not report it again, because it was marked seen when shown", absent="Stopped while you were away")
+    _, card = open_close("the next launch reports it (and is then killed, with no chance to say it left)", want="Finished while you were away", kill=True)
+    check("the card names the review, who it was for and how it ended", "job-1" in card.split("Finished while you were away")[-1] and "away-audit" in card.split("Finished while you were away")[-1] and ("ready for your approval" in card or "nothing to release" in card), card[-700:])
+    open_close("and the launch after that does not report it again, because it was marked seen when shown", absent="Finished while you were away")
 finally:
     srv5.kill()
     srv5.wait()

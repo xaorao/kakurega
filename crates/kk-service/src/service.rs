@@ -657,6 +657,29 @@ impl Service {
     /// Writes one entry to the signed log. An entry it cannot write (a full disk) is counted, and the count is written as
     /// one entry as soon as the log can be written again, so the gap shows in the log itself. A subject the log would
     /// refuse (too long, or with a control character) is shortened and cleaned rather than lost.
+    /// The values this program shows that are public by design: the signed log's public key and every fingerprint in it, and
+    /// the release signing key with its id. Text is checked for secrets with these set aside.
+    fn public_values(&self) -> Vec<String> {
+        let mut out = vec![kk_evidence::b64::encode(&self.log.public_key())];
+        let signer = self.signer_public();
+        out.push(kk_evidence::b64::encode(&signer));
+        out.push(kk_evidence::keys::KeyId::of(&signer).as_str().to_string());
+        out.push(signer.iter().map(|b| format!("{b:02x}")).collect());
+        if let Ok(v) = serde_json::from_str::<Value>(&self.log.export().unwrap_or_default()) {
+            for e in v["entries"].as_array().into_iter().flatten() {
+                for k in ["hash", "head"] {
+                    if let Some(h) = e[k].as_str() {
+                        out.push(h.to_string());
+                    }
+                }
+            }
+        }
+        // longest first, so a value that holds another is set aside whole
+        out.sort_by_key(|v| std::cmp::Reverse(v.len()));
+        out.retain(|v| v.len() >= 16);
+        out
+    }
+
     fn log_event(&self, kind: &str, subject: &str, data: &[(&str, kk_eventlog::Datum)]) -> bool {
         let subject = log_subject(subject);
         let mut unwritten = self.unwritten.lock().expect("lock");
@@ -2906,11 +2929,22 @@ async fn transcript_export(axum::Extension(svc): Svc, Json(b): Json<TranscriptEx
             "the text contains control or direction-changing characters",
         );
     }
-    if !kk_secrets::scan(&b.text).is_empty() || kk_secrets::looks_secret(&b.text).is_some() {
+    // this program's own public values are not secrets: they are set aside before the text is checked
+    let mut checked = b.text.clone();
+    for public in svc.public_values() {
+        checked = checked.replace(&public, " ");
+    }
+    let secret_at =
+        |t: &str| !kk_secrets::scan(t).is_empty() || kk_secrets::looks_secret(t).is_some();
+    if secret_at(&checked) {
+        let line = checked.lines().position(secret_at).map(|i| i + 1);
         return error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "SECRET",
-            "the text looks like it contains a secret, so it is not written to a file",
+            &match line {
+                Some(n) => format!("line {n} of the text looks like it holds a secret, so nothing was written to a file; leave that part out and export again"),
+                None => "the text looks like it holds a secret, so nothing was written to a file".to_string(),
+            },
         );
     }
     let dir = svc.data_dir.join("exports");
