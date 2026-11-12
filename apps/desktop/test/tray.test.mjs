@@ -71,3 +71,13 @@ test("tr04 the menu: running, what waits, open, waiting for you, notifications, 
   assert.equal(stopped.find((i) => i.id === "status"), undefined);
   assert.ok(stopped.some((i) => i.id === "quit"), "Quit is always there");
 });
+
+test("tr05 the capture entry shows its shortcut when the app holds it, and the menu does not take the keys itself", () => {
+  const t = (k) => k;
+  const actions = { open() {}, inbox() {}, capture() {}, setNotify() {}, quit() {} };
+  const held = menuTemplate({ count: 0, stopped: false, notify: true, shortcut: "CommandOrControl+Alt+K" }, t, actions).find((i) => i.id === "capture");
+  assert.equal(held.accelerator, "CommandOrControl+Alt+K");
+  assert.equal(held.registerAccelerator, false);
+  const free = menuTemplate({ count: 0, stopped: false, notify: true, shortcut: null }, t, actions).find((i) => i.id === "capture");
+  assert.equal(free.accelerator, undefined, "keys another app holds are not shown as if they worked");
+});

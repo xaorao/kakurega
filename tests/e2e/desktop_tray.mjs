@@ -165,6 +165,10 @@ try {
     const png = (await globalThis.kakuregaShell.window().webContents.capturePage()).toPNG();
     globalThis.kakuregaShell.setCapture(png, false);
   });
+  // the same capture is on a key held for the app, shown in the menu; a picture is still asked about before it is attached
+  const keys = await shell(app, () => globalThis.kakuregaShell.shortcut());
+  const captureItem = await shell(app, () => globalThis.kakuregaShell.menu()?.getMenuItemById("capture")?.accelerator ?? null);
+  check("the capture shortcut is held for the app and shown next to the menu entry", keys.registered === true && keys.shown === keys.keys && captureItem === keys.keys, JSON.stringify({ keys, captureItem }));
   const discarded = await shell(app, () => globalThis.kakuregaShell.capture());
   check("a picture the owner discards is not attached and the screen does not change", discarded?.outcome === "discarded" && new URL(page.url()).hash === "#/privacy", JSON.stringify(discarded));
   await shell(app, async () => {

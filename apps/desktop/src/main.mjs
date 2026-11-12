@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, shell, systemPreferences, session, Notification, Tray, Menu, nativeImage, desktopCapturer, screen } from "electron";
+import { app, BrowserWindow, dialog, shell, systemPreferences, session, Notification, Tray, Menu, nativeImage, desktopCapturer, screen, globalShortcut } from "electron";
 import { spawn, execFile } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync, chmodSync, readdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -349,6 +349,20 @@ async function runCapture() {
   if (why && captureTestAnswer === null) await dialog.showMessageBox({ type: "warning", message: t("capture.failed.message"), detail: t(why) });
 }
 
+/** The keys that take a picture of the screen from anywhere, the same as the menu-bar entry: the picture is shown and
+ *  nothing is attached without a yes. Taken only if no other app holds them. */
+const CAPTURE_SHORTCUT = "CommandOrControl+Alt+K";
+
+function takeShortcut() {
+  let ok = false;
+  try {
+    ok = globalShortcut.register(CAPTURE_SHORTCUT, () => void runCapture());
+  } catch {
+    ok = false;
+  }
+  state.shortcut = ok ? CAPTURE_SHORTCUT : null;
+}
+
 const trayActions = {
   capture: () => void runCapture(),
   // another profile is another data folder with its own keys: the app starts again in it
@@ -374,7 +388,7 @@ function refreshTray() {
     state.profile = profileName;
     state.profiles = [DEFAULT_PROFILE, ...profileNames(profilesHome)];
   }
-  const key = JSON.stringify([state.count, state.stopped, state.notify, language, state.profile, state.profiles]);
+  const key = JSON.stringify([state.count, state.stopped, state.notify, language, state.profile, state.profiles, state.shortcut]);
   // rebuilt only when something on it changed, so a menu the owner has open is not replaced under the pointer
   if (key === trayKey) return;
   trayKey = key;
@@ -392,6 +406,7 @@ function createTray() {
     icon.setTemplateImage(true);
     tray = new Tray(icon);
     if (process.platform === "win32") tray.on("click", () => showWindow());
+    takeShortcut();
     refreshTray();
   } catch (e) {
     console.error("kakurega: no menu-bar item:", String(e?.message ?? e));
@@ -545,6 +560,7 @@ if (!runsFromAsar) {
       return lastCapture;
     },
     lastCapture: () => lastCapture,
+    shortcut: () => ({ keys: CAPTURE_SHORTCUT, registered: globalShortcut.isRegistered(CAPTURE_SHORTCUT), shown: state.shortcut }),
     // opens the preview of this picture with no dialog, says whether the picture is really drawn in it, and closes it
     previewShows: async (png) => {
       const before = readdirSync(app.getPath("temp")).filter((n) => n.startsWith("kakurega-preview-")).length;
@@ -589,6 +605,10 @@ app.whenReady().then(() => { clearOldPreviews(); return app.isQuitting ? undefin
 });
 // the Dock icon of a running app whose window was closed brings the window back
 app.on("activate", () => showWindow());
+app.on("will-quit", () => {
+  globalShortcut.unregisterAll();
+});
+
 app.on("before-quit", () => {
   app.isQuitting = true;
   const c = child;
