@@ -21,6 +21,6 @@ export async function captureSelection(info, deps = {}) {
     if (r.status === 202) return { ok: true, message: "Queued in Kakurega. Review it there before anything is saved." };
     return { ok: false, message: describeFailure(r.status, r.body) };
   } catch {
-    return { ok: false, message: "Kakurega is not running on this computer." };
+    return { ok: false, message: "Nothing answers at Kakurega's saved address on this computer. Start Kakurega; if it is running, open the extension, disconnect and pair again." };
   }
 }

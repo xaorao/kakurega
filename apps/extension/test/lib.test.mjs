@@ -56,7 +56,7 @@ test("ex05 captureSelection reports every outcome in plain words and sends only 
   assert.match((await captureSelection({ selectionText: "", pageUrl: "https://a.example/" }, { fetch: ok, config: cfg })).message, /cannot be sent/);
   assert.match((await captureSelection({ selectionText: "x", pageUrl: "chrome://x" }, { fetch: ok, config: cfg })).message, /http or https/);
   const down = async () => { throw new TypeError("failed to fetch"); };
-  assert.match((await captureSelection({ selectionText: "x", pageUrl: "https://a.example/" }, { fetch: down, config: cfg })).message, /not running/);
+  assert.match((await captureSelection({ selectionText: "x", pageUrl: "https://a.example/" }, { fetch: down, config: cfg })).message, /Nothing answers at Kakurega.s saved address/);
   const refused = async () => ({ status: 422, json: async () => ({ error: { message: "looks like a secret" } }) });
   assert.match((await captureSelection({ selectionText: "x", pageUrl: "https://a.example/" }, { fetch: refused, config: cfg })).message, /looks like a secret/);
   const unpaired = async () => ({ status: 401, json: async () => ({}) });

@@ -31,7 +31,9 @@ async function render() {
     }
   } catch {
     $("state").className = "";
-    $("state").textContent = "Kakurega is not running on this computer.";
+    // nothing answered at the address saved when this browser was paired: the service is stopped, or it runs at
+    // another address now (it keeps its address across restarts when it can)
+    $("state").textContent = `Nothing answers at port ${c.port} on this computer. Start Kakurega; if it is running, it has another address now: disconnect this browser and pair again.`;
   }
 }
 
