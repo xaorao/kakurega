@@ -59,6 +59,8 @@ struct RunRow {
     goal: String,
     project: Option<String>,
     attachments: Vec<String>,
+    /// The most private route level this run has worked at; what it holds is not handed to a lesser one.
+    held: i64,
     status: String,
     final_text: Option<String>,
     final_note: String,
@@ -129,15 +131,20 @@ impl Drop for DriverGuard {
 }
 
 /// The seat of the coding agent installed on this computer. It is never in a plan unless the owner named it.
+/// Said when a run that worked with a more private model would go on with a lesser one.
+const MORE_PRIVATE: &str = "this run worked with a more private model than the one in use now, and what it holds is not sent to this one. Switch the model back in Settings to carry on, or plan a new run";
 pub(super) const OUTSIDE_SEAT: &str = "claude-code";
 /// The seat whose task is a sandboxed review of the run's project folder. It reads the project's files through the same
 /// worker, sandbox and broker every review uses; no expert reads files any other way.
 pub(super) const REVIEW_SEAT: &str = "project-review";
 pub(super) const REVIEW_NAME: &str = "Project reviewer";
+const REVIEW_NOT_HANDED: &str = "(the review's findings are not handed to an agent outside this program; open the review to read them)";
 pub(super) const REVIEW_SUMMARY: &str = "Reviews the files of the run's project folder in the sealed sandbox and reports only the defects it could reproduce. It is the same review as New review, whatever its task says, so give it the task of reviewing the project. It takes minutes, and it needs a project that has a folder.";
 const OUTSIDE_SUMMARY: &str = "The coding agent installed on this computer. Not private: each task for it is shown to the owner first and sent only on their yes. Give it only a task that needs none of the owner's files.";
 /// How a question to the owner about a hand-over begins, so it is told apart from an expert's own question.
 const HANDOVER_MARK: &str = "[hand-over]";
+/// What the owner's yes is replaced with, in the store, the moment the text is about to be sent.
+const HANDOVER_SENT: &str = "yes (sent)";
 
 impl Service {
     /// The seat for an id: a built-in expert, or one of the owner's methods approved for exactly its current text.
@@ -294,6 +301,37 @@ impl Service {
             Some((q, answer))
                 if q.contains(&stamp) && answer.trim().eq_ignore_ascii_case("yes") =>
             {
+                // the yes is used up in the store before anything is sent: if the service stops while the agent works,
+                // the text is not sent a second time when the run is carried on
+                let mut spent = t.asked.clone();
+                if let Some(last) = spent
+                    .iter_mut()
+                    .rev()
+                    .find(|(q, _)| q.starts_with(HANDOVER_MARK))
+                {
+                    last.1 = HANDOVER_SENT.to_string();
+                }
+                let saved = {
+                    let store = self.store.lock().expect("lock");
+                    store
+                        .connection()
+                        .execute(
+                            "UPDATE team_tasks SET asked = ?3 WHERE run = ?1 AND n = ?2",
+                            kk_vault::rusqlite::params![id, n as i64, json!(spent).to_string()],
+                        )
+                        .is_ok_and(|rows| rows == 1)
+                };
+                if !saved {
+                    self.team_set_task(
+                        id,
+                        n,
+                        State::Failed,
+                        "",
+                        "the hand-over could not be recorded, so nothing was sent",
+                        "",
+                    );
+                    return;
+                }
                 self.log_event(
                     "outbound.model",
                     "Claude Code on this computer, then its maker",
@@ -320,6 +358,10 @@ impl Service {
                         );
                     }
                 }
+            }
+            // a hand-over that was started and never finished (the service stopped while the agent worked)
+            Some((q, answer)) if q.contains(&stamp) && answer == HANDOVER_SENT => {
+                self.team_set_task(id, n, State::Failed, "", "this text was handed to the coding agent and the service stopped before its answer was saved; it is not sent a second time. Plan the run again to send it again", "");
             }
             // the owner answered a hand-over question for this very text with something other than yes
             Some((q, _)) if q.contains(&stamp) => {
@@ -403,7 +445,7 @@ impl Service {
         store
             .connection()
             .query_row(
-                "SELECT id, goal, project, status, final, final_note, created, updated, attachments FROM team_runs WHERE id = ?1",
+                "SELECT id, goal, project, status, final, final_note, created, updated, attachments, coalesce(held, 0) FROM team_runs WHERE id = ?1",
                 [id],
                 |r| {
                     Ok(RunRow {
@@ -419,6 +461,7 @@ impl Service {
                             .get::<_, Option<String>>(8)?
                             .and_then(|t| serde_json::from_str(&t).ok())
                             .unwrap_or_default(),
+                        held: r.get(9)?,
                     })
                 },
             )
@@ -694,6 +737,7 @@ impl Service {
             attachments: run.attachments.clone(),
             session: None,
             project: run.project.clone(),
+            held: None,
         };
         let Ok(chat) = chat_validate(self, body) else {
             self.team_set_final(
@@ -707,6 +751,19 @@ impl Service {
             );
             return "stopped";
         };
+        // a run that worked with a more private model holds notes, files and results that are not for a lesser one
+        let need = self.route_level();
+        if run.held > need {
+            self.team_set_final(id, None, MORE_PRIVATE);
+            return "stopped";
+        }
+        {
+            let store = self.store.lock().expect("lock");
+            let _ = store.connection().execute(
+                "UPDATE team_runs SET held = max(coalesce(held, 0), ?2) WHERE id = ?1",
+                kk_vault::rusqlite::params![id, need],
+            );
+        }
         let ctx = chat_context(self, &chat.body, None);
         if ctx.nothing_to_read() {
             self.team_set_final(id, None, &no_model_reply().text);
@@ -749,7 +806,7 @@ impl Service {
                 Next::Run(n) => n,
                 Next::WaitForOwner => return "waiting",
                 Next::Finished => {
-                    self.team_finish(id, &run.goal, &tasks, window);
+                    self.team_finish(id, &run.goal, &tasks, window, need);
                     return "done";
                 }
             };
@@ -776,6 +833,24 @@ impl Service {
                 .map(|(a, b)| (a.as_str(), b.as_str()))
                 .collect();
             let question = team::task_question(&run.goal, n, total, &t.task, &earlier, &t.asked);
+            // for the coding agent outside: a review's findings are words about the owner's files and leave this computer
+            // only through a release, so they are not offered for hand-over at all
+            let outside_owned: Vec<(String, String)> = t
+                .after
+                .iter()
+                .filter_map(|d| tasks.iter().find(|x| x.n == *d))
+                .map(|x| {
+                    if x.expert == REVIEW_SEAT {
+                        (x.expert_name.clone(), REVIEW_NOT_HANDED.to_string())
+                    } else {
+                        (x.expert_name.clone(), experts::fit(&x.result, cap).0)
+                    }
+                })
+                .collect();
+            let earlier_outside: Vec<(&str, &str)> = outside_owned
+                .iter()
+                .map(|(a, b)| (a.as_str(), b.as_str()))
+                .collect();
             if t.expert == REVIEW_SEAT {
                 let stopped = self.team_review_task(id, n, &run);
                 self.log_event(
@@ -793,7 +868,7 @@ impl Service {
                 continue;
             }
             if t.expert == OUTSIDE_SEAT {
-                self.team_outside_task(id, n, &run.goal, total, t, &earlier);
+                self.team_outside_task(id, n, &run.goal, total, t, &earlier_outside);
                 self.log_event(
                     "team.task",
                     id,
@@ -821,7 +896,13 @@ impl Service {
             }
             let started = std::time::Instant::now();
             let estimated = kk_route::tokens::estimate_messages(&messages);
-            let result = self.ask_stream(messages, &mut |_| !self.team_stop_asked(id));
+            let result = self.ask_stream_at(messages, &mut |_| !self.team_stop_asked(id), need);
+            // the model was switched to a less private one while this run worked: the run stops where it is
+            if matches!(&result, Err(e) if e == swap::ROUTE_CHANGED) {
+                self.team_unbegin_task(id, n);
+                self.team_set_final(id, None, MORE_PRIVATE);
+                return "stopped";
+            }
             let attempts = t.attempts + 1;
             let mut cut_short = false;
             let text = match result {
@@ -901,7 +982,7 @@ impl Service {
     }
 
     /// The lead's closing answer. If the lead cannot be asked, the tasks' results stand and the run says why there is no summary.
-    fn team_finish(&self, id: &str, goal: &str, tasks: &[TaskRow], window: Option<u64>) {
+    fn team_finish(&self, id: &str, goal: &str, tasks: &[TaskRow], window: Option<u64>, need: i64) {
         let done: Vec<&TaskRow> = tasks.iter().filter(|t| t.state == State::Done).collect();
         if done.is_empty() {
             self.team_set_final(id, None, "no task was done, so there is nothing to sum up");
@@ -929,7 +1010,8 @@ impl Service {
                 &team::final_question(goal, &results, &missing),
             ),
         ];
-        match self.ask(messages) {
+        match self.ask_counted_at(messages, need).map(|(r, _)| r) {
+            Err(e) if e == swap::ROUTE_CHANGED => self.team_set_final(id, None, MORE_PRIVATE),
             Ok(r) if !r.text.trim().is_empty() => self.team_set_final(id, Some(r.text.trim()), ""),
             Ok(_) => self.team_set_final(
                 id,
@@ -963,6 +1045,7 @@ pub(super) async fn team_plan(axum::Extension(svc): Svc, Json(b): Json<PlanBody>
         attachments: b.attachments.clone(),
         session: None,
         project: b.project.clone(),
+        held: None,
     };
     let project = match chat_validate(&svc, probe) {
         Ok(run) => run.body.project,

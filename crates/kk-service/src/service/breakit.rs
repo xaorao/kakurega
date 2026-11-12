@@ -114,6 +114,7 @@ pub(super) async fn attempt(axum::Extension(svc): Svc, Json(b): Json<BreakBody>)
             attachments: vec![id.clone()],
             session: None,
             project: None,
+            held: None,
         };
         let mut ctx = chat_context(&svc2, &body, None);
         svc2.attachments.lock().expect("lock").remove(&id);

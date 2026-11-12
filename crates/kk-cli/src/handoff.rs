@@ -20,6 +20,11 @@ const PASSED_ON: &[&str] = &[
 /// given here, which is none; no session kept on disk; one JSON object as the result.
 const ARGS: &[&str] = &[
     "-p",
+    // no settings source at all (user, project, local): the owner's hooks do not run on the text and their own
+    // instruction files are not sent along with it. Checked by run on 2.1.322: sign-in still works, and a question about
+    // the user's instruction file is answered as if there were none
+    "--setting-sources",
+    "",
     "--tools",
     "",
     "--strict-mcp-config",
@@ -215,6 +220,12 @@ mod tests {
         assert_eq!(ARGS[at + 1], "", "the list of built-in tools is empty");
         assert!(ARGS.contains(&"--strict-mcp-config") && !ARGS.contains(&"--mcp-config"));
         assert!(ARGS.contains(&"--no-session-persistence"));
+        let src = ARGS.iter().position(|a| *a == "--setting-sources").unwrap();
+        assert_eq!(
+            ARGS[src + 1],
+            "",
+            "no settings source: no hooks, no personal instruction file"
+        );
         for never in [
             "--dangerously-skip-permissions",
             "--add-dir",

@@ -21,6 +21,12 @@ pub(super) fn row_of(e: &Value) -> Option<Value> {
         "search.run" => ("search", String::new(), json!({"results": n("results")})),
         "research.fetched" => ("pages", String::new(), json!({"pages": n("addresses")})),
         "mcp.call" => ("tool", subject.to_string(), json!({})),
+        // a read from GitHub: the request (which repository, issue, file or search words) went to GitHub
+        "connector.read" => (
+            "connector",
+            "GitHub".to_string(),
+            json!({"action": d["action"], "items": n("items")}),
+        ),
         "release.delivery_finished" => {
             ("release", subject.to_string(), json!({"state": d["state"]}))
         }
@@ -66,7 +72,14 @@ pub(super) async fn list(axum::Extension(svc): Svc) -> Response {
     let rows: Vec<Value> = entries.iter().filter_map(row_of).collect();
     let mut totals = serde_json::Map::new();
     for what in [
-        "model", "review", "search", "pages", "tool", "release", "held",
+        "model",
+        "review",
+        "search",
+        "pages",
+        "tool",
+        "connector",
+        "release",
+        "held",
     ] {
         totals.insert(
             what.into(),
@@ -142,5 +155,24 @@ mod tests {
             assert!(row_of(&e(other, "s", json!({}))).is_none(), "{other}");
         }
         assert!(row_of(&json!({"no": "kind"})).is_none());
+    }
+
+    #[test]
+    fn ob02_a_read_from_github_is_a_row_with_its_kind_and_count_and_no_words() {
+        let e = json!({"kind": "connector.read", "subject": "github", "at": 5, "seq": 9, "data": {"action": "issue", "items": 3}});
+        let r = row_of(&e).unwrap();
+        assert_eq!(
+            (
+                r["what"].as_str(),
+                r["to"].as_str(),
+                r["detail"]["items"].as_i64()
+            ),
+            (Some("connector"), Some("GitHub"), Some(3)),
+            "{r}"
+        );
+        assert!(row_of(
+            &json!({"kind": "connector.read_refused", "subject": "github", "data": {}})
+        )
+        .is_none());
     }
 }

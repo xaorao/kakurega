@@ -1061,6 +1061,8 @@ export const en = {
   "out.kind.search": "search",
   "out.kind.pages": "web pages",
   "out.kind.tool": "tool",
+  "out.kind.connector": "connector",
+  "out.connector": "You read from {to}: the request went there, {n} items came back. Nothing was written there.",
   "out.kind.release": "release",
   "out.kind.held": "held back",
   "out.model": "A question went to the model at {to}: {chars} characters, {n} values as placeholders.",

@@ -152,6 +152,16 @@ fn password_like(t: &str) -> bool {
     inner.chars().any(|c| "!@#$%^&*+=~|\\".contains(c))
 }
 
+/// What stands right after "the password is" or "password:" and is still a password although it has no letter-and-digit
+/// mix: digits only (at least four), or one long run of letters that is no ordinary word (sixteen or more). Only after a
+/// linking word or sign, so "the password policy" and "password is required" stay ordinary sentences.
+fn plain_password(t: &str) -> bool {
+    let n = t.chars().count();
+    let digits = (4..=64).contains(&n) && t.chars().all(|c| c.is_ascii_digit());
+    let letters = (16..=200).contains(&n) && t.chars().all(|c| c.is_ascii_alphabetic());
+    digits || letters
+}
+
 fn code_like(t: &str) -> bool {
     let d: String = t.chars().filter(|c| !matches!(c, '-' | ' ')).collect();
     (4..=10).contains(&d.len()) && d.chars().all(|c| c.is_ascii_digit())
@@ -259,7 +269,8 @@ pub fn find(text: &str) -> Vec<(usize, usize)> {
                         let is_value = if digits_ok {
                             code_like(t) || (linked && password_like(t))
                         } else {
-                            password_like(t) && (linked || direct)
+                            (password_like(t) && (linked || direct))
+                                || (linked && plain_password(t))
                         };
                         if is_value && !NAMES.iter().chain(CODES).any(|w| t.eq_ignore_ascii_case(w))
                         {
@@ -426,5 +437,37 @@ mod tests {
             values("İpek said the password is Blue42Harbor"),
             vec!["Blue42Harbor"]
         );
+    }
+
+    #[test]
+    fn sp06_a_password_of_digits_only_or_of_one_long_plain_word_is_found_after_its_linking_word() {
+        for (text, value) in [
+            ("my password is 84736251", "84736251"),
+            ("the wifi password is 84736251", "84736251"),
+            ("password: 84736251", "84736251"),
+            ("passwd=0042", "0042"),
+            ("password is correcthorsebattery", "correcthorsebattery"),
+            (
+                "secret: abcdefghijklmnopqrstuvwxyz",
+                "abcdefghijklmnopqrstuvwxyz",
+            ),
+        ] {
+            let found = find(text);
+            assert_eq!(found.len(), 1, "{text}");
+            assert_eq!(&text[found[0].0..found[0].1], value, "{text}");
+        }
+        // the same words with no value after them stay ordinary sentences
+        for text in [
+            "the password is required for every account",
+            "password is wrong, try again",
+            "the password policy changed in 2024",
+            "a password of 12 characters or more",
+            "the secret is that nobody reads the manual",
+            "password is case-sensitive",
+            "the token is refreshed automatically",
+            "reset your password in 3 steps",
+        ] {
+            assert!(find(text).is_empty(), "{text}: {:?}", find(text));
+        }
     }
 }

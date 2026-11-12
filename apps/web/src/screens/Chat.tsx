@@ -335,9 +335,14 @@ export function Chat() {
     }
   };
   const [answeredAt, setAnsweredAt] = createSignal(-1);
+  // For a conversation this page holds itself: the most private level any of its answers was made at. The service is
+  // told, so earlier messages answered on this computer are not sent to a model elsewhere. A kept conversation's level
+  // is recorded by the service.
+  let heldLevel = 0;
   const show = (next: string | null, nextTurns: Shown[], summary = "") => {
     if (busy()) abort?.abort();
     view++;
+    heldLevel = 0;
     hist = idleHistory();
     pinned = true;
     batch(() => {
@@ -717,7 +722,7 @@ export function Chat() {
     setLive("");
     abort = new AbortController();
     try {
-      const r = await streamChat({ message, history, ...(attached.length > 0 ? { attachments: attached.map((f) => f.id) } : {}), sources: pages().filter((p) => p.page_id && !p.looks_like_instructions).map((p) => p.page_id as string), ...(session() ? { session: session(), project: project().trim() } : project().trim() ? { project: project().trim() } : {}) }, (d) => setLive((x) => x + d), abort.signal);
+      const r = await streamChat({ message, history, ...(heldLevel > 0 && history.length > 0 && !session() ? { held: heldLevel } : {}), ...(attached.length > 0 ? { attachments: attached.map((f) => f.id) } : {}), sources: pages().filter((p) => p.page_id && !p.looks_like_instructions).map((p) => p.page_id as string), ...(session() ? { session: session(), project: project().trim() } : project().trim() ? { project: project().trim() } : {}) }, (d) => setLive((x) => x + d), abort.signal);
       if (myView !== view) {
         if ("stopped" in r) saveDraft(sentKey, message);
         return;
@@ -727,6 +732,7 @@ export function Chat() {
         setText(message);
         return;
       }
+      heldLevel = Math.max(heldLevel, r.level ?? 0);
       const noModel = r.route.id === "none";
       const foot = noModel ? [t("chat.noModel"), t("chat.notesUsed", { n: r.notes_used })] : [r.route.simulated ? t("chat.test") : r.route.stays_here === false ? (r.route.host ? t("chat.remote", { host: r.route.host }) : t("chat.unknownPlace")) : t("chat.private"), t("chat.notesUsed", { n: r.notes_used })];
       // said first: the text above stops before the model had finished
@@ -1301,7 +1307,7 @@ export function Chat() {
         <div class="actions">
           <button class="primary" type="submit" disabled={busy() || text().trim().length === 0}>{t("chat.send")}</button>
           <Show when={busy()}><button type="button" onClick={() => abort?.abort()}>{t("chat.stop")}</button></Show>
-          <button type="button" disabled={busy() || turns().length === 0} onClick={() => { setTurns([]); setError(""); setSendFailed(false); forgetSent(draftKey(session())); hist = idleHistory(); }}>{t("chat.clear")}</button>
+          <button type="button" disabled={busy() || turns().length === 0} onClick={() => { setTurns([]); heldLevel = 0; setError(""); setSendFailed(false); forgetSent(draftKey(session())); hist = idleHistory(); }}>{t("chat.clear")}</button>
           <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
           <Show when={sendFailed() && error() && !busy() && text().trim().length > 0}><button type="button" onClick={() => void send()}>{t("chat.retry")}</button></Show>
           <Show when={recovered()}><span role="status" class="muted">{t("chat.recovered")}</span></Show>

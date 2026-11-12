@@ -96,7 +96,20 @@ fn server_args(c: &Choice) -> Vec<String> {
         a.push("--allow".into());
         a.push(names.join(","));
     }
-    if let Some(d) = &c.data_dir {
+    // a named profile in use now is written into the command: the client then stays with this profile's data even
+    // after the owner chooses another profile for their own commands
+    let chosen = c.data_dir.clone().or_else(|| {
+        crate::profile::resolve(
+            &crate::profile::home(),
+            None,
+            None,
+            std::env::var("KAKU_PROFILE").ok(),
+        )
+        .ok()
+        .filter(|(_, name)| name.as_deref() != Some(crate::profile::DEFAULT))
+        .map(|(dir, _)| dir)
+    });
+    if let Some(d) = &chosen {
         a.push("--data-dir".into());
         a.push(d.to_string_lossy().into_owned());
     }

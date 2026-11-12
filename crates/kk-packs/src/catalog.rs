@@ -193,6 +193,10 @@ pub fn check_catalog(
     if not_after <= now {
         return Err(Refusal::Expired);
     }
+    // a list dated ahead of now would shut out every later list from this publisher once it was opened
+    if issued > now + 600 {
+        return Err(Refusal::Shape("the catalog is dated in the future"));
+    }
     if seen_issued(verified.key_id.as_str()).is_some_and(|seen| issued < seen) {
         return Err(Refusal::Rollback);
     }

@@ -1063,6 +1063,8 @@ export const hi: Record<keyof typeof en, string> = {
   "out.kind.search": "खोज",
   "out.kind.pages": "वेब पेज",
   "out.kind.tool": "टूल",
+  "out.kind.connector": "कनेक्टर",
+  "out.connector": "आपने {to} से पढ़ा: अनुरोध वहाँ गया, {n} आइटम वापस आए। वहाँ कुछ नहीं लिखा गया।",
   "out.kind.release": "रिलीज़",
   "out.kind.held": "रोका गया",
   "out.model": "एक सवाल {to} पर मॉडल को गया: {chars} अक्षर, {n} मान संकेत के रूप में।",

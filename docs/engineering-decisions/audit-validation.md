@@ -46,3 +46,26 @@ Each finding was checked against the code. CONFIRMED means I reproduced it or re
 | 14 | The packaged desktop app honours environment overrides that skip its integrity check; the installer checked the zip and then read it again from its path | Part CONFIRMED | The installer now checks and unpacks one private copy. The overrides stay, for development: whoever can set this user's environment can already run any program as this user, and the record says so | `desktop_install.mjs` 12 |
 
 Sentences that claimed more than the code showed were corrected in the meeting-notes, secret-detection, agents-team and worker-loop records, in the leak benchmark's method, and in two code comments. The meeting notes now mark the summary as the model's own words, not checked.
+
+## Second independent audit (one read-only reviewer given the code since 77b821a and the whole system, no conclusions)
+No critical finding. Each finding was checked against the code; CONFIRMED means I reproduced it or read the exact path.
+
+| # | Finding | Verdict | What was done | Evidence |
+|---|---|---|---|---|
+| H1 | A team run built its notes and results for the model on this computer and went on sending them after the owner switched to a model elsewhere; the Project reviewer's findings went with them | CONFIRMED by reading | Every route has a level (this computer 3, confidential hardware elsewhere 2, hosted with no proof 1). A run records the highest level it worked at, refuses to be driven at a lower one, and every question it asks is checked against that level while the route is held | kk-service sv269 (mutation-checked) |
+| H2 | A password of digits only was never withheld, even after "password is" | CONFIRMED (the three inputs reproduce it) | After a linking word, digits only (four or more) and one run of sixteen or more letters are values too | kk-secrets sp06, with eight ordinary sentences that must stay untouched |
+| H3 | A kept conversation answered on this computer was later sent whole to a model elsewhere (continuing it, reading it for notes or for a skill) | CONFIRMED by reading | A conversation records the highest level it was answered at and is refused at a lower one, in words, before any model is asked and again while the route is held. A conversation the page holds itself carries the same level. Conversations from before count as held on this computer | kk-service sv268 (two mutants caught) |
+| H4 | "Sent once" did not survive a restart: the stored yes was still there when the run was carried on | CONFIRMED by reading | The yes is replaced in the store before anything is sent; a hand-over that was started and never finished fails in words and is not repeated | kk-service sv270 (mutation-checked) |
+| M1 | A review's findings and experts' results could be in the text offered to Claude Code | CONFIRMED | A review's findings are never in that text. Other experts' results still are, shown to the owner word for word before the yes; the records and LIMITS now say so | sv270 (mutation-checked) |
+| M2 | Chat chose its notes for one route and could send them after a switch a moment later | CONFIRMED by reading | The context is built while the route is held | read of the three call sites; sv268 for the level check under the hold |
+| M3 | A hand-over ran with the owner's Claude Code settings: hooks, and their personal instruction file sent along | CONFIRMED by run: the agent answered YES to "do your instructions name the user", 27,544 tokens of context | It is run with no settings source. By run: NO, 4,363 tokens, sign-in still works | kk-cli ho02; `handoff_web.mjs` with the real program, 10 of 10 |
+| M4 | An MCP client installed without a data folder followed whichever profile was chosen later | CONFIRMED by reading | A named profile in use at install is written into the command. The default profile still follows the saved choice | read; NOT TESTED by a run |
+| M5 | Reads from GitHub were missing from "what left this computer" | CONFIRMED | They are rows now, with the kind and the count, no words | kk-service ob02 |
+| L1 | A catalog dated in the future would shut out later ones; a withdrawn pack can still be imported from its own file | Part fixed | A catalog dated more than ten minutes ahead is refused. A withdrawn pack's own signed file still imports: a catalog lists, it does not revoke (written in skills.md) | kk-packs suite |
+| L2 | A key of fewer than 24 characters, or with no digit, that holds a placeholder word standing alone is still set aside | ACCEPTED, low | Written in secret-detection.md as a limit | the two inputs are the reviewer's |
+| L3 | A listed name ending on a Turkish capital İ was hidden without its last letter | CONFIRMED | The whole letter is covered, and the word boundary is judged after it | kk-secrets sw10 |
+| L4 | LIMITS said Linux packaging was not built | CONFIRMED | Corrected | `scripts/docs_check.py` |
+
+Also corrected because the reviewer showed them false: the README's "on every path" sentence about passwords, the LIMITS line about what the detector misses, and the sentence about where hiding applies.
+
+OPEN from this audit: none critical or high. Not done: a test that drives M4 through a real MCP client; the desktop honouring `KAKUREGA_HOME` while the terminal does not (a development override, written here).

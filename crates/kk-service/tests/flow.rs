@@ -19061,6 +19061,10 @@ impl JobRunner for TeamRunner {
     }
     fn handoff_run(&self, text: &str) -> Result<String, String> {
         TEAM_HANDED.lock().unwrap().push(text.to_string());
+        // the service dies while the agent works, after the text has gone
+        if self.die.load(std::sync::atomic::Ordering::SeqCst) {
+            panic!("the driver dies during a hand-over");
+        }
         Ok("def fix():\n    return 'rotate the key'".into())
     }
     fn run(
@@ -19079,6 +19083,9 @@ impl JobRunner for TeamRunner {
         v["context_tokens"] = json!(4096);
         if self.away.load(std::sync::atomic::Ordering::SeqCst) {
             v["class"] = json!("verified_tee");
+            v["endpoint"] = json!("https://cloud-api.near.ai/v1");
+        } else {
+            v["endpoint"] = json!("http://127.0.0.1:11434");
         }
         v
     }
@@ -22685,4 +22692,295 @@ fn sv267_a_reviews_findings_are_not_handed_to_experts_whose_model_is_elsewhere()
             .any(|m| m.iter().any(|x| x.content.contains("Token not revoked"))),
         "nothing about the project reached the model"
     );
+}
+
+/// A model whose place can be switched while a test runs: on this computer, or in confidential hardware elsewhere.
+struct SwitchRunner {
+    away: std::sync::atomic::AtomicBool,
+    asked: Mutex<Vec<String>>,
+}
+
+impl SwitchRunner {
+    fn new() -> Arc<SwitchRunner> {
+        Arc::new(SwitchRunner {
+            away: Default::default(),
+            asked: Mutex::new(Vec::new()),
+        })
+    }
+    fn note(&self, m: &[kk_types::chat::ChatMessage]) {
+        self.asked.lock().unwrap().push(
+            m.iter()
+                .map(|x| x.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    }
+    fn asked(&self) -> usize {
+        self.asked.lock().unwrap().len()
+    }
+}
+
+impl JobRunner for SwitchRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> JobReport {
+        CannedRunner { confirm: true }.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        if self.away.load(std::sync::atomic::Ordering::SeqCst) {
+            json!({"id": "near:m", "class": "verified_tee", "model": "m", "simulated": false, "endpoint": "https://cloud-api.near.ai/v1", "context_tokens": 16384})
+        } else {
+            json!({"id": "ollama:m", "class": "device_only", "model": "m", "simulated": false, "endpoint": "http://127.0.0.1:11434", "context_tokens": 16384})
+        }
+    }
+    fn chat(&self, m: Vec<kk_types::chat::ChatMessage>) -> Result<kk_service::ChatReply, String> {
+        self.note(&m);
+        Ok(kk_service::ChatReply {
+            text: "The harbour-lantern plan is settled.".into(),
+            route_id: "r".into(),
+            class: "device_only".into(),
+            simulated: false,
+            prompt_tokens: None,
+            cut_short: false,
+        })
+    }
+    fn summarize(&self, m: Vec<kk_types::chat::ChatMessage>) -> Result<String, String> {
+        self.note(&m);
+        Ok("[]".into())
+    }
+}
+
+fn switch_service(tag: &str) -> (kk_companion::Companion, Web, Arc<SwitchRunner>) {
+    let (root, _repo) = repo_copy(tag);
+    let runner = SwitchRunner::new();
+    let svc = Service::new(&root.join("data"), vec![root.clone()], runner.clone(), true).unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    (c, w, runner)
+}
+
+#[test]
+fn sv268_a_conversation_held_with_a_model_on_this_computer_is_not_sent_to_one_elsewhere() {
+    let (_c, w, runner) = switch_service("level-kept");
+    let away = |on: bool| runner.away.store(on, std::sync::atomic::Ordering::SeqCst);
+    let id = w.post("/api/sessions", json!({"title": ""})).1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "What is the harbour-lantern plan?", "session": id}),
+    );
+    assert_eq!((s, r["level"].as_i64()), (200, Some(3)), "{r}");
+    let before = runner.asked();
+
+    away(true);
+    // continuing it, reading it for notes and reading it for a skill are each refused in words, and no model is asked
+    let (s, r) = w.post("/api/chat", json!({"message": "And then?", "session": id}));
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (409, Some("KEPT_MORE_PRIVATELY")),
+        "{r}"
+    );
+    for path in ["suggest-notes", "suggest-skill"] {
+        let (s, r) = w.post(&format!("/api/sessions/{id}/{path}"), json!({}));
+        assert_eq!(
+            (s, r["error"]["code"].as_str()),
+            (409, Some("KEPT_MORE_PRIVATELY")),
+            "{path}: {r}"
+        );
+    }
+    assert_eq!(
+        runner.asked(),
+        before,
+        "nothing of the conversation reached the model elsewhere"
+    );
+    // a conversation the page itself holds says how private its earlier answers were; it is not sent down either
+    let hist = json!([{"role": "user", "content": "What is the harbour-lantern plan?"}, {"role": "assistant", "content": "The harbour-lantern plan is settled."}]);
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "And then?", "history": hist, "held": 3}),
+    );
+    assert_ne!(s, 200, "{r}");
+    assert!(
+        r["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("less private"),
+        "{r}"
+    );
+    assert_eq!(runner.asked(), before);
+    // a new question with no earlier messages is answered there, and says its level
+    let (s, r) = w.post("/api/chat", json!({"message": "A new question."}));
+    assert_eq!((s, r["level"].as_i64()), (200, Some(2)), "{r}");
+    // a conversation held elsewhere may go on with the model on this computer, and from then on stays here
+    let id2 = w.post("/api/sessions", json!({"title": ""})).1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        w.post(
+            "/api/chat",
+            json!({"message": "First, elsewhere.", "session": id2})
+        )
+        .0,
+        200
+    );
+    away(false);
+    assert_eq!(
+        w.post("/api/chat", json!({"message": "Now here.", "session": id2}))
+            .0,
+        200
+    );
+    assert_eq!(
+        w.post("/api/chat", json!({"message": "And then?", "session": id}))
+            .0,
+        200,
+        "back on this computer the first one goes on"
+    );
+    away(true);
+    assert_eq!(
+        w.post(
+            "/api/chat",
+            json!({"message": "Elsewhere again?", "session": id2})
+        )
+        .0,
+        409
+    );
+}
+
+#[test]
+fn sv269_a_team_run_that_worked_with_the_model_on_this_computer_does_not_go_on_with_one_elsewhere()
+{
+    let (_c, w, runner) = team("team-level", TEAM_PLAN);
+    let away = |on: bool| runner.away.store(on, std::sync::atomic::Ordering::SeqCst);
+    runner
+        .answers
+        .lock()
+        .unwrap()
+        .insert(1, vec![Ok("The vault-quill finding.".into())]);
+    runner
+        .answers
+        .lock()
+        .unwrap()
+        .insert(2, vec![Ok("NEEDS INPUT: Which vault do you use?".into())]);
+    let (_, v) = w.post(
+        "/api/team",
+        json!({"goal": "Decide where the payment key lives."}),
+    );
+    let id = v["id"].as_str().unwrap().to_string();
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(&w, &id, &["waiting"]);
+    assert_eq!(team_states(&v)[..2], ["done", "needs_input"], "{v}");
+    let asked = runner.seen.lock().unwrap().len();
+
+    // the owner switches to a model elsewhere, answers the question and carries the run on
+    away(true);
+    w.post(
+        &format!("/api/team/{id}/answer"),
+        json!({"task": 2, "answer": "The office one."}),
+    );
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(
+        &w,
+        &id,
+        &[
+            "stopped",
+            "waiting",
+            "interrupted",
+            "done",
+            "partial",
+            "failed",
+        ],
+    );
+    assert!(
+        v["final_note"]
+            .as_str()
+            .unwrap()
+            .contains("more private model"),
+        "{v}"
+    );
+    assert_ne!(v["tasks"][1]["state"], json!("done"), "{v}");
+    assert_eq!(
+        runner.seen.lock().unwrap().len(),
+        asked,
+        "no question of this run reached the model elsewhere"
+    );
+    // back on this computer it goes on to the end
+    away(false);
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(&w, &id, &["done"]);
+    assert_eq!(team_states(&v), ["done", "done", "done"], "{v}");
+}
+
+#[test]
+fn sv270_a_reviews_findings_are_never_offered_for_hand_over_and_a_yes_is_not_spent_twice_across_a_crash(
+) {
+    // the review's findings are not in the text offered for the outside agent
+    const PLAN: &str = "1 | project-review | after: - | Review the project.\n2 | claude-code | after: 1 | Write a fix plan (crash test).\n";
+    let (root, _repo) = repo_copy("team-handover-crash");
+    let runner = team_runner(PLAN);
+    let (_c, w) = team_service(&root, runner.clone());
+    w.post(
+        "/api/projects",
+        json!({"name": "kestrel", "folder": root.join("repo").to_string_lossy()}),
+    );
+    let (s, v) = w.post("/api/team", json!({"goal": "Review and plan the fix (crash test).", "experts": ["project-review", "claude-code"], "project": "kestrel"}));
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(&w, &id, &["waiting"]);
+    assert_eq!(team_states(&v), ["done", "needs_input"], "{v}");
+    assert!(v["tasks"][0]["result"]
+        .as_str()
+        .unwrap()
+        .contains("Token not revoked"));
+    let q = v["tasks"][1]["question"].as_str().unwrap();
+    assert!(
+        q.starts_with("[hand-over]")
+            && !q.contains("Token not revoked")
+            && q.contains("not handed to an agent outside"),
+        "{q}"
+    );
+
+    // the owner says yes; the service dies while the agent works; carried on, the text is not sent again
+    let sent = || {
+        TEAM_HANDED
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|t| t.contains("crash test"))
+            .count()
+    };
+    runner.die.store(true, std::sync::atomic::Ordering::SeqCst);
+    w.post(
+        &format!("/api/team/{id}/answer"),
+        json!({"task": 2, "answer": "yes"}),
+    );
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(&w, &id, &["interrupted"]);
+    assert_eq!(sent(), 1, "{v}");
+    runner.die.store(false, std::sync::atomic::Ordering::SeqCst);
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(&w, &id, &["done", "failed", "partial"]);
+    assert_eq!(v["tasks"][1]["state"], json!("failed"), "{v}");
+    assert!(
+        v["tasks"][1]["note"]
+            .as_str()
+            .unwrap()
+            .contains("not sent a second time"),
+        "{v}"
+    );
+    assert_eq!(sent(), 1, "the yes was spent once");
 }

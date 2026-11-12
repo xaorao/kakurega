@@ -160,10 +160,16 @@ impl Swap {
             while let Some(found) = lower[from..].find(name.as_str()) {
                 let (s, e) = (from + found, from + found + name.len());
                 from = s + lower[s..].chars().next().map_or(1, char::len_utf8);
+                // the end in the original is where the next original character starts. A match can end inside the
+                // lower-cased form of one original letter (a Turkish capital İ becomes two characters): that letter is
+                // then part of the name and is covered whole
+                let mut k = e;
+                while e > 0 && k + 1 < origin.len() && origin[k] == origin[e - 1] {
+                    k += 1;
+                }
+                let (os, oe) = (origin[s], origin[k]);
                 let before_ok = lower[..s].chars().next_back().is_none_or(|c| !is_word(c));
-                let after_ok = lower[e..].chars().next().is_none_or(|c| !is_word(c));
-                // the end in the original is where the next original character starts
-                let (os, oe) = (origin[s], origin[e]);
+                let after_ok = lower[k..].chars().next().is_none_or(|c| !is_word(c));
                 if before_ok
                     && after_ok
                     && oe > os
@@ -521,6 +527,18 @@ mod tests {
             s.hide("ΝΊΚΟΣ ΠΑΠΑΔΌΠΟΥΛΟΣ signed, and so did Νίκος Παπαδόπουλος."),
             "[[NAME_1]] signed, and so did [[NAME_1]]."
         );
+    }
+
+    #[test]
+    fn sw10_a_name_that_ends_on_a_turkish_capital_i_is_hidden_whole() {
+        let mut s = Swap::new(&names(&["Ali", "Ai"]));
+        assert_eq!(
+            s.hide("ALİ signed first, then Aİ."),
+            "[[NAME_1]] signed first, then [[NAME_2]]."
+        );
+        // and a longer word that only starts like the name is still not the name
+        let mut s = Swap::new(&names(&["Ali"]));
+        assert_eq!(s.hide("ALİCE signed."), "ALİCE signed.");
     }
 
     #[test]

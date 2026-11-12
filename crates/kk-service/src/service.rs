@@ -510,6 +510,24 @@ fn init_store(v: &Vault) -> Result<(), String> {
             .execute_batch("ALTER TABLE team_runs ADD COLUMN attachments TEXT;")
             .map_err(|e| e.to_string())?;
     }
+    // stores made before a conversation recorded how private its model was
+    let has_held = {
+        let c = v.connection();
+        let mut st = c
+            .prepare("SELECT name FROM pragma_table_info('sessions')")
+            .map_err(|e| e.to_string())?;
+        let names: Vec<String> = st
+            .query_map([], |r| r.get(0))
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .collect();
+        names.iter().any(|n| n == "held")
+    };
+    if !has_held {
+        v.connection()
+            .execute_batch("ALTER TABLE sessions ADD COLUMN held INTEGER; ALTER TABLE team_runs ADD COLUMN held INTEGER;")
+            .map_err(|e| e.to_string())?;
+    }
     // stores made before a conversation could branch
     let has_parent = {
         let c = v.connection();
@@ -3419,6 +3437,10 @@ struct ChatBody {
     /// The project this chat is about: notes saved for it are offered, and no other project's. None means notes that apply everywhere.
     #[serde(default)]
     project: Option<String>,
+    /// For a conversation the page itself holds (not kept here): the most private level any of its earlier answers was
+    /// made at, as the service reported it (`level` in each reply). The page's history is not sent to a lesser route.
+    #[serde(default)]
+    held: Option<i64>,
 }
 
 const CHAT_SYSTEM: &str = "You are Kakurega's private assistant. You run on the owner's own computer. \
@@ -3476,6 +3498,8 @@ struct ChatRun {
     compact: Option<CompactPlan>,
     compacted_now: bool,
     compaction_failed: Option<&'static str>,
+    /// The least private route level this run's earlier messages may be sent to (see `Service::route_level`).
+    need: i64,
 }
 
 struct CompactPlan {
@@ -3557,10 +3581,16 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
         format!("{}\n[attached: {}]", b.message, attached_names.join(", "))
     };
     let Some(id) = b.session.clone() else {
+        let need = if b.history.is_empty() {
+            0
+        } else {
+            b.held.unwrap_or(0).clamp(0, 3)
+        };
         return Ok(ChatRun {
             started: std::time::Instant::now(),
             body: b,
             kept: None,
+            need,
             message_to_keep,
             history_dropped: 0,
             summary: None,
@@ -3572,6 +3602,9 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
     };
     if !kk_secrets::scan(&b.message).is_empty() || kk_secrets::looks_secret(&b.message).is_some() {
         return Err(Box::new(error(StatusCode::BAD_REQUEST, "SECRET_IN_KEPT_CHAT", "this message looks like it contains a secret, and a kept conversation is saved; send it in a conversation that is not kept, or remove the secret")));
+    }
+    if let Some(refusal) = kept_elsewhere(svc, &id) {
+        return Err(Box::new(refusal));
     }
     let Some(turns) = session_turns(svc, &id) else {
         return Err(Box::new(error(
@@ -3652,6 +3685,7 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
         })
         .collect();
     Ok(ChatRun {
+        need: kept_level(svc, &id),
         started: std::time::Instant::now(),
         body: ChatBody { history, ..b },
         kept: Some(id),
@@ -4063,7 +4097,7 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
         );
     }
     let usage = json!({"elapsed_ms": elapsed_ms, "context_tokens": measured.unwrap_or(estimated), "context_tokens_estimate": estimated, "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "history_turns_summarized": run.summarized, "summary_text": run.summary, "compacted_now": run.compacted_now, "compaction_failed": run.compaction_failed, "estimate": measured.is_none()});
-    json!({"usage": usage, "reply": r.text, "cut_short": r.cut_short, "swapped": ctx.swapped, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated, "stays_here": svc.route_for_owner()["stays_here"], "host": svc.route_for_owner()["host"]}, "instructions_used": ctx.instructions_used, "methods_used": ctx.methods_used, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "files": {"used": ctx.files_used, "trimmed": ctx.files_trimmed, "left_out": ctx.files_left_out, "withheld_instructions": ctx.files_withheld_instructions, "withheld_secrets": ctx.files_withheld_secrets}, "saved": saved, "not_saved": not_saved, "project": run.body.project})
+    json!({"usage": usage, "reply": r.text, "level": svc.route_level(), "cut_short": r.cut_short, "swapped": ctx.swapped, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated, "stays_here": svc.route_for_owner()["stays_here"], "host": svc.route_for_owner()["host"]}, "instructions_used": ctx.instructions_used, "methods_used": ctx.methods_used, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "files": {"used": ctx.files_used, "trimmed": ctx.files_trimmed, "left_out": ctx.files_left_out, "withheld_instructions": ctx.files_withheld_instructions, "withheld_secrets": ctx.files_withheld_secrets}, "saved": saved, "not_saved": not_saved, "project": run.body.project})
 }
 
 async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
@@ -4075,14 +4109,18 @@ async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
     let out = tokio::task::spawn_blocking(move || {
         let mut run = run;
         prepare_history(&svc2, &mut run);
-        let mut ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
-        // what is shown as "sent" is what was sent: with personal values hidden when the model is elsewhere
-        // the route is held as it is from the hiding to the answer: a switch waits until this question is done
+        // the route is held as it is from building the context to the answer: a switch waits until this question is done,
+        // so notes chosen for one route are never sent to another
         let _hold = svc2.route_hold();
+        let mut ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
+        let blocked = svc2.route_level() < run.need;
+        // what is shown as "sent" is what was sent: with personal values hidden when the model is elsewhere
         let swap = svc2.hide_messages(&mut ctx.messages);
         ctx.swapped = swap.as_ref().map_or(0, |s| s.total());
         svc2.remember_sent(&ctx.messages, &ctx.excluded_notes);
-        let reply = if ctx.nothing_to_read() {
+        let reply = if blocked {
+            Err(swap::ROUTE_CHANGED.to_string())
+        } else if ctx.nothing_to_read() {
             Ok(no_model_reply())
         } else {
             svc2.runner.chat(ctx.messages.clone()).map(|mut r| {
@@ -4126,8 +4164,14 @@ async fn chat_stream(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Resp
         };
         let mut run = run;
         prepare_history(&svc2, &mut run);
-        let mut ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
         let _hold = svc2.route_hold();
+        let mut ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
+        if svc2.route_level() < run.need {
+            let _ = tx.send(line(
+                json!({"error": {"code": "NO_MODEL", "message": swap::ROUTE_CHANGED}}),
+            ));
+            return;
+        }
         let swap = svc2.hide_messages(&mut ctx.messages);
         ctx.swapped = swap.as_ref().map_or(0, |s| s.total());
         svc2.remember_sent(&ctx.messages, &ctx.excluded_notes);
@@ -4300,6 +4344,7 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
         attachments: b.attachments,
         session: b.session,
         project: b.project,
+        held: None,
     };
     let run = match chat_validate(&svc, body) {
         Ok(r) => r,
@@ -4315,8 +4360,14 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
         };
         let mut run = run;
         prepare_history(&svc2, &mut run);
-        let mut ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
         let hold = svc2.route_hold();
+        let mut ctx = chat_context(&svc2, &run.body, run.summary.as_deref());
+        if svc2.route_level() < run.need {
+            let _ = tx.send(line(
+                json!({"error": {"code": "NO_MODEL", "message": swap::ROUTE_CHANGED}}),
+            ));
+            return;
+        }
         let swap = svc2.hide_messages(&mut ctx.messages);
         ctx.swapped = swap.as_ref().map_or(0, |s| s.total());
         svc2.remember_sent(&ctx.messages, &ctx.excluded_notes);
@@ -4668,6 +4719,31 @@ async fn schedule_delete(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>
 const MAX_SESSIONS: i64 = 200;
 const MAX_SESSION_TURNS: i64 = 400;
 
+/// The most private route level any answer of this kept conversation was made at; 0 for one with no turns. A conversation
+/// from before levels were recorded counts as made on this computer.
+fn kept_level(svc: &Service, id: &str) -> i64 {
+    let store = svc.store.lock().expect("lock");
+    store
+        .connection()
+        .query_row(
+            "SELECT CASE WHEN (SELECT count(*) FROM session_turns t WHERE t.session = s.id) = 0 THEN 0 ELSE coalesce(s.held, 3) END FROM sessions s WHERE s.id = ?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0)
+}
+
+/// The refusal for reading a kept conversation with a model less private than the one it was held with.
+fn kept_elsewhere(svc: &Service, id: &str) -> Option<Response> {
+    (svc.route_level() < kept_level(svc, id)).then(|| {
+        error(
+            StatusCode::CONFLICT,
+            "KEPT_MORE_PRIVATELY",
+            "this conversation was held with a more private model than the one in use now, so its messages are not sent to this one. Switch the model back in Settings, or start a new conversation",
+        )
+    })
+}
+
 fn session_turns(svc: &Service, id: &str) -> Option<Vec<(String, String)>> {
     let store = svc.store.lock().expect("lock");
     let c = store.connection();
@@ -4700,6 +4776,8 @@ enum Appended {
 /// one that was forgotten while its reply was being written saves nothing.
 fn session_append(svc: &Service, id: &str, user: &str, assistant: &str) -> Appended {
     let t = now();
+    // read before the store is locked: how private the route that answered is
+    let level = svc.route_level();
     let store = svc.store.lock().expect("lock");
     let c = store.connection();
     // Forget deletes under this same lock, so checking here and inserting below cannot interleave with it.
@@ -4721,6 +4799,10 @@ fn session_append(svc: &Service, id: &str, user: &str, assistant: &str) -> Appen
     if c.execute("INSERT INTO session_turns(session, seq, role, content, at) VALUES (?1, ?2, 'user', ?3, ?4), (?1, ?5, 'assistant', ?6, ?4)", kk_vault::rusqlite::params![id, n, user, t, n + 1, assistant]).is_err() {
         return Appended::Failed;
     }
+    let _ = c.execute(
+        "UPDATE sessions SET held = max(coalesce(held, 0), ?2) WHERE id = ?1",
+        kk_vault::rusqlite::params![id, level],
+    );
     let title: String = user
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -5125,6 +5207,11 @@ async fn session_fork(
                 kk_vault::rusqlite::params![new_id, id, b.at as i64],
             )
             .is_ok();
+        // the copy was held as privately as the conversation it was branched from
+        let _ = c.execute(
+            "UPDATE sessions SET held = (SELECT held FROM sessions WHERE id = ?2) WHERE id = ?1",
+            kk_vault::rusqlite::params![new_id, id],
+        );
         if !done {
             let _ = c.execute("DELETE FROM session_turns WHERE session = ?1", [&new_id]);
             let _ = c.execute("DELETE FROM sessions WHERE id = ?1", [&new_id]);
@@ -5168,9 +5255,13 @@ async fn session_suggest_notes(
             "there is nothing to read yet: ask something and wait for the answer first",
         );
     }
+    if let Some(refusal) = kept_elsewhere(&svc, &id) {
+        return refusal;
+    }
+    let need = kept_level(&svc, &id);
     let request = crate::extraction::request(&turns, &crate::extraction::iso_date(now()));
     let svc2 = svc.clone();
-    let answer = tokio::task::spawn_blocking(move || svc2.ask_summary(request)).await;
+    let answer = tokio::task::spawn_blocking(move || svc2.ask_summary_at(request, need)).await;
     let text = match answer {
         Ok(Ok(t)) => t,
         _ => {

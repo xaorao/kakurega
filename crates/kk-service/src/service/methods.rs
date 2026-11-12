@@ -461,10 +461,14 @@ pub(super) async fn session_suggest_method(
             "there is nothing to read yet: ask something and wait for the answer first",
         );
     }
+    if let Some(refusal) = super::kept_elsewhere(&svc, &id) {
+        return refusal;
+    }
+    let need = super::kept_level(&svc, &id);
     let mut request = crate::extraction::request(&turns, &crate::extraction::iso_date(now()));
     request[0] = kk_types::chat::ChatMessage::new("system", LEARN_INSTRUCTIONS);
     let svc2 = svc.clone();
-    let text = match tokio::task::spawn_blocking(move || svc2.ask_summary(request)).await {
+    let text = match tokio::task::spawn_blocking(move || svc2.ask_summary_at(request, need)).await {
         Ok(Ok(t)) => t,
         _ => {
             return super::error(

@@ -10,7 +10,7 @@ To get help from an AI you hand it your code, your contracts and your meeting no
 
 ## What Kakurega does
 
-1. **Works on your files without handing them over.** An agent reviews a project inside a sealed sandbox with no network. Keys and passwords are withheld before any model sees a line, on every path: reviews, chat, attached files, documents, meeting notes, team runs.
+1. **Works on your files without handing them over.** An agent reviews a project inside a sealed sandbox with no network. Keys, and passwords said as passwords, are withheld before any model sees a line, on every path: reviews, chat, attached files, documents, meeting notes, team runs. What the detector cannot recognise is listed in the limits and counted by the benchmark.
 2. **Decides what may leave outside the model.** The model cannot send anything. A release is exact files with a digest; you read them and approve that digest, and nothing else goes. Planted instructions in a file are data, never orders.
 3. **Keeps only what it could prove.** A finding is kept when the kernel re-ran its script on a minimal extract and saw it fail the right way. A quote from a document or a transcript is kept when it is really in the file.
 4. **Gives the recipient something to check.** The result is a signed capsule. The recipient verifies it offline, in a one-file web page or with one command, and is told what the check does *not* establish.
@@ -56,7 +56,7 @@ The first row asks a public NEAR RPC and nothing of ours. The benchmark can be r
 
 ## Proof of protection
 
-- **Leaks.** 168 cases through seven doors against a model that repeats every secret it is shown (`benchmarks/leak/METHOD.md`). For the secret shapes the detector knows: 0 of 126 reached the model. For shapes it does not know (a password or a PIN written with no word saying what it is): 10 of 42 did, and the signed results name each one.
+- **Leaks.** 168 cases through seven doors against a model that repeats every secret it is shown (`benchmarks/leak/METHOD.md`). For the secret shapes the detector knows: 0 of 126 reached the model. For shapes it does not know (a password or a PIN written with no word saying what it is, or made of ordinary words): 10 of 42 did, and the signed results name each one.
 - **Planted instructions, real models.** A file with a made-up key and one planted instruction, summary asked for (`benchmarks/injection/METHOD.md`). A plain prompt repeated the key in 4 of 16 attack runs. With the file attached in Kakurega the key was sent 0 of 18 times, because its line is withheld. Small sample, two different models; the limits are in the method.
 - **Review quality.** On a small project with one planted defect and a 7B local model (`benchmarks/quality/METHOD.md`): the plain model found it 3 of 3 with 13 false findings; the verified loop found it 3 of 3 with 0 false findings, at about 150 seconds a review.
 - **Try to break it.** The app has a box where you write your own attack next to two fresh secrets and see exactly what the model was sent.
@@ -92,8 +92,8 @@ The full list is in [docs/FEATURES.md](docs/FEATURES.md).
 | A capsule that was changed, or signed by someone else, is refused by both verifiers | `crates/kk-evidence/src/capsule.rs`, `packages/` | `tests/e2e/verifier_page.mjs`, `scripts/judge-replay` |
 | The review agent has no network and sees no file you excluded | `crates/kk-sandbox`, `crates/kk-broker` | `scripts/test-lima`, `scripts/test-linux` |
 | The desktop page cannot be given the camera, the screen, or any other permission, and cannot navigate away | `apps/desktop/src/policy.mjs`, `apps/desktop/src/main.mjs` | `tests/e2e/desktop_attack.mjs` |
-| Text reaches the coding agent on your computer only after your yes on that exact text, once | `crates/kk-service/src/service/team.rs`, `crates/kk-cli/src/handoff.rs` | `crates/kk-service/tests/flow.rs` (sv261) |
-| A review's findings are handed to other experts only while their model is on this computer | `crates/kk-service/src/service/team.rs` | `crates/kk-service/tests/flow.rs` (sv266, sv267) |
+| Text reaches the coding agent on your computer only after your yes on that exact text, once, even across a restart | `crates/kk-service/src/service/team.rs`, `crates/kk-cli/src/handoff.rs` | `crates/kk-service/tests/flow.rs` (sv261) |
+| A review's findings are handed to other experts only while their model is on this computer, never to the outside coding agent, and a run or conversation held here is not continued with a model elsewhere | `crates/kk-service/src/service/team.rs` | `crates/kk-service/tests/flow.rs` (sv266 to sv270) |
 | A skill pack is taken only from a publisher you pinned, and through a catalog only when it is the exact file listed | `crates/kk-packs/src/lib.rs`, `crates/kk-packs/src/catalog.rs` | `crates/kk-service/tests/flow.rs` (sv216, sv265), `tests/e2e/packs_web.mjs` |
 | NEAR's verifier, not ours, vouches for a model key on chain | `contracts/kakurega-registry` | `contracts/kakurega-registry/tests/sandbox.rs` on a local node, and the testnet transaction above |
 | The signed log shows what left this computer, and it can be verified anywhere | `crates/kk-eventlog`, `crates/kk-service/src/service/outbound.rs` | `crates/kk-service/tests/flow.rs`, `kaku log verify` |

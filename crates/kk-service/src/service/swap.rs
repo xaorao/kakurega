@@ -21,9 +21,26 @@ pub(super) struct NamesBody {
 /// question is never hidden for one route and then answered by another.
 static ROUTE_GATE: std::sync::RwLock<()> = std::sync::RwLock::new(());
 
+/// Said when the model was switched to a less private one after something was prepared for the earlier one.
+pub(super) const ROUTE_CHANGED: &str = "the model was changed to a less private one, and what was prepared for the earlier model is not sent to it; ask again";
+
 impl Service {
     pub(super) fn route_hold(&self) -> std::sync::RwLockReadGuard<'static, ()> {
         ROUTE_GATE.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// How private the answering model's route is: 3 on this computer, 2 in confidential hardware elsewhere, 1 a hosted
+    /// model with no hardware proof. Notes, kept conversations and team runs made at one level are never handed to a
+    /// route of a lower one.
+    pub(super) fn route_level(&self) -> i64 {
+        let route = self.route_for_owner();
+        if route["stays_here"].as_bool().unwrap_or(false) {
+            3
+        } else if route["class"] == "public" {
+            1
+        } else {
+            2
+        }
     }
 
     pub(super) fn hidden_names(&self) -> Vec<(String, i64)> {
@@ -92,9 +109,22 @@ impl Service {
     /// `ask`, also saying how many different values went as placeholders.
     pub(super) fn ask_counted(
         &self,
+        messages: Vec<kk_types::chat::ChatMessage>,
+    ) -> Result<(ChatReply, usize), String> {
+        self.ask_counted_at(messages, 0)
+    }
+
+    /// `ask_counted` for messages that were prepared for a route of at least this level (see `route_level`). The level is
+    /// checked while the route is held, so a switch between preparing and sending cannot hand them to a lesser route.
+    pub(super) fn ask_counted_at(
+        &self,
         mut messages: Vec<kk_types::chat::ChatMessage>,
+        need: i64,
     ) -> Result<(ChatReply, usize), String> {
         let _hold = self.route_hold();
+        if self.route_level() < need {
+            return Err(ROUTE_CHANGED.into());
+        }
         let swap = self.hide_messages(&mut messages);
         let mut reply = self.runner.chat(messages)?;
         let mut swapped = 0;
@@ -105,14 +135,18 @@ impl Service {
         Ok((reply, swapped))
     }
 
-    /// `ask`, handing the answer over in pieces. A route that leaves this computer answers in one piece (it is held until
-    /// it is whole), so restoring each piece restores the answer.
-    pub(super) fn ask_stream(
+    /// `ask`, handing the answer over in pieces, for messages prepared for a route of at least this level. A route that
+    /// leaves this computer answers in one piece (it is held until it is whole), so restoring each piece restores the answer.
+    pub(super) fn ask_stream_at(
         &self,
         mut messages: Vec<kk_types::chat::ChatMessage>,
         on_chunk: &mut dyn FnMut(&str) -> bool,
+        need: i64,
     ) -> Result<StreamedReply, String> {
         let _hold = self.route_hold();
+        if self.route_level() < need {
+            return Err(ROUTE_CHANGED.into());
+        }
         let swap = self.hide_messages(&mut messages);
         let mut out = match &swap {
             Some(s) => self
@@ -129,9 +163,21 @@ impl Service {
     /// A summary of earlier turns, asked the same way.
     pub(super) fn ask_summary(
         &self,
+        messages: Vec<kk_types::chat::ChatMessage>,
+    ) -> Result<String, String> {
+        self.ask_summary_at(messages, 0)
+    }
+
+    /// `ask_summary` for messages prepared for a route of at least this level.
+    pub(super) fn ask_summary_at(
+        &self,
         mut messages: Vec<kk_types::chat::ChatMessage>,
+        need: i64,
     ) -> Result<String, String> {
         let _hold = self.route_hold();
+        if self.route_level() < need {
+            return Err(ROUTE_CHANGED.into());
+        }
         let swap = self.hide_messages(&mut messages);
         let text = self.runner.summarize(messages)?;
         Ok(match &swap {
