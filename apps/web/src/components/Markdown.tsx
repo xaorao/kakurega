@@ -1,6 +1,6 @@
 import { Code } from "./Code";
 import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
-import { parse, tableToTsv, type Align, type Block, type Inline } from "../markdown";
+import { inline, parse, tableToTsv, type Align, type Block, type Inline } from "../markdown";
 import { t } from "../i18n";
 
 function Inlines(props: { v: Inline[] }) {
@@ -97,3 +97,9 @@ export function Markdown(props: { text: string }) {
     </div>
   );
 }
+
+/** One line of model text with its inline marks (`code`, **bold**, *emphasis*, links) shown as such, not as raw symbols. */
+export function InlineMarkdown(props: { text: string }) {
+  return <Inlines v={inline(props.text)} />;
+}
+

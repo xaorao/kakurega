@@ -7,6 +7,7 @@ import { clockOffset, formatSpan, timeLeft } from "../expiry";
 import { DiffView } from "../components/DiffView";
 import { api, ApiError, type Config, type Fix, type Job } from "../api";
 import { locale, rich, t, type Key } from "../i18n";
+import { InlineMarkdown } from "../components/Markdown";
 
 type Tab = "progress" | "protected" | "source" | "findings" | "release";
 
@@ -121,12 +122,14 @@ function Protected(props: { job: Job }) {
         <h2>{t("prot.requests")}</h2>
         <Show when={audit()} fallback={<p class="muted">{t("review.loading")}</p>}>
           {(a) => (
+            <div class="table-scroll" tabindex="0" role="region" aria-label={t("prot.requests")}>
             <table>
-              <thead><tr><th scope="col">#</th><th scope="col">{t("prot.col.op")}</th><th scope="col">{t("prot.col.result")}</th></tr></thead>
+              <thead><tr><th scope="col">#</th><th scope="col">{t("prot.col.op")}</th><th scope="col">{t("prot.col.asked")}</th><th scope="col">{t("prot.col.result")}</th></tr></thead>
               <tbody>
-                <For each={a()}>{(e) => <tr class={e.outcome === "ok" ? "" : "refused"}><td>{e.request}</td><td><code>{e.op}</code></td><td>{e.outcome === "ok" ? t("prot.allowed") : t("prot.refused", { why: e.outcome })}</td></tr>}</For>
+                <For each={a()}>{(e) => <tr class={e.outcome === "ok" ? "" : "refused"}><td>{e.request}</td><td><code>{e.op}</code></td><td class="asked">{e.asked ? <code>{e.asked}</code> : <span class="muted">-</span>}</td><td>{e.outcome === "ok" ? t("prot.allowed") : <span title={[e.outcome, e.detail].filter(Boolean).join(": ")}>{t("prot.refused", { why: refusalWords(e.outcome, e.detail) })}</span>}</td></tr>}</For>
               </tbody>
             </table>
+            </div>
           )}
         </Show>
       </div>
@@ -338,7 +341,7 @@ function ShareOne(props: { jobId: string }) {
           <For each={list()?.findings ?? []}>
             {(f) => (
               <li class="work-item" data-finding={f.n}>
-                <span class="work-what"><strong>{t("share.finding", { n: f.n })}</strong> {f.title}</span>
+                <span class="work-what"><strong>{t("share.finding", { n: f.n })}</strong> <InlineMarkdown text={f.title} /></span>
                 <button type="button" onClick={() => void share(f.n)}>{t("share.button")}</button>
               </li>
             )}
@@ -377,9 +380,9 @@ function Findings(props: { job: Job }) {
                 const [statusLabel, cls] = statusText(f.status);
                 return (
                   <article class="card stack">
-                    <header class="between"><h2>{f.title}</h2><span class={`chip ${cls}`}>{statusLabel}</span></header>
+                    <header class="between"><h2><InlineMarkdown text={f.title} /></h2><span class={`chip ${cls}`}>{statusLabel}</span></header>
                     <p><code>{f.file}:{f.line}</code></p>
-                    <p>{f.explanation}</p>
+                    <p><InlineMarkdown text={f.explanation} /></p>
                     <Show when={f.reproducer}>
                       <details><summary>{t("find.reproIn", { language: languageName(f.language) })}</summary><pre tabindex="0"><Code lang={f.language ?? "python"} text={f.reproducer} /></pre><Show when={f.output}><p class="muted">{t("find.output")}</p><pre tabindex="0"><code>{f.output}</code></pre></Show></details>
                     </Show>
@@ -652,3 +655,11 @@ export function ReviewView(props: { id: string; config: Config; onUpdate?: () =>
     </Show>
   );
 }
+
+/** Why the broker refused a request, in plain words; an unknown code falls back to the broker's own detail. */
+function refusalWords(code: string, detail: string): string {
+  const key = `prot.why.${code}` as Key;
+  const text = t(key);
+  return text === key ? detail || code : text;
+}
+

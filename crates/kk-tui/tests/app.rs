@@ -6968,12 +6968,13 @@ fn tu_at02_a_message_with_files_attaches_them_first_and_sends_the_ids_with_the_q
     );
     // the answer says how many files were read, and the queued message follows
     let next = app.handle(ok(&r3[0], 200, json!({"reply": "They differ.", "route": {"id": "local", "simulated": false}, "notes_used": 0,
-        "files": {"used": 2, "trimmed": 1, "left_out": 0, "withheld_instructions": 1, "withheld_secrets": 1}})));
+        "files": {"used": 2, "trimmed": 1, "left_out": 0, "withheld_instructions": 1, "withheld_secrets": 1, "withheld_whole": 1}})));
     let t = text(&app);
     assert!(
         t.contains("2 attached files read")
             && t.contains("1 attached file cut short")
-            && t.contains("2 passages of attached files were not given"),
+            && t.contains("2 passages of attached files were not given")
+            && t.contains("nothing of 1 attached file was given to the model"),
         "{t}"
     );
     assert_eq!(

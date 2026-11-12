@@ -11,18 +11,28 @@ export function Projects() {
   const [name, setName] = createSignal("");
   const [folder, setFolder] = createSignal("");
   const [said, setSaid] = createSignal("");
+  // a change made in one project's card is confirmed in that card, not in the form for a new project
+  const [savedIn, setSavedIn] = createSignal<{ name: string; text: string; bad?: boolean } | null>(null);
   const [bad, setBad] = createSignal("");
-  const change = async (body: { name?: string; folder?: string; remove?: string; floor?: ProjectFloor }, ok: string) => {
+  const change = async (body: { name?: string; folder?: string; remove?: string; floor?: ProjectFloor }, ok: string, inCard?: string) => {
     setSaid("");
     setBad("");
+    setSavedIn(null);
     try {
       const r = await api.projectChange(body);
       mutate(r.projects);
-      setSaid(r.kept ? `${ok} ${r.kept}` : ok);
+      const text = r.kept ? `${ok} ${r.kept}` : ok;
+      if (inCard) {
+        setSavedIn({ name: inCard, text });
+        return;
+      }
+      setSaid(text);
       setName("");
       setFolder("");
     } catch (e) {
-      setBad(e instanceof ApiError ? e.message : t("proj.error"));
+      const why = e instanceof ApiError ? e.message : t("proj.error");
+      if (inCard) setSavedIn({ name: inCard, text: why, bad: true });
+      else setBad(why);
     }
   };
   const ask = (p: ProjectRow) => { leave("kk-docs-folder", p.folder ?? ""); location.hash = "#/docs"; };
@@ -55,12 +65,13 @@ export function Projects() {
                     <Show when={p.notes_only}><li>{t("proj.notesOnly")}</li></Show>
                   </ul>
                   <label for={`proj-floor-${p.name}`}>{t("proj.floor")}</label>
-                  <select id={`proj-floor-${p.name}`} value={p.floor ?? "any"} onChange={(e) => void change({ name: p.name, floor: e.currentTarget.value as ProjectFloor }, t("proj.floorSaved"))}>
+                  <select id={`proj-floor-${p.name}`} value={p.floor ?? "any"} onChange={(e) => void change({ name: p.name, floor: e.currentTarget.value as ProjectFloor }, t("proj.floorSaved"), p.name)}>
                     <option value="any">{t("proj.floor.any")}</option>
                     <option value="confidential">{t("proj.floor.confidential")}</option>
                     <option value="here">{t("proj.floor.here")}</option>
                   </select>
                   <p class="muted">{t(`proj.floor.${p.floor ?? "any"}.hint` as Key)}</p>
+                  <Show when={savedIn()?.name === p.name}><p role={savedIn()?.bad ? "alert" : "status"} class={savedIn()?.bad ? "bad" : "ok"}>{savedIn()?.text}</p></Show>
                   <div class="actions">
                     <button type="button" onClick={() => chat(p)}>{t("proj.chat")}</button>
                     <Show when={p.folder && p.folder_available}><button type="button" onClick={() => ask(p)}>{t("proj.ask")}</button></Show>

@@ -167,6 +167,8 @@ pub struct Block {
     pub withheld_instructions: usize,
     /// The same for holding a secret, counted only when the model does not run on this computer.
     pub withheld_secrets: usize,
+    /// Something was held back and nothing of the file was left to give.
+    pub nothing_given: bool,
 }
 
 /// Which lines of a passage `flagged` takes out, and whether the whole passage went. When the passage is flagged as a whole
@@ -277,6 +279,7 @@ pub fn block(p: &Parsed, runs_here: bool) -> Block {
     let mut body = String::new();
     let (mut instr, mut secrets) = (0usize, 0usize);
     let mut left: Vec<&str> = Vec::new();
+    let mut kept_any = false;
     let texts: Vec<&str> = p.passages.iter().map(|p| p.text.as_str()).collect();
     let keys = private_key_lines(&texts);
     for (n, passage) in p.passages.iter().enumerate() {
@@ -300,6 +303,7 @@ pub fn block(p: &Parsed, runs_here: bool) -> Block {
             left.push(&passage.anchor);
         }
         if let Some(t) = kept.filter(|t| !t.trim().is_empty()) {
+            kept_any = true;
             body.push('[');
             body.push_str(&passage.anchor);
             body.push_str("]\n");
@@ -307,10 +311,15 @@ pub fn block(p: &Parsed, runs_here: bool) -> Block {
             body.push_str("\n\n");
         }
     }
+    let nothing_given = !left.is_empty() && !kept_any;
     if !left.is_empty() {
         let shown: Vec<&str> = left.iter().copied().take(10).collect();
+        if nothing_given {
+            body.push_str("[none of this file was given to you]\n");
+        }
+        // a model told only that parts are missing has filled them in with plausible values; it is told it cannot know them
         body.push_str(&kk_types::words::counted(&format!(
-            "[left out: {} part(s) at {} were not given to you because they read like instructions or hold a secret]\n",
+            "[left out: {} part(s) at {} were not given to you because they read like instructions or hold a secret. You do not know what they say: never guess them, rebuild them or show example values in their place; say they were held back]\n",
             instr + secrets,
             shown.join("; ")
         )));
@@ -320,6 +329,7 @@ pub fn block(p: &Parsed, runs_here: bool) -> Block {
         body: body.trim_end().to_string(),
         withheld_instructions: instr,
         withheld_secrets: secrets,
+        nothing_given,
     }
 }
 
@@ -497,7 +507,10 @@ mod tests {
         );
         let b = block(&parsed(&[text]), true);
         assert!(
-            b.body.starts_with("[left out: 1 part at paragraph 1"),
+            b.nothing_given
+                && b.body.starts_with(
+                    "[none of this file was given to you]\n[left out: 1 part at paragraph 1"
+                ),
             "{}",
             b.body
         );
@@ -702,5 +715,32 @@ mod tests {
             b.body
         );
         assert_eq!(b.withheld_secrets, 2);
+    }
+
+    #[test]
+    fn at01_a_file_held_back_whole_says_so_and_the_model_is_told_not_to_guess() {
+        let p = Parsed {
+            name: ".env".into(),
+            kind: Kind::Text,
+            passages: vec![Passage {
+                anchor: "lines 1-2".into(),
+                text: format!(
+                    "API_KEY={}-{}\nSTRIPE_KEY={}_{}",
+                    "sk-ant",
+                    "api03-abcdefghijklmnopqrstuvwxyz0123456789",
+                    "sk_live",
+                    "abcdefghijklmnopqrstuvwx"
+                ),
+            }],
+            notes: Vec::new(),
+            truncated: false,
+        };
+        let away = block(&p, false);
+        assert!(away.nothing_given, "{}", away.body);
+        assert!(away.body.contains("none of this file was given to you"));
+        assert!(away.body.contains("never guess them"));
+        assert!(!away.body.contains("sk-ant") && !away.body.contains("sk_live"));
+        let here = block(&p, true);
+        assert!(!here.nothing_given);
     }
 }

@@ -49,6 +49,8 @@ pub struct AuditEvent {
     pub session: SessionId,
     pub request_id: u64,
     pub op: String,
+    /// What was asked: the tool and its file or text, never contents (see `Request::summary`).
+    pub asked: String,
     pub outcome: String,
     pub detail: String,
 }
@@ -282,6 +284,7 @@ impl Broker {
         };
         let req_id = envelope.id;
         let op = envelope.request.op_name();
+        let asked = envelope.request.summary();
         let outcome = self.dispatch(id, req_id, envelope.request);
         match outcome {
             Ok(v) => {
@@ -289,6 +292,7 @@ impl Broker {
                     session: id,
                     request_id: req_id,
                     op: op.to_string(),
+                    asked: asked.clone(),
                     outcome: "ok".into(),
                     detail: String::new(),
                 });
@@ -299,6 +303,7 @@ impl Broker {
                     session: id,
                     request_id: req_id,
                     op: op.to_string(),
+                    asked,
                     outcome: format!("{:?}", f.code),
                     detail: f.detail.clone(),
                 });

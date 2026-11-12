@@ -8,6 +8,8 @@ export interface FilesReport {
   left_out: number;
   withheld_instructions: number;
   withheld_secrets: number;
+  /** Files of which nothing was given to the model; absent from older services. */
+  withheld_whole?: number;
 }
 
 /** The most files one message carries, the same figure as the service. */
@@ -25,6 +27,7 @@ export function sizeText(bytes: number): string {
 export function fileNotes(f: FilesReport | undefined): { key: Key; n: number }[] {
   if (!f || (f.used === 0 && f.left_out === 0 && f.withheld_instructions === 0 && f.withheld_secrets === 0)) return [];
   const out: { key: Key; n: number }[] = [];
+  if ((f.withheld_whole ?? 0) > 0) out.push({ key: (f.withheld_whole === 1 ? "files.withheldWhole.one" : "files.withheldWhole") as Key, n: f.withheld_whole! });
   if (f.used > 0) out.push({ key: "files.used", n: f.used });
   if (f.trimmed > 0) out.push({ key: "files.trimmed", n: f.trimmed });
   if (f.left_out > 0) out.push({ key: "files.leftOut", n: f.left_out });

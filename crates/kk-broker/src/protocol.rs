@@ -72,6 +72,63 @@ impl Request {
             Request::ReleasePropose { .. } => "release.propose",
         }
     }
+
+    /// What was asked, in a few words for the request list a person reads: the tool and the file or text it was given, how
+    /// many messages went to the model, how many bytes were written. Never a file's contents or a message's text.
+    pub fn summary(&self) -> String {
+        fn short(s: &str) -> String {
+            let clean: String = s
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect();
+            if clean.chars().count() > 80 {
+                format!("{}…", clean.chars().take(80).collect::<String>())
+            } else {
+                clean
+            }
+        }
+        let bytes = |b64: &str| b64.len() / 4 * 3;
+        match self {
+            Request::ReadArtifact { handle } => format!("file {handle}"),
+            Request::WriteArtifact {
+                bytes_b64, kind, ..
+            } => format!("{} ({} bytes)", short(kind), bytes(bytes_b64)),
+            Request::ModelComplete {
+                messages, tools, ..
+            } => format!(
+                "{} message{}, {} tool{} offered",
+                messages.len(),
+                if messages.len() == 1 { "" } else { "s" },
+                tools.len(),
+                if tools.len() == 1 { "" } else { "s" }
+            ),
+            Request::ToolCall { name, args, .. } => {
+                let text = |k: &str| {
+                    args.get(k)
+                        .and_then(Value::as_str)
+                        .filter(|v| !v.is_empty())
+                };
+                match (text("path"), text("needle"), text("prefix")) {
+                    (Some(path), _, _) => format!("{} {}", short(name), short(path)),
+                    (None, Some(needle), Some(prefix)) => {
+                        format!("{} \"{}\" in {}", short(name), short(needle), short(prefix))
+                    }
+                    (None, Some(needle), None) => format!("{} \"{}\"", short(name), short(needle)),
+                    (None, None, Some(prefix)) => format!("{} {}", short(name), short(prefix)),
+                    (None, None, None) => short(name),
+                }
+            }
+            Request::Checkpoint { state_b64 } => format!("{} bytes", bytes(state_b64)),
+            Request::CheckpointLoad {} => String::new(),
+            Request::LogNote { code } => short(code),
+            Request::ReleasePropose { handles, recipient } => format!(
+                "{} file{} for {}",
+                handles.len(),
+                if handles.len() == 1 { "" } else { "s" },
+                short(recipient)
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -138,5 +195,61 @@ impl Reply {
                 detail: detail.to_string(),
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn pr01_a_request_summary_names_the_tool_and_file_but_never_contents_or_message_text() {
+        let secret = format!(
+            "{}-{}",
+            "sk-ant", "api03-abcdefghijklmnopqrstuvwxyz0123456789"
+        );
+        let b64 = kk_evidence::b64::encode(secret.as_bytes());
+        let write = Request::WriteArtifact {
+            bytes_b64: b64.clone(),
+            derived_from_hint: vec![],
+            kind: "finding".into(),
+        };
+        let s = write.summary();
+        assert!(
+            s.starts_with("finding (") && !s.contains(&b64) && !s.contains(&secret),
+            "{s}"
+        );
+        let model = Request::ModelComplete {
+            messages: vec![
+                ChatMessage::new("system", "rules"),
+                ChatMessage::new("user", &format!("the key is {secret}")),
+            ],
+            tools: vec![],
+            max_tokens: 100,
+        };
+        let s = model.summary();
+        assert_eq!(s, "2 messages, 0 tools offered");
+        let read = Request::ToolCall {
+            request_id: "r1".into(),
+            name: "read_file".into(),
+            args: json!({"path": "src/a.rs\u{1b}[2J"}),
+        };
+        assert_eq!(
+            read.summary(),
+            "read_file src/a.rs [2J",
+            "control characters are blanked"
+        );
+        let search = Request::ToolCall {
+            request_id: "r2".into(),
+            name: "search_text".into(),
+            args: json!({"needle": "x".repeat(200), "prefix": "src/"}),
+        };
+        let s = search.summary();
+        assert!(s.chars().count() < 110 && s.ends_with("in src/"), "{s}");
+        let checkpoint = Request::Checkpoint {
+            state_b64: b64.clone(),
+        };
+        assert!(!checkpoint.summary().contains(&b64));
     }
 }

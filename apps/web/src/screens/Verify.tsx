@@ -1,8 +1,9 @@
 import { createSignal, For, Show } from "solid-js";
 import { b64urlDecode, verifyCapsule, verifyShare } from "@kakurega/verifier";
-import { rich, t, type Key } from "../i18n";
+import { rich, t, type Key, locale } from "../i18n";
 import { visible } from "../visible";
 import { Verdict } from "../components/Verdict";
+import { when } from "../when";
 
 function reasonText(code: string): string {
   const key = `reason.${code}` as Key;
@@ -104,7 +105,7 @@ export function Verify() {
               <ul class="plain">
                 <li>{rich("ver.est1", { claims: r().claimCount, signer: r().signer })}</li>
                 <li>{rich("ver.est2", { files: r().fileCount })}</li>
-                <li>{rich("ver.est3", { recipient: r().recipient, expires: new Date(r().expires * 1000).toLocaleString() })}</li>
+                <li>{rich("ver.est3", { recipient: r().recipient, expires: when(r().expires, locale()) })}</li>
                 <Show when={r().signerPinned}><li>{t("ver.est4")}</li></Show>
               </ul>
               <Show when={(r().receipts ?? []).length > 0}>

@@ -432,9 +432,9 @@ try {
 
   await page.getByRole("tab", { name: "Protection" }).click();
   await page.getByText("possible prompt injection").first().waitFor();
-  await page.getByText("refused: UnknownHandle").first().waitFor({ timeout: 15000 });
+  await page.getByText("refused: it asked for a file it was never given").first().waitFor({ timeout: 15000 });
   const prot = await page.locator('[role="tabpanel"]').innerText();
-  check("protection lists withheld files, injection suspects and refused requests", prot.includes(".env") && prot.includes("README.md") && /refused: UnknownHandle/.test(prot), prot.includes("refused") ? "" : "no refused rows");
+  check("protection lists withheld files, injection suspects and refused requests", prot.includes(".env") && prot.includes("README.md") && /refused: it asked for a file it was never given/.test(prot), prot.includes("refused") ? "" : "no refused rows");
   await page.screenshot({ path: join(shots, "04-protection.png"), fullPage: true });
   await axeCheck(page, "protection");
 
@@ -2393,7 +2393,12 @@ try {
   await page.getByRole("link", { name: "Activity" }).click();
   await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();
   await axeCheck(page, "activity screen");
-  await page.screenshot({ path: join(shots, "12-activity.png") });
+  await page.getByRole("heading", { name: "Signed log" }).waitFor();
+  const verifyCmd = await page.locator(".cmdline pre").innerText();
+  check("the signed log has its own heading and the check command sits on one line with a copy button", /^kaku log verify kakurega-event-log\.json --pin \S{40,}$/.test(verifyCmd.trim()) && (await page.locator(".cmdline").getByRole("button", { name: "Copy the command" }).count()) === 1, verifyCmd);
+  const firstWhen = (await page.locator("table time").first().innerText().catch(() => "")).trim();
+  check("log times name the month, so a day cannot be misread", firstWhen === "" || (/[A-Za-z]{3}/.test(firstWhen) && !/\d{1,2}\/\d{1,2}\/\d{4}/.test(firstWhen)), firstWhen);
+  await page.screenshot({ path: join(shots, "12-activity.png"), fullPage: true });
   const [logDl] = await Promise.all([page.waitForEvent("download"), page.getByRole("link", { name: "Download the signed log" }).click()]);
   const logPath = join(work, "event-log.json");
   await logDl.saveAs(logPath);

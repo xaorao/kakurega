@@ -1,7 +1,8 @@
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError, type RoutePrice, type WorkItem } from "../api";
 import { LoadState } from "../components/LoadState";
-import { rich, t, type Key } from "../i18n";
+import { rich, t, type Key, locale } from "../i18n";
+import { when } from "../when";
 
 function label(kind: string): string {
   const key = `log.kind.${kind}` as Key;
@@ -202,19 +203,22 @@ export function Activity() {
       <Show when={log()} fallback={<LoadState loading={log.loading} retry={() => void refetch()} />}>
         {(l) => (
           <>
-            <div class="card stack">
-              <p>{t("act.count", { count: l().count })}</p>
+            <section class="card stack" aria-labelledby="h-log">
+              <h2 id="h-log">{t("act.log.title")}</h2>
+              <p>{t(l().count === 1 ? "act.count.one" : "act.count", { count: l().count })}</p>
               <p class="muted">{t("act.head")}: <code>{l().head ?? "-"}</code></p>
               <p class="muted">{t("act.key")}: <code>{l().public_key}</code></p>
               <p><a class="button" href="/api/log/export" download="kakurega-event-log.json">{t("act.download")}</a></p>
-              <p class="muted">{rich("act.verify", { key: l().public_key })}</p>
-            </div>
+              <p class="muted">{t("act.verify.lead")}</p>
+              <CommandLine text={`kaku log verify kakurega-event-log.json --pin ${l().public_key}`} />
+              <p class="muted">{rich("act.verify.anchor")}</p>
+            </section>
             <div class="card table-scroll" tabindex="0" role="region" aria-label={t("act.col.event")}>
               <table>
                 <thead><tr><th scope="col">{t("act.col.when")}</th><th scope="col">{t("act.col.event")}</th><th scope="col">{t("act.col.subject")}</th></tr></thead>
                 <tbody>
                   <For each={l().recent} fallback={<tr><td colSpan={3} class="muted">{t("act.none")}</td></tr>}>
-                    {(e) => <tr><td>{new Date(e.at * 1000).toLocaleString()}</td><td>{label(e.kind)}</td><td><code>{e.subject}</code></td></tr>}
+                    {(e) => <tr><td><time datetime={new Date(e.at * 1000).toISOString()}>{when(e.at, locale())}</time></td><td>{label(e.kind)}</td><td><code>{e.subject}</code></td></tr>}
                   </For>
                 </tbody>
               </table>
@@ -225,3 +229,24 @@ export function Activity() {
     </section>
   );
 }
+
+/** A command to type, on its own line: it scrolls sideways rather than breaking inside a key, and has a copy button. */
+function CommandLine(props: { text: string }) {
+  const [copied, setCopied] = createSignal(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(props.text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <div class="cmdline">
+      <pre tabindex="0"><code>{props.text}</code></pre>
+      <button type="button" onClick={() => void copy()} aria-label={t("act.copy.label")}>{copied() ? t("diag.copied") : t("act.copy")}</button>
+    </div>
+  );
+}
+

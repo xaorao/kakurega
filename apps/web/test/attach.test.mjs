@@ -93,3 +93,10 @@ test("at12 the same name and bytes are the same attachment; a different name or 
   assert.notEqual(await weak("a.txt", 5, 1), await weak("a.txt", 6, 1));
   assert.notEqual(await weak("a.txt", 5, 1), await weak("a.txt", 5, 2));
 });
+
+test("a file of which nothing was given is named first, so the answer is read in that light", () => {
+  const notes = fileNotes({ used: 1, trimmed: 0, left_out: 0, withheld_instructions: 0, withheld_secrets: 2, withheld_whole: 1 });
+  assert.deepEqual(notes[0], { key: "files.withheldWhole.one", n: 1 });
+  assert.equal(fileNotes({ used: 2, trimmed: 0, left_out: 0, withheld_instructions: 0, withheld_secrets: 4, withheld_whole: 2 })[0].key, "files.withheldWhole");
+  assert.ok(!fileNotes({ used: 1, trimmed: 0, left_out: 0, withheld_instructions: 0, withheld_secrets: 1 }).some((x) => x.key.startsWith("files.withheldWhole")));
+});

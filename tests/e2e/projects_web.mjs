@@ -70,6 +70,7 @@ await page.getByRole("link", { name: "Projects", exact: true }).click();
 // where its work may go: kept on this computer, said in words, and still so after a reload
 await page.getByLabel("Where may its work go?").selectOption("here");
 await page.getByText("Saved where its work may go.").waitFor();
+check(await page.locator("#proj-list li.card").getByText("Saved where its work may go.").isVisible() && (await page.locator("form").getByText("Saved where its work may go.").count()) === 0, "the change is confirmed in that project's card, not in the form for a new one");
 check(await page.getByText(/With any model elsewhere in use, nothing of this project is sent/).isVisible(), "a project kept on this computer says what that means");
 await page.reload();
 await page.waitForSelector("#proj-list");

@@ -77,6 +77,9 @@ pub struct SnapEdit {
 pub struct SnapAudit {
     pub request: u64,
     pub op: String,
+    /// Absent in snapshots stored before requests were described.
+    #[serde(default)]
+    pub asked: String,
     pub outcome: String,
     pub detail: String,
 }
@@ -271,6 +274,7 @@ impl Snapshot {
                 .map(|e| SnapAudit {
                     request: e.request_id,
                     op: e.op.clone(),
+                    asked: e.asked.clone(),
                     outcome: e.outcome.clone(),
                     detail: e.detail.clone(),
                 })

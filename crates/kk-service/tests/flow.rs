@@ -10268,7 +10268,7 @@ fn sv98_attached_files_go_to_the_model_as_labelled_data_and_what_is_left_out_is_
     assert_eq!(s, 200, "{r}");
     assert_eq!(
         r["files"],
-        json!({"used": 2, "trimmed": 0, "left_out": 0, "withheld_instructions": 1, "withheld_secrets": 1})
+        json!({"used": 2, "trimmed": 0, "left_out": 0, "withheld_instructions": 1, "withheld_secrets": 1, "withheld_whole": 0})
     );
     let sent = runner.sent();
     assert!(
@@ -10295,6 +10295,32 @@ fn sv98_attached_files_go_to_the_model_as_labelled_data_and_what_is_left_out_is_
         "{sent}"
     );
     assert!(sent.contains("[left out: 2 parts at lines 1-"), "{sent}");
+    assert!(
+        sent.contains("You do not know what they say: never guess them"),
+        "the model is told it cannot know what was held back: {sent}"
+    );
+
+    // a file of nothing but secrets: none of it goes, and the answer's footer can say so
+    let env = format!(
+        "API_KEY={key}\nSTRIPE_KEY={}_{}",
+        "sk_live", "abcdefghijklmnopqrstuvwx"
+    );
+    let (s, v) = w.post_raw("/api/attachments?name=.env", env.as_bytes());
+    assert_eq!(s, 201, "{v}");
+    let only = v["id"].as_str().unwrap().to_string();
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "What is in the env file?", "attachments": [only]}),
+    );
+    assert_eq!(s, 200, "{r}");
+    assert_eq!(r["files"]["withheld_whole"], 1, "{r}");
+    let sent = runner.sent();
+    assert!(
+        sent.contains("[none of this file was given to you]")
+            && !sent.contains("sk-ant")
+            && !sent.contains("sk_live"),
+        "{sent}"
+    );
 
     // no file, or an unknown, stale or malformed one
     let (s, r) = w.post("/api/chat", json!({"message": "again"}));

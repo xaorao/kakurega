@@ -7181,6 +7181,12 @@ impl App {
                         files("left_out")
                     )));
                 }
+                if files("withheld_whole") > 0 {
+                    foot.push(counted(&format!(
+                        "nothing of {} attached file(s) was given to the model: every line was held back, so the answer cannot draw on them",
+                        files("withheld_whole")
+                    )));
+                }
                 if files("withheld_instructions") + files("withheld_secrets") > 0 {
                     foot.push(counted(&format!(
                         "{} passage(s) of attached files were not given to the model (they read like instructions or hold a secret)",

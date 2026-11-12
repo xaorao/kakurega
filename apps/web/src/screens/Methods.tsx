@@ -1,8 +1,9 @@
 import { LoadState } from "../components/LoadState";
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, type Method, type MethodVersion, type BundledMethod, type PackCatalog, type PackCatalogEntry } from "../api";
-import { t, type Key } from "../i18n";
+import { t, type Key, locale } from "../i18n";
 import { hueOf, initials } from "../monogram";
+import { when } from "../when";
 
 const words = (text: string) => text.split(",").map((w) => w.trim()).filter(Boolean);
 
@@ -68,7 +69,7 @@ function History(props: { m: Method; onChanged: (message: string) => void }) {
             <For each={earlier()}>
               {(v) => (
                 <li class="stack">
-                  <p class="muted">{t("met.history.saved", { when: new Date(v.saved_at * 1000).toLocaleString() })}{v.was_approved ? ` · ${t("met.history.wasApproved")}` : ""}</p>
+                  <p class="muted">{t("met.history.saved", { when: when(v.saved_at, locale()) })}{v.was_approved ? ` · ${t("met.history.wasApproved")}` : ""}</p>
                   <Show when={v.description !== props.m.description}><p>{v.description}</p></Show>
                   <pre class="plain-pre">{v.body}</pre>
                   <div class="actions">
@@ -206,7 +207,7 @@ function Packs(props: { onChanged: (message: string) => void }) {
       <Show when={catalog()}>
         {(c) => (
           <div class="stack" id="pack-catalog-list">
-            <p>{t("pack.cat.from", { publisher: c().publisher || c().key_id.slice(0, 20), date: new Date(c().not_after * 1000).toLocaleDateString() })}</p>
+            <p>{t("pack.cat.from", { publisher: c().publisher || c().key_id.slice(0, 20), date: when(c().not_after, locale(), { dateOnly: true }) })}</p>
             <ul class="plain stack" aria-label={t("pack.cat.heading")}>
               <For each={c().packs}>
                 {(e) => (

@@ -582,4 +582,10 @@ button.danger:not(.linklike) { border-color: var(--redline); }
 /* a checkbox and its words on one line, the box centred on the text */
 label.choice { display: inline-flex; gap: 6px; align-items: center; }
 label.choice input { margin: 0; }
+/* what an agent request asked for: a file path or search text, wrapped rather than widening the table */
+td.asked code { overflow-wrap: anywhere; white-space: normal; }
+/* a command to type: one line that scrolls sideways, never broken inside a key, with a copy button beside it */
+.cmdline { display: flex; gap: 8px; align-items: stretch; min-width: 0; }
+.cmdline pre { flex: 1; min-width: 0; margin: 0; padding: 8px 10px; overflow-x: auto; white-space: pre; border: 1px solid var(--line); border-radius: 8px; background: var(--veil); font-size: 12.5px; }
+.cmdline button { flex: none; }
 
