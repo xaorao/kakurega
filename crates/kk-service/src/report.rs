@@ -113,9 +113,66 @@ pub fn scrub_home_paths(text: &str) -> String {
     out
 }
 
+/// Every path in the text (`/…`, `~/…`, `~`, or a drive path like `C:\…`) as `<path>`, so a report that says it holds no
+/// paths holds none: a path outside the home folder can name a person or a project too. Words after a path that carry
+/// a slash are taken as the rest of a path with spaces in it.
+pub fn scrub_paths(text: &str) -> String {
+    let opening: &[char] = &['(', '"', '\'', '[', '`'];
+    let closing: &[char] = &[')', '"', '\'', ',', ';', ':', '.', ']', '`'];
+    let mut out: Vec<String> = Vec::new();
+    let mut in_path = false;
+    for token in text.split(' ') {
+        let lead = token.len() - token.trim_start_matches(opening).len();
+        let end = token.trim_end_matches(closing).len().max(lead);
+        let (pre, core, post) = (&token[..lead], &token[lead..end], &token[end..]);
+        let b = core.as_bytes();
+        let drive = b.len() >= 3
+            && b[0].is_ascii_alphabetic()
+            && b[1] == b':'
+            && matches!(b[2], b'\\' | b'/');
+        let path = (core.starts_with('/') && core.len() > 1)
+            || core.starts_with("~/")
+            || core == "~"
+            || drive;
+        if path {
+            out.push(format!("{pre}<path>{post}"));
+            in_path = true;
+        } else if in_path && core.contains(['/', '\\']) && !core.contains("://") {
+            // the rest of the same path: only what followed it stays
+            if let Some(last) = out.last_mut() {
+                last.push_str(post);
+            }
+        } else {
+            out.push(token.to_string());
+            in_path = false;
+        }
+    }
+    out.join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::scrub_home_paths as scrub;
+
+    #[test]
+    fn rp02_no_path_of_any_kind_is_left() {
+        use super::scrub_paths as paths;
+        assert_eq!(
+            paths("worker: /private/tmp/alice/userbuild/bin/kk-worker is missing"),
+            "worker: <path> is missing"
+        );
+        assert_eq!(
+            paths("(see ~/notes/a.md), then ~"),
+            "(see <path>), then <path>"
+        );
+        assert_eq!(paths("at C:\\Users\\x\\a and D:/b"), "at <path> and <path>");
+        assert_eq!(paths("in /Volumes/My Disk/x: gone"), "in <path>: gone");
+        // addresses, versions and plain words stay
+        assert_eq!(
+            paths("http://127.0.0.1:11434 answers; rustc 1.93, 1/2 and / alone"),
+            "http://127.0.0.1:11434 answers; rustc 1.93, 1/2 and / alone"
+        );
+    }
 
     #[test]
     fn rp01_the_user_name_of_any_home_path_is_replaced() {

@@ -57,7 +57,7 @@ await page.getByText("Copied.").waitFor();
 check((await page.evaluate(() => navigator.clipboard.readText())) === text.replace(/\n$/, "") || (await page.evaluate(() => navigator.clipboard.readText())).startsWith("Kakurega diagnostics"), "copy puts the same text on the clipboard");
 const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Save as a file" }).click()]);
 check(download.suggestedFilename() === "kakurega-diagnostics.txt", "save offers a text file");
-await page.getByRole("button", { name: "Hide it" }).click();
+await page.getByRole("button", { name: "Hide the report" }).click();
 check((await page.locator("pre.passage").count()) === 0, "hiding removes it");
 check(problems.length === 0, "no console errors or failed requests: " + problems.join("; "));
 await browser.close();

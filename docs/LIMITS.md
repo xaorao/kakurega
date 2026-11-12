@@ -1,6 +1,6 @@
 # What is and is not claimed
 
-This file is the plain list. Evidence for each line is in `TESTING.md`; the status of every planned capability is in `program/parity_registry.json` (most are not built).
+This file is the plain list. `docs/TESTING.md` says which test checks what and what runs only by hand; `program/ACCEPTANCE_MANIFEST.json` gives each acceptance row the command that proves it; the status of every planned capability is in `program/parity_registry.json` (most are not built).
 
 ## Not verified, and why
 - NEAR AI Cloud completions, encrypted inference, signed responses and image provenance: the NEAR API key and credits do not exist yet. Only model attestation was verified, against real public evidence.

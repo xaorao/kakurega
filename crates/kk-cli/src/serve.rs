@@ -222,7 +222,21 @@ fn serve(args: &[String]) -> Result<(), String> {
     });
     drop(keys);
     let test_mode = crate::flag(args, "--scripted").is_some();
-    let service = Service::new(&data, roots, runner, test_mode)?;
+    let service = Service::new(&data, roots, runner, test_mode).map_err(|e| {
+        if e.contains("owns this ledger") {
+            // said with the process that has it, when admin.json names one
+            let pid = std::fs::read_to_string(data.join("admin.json"))
+                .ok()
+                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+                .and_then(|v| v["pid"].as_u64());
+            format!(
+                "another Kakurega service is already running for this data folder{}; use that one (`kaku`, or the link `kaku pair` prints), or stop it first. A second service needs its own --data-dir or --profile",
+                pid.map(|p| format!(" (process {p})")).unwrap_or_default()
+            )
+        } else {
+            e
+        }
+    })?;
     service.set_require_approver(args.iter().any(|a| a == "--require-approver"));
     let ui_dir = crate::flag(args, "--ui-dir")
         .map(PathBuf::from)

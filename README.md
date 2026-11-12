@@ -126,7 +126,7 @@ scripts/test-lima                    # the sandbox and worker tests inside the L
 python3 scripts/verify_program.py I  # the acceptance gate for a milestone (also II and III)
 ```
 
-`program/ACCEPTANCE_MANIFEST.json` lists every acceptance row with the command that proves it; rows that need a person or an external key say so. `TESTING.md`, `PROGRESS.md` and `HUMAN.md` (one level up in the working tree) record evidence, state and what only the owner can do.
+`program/ACCEPTANCE_MANIFEST.json` lists every acceptance row with the command that proves it; rows that need a person or an external key say so. `docs/TESTING.md` says what each suite covers and what runs only by hand, and why.
 
 ## Check a capsule as a recipient
 

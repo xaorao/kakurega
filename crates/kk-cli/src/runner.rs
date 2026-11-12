@@ -162,10 +162,11 @@ impl ReviewRunner {
         } else if self.outside.is_some() {
             match e {
                 kk_route::RouteError::BadResponse(m) => m,
+                kk_route::RouteError::Unreachable(_) => "the outside model's service could not be reached: check this computer's internet connection, then ask again".into(),
                 other => format!("the outside model did not answer: {other}"),
             }
         } else {
-            model_failure(e, &self.model_name())
+            model_failure(e, &self.model_name(), &self.ollama)
         }
     }
 
@@ -230,8 +231,12 @@ fn remote_failure(e: kk_route::RouteError) -> String {
 }
 
 /// What the owner is told when the local model fails. A conversation larger than the model's window gets advice, not a status.
-fn model_failure(e: kk_route::RouteError, model: &str) -> String {
+fn model_failure(e: kk_route::RouteError, model: &str, address: &str) -> String {
     match e {
+        // nothing answers at the address: Ollama is not running there
+        kk_route::RouteError::Unreachable(_) => format!(
+            "the local model service is not running at {address}: start Ollama (open the Ollama app, or run `ollama serve`), then ask again"
+        ),
         // the model is not there: say which one, and how to install it
         kk_route::RouteError::NotFound => format!(
             "the model {model} is not installed: run `ollama pull {model}`, or choose an installed model in Settings"
@@ -462,7 +467,7 @@ cut_short: false,
                 },
                 on_chunk,
             )
-            .map_err(|e| model_failure(e, &self.model_name()))?;
+            .map_err(|e| model_failure(e, &self.model_name(), &self.ollama))?;
         Ok(kk_service::StreamedReply {
             reply: kk_service::ChatReply {
                 prompt_tokens: (done.prompt_tokens > 0).then_some(done.prompt_tokens),
@@ -773,7 +778,7 @@ cut_short: false,
         let route = Stoppable::wrap(
             Box::new(
                 self.route()
-                    .map_err(|e| model_failure(e, &self.model_name()))?,
+                    .map_err(|e| model_failure(e, &self.model_name(), &self.ollama))?,
             ),
             stop,
         );
@@ -846,7 +851,7 @@ cut_short: false,
             Stoppable::wrap(
                 Box::new(
                     self.route()
-                        .map_err(|e| model_failure(e, &self.model_name()))?,
+                        .map_err(|e| model_failure(e, &self.model_name(), &self.ollama))?,
                 ),
                 stop,
             )

@@ -48,13 +48,21 @@ impl Admin {
         if !matches!(&first, Err(_) | Ok((401, _))) {
             return first;
         }
-        match read_admin(&self.dir) {
+        let out = match read_admin(&self.dir) {
             Ok(fresh) if fresh != (base, token) => {
                 *self.conn.lock().expect("lock") = fresh.clone();
                 send(&fresh.0, &fresh.1)
             }
             _ => first,
-        }
+        };
+        // a request that could not be sent at all: the service is not running (or stopped), said in words
+        out.map_err(|e| {
+            if e.starts_with("io:") || e.contains("onnection") {
+                "Kakurega's service is not answering: it is not running, or it stopped. Start it with `kaku serve` (or open the app), then try again".to_string()
+            } else {
+                e
+            }
+        })
     }
 
     pub fn get(&self, path: &str) -> Result<(u16, Value), String> {

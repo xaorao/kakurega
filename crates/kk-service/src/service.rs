@@ -3524,7 +3524,7 @@ async fn diagnostics(axum::Extension(svc): Svc) -> Json<Value> {
                 out = out.replace(&from, to);
             }
         }
-        crate::report::scrub_home_paths(&out)
+        crate::report::scrub_paths(&crate::report::scrub_home_paths(&out))
             .chars()
             .take(300)
             .collect()

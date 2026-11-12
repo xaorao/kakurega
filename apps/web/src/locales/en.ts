@@ -311,7 +311,7 @@ export const en = {
   "diag.title": "Report a problem",
   "diag.lead": "Show a short report of versions, checks, counts and crashes to read, copy or save. It holds no file names, paths, notes, conversations, file text or keys. Nothing is sent anywhere: you decide whether to attach it to a bug report.",
   "diag.show": "Show the report",
-  "diag.hide": "Hide it",
+  "diag.hide": "Hide the report",
   "diag.copy": "Copy the report",
   "diag.copied": "Copied.",
   "diag.save": "Save as a file",

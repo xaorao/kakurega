@@ -10510,8 +10510,8 @@ fn sv104_diagnostics_hold_versions_checks_counts_and_event_kinds_and_never_names
     );
     assert_eq!(
         v["checks"][0]["detail"],
-        json!("models are kept in ~/.ollama and answer"),
-        "the home folder is shortened"
+        json!("models are kept in <path> and answer"),
+        "a path, even one in the home folder, is not in the report"
     );
     let text = v.to_string();
     for private in [
@@ -16630,7 +16630,9 @@ fn sv181_the_owners_session_can_read_the_diagnostics_as_text_and_it_names_nothin
     );
     assert!(text.contains("This report holds no file names"), "{text}");
     assert!(
-        text.contains("worker ~/kk-target/debug/kk-worker"),
+        text.contains("worker <path>, <path>")
+            && !text.contains("kk-target")
+            && !text.contains("Bob"),
         "{text}"
     );
     assert_eq!(v["data"]["version"], json!(env!("CARGO_PKG_VERSION")));

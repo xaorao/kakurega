@@ -277,6 +277,21 @@ try:
     check("with no service running the command starts its own, and a model that cannot be reached is exit 5", p.returncode == 5, f"{p.returncode} {p.stderr[:200]}")
     left = subprocess.run(["pgrep", "-f", f"kaku serve --data-dir {d2}"], capture_output=True, text=True)
     check("and it stops that service when it is done", left.returncode != 0, left.stdout)
+
+    # a second service on the same data folder says which process has it and what to do, in words
+    second = subprocess.run([kaku, "serve", "--data-dir", str(data), "--root", str(work / "root"), "--scripted", str(repo / "tests/e2e/script.json")], capture_output=True, text=True, timeout=60)
+    check("a second service on the same data folder names the running one and what to do", second.returncode == 1 and f"already running for this data folder (process {srv.pid})" in second.stderr and "--data-dir" in second.stderr, second.stderr)
+    # with the service gone, a command says it is not running and how to start it, not a socket error
+    srv.kill()
+    srv.wait(timeout=10)
+    mcp = subprocess.run([kaku, "mcp", "--data-dir", str(data)], input="\n".join(json.dumps(m) for m in [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "list_reviews", "arguments": {}}},
+    ]) + "\n", capture_output=True, text=True, timeout=60)
+    last = json.loads(mcp.stdout.strip().splitlines()[-1]) if mcp.stdout.strip() else {}
+    said = json.dumps(last)
+    check("an agent calling a tool with the service stopped is told it is not running and how to start it", last.get("result", {}).get("isError") is True and "not answering" in said and "kaku serve" in said and "os error" not in said, said[:300])
 finally:
     srv.kill()
     subprocess.run(["pkill", "-f", f"kaku serve --data-dir {work}"], capture_output=True)
