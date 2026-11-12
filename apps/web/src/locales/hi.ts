@@ -599,6 +599,8 @@ export const hi: Record<keyof typeof en, string> = {
   "log.kind.memory.imported_notes": "नोट लाए गए",
   "log.kind.method.saved": "स्किल सहेजी गई",
   "log.kind.project.settings": "प्रोजेक्ट की सेटिंग बदली गई",
+  "log.kind.log.unwritten": "जो प्रविष्टियाँ लॉग में नहीं लिखी जा सकीं",
+  "log.kind.research.requesting": "वेब पते माँगे गए",
   "log.kind.research.fetched": "वेब पेज लाए गए",
   "log.kind.research.proposed": "वेब पेज प्रस्तावित हुए",
   "log.kind.route.gateway_attested": "गेटवे के हार्डवेयर प्रमाण की जाँच हुई",

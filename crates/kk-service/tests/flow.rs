@@ -25093,3 +25093,118 @@ fn sv294_keeping_a_conversation_keeps_the_turns_already_on_the_screen_as_private
         );
     }
 }
+
+/// While the signed log cannot be written (here another program holds its write lock; a full disk does the same, see
+/// tests/e2e/full_disk.py), approved web addresses are not requested and an approved hand-over is not sent; the readiness
+/// checks name the log; once it can be written, the same approval works and the log first says how many entries it missed.
+#[test]
+fn sv295_research_and_the_hand_over_wait_for_the_signed_log() {
+    let runner = AgentRunner {
+        inner: FileRunner::new("http://127.0.0.1:11434", 16384),
+        installed: true,
+        handed: Default::default(),
+    };
+    let (root, _repo) = repo_copy("log-blocked");
+    let data = root.join("data");
+    let svc = Service::new(&data, vec![root.clone()], Arc::new(runner.clone()), true).unwrap();
+    let web = Arc::new(FakeWeb {
+        calls: Default::default(),
+    });
+    svc.set_web(web.clone());
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (_, p) = w.post(
+        "/api/research/propose",
+        json!({"urls": ["https://docs.rs/tokio"]}),
+    );
+    let fetch = format!("/api/research/{}/fetch", p["id"].as_str().unwrap());
+    let approve = json!({"approve": true, "digest": p["digest"]});
+    let (_, h) = w.post(
+        "/api/handoff",
+        json!({"text": "Why does this loop never end?"}),
+    );
+    let run = format!("/api/handoff/{}/run", h["id"].as_str().unwrap());
+
+    // another connection takes the log's write lock: every write to the log now fails
+    let blocker = kk_service::keys::open_vault(&data, "events.db").unwrap();
+    blocker
+        .connection()
+        .execute_batch("BEGIN IMMEDIATE")
+        .unwrap();
+    let (s, r) = w.post(&fetch, approve.clone());
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (507, Some("LOG_UNAVAILABLE")),
+        "{r}"
+    );
+    assert!(
+        web.calls.lock().unwrap().is_empty(),
+        "no address was requested"
+    );
+    let (s, r) = w.post(&run, json!({}));
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (507, Some("LOG_UNAVAILABLE")),
+        "{r}"
+    );
+    assert!(
+        runner.handed.lock().unwrap().is_empty(),
+        "nothing was handed over"
+    );
+    let (_, ready) = w.get("/api/readiness");
+    let log_check = ready["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "log")
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(
+        (ready["ready"].clone(), log_check["ok"].clone()),
+        (json!(false), json!(false)),
+        "{ready}"
+    );
+    assert!(
+        log_check["detail"]
+            .as_str()
+            .unwrap()
+            .contains("2 entries could not be written"),
+        "{log_check}"
+    );
+
+    // the lock is let go: the same approvals now work, once each
+    blocker.connection().execute_batch("ROLLBACK").unwrap();
+    drop(blocker);
+    let (s, r) = w.post(&fetch, approve);
+    assert_eq!(s, 200, "{r}");
+    assert_eq!(web.calls.lock().unwrap().len(), 1);
+    let (s, r) = w.post(&run, json!({}));
+    assert_eq!(s, 200, "{r}");
+    assert_eq!(runner.handed.lock().unwrap().len(), 1);
+    let (_, ready) = w.get("/api/readiness");
+    assert!(
+        !ready["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == "log"),
+        "{ready}"
+    );
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    let (_, log) = admin(&base, c.security.admin_token(), "GET", "/admin/log", None);
+    let kinds: Vec<Value> = log["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| serde_json::from_str::<Value>(e["entry"].as_str().unwrap()).unwrap())
+        .collect();
+    let at = |k: &str| kinds.iter().position(|e| e["kind"] == k);
+    let gap = at("log.unwritten").expect("the gap is in the log");
+    assert_eq!(kinds[gap]["data"]["entries"], json!(2), "{:?}", kinds[gap]);
+    assert!(gap < at("research.requesting").unwrap() && gap < at("outbound.model").unwrap());
+}

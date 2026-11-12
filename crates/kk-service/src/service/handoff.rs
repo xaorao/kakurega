@@ -110,11 +110,25 @@ pub(super) async fn run(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>)
         return error(StatusCode::NOT_FOUND, "NO_HANDOFF", "that hand-over was already sent, was cancelled, or is older than ten minutes; show the text again first");
     };
     let chars = text.chars().count();
-    svc.log_event(
+    if !svc.log_event(
         "outbound.model",
         "Claude Code on this computer, then its maker",
         &[("chars", chars.into()), ("swapped", 0usize.into())],
-    );
+    ) {
+        // kept again, so the same yes works once there is room for the record
+        {
+            let store = svc.store.lock().expect("lock");
+            let _ = store.connection().execute(
+                "INSERT INTO handoffs(id, text, at) VALUES(?1, ?2, ?3)",
+                kk_vault::rusqlite::params![id, text, now()],
+            );
+        }
+        return error(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "LOG_UNAVAILABLE",
+            super::swap::LOG_UNWRITABLE,
+        );
+    }
     let svc2 = svc.clone();
     let started = std::time::Instant::now();
     let out = tokio::task::spawn_blocking(move || svc2.runner.handoff_run(&text)).await;

@@ -24,6 +24,9 @@ static ROUTE_GATE: std::sync::RwLock<()> = std::sync::RwLock::new(());
 /// Said when the model was switched to a less private one after something was prepared for the earlier one.
 pub(super) const ROUTE_CHANGED: &str = "the model was changed to a less private one, and what was prepared for the earlier model is not sent to it; ask again";
 
+/// Said when the signed log cannot record that something is about to leave this computer, so it does not leave.
+pub(super) const LOG_UNWRITABLE: &str = "the signed log could not be written (is the disk full?), so nothing was sent to the model elsewhere; free some space and ask again";
+
 impl Service {
     pub(super) fn route_hold(&self) -> std::sync::RwLockReadGuard<'static, ()> {
         ROUTE_GATE.read().unwrap_or_else(|e| e.into_inner())
@@ -67,9 +70,9 @@ impl Service {
     pub(super) fn hide_messages(
         &self,
         messages: &mut Vec<kk_types::chat::ChatMessage>,
-    ) -> Option<Swap> {
+    ) -> Result<Option<Swap>, String> {
         if !self.answers_elsewhere() {
-            return None;
+            return Ok(None);
         }
         let names: Vec<String> = self.hidden_names().into_iter().map(|(n, _)| n).collect();
         let mut swap = Swap::new(&names);
@@ -82,11 +85,14 @@ impl Service {
             .unwrap_or("another computer")
             .to_string();
         let chars: usize = messages.iter().map(|m| m.content.chars().count()).sum();
-        self.log_event(
+        // nothing leaves unless the log says it did
+        if !self.log_event(
             "outbound.model",
             &host,
             &[("chars", chars.into()), ("swapped", swap.total().into())],
-        );
+        ) {
+            return Err(LOG_UNWRITABLE.into());
+        }
         if swap.total() > 0 {
             // told once, after the product's own instruction, so the model keeps the placeholders as they are
             let at = usize::from(messages.first().is_some_and(|m| m.role == "system"));
@@ -95,7 +101,7 @@ impl Service {
                 kk_types::chat::ChatMessage::new("system", kk_secrets::swap::NOTICE),
             );
         }
-        Some(swap)
+        Ok(Some(swap))
     }
 
     /// Asks the answering model. On a route that leaves this computer the question is sent with personal values hidden
@@ -126,7 +132,7 @@ impl Service {
         if self.route_level() < need {
             return Err(ROUTE_CHANGED.into());
         }
-        let swap = self.hide_messages(&mut messages);
+        let swap = self.hide_messages(&mut messages)?;
         let mut reply = self.runner.chat(messages)?;
         let mut swapped = 0;
         if let Some(s) = &swap {
@@ -148,7 +154,7 @@ impl Service {
         if self.route_level() < need {
             return Err(ROUTE_CHANGED.into());
         }
-        let swap = self.hide_messages(&mut messages);
+        let swap = self.hide_messages(&mut messages)?;
         let mut out = match &swap {
             Some(s) => self
                 .runner
@@ -171,7 +177,7 @@ impl Service {
         if self.route_level() < need {
             return Err(ROUTE_CHANGED.into());
         }
-        let swap = self.hide_messages(&mut messages);
+        let swap = self.hide_messages(&mut messages)?;
         let text = self.runner.summarize(messages)?;
         Ok(match &swap {
             Some(s) => s.show(&text),

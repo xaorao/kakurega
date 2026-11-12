@@ -329,6 +329,8 @@ pub struct Service {
     search_provider: Mutex<Option<String>>,
     attester: Mutex<Arc<dyn Attester>>,
     repairs: Mutex<std::collections::HashMap<String, Value>>,
+    /// Entries the signed log could not write since it last could (how many, and since when).
+    unwritten: Mutex<Option<(usize, i64)>>,
     streams: std::sync::atomic::AtomicUsize,
     /// When set, a release can be approved only with a signature from an enrolled approval key; the unenrolled path is closed.
     require_approver: std::sync::atomic::AtomicBool,
@@ -652,8 +654,45 @@ impl Service {
         self.memory.lock().expect("lock").use_rows_for_test()
     }
 
+    /// Writes one entry to the signed log. An entry it cannot write (a full disk) is counted, and the count is written as
+    /// one entry as soon as the log can be written again, so the gap shows in the log itself. A subject the log would
+    /// refuse (too long, or with a control character) is shortened and cleaned rather than lost.
     fn log_event(&self, kind: &str, subject: &str, data: &[(&str, kk_eventlog::Datum)]) -> bool {
-        self.log.append(now(), kind, subject, data).is_ok()
+        let subject = log_subject(subject);
+        let mut unwritten = self.unwritten.lock().expect("lock");
+        if let Some((entries, since)) = *unwritten {
+            let gap = [("entries", entries.into()), ("since", since.into())];
+            if self
+                .log
+                .append(now(), "log.unwritten", "this computer", &gap)
+                .is_ok()
+            {
+                *unwritten = None;
+            }
+        }
+        if self.log.append(now(), kind, &subject, data).is_ok() {
+            return true;
+        }
+        let (entries, since) = unwritten.unwrap_or((0, now()));
+        *unwritten = Some((entries + 1, since));
+        false
+    }
+
+    /// A failed readiness check while the signed log is missing entries: nothing goes to a model elsewhere and no review
+    /// starts until it can be written again.
+    fn log_check(&self) -> Option<Value> {
+        let (entries, since) = (*self.unwritten.lock().expect("lock"))?;
+        Some(json!({
+            "id": "log",
+            "label": "Signed log",
+            "ok": false,
+            "detail": format!(
+                "{} could not be written in the last {} min, most likely because the disk is full; until it can be written, nothing is sent to a model elsewhere and no review starts",
+                if entries == 1 { "1 entry".to_string() } else { format!("{entries} entries") },
+                ((now() - since).max(0) + 59) / 60
+            ),
+            "fix": "free space on the disk that holds the data folder; the next entry then records how many were missed",
+        }))
     }
 
     fn plan_for(repo: &std::path::Path, recipient: &str, s: &Snapshot) -> kk_disclosure::Plan {
@@ -994,6 +1033,7 @@ impl Service {
             ),
             attester: Mutex::new(Arc::new(RealAttester)),
             repairs: Mutex::new(std::collections::HashMap::new()),
+            unwritten: Mutex::new(None),
             streams: std::sync::atomic::AtomicUsize::new(0),
             require_approver: std::sync::atomic::AtomicBool::new(false),
             last_sent: Mutex::new(None),
@@ -1242,6 +1282,10 @@ impl Service {
             }
             let id = format!("job-{}", g.next);
             g.next += 1;
+            // everything a review later releases rests on the log, so a review whose start cannot be recorded does not start
+            if !self.log_event("job.started", &id, &[("recipient", recipient.into())]) {
+                return Err("the signed log could not be written (is the disk full?), so the review was not started; free some space and start it again".into());
+            }
             let job = Job {
                 id: id.clone(),
                 repo: dir.clone(),
@@ -1256,7 +1300,6 @@ impl Service {
             (id, job)
         };
         self.persist_job(&first, None);
-        self.log_event("job.started", &id, &[("recipient", recipient.into())]);
         let svc = self.clone();
         let (jid, rec) = (id.clone(), recipient.to_string());
         let extra = self.memory_files(&dir, recipient);
@@ -1485,6 +1528,8 @@ async fn readiness(axum::Extension(svc): Svc) -> Json<Value> {
         tokio::task::spawn_blocking(move || (svc2.runner.readiness(), svc2.runner.repairable()))
             .await
             .unwrap_or_default();
+    let mut checks = checks;
+    checks.extend(svc.log_check());
     let ready = machine_is_ready(&checks);
     let repairs = svc.repairs.lock().expect("lock").clone();
     let checks: Vec<Value> = checks
@@ -4296,7 +4341,10 @@ async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
             return (run, ctx, Err(swap::ROUTE_CHANGED.to_string()));
         }
         // what is shown as "sent" is what was sent: with personal values hidden when the model is elsewhere
-        let swap = svc2.hide_messages(&mut ctx.messages);
+        let swap = match svc2.hide_messages(&mut ctx.messages) {
+            Ok(swap) => swap,
+            Err(why) => return (run, ctx, Err(why)),
+        };
         ctx.swapped = swap.as_ref().map_or(0, |s| s.total());
         svc2.remember_sent(&ctx.messages, &ctx.excluded_notes);
         let reply = if ctx.nothing_to_read() {
@@ -4351,7 +4399,15 @@ async fn chat_stream(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Resp
             ));
             return;
         }
-        let swap = svc2.hide_messages(&mut ctx.messages);
+        let swap = match svc2.hide_messages(&mut ctx.messages) {
+            Ok(swap) => swap,
+            Err(why) => {
+                let _ = tx.send(line(
+                    json!({"error": {"code": "LOG_UNAVAILABLE", "message": why}}),
+                ));
+                return;
+            }
+        };
         ctx.swapped = swap.as_ref().map_or(0, |s| s.total());
         svc2.remember_sent(&ctx.messages, &ctx.excluded_notes);
         // a model that is elsewhere answers in one piece, so restoring each piece restores the answer
@@ -4553,7 +4609,15 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
             ctx.messages
                 .push(kk_types::chat::ChatMessage::new("system", &e.instruction));
         }
-        let swap = svc2.hide_messages(&mut ctx.messages);
+        let swap = match svc2.hide_messages(&mut ctx.messages) {
+            Ok(swap) => swap,
+            Err(why) => {
+                let _ = tx.send(line(
+                    json!({"error": {"code": "LOG_UNAVAILABLE", "message": why}}),
+                ));
+                return;
+            }
+        };
         ctx.swapped = swap.as_ref().map_or(0, |s| s.total());
         svc2.remember_sent(&ctx.messages, &ctx.excluded_notes);
         // they are the last ones: the note about placeholders, when there is one, goes near the top
@@ -6733,6 +6797,23 @@ async fn research_fetch(
         }
         r.proposals.remove(&id).expect("present")
     };
+    if !svc.log_event(
+        "research.requesting",
+        &id,
+        &[("addresses", prop.urls.len().into())],
+    ) {
+        // the request stays open, so the same approval works once there is room for the record
+        svc.research
+            .lock()
+            .expect("lock")
+            .proposals
+            .insert(id, prop);
+        return error(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "LOG_UNAVAILABLE",
+            "the signed log could not be written (is the disk full?), so no address was requested; free some space and approve again",
+        );
+    }
     let web = svc.web.lock().expect("lock").clone();
     let urls = prop.urls.clone();
     let results = tokio::task::spawn_blocking(move || {
@@ -6922,6 +7003,18 @@ async fn search_run(
         }
         r.proposals.remove(&id).expect("present")
     };
+    if !svc.log_event("research.requesting", &id, &[("addresses", 1usize.into())]) {
+        svc.research
+            .lock()
+            .expect("lock")
+            .proposals
+            .insert(id, prop);
+        return error(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "LOG_UNAVAILABLE",
+            "the signed log could not be written (is the disk full?), so nothing was searched; free some space and approve again",
+        );
+    }
     let web = svc.web.lock().expect("lock").clone();
     let url = prop.urls[0].clone();
     let answer = tokio::task::spawn_blocking(move || web.search(&url)).await;
@@ -10268,6 +10361,8 @@ async fn admin_overview(axum::Extension(svc): Svc) -> Response {
         .map(|(l, n)| (l, json!(n)))
         .collect();
     let head = svc.log.head().ok().flatten();
+    let mut checks = checks;
+    checks.extend(svc.log_check());
     Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
         "route": svc.route_for_owner(),
@@ -10919,4 +11014,19 @@ mod away_tests {
         // nothing at or before the mark, whatever the count
         assert!(away_finished(jobs.iter(), 2000).is_empty());
     }
+}
+
+/// The subject as the signed log accepts it: no control or direction characters, at most 128 bytes.
+fn log_subject(subject: &str) -> String {
+    let mut out = String::new();
+    for c in subject.chars().filter(|c| {
+        !c.is_control()
+            && !matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{feff}')
+    }) {
+        if out.len() + c.len_utf8() > 128 {
+            break;
+        }
+        out.push(c);
+    }
+    out
 }

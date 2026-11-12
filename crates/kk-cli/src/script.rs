@@ -577,17 +577,19 @@ pub fn chat(args: &[String]) -> u8 {
         match call(&http, Method::Post, "/api/chat", Some(body)) {
             Ok((200, v)) => {
                 let reply = v["reply"].as_str().unwrap_or("");
+                // the answer is shown either way; a kept conversation the service could not add it to is a failure
+                let lost = session.is_some() && v["saved"] != true;
                 if json_mode {
                     println!(
                         "{}",
-                        json!({"reply": reply, "cut_short": v["cut_short"] == true, "session": session, "route": {"class": v["route"]["class"], "simulated": v["route"]["simulated"]}, "notes_used": v["notes_used"]})
+                        json!({"reply": reply, "cut_short": v["cut_short"] == true, "session": session, "saved": session.is_some() && !lost, "not_saved": if lost { v["not_saved"].clone() } else { Value::Null }, "route": {"class": v["route"]["class"], "simulated": v["route"]["simulated"]}, "notes_used": v["notes_used"]})
                     );
                 } else {
                     println!("{}", clean(reply));
                     if v["cut_short"] == true {
                         eprintln!("this answer reached the model's length limit and stops there; ask it to continue");
                     }
-                    if keep {
+                    if keep && !lost {
                         if let Some(id) = &session {
                             eprintln!(
                                 "kept as {}; continue it with --session {}",
@@ -596,6 +598,19 @@ pub fn chat(args: &[String]) -> u8 {
                             );
                         }
                     }
+                }
+                if lost {
+                    let why = match v["not_saved"].as_str() {
+                        Some("forgotten") => {
+                            "the conversation was forgotten while the answer was written"
+                        }
+                        Some("error") => "the service could not write it (is the disk full?)",
+                        _ => "the service did not say why",
+                    };
+                    if !json_mode {
+                        eprintln!("this answer was NOT saved to the conversation: {why}");
+                    }
+                    return FAILED;
                 }
                 OK
             }

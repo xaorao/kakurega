@@ -597,6 +597,8 @@ export const en = {
   "log.kind.memory.imported_notes": "Notes brought in",
   "log.kind.method.saved": "Skill saved",
   "log.kind.project.settings": "Project settings changed",
+  "log.kind.log.unwritten": "Entries the log could not write",
+  "log.kind.research.requesting": "Web addresses requested",
   "log.kind.research.fetched": "Web pages fetched",
   "log.kind.research.proposed": "Web pages proposed",
   "log.kind.route.gateway_attested": "Gateway hardware proof checked",
