@@ -110,3 +110,5 @@ Each finding was checked against the code before anything was changed.
 | 11h | `/newchat` in an unkept chat kept the old level | CONFIRMED | Reset | read |
 
 Accepted, with the reason: a hard link to a file inside the data folder, made in an allowed folder, is not recognised as the program's own data. Making one needs the owner's own account on this computer, which can read that folder directly. A password that is an ordinary word, a login written as "admin / value" and a code said with no word for what it is stay unrecognised and are in `LIMITS.md`.
+
+Found while re-running the leak benchmark for these fixes: a random 32-character token with fewer than two digits (about one in forty) was not recognised when no word named it, so one benchmark case flipped by chance. Such a token is now recognised by how its capitals and small letters fall; measured on 200,000 random tokens the miss went from 2.56% to 0.15% (kk-secrets sp08, with seven long program names that must stay ordinary).

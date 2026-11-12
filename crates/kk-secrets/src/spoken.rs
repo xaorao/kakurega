@@ -216,7 +216,25 @@ fn random_token(t: &str) -> bool {
     let up = t.chars().filter(char::is_ascii_uppercase).count();
     let low = t.chars().filter(char::is_ascii_lowercase).count();
     let dig = t.chars().filter(char::is_ascii_digit).count();
-    up >= 3 && low >= 3 && dig >= 2
+    if up >= 3 && low >= 3 && dig >= 2 {
+        return true;
+    }
+    // about one random token in forty has fewer than two digits. It still does not read like a name made of words:
+    // capitals and small letters change places all the time and capitals stand next to each other, which a name such as
+    // AbstractSingletonProxyFactoryBean or HTTPSConnectionPoolManagerXMLParser does not do
+    let letters: Vec<char> = t.chars().collect();
+    let pairs = || letters.windows(2);
+    let switches = pairs()
+        .filter(|w| {
+            w[0].is_ascii_alphabetic()
+                && w[1].is_ascii_alphabetic()
+                && w[0].is_ascii_uppercase() != w[1].is_ascii_uppercase()
+        })
+        .count();
+    let capitals_together = pairs()
+        .filter(|w| w[0].is_ascii_uppercase() && w[1].is_ascii_uppercase())
+        .count();
+    up >= 6 && low >= 6 && switches >= 10 && capitals_together >= 3
 }
 
 /// The byte ranges of the values in this text that read like a secret someone wrote or said.
@@ -615,6 +633,32 @@ mod tests {
             ("the password is 48213377", "48213377"),
         ] {
             assert_eq!(values(text), [value], "{text}");
+        }
+    }
+
+    #[test]
+    fn sp08_a_random_token_with_one_digit_or_none_is_still_found_and_long_names_are_not() {
+        for token in [
+            "SuYYpQMHbqvmvtPCgJynGvYs0gNTkqXI",
+            "YgtGKheKpiQfGGtswXppLADdnLCkJgDi",
+        ] {
+            assert_eq!(values(&format!("it is {token} for now")), [token]);
+        }
+        // about one in seven hundred still gets through: mostly small letters, capitals never together
+        assert!(values("it is qvnVlndViItRnlwgjjxwlBbazGdzgu8I for now").is_empty());
+        for name in [
+            "AbstractSingletonProxyFactoryBean",
+            "HTTPSConnectionPoolManagerXMLParser",
+            "InternationalizationServiceProviderImpl",
+            "getUserAccountSettingsByIdentifierAsync",
+            "thisisalonglowercasewordwithoutanycapitals",
+            "URLSessionConfigurationBackgroundTask",
+            "NSAttributedStringDocumentReadingOptionKey",
+        ] {
+            assert!(
+                values(&format!("see {name} in the code")).is_empty(),
+                "{name}"
+            );
         }
     }
 }
