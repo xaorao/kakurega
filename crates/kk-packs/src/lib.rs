@@ -46,6 +46,19 @@ const ENV_NEVER: &[&str] = &[
     "TERMINFO",
     "CURL_CA_BUNDLE",
     "REQUESTS_CA_BUNDLE",
+    "GOFLAGS",
+    "GOPROXY",
+    "GOPATH",
+    "GOROOT",
+    "GOBIN",
+    "GOENV",
+    "GOPRIVATE",
+    "GONOPROXY",
+    "GONOSUMDB",
+    "GOSUMDB",
+    "GOINSECURE",
+    "GOTOOLCHAIN",
+    "KUBECONFIG",
     "HTTP_PROXY",
     "HTTPS_PROXY",
     "ALL_PROXY",
@@ -53,9 +66,59 @@ const ENV_NEVER: &[&str] = &[
     "FTP_PROXY",
 ];
 const ENV_NEVER_PREFIX: &[&str] = &[
-    "LD_", "DYLD_", "PYTHON", "NODE_", "NPM_", "YARN_", "PNPM_", "DENO_", "BUN_", "JAVA_", "JDK_",
-    "_JAVA", "GIT_", "SSL_", "SSH_", "OPENSSL_", "LUA_", "PERL", "RUBY", "GEM_", "BUNDLE_",
-    "CARGO_", "RUSTC", "RUSTUP_", "GO", "PHP", "XDG_", "MALLOC_", "LC_", "DOTNET_", "COMPlus_",
+    "LD_",
+    "DYLD_",
+    "PYTHON",
+    "NODE_",
+    "NPM_",
+    "YARN_",
+    "PNPM_",
+    "DENO_",
+    "BUN_",
+    "JAVA_",
+    "JDK_",
+    "_JAVA",
+    "GIT_",
+    "SSL_",
+    "SSH_",
+    "OPENSSL_",
+    "LUA_",
+    "PERL",
+    "RUBY",
+    "GEM_",
+    "BUNDLE_",
+    "CARGO_",
+    "RUSTC",
+    "RUSTUP_",
+    "PHP",
+    "XDG_",
+    "MALLOC_",
+    "LC_",
+    "DOTNET_",
+    "COMPlus_",
+    "DOCKER_",
+    "ELECTRON_",
+    "UV_",
+    "PIP_",
+    "CONDA_",
+    "SSLKEYLOG",
+    "CURL_",
+    "REQUESTS_",
+];
+/// Endings of names that say where a program connects or whom it trusts (`OPENAI_BASE_URL`, `AWS_ENDPOINT_URL`,
+/// `AWS_CA_BUNDLE`): the value would send the owner's key, or the program's traffic, somewhere else.
+const ENV_NEVER_SUFFIX: &[&str] = &[
+    "_BASE_URL",
+    "_API_BASE",
+    "_ENDPOINT",
+    "_ENDPOINT_URL",
+    "_CA_BUNDLE",
+    "_CA_CERT",
+    "_CA_FILE",
+    "_CERT_FILE",
+    "_PROXY",
+    "_INDEX_URL",
+    "_REGISTRY",
 ];
 /// Programs that only start another program, or a shell: named as the program, the card would not say what really runs.
 const LAUNCHERS: &[&str] = &[
@@ -226,12 +289,17 @@ fn plain_text(s: &str, max: usize) -> bool {
 /// Whether a suggested program and its arguments say plainly what runs: not a launcher or a shell, and not an interpreter
 /// told to run code written in the arguments.
 fn says_what_runs(program: &str, args: &[String]) -> bool {
-    let base = program.rsplit('/').next().unwrap_or(program);
+    // file names are compared without letter case: on a disk that ignores case `/usr/bin/ENV` is `/usr/bin/env`
+    let base = program
+        .rsplit('/')
+        .next()
+        .unwrap_or(program)
+        .to_ascii_lowercase();
     let stem = base.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
-    if LAUNCHERS.contains(&base) || LAUNCHERS.contains(&stem) {
+    if LAUNCHERS.contains(&base.as_str()) || LAUNCHERS.contains(&stem) {
         return false;
     }
-    if INTERPRETERS.contains(&stem) {
+    if INTERPRETERS.iter().any(|i| i.eq_ignore_ascii_case(stem)) {
         return !args.iter().any(|a| {
             INLINE_CODE.contains(&a.as_str())
                 || INLINE_CODE
@@ -255,6 +323,7 @@ fn env_name_ok(n: &str) -> bool {
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
         && !ENV_NEVER.contains(&n)
         && !ENV_NEVER_PREFIX.iter().any(|p| n.starts_with(p))
+        && !ENV_NEVER_SUFFIX.iter().any(|x| n.ends_with(x))
 }
 
 fn parse_servers(v: Option<&Value>) -> Result<Vec<SuggestedServer>, Refusal> {

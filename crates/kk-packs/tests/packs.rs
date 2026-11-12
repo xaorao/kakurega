@@ -465,6 +465,20 @@ fn pk13_a_suggestion_must_name_what_really_runs_and_show_nothing_hidden() {
         json!([{"name": "x", "program": "/usr/bin/x", "why": "safe\u{202e}txt.exe"}]),
         json!([{"name": "x", "program": "/usr/bin/x", "args": ["--ok\u{200b}"]}]),
         json!([{"name": "x", "program": "/usr/bin/x\u{2066}"}]),
+        // the same launcher or interpreter in another letter case
+        json!([{"name": "x", "program": "/usr/bin/ENV", "args": ["--version"]}]),
+        json!([{"name": "x", "program": "/BIN/SH", "args": ["-c", "id"]}]),
+        json!([{"name": "x", "program": "/usr/bin/Python3", "args": ["-c", "print(1)"]}]),
+        // names that say where a program connects or whom it trusts
+        json!([{"name": "x", "program": "/usr/bin/x", "env": ["DOCKER_HOST"]}]),
+        json!([{"name": "x", "program": "/usr/bin/x", "env": ["OPENAI_BASE_URL"]}]),
+        json!([{"name": "x", "program": "/usr/bin/x", "env": ["AWS_ENDPOINT_URL"]}]),
+        json!([{"name": "x", "program": "/usr/bin/x", "env": ["AWS_CA_BUNDLE"]}]),
+        json!([{"name": "x", "program": "/usr/bin/x", "env": ["SSLKEYLOGFILE"]}]),
+        json!([{"name": "x", "program": "/usr/bin/x", "env": ["ELECTRON_RUN_AS_NODE"]}]),
+        json!([{"name": "x", "program": "/usr/bin/x", "env": ["UV_INDEX_URL"]}]),
+        json!([{"name": "x", "program": "/usr/bin/x", "env": ["PIP_INDEX_URL"]}]),
+        json!([{"name": "x", "program": "/usr/bin/x", "env": ["GOPROXY"]}]),
     ] {
         assert!(refused(bad.clone()), "{bad}");
     }
@@ -474,6 +488,8 @@ fn pk13_a_suggestion_must_name_what_really_runs_and_show_nothing_hidden() {
         json!([{"name": "fetch", "program": "/opt/homebrew/bin/uvx", "args": ["mcp-server-fetch"]}]),
         json!([{"name": "mine", "program": "/usr/bin/python3", "args": ["-I", "-m", "my_server", "--port", "0"], "env": ["MY_SERVER_API_KEY", "AWS_REGION"]}]),
         json!([{"name": "srv", "program": "/usr/local/bin/node", "args": ["/srv/server.js", "-Wignore"]}]),
+        // a Google tool server's key is a key, not a Go setting
+        json!([{"name": "maps", "program": "/usr/local/bin/npx", "args": ["-y", "@modelcontextprotocol/server-google-maps"], "env": ["GOOGLE_MAPS_API_KEY", "GOOGLE_API_KEY"]}]),
     ] {
         assert!(!refused(good.clone()), "{good}");
     }

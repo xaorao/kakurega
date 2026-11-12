@@ -118,15 +118,33 @@ function softwareSigner() {
 }
 
 async function waitForAdmin() {
+  let other = null;
   for (let i = 0; i < 100; i++) {
     try {
       const admin = await readAdmin(dataDir);
-      const r = await fetch(admin.base + "/api/session", { headers: shellSecret ? { [SHELL_HEADER]: shellSecret } : {} });
-      if (r.ok) return admin;
+      // only the service this app started: an admin.json left by a service that crashed, or written by one started from a
+      // terminal on the same data folder, names another process, and its port may now be anyone's
+      if (child && admin.pid === child.pid) {
+        const r = await fetch(admin.base + "/api/session", { headers: shellSecret ? { [SHELL_HEADER]: shellSecret } : {} });
+        if (r.ok) return admin;
+      } else if (admin.pid !== null && admin.pid !== child?.pid) {
+        other = admin.pid;
+      }
     } catch {}
+    if (child && child.exitCode !== null) break;
     await sleep(100);
   }
+  if (other !== null && processAlive(other)) throw new Error(t("error.otherService", { pid: other }));
   throw new Error("the Kakurega companion did not start");
+}
+
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e?.code === "EPERM";
+  }
 }
 
 async function authenticate(reason) {
@@ -171,6 +189,11 @@ function launchCompanion() {
   const mine = child;
   mine.on("exit", () => {
     if (app.isQuitting || child !== mine) return;
+    // from now until a new service is connected nothing goes to the old address: not a picture, not the key
+    state.stopped = true;
+    current = null;
+    syncShortcut();
+    refreshTray();
     const d = companionPolicy.next();
     if (!d.restart) {
       state.stopped = true;
@@ -190,6 +213,9 @@ function launchCompanion() {
         }
         launchCompanion();
         await connect();
+        state.stopped = false;
+        syncShortcut();
+        refreshTray();
         await window?.loadURL(`${current.admin.origin}/#pair=${current.code}`);
         tell(t("notice.restarted.title"), t("notice.restarted.body"));
       } catch (e) {
@@ -302,7 +328,14 @@ async function openPreview(png) {
 }
 
 /** Shows the picture and asks with a native dialog on its window. */
+let captureRelease = null;
 async function confirmPicture(png) {
+  // a test may hold the answer until it lets it go, as an owner who reads the picture for a while
+  if (captureTestAnswer === "wait") {
+    await new Promise((resolve) => (captureRelease = resolve));
+    captureRelease = null;
+    return captureTestAnswer === true;
+  }
   if (captureTestAnswer !== null) return captureTestAnswer;
   const { preview, close } = await openPreview(png);
   try {
@@ -331,14 +364,20 @@ const captureScreen = createCapture({
     return got;
   },
   confirm: confirmPicture,
-  upload: (name, png) => adminClient(current.admin).postBytes(`/admin/attachments?name=${encodeURIComponent(name)}`, png),
+  // only to the service that was running when the picture was taken, and only if it still runs
+  upload: (name, png) =>
+    !current || state.stopped || current !== captureTarget
+      ? Promise.resolve({ status: 0 })
+      : adminClient(current.admin).postBytes(`/admin/attachments?name=${encodeURIComponent(name)}`, png),
   open: (hash) => showWindow(hash),
 });
 let lastCapture = null;
+let captureTarget = null;
 
 async function runCapture() {
   // a stopped service may have been one whose program changed: nothing goes to the address it had
   if (!current || state.stopped) return;
+  captureTarget = current;
   let r;
   try {
     r = await captureScreen();
@@ -585,6 +624,33 @@ if (!runsFromAsar) {
       state.stopped = on;
       lastCapture = null;
       refreshTray();
+    },
+    // the service this app started stops, as it would by itself; the app reconnects as it does after any exit
+    killService: () => child?.kill("SIGKILL"),
+    connected: () => !!current && !state.stopped,
+    // a capture whose answer comes after the service stopped: the picture is not sent
+    captureAcrossStop: async () => {
+      const before = captureTestAnswer;
+      const oldPort = Number(new URL(current.admin.base).port);
+      captureTestAnswer = "wait";
+      const pending = runCapture();
+      await sleep(50);
+      child?.kill("SIGKILL");
+      while (!state.stopped) await sleep(20);
+      // something else now answers on the old address: it must hear nothing
+      const { createServer } = await import("node:http");
+      let heard = 0;
+      const stranger = createServer((req, res) => {
+        heard += 1;
+        res.writeHead(201, { "content-type": "application/json" });
+        res.end(JSON.stringify({ id: "att-000000000000" }));
+      });
+      await new Promise((resolve) => stranger.listen(oldPort, "127.0.0.1", resolve).on("error", resolve));
+      captureTestAnswer = before;
+      captureRelease?.();
+      await pending;
+      await new Promise((resolve) => stranger.close(resolve));
+      return { ...lastCapture, heard };
     },
     shortcut: () => ({ keys: CAPTURE_SHORTCUT, registered: globalShortcut.isRegistered(CAPTURE_SHORTCUT), shown: state.shortcut }),
     // opens the preview of this picture with no dialog, says whether the picture is really drawn in it, and closes it

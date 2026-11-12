@@ -4,7 +4,7 @@ import { join } from "node:path";
 export async function readAdmin(dataDir) {
   const raw = JSON.parse(await readFile(join(dataDir, "admin.json"), "utf8"));
   if (!Number.isInteger(raw.port) || typeof raw.token !== "string" || !raw.token) throw new Error("damaged admin.json");
-  return { base: `http://127.0.0.1:${raw.port}`, origin: `http://127.0.0.1:${raw.port}`, token: raw.token };
+  return { base: `http://127.0.0.1:${raw.port}`, origin: `http://127.0.0.1:${raw.port}`, token: raw.token, pid: Number.isInteger(raw.pid) ? raw.pid : null };
 }
 
 export function adminClient(admin, fetchImpl = fetch) {

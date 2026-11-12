@@ -257,6 +257,21 @@ try {
   });
   check("after the window crashes the menu-bar item is still there, still reads the inbox, and still opens the inbox screen", afterCrash.tray && afterCrash.polled?.count >= 1 && afterCrash.hash === "#/inbox" && afterCrash.inbox, JSON.stringify(afterCrash));
 
+  // the service stops while a picture waits for the owner's answer: the picture is not sent anywhere, and the app is
+  // connected again to the new service it starts
+  await shell(app, async () => {
+    const png = (await globalThis.kakuregaShell.window().webContents.capturePage()).toPNG();
+    globalThis.kakuregaShell.setCapture(png, true);
+  });
+  const across = await shell(app, () => globalThis.kakuregaShell.captureAcrossStop());
+  let reconnected = false;
+  for (let i = 0; i < 120 && !reconnected; i++) {
+    await sleep(250);
+    reconnected = await shell(app, () => globalThis.kakuregaShell.connected());
+  }
+  const keyBack = await shell(app, () => globalThis.kakuregaShell.shortcut());
+  check("a picture answered after the service stopped is not sent, and the app reconnects to the service it starts again", across?.outcome === "refused" && across?.heard === 0 && reconnected && keyBack.registered === true, JSON.stringify({ across, reconnected, keyBack }));
+
   // Quit in the menu ends the app and its companion
   const pid = app.process().pid;
   await clickMenu(app, "quit").catch(() => {});

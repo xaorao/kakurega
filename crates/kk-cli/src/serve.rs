@@ -185,7 +185,8 @@ fn serve(args: &[String]) -> Result<(), String> {
         ..Options::default()
     })
     .map_err(|e| e.to_string())?;
-    let admin = serde_json::json!({"port": companion.addr.port(), "token": companion.security.admin_token()});
+    // the process that wrote it is named, so a shell that started this service can tell it from another one or a stale file
+    let admin = serde_json::json!({"port": companion.addr.port(), "token": companion.security.admin_token(), "pid": std::process::id()});
     let admin_path = data.join("admin.json");
     {
         use std::io::Write;
