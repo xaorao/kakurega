@@ -243,9 +243,12 @@ impl Chain {
     /// What the registry recorded about a model signing key's hardware quote, or `None`.
     pub async fn hardware(&self, signer: &str) -> Result<Option<Value>, ChainError> {
         if !is_hex(signer, 64) {
-            return Err(ChainError::Input(
-                "a signing key is 64 lowercase hex digits".into(),
-            ));
+            // an Ethereum-style address is the ECDSA form of a key, which the registry does not record
+            return Err(ChainError::Input(if signer.starts_with("0x") {
+                "that is an Ethereum-style address (an ECDSA key); the registry records the Ed25519 key that signs the model's answers: 64 lowercase hex digits, as the hardware panel in Chat shows it".into()
+            } else {
+                "a signing key is 64 lowercase hex digits (the Ed25519 key that signs the model's answers)".into()
+            }));
         }
         let v = self.view("hardware", json!({"signer": signer})).await?;
         Ok((!v.is_null()).then_some(v))

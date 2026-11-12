@@ -2,7 +2,8 @@ use nearai_inference_sdk::{
     verify_gateway_attestation, verify_model_attestation, AttestationClient, AttestationPolicy,
     AttestationVerifiers, DefaultTdxQuoteVerifier, GatewayAttestationFetchOptions,
     GatewayTlsBinding, GpuEvidenceRequirement, GpuEvidenceStatus, ModelAttestationPolicy,
-    ModelAttestationVerifiers, NrasGpuEvidenceVerifier, TcbStatus, VerifiedModelAttestation,
+    ModelAttestationVerifiers, NrasGpuEvidenceVerifier, SigningAlgo, TcbStatus,
+    VerifiedModelAttestation,
 };
 use std::fmt;
 
@@ -130,8 +131,10 @@ pub async fn attest_model(
     policy: &NearPolicy,
 ) -> Result<Vec<RouteAttestation>, NearError> {
     let client = AttestationClient::new(None);
+    // asked for the Ed25519 key, the one the answering route has answers signed with: the key shown is then the key that
+    // signs answers, and the one the NEAR registry records
     let fetched = client
-        .fetch_model_attestations(model, None, None)
+        .fetch_model_attestations(model, Some(SigningAlgo::Ed25519), None)
         .await
         .map_err(|e| NearError::Fetch(format!("{e:?}")))?;
     if fetched.attestations.is_empty() {

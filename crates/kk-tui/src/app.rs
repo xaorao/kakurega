@@ -7094,10 +7094,17 @@ impl App {
                             "GPU evidence not verified".to_string()
                         });
                     }
-                    lines.push(format!(
-                        "Answer-signing key: {}",
-                        clean(d["signer"].as_str().unwrap_or("?"))
-                    ));
+                    let signer = clean(d["signer"].as_str().unwrap_or("?"));
+                    if gateway {
+                        lines.push(format!("The gateway's own attestation key: {signer}"));
+                    } else {
+                        lines.push(format!(
+                            "Key that signs the model's answers (Ed25519): {signer}"
+                        ));
+                        if signer.len() == 64 && signer.chars().all(|c| c.is_ascii_hexdigit()) {
+                            lines.push(format!("Whether NEAR recorded its hardware quote: kaku chain hardware {signer}"));
+                        }
+                    }
                     lines.push(format!(
                         "Fresh challenge: {}",
                         clean(d["nonce"].as_str().unwrap_or("?"))

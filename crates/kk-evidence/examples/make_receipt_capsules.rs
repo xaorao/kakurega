@@ -39,21 +39,24 @@ fn main() {
         evidence: vec!["finding.md".into()],
         how_to_check: "Read finding.md".into(),
     };
-    let spec = |receipts: Vec<ReceiptSpec>| ReleaseSpec {
+    let spec = |receipts: Vec<ReceiptSpec>| {
+        ReleaseSpec {
         capsule_id: "00112233445566778899aabbccddeeff".into(),
         created: now,
         expires: now + 365 * 86_400,
-        recipient: "acme-audit".into(),
+        recipient: "example-recipient".into(),
         policy_version: "policy-1".into(),
         binding_level: "B1".into(),
-        route: "verified_tee".into(),
+        route: "example".into(),
         not_established: vec![
+            "That any review took place: this is an example made by scripts/judge-replay, signed with made-up keys, and its two model answers were made up too. It shows how the check works.".into(),
             "That the private source repository is the one that was reviewed.".into(),
         ],
         route_receipts: receipts,
         source_commitment_scheme: "hmac-sha256-keyed".into(),
         source_commitment_digest: sha256_hex(b"manifest"),
         source_manifest_files: 3,
+    }
     };
     let two = vec![
         receipt(7, "chat-1", b"request one", b"answer one"),

@@ -10,10 +10,10 @@ cargo build -q -p kk-cli
 cargo run -q -p kk-evidence --example make_receipt_capsules -- "$out"
 (cd apps/verifier-page && node build.mjs)
 kaku=target/debug/kaku
-echo "== a good capsule with two model signatures"
+echo "== an EXAMPLE capsule this script just made with made-up keys and made-up model answers (it shows the check, not a real review)"
 "$kaku" verify "$out/two.kkg"
 echo
-echo "== the same capsule with one model receipt altered after signing (must be refused)"
+echo "== the same example with one model receipt altered after signing (must be refused)"
 if "$kaku" verify "$out/forged.kkg"; then
   echo "FAILED: the forged capsule was accepted" >&2
   exit 1

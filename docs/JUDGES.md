@@ -29,7 +29,7 @@ scripts/judge-replay
 Expected, in order:
 - `Recorded at kakurega-registry-5d26f9.testnet on NEAR testnet:` then the key, `NEAR's verifier checked its Intel TDX quote against Intel's collateral on 2026-11-11 08:41:42 UTC`, `Intel patch level then: UpToDate`, and a list headed `This does not establish:`.
 - `Signature: checks against the pinned key.` then `known shapes: 126 cases. … leaked 0.` and `beyond the detector: 42 cases. … leaked 10.` with each leak named. The leaks are real and listed on purpose: they are passwords and PINs written with no word saying what they are.
-- A capsule accepted with a list headed `Not established:`, then the same capsule with one receipt altered: `INVALID: receipt_signature`, then `Both results are as expected.` It prints the path of a one-file page to open from disk; drop either capsule on it.
+- An example capsule the script makes on the spot, with made-up keys and made-up model answers, for the route `example`: accepted, with a list headed `Not established:` whose first line says it is an example. Then the same capsule with one receipt altered: `INVALID: receipt_signature`, then `Both results are as expected.` It prints the path of a one-file page to open from disk; drop either capsule on it. A capsule from a real review is made by `kaku` and checked the same way.
 
 ## 10 minutes: is the contract on NEAR the code in this repository?
 
