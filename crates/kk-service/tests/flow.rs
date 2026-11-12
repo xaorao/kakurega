@@ -23440,10 +23440,21 @@ fn sv275_a_question_about_a_project_is_answered_with_its_places_checked_and_the_
         ),
         (Some(id.as_str()), Some(1))
     );
-    // kept across a restart
+    // kept across a restart: the store is reopened once the first service has let it go
+    drop(w);
     drop(c);
     drop(svc);
-    let svc = Service::new(&root.join("data"), vec![root.clone()], runner.clone(), true).unwrap();
+    let waited = std::time::Instant::now();
+    let svc = loop {
+        match Service::new(&root.join("data"), vec![root.clone()], runner.clone(), true) {
+            Ok(s) => break s,
+            Err(e) if waited.elapsed() < Duration::from_secs(10) => {
+                let _ = e;
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => panic!("the store was not let go: {e}"),
+        }
+    };
     let c = start(Options {
         extension: Arc::new(Routes(svc.clone())),
         ..Options::default()
