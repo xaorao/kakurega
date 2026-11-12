@@ -771,8 +771,6 @@ export function Memory() {
           <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
         </div>
       </form>
-      <ImportNotes onDone={() => void refetch()} />
-      <NotesBackup onDone={() => void refetch()} />
       <Suggestions jobId="browser" heading="sug.browser.heading" lead="sug.browser.lead" onChange={() => void refetch()} />
       <div>
         <label class="sr" for="mem-search">{t("mem.search")}</label>
@@ -808,17 +806,20 @@ export function Memory() {
           <Show when={filtering()}><button type="button" onClick={() => { setFLevel(""); setFOrigin(""); setFProject(""); setFUnused(false); setFEnding(false); }}>{t("mem.filter.reset")}</button></Show>
         </div>
       </section>
+      <ul class="plain stack">
+        <For each={items()} fallback={<li class="muted">{items.loading ? t("review.loading") : query().trim() || filtering() ? t("mem.nomatch") : t("mem.none")}</li>}>
+          {(m) => <Item m={m} pinned={pinned()?.has(m.id)} onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />}
+        </For>
+      </ul>
+      {/* the notes come first; looking after them (duplicates, disagreements, what was put away, bringing notes in, backups) comes after */}
       <Similar onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />
       <Disagreements onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <Merged onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <Quiet onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
       <Archived onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />
       <ReviewSources onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
-      <ul class="plain stack">
-        <For each={items()} fallback={<li class="muted">{items.loading ? t("review.loading") : query().trim() || filtering() ? t("mem.nomatch") : t("mem.none")}</li>}>
-          {(m) => <Item m={m} pinned={pinned()?.has(m.id)} onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />}
-        </For>
-      </ul>
+      <ImportNotes onDone={() => void refetch()} />
+      <NotesBackup onDone={() => void refetch()} />
     </section>
   );
 }

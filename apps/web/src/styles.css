@@ -454,3 +454,7 @@ details.stack:not([open]) { display: block; }
 @media (prefers-reduced-motion: reduce) { details > summary::before { transition: none; } }
 /* settings in one card are told apart: a hairline and room between one setting and the next */
 .settings-list > li + li { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 10px; }
+/* every summary is a row, so its arrow sits beside its words, never on them; a heading inside one keeps its own size */
+details > summary { display: flex; align-items: center; gap: 10px; }
+details > summary::before { margin-right: 0; margin-left: 2px; }
+details > summary > h3, details > summary > h2 { margin: 0; }

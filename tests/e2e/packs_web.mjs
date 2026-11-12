@@ -57,6 +57,9 @@ await page.goto(link);
 await page.waitForSelector("nav");
 await page.goto(origin + "/#/skills");
 await page.getByRole("heading", { name: "Method packs" }).waitFor();
+// packs sit in a fold at the end of the methods; it is opened to work with them
+check(!(await page.locator("#packs-fold").evaluate((d) => d.open)), "the packs section is folded until someone wants it");
+await page.locator("#packs-fold > summary").click();
 check(await page.getByText("No publisher is pinned yet, so no pack can be imported.").isVisible(), "a new install trusts no publisher and says so");
 await importPack(good);
 await page.getByRole("alert").filter({ hasText: /not signed by a publisher you trust/ }).waitFor();

@@ -131,8 +131,8 @@ function Packs(props: { onChanged: (message: string) => void }) {
     });
   };
   return (
-    <section class="card stack" aria-labelledby="h-pack">
-      <h3 id="h-pack">{t("pack.heading")}</h3>
+    <details class="card stack" id="packs-fold" aria-labelledby="h-pack">
+      <summary><h3 id="h-pack">{t("pack.heading")}</h3></summary>
       <p class="muted">{t("pack.lead")}</p>
       <h4>{t("pack.publishers")}</h4>
       <Show when={(data()?.publishers ?? []).length === 0}><p class="muted">{t("pack.noPublishers")}</p></Show>
@@ -189,7 +189,7 @@ function Packs(props: { onChanged: (message: string) => void }) {
         <p class="muted">{t("pack.imported.list")}: {(data()?.imported ?? []).map((i) => `${i.name} ${i.version}`).join(", ")}</p>
       </Show>
       <Show when={problem()}><span role="alert" class="bad">{problem()}</span></Show>
-    </section>
+    </details>
   );
 }
 
@@ -294,7 +294,6 @@ export function Methods() {
       <p class="muted">{t("met.limits")}</p>
       <Show when={status()}><p role="status" class="ok">{status()}</p></Show>
       <Proposals onChanged={changed} />
-      <Packs onChanged={changed} />
       <Show when={data()} fallback={<LoadState loading={data.loading} retry={() => void refetch()} />}>
         {(d) => (
           <>
@@ -303,6 +302,8 @@ export function Methods() {
             <Show when={(d().bundled ?? []).length > 0}><Bundled list={d().bundled ?? []} onChanged={changed} /></Show>
             <h3>{t("met.new")}</h3>
             <Form onDone={changed} />
+            {/* packs from publishers come last and folded: most people write their own or take one from the shelf */}
+            <Packs onChanged={changed} />
           </>
         )}
       </Show>

@@ -317,3 +317,9 @@ Performance of Solid with long streaming transcripts at our scale; accessibility
   - Settings ran one setting into the next; a hairline and room now separate them.
   - The last "(s)" sentences are reworded ("Uses left: 2. Minutes remaining: 30.", "1 withheld file", "2 defects the sandbox reproduced").
   Evidence: `run.mjs` 512, `readiness.mjs`, `team_web.mjs`, `projects_web.mjs`; the screen matrix (19 routes, quick pass) flags nothing; screenshots read by me after each change.
+- Polish, second round (memory, skills, activity read by eye):
+  - Memory showed its notes after six folds of upkeep. The notes now follow the search and the glance; duplicates, disagreements, what was put away, imports and backups come after.
+  - Skills opened with publisher packs, which few people use. Your own methods, the shelf and the new-method form come first; packs and the catalog are one fold at the end.
+  - A fold's arrow sat on its words where the summary was not a row; every summary is a row with a gap now.
+  - Activity showed raw names for many entries (`session.kept`). All 120 kinds the service writes now have a plain label in both languages, and `scripts/check_log_labels.py` (run by `scripts/test` and the fast check) fails when a new kind has none: it found 75 on its first run.
+  Evidence: `run.mjs` 512, `packs_web.mjs` 16, `bundled_web.mjs` 9, `team_web.mjs` 37.
