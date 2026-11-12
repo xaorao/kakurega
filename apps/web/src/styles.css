@@ -458,3 +458,9 @@ details.stack:not([open]) { display: block; }
 details > summary { display: flex; align-items: center; gap: 10px; }
 details > summary::before { margin-right: 0; margin-left: 2px; }
 details > summary > h3, details > summary > h2 { margin: 0; }
+/* On a phone the top of the page is kept short so the work is in view: the one badge that says where the model runs
+   stays; the sandbox, approval and model-name badges are on "Where your data goes". A phone has nothing to drop. */
+@media (max-width: 640px) {
+  .badges .badge:not(.ok):not(.warn) { display: none; }
+  .attach .actions > .muted { display: none; }
+}
