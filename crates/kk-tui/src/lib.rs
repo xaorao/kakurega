@@ -8,6 +8,7 @@ pub mod linear;
 pub mod markdown;
 pub mod picker;
 pub mod project;
+pub mod prompt_vars;
 pub mod run;
 pub mod settings;
 pub mod ui;

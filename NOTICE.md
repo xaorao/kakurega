@@ -78,3 +78,5 @@ GitHub connector (`crates/kk-cli/src/github.rs`, `crates/kk-service/src/service/
 
 Recovery-phrase word list (`crates/kk-secrets/src/bip39_english.txt`): the English word list of BIP-39 (MIT; Palatinus, Rusnak, Voisine, Bowe), copied unchanged from `bitcoin/bips` `bip-0039/english.txt` (SHA-256 2f5eed53a4727b4bf8880d8f3f199efc90e58503646d9ff8eff3a2ed3b24dbda). The checksum check in `crates/kk-secrets/src/lib.rs` is written here from the BIP's text.
 
+Fields in saved prompts (`apps/web/src/promptVars.ts`, `crates/kk-tui/src/prompt_vars.rs`): the `{{name}}` and `{{name:one|two}}` notation and the idea of asking for each field before use follow LibreChat (MIT, LibreChat) `client/src/utils/prompts.ts` and `VariableForm.tsx` (commit f4154b6); the code was written here.
+

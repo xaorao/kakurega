@@ -8461,3 +8461,74 @@ fn tu_mh01_a_skills_earlier_texts_are_listed_by_number_and_one_is_brought_back_b
     );
     assert!(enter(&mut app, "/method restore contract-check x").is_empty());
 }
+
+#[test]
+fn tu_pr01_a_saved_prompt_goes_into_the_message_line_only_with_every_field_filled() {
+    use kk_tui::prompt_vars::{fields, fill, pairs};
+    // the same rules as the web page's
+    let letter = "Write to {{client}} in a {{tone:formal|casual|very: polite}} tone about {{client}}. Dated {{current_date}}.";
+    let fs = fields(letter);
+    assert_eq!(
+        fs.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
+        ["client", "tone"]
+    );
+    assert_eq!(fs[1].options, ["formal", "casual", "very: polite"]);
+    let v = pairs(r#"client="Acme Ltd" tone=formal"#).unwrap();
+    // 2026-01-05 00:00:00 UTC
+    assert_eq!(
+        fill(letter, &v, 1_767_571_200).unwrap(),
+        "Write to Acme Ltd in a formal tone about Acme Ltd. Dated 2026-01-05."
+    );
+    assert_eq!(
+        fill(letter, &pairs("client=Acme").unwrap(), 0),
+        Err(vec!["tone".to_string()])
+    );
+    assert!(pairs("client").is_err() && pairs(r#"client="open"#).is_err());
+
+    let mut app = booted();
+    let list = json!({"prompts": [{"name": "Client letter", "text": letter, "added_at": 1}, {"name": "weekly", "text": "Summarise this week.", "added_at": 2}]});
+    let r = enter(&mut app, "/prompts");
+    app.handle(ok(&r[0], 200, list.clone()));
+    let t = text(&app);
+    assert!(
+        t.contains("Client letter")
+            && t.contains("(asks for: client, tone [formal|casual|very: polite])"),
+        "{t}"
+    );
+    // a field left out is named, and the message line stays as it was
+    let r = enter(&mut app, r#"/prompt "Client letter" client=Acme"#);
+    assert_eq!(r[0].path, "/api/prompts");
+    app.handle(ok(&r[0], 200, list.clone()));
+    assert!(
+        text(&app)
+            .contains("Client letter asks for tone. Give it as /prompt \"Client letter\" tone=..."),
+        "{}",
+        text(&app)
+    );
+    assert_eq!(app.input, "");
+    let r = enter(
+        &mut app,
+        r#"/prompt "Client letter" client=Acme tone=casual"#,
+    );
+    app.handle(ok(&r[0], 200, list.clone()));
+    assert!(
+        app.input
+            .starts_with("Write to Acme in a casual tone about Acme. Dated "),
+        "{}",
+        app.input
+    );
+    assert!(!app.input.contains("{{"));
+    // a prompt with no fields goes in as it is; saving and removing go to the service
+    app.input.clear();
+    let r = enter(&mut app, "/prompt weekly");
+    app.handle(ok(&r[0], 200, list));
+    assert_eq!(app.input, "Summarise this week.");
+    app.input.clear();
+    let r = enter(&mut app, "/prompt save standup : What did I do yesterday?");
+    assert_eq!(
+        (r[0].path.as_str(), &r[0].body.as_ref().unwrap()["name"]),
+        ("/api/prompts", &json!("standup"))
+    );
+    let r = enter(&mut app, "/prompt remove standup");
+    assert_eq!(r[0].body.as_ref().unwrap()["remove"], "standup");
+}

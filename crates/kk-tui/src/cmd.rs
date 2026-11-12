@@ -176,6 +176,14 @@ pub enum Command {
     },
     /// `/explore show [ID]`: the last (or named) question and its answer.
     ExploreShow(Option<String>),
+    /// `/prompts`: the saved prompts and the fields each asks for.
+    Prompts,
+    /// `/prompt NAME [field=value ...]`: the saved prompt, its fields filled, put into the message line to read and send.
+    PromptUse(String, String),
+    /// `/prompt save NAME : TEXT`.
+    PromptSave(String, String),
+    /// `/prompt remove NAME`.
+    PromptRemove(String),
     /// `/model`: the models installed on this computer; `/model NAME`: answer with that one from now on.
     Model(Option<String>),
     /// Branch the open kept conversation, keeping its first N messages (all when none is given).
@@ -251,6 +259,8 @@ pub const NAMES: &[&str] = &[
     "ask",
     "code",
     "explore",
+    "prompts",
+    "prompt",
     "aside",
     "roundtable",
     "team",
@@ -326,6 +336,10 @@ pub fn describe(name: &str) -> &'static str {
         "code" => "have a local model change a project; you read the patch before anything changes",
         "explore" => {
             "ask a question about a project's code; every line the answer rests on is checked"
+        }
+        "prompts" => "your saved prompts and the fields each asks for",
+        "prompt" => {
+            "put a saved prompt into the message line, its fields filled; or save or remove one"
         }
         "aside" => "ask something that stays out of the conversation and is not saved",
         "roundtable" => "ask 2 to 5 experts one question, each alone; a lead says what to do",
@@ -442,6 +456,8 @@ pub fn usage(name: &str) -> &'static str {
         "ask" => "/ask FOLDER : QUESTION",
         "code" => "/code FOLDER : TASK | /code show|apply|undo [ID]",
         "explore" => "/explore [quick|thorough] FOLDER : QUESTION | /explore show [ID]",
+        "prompts" => "/prompts",
+        "prompt" => "/prompt NAME [field=value ...] | /prompt save NAME : TEXT | /prompt remove NAME",
         "aside" => "/aside QUESTION",
         "roundtable" => "/roundtable EXPERT,EXPERT[,EXPERT] : QUESTION   (alone, it lists the experts)",
         "team" => "/team plan GOAL | /team start|stop|show [ID] | /team answer TASK TEXT | /team delete ID   (alone, it lists your runs)",
@@ -546,6 +562,33 @@ pub fn parse(line: &str) -> Result<Command, String> {
                     }
                     _ => Err(format!("usage: {}", usage("code"))),
                 },
+            }
+        }
+        "prompts" if rest.is_empty() => Ok(Command::Prompts),
+        "prompt" => {
+            let (first, tail) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+            let tail = tail.trim();
+            match first {
+                "" => Err(format!("usage: {}", usage("prompt"))),
+                "save" => match tail.split_once(" : ") {
+                    Some((n, t)) if !n.trim().is_empty() && !t.trim().is_empty() => Ok(
+                        Command::PromptSave(n.trim().to_string(), t.trim().to_string()),
+                    ),
+                    _ => Err(format!("usage: {}", usage("prompt"))),
+                },
+                "remove" if !tail.is_empty() => Ok(Command::PromptRemove(tail.to_string())),
+                // a prompt's name may hold spaces: it is quoted then, like a field's value
+                name => {
+                    let (name, values) = match rest.strip_prefix('"') {
+                        Some(q) => match q.split_once('"') {
+                            Some((n, v)) => (n.to_string(), v.trim().to_string()),
+                            None => return Err("the prompt's name has no closing quote".into()),
+                        },
+                        None => (name.to_string(), tail.to_string()),
+                    };
+                    crate::prompt_vars::pairs(&values)?;
+                    Ok(Command::PromptUse(name, values))
+                }
             }
         }
         "explore" => {

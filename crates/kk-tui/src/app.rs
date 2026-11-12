@@ -305,6 +305,9 @@ enum Intent {
     ExploreStart,
     ExplorePoll(String),
     ExploreShow,
+    PromptList,
+    PromptUse(String, String),
+    PromptDone(&'static str),
     CodeApply(String),
     CodeUndo(String),
 }
@@ -2988,6 +2991,30 @@ impl App {
                     Some(json!({"folder": path, "question": question, "depth": depth})),
                 )]
             }
+            Command::Prompts => {
+                vec![self.req(Intent::PromptList, false, Method::Get, "/api/prompts", None)]
+            }
+            Command::PromptUse(name, values) => vec![self.req(
+                Intent::PromptUse(name, values),
+                false,
+                Method::Get,
+                "/api/prompts",
+                None,
+            )],
+            Command::PromptSave(name, text) => vec![self.req(
+                Intent::PromptDone("Saved. /prompt NAME puts it into the message line."),
+                false,
+                Method::Post,
+                "/api/prompts",
+                Some(json!({"name": name, "text": text})),
+            )],
+            Command::PromptRemove(name) => vec![self.req(
+                Intent::PromptDone("Removed."),
+                false,
+                Method::Post,
+                "/api/prompts",
+                Some(json!({"remove": name})),
+            )],
             Command::ExploreShow(id) => {
                 let Some(id) = id.or_else(|| self.explore_shown.clone()) else {
                     self.say(
@@ -5008,6 +5035,108 @@ impl App {
                         Some(&format!("Fix {n}")),
                         lines,
                     );
+                }
+                Vec::new()
+            }
+            Intent::PromptList => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let list = body["prompts"].as_array().cloned().unwrap_or_default();
+                let mut lines: Vec<String> = Vec::new();
+                if list.is_empty() {
+                    lines.push("No saved prompts yet. /prompt save NAME : TEXT saves one.".into());
+                }
+                for p in &list {
+                    let text = p["text"].as_str().unwrap_or("");
+                    let fs = crate::prompt_vars::fields(text);
+                    let first: String =
+                        text.lines().next().unwrap_or("").chars().take(70).collect();
+                    lines.push(format!(
+                        "{}  {}{}",
+                        clean(p["name"].as_str().unwrap_or("")),
+                        clean(&first),
+                        if fs.is_empty() {
+                            String::new()
+                        } else {
+                            format!(
+                                "  (asks for: {})",
+                                fs.iter()
+                                    .map(|f| if f.options.is_empty() {
+                                        f.name.clone()
+                                    } else {
+                                        format!("{} [{}]", f.name, f.options.join("|"))
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                        }
+                    ));
+                }
+                if !list.is_empty() {
+                    lines.push("/prompt NAME field=value ... puts one into the message line. A prompt may ask for {{field}}, {{field:one|two}} and {{current_date}} (UTC here).".into());
+                }
+                self.push(Kind::Info, Some("Saved prompts"), lines);
+                Vec::new()
+            }
+            Intent::PromptUse(name, values) => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let found = body["prompts"]
+                    .as_array()
+                    .and_then(|a| a.iter().find(|p| p["name"] == name.as_str()))
+                    .cloned();
+                let Some(p) = found else {
+                    self.say(
+                        Kind::Error,
+                        format!(
+                            "There is no saved prompt named {}. /prompts lists them.",
+                            clean(&name)
+                        ),
+                    );
+                    return Vec::new();
+                };
+                let given = crate::prompt_vars::pairs(&values).unwrap_or_default();
+                match crate::prompt_vars::fill(p["text"].as_str().unwrap_or(""), &given, now_secs())
+                {
+                    Ok(text) => {
+                        self.input = text;
+                        self.cursor = self.input.chars().count();
+                        self.say(
+                            Kind::Info,
+                            "The prompt is in the message line. Read it, then Enter sends it.",
+                        );
+                    }
+                    Err(missing) => self.say(
+                        Kind::Warn,
+                        format!(
+                            "{} asks for {}. Give {} as /prompt {} {}",
+                            clean(&name),
+                            missing.join(", "),
+                            if missing.len() == 1 { "it" } else { "them" },
+                            if name.contains(' ') {
+                                format!("\"{}\"", clean(&name))
+                            } else {
+                                clean(&name)
+                            },
+                            missing
+                                .iter()
+                                .map(|m| format!("{m}=..."))
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        ),
+                    ),
+                }
+                Vec::new()
+            }
+            Intent::PromptDone(done) => {
+                if ok {
+                    self.say(Kind::Ok, done);
+                } else {
+                    self.say(Kind::Error, err_text(status, &body));
                 }
                 Vec::new()
             }
