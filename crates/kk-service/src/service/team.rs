@@ -500,14 +500,25 @@ impl Service {
                     );
                     return;
                 }
-                self.log_event(
+                // nothing leaves unless the log says it did; the yes stays used, so nothing is sent later either
+                if !self.log_event(
                     "outbound.model",
                     "Claude Code on this computer, then its maker",
                     &[
                         ("chars", text.chars().count().into()),
                         ("swapped", 0usize.into()),
                     ],
-                );
+                ) {
+                    self.team_set_task(
+                        id,
+                        n,
+                        State::Failed,
+                        "",
+                        "the signed log could not be written (is the disk full?), so nothing was sent to the coding agent",
+                        "",
+                    );
+                    return;
+                }
                 match self
                     .runner
                     .handoff_run_until(&text, &|| self.team_stop_asked(id))

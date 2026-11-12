@@ -92,21 +92,19 @@ pub(super) async fn run(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>)
             "there is no such hand-over",
         );
     }
-    // taken out of the store before it is sent, so a second yes cannot send it twice
-    let kept: Option<(String, i64)> = {
+    // read first; nothing is changed until the log has recorded what is about to leave
+    let text: Option<String> = {
         let store = svc.store.lock().expect("lock");
-        let c = store.connection();
-        let t = c
+        store
+            .connection()
             .query_row(
-                "SELECT text, at FROM handoffs WHERE id = ?1 AND at >= ?2",
+                "SELECT text FROM handoffs WHERE id = ?1 AND at >= ?2",
                 kk_vault::rusqlite::params![id, now() - KEEP_SECS],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| r.get(0),
             )
-            .ok();
-        let _ = c.execute("DELETE FROM handoffs WHERE id = ?1", [&id]);
-        t
+            .ok()
     };
-    let Some((text, shown_at)) = kept else {
+    let Some(text) = text else {
         return error(StatusCode::NOT_FOUND, "NO_HANDOFF", "that hand-over was already sent, was cancelled, or is older than ten minutes; show the text again first");
     };
     let chars = text.chars().count();
@@ -115,19 +113,24 @@ pub(super) async fn run(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>)
         "Claude Code on this computer, then its maker",
         &[("chars", chars.into()), ("swapped", 0usize.into())],
     ) {
-        // kept again, so the same yes works once there is room for the record
-        {
-            let store = svc.store.lock().expect("lock");
-            let _ = store.connection().execute(
-                "INSERT INTO handoffs(id, text, at) VALUES(?1, ?2, ?3)",
-                kk_vault::rusqlite::params![id, text, shown_at],
-            );
-        }
+        // the text stays as it was, so the same yes works once there is room for the record
         return error(
             StatusCode::INSUFFICIENT_STORAGE,
             "LOG_UNAVAILABLE",
             super::swap::LOG_UNWRITABLE,
         );
+    }
+    // used up before it is sent, and only by the one yes that removes it: a second yes, or one racing this, finds nothing
+    let used = {
+        let store = svc.store.lock().expect("lock");
+        store
+            .connection()
+            .execute("DELETE FROM handoffs WHERE id = ?1", [&id])
+    };
+    match used {
+        Ok(1) => {}
+        Ok(_) => return error(StatusCode::NOT_FOUND, "NO_HANDOFF", "that hand-over was already sent, was cancelled, or is older than ten minutes; show the text again first"),
+        Err(_) => return error(StatusCode::INSUFFICIENT_STORAGE, "HANDOFF_NOT_MARKED", "the hand-over could not be marked as used, so nothing was sent; free some space and say yes again"),
     }
     let svc2 = svc.clone();
     let started = std::time::Instant::now();

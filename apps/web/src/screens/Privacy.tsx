@@ -29,6 +29,8 @@ function Outbound() {
       case "connector": return t("out.connector", { to: r.to, n: Number(d.items ?? 0) });
       case "release": return t("out.release", { to: r.to });
       case "review": return t("out.review", { to: r.to, calls: Number(d.calls ?? 0), tokens: Number(d.tokens ?? 0) });
+      case "program": return t("out.program", { to: r.to });
+      case "gap": return t(Number(d.entries ?? 0) === 1 ? "out.gap.one" : "out.gap", { n: Number(d.entries ?? 0) });
       default: return t("out.held", { where: doorName(r.to), secrets: Number(d.secrets ?? 0), orders: Number(d.instructions ?? 0) });
     }
   };

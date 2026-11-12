@@ -8697,6 +8697,19 @@ fn tu_rt01_route_shows_what_can_be_chosen_and_switches_without_a_key_ever_typed(
     let next = app.handle(ok(&r[0], 200, json!({"current": "near"})));
     assert!(text(&app).contains("Answers now come from NEAR AI Cloud"));
     assert_eq!(next[0].path, "/api/config", "the header is read again");
+    // the route on this computer with a model: the route first, then that model, by /model's own request
+    let r = enter(&mut app, "/route local qwen2.5-coder:7b");
+    assert_eq!(r[0].body.as_ref().unwrap(), &json!({"route": "local"}));
+    let next = app.handle(ok(&r[0], 200, json!({"current": "local"})));
+    assert_eq!(
+        (next[0].path.as_str(), next[0].method),
+        ("/api/model", Method::Post)
+    );
+    assert_eq!(
+        next[0].body.as_ref().unwrap(),
+        &json!({"model": "qwen2.5-coder:7b"})
+    );
+    assert_eq!(next[1].path, "/api/config");
 }
 
 #[test]

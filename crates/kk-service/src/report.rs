@@ -119,35 +119,65 @@ pub fn scrub_home_paths(text: &str) -> String {
 pub fn scrub_paths(text: &str) -> String {
     let opening: &[char] = &['(', '"', '\'', '[', '`'];
     let closing: &[char] = &[')', '"', '\'', ',', ';', ':', '.', ']', '`'];
-    let mut out: Vec<String> = Vec::new();
-    let mut in_path = false;
-    for token in text.split(' ') {
+    // words with the white space after each, so the text keeps its own spaces, tabs and line breaks
+    let mut words: Vec<(&str, &str)> = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let w_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        let after = &rest[w_end..];
+        let s_end = after
+            .find(|c: char| !c.is_whitespace())
+            .unwrap_or(after.len());
+        words.push((&rest[..w_end], &after[..s_end]));
+        rest = &after[s_end..];
+    }
+    let split = |token: &str| -> (usize, usize) {
         let lead = token.len() - token.trim_start_matches(opening).len();
         let end = token.trim_end_matches(closing).len().max(lead);
-        let (pre, core, post) = (&token[..lead], &token[lead..end], &token[end..]);
+        (lead, end)
+    };
+    let starts_path = |token: &str| {
+        let (lead, end) = split(token);
+        let core = &token[lead..end];
         let b = core.as_bytes();
         let drive = b.len() >= 3
             && b[0].is_ascii_alphabetic()
             && b[1] == b':'
             && matches!(b[2], b'\\' | b'/');
-        let path = (core.starts_with('/') && core.len() > 1)
-            || core.starts_with("~/")
-            || core == "~"
-            || drive;
-        if path {
-            out.push(format!("{pre}<path>{post}"));
-            in_path = true;
-        } else if in_path && core.contains(['/', '\\']) && !core.contains("://") {
-            // the rest of the same path: only what followed it stays
-            if let Some(last) = out.last_mut() {
-                last.push_str(post);
-            }
-        } else {
-            out.push(token.to_string());
-            in_path = false;
+        (core.starts_with('/') && core.len() > 1) || core.starts_with("~/") || core == "~" || drive
+    };
+    let slashed = |token: &str| token.contains(['/', '\\']) && !token.contains("://");
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < words.len() {
+        let (word, space) = words[i];
+        if !starts_path(word) {
+            out.push_str(word);
+            out.push_str(space);
+            i += 1;
+            continue;
         }
+        // a path may hold spaces: it runs on, within its line and before the next path, to the last word with a slash
+        let mut last = i;
+        let mut j = i;
+        while j + 1 < words.len() && !words[j].1.contains('\n') {
+            j += 1;
+            if starts_path(words[j].0) {
+                break;
+            }
+            if slashed(words[j].0) {
+                last = j;
+            }
+        }
+        let (lead, _) = split(word);
+        let (_, end) = split(words[last].0);
+        out.push_str(&word[..lead]);
+        out.push_str("<path>");
+        out.push_str(&words[last].0[end..]);
+        out.push_str(words[last].1);
+        i = last + 1;
     }
-    out.join(" ")
+    out
 }
 
 #[cfg(test)]
@@ -167,6 +197,18 @@ mod tests {
         );
         assert_eq!(paths("at C:\\Users\\x\\a and D:/b"), "at <path> and <path>");
         assert_eq!(paths("in /Volumes/My Disk/x: gone"), "in <path>: gone");
+        assert_eq!(
+            paths("at ~/Acme Corp Merger/notes.txt: gone"),
+            "at <path>: gone"
+        );
+        assert_eq!(
+            paths("first\n/private/tmp/bob/x\tand ~/y here"),
+            "first\n<path>\tand <path> here"
+        );
+        assert_eq!(
+            paths("worker ~/kk-target/debug/kk-worker, ~/x"),
+            "worker <path>, <path>"
+        );
         // addresses, versions and plain words stay
         assert_eq!(
             paths("http://127.0.0.1:11434 answers; rustc 1.93, 1/2 and / alone"),

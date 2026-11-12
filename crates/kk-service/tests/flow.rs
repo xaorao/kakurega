@@ -887,6 +887,28 @@ fn sv03_folders_outside_the_allowed_roots_are_refused() {
         json!({"repo": repo.to_string_lossy(), "recipient": ""}),
     );
     assert_eq!(code, 400);
+    // a name with a hidden mark from copying is refused in words, not taken for a full disk
+    let (code, v) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "Acme\u{200b}Audit"}),
+    );
+    assert!(
+        code == 400
+            && v["error"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("hidden characters"),
+        "{code} {v}"
+    );
+    let (_, ready) = w.get("/api/readiness");
+    assert!(
+        !ready["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == "log"),
+        "{ready}"
+    );
 }
 
 #[test]
@@ -17159,7 +17181,7 @@ fn sv200_mcp_servers_are_added_checked_listed_without_their_secrets_and_removed_
 #[test]
 fn sv201_tools_are_off_until_the_owner_allows_them_with_the_pin_they_read_and_only_allowed_ones_run(
 ) {
-    let (_c, w, _seen, _root) = instructions_service("mcp-tools");
+    let (_c, w, _seen, root) = instructions_service("mcp-tools");
     w.post("/api/mcp/servers", mcp_server_body("srv", "ok"));
     let (s, v) = w.post("/api/mcp/discover", json!({"name": "srv"}));
     assert_eq!((s, v["tools"].clone()), (200, json!(2)), "{v}");
@@ -17218,6 +17240,31 @@ fn sv201_tools_are_off_until_the_owner_allows_them_with_the_pin_they_read_and_on
         json!({"server": "srv", "tool": "echo", "args": {"text": "hi"}}),
     );
     assert_eq!((s, v["text"].clone()), (200, json!("echo: hi")), "{v}");
+    // while the signed log cannot be written, the program is not called; once it can, it is
+    let blocker = kk_service::keys::open_vault(&root.join("data"), "events.db").unwrap();
+    blocker
+        .connection()
+        .execute_batch("BEGIN IMMEDIATE")
+        .unwrap();
+    let (s, v) = w.post(
+        "/api/mcp/test",
+        json!({"server": "srv", "tool": "echo", "args": {"text": "held"}}),
+    );
+    assert!(
+        s == 422
+            && v["error"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("signed log could not be written"),
+        "{s} {v}"
+    );
+    blocker.connection().execute_batch("ROLLBACK").unwrap();
+    drop(blocker);
+    let (s, v) = w.post(
+        "/api/mcp/test",
+        json!({"server": "srv", "tool": "echo", "args": {"text": "again"}}),
+    );
+    assert_eq!((s, v["text"].clone()), (200, json!("echo: again")), "{v}");
     // the other tool stays off
     assert_eq!(
         w.post(
@@ -22228,6 +22275,50 @@ fn sv261_a_task_for_the_coding_agent_waits_for_the_owners_yes_on_the_exact_text_
         "{o}"
     );
 
+    // a yes while the signed log cannot be written: the task fails saying so, and nothing is sent
+    let (_c3, w3, _r3) = team("team-handover-log", PLAN);
+    let goal_log = "Rotate the payment key safely (log test).";
+    let (_, v) = w3.post(
+        "/api/team",
+        json!({"goal": goal_log, "experts": ["security-reviewer", "claude-code"]}),
+    );
+    let id3 = v["id"].as_str().unwrap().to_string();
+    w3.post(&format!("/api/team/{id3}/start"), json!({}));
+    team_wait(&w3, &id3, &["waiting"]);
+    w3.post(
+        &format!("/api/team/{id3}/answer"),
+        json!({"task": 2, "answer": "yes"}),
+    );
+    let data3 = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/service-tmp")
+        .join(format!("team-handover-log-{}", std::process::id()))
+        .join("data");
+    let blocker = kk_service::keys::open_vault(&data3, "events.db").unwrap();
+    blocker
+        .connection()
+        .execute_batch("BEGIN IMMEDIATE")
+        .unwrap();
+    w3.post(&format!("/api/team/{id3}/start"), json!({}));
+    let v = team_wait(&w3, &id3, &["done", "failed", "partial"]);
+    blocker.connection().execute_batch("ROLLBACK").unwrap();
+    drop(blocker);
+    assert_eq!(v["tasks"][1]["state"], json!("failed"), "{v}");
+    assert!(
+        v["tasks"][1]["note"]
+            .as_str()
+            .unwrap()
+            .contains("signed log could not be written"),
+        "{v}"
+    );
+    assert!(
+        !TEAM_HANDED
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|t| t.contains("log test")),
+        "nothing was handed over"
+    );
+
     // anything but yes: the task fails in words and nothing is sent
     let (_c2, w2, _r2) = team("team-handover-no", PLAN);
     let goal_no = "Rotate the payment key safely (declined test).";
@@ -25181,6 +25272,13 @@ fn sv295_research_and_the_hand_over_wait_for_the_signed_log() {
         runner.handed.lock().unwrap().is_empty(),
         "nothing was handed over"
     );
+    // a read from GitHub waits for the log too: nothing is asked of GitHub
+    let (s, r) = w.post("/api/connectors/github/read", json!({"action": "whoami"}));
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (507, Some("LOG_UNAVAILABLE")),
+        "{r}"
+    );
     let (_, ready) = w.get("/api/readiness");
     let log_check = ready["checks"]
         .as_array()
@@ -25198,7 +25296,7 @@ fn sv295_research_and_the_hand_over_wait_for_the_signed_log() {
         log_check["detail"]
             .as_str()
             .unwrap()
-            .contains("2 entries could not be written"),
+            .contains("3 entries could not be written"),
         "{log_check}"
     );
 
@@ -25230,6 +25328,16 @@ fn sv295_research_and_the_hand_over_wait_for_the_signed_log() {
         .collect();
     let at = |k: &str| kinds.iter().position(|e| e["kind"] == k);
     let gap = at("log.unwritten").expect("the gap is in the log");
-    assert_eq!(kinds[gap]["data"]["entries"], json!(2), "{:?}", kinds[gap]);
+    assert_eq!(kinds[gap]["data"]["entries"], json!(3), "{:?}", kinds[gap]);
     assert!(gap < at("research.requesting").unwrap() && gap < at("outbound.model").unwrap());
+    // the what-left page says entries are missing
+    let (_, out) = w.get("/api/outbound");
+    assert!(
+        out["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["what"] == "gap" && r["detail"]["entries"] == 3),
+        "{out}"
+    );
 }

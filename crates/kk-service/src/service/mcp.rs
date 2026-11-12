@@ -342,6 +342,10 @@ impl Service {
             return Err("that tool is not one the owner has allowed".into());
         }
         let config = self.mcp_config(server)?;
+        // the program is given these arguments only once the log has recorded the call
+        if !self.log_event("mcp.calling", &format!("{server}/{tool}"), &[]) {
+            return Err("the signed log could not be written (is the disk full?), so the outside program was not called; free some space and try again".into());
+        }
         let mut s = Server::start(config, limits()).map_err(|e| e.to_string())?;
         let listed: Vec<ToolInfo> = s.list_tools().map_err(|e| e.to_string())?;
         // the server may have changed the tool since the owner allowed it: then it is not called, and is put back to waiting

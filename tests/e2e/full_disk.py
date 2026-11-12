@@ -179,11 +179,13 @@ try:
             refused += 1
             check("a refused review leaves no review behind", now == before, f"{before} -> {now}")
             # nothing has been written since: the readiness checks name the log
-            problem_seen = problem_seen or log_problem(a)
+            # the readiness check tries the log again: it names the log while it still cannot write, or it writes the
+            # count of missed entries at once when SQLite finds room (space a failed write left behind)
+            problem_seen = problem_seen or log_problem(a) or any(e["kind"] == "log.unwritten" for e in log_entries(a)[1])
             break
         started += sorted(now - before)
     check("on a full disk a review was refused because its start could not be recorded", refused >= 1, f"refused {refused}, started {started}")
-    check("while entries are missing, the readiness checks name the signed log", problem_seen)
+    check("the readiness check names the signed log, or has already written how many entries were missed", problem_seen)
 
     # a kept turn: whatever the store managed, the command's exit code and words match what happened
     turns = []
@@ -207,6 +209,8 @@ try:
     check("importing notes on a full disk says how many could NOT be saved, and fails", rc == 1 and "could NOT be saved" in err and "refused 0" in out, f"{rc} {out} {err}")
 
     free()
+    # the readiness check tries the log again itself: with room again it passes before anything else is done
+    check("once there is room, the readiness checks clear by themselves", not log_problem(a))
     rc, out, err = k("chat", "--json", "Question once there is room again")
     text, log = log_entries(a)
     kinds = [e["kind"] for e in log]

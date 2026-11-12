@@ -641,6 +641,7 @@ pub fn chat(args: &[String]) -> u8 {
                             "the conversation was forgotten while the answer was written"
                         }
                         Some("error") => "the service could not write it (is the disk full?)",
+                        Some("full") => "the conversation holds as many messages as it can; start a new one with --keep",
                         _ => "the service did not say why",
                     };
                     if !json_mode {
@@ -1487,7 +1488,8 @@ pub fn stop(args: &[String]) -> u8 {
 /// no progress for a while. Exit 0 when nothing has gone quiet, 3 when something has.
 pub fn work(args: &[String]) -> u8 {
     let json_mode = args.iter().any(|a| a == "--json");
-    if let Some(code) = refuse_stray("work", args, &["--json"], json_mode) {
+    // this command is given the whole line, its own name first
+    if let Some(code) = refuse_stray("work", &args[1..], &["--json"], json_mode) {
         return code;
     }
     crate::tui::with_service(&serve_args(args), |dir| {

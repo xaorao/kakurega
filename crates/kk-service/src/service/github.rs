@@ -225,6 +225,18 @@ pub(super) async fn read(axum::Extension(svc): Svc, Json(b): Json<ReadBody>) -> 
         "owner": b.owner, "repo": b.repo, "number": b.number, "path": b.path, "ref": b.git_ref,
         "state": b.state, "page": b.page, "query": b.query,
     });
+    // nothing is asked of GitHub unless the log has recorded that it is about to be
+    if !svc.log_event(
+        "connector.requesting",
+        "github",
+        &[("action", action.into())],
+    ) {
+        return error(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "LOG_UNAVAILABLE",
+            "the signed log could not be written (is the disk full?), so nothing was asked of GitHub; free some space and try again",
+        );
+    }
     let out = blocking(&svc, move |r| r.github_read(action, &params)).await;
     let mut v = match out {
         Ok(v) => v,

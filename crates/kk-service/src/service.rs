@@ -654,9 +654,6 @@ impl Service {
         self.memory.lock().expect("lock").use_rows_for_test()
     }
 
-    /// Writes one entry to the signed log. An entry it cannot write (a full disk) is counted, and the count is written as
-    /// one entry as soon as the log can be written again, so the gap shows in the log itself. A subject the log would
-    /// refuse (too long, or with a control character) is shortened and cleaned rather than lost.
     /// The values this program shows that are public by design: the signed log's public key and every fingerprint in it, and
     /// the release signing key with its id. Text is checked for secrets with these set aside.
     fn public_values(&self) -> std::collections::HashSet<String> {
@@ -677,9 +674,38 @@ impl Service {
         out.into_iter().filter(|v| v.len() >= 16).collect()
     }
 
+    /// Writes one entry to the signed log. An entry it cannot write (a full disk) is counted, and the count is written as
+    /// one entry as soon as the log can be written again, so the gap shows in the log itself. A subject or a text value
+    /// the log would refuse (too long, or with a control or direction character) is shortened and cleaned rather than lost.
     fn log_event(&self, kind: &str, subject: &str, data: &[(&str, kk_eventlog::Datum)]) -> bool {
-        let subject = log_subject(subject);
+        let subject = log_text(subject, 128);
+        // text values are cleaned and cut as the log accepts them, so an entry fails only when the log cannot be written
+        let data: Vec<(&str, kk_eventlog::Datum)> = data
+            .iter()
+            .map(|(k, v)| {
+                (
+                    *k,
+                    match v {
+                        kk_eventlog::Datum::Str(s) => kk_eventlog::Datum::Str(log_text(s, 200)),
+                        other => other.clone(),
+                    },
+                )
+            })
+            .collect();
         let mut unwritten = self.unwritten.lock().expect("lock");
+        self.write_gap(&mut unwritten);
+        if self.log.append(now(), kind, &subject, &data).is_ok() {
+            return true;
+        }
+        let (entries, since) = unwritten.unwrap_or((0, now()));
+        *unwritten = Some((entries + 1, since));
+        false
+    }
+
+    /// A failed readiness check while the signed log is missing entries: nothing goes to a model elsewhere and no review
+    /// starts until it can be written again.
+    /// Writes the count of missed entries, if there are any and the log can be written now.
+    fn write_gap(&self, unwritten: &mut Option<(usize, i64)>) {
         if let Some((entries, since)) = *unwritten {
             let gap = [("entries", entries.into()), ("since", since.into())];
             if self
@@ -690,24 +716,21 @@ impl Service {
                 *unwritten = None;
             }
         }
-        if self.log.append(now(), kind, &subject, data).is_ok() {
-            return true;
-        }
-        let (entries, since) = unwritten.unwrap_or((0, now()));
-        *unwritten = Some((entries + 1, since));
-        false
     }
 
-    /// A failed readiness check while the signed log is missing entries: nothing goes to a model elsewhere and no review
-    /// starts until it can be written again.
     fn log_check(&self) -> Option<Value> {
-        let (entries, since) = (*self.unwritten.lock().expect("lock"))?;
+        // tried again first: once there is room, the gap is written and the check passes without waiting for other work
+        let (entries, since) = {
+            let mut unwritten = self.unwritten.lock().expect("lock");
+            self.write_gap(&mut unwritten);
+            (*unwritten)?
+        };
         Some(json!({
             "id": "log",
             "label": "Signed log",
             "ok": false,
             "detail": format!(
-                "{} could not be written in the last {} min, most likely because the disk is full; until it can be written, nothing is sent to a model elsewhere and no review starts",
+                "{} could not be written in the last {} min, most likely because the disk is full; until it can be written, nothing is sent to a model elsewhere or to Claude Code, no web address or GitHub read is requested, no outside program is called and no review starts",
                 if entries == 1 { "1 entry".to_string() } else { format!("{entries} entries") },
                 ((now() - since).max(0) + 59) / 60
             ),
@@ -1284,6 +1307,10 @@ impl Service {
             || recipient.chars().any(|c| c.is_control())
         {
             return Err("name the recipient in 1 to 128 characters".into());
+        }
+        // it is printed on the release the recipient receives and written to the log as it is
+        if kk_types::injection::hidden_chars(recipient) {
+            return Err("the recipient holds hidden characters (zero-width or direction marks), often from copying; type it plainly".into());
         }
         // the recipient is written into the record and the log and printed on the release the recipient receives
         if kk_secrets::holds_secret(recipient) {
@@ -4409,6 +4436,10 @@ async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
     };
     match reply {
         Ok(r) => Json(chat_finish(&svc, &run, &ctx, &r)).into_response(),
+        // the log could not record the question: said as that, not as a model that did not answer
+        Err(m) if m == swap::LOG_UNWRITABLE => {
+            error(StatusCode::INSUFFICIENT_STORAGE, "LOG_UNAVAILABLE", &m)
+        }
         Err(m) => error(StatusCode::BAD_GATEWAY, "NO_MODEL", &m),
     }
 }
@@ -11056,14 +11087,14 @@ mod away_tests {
     }
 }
 
-/// The subject as the signed log accepts it: no control or direction characters, at most 128 bytes.
-fn log_subject(subject: &str) -> String {
+/// Text as the signed log accepts it: no control or direction characters, at most `max` bytes.
+fn log_text(text: &str, max: usize) -> String {
     let mut out = String::new();
-    for c in subject.chars().filter(|c| {
+    for c in text.chars().filter(|c| {
         !c.is_control()
             && !matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{feff}')
     }) {
-        if out.len() + c.len_utf8() > 128 {
+        if out.len() + c.len_utf8() > max {
             break;
         }
         out.push(c);
@@ -11072,17 +11103,25 @@ fn log_subject(subject: &str) -> String {
 }
 
 /// The text with every run of key-like characters (letters, digits, `-`, `_`, `:`) that is one of `public` replaced by a
-/// space, in one pass. A run also counts when it is a public value with a prefix such as `ed25519:` or a trailing `.`.
+/// space, in one pass. A run also counts when it is a public value after the label `ed25519:` or `sha256:`.
 fn set_aside(text: &str, public: &std::collections::HashSet<String>) -> String {
     let key_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':');
     let mut out = String::with_capacity(text.len());
     let mut run = String::new();
     let flush = |run: &mut String, out: &mut String| {
-        let bare = run.rsplit(':').next().unwrap_or(run.as_str());
-        if public.contains(run.as_str()) || public.contains(bare) {
+        // a known label in front (`ed25519:KEY`) belongs to the value; any other part joined by a colon is read on its
+        // own, so a secret written next to a public value is still checked
+        let labelled = run.split_once(':').is_some_and(|(label, rest)| {
+            matches!(label, "ed25519" | "sha256") && public.contains(rest)
+        });
+        if public.contains(run.as_str()) || labelled {
             out.push(' ');
         } else {
-            out.push_str(run);
+            let parts: Vec<&str> = run
+                .split(':')
+                .map(|p| if public.contains(p) { " " } else { p })
+                .collect();
+            out.push_str(&parts.join(":"));
         }
         run.clear();
     };
@@ -11112,5 +11151,10 @@ mod set_aside_tests {
             out,
             "Signing key  \nlatest fingerprint  .\nsigned by  \nthe key is sk_live_abc"
         );
+        // a secret joined to a public value by a colon stays to be read
+        let joined = super::set_aside(&format!("token ghp_secretvalue123:{head}"), &public);
+        assert_eq!(joined, "token ghp_secretvalue123: ");
+        let other_label = super::set_aside(&format!("x sk-live-abc:{key}"), &public);
+        assert!(other_label.contains("sk-live-abc"), "{other_label}");
     }
 }

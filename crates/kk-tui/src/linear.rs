@@ -371,7 +371,8 @@ pub fn run_with(
                 let _ = writeln!(
                     out,
                     "In the message line now: {}\nPress Enter on an empty line to send it as it is, or type a whole new line instead.",
-                    app.input.trim_end()
+                    // written to the terminal: no control or escape characters, whatever the prompt held
+                    crate::app::clean(app.input.trim_end())
                 );
                 let _ = out.flush();
             }

@@ -21,6 +21,8 @@ pub(super) fn row_of(e: &Value) -> Option<Value> {
         "search.run" => ("search", String::new(), json!({"results": n("results")})),
         "research.fetched" => ("pages", String::new(), json!({"pages": n("addresses")})),
         "mcp.call" => ("tool", subject.to_string(), json!({})),
+        // an outside program on this computer was given arguments; it may pass on what it was given
+        "mcp.called" => ("program", subject.to_string(), json!({"bytes": n("bytes")})),
         // a read from GitHub: the request (which repository, issue, file or search words) went to GitHub
         "connector.read" => (
             "connector",
@@ -39,6 +41,12 @@ pub(super) fn row_of(e: &Value) -> Option<Value> {
             "held",
             subject.to_string(),
             json!({"secrets": n("secrets"), "instructions": n("instructions")}),
+        ),
+        // entries the log could not write: what they were is not known, so the list says how many are missing
+        "log.unwritten" => (
+            "gap",
+            String::new(),
+            json!({"entries": n("entries"), "since": n("since")}),
         ),
         _ => return None,
     };
@@ -80,6 +88,8 @@ pub(super) async fn list(axum::Extension(svc): Svc) -> Response {
         "connector",
         "release",
         "held",
+        "gap",
+        "program",
     ] {
         totals.insert(
             what.into(),

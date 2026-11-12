@@ -318,7 +318,8 @@ enum Intent {
     ModelList,
     ModelChoose(String),
     RouteShow,
-    RouteChosen,
+    /// A route was chosen; for the route on this computer, the model named with it is chosen next.
+    RouteChosen(Option<String>),
     RenameChat,
     ChooseNote,
     BothRight,
@@ -3284,13 +3285,21 @@ impl App {
                 "/api/route/options",
                 None,
             )],
-            Command::RouteChoose { route, model } => vec![self.req(
-                Intent::RouteChosen,
-                false,
-                Method::Post,
-                "/api/route/choose",
-                Some(json!({ "route": route, "model": model })),
-            )],
+            Command::RouteChoose { route, model } => {
+                // the route on this computer is chosen first and its model after it, by the same request /model sends
+                let (body, then) = if route == "local" {
+                    (json!({ "route": route }), model)
+                } else {
+                    (json!({ "route": route, "model": model }), None)
+                };
+                vec![self.req(
+                    Intent::RouteChosen(then),
+                    false,
+                    Method::Post,
+                    "/api/route/choose",
+                    Some(body),
+                )]
+            }
             Command::Model(Some(name)) => vec![self.req(
                 Intent::ModelChoose(name.clone()),
                 false,
@@ -5556,10 +5565,23 @@ impl App {
                 self.push(Kind::Info, Some("Where answers are made"), lines);
                 Vec::new()
             }
-            Intent::RouteChosen => {
+            Intent::RouteChosen(then) => {
                 if !ok {
                     self.say(Kind::Error, err_text(status, &body));
                     return Vec::new();
+                }
+                if let Some(name) = then {
+                    // the model is chosen now; its own answer says which one answers, and the header is read again
+                    return vec![
+                        self.req(
+                            Intent::ModelChoose(name.clone()),
+                            false,
+                            Method::Post,
+                            "/api/model",
+                            Some(json!({ "model": name })),
+                        ),
+                        self.req(Intent::Config, false, Method::Get, "/api/config", None),
+                    ];
                 }
                 self.say(
                     Kind::Info,
@@ -7634,7 +7656,6 @@ impl Default for App {
     }
 }
 
-/// Seconds since 1970 on this computer, which is also the computer the service runs on.
 /// This computer's offset from UTC now, in seconds, as `date +%z` gives it (0 when it cannot be read).
 fn local_offset_secs() -> i64 {
     std::process::Command::new("date")
@@ -7654,6 +7675,7 @@ fn local_offset_secs() -> i64 {
         .unwrap_or(0)
 }
 
+/// Seconds since 1970 on this computer, which is also the computer the service runs on.
 pub fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

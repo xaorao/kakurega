@@ -169,7 +169,7 @@ export function Mcp() {
                         </Show>
                         <Show when={(g.env ?? []).length > 0}><p class="muted">{t("mcp.suggestedEnv", { names: (g.env ?? []).join(", ") })}</p></Show>
                         <div class="actions">
-                          <button type="button" onClick={() => { setName(g.name); setProgram(g.program); setArgs((g.args ?? []).join("\n")); setEnv((g.env ?? []).map((n) => `${n}=`).join("\n")); setStatus(t("mcp.suggestedFilled")); document.getElementById("mcp-name")?.focus(); }}>{t("mcp.suggestedUse")}</button>
+                          <button type="button" onClick={() => { setName(g.name); setProgram(g.program); setArgs((g.args ?? []).join("\n")); setEnv((g.env ?? []).map((n) => `${n}=`).join("\n")); setStatus(t("mcp.suggestedFilled")); setAdding(true); document.getElementById("mcp-name")?.focus(); }}>{t("mcp.suggestedUse")}</button>
                           <button type="button" class="linklike" onClick={async () => { try { await api.mcpDismissSuggested(g.pack, g.publisher, g.name); changed(""); } catch (e) { setProblem(e instanceof ApiError ? e.message : t("mcp.error")); } }} aria-label={t("mcp.suggestedDismissLabel", { name: g.name, pack: g.pack, publisher: g.publisher_label || "?" })}>{t("mcp.suggestedDismiss")} <span class="sr">{g.name}</span></button>
                         </div>
                       </li>

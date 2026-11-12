@@ -99,8 +99,9 @@ fn decode32(text: &str) -> Option<Vec<u8>> {
             out.push(((buf >> bits) & 0xff) as u8);
         }
     }
-    // the bits left over after the last whole byte are padding and must be zero: one text for one value
-    if buf & ((1u32 << bits) - 1) != 0 {
+    // the bits left over after the last whole byte are padding: fewer than one character's worth, and all zero, so one
+    // value has one text
+    if bits >= 5 || buf & ((1u32 << bits) - 1) != 0 {
         return None;
     }
     Some(out)
@@ -511,10 +512,9 @@ mod tests {
             let changed = format!("{}{other}", &text[..text.len() - 1]);
             assert!(key_from_text(&changed).is_err(), "{changed}");
         }
-        assert!(
-            key_from_text(&format!("{text}A")).is_err()
-                && key_from_text(&format!("{text}AA")).is_err()
-        );
+        for extra in ["A", "AA", "0", "o", "O", "00"] {
+            assert!(key_from_text(&format!("{text}{extra}")).is_err(), "{extra}");
+        }
         assert_ne!(key_to_text(&key), key_to_text(&new_key()));
     }
 
