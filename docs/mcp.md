@@ -61,6 +61,8 @@ You give and take leases with `kaku agent grant start_review --uses 3 --minutes 
 
 An MCP client is a sink, not a principal with your privileges. The server has no tool to approve or deliver a release, and none that returns source files, findings, memory text, chat text or release contents. Files given to `verify_*` must end in `.kkg` or `.json`, be regular files under 20 MB, and every failure reads "cannot read that file", so the tool cannot be used to probe your file system.
 
+The tools keep the agent out; your own account does not. An agent that can also run commands as you (Claude Code, Codex and the like have a shell) can do what you can at a terminal. Three things make that hard on purpose: `request_approval` does not give the agent the digest that acknowledges the release, `kaku approve` refuses a digest that arrives through a pipe rather than typed at a terminal, and `kaku agent grant` refuses a grant made the same way. A program that fakes a terminal and reads the service's own files gets past those. What stops it is an approval key that asks for you: enrol one with `kaku approver enroll --enclave` (Touch ID on a Mac), and every release then needs your finger, which no program can give. With an agent that has a shell, do that first.
+
 ## Checked
 
 `cargo test -p kk-cli --test mcp_frames` and `--test mcp` (protocol, the golden contract, argument validation, uniform file errors) and `python3 tests/e2e/mcp_live.py` (a live agent session against a real sandboxed review that scans every response for source, finding and memory text).

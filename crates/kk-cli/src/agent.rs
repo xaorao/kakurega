@@ -79,6 +79,12 @@ pub fn run(args: &[String]) -> u8 {
     match args.first().map(String::as_str) {
         Some("grant") => {
             let (tool, uses, minutes) = grant.expect("parsed above");
+            // a lease is the owner's decision, made at a terminal: an agent that runs commands cannot grant itself one by
+            // piping or scripting this command
+            if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                eprintln!("kaku agent grant: run this yourself in a terminal; a grant from a pipe or a program is refused");
+                return 1;
+            }
             match admin.post(
                 "/admin/agent-access/grant",
                 json!({"tool": tool, "uses": uses, "minutes": minutes}),

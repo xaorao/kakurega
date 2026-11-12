@@ -93,7 +93,8 @@ try {
   await view("release");
   await page.getByRole("button", { name: "Request approval" }).click();
   await page.getByText("Waiting for you.").waitFor({ timeout: 20000 });
-  const approve = spawnSync(kaku, ["approve", "--data-dir", data], { input: digest.slice(0, 12) + "\n", encoding: "utf8" });
+  // typed at a terminal, as a person does (a digest from a pipe is refused)
+  const approve = spawnSync("python3", [new URL("./term_input.py", import.meta.url).pathname, kaku, "approve", "--data-dir", data], { input: digest.slice(0, 12) + "\n", encoding: "utf8" });
   check("the terminal shows the exact release and accepts the digest's first characters", approve.status === 0 && /Approved\./.test(approve.stdout), approve.stdout.slice(-300) + approve.stderr.slice(0, 200));
   await page.getByRole("button", { name: "Sign and deliver the capsule" }).waitFor({ timeout: 20000 });
   await page.getByRole("button", { name: "Sign and deliver the capsule" }).click();

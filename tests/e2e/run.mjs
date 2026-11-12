@@ -459,7 +459,10 @@ try {
   check("a change notice makes the approval screen look at once", approvalAsks > before, `${before} -> ${approvalAsks}`);
 
   const decidedAt = Date.now();
-  const approve = spawnSync(kaku, ["approve", "--data-dir", data], { input: digest.slice(0, 12) + "\n", encoding: "utf8" });
+  const piped = spawnSync(kaku, ["approve", "--data-dir", data], { input: digest.slice(0, 12) + "\n", encoding: "utf8" });
+  check("a digest piped in by a program is refused, so an agent running commands cannot approve", piped.status !== 0 && /typed by a person at a terminal/.test(piped.stderr), piped.stderr.slice(0, 200));
+  // typed at a terminal, as a person does (a digest from a pipe is refused)
+  const approve = spawnSync("python3", [new URL("./term_input.py", import.meta.url).pathname, kaku, "approve", "--data-dir", data], { input: digest.slice(0, 12) + "\n", encoding: "utf8" });
   check("terminal shows the exact files and accepts the digest prefix", approve.status === 0 && /RELEASE FOR APPROVAL/.test(approve.stdout) && /Approved\./.test(approve.stdout), approve.stderr.slice(0, 200));
   await page.getByRole("button", { name: "Sign and deliver the capsule" }).waitFor({ timeout: 15000 });
   // approved, but past the deadline: delivery cannot be started from the page

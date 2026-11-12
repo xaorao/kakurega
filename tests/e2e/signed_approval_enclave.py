@@ -2,6 +2,8 @@
 """Real binaries: enrol an approver key, then prove an admin-token-only approval is refused and `kaku approve` (which signs) works."""
 import json, os, re, shutil, subprocess, sys, time, urllib.request, urllib.error
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from term_input import run_tty  # noqa: E402
 
 repo = Path(__file__).resolve().parent.parent.parent
 work = repo / "target/signed-approval-enclave-tmp"
@@ -53,17 +55,17 @@ try:
     d1 = adm("GET", f"/admin/approvals/{aid1}")[1]
     st, r = adm("POST", f"/admin/approvals/{aid1}/approve", {"ack": d1["digest"][:12]})
     check("the admin token plus the digest is refused", st == 403 and r["error"]["code"] == "PROOF_REQUIRED")
-    out = subprocess.run([kaku, "approve", aid1, "--data-dir", str(data)], input=d1["digest"][:12] + "\n", capture_output=True, text=True, env=env)
+    out = run_tty([kaku, "approve", aid1, "--data-dir", str(data)], d1["digest"][:12] + "\n", env=env)
     check("`kaku approve` signs inside the Secure Enclave and the approval is accepted", out.returncode == 0 and "Approved" in out.stdout, (out.stdout + out.stderr).strip()[-120:])
     job2, aid2 = review()
     d2 = adm("GET", f"/admin/approvals/{aid2}")[1]
     bad = dict(env, KAKU_ENCLAVE_BIN="/nonexistent/kaku-enclave")
-    out = subprocess.run([kaku, "approve", aid2, "--data-dir", str(data)], input=d2["digest"][:12] + "\n", capture_output=True, text=True, env=bad)
+    out = run_tty([kaku, "approve", aid2, "--data-dir", str(data)], d2["digest"][:12] + "\n", env=bad)
     check("with the helper missing nothing is approved and the reason is shown", out.returncode != 0 and adm("GET", f"/admin/approvals/{aid2}")[1].get("state", "waiting") != "approved", (out.stderr).strip()[:100])
     blob_copy = data / "other.enclave"
     open(blob_copy, "wb").write(b"junk")
     os.replace(blob, data / "approver.enclave.bak"); os.replace(blob_copy, blob)
-    out = subprocess.run([kaku, "approve", aid2, "--data-dir", str(data)], input=d2["digest"][:12] + "\n", capture_output=True, text=True, env=env)
+    out = run_tty([kaku, "approve", aid2, "--data-dir", str(data)], d2["digest"][:12] + "\n", env=env)
     check("a damaged key blob signs nothing", out.returncode != 0 and "Approved" not in out.stdout, out.stderr.strip()[:100])
     os.replace(data / "approver.enclave.bak", blob)
 finally:

@@ -2,6 +2,8 @@
 """Real binaries: enrol an approver key, then prove an admin-token-only approval is refused and `kaku approve` (which signs) works."""
 import json, os, re, shutil, subprocess, sys, time, urllib.request, urllib.error
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from term_input import run_tty  # noqa: E402
 
 repo = Path(__file__).resolve().parent.parent.parent
 work = repo / "target/signed-approval-tmp"
@@ -49,7 +51,7 @@ try:
     check("now a proof is required and the statement binds recipient, digest, policy and a nonce", d1["requires_proof"] is True and set(d1["statement"]) >= {"approval", "job", "digest", "recipient", "policy", "expires", "nonce"})
     st, r = adm("POST", f"/admin/approvals/{aid1}/approve", {"ack": d1["digest"][:12]})
     check("the admin token plus the digest prefix is no longer enough", st == 403 and r["error"]["code"] == "PROOF_REQUIRED", f"{st} {r['error']['code'] if r else ''}")
-    out = subprocess.run([kaku, "approve", aid1, "--data-dir", str(data)], input=d1["digest"][:12] + "\n", capture_output=True, text=True)
+    out = run_tty([kaku, "approve", aid1, "--data-dir", str(data)], d1["digest"][:12] + "\n")
     check("`kaku approve` signs the exact statement and the approval is accepted", out.returncode == 0 and "Approved" in out.stdout, (out.stdout + out.stderr).strip()[-120:])
     # deliver to prove the approval is real
     st, _ = adm("GET", f"/admin/jobs/{job1}")
@@ -58,11 +60,11 @@ try:
     d2 = adm("GET", f"/admin/approvals/{aid2}")[1]
     moved = data / "approver.key.moved"
     key.rename(moved)
-    out = subprocess.run([kaku, "approve", aid2, "--data-dir", str(data)], input=d2["digest"][:12] + "\n", capture_output=True, text=True)
+    out = run_tty([kaku, "approve", aid2, "--data-dir", str(data)], d2["digest"][:12] + "\n")
     check("without the key `kaku approve` explains and sends nothing", out.returncode != 0 and "approver enroll" in out.stderr and adm("GET", f"/admin/approvals/{aid2}")[1].get("state", "waiting") != "approved")
     moved.rename(key)
     key.chmod(0o644)
-    out = subprocess.run([kaku, "approve", aid2, "--data-dir", str(data)], input=d2["digest"][:12] + "\n", capture_output=True, text=True)
+    out = run_tty([kaku, "approve", aid2, "--data-dir", str(data)], d2["digest"][:12] + "\n")
     check("a key file readable by others is refused", out.returncode != 0)
     key.chmod(0o600)
     kid = lst.split()[0]

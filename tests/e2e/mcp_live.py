@@ -7,6 +7,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from term_input import run_tty  # noqa: E402
 
 repo = Path(__file__).resolve().parent.parent.parent
 work = repo / "target/mcp-live-tmp"
@@ -104,6 +106,7 @@ try:
     check("the review status resource says the review is ready", json.loads(rs["text"])["state"] == "ready", rs["text"][:160])
     ap = tool("request_approval", id=job)
     check("the agent can only ASK for approval and is told where the owner decides", ap["isError"] is False and "kaku approve" in ap["structuredContent"]["how"])
+    check("the agent is not given the digest that acknowledges the release", "digest" not in ap["structuredContent"] and not any(len(w) == 64 and all(c in "0123456789abcdef" for c in w) for w in json.dumps(ap).replace('"', " ").split()), json.dumps(ap)[:300])
     st2 = tool("review_status", id=job)["structuredContent"]
     check("nothing was delivered by asking", st2["delivered"] is None)
     again = tool("request_approval", id=job)
@@ -134,7 +137,8 @@ try:
 
     # leased mode against the live service: the owner's lease, not the agent, decides whether a review can be started
     def owner(*args):
-        return subprocess.run([kaku, "agent", *args, "--data-dir", str(data)], capture_output=True, text=True)
+        # the owner, at a terminal: a grant from a pipe is refused (checked below)
+        return run_tty([kaku, "agent", *args, "--data-dir", str(data)])
 
     lm = subprocess.Popen([kaku, "mcp", "--leased", "--data-dir", str(data)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1, cwd=str(work))
     ln = 0
@@ -158,6 +162,8 @@ try:
     check("leased: with no lease the tools that act are not offered", "start_review" not in lnames() and "request_approval" not in lnames() and "overview" in lnames())
     r0 = lstart()
     check("leased: a start without a lease is refused and says how to get one", r0["isError"] is True and "kaku agent grant start_review" in r0["content"][0]["text"], r0["content"][0]["text"][:120])
+    piped = subprocess.run([kaku, "agent", "grant", "start_review", "--uses", "1", "--minutes", "5", "--data-dir", str(data)], capture_output=True, text=True, input="")
+    check("a grant from a pipe, as an agent running commands would make, is refused", piped.returncode != 0 and "terminal" in piped.stderr, piped.stderr)
     g = owner("grant", "start_review", "--uses", "1", "--minutes", "5")
     check("the owner grants one use from the terminal", g.returncode == 0 and "1 time in" in g.stdout, g.stdout + g.stderr)
     check("leased: the granted tool appears at once, the other does not", "start_review" in lnames() and "request_approval" not in lnames())

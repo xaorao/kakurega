@@ -276,9 +276,6 @@
         "approval": {
           "type": "string"
         },
-        "digest": {
-          "type": "string"
-        },
         "how": {
           "type": "string"
         }

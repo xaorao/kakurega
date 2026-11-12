@@ -10,6 +10,8 @@ This file is the plain list. Evidence for each line is in `TESTING.md`; the stat
 - Telegram: the bridge was checked once on a real phone (pairing, a status reply and a review notification, observed by the owner) and against a fake Telegram server. Delivery retries, flood control and 4xx/5xx handling are unit-tested only; long-running reliability (days, reconnects, many chats) is not tested. Chat is a transport for counts and ids: approvals are never done through chat.
 
 ## Known weaknesses
+- An agent that runs commands as the owner (an MCP client with a shell) can fake a terminal and read the service's files, so `kaku approve` refusing a piped digest only slows it down. Approvals are bound to the owner only with an approval key that asks for them (`kaku approver enroll --enclave`, Touch ID); without one, an agent with a shell can approve. See `docs/mcp.md`.
+- A file attached through the browser is matched to a project by its exact bytes (up to 100,000 entries looked at across the project folders, `.git`, `node_modules`, `target` and virtual environments left out). An edited or re-saved copy of a project's file is not recognised as the project's.
 - macOS runs the sandbox inside a Linux virtual machine; that is a development arrangement, not a hardened macOS sandbox.
 - The prompt-injection defence for notes is a phrase list plus labelling. Rewording can get past the phrase list; the chat has no tools, which limits the damage.
 - Cumulative disclosure checks file coverage and release rate only. It does not detect excerpts that combine into something no single file shows, and says so on screen.

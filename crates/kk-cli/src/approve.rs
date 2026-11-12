@@ -231,6 +231,13 @@ pub fn run(args: &[String]) -> u8 {
     for n in d["not_established"].as_array().into_iter().flatten() {
         println!("  - {}", n.as_str().unwrap_or(""));
     }
+    // the digest is typed by a person: a program that pipes it in, such as an agent running commands for the owner, is refused.
+    // An agent that can run commands as the owner can still fake a terminal; only an approval key that asks for the owner
+    // (Touch ID, `kaku approver enroll --enclave`) stops that, and with one enrolled every release needs it.
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        eprintln!("kaku approve: the digest must be typed by a person at a terminal; a digest from a pipe or a program is refused, and nothing was approved");
+        return 1;
+    }
     print!("\nType the first 12 characters of the digest to approve, or press Enter to refuse: ");
     let _ = std::io::stdout().flush();
     let mut line = String::new();

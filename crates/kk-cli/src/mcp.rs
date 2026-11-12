@@ -79,7 +79,7 @@ pub fn tools() -> Value {
             obj(json!({"after": {"type": "integer", "description": "The position of the last event you saw; 0 to start.", "minimum": 0, "maximum": 9_007_199_254_740_991u64}, "limit": {"type": "integer", "description": "How many events at most, 1 to 100.", "minimum": 1, "maximum": 100}, "wait_seconds": {"type": "integer", "description": "Wait up to this many seconds for a new event before answering (0 to 25; 0 answers at once).", "minimum": 0, "maximum": MAX_WAIT_SECONDS}}), &[]),
             out_obj(json!({"events": {"type": "array", "items": {"type": "object"}}, "next": {"type": "integer"}, "latest": {"type": "integer"}, "reset": {"type": "boolean"}}), &["events", "next", "latest", "reset"])),
         tool("request_approval", "Request approval", "Ask the owner to approve the release. This tool cannot approve: the owner approves in the desktop window, the terminal workspace or `kaku approve`, after seeing the exact files.", obj(json!({"id": job_id_prop()}), &["id"]),
-            out_obj(json!({"approval": {"type": "string"}, "digest": {"type": "string"}, "how": {"type": "string"}}), &["approval"])),
+            out_obj(json!({"approval": {"type": "string"}, "how": {"type": "string"}}), &["approval"])),
         tool("verify_capsule", "Verify a capsule", "Check a capsule file (.kkg) offline and report what it does and does not establish.", obj(json!({"path": string_prop("Path of a .kkg capsule file.", 4096)}), &["path"]),
             out_obj(json!({"valid": {"type": "boolean"}, "reason": {"type": "string"}, "signer": {}, "recipient": {}, "established": {"type": "array"}, "not_established": {"type": "array"}}), &["valid"])),
         tool("verify_log", "Verify the event log", "Check a saved signed event log (.json) offline, optionally against a pinned key and an anchor.", obj(json!({"path": string_prop("Path of a saved event log.", 4096), "pin": string_prop("Base64url Ed25519 public key to require.", 64), "anchor": string_prop("COUNT:HEAD printed by `kaku log export`.", 200)}), &["path"]),
@@ -726,10 +726,18 @@ fn call_inner(
                 std::thread::sleep(std::time::Duration::from_millis(400));
             }
         }
-        "request_approval" => admin.post(
-            &format!("/admin/jobs/{}/approval", s("id").unwrap_or_default()),
-            json!({}),
-        ),
+        "request_approval" => admin
+            .post(
+                &format!("/admin/jobs/{}/approval", s("id").unwrap_or_default()),
+                json!({}),
+            )
+            .map(|(c, mut v)| {
+                // the digest acknowledges the release: the owner reads it on their own screen, the agent never holds it
+                if let Some(o) = v.as_object_mut() {
+                    o.remove("digest");
+                }
+                (c, v)
+            }),
         _ => return fail("unknown tool"),
     };
     match r {
