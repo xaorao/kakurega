@@ -138,7 +138,7 @@ await step("team with the project reviewer", async () => {
   const run = await page.locator("#team-run").innerText();
   const tasks = await page.locator(".team-tasks").innerText();
   console.log(`team run ended after ${lap()} s: ${flat(tasks).slice(0, 700)}`);
-  check("team: the run finished, and the reviewer's result names defects the sandbox reproduced, with the review it came from", (await page.locator("#team-run [data-status]").getAttribute("data-status")) === "done" && /defect\(s\) the sandbox reproduced/.test(tasks) && /from the sandboxed review job-\d+/.test(tasks), flat(tasks).slice(0, 400));
+  check("team: the run finished, and the reviewer's result names defects the sandbox reproduced, with the review it came from", (await page.locator("#team-run [data-status]").getAttribute("data-status")) === "done" && /defects? the sandbox reproduced/.test(tasks) && /from the sandboxed review job-\d+/.test(tasks), flat(tasks).slice(0, 400));
   check("team: the closing answer is there", flat(await page.locator("main").innerText()).includes("Not done:"), flat(run).slice(0, 200));
   await shot("5-team-done");
   await page.getByRole("link", { name: "Where your data goes" }).click();

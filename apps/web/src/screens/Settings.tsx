@@ -308,7 +308,7 @@ export function Settings() {
           <Show when={found().some((s) => s.section === sec)}>
             <section class="card stack" aria-labelledby={`sec-${sec}`}>
               <h2 id={`sec-${sec}`}>{t(`set.section.${sec}` as Key)}</h2>
-              <ul class="plain stack">
+              <ul class="plain stack settings-list">
                 <For each={found().filter((s) => s.section === sec)}>
                   {(s) => (
                     <li class="stack" id={`setting-${s.id}`}>

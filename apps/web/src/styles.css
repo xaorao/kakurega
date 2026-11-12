@@ -440,3 +440,17 @@ pre.wrap, code.wrap { white-space: pre-wrap; overflow-wrap: anywhere; word-break
 .chat-tab .linklike { text-decoration: none; padding: 0 8px 0 0; font-size: 16px; }
 /* a link that is a whole line of its own is tall enough to press with a finger */
 .line-link { display: inline-block; padding: 4px 0; min-height: 24px; }
+/* Every fold shows that it is one: a small arrow that turns when it opens. (A summary laid out as a row loses the
+   browser's own marker, which made a closed fold look like an empty card.) */
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before { content: ""; flex: none; display: inline-block; width: 7px; height: 7px; margin-right: 10px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform 0.12s; opacity: 0.7; }
+details[open] > summary::before { transform: rotate(45deg); }
+details:not([open]) > summary { margin-bottom: 0; }
+details.card:not([open]) { padding-top: 14px; padding-bottom: 14px; }
+/* a closed fold is one line: the column gap that spaces an open one would otherwise sit under its only line */
+details.stack:not([open]) { display: block; }
+.checks-fold > summary { font-weight: 400; color: var(--graphite); }
+@media (prefers-reduced-motion: reduce) { details > summary::before { transition: none; } }
+/* settings in one card are told apart: a hairline and room between one setting and the next */
+.settings-list > li + li { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 10px; }

@@ -365,7 +365,10 @@ export function Chat() {
     box?.focus({ preventScroll: !pinned });
   };
   const [unseen, setUnseen] = createSignal(false);
-  const atBottom = () => document.documentElement.scrollHeight - window.innerHeight - window.scrollY <= 80;
+  // "The end" is the bottom of the message box, not of the page: the conversation's tools come after it.
+  let formEl: HTMLFormElement | undefined;
+  const endY = () => (formEl ? formEl.getBoundingClientRect().bottom + window.scrollY + 24 : document.documentElement.scrollHeight);
+  const atBottom = () => endY() - window.innerHeight - window.scrollY <= 80;
   let lastY = window.scrollY;
   const onScroll = () => {
     const y = window.scrollY;
@@ -415,7 +418,7 @@ export function Chat() {
       document.removeEventListener("keydown", esc);
     });
   });
-  const toEnd = () => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "auto" });
+  const toEnd = () => window.scrollTo({ top: Math.max(0, endY() - window.innerHeight), behavior: "auto" });
   let frame = 0;
   createEffect(
     on(
@@ -855,6 +858,272 @@ export function Chat() {
       </Show>
       <p class="lead">{t("chat.lead")}</p>
       <p class="muted">{session() ? t("chat.noteKept") : t("chat.note")}</p>
+      <Show when={summaryText()}>
+        <details class="card stack summary-shown"><summary>{t("chat.summaryShow")}</summary><p class="muted">{t("chat.summaryExplain")}</p><p class="mem-text">{summaryText()}</p></details>
+      </Show>
+      <Show when={session() && (branches().length > 0 || forkAt() !== null)}>
+        <nav class="card stack branches" aria-label={t("chat.branches")}>
+          <strong>{t("chat.branches")}</strong>
+          <p class="muted">{forkAt() !== null ? t("chat.branchFrom", { n: forkAt()! }) + " " : ""}{t("chat.branchesHelp")}</p>
+          <ul class="plain row-wrap">
+            <For each={branches()}>{(b) => <li><button type="button" class="linklike" onClick={() => void openKept(b.id)}>{t("chat.branchOf", { title: b.title, n: b.turns })}</button></li>}</For>
+          </ul>
+        </nav>
+      </Show>
+      <Show when={turns().length > 0}>
+        <div class="find-bar" role="search">
+          <label class="sr" for="chat-find">{t("chatfind.label")}</label>
+          <input id="chat-find" type="search" maxlength="200" placeholder={t("chatfind.label")} value={findText()} onInput={(e) => runFind(e.currentTarget.value)} onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              stepFind(e.shiftKey ? -1 : 1);
+            } else if (e.key === "Escape" && findText() !== "") {
+              e.stopPropagation();
+              clearFind();
+            }
+          }} />
+          <Show when={findText().trim() !== ""}>
+            <span class="muted" role="status">{found().length === 0 ? t("chatfind.none") : t("chatfind.count", { n: (findAt() ?? 0) + 1, of: found().length })}</span>
+            <button type="button" class="linklike" disabled={found().length === 0} onClick={() => stepFind(-1)}>{t("chatfind.prev")}</button>
+            <button type="button" class="linklike" disabled={found().length === 0} onClick={() => stepFind(1)}>{t("chatfind.next")}</button>
+          </Show>
+        </div>
+      </Show>
+      <ul ref={listEl} class="plain stack chat" aria-live="polite">
+        <For each={turns()} fallback={<li class="muted">{t("chat.empty")}</li>}>
+          {(m, i) => (
+            <li class={`card stack msg ${m.role}`}>
+              <strong>{m.role === "user" ? t("chat.you") : t("chat.assistant")}</strong>
+              <div class="msg-body">{m.role === "assistant" ? <Markdown text={m.content} /> : <p class="mem-text">{m.content}</p>}</div>
+              <Show when={(m.attached ?? []).length > 0}><p class="muted">{t("files.attached", { names: m.attached!.join(", ") })}</p></Show>
+              <Show when={m.foot}>{(f) => <p class="muted">{f().join(" · ")}</p>}</Show>
+              <div class="actions msg-actions">
+                <button type="button" class="linklike" onClick={() => void copyTurn(i(), m.content)}>{copiedAt() === i() ? t("chat.copied") : t("chat.copy")}</button>
+                <Show when={session() && !busy() && editPoint(turns(), i())}>
+                  <button type="button" class="linklike" onClick={() => void branchAt(editPoint(turns(), i()), false)}>{t("chat.edit")}</button>
+                </Show>
+                <Show when={session() && !busy() && againPoint(turns(), i())}>
+                  <button type="button" class="linklike" onClick={() => void branchAt(againPoint(turns(), i()), true)}>{t("chat.again")}</button>
+                </Show>
+              </div>
+              <Show when={m.role === "assistant" && i() === answeredAt() && !busy() && i() > 0 && turns()[i() - 1]?.role === "user"}>
+                <SentView typed={turns()[i() - 1]!.content} />
+              </Show>
+              <Show when={(m.notes ?? []).length > 0}>
+                <details class="notes-used">
+                  <summary>{t("chat.whichNotes", { n: m.notes!.length })}</summary>
+                  <ul class="plain"><For each={m.notes}>{(n) => <li><span>{n.text}</span> <span class="muted">({n.why}{n.untrusted ? `; ${t("mem.untrusted")}` : ""})</span></li>}</For></ul>
+                </details>
+              </Show>
+            </li>
+          )}
+        </For>
+        <Show when={busy() && live()}><li class="card stack msg assistant"><strong>{t("chat.assistant")}</strong><Markdown text={live()} /></li></Show>
+        <Show when={busy() && !live()}><li class="muted" role="status">{t("chat.thinking")}</li></Show>
+      </ul>
+      <Show when={unseen()}><button type="button" class="jump" onClick={jump}>{t("chat.jump")}</button></Show>
+      <form ref={formEl} class="card stack" onSubmit={send}>
+        <label for="chat-input">{t("chat.input")}</label>
+        <div
+          class={dragging() ? "stack attach drop" : "stack attach"}
+        >
+          <div class="actions">
+            <input ref={picker} type="file" multiple hidden aria-label={t("files.attach")} onChange={(e) => {
+              void addFiles(Array.from(e.currentTarget.files ?? []));
+              e.currentTarget.value = "";
+            }} />
+            <button type="button" disabled={busy() || !!reading()} onClick={() => picker?.click()}>{t("files.attach")}</button>
+            <span class="muted">{t("files.drop")}</span>
+            <Show when={dragging()}><strong role="status">{t("files.dropNow")}</strong></Show>
+            <Show when={reading()}><span role="status" class="muted">{reading()}</span></Show>
+          </div>
+          <p class="muted">{t("files.attachHelp")}</p>
+          <Show when={fileInfo()}><p role="alert" class="bad">{fileInfo()}</p></Show>
+          <Show when={files().length > 0}>
+            <ul class="plain stack" aria-label={t("files.attach")}>
+              <For each={files()}>
+                {(f) => (
+                  <li class="card stack file-chip">
+                    <p><strong>{f.name}</strong> <span class="chip">{f.kind_label}</span> <span class="muted">{sizeText(f.bytes)} · {t("files.chars", { n: f.chars })} · {t("files.passages", { n: f.passages })}</span></p>
+                    <Show when={f.truncated}><p class="muted">{t("files.truncated")}</p></Show>
+                    <For each={f.notes}>{(n) => <p class="muted">{n}</p>}</For>
+                    <Show when={f.flagged.instruction_like > 0}><p class="bad">{t("files.flaggedInstructions", { n: f.flagged.instruction_like })}</p></Show>
+                    <Show when={f.flagged.secret > 0}><p class="bad">{t("files.flaggedSecrets", { n: f.flagged.secret })}</p></Show>
+                    <Show when={f.passages === 0}><p class="muted">{t("files.noText")}</p></Show>
+                    <div class="actions">
+                      <button type="button" class="linklike" onClick={() => void toggleRead(f.id)}>{shown()[f.id] && shown()[f.id] !== "loading" ? t("files.hide") : t("files.show")}</button>
+                      <button type="button" class="linklike" onClick={() => void dropFile(f.id)}>{t("files.remove")}</button>
+                    </div>
+                    <Show when={shown()[f.id] && shown()[f.id] !== "loading"}>
+                      <ul class="plain stack read-passages">
+                        <For each={(shown()[f.id] as AttachmentRead).read.slice(0, 60)}>
+                          {(p) => (
+                            <li>
+                              <code>{p.anchor}</code>
+                              <For each={p.lines.slice(0, 40)}>
+                                {(l) => (
+                                  <p class={l.flagged ? "mem-text muted struck" : "mem-text"}>
+                                    {visible(l.text.length > 300 ? l.text.slice(0, 300) + "…" : l.text)}
+                                    <Show when={l.flagged}> <span class="chip">{t(l.flagged === "secret" ? "files.passageFlagSecret" : "files.passageFlag")}</span></Show>
+                                  </p>
+                                )}
+                              </For>
+                            </li>
+                          )}
+                        </For>
+                      </ul>
+                    </Show>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </Show>
+        </div>
+        <textarea
+          ref={box}
+          id="chat-input"
+          rows="3"
+          value={text()}
+          role="combobox"
+          aria-expanded={slashOpen()}
+          aria-controls="slash-list"
+          aria-autocomplete="list"
+          aria-activedescendant={slashOpen() && slash().active >= 0 ? `slash-${slashRows()[slash().active]?.name}` : undefined}
+          onInput={(e) => {
+            setText(e.currentTarget.value);
+            const q = slashQuery(e.currentTarget.value);
+            setSlash(afterInput(slash(), q === null ? 0 : slashMatches(q).length));
+            setSlashNote("");
+          }}
+          onPaste={(e) => {
+            const pasted = pastedFiles(e.clipboardData?.items);
+            if (pasted.length === 0) return;
+            e.preventDefault();
+            if (!busy()) void addFiles(pasted);
+          }}
+          onKeyDown={(e) => {
+            if (slashOpen() && slashRows().length > 0) {
+              const step = slashKey(slash(), slashRows().length, { key: e.key, ctrlKey: e.ctrlKey, isComposing: e.isComposing || e.keyCode === 229 });
+              if (step.kind === "move" || step.kind === "close") {
+                e.preventDefault();
+                setSlash(step.state);
+                return;
+              }
+              // a command typed out in full needs no help: Enter runs it, as in the terminal; Tab still completes
+              const exact = parseLine(text().trim()) !== null && e.key === "Enter";
+              if (step.kind === "choose" && !exact) {
+                e.preventDefault();
+                chooseSlash(step.index);
+                return;
+              }
+            } else if (slashOpen() && e.key === "Escape") {
+              e.preventDefault();
+              setSlash({ ...slash(), dismissed: true });
+              return;
+            }
+            if (stopsReply(e, busy())) {
+              e.preventDefault();
+              abort?.abort();
+              return;
+            }
+            if (opensHistoryPicker(e, e.currentTarget.value, e.currentTarget.selectionStart, sentHistory().length)) {
+              e.preventDefault();
+              setPicking(true);
+              return;
+            }
+            const dir = historyKey(e);
+            if (dir) {
+              const el = e.currentTarget;
+              if (el.selectionStart !== el.selectionEnd) return;
+              const step = historyStep(sentHistory(), hist, dir, el.value, el.selectionStart);
+              if (step) {
+                e.preventDefault();
+                hist = step.state;
+                setText(step.text);
+                el.value = step.text;
+                el.setSelectionRange(step.cursor, step.cursor);
+              }
+              return;
+            }
+            // Enter that confirms an input-method composition (Hindi, Chinese, Japanese) must not send the message.
+            if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+              e.preventDefault();
+              void send();
+            }
+          }}
+        />
+        <SavedPrompts text={text} onUse={(p) => { setText(p); box?.focus(); }} />
+        <Show when={slashOpen()}>
+          <Show
+            when={slashRows().length > 0}
+            fallback={<p class="muted" role="status">{t("slash.none")}</p>}
+          >
+            <ul id="slash-list" class="slash" role="listbox" aria-label={t("slash.title")}>
+              <For each={slashRows()}>
+                {(c, i) => (
+                  <li
+                    id={`slash-${c.name}`}
+                    role="option"
+                    aria-selected={slash().active === i()}
+                    class={slash().active === i() ? "slash-row on" : "slash-row"}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      chooseSlash(i());
+                    }}
+                  >
+                    <code>/{c.name}{c.job ? " …" : ""}</code> <span class="muted">{t(c.about)}</span>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </Show>
+        </Show>
+        <Show when={slashNote()}><p class="muted" role="status">{slashNote()}</p></Show>
+        <div class="actions">
+          <button class="primary" type="submit" disabled={busy() || text().trim().length === 0}>{t("chat.send")}</button>
+          <Show when={busy()}><button type="button" onClick={() => abort?.abort()}>{t("chat.stop")}</button></Show>
+          <button type="button" disabled={busy() || turns().length === 0} onClick={() => { setTurns([]); heldLevel = 0; setError(""); setSendFailed(false); forgetSent(draftKey(session())); hist = idleHistory(); }}>{t("chat.clear")}</button>
+          <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
+          <Show when={sendFailed() && error() && !busy() && text().trim().length > 0}><button type="button" onClick={() => void send()}>{t("chat.retry")}</button></Show>
+          <Show when={recovered()}><span role="status" class="muted">{t("chat.recovered")}</span></Show>
+        </div>
+        <p class="muted">{t("chat.pick.hint")}</p>
+        <Show when={turns().length > 0}>
+          <details class="stack">
+            <summary>{t("chat.export")}</summary>
+            <label for="export-name">{t("chat.export.name")}</label>
+            <input id="export-name" value={exportName()} maxlength="60" onInput={(e) => setExportName(e.currentTarget.value)} />
+            <label for="export-format">{t("chat.export.format")}</label>
+            <select id="export-format" value={exportFormat()} onChange={(e) => setExportFormat(e.currentTarget.value as ExportFormat)}>
+              <option value="lines">{t("chat.export.format.lines")}</option>
+              <option value="markdown">{t("chat.export.format.markdown")}</option>
+              <option value="json">{t("chat.export.format.json")}</option>
+            </select>
+            <div class="actions"><button type="button" onClick={exportNow}>{t("chat.export.go")}</button></div>
+            <Show when={exportNote()}><p role="status" class="muted">{exportNote()}</p></Show>
+          </details>
+        </Show>
+        <Show when={picking()}>
+          <HistoryPicker
+            entries={sentHistory()}
+            onPick={(m) => {
+              setPicking(false);
+              hist = idleHistory();
+              setText(m);
+              queueMicrotask(() => {
+                box?.focus();
+                box?.setSelectionRange(m.length, m.length);
+              });
+            }}
+            onClose={() => {
+              setPicking(false);
+              queueMicrotask(() => box?.focus());
+            }}
+          />
+        </Show>
+      </form>
+      {/* The tools come after the message box: someone who came to ask can ask at once, and the box still sits directly
+          under the newest message. */}
       <div class="stack">
         <label for="chat-project">{t("chat.project")}</label>
         <input id="chat-project" value={project()} maxlength="80" placeholder={t("chat.projectHint")} disabled={busy()} onInput={(e) => setProject(e.currentTarget.value)} />
@@ -1082,271 +1351,6 @@ export function Chat() {
           <button type="button" onClick={() => setPages([])}>{t("web.forget")}</button>
         </Show>
       </details>
-      {/* The tools come before the conversation, so the message box sits directly under the newest message. */}
-      <Show when={summaryText()}>
-        <details class="card stack summary-shown"><summary>{t("chat.summaryShow")}</summary><p class="muted">{t("chat.summaryExplain")}</p><p class="mem-text">{summaryText()}</p></details>
-      </Show>
-      <Show when={session() && (branches().length > 0 || forkAt() !== null)}>
-        <nav class="card stack branches" aria-label={t("chat.branches")}>
-          <strong>{t("chat.branches")}</strong>
-          <p class="muted">{forkAt() !== null ? t("chat.branchFrom", { n: forkAt()! }) + " " : ""}{t("chat.branchesHelp")}</p>
-          <ul class="plain row-wrap">
-            <For each={branches()}>{(b) => <li><button type="button" class="linklike" onClick={() => void openKept(b.id)}>{t("chat.branchOf", { title: b.title, n: b.turns })}</button></li>}</For>
-          </ul>
-        </nav>
-      </Show>
-      <Show when={turns().length > 0}>
-        <div class="find-bar" role="search">
-          <label class="sr" for="chat-find">{t("chatfind.label")}</label>
-          <input id="chat-find" type="search" maxlength="200" placeholder={t("chatfind.label")} value={findText()} onInput={(e) => runFind(e.currentTarget.value)} onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              stepFind(e.shiftKey ? -1 : 1);
-            } else if (e.key === "Escape" && findText() !== "") {
-              e.stopPropagation();
-              clearFind();
-            }
-          }} />
-          <Show when={findText().trim() !== ""}>
-            <span class="muted" role="status">{found().length === 0 ? t("chatfind.none") : t("chatfind.count", { n: (findAt() ?? 0) + 1, of: found().length })}</span>
-            <button type="button" class="linklike" disabled={found().length === 0} onClick={() => stepFind(-1)}>{t("chatfind.prev")}</button>
-            <button type="button" class="linklike" disabled={found().length === 0} onClick={() => stepFind(1)}>{t("chatfind.next")}</button>
-          </Show>
-        </div>
-      </Show>
-      <ul ref={listEl} class="plain stack chat" aria-live="polite">
-        <For each={turns()} fallback={<li class="muted">{t("chat.empty")}</li>}>
-          {(m, i) => (
-            <li class={`card stack msg ${m.role}`}>
-              <strong>{m.role === "user" ? t("chat.you") : t("chat.assistant")}</strong>
-              <div class="msg-body">{m.role === "assistant" ? <Markdown text={m.content} /> : <p class="mem-text">{m.content}</p>}</div>
-              <Show when={(m.attached ?? []).length > 0}><p class="muted">{t("files.attached", { names: m.attached!.join(", ") })}</p></Show>
-              <Show when={m.foot}>{(f) => <p class="muted">{f().join(" · ")}</p>}</Show>
-              <div class="actions msg-actions">
-                <button type="button" class="linklike" onClick={() => void copyTurn(i(), m.content)}>{copiedAt() === i() ? t("chat.copied") : t("chat.copy")}</button>
-                <Show when={session() && !busy() && editPoint(turns(), i())}>
-                  <button type="button" class="linklike" onClick={() => void branchAt(editPoint(turns(), i()), false)}>{t("chat.edit")}</button>
-                </Show>
-                <Show when={session() && !busy() && againPoint(turns(), i())}>
-                  <button type="button" class="linklike" onClick={() => void branchAt(againPoint(turns(), i()), true)}>{t("chat.again")}</button>
-                </Show>
-              </div>
-              <Show when={m.role === "assistant" && i() === answeredAt() && !busy() && i() > 0 && turns()[i() - 1]?.role === "user"}>
-                <SentView typed={turns()[i() - 1]!.content} />
-              </Show>
-              <Show when={(m.notes ?? []).length > 0}>
-                <details class="notes-used">
-                  <summary>{t("chat.whichNotes", { n: m.notes!.length })}</summary>
-                  <ul class="plain"><For each={m.notes}>{(n) => <li><span>{n.text}</span> <span class="muted">({n.why}{n.untrusted ? `; ${t("mem.untrusted")}` : ""})</span></li>}</For></ul>
-                </details>
-              </Show>
-            </li>
-          )}
-        </For>
-        <Show when={busy() && live()}><li class="card stack msg assistant"><strong>{t("chat.assistant")}</strong><Markdown text={live()} /></li></Show>
-        <Show when={busy() && !live()}><li class="muted" role="status">{t("chat.thinking")}</li></Show>
-      </ul>
-      <Show when={unseen()}><button type="button" class="jump" onClick={jump}>{t("chat.jump")}</button></Show>
-      <form class="card stack" onSubmit={send}>
-        <label for="chat-input">{t("chat.input")}</label>
-        <div
-          class={dragging() ? "stack attach drop" : "stack attach"}
-        >
-          <div class="actions">
-            <input ref={picker} type="file" multiple hidden aria-label={t("files.attach")} onChange={(e) => {
-              void addFiles(Array.from(e.currentTarget.files ?? []));
-              e.currentTarget.value = "";
-            }} />
-            <button type="button" disabled={busy() || !!reading()} onClick={() => picker?.click()}>{t("files.attach")}</button>
-            <span class="muted">{t("files.drop")}</span>
-            <Show when={dragging()}><strong role="status">{t("files.dropNow")}</strong></Show>
-            <Show when={reading()}><span role="status" class="muted">{reading()}</span></Show>
-          </div>
-          <p class="muted">{t("files.attachHelp")}</p>
-          <Show when={fileInfo()}><p role="alert" class="bad">{fileInfo()}</p></Show>
-          <Show when={files().length > 0}>
-            <ul class="plain stack" aria-label={t("files.attach")}>
-              <For each={files()}>
-                {(f) => (
-                  <li class="card stack file-chip">
-                    <p><strong>{f.name}</strong> <span class="chip">{f.kind_label}</span> <span class="muted">{sizeText(f.bytes)} · {t("files.chars", { n: f.chars })} · {t("files.passages", { n: f.passages })}</span></p>
-                    <Show when={f.truncated}><p class="muted">{t("files.truncated")}</p></Show>
-                    <For each={f.notes}>{(n) => <p class="muted">{n}</p>}</For>
-                    <Show when={f.flagged.instruction_like > 0}><p class="bad">{t("files.flaggedInstructions", { n: f.flagged.instruction_like })}</p></Show>
-                    <Show when={f.flagged.secret > 0}><p class="bad">{t("files.flaggedSecrets", { n: f.flagged.secret })}</p></Show>
-                    <Show when={f.passages === 0}><p class="muted">{t("files.noText")}</p></Show>
-                    <div class="actions">
-                      <button type="button" class="linklike" onClick={() => void toggleRead(f.id)}>{shown()[f.id] && shown()[f.id] !== "loading" ? t("files.hide") : t("files.show")}</button>
-                      <button type="button" class="linklike" onClick={() => void dropFile(f.id)}>{t("files.remove")}</button>
-                    </div>
-                    <Show when={shown()[f.id] && shown()[f.id] !== "loading"}>
-                      <ul class="plain stack read-passages">
-                        <For each={(shown()[f.id] as AttachmentRead).read.slice(0, 60)}>
-                          {(p) => (
-                            <li>
-                              <code>{p.anchor}</code>
-                              <For each={p.lines.slice(0, 40)}>
-                                {(l) => (
-                                  <p class={l.flagged ? "mem-text muted struck" : "mem-text"}>
-                                    {visible(l.text.length > 300 ? l.text.slice(0, 300) + "…" : l.text)}
-                                    <Show when={l.flagged}> <span class="chip">{t(l.flagged === "secret" ? "files.passageFlagSecret" : "files.passageFlag")}</span></Show>
-                                  </p>
-                                )}
-                              </For>
-                            </li>
-                          )}
-                        </For>
-                      </ul>
-                    </Show>
-                  </li>
-                )}
-              </For>
-            </ul>
-          </Show>
-        </div>
-        <textarea
-          ref={box}
-          id="chat-input"
-          rows="3"
-          value={text()}
-          role="combobox"
-          aria-expanded={slashOpen()}
-          aria-controls="slash-list"
-          aria-autocomplete="list"
-          aria-activedescendant={slashOpen() && slash().active >= 0 ? `slash-${slashRows()[slash().active]?.name}` : undefined}
-          onInput={(e) => {
-            setText(e.currentTarget.value);
-            const q = slashQuery(e.currentTarget.value);
-            setSlash(afterInput(slash(), q === null ? 0 : slashMatches(q).length));
-            setSlashNote("");
-          }}
-          onPaste={(e) => {
-            const pasted = pastedFiles(e.clipboardData?.items);
-            if (pasted.length === 0) return;
-            e.preventDefault();
-            if (!busy()) void addFiles(pasted);
-          }}
-          onKeyDown={(e) => {
-            if (slashOpen() && slashRows().length > 0) {
-              const step = slashKey(slash(), slashRows().length, { key: e.key, ctrlKey: e.ctrlKey, isComposing: e.isComposing || e.keyCode === 229 });
-              if (step.kind === "move" || step.kind === "close") {
-                e.preventDefault();
-                setSlash(step.state);
-                return;
-              }
-              // a command typed out in full needs no help: Enter runs it, as in the terminal; Tab still completes
-              const exact = parseLine(text().trim()) !== null && e.key === "Enter";
-              if (step.kind === "choose" && !exact) {
-                e.preventDefault();
-                chooseSlash(step.index);
-                return;
-              }
-            } else if (slashOpen() && e.key === "Escape") {
-              e.preventDefault();
-              setSlash({ ...slash(), dismissed: true });
-              return;
-            }
-            if (stopsReply(e, busy())) {
-              e.preventDefault();
-              abort?.abort();
-              return;
-            }
-            if (opensHistoryPicker(e, e.currentTarget.value, e.currentTarget.selectionStart, sentHistory().length)) {
-              e.preventDefault();
-              setPicking(true);
-              return;
-            }
-            const dir = historyKey(e);
-            if (dir) {
-              const el = e.currentTarget;
-              if (el.selectionStart !== el.selectionEnd) return;
-              const step = historyStep(sentHistory(), hist, dir, el.value, el.selectionStart);
-              if (step) {
-                e.preventDefault();
-                hist = step.state;
-                setText(step.text);
-                el.value = step.text;
-                el.setSelectionRange(step.cursor, step.cursor);
-              }
-              return;
-            }
-            // Enter that confirms an input-method composition (Hindi, Chinese, Japanese) must not send the message.
-            if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
-              e.preventDefault();
-              void send();
-            }
-          }}
-        />
-        <SavedPrompts text={text} onUse={(p) => { setText(p); box?.focus(); }} />
-        <Show when={slashOpen()}>
-          <Show
-            when={slashRows().length > 0}
-            fallback={<p class="muted" role="status">{t("slash.none")}</p>}
-          >
-            <ul id="slash-list" class="slash" role="listbox" aria-label={t("slash.title")}>
-              <For each={slashRows()}>
-                {(c, i) => (
-                  <li
-                    id={`slash-${c.name}`}
-                    role="option"
-                    aria-selected={slash().active === i()}
-                    class={slash().active === i() ? "slash-row on" : "slash-row"}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      chooseSlash(i());
-                    }}
-                  >
-                    <code>/{c.name}{c.job ? " …" : ""}</code> <span class="muted">{t(c.about)}</span>
-                  </li>
-                )}
-              </For>
-            </ul>
-          </Show>
-        </Show>
-        <Show when={slashNote()}><p class="muted" role="status">{slashNote()}</p></Show>
-        <div class="actions">
-          <button class="primary" type="submit" disabled={busy() || text().trim().length === 0}>{t("chat.send")}</button>
-          <Show when={busy()}><button type="button" onClick={() => abort?.abort()}>{t("chat.stop")}</button></Show>
-          <button type="button" disabled={busy() || turns().length === 0} onClick={() => { setTurns([]); heldLevel = 0; setError(""); setSendFailed(false); forgetSent(draftKey(session())); hist = idleHistory(); }}>{t("chat.clear")}</button>
-          <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
-          <Show when={sendFailed() && error() && !busy() && text().trim().length > 0}><button type="button" onClick={() => void send()}>{t("chat.retry")}</button></Show>
-          <Show when={recovered()}><span role="status" class="muted">{t("chat.recovered")}</span></Show>
-        </div>
-        <p class="muted">{t("chat.pick.hint")}</p>
-        <Show when={turns().length > 0}>
-          <details class="stack">
-            <summary>{t("chat.export")}</summary>
-            <label for="export-name">{t("chat.export.name")}</label>
-            <input id="export-name" value={exportName()} maxlength="60" onInput={(e) => setExportName(e.currentTarget.value)} />
-            <label for="export-format">{t("chat.export.format")}</label>
-            <select id="export-format" value={exportFormat()} onChange={(e) => setExportFormat(e.currentTarget.value as ExportFormat)}>
-              <option value="lines">{t("chat.export.format.lines")}</option>
-              <option value="markdown">{t("chat.export.format.markdown")}</option>
-              <option value="json">{t("chat.export.format.json")}</option>
-            </select>
-            <div class="actions"><button type="button" onClick={exportNow}>{t("chat.export.go")}</button></div>
-            <Show when={exportNote()}><p role="status" class="muted">{exportNote()}</p></Show>
-          </details>
-        </Show>
-        <Show when={picking()}>
-          <HistoryPicker
-            entries={sentHistory()}
-            onPick={(m) => {
-              setPicking(false);
-              hist = idleHistory();
-              setText(m);
-              queueMicrotask(() => {
-                box?.focus();
-                box?.setSelectionRange(m.length, m.length);
-              });
-            }}
-            onClose={() => {
-              setPicking(false);
-              queueMicrotask(() => box?.focus());
-            }}
-          />
-        </Show>
-      </form>
     </section>
   );
 }

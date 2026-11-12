@@ -245,7 +245,9 @@ try {
   await page.locator(".welcome").waitFor({ state: "detached" });
   check("Escape skips the rest from the keyboard and nothing was required", (await page.evaluate(() => localStorage.getItem("kk-welcome"))) === "done");
   await page.getByRole("heading", { name: "Ready to review" }).waitFor({ timeout: 20000 });
-  check("a correctly set up machine says Ready to review and lists every check as ready", (await page.getByRole("region", { name: "Setup check" }).innerText()).split("Needs attention").length === 1);
+  check("a correctly set up machine says Ready to review and folds its checks away behind one line", /All \d+ checks passed/.test(await page.getByRole("region", { name: "Setup check" }).innerText()) && !(await page.locator(".checks-fold").evaluate((d) => d.open)));
+  await page.locator(".checks-fold > summary").click();
+  check("opened, every check is listed as ready", (await page.getByRole("region", { name: "Setup check" }).innerText()).split("Needs attention").length === 1 && (await page.locator(".checks li").count()) >= 3);
   await page.screenshot({ path: join(shots, "01-new-review.png") });
   await page.route("**/api/readiness", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ready: true, checks: [{ id: "model", label: "Model", ok: true, detail: "m", fix: "" }, { id: "node", label: "JavaScript checks", required: false, ok: false, detail: "Node.js was not found", fix: "Install Node.js 22" }] }) }));
   await page.reload();
@@ -873,9 +875,9 @@ try {
   await page.getByLabel("Minutes it lasts").fill("30");
   await page.getByLabel("What the agent may do").selectOption("start_review");
   await page.getByRole("button", { name: "Give lease" }).click();
-  await page.getByText("2 use(s) left", { exact: false }).waitFor();
+  await page.getByText("Uses left: 2", { exact: false }).waitFor();
   const leaseRow = page.getByRole("region", { name: "Active leases" });
-  check("a given lease is listed with its uses and minutes", (await leaseRow.innerText()).includes("Start a review") && /\b(29|30) minute\(s\) remaining/.test(await leaseRow.innerText()));
+  check("a given lease is listed with its uses and minutes", (await leaseRow.innerText()).includes("Start a review") && /Minutes remaining: (29|30)\./.test(await leaseRow.innerText()));
   check("the service holds the same lease", (await page.evaluate(async () => { const r = await (await fetch("/api/agent-access")).json(); return r.leases.length === 1 && r.leases[0].tool === "start_review" && r.leases[0].remaining === 2; })));
   await axeCheck(page, "agent access screen (with a lease)");
   await page.getByRole("button", { name: "Revoke", exact: true }).click();

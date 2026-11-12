@@ -22620,7 +22620,7 @@ fn sv266_the_project_reviewer_runs_a_real_review_of_the_runs_project_and_hands_o
     assert_eq!(team_states(&v), ["done", "done"], "{v}");
     let result = v["tasks"][0]["result"].as_str().unwrap();
     assert!(
-        result.contains("1 defect(s) the sandbox reproduced")
+        result.contains("1 defect the sandbox reproduced")
             && result.contains("Token not revoked (payments/auth/session.py:"),
         "{result}"
     );

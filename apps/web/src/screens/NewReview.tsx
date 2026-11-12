@@ -72,6 +72,9 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
         {(r) => (
           <div class="card stack" role="region" aria-label={t("setup.region")}>
             <h2>{r().ready ? t("setup.ready") : t("setup.finish")}</h2>
+            {/* when every check passed the list is folded away: it is there to read, not in the way */}
+            <details class="checks-fold" open={!r().checks.every((c) => c.ok)}>
+            <summary>{r().checks.every((c) => c.ok) ? t("setup.allOk", { n: r().checks.length }) : t("setup.someNot")}</summary>
             <ul class="checks">
               <For each={r().checks}>
                 {(c) => (
@@ -86,6 +89,7 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
                 )}
               </For>
             </ul>
+            </details>
             <Show when={repairError()}><p role="alert" class="bad">{repairError()}</p></Show>
             <Show when={!r().ready}>
               <div class="actions"><button onClick={() => refetch()}>{t("setup.recheck")}</button></div>

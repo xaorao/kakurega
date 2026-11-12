@@ -358,7 +358,11 @@ pub fn assemble(
         .any(|f| f.label.level >= Level::Restricted)
     {
         removed.push(Removal {
-            what: format!("{} withheld file(s)", withheld.len()),
+            what: format!(
+                "{} withheld {}",
+                withheld.len(),
+                if withheld.len() == 1 { "file" } else { "files" }
+            ),
             why: "labelled secret or restricted; never read by the agent and never released".into(),
         });
     }

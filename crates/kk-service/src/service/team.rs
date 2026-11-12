@@ -130,6 +130,11 @@ impl Drop for DriverGuard {
     }
 }
 
+/// "1 defect", "2 defects".
+fn count(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
 /// The seat of the coding agent installed on this computer. It is never in a plan unless the owner named it.
 /// Said when a run that worked with a more private model would go on with a lesser one.
 const MORE_PRIVATE: &str = "this run worked with a more private model than the one in use now, and what it holds is not sent to this one. Switch the model back in Settings to carry on, or plan a new run";
@@ -226,10 +231,13 @@ impl Service {
                     .as_ref()
                     .map_or(0, |s| s.findings.len() - findings.len() + s.unparsed);
                 let mut text = format!(
-                    "Review {job} of the project folder: {} defect(s) the sandbox reproduced{}.\n",
-                    findings.len(),
+                    "Review {job} of the project folder: {} the sandbox reproduced{}.\n",
+                    count(findings.len(), "defect", "defects"),
                     if not_confirmed > 0 {
-                        format!(", {not_confirmed} suspicion(s) it could not reproduce (left out)")
+                        format!(
+                            ", {} it could not reproduce (left out)",
+                            count(not_confirmed, "suspicion", "suspicions")
+                        )
                     } else {
                         String::new()
                     }
