@@ -80,3 +80,4 @@ Recovery-phrase word list (`crates/kk-secrets/src/bip39_english.txt`): the Engli
 
 Fields in saved prompts (`apps/web/src/promptVars.ts`, `crates/kk-tui/src/prompt_vars.rs`): the `{{name}}` and `{{name:one|two}}` notation and the idea of asking for each field before use follow LibreChat (MIT, LibreChat) `client/src/utils/prompts.ts` and `VariableForm.tsx` (commit f4154b6); the code was written here.
 
+The switch for the screen-picture key in the desktop menu (`apps/desktop/src/main.mjs`, `apps/desktop/src/tray.mjs`): turning a global key off so other apps keep it, and saying when another app already holds it, follow the Shortcut setting of Aftercall (Don-Vicks/aftercall at a367ec7, `apps/desktop/src/ShortcutSettings.tsx`, MIT, Copyright (c) 2026 Victor Shallangwa). Idea only; no code was taken.

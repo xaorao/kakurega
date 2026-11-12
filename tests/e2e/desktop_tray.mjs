@@ -97,7 +97,7 @@ try {
   const tray = await shell(app, () => { const t = globalThis.kakuregaShell.tray(); return t && { destroyed: t.isDestroyed(), title: process.platform === "darwin" ? t.getTitle() : "" }; });
   check("the app shows a menu-bar item as soon as it runs, with no number while nothing waits", !!tray && !tray.destroyed && tray.title === "", JSON.stringify(tray));
   const labels = await menuLabels(app);
-  check("its menu says Kakurega is running and what waits, and offers Open, Waiting for you, notifications and Quit", JSON.stringify(labels.map((l) => l.label)) === JSON.stringify(["Kakurega is running", "Nothing is waiting for you", "Open Kakurega", "Waiting for you", "Take a picture of the screen for the chat…", "Tell me when something needs me", "Quit Kakurega"]) && labels[0].enabled === false && labels[1].enabled === false, JSON.stringify(labels.map((l) => l.label)));
+  check("its menu says Kakurega is running and what waits, and offers Open, Waiting for you, the picture, notifications, the picture key and Quit", JSON.stringify(labels.map((l) => l.label)) === JSON.stringify(["Kakurega is running", "Nothing is waiting for you", "Open Kakurega", "Waiting for you", "Take a picture of the screen for the chat…", "Tell me when something needs me", "Picture key ⇧⌥⌘K from any app", "Quit Kakurega"]) && labels[0].enabled === false && labels[1].enabled === false, JSON.stringify(labels.map((l) => l.label)));
   const adminInbox = await admin(data, "GET", "/admin/inbox");
   const st0 = await shell(app, () => globalThis.kakuregaShell.state());
   check(`the shell reads the inbox through its admin token (${adminInbox.status === 200 ? "the service's /admin/inbox" : "this service has no /admin/inbox, so the reviews' part from /admin/jobs"})`, st0.complete === (adminInbox.status === 200), `GET /admin/inbox -> ${adminInbox.status}`);
@@ -177,6 +177,14 @@ try {
     globalThis.kakuregaShell.markStopped(false);
     return { k, r, again: globalThis.kakuregaShell.shortcut() };
   });
+  // the owner can let other apps keep the key; the choice is saved, and turned on again the key is held again
+  await clickMenu(app, "key-anywhere");
+  const keyOff = await shell(app, () => ({ k: globalThis.kakuregaShell.shortcut(), checked: globalThis.kakuregaShell.menu()?.getMenuItemById("key-anywhere")?.checked, accel: globalThis.kakuregaShell.menu()?.getMenuItemById("capture")?.accelerator ?? null }));
+  const savedOff = JSON.parse(readFileSync(join(data, "electron/shell.json"), "utf8"));
+  await clickMenu(app, "key-anywhere");
+  const keyOn = await shell(app, () => globalThis.kakuregaShell.shortcut());
+  const savedOn = JSON.parse(readFileSync(join(data, "electron/shell.json"), "utf8"));
+  check("the picture key can be turned off from the menu so other apps keep it, the choice is saved, and on again it is held", keyOff.k.registered === false && keyOff.checked === false && keyOff.accel === null && savedOff.keyAnywhere === false && keyOn.registered === true && savedOn.keyAnywhere === true, JSON.stringify({ keyOff, savedOff, keyOn, savedOn }));
   check("a stopped service lets the key go, a capture then sends nothing, and the key is held again once it runs", stoppedKeys.k.registered === false && stoppedKeys.k.shown === null && stoppedKeys.r === null && stoppedKeys.again.registered === true, JSON.stringify(stoppedKeys));
   const discarded = await shell(app, () => globalThis.kakuregaShell.capture());
   check("a picture the owner discards is not attached and the screen does not change", discarded?.outcome === "discarded" && new URL(page.url()).hash === "#/privacy", JSON.stringify(discarded));
@@ -267,7 +275,7 @@ try {
   await page.waitForLoadState("domcontentloaded");
   const lang = await shell(app, () => globalThis.kakuregaShell.language());
   const hiLabels = (await menuLabels(app)).map((l) => l.label);
-  check("with the system in Hindi the menu-bar item's menu is in Hindi", lang === "hi" && JSON.stringify(hiLabels) === JSON.stringify([STRINGS.hi["tray.running"], STRINGS.hi["tray.nothing"], STRINGS.hi["tray.open"], STRINGS.hi["tray.inbox"], STRINGS.hi["tray.capture"], STRINGS.hi["tray.notify"], STRINGS.hi["tray.quit"]]), JSON.stringify([lang, hiLabels]));
+  check("with the system in Hindi the menu-bar item's menu is in Hindi", lang === "hi" && JSON.stringify(hiLabels) === JSON.stringify([STRINGS.hi["tray.running"], STRINGS.hi["tray.nothing"], STRINGS.hi["tray.open"], STRINGS.hi["tray.inbox"], STRINGS.hi["tray.capture"], STRINGS.hi["tray.notify"], STRINGS.hi["tray.keyAnywhere"].replace("{keys}", "⇧⌥⌘K"), STRINGS.hi["tray.quit"]]), JSON.stringify([lang, hiLabels]));
   await setFocus(app, false);
   await poll(app);
   await review(data, "Hindi-Recipient-7708");

@@ -59,7 +59,7 @@ let t = english;
 let language = "en";
 const companionPolicy = createRestartPolicy();
 const rendererPolicy = createRestartPolicy({ baseDelayMs: 0 });
-const state = { count: 0, stopped: false, notify: true, complete: true };
+const state = { count: 0, stopped: false, notify: true, keyAnywhere: true, keysText: process.platform === "darwin" ? "⇧⌥⌘K" : "Ctrl+Alt+Shift+K", complete: true };
 // The notifications this run has shown, newest last, so a click can still be handled; only generic text is ever in them.
 const notices = [];
 
@@ -202,16 +202,16 @@ function launchCompanion() {
 function readSettings() {
   try {
     const s = JSON.parse(readFileSync(settingsPath(), "utf8"));
-    return { notify: s?.notify !== false };
+    return { notify: s?.notify !== false, keyAnywhere: s?.keyAnywhere !== false };
   } catch {
-    return { notify: true };
+    return { notify: true, keyAnywhere: true };
   }
 }
 
 function saveSettings() {
   try {
     mkdirSync(app.getPath("userData"), { recursive: true });
-    writeFileSync(settingsPath(), JSON.stringify({ notify: state.notify }), { mode: 0o600 });
+    writeFileSync(settingsPath(), JSON.stringify({ notify: state.notify, keyAnywhere: state.keyAnywhere }), { mode: 0o600 });
   } catch {}
 }
 
@@ -365,9 +365,10 @@ function takeShortcut() {
   state.shortcut = ok ? CAPTURE_SHORTCUT : null;
 }
 
-/** The key is held while the service runs and let go when it stops, as the menu entry is hidden then. */
+/** The key is held while the service runs and the owner wants it from any app; it is let go when the service stops, as
+ *  the menu entry is hidden then, and when the owner turns it off so other apps keep it. */
 function syncShortcut() {
-  if (state.stopped) {
+  if (state.stopped || !state.keyAnywhere) {
     if (globalShortcut.isRegistered(CAPTURE_SHORTCUT)) globalShortcut.unregister(CAPTURE_SHORTCUT);
     state.shortcut = null;
   } else if (!globalShortcut.isRegistered(CAPTURE_SHORTCUT)) {
@@ -391,6 +392,11 @@ const trayActions = {
     saveSettings();
     refreshTray();
   },
+  setKeyAnywhere: (on) => {
+    state.keyAnywhere = on;
+    saveSettings();
+    refreshTray();
+  },
   quit: () => app.quit(),
 };
 
@@ -401,7 +407,7 @@ function refreshTray() {
     state.profile = profileName;
     state.profiles = [DEFAULT_PROFILE, ...profileNames(profilesHome)];
   }
-  const key = JSON.stringify([state.count, state.stopped, state.notify, language, state.profile, state.profiles, state.shortcut]);
+  const key = JSON.stringify([state.count, state.stopped, state.notify, state.keyAnywhere, language, state.profile, state.profiles, state.shortcut]);
   // rebuilt only when something on it changed, so a menu the owner has open is not replaced under the pointer
   if (key === trayKey) return;
   trayKey = key;
@@ -470,6 +476,7 @@ async function start() {
     return;
   }
   state.notify = readSettings().notify;
+  state.keyAnywhere = readSettings().keyAnywhere;
   createTray();
   if (kakuBin) launchCompanion();
   await connect();

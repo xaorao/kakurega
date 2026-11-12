@@ -99,6 +99,10 @@ export function menuTemplate(state, t, actions) {
       : []),
     { type: "separator" },
     { id: "notify", label: t("tray.notify"), type: "checkbox", checked: !!state.notify, click: (item) => actions.setNotify(!!item?.checked) },
+    // the picture key from any app: off, other apps keep it; wanted but held by another app, the entry says so
+    ...(state.stopped || !actions.setKeyAnywhere
+      ? []
+      : [{ id: "key-anywhere", label: t(state.keyAnywhere !== false && !state.shortcut ? "tray.keyTaken" : "tray.keyAnywhere", { keys: state.keysText ?? "⇧⌥⌘K" }), type: "checkbox", checked: state.keyAnywhere !== false, click: (item) => actions.setKeyAnywhere(!!item?.checked) }]),
     { type: "separator" },
     { id: "quit", label: t("tray.quit"), click: () => actions.quit() },
   ];
