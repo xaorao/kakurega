@@ -1767,6 +1767,7 @@ export const en = {
   "code.saysModel": "The model says",
   "code.withheld": "{n} files holding secrets or private data were withheld from the model.",
   "code.testsPass": "Tests pass on the changed files ({cmd}), run by the kernel, not reported by the model.",
+  "code.testsNotRun": "The tests ({cmd}) could not run here: the sandbox could not start them, so nothing is known about whether they pass. Run kaku doctor.",
   "code.testsFail": "Tests do NOT pass on the changed files ({cmd}).",
   "code.testsNone": "No tests were found that can run here, so nothing was checked by running it.",
   "code.testOutput": "Test output",

@@ -158,7 +158,7 @@ export function CodeTask() {
               <Show when={c().tests} fallback={<p class="warn">{t("code.testsNone")}</p>}>
                 {(tr) => (
                   <>
-                    <p class={tr().passed ? "ok" : "bad"}>{t(tr().passed ? "code.testsPass" : "code.testsFail", { cmd: c().test_command ?? "" })}</p>
+                    <p class={tr().ran === false ? "warn" : tr().passed ? "ok" : "bad"}>{t(tr().ran === false ? "code.testsNotRun" : tr().passed ? "code.testsPass" : "code.testsFail", { cmd: c().test_command ?? "" })}</p>
                     <details><summary>{t("code.testOutput")}</summary><pre class="passage" tabindex="0">{tr().output}</pre></details>
                   </>
                 )}

@@ -88,6 +88,9 @@ pub enum SandboxError {
     Unsupported(&'static str),
     Spawn(String),
     SelfCheckFailed(Vec<String>),
+    /// The sandbox itself could not start the program (the virtual machine is missing, a folder it binds is not there):
+    /// what the program would have done is not known.
+    NotStarted(String),
 }
 
 impl fmt::Display for SandboxError {
@@ -97,6 +100,9 @@ impl fmt::Display for SandboxError {
             SandboxError::Spawn(m) => write!(f, "could not start the sandbox: {m}"),
             SandboxError::SelfCheckFailed(v) => {
                 write!(f, "sandbox self-check failed: {}", v.join("; "))
+            }
+            SandboxError::NotStarted(m) => {
+                write!(f, "the sandbox could not start the program: {m}")
             }
         }
     }
@@ -762,6 +768,39 @@ fn join_reader(
 }
 
 pub fn run_with(spec: &SandboxSpec, transport: &Transport) -> Result<Outcome, SandboxError> {
+    run_with_unclassified(spec, transport).and_then(not_started)
+}
+
+/// An exit that came from the sandbox's own tools before the program ran: `limactl` saying the machine is not there
+/// (`level=fatal msg=...`), or `bwrap` refusing to set up (`bwrap: Can't find source path ...`). The program cannot print
+/// either first line itself before it has started, and a program that prints one later is not misread: only the first line
+/// of what was written to standard error, on a failing exit, counts.
+fn not_started(o: Outcome) -> Result<Outcome, SandboxError> {
+    if matches!(o.exit, Exit::Code(0)) {
+        return Ok(o);
+    }
+    let err = String::from_utf8_lossy(&o.stderr);
+    let first = err
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let lima = first.contains("level=fatal") && first.contains("msg=");
+    if (first.starts_with("bwrap: ") || lima) && o.stdout.is_empty() {
+        let shown: String = first
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(300)
+            .collect();
+        return Err(SandboxError::NotStarted(shown));
+    }
+    Ok(o)
+}
+
+fn run_with_unclassified(
+    spec: &SandboxSpec,
+    transport: &Transport,
+) -> Result<Outcome, SandboxError> {
     match transport {
         Transport::Local => {
             selfcheck::verify_profile()?;
@@ -819,6 +858,55 @@ pub fn run_with(spec: &SandboxSpec, transport: &Transport) -> Result<Outcome, Sa
                 stderr,
                 truncated: t1 || t2,
             })
+        }
+    }
+}
+
+#[cfg(test)]
+mod not_started_tests {
+    use super::*;
+
+    fn out(code: i32, stdout: &str, stderr: &str) -> Outcome {
+        Outcome {
+            exit: Exit::Code(code),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+            truncated: false,
+        }
+    }
+
+    #[test]
+    fn the_sandboxs_own_refusals_are_not_runs_and_a_programs_own_failure_is_not() {
+        for (stderr, why) in [
+            (
+                "bwrap: Can't find source path /tmp/x/sample: No such file or directory\n",
+                "bwrap",
+            ),
+            (
+                "time=\"2026-11-12T03:00:00Z\" level=fatal msg=\"instance `kak` does not exist\"\n",
+                "limactl",
+            ),
+        ] {
+            assert!(
+                matches!(
+                    not_started(out(1, "", stderr)),
+                    Err(SandboxError::NotStarted(_))
+                ),
+                "{why}"
+            );
+        }
+        // the program's own failure, a program that printed first, and a success are what they are
+        for o in [
+            out(
+                1,
+                "",
+                "Traceback (most recent call last):\n  ...\nbwrap: is mentioned later\n",
+            ),
+            out(1, "partial output\n", "bwrap: Can't find source path\n"),
+            out(0, "", "bwrap: Can't find source path\n"),
+            out(2, "", "error: the test failed\n"),
+        ] {
+            assert!(not_started(o).is_ok());
         }
     }
 }

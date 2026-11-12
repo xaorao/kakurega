@@ -654,6 +654,29 @@ cut_short: false,
                     },
                     &format!("Start it with: limactl start {vm}"),
                 ));
+                // the samples a check reads are written under the data folder on this computer and opened in the machine
+                // at the same path, and the machine sees only the home folder: a data folder elsewhere means no check can
+                // run, so every finding would go unconfirmed
+                let home = std::env::var_os("HOME").map(PathBuf::from);
+                let scratch = self
+                    .scratch
+                    .canonicalize()
+                    .unwrap_or_else(|_| self.scratch.clone());
+                let visible = home
+                    .as_ref()
+                    .map(|h| h.canonicalize().unwrap_or_else(|_| h.clone()))
+                    .is_some_and(|h| scratch.starts_with(&h));
+                out.push(check(
+                    "scratch",
+                    "Data folder the sandbox can see",
+                    visible,
+                    if visible {
+                        "inside the home folder, which the sandbox machine sees".into()
+                    } else {
+                        format!("{} is outside the home folder, which is all the sandbox machine sees", scratch.display())
+                    },
+                    "Start the service with a data folder inside your home folder (the default, ~/.kakurega, is)",
+                ));
                 if running {
                     let present = std::process::Command::new("limactl")
                         .args(["shell", vm, "--", "test", "-x"])

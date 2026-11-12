@@ -81,6 +81,11 @@ pub fn finding(status: &CheckStatus) -> Value {
                 verdict("failed", "The script could not be run. Check that it is complete and uses only the project's own files.")
             }
         }
+        // the sandbox, not the script: the model is not asked to change anything, and is not told the check failed
+        CheckStatus::NotRun(_) => verdict(
+            "not_run",
+            "The kernel could not start its sandbox to run your script, so nothing is known about this finding yet. Do not change the script for this; go on with the review.",
+        ),
         CheckStatus::Unavailable(m) => {
             if starts(m, msg::NO_REPRODUCER) {
                 verdict("unavailable", "The finding has no reproducer. Add one, and report the finding again with the same title.")

@@ -259,6 +259,30 @@ pub fn run_job(
         report.error = Some(STOPPED_BY_OWNER.into());
         return report;
     }
+    // an agent that ended with an error before it asked the model anything never reviewed the project: that is a failed
+    // review, not one that found nothing
+    if report.error.is_none()
+        && report.model_usage.is_empty()
+        && report
+            .worker_exit
+            .as_ref()
+            .is_some_and(|e| *e != Exit::Code(0))
+    {
+        let first = report
+            .worker_stderr
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("")
+            .chars()
+            .take(200)
+            .collect::<String>();
+        report.error = Some(format!(
+            "the review did not run: the agent stopped before it asked the model anything ({}). Run `kaku doctor`, fix what it names, and start the review again",
+            if first.is_empty() { format!("{:?}", report.worker_exit.as_ref().expect("checked")) } else { first }
+        ));
+        return report;
+    }
 
     let index: BTreeMap<String, &crate::import::ImportedFile> =
         files.iter().map(|f| (f.path.clone(), f)).collect();
@@ -421,5 +445,11 @@ pub fn run_job(
         cfg.now,
         cfg.ttl_secs,
     );
+    // checks the sandbox could not start neither confirm nor refute anything: the review failed, it is not a clean result
+    if let Err(Rejection::ChecksNotRun(why)) = &report.draft {
+        report.error = Some(format!(
+            "the kernel could not run its checks, so nothing was confirmed or refuted ({why}). Run `kaku doctor`, fix what it names, and start the review again"
+        ));
+    }
     report
 }

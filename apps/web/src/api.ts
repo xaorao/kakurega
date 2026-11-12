@@ -306,7 +306,7 @@ export type CodeTask = {
   progress: string[];
   ended: string | null;
   summary: string | null;
-  tests: { passed: boolean; output: string } | null;
+  tests: { ran?: boolean; passed: boolean; output: string } | null;
   test_command: string | null;
   withheld_files: number | null;
   steps: { tool: string; label: string | null; refused: boolean; said: string }[];

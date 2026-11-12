@@ -834,6 +834,10 @@ impl App {
             Value::Null => {
                 "Tests: none found that can run here, so nothing was checked by running it.".into()
             }
+            t if t["ran"] == false => format!(
+                "Tests could NOT run here ({}): the sandbox could not start them, so nothing is known about whether they pass. Run `kaku doctor`.",
+                clean(v["test_command"].as_str().unwrap_or(""))
+            ),
             _ if tests_pass => format!(
                 "Tests pass on the changed files ({}), run by the kernel.",
                 clean(v["test_command"].as_str().unwrap_or(""))

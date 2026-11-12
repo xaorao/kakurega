@@ -1394,3 +1394,38 @@ fn rs08_a_capsule_built_from_a_review_that_used_a_verified_model_carries_the_mod
     assert!(!r.valid);
     assert_eq!(r.reason, Some("receipt_signature"));
 }
+
+#[test]
+fn rs_not_run_a_review_whose_checks_could_not_start_is_refused_as_not_run_not_as_nothing_confirmed()
+{
+    let f = files();
+    let idx = index(&f);
+    let not_run = CheckResult {
+        status: CheckStatus::NotRun("bwrap: Can't find source path".into()),
+        stdout: String::new(),
+        sample_paths: vec![],
+    };
+    let r = assemble(
+        &[(finding(), not_run)],
+        &idx,
+        "acme-audit",
+        "policy-1",
+        1_700_000_000,
+        86_400,
+    );
+    assert!(matches!(r, Err(Rejection::ChecksNotRun(_))), "{r:?}");
+    let not_reproduced = CheckResult {
+        status: CheckStatus::NotReproduced,
+        stdout: String::new(),
+        sample_paths: vec![],
+    };
+    let r = assemble(
+        &[(finding(), not_reproduced)],
+        &idx,
+        "acme-audit",
+        "policy-1",
+        1_700_000_000,
+        86_400,
+    );
+    assert!(matches!(r, Err(Rejection::NothingConfirmed)), "{r:?}");
+}

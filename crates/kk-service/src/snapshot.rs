@@ -145,6 +145,7 @@ fn status_text(s: &CheckStatus) -> String {
         CheckStatus::Nondeterministic => "nondeterministic".into(),
         CheckStatus::Failed(m) => format!("failed: {m}"),
         CheckStatus::Unavailable(m) => format!("unavailable: {m}"),
+        CheckStatus::NotRun(m) => format!("not run: the sandbox could not start the check ({m})"),
     }
 }
 

@@ -428,6 +428,8 @@ pub enum CheckStatus {
     Nondeterministic,
     Failed(String),
     Unavailable(String),
+    /// The sandbox could not start the check: nothing is known about the finding, and the setup needs fixing.
+    NotRun(String),
 }
 
 #[derive(Debug, Clone)]
@@ -751,6 +753,14 @@ pub fn run_reproducer(
                 let _ = fs::remove_dir_all(&dir);
                 return CheckResult {
                     status: CheckStatus::Unavailable(m.to_string()),
+                    stdout: String::new(),
+                    sample_paths,
+                };
+            }
+            Err(SandboxError::NotStarted(m)) => {
+                let _ = fs::remove_dir_all(&dir);
+                return CheckResult {
+                    status: CheckStatus::NotRun(m),
                     stdout: String::new(),
                     sample_paths,
                 };

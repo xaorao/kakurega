@@ -689,6 +689,8 @@ pub trait Tester {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TestRun {
+    /// False when the sandbox could not start the tests: then `passed` says nothing about the change.
+    pub ran: bool,
     pub passed: bool,
     /// The end of what the command printed, bounded.
     pub output: String,
@@ -1129,26 +1131,31 @@ fn rust_verdict(exit: &kk_sandbox::Exit, stdout: &str, stderr: &str, tail: Strin
         let chars: Vec<char> = rest.chars().collect();
         let shown: String = chars[chars.len().saturating_sub(6000)..].iter().collect();
         return TestRun {
+            ran: true,
             passed: false,
             output: format!("the crate or its tests did not build\n{shown}"),
         };
     }
     if *exit == kk_sandbox::Exit::TimedOut {
         return TestRun {
+            ran: true,
             passed: false,
             output: format!("the tests took longer than two minutes and were stopped\n{tail}"),
         };
     }
     match rust::parse_rust_tests(exit, stdout) {
         crate::check::TestRun::Passed(_) => TestRun {
+            ran: true,
             passed: true,
             output: tail,
         },
         crate::check::TestRun::NoTests => TestRun {
+            ran: true,
             passed: false,
             output: format!("no test was found\n{tail}"),
         },
         crate::check::TestRun::Failed(why) | crate::check::TestRun::Unavailable(why) => TestRun {
+            ran: true,
             passed: false,
             output: format!("{why}\n{tail}"),
         },
@@ -1184,6 +1191,7 @@ impl Tester for SandboxTester<'_> {
         let project = dir.join("project");
         let _ = std::fs::remove_dir_all(&dir);
         let failed = |why: &str| TestRun {
+            ran: true,
             passed: false,
             output: why.to_string(),
         };
@@ -1277,25 +1285,34 @@ impl Tester for SandboxTester<'_> {
                     && (text.contains("tests 0") || text.contains("# tests 0"));
                 match o.exit {
                     Exit::Code(0) if !none_found => TestRun {
+                        ran: true,
                         passed: true,
                         output: tail,
                     },
                     Exit::Code(0) => TestRun {
+                        ran: true,
                         passed: false,
                         output: format!("no test was found\n{tail}"),
                     },
                     Exit::TimedOut => TestRun {
+                        ran: true,
                         passed: false,
                         output: format!(
                             "the tests took longer than two minutes and were stopped\n{tail}"
                         ),
                     },
                     _ => TestRun {
+                        ran: true,
                         passed: false,
                         output: tail,
                     },
                 }
             }
+            Err(kk_sandbox::SandboxError::NotStarted(m)) => TestRun {
+                ran: false,
+                passed: false,
+                output: format!("the tests could not run: the sandbox could not start them ({m})"),
+            },
             Err(e) => failed(&format!("the sandbox could not run the tests: {e}")),
         }
     }

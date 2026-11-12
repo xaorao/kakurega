@@ -81,6 +81,10 @@ fn vm_paths() -> (Transport, PathBuf) {
 
 fn config(name: &str) -> JobConfig {
     let (transport, worker_binary) = vm_paths();
+    config_for(name, transport, worker_binary)
+}
+
+fn config_for(name: &str, transport: Transport, worker_binary: PathBuf) -> JobConfig {
     let scratch = if cfg!(target_os = "linux") {
         std::env::temp_dir().join("kk-job-tmp/scratch")
     } else {
@@ -701,6 +705,8 @@ fn measure(fixture: &str, language_wanted: kk_review::check::Language, tag: &str
                 }
                 CheckStatus::NotReproduced => not_reproduced += 1,
                 CheckStatus::Nondeterministic => nondeterministic += 1,
+                // the sandbox could not start the check: the setup, not the model, so it counts as nothing here
+                CheckStatus::NotRun(m) => panic!("the sandbox could not start a check: {m}"),
                 CheckStatus::Failed(m) => {
                     failed += 1;
                     reasons.push(format!(
@@ -2104,4 +2110,27 @@ fn j30_a_model_that_stops_answering_in_the_second_look_still_ends_the_review_cle
         report.draft.is_err(),
         "nothing was found, so nothing is prepared for release"
     );
+}
+
+#[test]
+fn j_not_run_a_review_whose_agent_never_started_fails_and_says_why() {
+    // an agent that ends at once with an error: on macOS the sandbox machine is not there, on Linux the program fails
+    let transport = if cfg!(target_os = "linux") {
+        Transport::Local
+    } else {
+        Transport::Lima {
+            vm: "kk-no-such-machine".into(),
+            launcher: PathBuf::from("/nonexistent/kk-sandbox-launch"),
+        }
+    };
+    let cfg = config_for("j-not-run", transport, PathBuf::from("/bin/false"));
+    let (routes, ev) = scripted(vec![calls(vec![("list_files", json!({}))])]);
+    let report = run_job(&cfg, routes, ev, &|_, _| {});
+    let why = report.error.clone().unwrap_or_default();
+    assert!(
+        why.starts_with("the review did not run"),
+        "{why:?} {:?}",
+        report.worker_exit
+    );
+    assert!(report.findings.is_empty());
 }

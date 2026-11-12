@@ -741,7 +741,9 @@ fn print_code(v: &Value) {
         t => println!(
             "  tests ({}): {}",
             clean(v["test_command"].as_str().unwrap_or("")),
-            if t["passed"] == true {
+            if t["ran"] == false {
+                "could NOT run here, so nothing is known about whether they pass (the sandbox could not start them; run `kaku doctor`)"
+            } else if t["passed"] == true {
                 "pass on the changed files, run by the kernel"
             } else {
                 "do NOT pass on the changed files"

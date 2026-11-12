@@ -60,6 +60,7 @@ impl Tester for FakeTests {
         *self.runs.borrow_mut() += 1;
         let ok = files.get("src/app.py").is_some_and(|t| t.contains("a + b"));
         TestRun {
+            ran: true,
             passed: ok,
             output: if ok {
                 "1 passed".into()

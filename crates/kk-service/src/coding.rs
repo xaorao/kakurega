@@ -203,7 +203,7 @@ pub fn view(t: &Task) -> Value {
         "steps": o.map(|o| o.steps.iter().enumerate().map(|(i, (n, refused, said))| json!({"tool": n, "label": o.step_labels.get(i), "refused": refused, "said": said})).collect::<Vec<_>>()).unwrap_or_default(),
         "ended": o.map(|o| ended(&o.ending)),
         "model_test_runs": o.map(|o| o.test_runs),
-        "tests": o.and_then(|o| o.kernel_test.as_ref()).map(|t| json!({"passed": t.passed, "output": t.output})),
+        "tests": o.and_then(|o| o.kernel_test.as_ref()).map(|t| json!({"ran": t.ran, "passed": t.passed, "output": t.output})),
         "test_command": o.and_then(|o| o.test_command.clone()),
         "withheld_files": o.map(|o| o.left_restricted),
         "route": o.map(|o| o.route.clone()),

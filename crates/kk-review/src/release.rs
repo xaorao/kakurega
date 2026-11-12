@@ -81,10 +81,17 @@ sys.exit(1 if failed else (2 if missing else 0))
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Rejection {
-    ContainsWithheldText { file: String, withheld: String },
-    ContainsSecret { file: String },
+    ContainsWithheldText {
+        file: String,
+        withheld: String,
+    },
+    ContainsSecret {
+        file: String,
+    },
     TooLarge,
     NothingConfirmed,
+    /// No finding was confirmed because the sandbox could not run the checks: not a clean result.
+    ChecksNotRun(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -323,6 +330,12 @@ pub fn assemble(
         index_entries.push(Value::Object(entry));
     }
     if n == 0 {
+        if let Some(why) = results.iter().find_map(|(_, r)| match &r.status {
+            CheckStatus::NotRun(m) => Some(m.clone()),
+            _ => None,
+        }) {
+            return Err(Rejection::ChecksNotRun(why));
+        }
         return Err(Rejection::NothingConfirmed);
     }
     let index = Value::Object(vec![("findings".into(), Value::Array(index_entries))]);
