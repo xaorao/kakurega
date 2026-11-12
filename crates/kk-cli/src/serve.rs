@@ -178,8 +178,14 @@ fn serve(args: &[String]) -> Result<(), String> {
     } else {
         None
     };
+    // the port this data folder's service had last time, kept in a file of its own: the same address after a restart
+    let port_file = data.join("port");
+    let preferred_port = std::fs::read_to_string(&port_file)
+        .ok()
+        .and_then(|t| t.trim().parse::<u16>().ok());
     let companion = start(Options {
         shell_secret,
+        preferred_port,
         ui_dir: ui_dir.clone(),
         extension: Arc::new(Routes(service.clone())),
         ..Options::default()
@@ -187,6 +193,7 @@ fn serve(args: &[String]) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     // the process that wrote it is named, so a shell that started this service can tell it from another one or a stale file
     let admin = serde_json::json!({"port": companion.addr.port(), "token": companion.security.admin_token(), "pid": std::process::id()});
+    let _ = std::fs::write(&port_file, companion.addr.port().to_string());
     let admin_path = data.join("admin.json");
     {
         use std::io::Write;

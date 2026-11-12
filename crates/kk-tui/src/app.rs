@@ -4245,9 +4245,21 @@ impl App {
                     self.approval_watch_inflight = false;
                     return Vec::new();
                 }
+                // a chat that could not be sent is over: the message box is free again and nothing waits behind it
+                if matches!(intent, Intent::Chat | Intent::AttachMention(_)) {
+                    self.chat_waiting = false;
+                    self.live = None;
+                    let dropped = std::mem::take(&mut self.queued).len();
+                    if dropped > 0 {
+                        self.say(
+                            Kind::Info,
+                            counted(&format!("{dropped} message(s) that were waiting were not sent. Send them again when the service answers.")),
+                        );
+                    }
+                }
                 self.say(
                     Kind::Error,
-                    format!("Could not reach the service: {}", clean(&e)),
+                    format!("Could not reach the service: {}. If it was started again, the next request connects to it.", clean(&e)),
                 );
                 if !std::mem::replace(&mut self.service_down, true) {
                     self.attention = Some(crate::attention::Attention::ServiceDown);

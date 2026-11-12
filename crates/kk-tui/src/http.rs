@@ -8,6 +8,8 @@ pub struct Http {
     base: String,
     token: String,
     csrf: String,
+    /// Where the service writes its address and token: read again when the service was started anew.
+    data_dir: std::path::PathBuf,
 }
 
 fn build_agent() -> ureq::Agent {
@@ -33,9 +35,29 @@ impl Http {
             base: format!("http://127.0.0.1:{port}"),
             token,
             csrf: String::new(),
+            data_dir: data_dir.to_path_buf(),
         };
         h.pair()?;
         Ok(h)
+    }
+
+    /// Connects again from what the service wrote when it last started: a service that was stopped and started has a new
+    /// token, and its paired session is gone. Leaves this connection as it was when that fails.
+    pub fn reconnect(&mut self) -> Result<(), String> {
+        let fresh = Http::connect(&self.data_dir)?;
+        *self = fresh;
+        Ok(())
+    }
+
+    /// Whether an answer says this connection is no longer the service's: it could not be reached at all, or it no longer
+    /// knows the session (it was started again). An answer that broke off part way is not one: asking again could run
+    /// the same thing twice.
+    pub fn lost(resp: &Resp) -> bool {
+        match &resp.result {
+            Ok((401, _)) => true,
+            Ok(_) => false,
+            Err(e) => e != "the answer ended before it was finished",
+        }
     }
 
     fn pair(&mut self) -> Result<(), String> {

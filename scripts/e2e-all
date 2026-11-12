@@ -14,6 +14,7 @@ python3 tests/e2e/mcp_live.py
 python3 tests/e2e/telegram_fake.py
 python3 tests/e2e/tui_pty.py
 python3 tests/e2e/tui_linear.py
+python3 tests/e2e/tui_restart.py
 python3 tests/e2e/script_cli.py
 python3 tests/e2e/telegram_proxy.py
 python3 tests/e2e/chain_register.py

@@ -268,28 +268,36 @@ pub fn run_with(
         let tx = tx.clone();
         let cancel = app.cancel.clone();
         std::thread::spawn(move || {
+            let mut http = http;
             while let Ok(req) = req_rx.recv() {
-                let resp = if req.stream && req.path == "/api/chat/roundtable" {
-                    let t = tx.clone();
-                    let id = req.id;
-                    http.run_events(&req, &cancel, &mut |v| {
-                        let _ = t.send(Msg::Ev(Event::Table {
-                            id,
-                            line: v.clone(),
-                        }));
-                    })
-                } else if req.stream {
-                    let t = tx.clone();
-                    let id = req.id;
-                    http.run_stream(&req, &cancel, &mut |piece| {
-                        let _ = t.send(Msg::Ev(Event::Delta {
-                            id,
-                            text: piece.to_string(),
-                        }));
-                    })
-                } else {
-                    http.run(&req)
+                let send = |http: &Http, req: &crate::app::Req| {
+                    if req.stream && req.path == "/api/chat/roundtable" {
+                        let t = tx.clone();
+                        let id = req.id;
+                        http.run_events(req, &cancel, &mut |v| {
+                            let _ = t.send(Msg::Ev(Event::Table {
+                                id,
+                                line: v.clone(),
+                            }));
+                        })
+                    } else if req.stream {
+                        let t = tx.clone();
+                        let id = req.id;
+                        http.run_stream(req, &cancel, &mut |piece| {
+                            let _ = t.send(Msg::Ev(Event::Delta {
+                                id,
+                                text: piece.to_string(),
+                            }));
+                        })
+                    } else {
+                        http.run(req)
+                    }
                 };
+                let mut resp = send(&http, &req);
+                // the service was stopped and started again: connect to the new one and ask once more
+                if Http::lost(&resp) && http.reconnect().is_ok() {
+                    resp = send(&http, &req);
+                }
                 if tx.send(Msg::Ev(Event::Resp(resp))).is_err() {
                     break;
                 }

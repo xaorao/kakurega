@@ -29,6 +29,10 @@ pub struct Options {
     /// When set, the app answers only requests that carry it in `x-kk-shell`: the desktop shell adds it to its own window's
     /// requests, so no other program on the computer can even load the page. At least 32 characters.
     pub shell_secret: Option<String>,
+    /// The port to listen on when it is free (the one this data folder's service had last time), so a browser tab, the
+    /// extension and a bookmark still reach the service after it starts again. Taken by another program, any free port
+    /// is used.
+    pub preferred_port: Option<u16>,
     /// The most connections served at once; more wait to be accepted.
     pub max_connections: usize,
     /// How long a connection may take to send a request head or stay idle before it is closed.
@@ -38,6 +42,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Options {
+            preferred_port: None,
             ui_dir: None,
             security: Arc::new(Security::new()),
             extension: Arc::new(NoExtension),
@@ -55,7 +60,14 @@ pub fn start(options: Options) -> std::io::Result<Companion> {
             "the shell secret must be at least 32 characters",
         ));
     }
-    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let listener = match options
+        .preferred_port
+        .filter(|p| *p >= 1024)
+        .and_then(|p| TcpListener::bind(("127.0.0.1", p)).ok())
+    {
+        Some(l) => l,
+        None => TcpListener::bind("127.0.0.1:0")?,
+    };
     listener.set_nonblocking(true)?;
     let addr = listener.local_addr()?;
     let state = AppState {
