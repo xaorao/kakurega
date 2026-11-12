@@ -1,89 +1,124 @@
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 
+/// The owner's own door to the service, by the address and token the service writes when it starts. A program that lives
+/// longer than one service (the Telegram bridge, the server for agents) keeps working when the service is started again:
+/// a request that cannot be sent, or that the service no longer knows the token of, is sent once more with what the
+/// service wrote since.
 pub struct Admin {
-    base: String,
-    token: String,
+    conn: std::sync::Mutex<(String, String)>,
+    dir: std::path::PathBuf,
     agent: ureq::Agent,
 }
 
-pub fn connect(args: &[String]) -> Result<Admin, String> {
-    let dir = crate::data_dir(args);
+fn read_admin(dir: &std::path::Path) -> Result<(String, String), String> {
     let text = std::fs::read_to_string(dir.join("admin.json")).map_err(|_| {
         "kaku serve is not running (no admin.json in the data directory)".to_string()
     })?;
     let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     let port = v["port"].as_u64().ok_or("damaged admin.json")?;
     let token = v["token"].as_str().ok_or("damaged admin.json")?.to_string();
+    Ok((format!("http://127.0.0.1:{port}"), token))
+}
+
+pub fn connect(args: &[String]) -> Result<Admin, String> {
+    let dir = crate::data_dir(args);
+    let conn = read_admin(&dir)?;
     let cfg = ureq::Agent::config_builder()
         .http_status_as_error(false)
         .timeout_global(Some(std::time::Duration::from_secs(30)))
         .proxy(None)
         .build();
     Ok(Admin {
-        base: format!("http://127.0.0.1:{port}"),
-        token,
+        conn: std::sync::Mutex::new(conn),
+        dir,
         agent: cfg.into(),
     })
 }
 
 impl Admin {
+    /// Runs one request with the address and token in use; when it could not be sent, or the token is not the service's
+    /// any more, and the service has written a new address or token since, runs it once more with those.
+    fn with<T>(
+        &self,
+        send: impl Fn(&str, &str) -> Result<(u16, T), String>,
+    ) -> Result<(u16, T), String> {
+        let (base, token) = self.conn.lock().expect("lock").clone();
+        let first = send(&base, &token);
+        if !matches!(&first, Err(_) | Ok((401, _))) {
+            return first;
+        }
+        match read_admin(&self.dir) {
+            Ok(fresh) if fresh != (base, token) => {
+                *self.conn.lock().expect("lock") = fresh.clone();
+                send(&fresh.0, &fresh.1)
+            }
+            _ => first,
+        }
+    }
+
     pub fn get(&self, path: &str) -> Result<(u16, Value), String> {
-        let mut r = self
-            .agent
-            .get(&format!("{}{path}", self.base))
-            .header("Authorization", &format!("Bearer {}", self.token))
-            .call()
-            .map_err(|e| e.to_string())?;
-        Ok((
-            r.status().as_u16(),
-            r.body_mut().read_json().unwrap_or(Value::Null),
-        ))
+        self.with(|base, token| {
+            let mut r = self
+                .agent
+                .get(&format!("{base}{path}"))
+                .header("Authorization", &format!("Bearer {token}"))
+                .call()
+                .map_err(|e| e.to_string())?;
+            Ok((
+                r.status().as_u16(),
+                r.body_mut().read_json().unwrap_or(Value::Null),
+            ))
+        })
     }
 
     pub fn get_text(&self, path: &str) -> Result<(u16, String), String> {
-        let mut r = self
-            .agent
-            .get(&format!("{}{path}", self.base))
-            .header("Authorization", &format!("Bearer {}", self.token))
-            .call()
-            .map_err(|e| e.to_string())?;
-        Ok((
-            r.status().as_u16(),
-            r.body_mut().read_to_string().map_err(|e| e.to_string())?,
-        ))
+        self.with(|base, token| {
+            let mut r = self
+                .agent
+                .get(&format!("{base}{path}"))
+                .header("Authorization", &format!("Bearer {token}"))
+                .call()
+                .map_err(|e| e.to_string())?;
+            Ok((
+                r.status().as_u16(),
+                r.body_mut().read_to_string().map_err(|e| e.to_string())?,
+            ))
+        })
     }
 
     pub fn post(&self, path: &str, body: Value) -> Result<(u16, Value), String> {
-        let mut r = self
-            .agent
-            .post(&format!("{}{path}", self.base))
-            .header("Authorization", &format!("Bearer {}", self.token))
-            .send_json(body)
-            .map_err(|e| e.to_string())?;
-        Ok((
-            r.status().as_u16(),
-            r.body_mut().read_json().unwrap_or(Value::Null),
-        ))
+        self.with(|base, token| {
+            let mut r = self
+                .agent
+                .post(&format!("{base}{path}"))
+                .header("Authorization", &format!("Bearer {token}"))
+                .send_json(body.clone())
+                .map_err(|e| e.to_string())?;
+            Ok((
+                r.status().as_u16(),
+                r.body_mut().read_json().unwrap_or(Value::Null),
+            ))
+        })
     }
-}
 
-impl Admin {
     /// Like `post`, but gives up after `secs` seconds: for notes the caller does not wait on, such as a record of a call.
     pub fn post_within(&self, path: &str, body: Value, secs: u64) -> Result<(u16, Value), String> {
-        let mut r = self
-            .agent
-            .post(&format!("{}{path}", self.base))
-            .header("Authorization", &format!("Bearer {}", self.token))
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(secs)))
-            .build()
-            .send_json(body)
-            .map_err(|e| e.to_string())?;
-        Ok((
-            r.status().as_u16(),
-            r.body_mut().read_json().unwrap_or(Value::Null),
-        ))
+        self.with(|base, token| {
+            let mut r = self
+                .agent
+                .post(&format!("{base}{path}"))
+                .header("Authorization", &format!("Bearer {token}"))
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(secs)))
+                .build()
+                .send_json(body.clone())
+                .map_err(|e| e.to_string())?;
+            Ok((
+                r.status().as_u16(),
+                r.body_mut().read_json().unwrap_or(Value::Null),
+            ))
+        })
     }
 }
 
@@ -349,7 +384,10 @@ mod proxy_tests {
             .unwrap();
         let _ = admin
             .agent
-            .get(&format!("{}/admin/health", admin.base))
+            .get(&format!(
+                "{}/admin/health",
+                admin.conn.lock().expect("lock").0
+            ))
             .call();
         std::thread::sleep(std::time::Duration::from_millis(200));
         assert!(proxy.accept().is_err(), "the proxy was contacted");

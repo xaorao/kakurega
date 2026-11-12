@@ -235,6 +235,30 @@ try:
     say(111, "/status")
     m = wait_sent(lambda m: "Reviews:" in m["text"])
     check("/status answers with counts", m is not None and "Setup:" in m["text"], (m or {}).get("text", "")[:100])
+    # the service is stopped and started again under the running bridge: the bridge finds the new one by itself
+    srv.kill()
+    srv.wait()
+    with lock:
+        before_restart = len(sent)
+    srv = subprocess.Popen([kaku, "serve", "--data-dir", str(data), "--root", str(work / "root"), "--scripted", str(repo / "tests/e2e/script.json"), "--ui-dir", str(repo / "apps/web/dist")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(300):
+        try:
+            if f'"pid":{srv.pid}' in (data / "admin.json").read_text().replace(" ", ""):
+                break
+        except OSError:
+            pass
+        time.sleep(0.1)
+    admin = json.loads((data / "admin.json").read_text())
+    say(111, "/status")
+    end = time.time() + 30
+    got = None
+    while time.time() < end and got is None:
+        with lock:
+            got = next((x for x in sent[before_restart:] if "Reviews:" in x["text"]), None)
+        time.sleep(0.2)
+    with lock:
+        after = [x["text"][:80] for x in sent[before_restart:]]
+    check("after the service is started again the running bridge answers /status from the new one", got is not None, str(after))
     # Telegram delivering the same update twice (a lost confirmation) is answered once
     with lock:
         dup = next_id[0]
