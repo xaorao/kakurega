@@ -535,7 +535,7 @@ impl App {
             cards: vec![Card {
                 kind: Kind::Info,
                 title: Some("Kakurega".into()),
-                lines: vec!["Type /help for the commands. Everything runs on this computer; nothing leaves until you approve the exact files.".into()],
+                lines: vec!["Type /help for the commands. /where says where the model runs and what can leave; a release leaves only after you approve its exact files.".into()],
             }],
             input: String::new(),
             cursor: 0,
@@ -4237,8 +4237,16 @@ impl App {
                         .or_else(|| body["route"]["id"].as_str())
                         .unwrap_or("model");
                     let simulated = body["route"]["simulated"] == true;
+                    // the word says where the model really is: only one on this computer is called private
+                    let word = if simulated || body["route"]["stays_here"] == true {
+                        "private"
+                    } else if body["route"]["class"] == "verified_tee" {
+                        "confidential hardware"
+                    } else {
+                        "NOT private"
+                    };
                     self.route = format!(
-                        "private · {}{}",
+                        "{word} · {}{}",
                         clean(model),
                         if simulated { " (test)" } else { "" }
                     );

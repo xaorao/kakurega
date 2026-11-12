@@ -61,7 +61,7 @@ fn booted() -> App {
         reqs.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
         ["/api/config", "/api/readiness", "/api/jobs"]
     );
-    app.handle(ok(&reqs[0], 200, json!({"route": {"model": "qwen2.5:1.5b", "simulated": false}, "roots": ["/home/u/projects"]})));
+    app.handle(ok(&reqs[0], 200, json!({"route": {"model": "qwen2.5:1.5b", "simulated": false, "stays_here": true}, "roots": ["/home/u/projects"]})));
     app.handle(ok(&reqs[1], 200, json!({"ready": true, "checks": [{"label": "Sandbox", "ok": true, "detail": "running", "fix": ""}]})));
     app.handle(ok(&reqs[2], 200, json!({"jobs": []})));
     app
@@ -8531,4 +8531,28 @@ fn tu_pr01_a_saved_prompt_goes_into_the_message_line_only_with_every_field_fille
     );
     let r = enter(&mut app, "/prompt remove standup");
     assert_eq!(r[0].body.as_ref().unwrap()["remove"], "standup");
+}
+
+#[test]
+fn tu_hdr_the_header_calls_only_a_model_on_this_computer_private() {
+    let header = |route: Value| {
+        let mut app = App::new();
+        let reqs = app.start();
+        app.handle(ok(&reqs[0], 200, json!({"route": route, "roots": []})));
+        app.status_line()
+    };
+    assert!(
+        header(json!({"model": "m", "simulated": false, "stays_here": true}))
+            .contains("private · m")
+    );
+    let tee = header(
+        json!({"model": "m", "simulated": false, "stays_here": false, "class": "verified_tee"}),
+    );
+    assert!(
+        tee.contains("confidential hardware · m") && !tee.contains("private ·"),
+        "{tee}"
+    );
+    let hosted =
+        header(json!({"model": "m", "simulated": false, "stays_here": false, "class": "public"}));
+    assert!(hosted.contains("NOT private · m"), "{hosted}");
 }
