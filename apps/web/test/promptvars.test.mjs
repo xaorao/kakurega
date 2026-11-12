@@ -14,8 +14,22 @@ test("pv01 each field once, in order, with its options; the date and time are no
 test("pv02 a prompt is filled only when every field has a value, and a value is never filled again", () => {
   const text = "Write to {{client}} in a {{tone:formal|casual}} tone about {{client}} on {{current_date}}.";
   assert.deepEqual(fillPrompt(text, { client: "Acme" }, new Date(2026, 0, 5)), { missing: ["tone"] });
-  assert.deepEqual(fillPrompt(text, { client: "  ", "tone:formal|casual": "x" }, new Date(2026, 0, 5)), { missing: ["client"] });
-  const r = fillPrompt(text, { client: "{{tone:formal|casual}}", "tone:formal|casual": "formal" }, new Date(2026, 0, 5, 9, 7));
+  assert.deepEqual(fillPrompt(text, { client: "  ", tone: "x" }, new Date(2026, 0, 5)), { missing: ["client"] });
+  const r = fillPrompt(text, { client: "{{tone:formal|casual}}", tone: "formal" }, new Date(2026, 0, 5, 9, 7));
   assert.deepEqual(r, { text: "Write to {{tone:formal|casual}} in a formal tone about {{tone:formal|casual}} on 2026-01-05." });
   assert.deepEqual(fillPrompt("Plain prompt.", {}, new Date()), { text: "Plain prompt." });
+});
+
+import { readFileSync } from "node:fs";
+test("pv-shared the same fields and the same filled text as the terminal, for every shared case", () => {
+  const cases = JSON.parse(readFileSync(new URL("./promptvars-cases.json", import.meta.url), "utf8"));
+  for (const c of cases.fields) {
+    assert.deepEqual(variablesOf(c.text).map((v) => ({ name: v.name, options: v.options })), c.want, c.text);
+  }
+  for (const c of cases.fill) {
+    assert.deepEqual(fillPrompt(c.text, c.values, new Date(2026, 0, 5, 9, 7)), c.want, c.text);
+  }
+  // a name that fills itself is never left in braces, whatever follows a colon
+  const r = fillPrompt("{{current_date:x}} {{ ISO_DATETIME }}", {}, new Date(Date.UTC(2026, 0, 5, 9, 7, 3)));
+  assert.ok("text" in r && !r.text.includes("{{") && r.text.endsWith("2026-01-05T09:07:03Z"), JSON.stringify(r));
 });

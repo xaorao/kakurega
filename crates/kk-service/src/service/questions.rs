@@ -65,7 +65,7 @@ pub(super) async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -
             "a question about a project lets the model read the whole project, so it is answered only by a model on this computer; choose one in Settings",
         );
     }
-    let id = {
+    let (id, forgotten) = {
         let mut g = svc.questions.lock().expect("lock");
         if g.list.values().any(|x| x.state == State::Running) {
             return error(
@@ -74,23 +74,53 @@ pub(super) async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -
                 "a question is already being answered; wait for it to finish",
             );
         }
-        // the oldest answered questions make room
+        // the oldest answered questions make room, and the owner is told which; one the store would not let go of stays,
+        // and nothing new is started
+        let mut forgotten: Vec<String> = Vec::new();
         while g.list.len() >= q::MAX_KEPT {
             let Some(oldest) = g
                 .list
                 .values()
                 .filter(|x| x.state != State::Running)
-                .min_by_key(|x| x.created)
+                .min_by_key(|x| {
+                    (
+                        x.created,
+                        x.id.strip_prefix("question-")
+                            .and_then(|n| n.parse::<u64>().ok())
+                            .unwrap_or(0),
+                    )
+                })
                 .map(|x| x.id.clone())
             else {
                 break;
             };
-            if let Ok(store) = svc.store.lock() {
-                q::remove(store.connection(), &oldest);
+            let gone = svc
+                .store
+                .lock()
+                .is_ok_and(|store| q::remove(store.connection(), &oldest));
+            if !gone {
+                return error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "STORE_FAILED",
+                    "an old question could not be forgotten to make room, so the new one was not started",
+                );
             }
             g.list.remove(&oldest);
+            forgotten.push(oldest);
         }
-        g.next += 1;
+        let number = g.next + 1;
+        if !svc
+            .store
+            .lock()
+            .is_ok_and(|store| q::note_number(store.connection(), number))
+        {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "STORE_FAILED",
+                "the question could not be kept, so it was not started",
+            );
+        }
+        g.next = number;
         let id = format!("question-{}", g.next);
         let item = Question {
             id: id.clone(),
@@ -110,7 +140,7 @@ pub(super) async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -
             );
         }
         g.list.insert(id.clone(), item);
-        id
+        (id, forgotten)
     };
     svc.log_event("question.started", &id, &[("depth", depth.as_str().into())]);
     let svc2 = svc.clone();
@@ -156,13 +186,26 @@ pub(super) async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -
             &[("checked_places", checked.into())],
         );
     });
-    (StatusCode::ACCEPTED, Json(json!({"id": id}))).into_response()
+    // 100 questions are kept: the oldest answered ones that made room for this one are named
+    (
+        StatusCode::ACCEPTED,
+        Json(json!({"id": id, "forgotten": forgotten})),
+    )
+        .into_response()
 }
 
 pub(super) async fn list(axum::Extension(svc): Svc) -> Json<Value> {
     let g = svc.questions.lock().expect("lock");
     let mut all: Vec<&Question> = g.list.values().collect();
-    all.sort_by_key(|x| std::cmp::Reverse(x.created));
+    // newest first; questions of one second in the order of their numbers
+    all.sort_by_key(|x| {
+        std::cmp::Reverse((
+            x.created,
+            x.id.strip_prefix("question-")
+                .and_then(|n| n.parse::<u64>().ok())
+                .unwrap_or(0),
+        ))
+    });
     let items: Vec<Value> = all
         .into_iter()
         .take(q::MAX_KEPT)

@@ -200,75 +200,85 @@ pub fn check_citation(ws: &Workspace, file: &str, line: usize, quote: &str) -> C
         found: Found::NotFound,
         text: String::new(),
     };
-    if ws.withheld(file) {
-        c.found = Found::Withheld;
-        return c;
-    }
+    // a file the agent may read is never taken for a withheld one whose name differs only by case
     let Some(text) = ws.file(file) else {
-        c.found = Found::NoSuchFile;
+        c.found = if ws.withheld(file) {
+            Found::Withheld
+        } else {
+            Found::NoSuchFile
+        };
         return c;
     };
-    // a model may copy the line numbers too ("12\tdef f():"): they are not part of the text
+    // what a model copies along with a line is not part of it: the number read_file put before it ("12\t", "12: ",
+    // "12:  "), and the mark a cut-off line ends with
     let wanted: Vec<String> = quote
         .lines()
         .map(|l| {
             let l = l.trim_start();
             let digits = l.chars().take_while(char::is_ascii_digit).count();
             let rest = &l[digits..];
-            if digits > 0
-                && (rest.starts_with('\t') || rest.starts_with(": ") || rest.starts_with("  "))
+            let l = if digits > 0
+                && (rest.starts_with('\t') || rest.starts_with(':') || rest.starts_with("  "))
             {
-                squash(rest)
+                rest.trim_start_matches(':')
             } else {
-                squash(l)
-            }
+                l
+            };
+            squash(l.trim_end().trim_end_matches("... (cut)"))
         })
         .filter(|l| !l.is_empty())
         .collect();
-    let lines: Vec<String> = text.lines().map(squash).collect();
     if wanted.is_empty() {
         c.found = Found::TooShort;
         return c;
     }
-    let letters: usize = wanted
-        .iter()
-        .map(|w| w.chars().filter(|ch| !ch.is_whitespace()).count())
-        .sum();
+    // the file's lines that hold anything, with where each is: a blank line between quoted lines is not a mismatch
+    let lines: Vec<(usize, String)> = text
+        .lines()
+        .enumerate()
+        .map(|(i, l)| (i, squash(l)))
+        .filter(|(_, l)| !l.is_empty())
+        .collect();
+    let letters = |w: &str| w.chars().filter(|ch| !ch.is_whitespace()).count();
+    // each quoted line is judged on its own: a short one ("}", "return", "#") must be a whole line, a longer one may be
+    // part of one
+    let line_matches = |w: &str, l: &str| {
+        if letters(w) < MIN_QUOTE {
+            l == w
+        } else {
+            l.contains(w)
+        }
+    };
     let matches_at = |i: usize| {
-        wanted.iter().enumerate().all(|(k, w)| {
-            lines.get(i + k).is_some_and(|l| {
-                // a short piece must be the whole line; a longer one may be part of it
-                if letters < MIN_QUOTE {
-                    l == w
-                } else {
-                    l.contains(w.as_str())
-                }
-            })
-        })
+        wanted
+            .iter()
+            .enumerate()
+            .all(|(k, w)| lines.get(i + k).is_some_and(|(_, l)| line_matches(w, l)))
     };
-    if letters < MIN_QUOTE && wanted.len() == 1 && !lines.iter().any(|l| l == &wanted[0]) {
-        c.found = Found::TooShort;
-        return c;
-    }
     let hits: Vec<usize> = (0..lines.len()).filter(|i| matches_at(*i)).collect();
-    // a short line that stands in many places ("}") cannot show which one was meant
-    if letters < MIN_QUOTE && hits.len() > 1 {
+    let total: usize = wanted.iter().map(|w| letters(w)).sum();
+    // made only of short pieces, a quote that fits in several places, or in none, shows nothing about which was meant
+    if total < MIN_QUOTE && hits.len() != 1 {
         c.found = Found::TooShort;
         return c;
     }
-    let Some(best) = hits.iter().min_by_key(|i| (**i + 1).abs_diff(line)) else {
+    let Some(best) = hits
+        .iter()
+        .min_by_key(|i| (lines[**i].0 + 1).abs_diff(line))
+    else {
         return c;
     };
-    let real = best + 1;
-    c.found = if real == line {
+    let first = lines[*best].0;
+    let last = lines[*best + wanted.len() - 1].0;
+    c.found = if first + 1 == line {
         Found::AtLine
     } else {
-        Found::Moved { line: real }
+        Found::Moved { line: first + 1 }
     };
     c.text = text
         .lines()
-        .skip(*best)
-        .take(wanted.len())
+        .skip(first)
+        .take(last - first + 1)
         .map(|l| cut(l, 400))
         .collect::<Vec<_>>()
         .join("\n");
@@ -331,14 +341,21 @@ pub fn starting_points(ws: &Workspace, question: &str, n: usize) -> Vec<(String,
 }
 
 /// The places written into an answer as text: `path:line: text` (or `path:line` followed by the text after a dash or a
-/// colon), for paths the model may read or that are withheld. Bounded like the tool's list.
+/// colon), for paths the model may read or that are withheld, or labelled lines (see `places_in_labels`). Bounded like the
+/// tool's list.
 pub fn places_in_text(text: &str, ws: &Workspace) -> Vec<Value> {
+    places_and_lines(text, ws).0
+}
+
+/// The places, and the numbers of the lines of the text they were read from: only those lines are taken out of the answer.
+fn places_and_lines(text: &str, ws: &Workspace) -> (Vec<Value>, Vec<usize>) {
     let labelled = places_in_labels(text, ws);
-    if !labelled.is_empty() {
+    if !labelled.0.is_empty() {
         return labelled;
     }
     let mut out: Vec<Value> = Vec::new();
-    for raw in text.lines() {
+    let mut used: Vec<usize> = Vec::new();
+    for (n, raw) in text.lines().enumerate() {
         let l = raw
             .trim()
             .trim_start_matches(['-', '*', ' '])
@@ -365,16 +382,17 @@ pub fn places_in_text(text: &str, ws: &Workspace) -> Vec<Value> {
             continue;
         }
         out.push(json!({"file": path, "line": line, "text": after}));
+        used.push(n);
         if out.len() == MAX_CITATIONS {
             break;
         }
     }
-    out
+    (out, used)
 }
 
 /// Places written as labelled lines ("File: path", "Line: 7", "Text: ..."), as small models often do. A place is taken
-/// when all three are given, in that order.
-fn places_in_labels(text: &str, ws: &Workspace) -> Vec<Value> {
+/// when all three are given, in that order; the lines of a place that was taken are returned with it.
+fn places_in_labels(text: &str, ws: &Workspace) -> (Vec<Value>, Vec<usize>) {
     let label = |l: &str| -> Option<(String, String)> {
         let t = l
             .trim()
@@ -387,20 +405,26 @@ fn places_in_labels(text: &str, ws: &Workspace) -> Vec<Value> {
         ))
     };
     let mut out: Vec<Value> = Vec::new();
-    let (mut file, mut line): (Option<String>, Option<usize>) = (None, None);
-    for raw in text.lines() {
+    let mut used: Vec<usize> = Vec::new();
+    // the file named and the line of the text it was named on; the line number given and the line it was given on
+    let mut file: Option<(String, usize)> = None;
+    let mut line: Option<(usize, usize)> = None;
+    for (n, raw) in text.lines().enumerate() {
         let Some((k, v)) = label(raw) else { continue };
         match k.as_str() {
             "file" | "path" => {
                 let p = v.trim_start_matches("./").to_string();
-                file = (ws.file(&p).is_some() || ws.withheld(&p)).then_some(p);
+                file = (ws.file(&p).is_some() || ws.withheld(&p)).then_some((p, n));
                 line = None;
             }
-            "line" | "line number" => line = v.parse().ok().filter(|n: &usize| *n > 0),
+            "line" | "line number" => {
+                line = v.parse().ok().filter(|x: &usize| *x > 0).map(|x| (x, n))
+            }
             "text" | "code" | "quote" | "content" => {
-                if let (Some(f), Some(n)) = (file.take(), line.take()) {
+                if let (Some((f, fl)), Some((x, ll))) = (file.take(), line.take()) {
                     if !v.is_empty() {
-                        out.push(json!({"file": f, "line": n, "text": v}));
+                        out.push(json!({"file": f, "line": x, "text": v}));
+                        used.extend([fl, ll, n]);
                     }
                 }
             }
@@ -410,33 +434,16 @@ fn places_in_labels(text: &str, ws: &Workspace) -> Vec<Value> {
             break;
         }
     }
-    out
+    (out, used)
 }
 
-fn is_label_line(t: &str) -> bool {
-    t.replace("**", "").split_once(':').is_some_and(|(k, _)| {
-        matches!(
-            k.trim().to_lowercase().as_str(),
-            "file" | "path" | "line" | "line number" | "text" | "code" | "quote" | "content"
-        )
-    })
-}
-
-/// The answer's own words, with the lines that are places taken out.
-fn answer_without_places(text: &str) -> String {
+/// The answer's own words: every line except those the places were read from.
+fn answer_without_places(text: &str, used: &[usize]) -> String {
     let kept: Vec<&str> = text
         .lines()
-        .filter(|l| {
-            let t = l
-                .trim()
-                .trim_start_matches(['-', '*', ' '])
-                .trim()
-                .trim_matches('`');
-            !is_label_line(t)
-                && !t
-                    .split_once(':')
-                    .is_some_and(|(_, r)| r.chars().next().is_some_and(|c| c.is_ascii_digit()))
-        })
+        .enumerate()
+        .filter(|(n, _)| !used.contains(n))
+        .map(|(_, l)| l)
         .collect();
     // blank lines run together, and a line that only introduced the places ("The places it rests on are:") goes with them
     let mut out: Vec<&str> = Vec::new();
@@ -448,7 +455,7 @@ fn answer_without_places(text: &str) -> String {
     }
     while out
         .last()
-        .is_some_and(|l| l.trim().is_empty() || l.trim_end().ends_with(':'))
+        .is_some_and(|l| l.trim().is_empty() || (!used.is_empty() && l.trim_end().ends_with(':')))
     {
         out.pop();
     }
@@ -651,12 +658,12 @@ pub fn run_question(
             } else if looked {
                 // a small model often writes its answer and the lines it rests on as text ("path:15: def logout(...)"):
                 // the lines are read out of it and checked exactly as if they had come through the tool
-                let places = places_in_text(&reply.content, ws);
+                let (places, used) = places_and_lines(&reply.content, ws);
                 if !places.is_empty() {
                     reply.tool_calls = vec![kk_types::chat::ToolCall {
                         id: format!("text_answer_{}", report.turns),
                         name: "answer".into(),
-                        arguments: json!({"answer": answer_without_places(&reply.content), "places": places}),
+                        arguments: json!({"answer": answer_without_places(&reply.content, &used), "places": places}),
                     }];
                     reply.content.clear();
                     report.text_calls += 1;
@@ -942,7 +949,9 @@ impl ScriptRunner for SandboxScripts<'_> {
             _ => (
                 "check.py",
                 self.python.clone(),
-                "set -u; cp -R /project /tmp/w && cd /tmp/w && PYTHONPATH=/tmp/w exec \"$1\" -B /check/check.py",
+                // isolated: nothing of the project runs at start-up (a sitecustomize.py, a .pth file), and the project
+                // folder comes after the standard library, so a project file cannot stand in for a standard module
+                "set -u; cp -R /project /tmp/w && cd /tmp/w && exec \"$1\" -I -B -c 'import runpy, sys; sys.path.append(\"/tmp/w\"); runpy.run_path(\"/check/check.py\", run_name=\"__main__\")'",
             ),
         };
         if std::fs::create_dir_all(&check).is_err()

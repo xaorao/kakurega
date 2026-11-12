@@ -146,6 +146,9 @@ fn all(svc: &Service) -> Vec<Value> {
     for sql in [
         "SELECT DISTINCT project FROM sessions WHERE project IS NOT NULL AND project != ''",
         "SELECT project FROM project_settings",
+        // a project taken off the list keeps where its work may go (its conversations and notes are kept too), so the
+        // setting stays in sight and can be changed
+        "SELECT project FROM project_floor",
     ] {
         if let Ok(mut st) = c.prepare(sql) {
             if let Ok(rows) = st.query_map([], |r| r.get::<_, String>(0)) {
@@ -199,7 +202,7 @@ pub(super) async fn change(axum::Extension(svc): Svc, Json(b): Json<ProjectBody>
                 svc.log_event("project.removed", "owner", &[]);
             }
             // its conversations, notes and instructions are the owner's and are not deleted with the list entry
-            Json(json!({"changed": n > 0, "projects": all(&svc), "kept": "The project's conversations, notes and instructions were not deleted. Forget them where they are shown."})).into_response()
+            Json(json!({"changed": n > 0, "projects": all(&svc), "kept": "The project's conversations, notes, instructions and where its work may go were not deleted. Forget them where they are shown."})).into_response()
         }
         (Some(name), None) => {
             if !valid(name) {
@@ -211,6 +214,16 @@ pub(super) async fn change(axum::Extension(svc): Svc, Json(b): Json<ProjectBody>
                     Some(l) => Some(l),
                     None => {
                         return refuse("where a project's work may go is any, confidential or here")
+                    }
+                },
+            };
+            let folder = match b.folder.as_deref().map(str::trim) {
+                None => None,
+                Some("") => Some(None),
+                Some(f) => match svc.allowed_dir(f) {
+                    Some(dir) => Some(Some(dir.to_string_lossy().to_string())),
+                    None => {
+                        return refuse("that folder is not inside a folder this program may read")
                     }
                 },
             };
@@ -239,16 +252,6 @@ pub(super) async fn change(axum::Extension(svc): Svc, Json(b): Json<ProjectBody>
                     return Json(json!({"changed": true, "projects": all(&svc)})).into_response();
                 }
             }
-            let folder = match b.folder.as_deref().map(str::trim) {
-                None => None,
-                Some("") => Some(None),
-                Some(f) => match svc.allowed_dir(f) {
-                    Some(dir) => Some(Some(dir.to_string_lossy().to_string())),
-                    None => {
-                        return refuse("that folder is not inside a folder this program may read")
-                    }
-                },
-            };
             {
                 let store = svc.store.lock().expect("lock");
                 let c = store.connection();

@@ -1914,14 +1914,32 @@ pub fn explore(args: &[String]) -> u8 {
                     ),
                     202,
                 ) {
-                    Ok(v) => clean(v["id"].as_str().unwrap_or("")),
+                    Ok(v) => (
+                        clean(v["id"].as_str().unwrap_or("")),
+                        v["forgotten"]
+                            .as_array()
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|x| x.as_str().map(clean))
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default(),
+                    ),
                     Err(c) => return c,
                 };
+                let (id, forgotten) = id;
                 say(
                     json_mode,
-                    &json!({"event": "started", "question": id}),
+                    &json!({"event": "started", "question": id, "forgotten": forgotten}),
                     || {
-                        format!("{id} started; the agent reads the project on this computer, and nothing is changed")
+                        let mut line = format!("{id} started; the agent reads the project on this computer, and nothing is changed");
+                        if !forgotten.is_empty() {
+                            line.push_str(&format!(
+                                "\n100 questions are kept: {} was forgotten to make room",
+                                forgotten.join(", ")
+                            ));
+                        }
+                        line
                     },
                 );
                 let started = Instant::now();

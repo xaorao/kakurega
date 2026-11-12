@@ -455,6 +455,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY, body TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS code_tasks(id TEXT PRIMARY KEY, body TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS questions(id TEXT PRIMARY KEY, body TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS id_counters(kind TEXT PRIMARY KEY, last INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS fix_files(job TEXT NOT NULL, n INTEGER NOT NULL, file TEXT NOT NULL, orig BLOB NOT NULL, sha_after TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (job, n, file));
              CREATE TABLE IF NOT EXISTS fix_snapshots(job TEXT NOT NULL, n INTEGER NOT NULL, file TEXT NOT NULL, orig BLOB NOT NULL, sha_after TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (job, n));
              CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, title TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL, project TEXT);
@@ -470,7 +471,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE INDEX IF NOT EXISTS usage_ledger_at ON usage_ledger(at);
              CREATE TABLE IF NOT EXISTS pii_allow(entry TEXT PRIMARY KEY, added_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS owner_instructions(scope TEXT PRIMARY KEY, text TEXT NOT NULL, updated_at INTEGER NOT NULL);
-             CREATE TABLE IF NOT EXISTS pack_servers(pack TEXT NOT NULL, name TEXT NOT NULL, key_id TEXT NOT NULL, body TEXT NOT NULL, dismissed INTEGER NOT NULL DEFAULT 0, at INTEGER NOT NULL, PRIMARY KEY(pack, name));
+             CREATE TABLE IF NOT EXISTS pack_suggestions(pack TEXT NOT NULL, key_id TEXT NOT NULL, name TEXT NOT NULL, body TEXT NOT NULL, dismissed INTEGER NOT NULL DEFAULT 0, at INTEGER NOT NULL, PRIMARY KEY(pack, key_id, name));
              CREATE TABLE IF NOT EXISTS mcp_servers(name TEXT PRIMARY KEY, program TEXT NOT NULL, args TEXT NOT NULL, env TEXT NOT NULL, created INTEGER NOT NULL, sha256 TEXT NOT NULL DEFAULT '');
              CREATE TABLE IF NOT EXISTS mcp_tools(server TEXT NOT NULL, tool TEXT NOT NULL, pin TEXT NOT NULL, description TEXT NOT NULL, schema TEXT NOT NULL DEFAULT '{}', effect TEXT NOT NULL DEFAULT 'unknown', mode TEXT NOT NULL, PRIMARY KEY(server, tool));
              CREATE TABLE IF NOT EXISTS method_proposals(id INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL);
@@ -585,6 +586,21 @@ fn init_store(v: &Vault) -> Result<(), String> {
     if !has_pinned {
         v.connection()
             .execute_batch("ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0; ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;")
+            .map_err(|e| e.to_string())?;
+    }
+    // stores made when a pack's suggestions were known by pack and name only: two publishers' packs of one name are
+    // told apart by the publisher's key now
+    let old_suggestions: i64 = v
+        .connection()
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'pack_servers'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if old_suggestions > 0 {
+        v.connection()
+            .execute_batch("INSERT OR IGNORE INTO pack_suggestions(pack, key_id, name, body, dismissed, at) SELECT pack, key_id, name, body, dismissed, at FROM pack_servers; DROP TABLE pack_servers;")
             .map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -1177,7 +1193,9 @@ impl Service {
         let dir = self
             .allowed_dir(repo)
             .ok_or("that folder is not available")?;
-        if let Some((name, _)) = self.floor_above_route(None, Some(&dir)) {
+        // the review is given the notes of the project named like the folder, and the folder's own project's files
+        let named = dir.file_name().map(|n| n.to_string_lossy().into_owned());
+        if let Some((name, _)) = self.floor_above_route(named.as_deref(), Some(&dir)) {
             return Err(projects::floor_words(&name));
         }
         if recipient.is_empty()
@@ -1400,6 +1418,8 @@ async fn config(axum::Extension(svc): Svc) -> Json<Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "route": svc.route_for_owner(),
         "roots": svc.roots.iter().map(|r| r.to_string_lossy()).collect::<Vec<_>>(),
+        // the owner's own home folder, so the page writes it as ~ and writes every other folder as it is
+        "home": std::env::var("HOME").ok().filter(|h| h.starts_with('/') && h.len() > 1),
         "test_mode": svc.test_mode,
         // the name of the profile this data folder is (written when the profile was made); none for the first folder
         "profile": std::fs::read_to_string(svc.data_dir.join("profile.json"))
@@ -3611,14 +3631,22 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
         )));
     }
     let mut attached_names: Vec<String> = Vec::new();
+    let mut attached_floor = 0i64;
     {
         let mut store = svc.attachments.lock().expect("lock");
         for id in &b.attachments {
             match crate::attachments::valid_id(id)
-                .then(|| store.get(now(), id).map(|s| s.parsed.name.clone()))
+                .then(|| {
+                    store
+                        .get(now(), id)
+                        .map(|s| (s.parsed.name.clone(), s.floor))
+                })
                 .flatten()
             {
-                Some(n) => attached_names.push(n),
+                Some((n, f)) => {
+                    attached_names.push(n);
+                    attached_floor = attached_floor.max(f);
+                }
                 None => {
                     return Err(Box::new(error(
                         StatusCode::NOT_FOUND,
@@ -3638,7 +3666,14 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
     if let Some(refusal) = svc.floor_refusal(b.project.as_deref(), None) {
         return Err(Box::new(refusal));
     }
-    let floor = svc.project_floor(b.project.as_deref());
+    if svc.route_level() < attached_floor {
+        return Err(Box::new(error(
+            StatusCode::CONFLICT,
+            "PROJECT_KEPT_PRIVATELY",
+            "an attached file comes from a project kept more privately than the model in use now allows, so it is not sent to it; choose a more private model in Settings, or remove the file",
+        )));
+    }
+    let floor = svc.project_floor(b.project.as_deref()).max(attached_floor);
     let Some(id) = b.session.clone() else {
         let need = if b.history.is_empty() {
             0
@@ -5552,6 +5587,12 @@ async fn attachment_from_path(
             "that file is not in a folder this service may read",
         );
     };
+    // a file of a project kept more privately than the model in use is not taken at all, and one that is taken carries
+    // its project's floor into every message it goes with
+    if let Some(refusal) = svc.floor_refusal(None, Some(&path)) {
+        return refusal;
+    }
+    let floor = svc.folder_floor(&path);
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -5582,10 +5623,10 @@ async fn attachment_from_path(
     .await;
     match read {
         Ok(Ok(bytes)) => match range {
-            None => attach_bytes(svc, &name, axum::body::Bytes::from(bytes)).await,
+            None => attach_bytes_from(svc, &name, axum::body::Bytes::from(bytes), floor).await,
             Some((start, end)) => match select_lines(&name, &bytes, start, end) {
                 Ok((named, picked)) => {
-                    attach_bytes(svc, &named, axum::body::Bytes::from(picked)).await
+                    attach_bytes_from(svc, &named, axum::body::Bytes::from(picked), floor).await
                 }
                 Err(why) => error(StatusCode::BAD_REQUEST, "BAD_LINES", &why),
             },
@@ -5600,6 +5641,16 @@ async fn attachment_from_path(
 }
 
 async fn attach_bytes(svc: Arc<Service>, raw_name: &str, body: axum::body::Bytes) -> Response {
+    attach_bytes_from(svc, raw_name, body, 0).await
+}
+
+/// `attach_bytes` for a file read from a folder: the floor of the project that folder belongs to goes with it.
+async fn attach_bytes_from(
+    svc: Arc<Service>,
+    raw_name: &str,
+    body: axum::body::Bytes,
+    floor: i64,
+) -> Response {
     let name = match kk_parse::clean_name(raw_name) {
         Ok(n) => n,
         Err(e) => return parse_error_response(&e),
@@ -5643,7 +5694,7 @@ async fn attach_bytes(svc: Arc<Service>, raw_name: &str, body: axum::body::Bytes
         .attachments
         .lock()
         .expect("lock")
-        .add(now(), id, parsed, bytes);
+        .add(now(), id, parsed, bytes, floor);
     match added {
         Ok(()) => {
             svc.log_event(
@@ -5925,7 +5976,14 @@ async fn code_start(axum::Extension(svc): Svc, Json(b): Json<CodeBody>) -> Respo
                 }
             }
         };
-        let external = svc2.mcp_external();
+        // an outside tool program may send what it is given anywhere, and nothing here shows where: a project kept on
+        // confidential hardware or on this computer is not handed to one
+        let external = if svc2.folder_floor(&repo) > 1 {
+            progress("Outside tools were not offered: this project is kept more privately than an outside program allows.");
+            None
+        } else {
+            svc2.mcp_external()
+        };
         let mut result = svc2.runner.code_task_stoppable(
             &imported.files,
             &task,
@@ -9040,7 +9098,7 @@ fn draft_json(s: &Snapshot, allow: &kk_secrets::pii::Allow) -> Value {
             json!({
                 "available": true, "digest": d.digest, "recipient": d.recipient, "policy_version": d.policy_version, "expires": d.expires, "server_time": now(),
                 "files": d.files.iter().map(|(n, b)| json!({"name": n, "bytes": b.len(), "sha256": kk_evidence::capsule::sha256_hex(b), "text": if n.ends_with(".txt") || n.ends_with(".py") || n.ends_with(".json") { Value::String(String::from_utf8_lossy(b).into_owned()) } else { Value::Null }})).collect::<Vec<_>>(),
-                "removed": d.removed.iter().map(|x| json!({"what": x.what, "why": x.why})).collect::<Vec<_>>(),
+                "removed": d.removed.iter().map(|x| json!({"what": x.what, "why": x.why, "files": x.files})).collect::<Vec<_>>(),
                 "not_confirmed": d.not_confirmed.iter().map(|(t, w)| json!({"title": t, "why": w})).collect::<Vec<_>>(),
                 // personal data seen in the exact bytes being released, counts only; a notice for the owner, never a block
             "personal_data": scans.iter().filter(|(_, x)| !x.found.is_empty()).map(|(n, x)| {

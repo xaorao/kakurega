@@ -169,6 +169,15 @@ try {
   const keys = await shell(app, () => globalThis.kakuregaShell.shortcut());
   const captureItem = await shell(app, () => globalThis.kakuregaShell.menu()?.getMenuItemById("capture")?.accelerator ?? null);
   check("the capture shortcut is held for the app and shown next to the menu entry", keys.registered === true && keys.shown === keys.keys && captureItem === keys.keys, JSON.stringify({ keys, captureItem }));
+  // with the service stopped the key is let go and a capture sends nothing; running again, it is held again
+  const stoppedKeys = await shell(app, async () => {
+    globalThis.kakuregaShell.markStopped(true);
+    const k = globalThis.kakuregaShell.shortcut();
+    const r = await globalThis.kakuregaShell.capture();
+    globalThis.kakuregaShell.markStopped(false);
+    return { k, r, again: globalThis.kakuregaShell.shortcut() };
+  });
+  check("a stopped service lets the key go, a capture then sends nothing, and the key is held again once it runs", stoppedKeys.k.registered === false && stoppedKeys.k.shown === null && stoppedKeys.r === null && stoppedKeys.again.registered === true, JSON.stringify(stoppedKeys));
   const discarded = await shell(app, () => globalThis.kakuregaShell.capture());
   check("a picture the owner discards is not attached and the screen does not change", discarded?.outcome === "discarded" && new URL(page.url()).hash === "#/privacy", JSON.stringify(discarded));
   await shell(app, async () => {

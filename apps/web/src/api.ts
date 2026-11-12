@@ -125,6 +125,8 @@ export interface Config {
   version: string;
   route: { id: string; class: string; model?: string; simulated: boolean; transport?: string; host?: string | null; stays_here?: boolean };
   roots: string[];
+  /** The owner's own home folder, written as ~ on screens. */
+  home?: string | null;
   test_mode: boolean;
   approvals?: { asks_every_release: boolean; signing_key_enrolled: boolean };
   signer: string;
@@ -260,7 +262,7 @@ export interface Release {
   /** The service's clock when this was answered, in Unix seconds, so a countdown does not depend on this page's clock. */
   server_time?: number;
   files?: ReleaseFile[];
-  removed?: { what: string; why: string }[];
+  removed?: { what: string; why: string; files?: number }[];
   not_confirmed: { title: string; why: string }[];
   not_established?: string[];
   personal_data?: { file: string; found: string }[];
@@ -413,7 +415,7 @@ export const api = {
   keepProposal: (id: number) => request<{ name: string; approved: boolean }>("POST", "/api/method-proposals/keep", { id }),
   dismissProposal: (id: number) => request<{ dismissed: boolean }>("POST", "/api/method-proposals/dismiss", { id }),
   mcp: () => request<{ servers: McpServer[]; suggested?: McpSuggested[]; limits: { servers: number } }>("GET", "/api/mcp"),
-  mcpDismissSuggested: (pack: string, name: string) => request<{ dismissed: boolean }>("POST", "/api/mcp/suggested/dismiss", { pack, name }),
+  mcpDismissSuggested: (pack: string, publisher: string, name: string) => request<{ dismissed: boolean }>("POST", "/api/mcp/suggested/dismiss", { pack, publisher, name }),
   mcpAdd: (b: { name: string; program: string; args: string[]; env: Record<string, string> }) => request<{ saved: boolean }>("POST", "/api/mcp/servers", b),
   mcpRemove: (name: string) => request<{ removed: boolean }>("POST", "/api/mcp/servers/remove", { name }),
   mcpDiscover: (name: string) => request<{ tools: number; changed: string[] }>("POST", "/api/mcp/discover", { name }),
@@ -484,7 +486,7 @@ export const api = {
   codeApply: (id: string, digest: string) => request<{ applied: boolean; files: number }>("POST", `/api/code/${id}/apply`, { digest }),
   /** Asks a running review or coding task to stop. `at_once` is false when it can only end at its own end. */
   stopWork: (kind: "review" | "code" | "question", id: string) => request<{ stopping: boolean; at_once: boolean }>("POST", `/api/${kind === "review" ? "jobs" : kind === "code" ? "code" : "questions"}/${encodeURIComponent(id)}/stop`, {}),
-  questionStart: (folder: string, question: string, depth: QuestionDepth) => request<{ id: string }>("POST", "/api/questions", { folder, question, depth }),
+  questionStart: (folder: string, question: string, depth: QuestionDepth) => request<{ id: string; forgotten?: string[] }>("POST", "/api/questions", { folder, question, depth }),
   questionList: () => request<{ questions: QuestionRow[]; max: number }>("GET", "/api/questions"),
   questionGet: (id: string) => request<Question>("GET", `/api/questions/${encodeURIComponent(id)}`),
   questionForget: (id: string) => request<{ forgotten: boolean }>("POST", `/api/questions/${encodeURIComponent(id)}/forget`, {}),

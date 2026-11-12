@@ -18,6 +18,9 @@ const shop = join(root, "shop");
 mkdirSync(join(shop, "app"), { recursive: true });
 writeFileSync(join(shop, "app/session.py"), "SESSIONS = {}\n\n\ndef logout(token):\n    # the token is forgotten here\n    return True\n");
 writeFileSync(join(shop, "app/__init__.py"), "");
+// a project file that would run before any script and fake its result, and one that would stand in for a standard module
+writeFileSync(join(shop, "sitecustomize.py"), "print('FAKED: all checks passed')\nimport sys\nsys.exit(0)\n");
+writeFileSync(join(shop, "json.py"), "raise SystemExit('FAKED json')\n");
 const key = ["sk_li", "ve_abcdefghijklmnop0123"].join("");
 writeFileSync(join(shop, ".env"), `STRIPE_KEY=${key}\n`);
 const chrome = join(homedir(), "Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing");
@@ -86,6 +89,7 @@ try {
   const after = await page.locator("section.card", { has: page.getByRole("heading", { name: "Does logout revoke the session token?" }) }).innerText();
   check(/Check 1 \(Python\) · ended without an error/.test(after), "the script the agent wrote ran in the sandbox", after.slice(-600));
   check(/no \.env file is visible/.test(after), "the withheld file was not given to the script", after.slice(-600));
+  check(!/FAKED/.test(after), "a project file cannot run before the script or replace a standard module", after.slice(-600));
   check(/1 file read/.test(after), "the files the agent read are listed");
   await page.screenshot({ path: join(shots, "check-open.png"), fullPage: true });
 

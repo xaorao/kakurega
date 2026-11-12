@@ -189,6 +189,10 @@ function Source(props: { job: Job }) {
   );
 }
 
+/** How many of the project's files a release holds back: each entry says how many it covers (an older release, without the
+ *  count, counts as one). */
+const heldFiles = (r: { removed?: { files?: number }[] }) => (r.removed ?? []).reduce((a, x) => a + (typeof x.files === "number" ? x.files : 1), 0);
+
 export function Suggestions(props: { jobId: string; heading?: Key; lead?: Key; onChange?: () => void }) {
   const [items, { refetch }] = createResource(() => props.jobId, (id) => api.suggestions(id).then((r) => r.suggestions));
   const [note, setNote] = createSignal("");
@@ -469,10 +473,11 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
               <p>
                 <strong>{t((r().files ?? []).length === 1 ? "rel.summary.files.one" : "rel.summary.files", { n: (r().files ?? []).length, size: sizeText((r().files ?? []).reduce((a, f) => a + f.bytes, 0)), recipient: r().recipient ?? "" })}</strong>
                 {" · "}<span class="ok-text">✓ {t((r().files ?? []).filter((f) => f.name.startsWith("finding-")).length === 1 ? "rel.summary.findings.one" : "rel.summary.findings", { n: (r().files ?? []).filter((f) => f.name.startsWith("finding-")).length })}</span>
-                {" · "}{t((r().removed ?? []).length === 1 ? "rel.summary.held.one" : "rel.summary.held", { n: (r().removed ?? []).length })}
+                {" · "}{t(heldFiles(r()) === 1 ? "rel.summary.held.one" : "rel.summary.held", { n: heldFiles(r()) })}
                 <Show when={r().disclosure}>{(d) => <>{" · "}<span class={d().verdict === "allow" ? "chip ok" : d().verdict === "block" ? "chip bad" : "chip warn"}>{t(`rel.summary.disc.${d().verdict}` as Key)}</span></>}</Show>
               </p>
-              <Show when={!props.job.delivered}>
+              {/* a release the disclosure check blocks cannot be approved, so it is not offered as the next step */}
+              <Show when={!props.job.delivered && r().disclosure?.verdict !== "block"}>
                 <button type="button" class="primary" onClick={() => document.getElementById("approval-card")?.scrollIntoView({ behavior: "smooth", block: "start" })}>{t("rel.summary.go")}</button>
               </Show>
             </div>

@@ -8,6 +8,7 @@ description = "Signed method packs: a publisher's methods, checked against a key
 [dependencies]
 kk-evidence = { path = "../kk-evidence" }
 kk-methods = { path = "../kk-methods" }
+kk-types = { path = "../kk-types" }
 serde_json = "1"
 
 [lints]

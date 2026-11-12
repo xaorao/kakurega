@@ -349,6 +349,8 @@ try {
   check("release shows a full digest", !!digest);
   const releaseText = await page.locator('[role="tabpanel"]').innerText();
   check("release lists the fixed files and the held-back file count", releaseText.includes("finding-1.txt") && releaseText.includes("run-check.py") && /1 withheld file/.test(releaseText));
+  const summaryLine = await page.locator(".release-summary").innerText();
+  check("the summary at the top counts the files held back, not the lines that list them", /1 file held back/.test(summaryLine), summaryLine);
   check("release states what it does not establish", /does not establish/i.test(releaseText) && /private source repository/.test(releaseText));
   check("no secret value appears in the release", !/hunter2|sk_live/.test(releaseText));
 

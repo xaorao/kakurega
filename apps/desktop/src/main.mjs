@@ -337,7 +337,8 @@ const captureScreen = createCapture({
 let lastCapture = null;
 
 async function runCapture() {
-  if (!current) return;
+  // a stopped service may have been one whose program changed: nothing goes to the address it had
+  if (!current || state.stopped) return;
   let r;
   try {
     r = await captureScreen();
@@ -350,8 +351,9 @@ async function runCapture() {
 }
 
 /** The keys that take a picture of the screen from anywhere, the same as the menu-bar entry: the picture is shown and
- *  nothing is attached without a yes. Taken only if no other app holds them. */
-const CAPTURE_SHORTCUT = "CommandOrControl+Alt+K";
+ *  nothing is attached without a yes. Taken only if no other app holds them, held only while the service runs, and with
+ *  Shift as well, since apps use ⌥⌘K for themselves (Firefox's console). */
+const CAPTURE_SHORTCUT = "CommandOrControl+Alt+Shift+K";
 
 function takeShortcut() {
   let ok = false;
@@ -361,6 +363,16 @@ function takeShortcut() {
     ok = false;
   }
   state.shortcut = ok ? CAPTURE_SHORTCUT : null;
+}
+
+/** The key is held while the service runs and let go when it stops, as the menu entry is hidden then. */
+function syncShortcut() {
+  if (state.stopped) {
+    if (globalShortcut.isRegistered(CAPTURE_SHORTCUT)) globalShortcut.unregister(CAPTURE_SHORTCUT);
+    state.shortcut = null;
+  } else if (!globalShortcut.isRegistered(CAPTURE_SHORTCUT)) {
+    takeShortcut();
+  }
 }
 
 const trayActions = {
@@ -384,6 +396,7 @@ const trayActions = {
 
 function refreshTray() {
   if (!tray || tray.isDestroyed()) return;
+  syncShortcut();
   if (profileName !== null) {
     state.profile = profileName;
     state.profiles = [DEFAULT_PROFILE, ...profileNames(profilesHome)];
@@ -560,6 +573,12 @@ if (!runsFromAsar) {
       return lastCapture;
     },
     lastCapture: () => lastCapture,
+    // what the menu and the key do when the service has stopped
+    markStopped: (on) => {
+      state.stopped = on;
+      lastCapture = null;
+      refreshTray();
+    },
     shortcut: () => ({ keys: CAPTURE_SHORTCUT, registered: globalShortcut.isRegistered(CAPTURE_SHORTCUT), shown: state.shortcut }),
     // opens the preview of this picture with no dialog, says whether the picture is really drawn in it, and closes it
     previewShows: async (png) => {

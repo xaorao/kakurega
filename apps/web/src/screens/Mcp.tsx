@@ -156,11 +156,18 @@ export function Mcp() {
                       <li class="card stack">
                         <p><strong>{g.name}</strong> <span class="muted">{t("mcp.suggestedFrom", { pack: g.pack })}</span></p>
                         <Show when={g.why}><p>{g.why}</p></Show>
-                        <pre class="passage" tabindex="0">{[g.program, ...(g.args ?? [])].join(" ")}</pre>
+                        <p class="muted">{t("mcp.suggestedProgram")}</p>
+                        <pre class="passage" tabindex="0">{g.program}</pre>
+                        <Show when={(g.args ?? []).length > 0}>
+                          <p class="muted">{t("mcp.suggestedArgs", { n: (g.args ?? []).length })}</p>
+                          <ol class="args">
+                            <For each={g.args ?? []}>{(a) => <li><code>{a}</code></li>}</For>
+                          </ol>
+                        </Show>
                         <Show when={(g.env ?? []).length > 0}><p class="muted">{t("mcp.suggestedEnv", { names: (g.env ?? []).join(", ") })}</p></Show>
                         <div class="actions">
                           <button type="button" onClick={() => { setName(g.name); setProgram(g.program); setArgs((g.args ?? []).join("\n")); setEnv((g.env ?? []).map((n) => `${n}=`).join("\n")); setStatus(t("mcp.suggestedFilled")); document.getElementById("mcp-name")?.focus(); }}>{t("mcp.suggestedUse")}</button>
-                          <button type="button" class="linklike" onClick={async () => { try { await api.mcpDismissSuggested(g.pack, g.name); changed(""); } catch (e) { setProblem(e instanceof ApiError ? e.message : t("mcp.error")); } }}>{t("mcp.suggestedDismiss")} <span class="sr">{g.name}</span></button>
+                          <button type="button" class="linklike" onClick={async () => { try { await api.mcpDismissSuggested(g.pack, g.publisher, g.name); changed(""); } catch (e) { setProblem(e instanceof ApiError ? e.message : t("mcp.error")); } }}>{t("mcp.suggestedDismiss")} <span class="sr">{g.name}</span></button>
                         </div>
                       </li>
                     )}

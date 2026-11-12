@@ -36,10 +36,11 @@ impl Service {
         let route = self.route_for_owner();
         if route["stays_here"].as_bool().unwrap_or(false) {
             3
-        } else if route["class"] == "public" {
-            1
-        } else {
+        } else if route["class"] == "verified_tee" {
             2
+        } else {
+            // a model elsewhere with no hardware proof (a hosted one, or a plain server on another computer)
+            1
         }
     }
 

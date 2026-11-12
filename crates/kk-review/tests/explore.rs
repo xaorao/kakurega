@@ -404,3 +404,65 @@ fn ex08_an_answer_written_as_text_with_its_lines_is_read_and_checked_like_one_th
         vec![json!({"file": "app/session.py", "line": 14, "text": "return True"})]
     );
 }
+
+#[test]
+fn ex09_only_lines_that_hold_places_leave_a_text_answer_and_scraps_of_text_are_not_places() {
+    // a time, a ratio or an address in the answer's own words stays in it
+    let text = "The login is refused at a ratio of 3:1 failures.\nIt is NOT refused at 10:30: the limit resets.\nCode: see below.\n- `app/session.py:14: return True`";
+    let r = route(vec![
+        calls(&[("read_file", json!({"path": "app/session.py"}))]),
+        ChatMessage::new("assistant", text),
+        ChatMessage::new("assistant", text),
+    ]);
+    let rep = run_question(
+        &r,
+        &mut ws(),
+        "When is the login refused?",
+        Depth::Normal,
+        None,
+        NEVER,
+    );
+    assert_eq!(rep.answer, "The login is refused at a ratio of 3:1 failures.\nIt is NOT refused at 10:30: the limit resets.\nCode: see below.", "{rep:?}");
+    assert_eq!(rep.citations.len(), 1);
+    // each quoted line is judged on its own: short pieces must be whole lines
+    let w = ws();
+    for scrap in [
+        "x\ny\nz\nw\nv\nu\nt =",
+        "return\n#\nTrue",
+        "check\nreturn True",
+    ] {
+        assert!(
+            !check_citation(&w, "app/session.py", 14, scrap)
+                .found
+                .checked(),
+            "{scrap:?}"
+        );
+    }
+    // what a model copies with a line is not held against it: the number with a colon, the mark of a cut line
+    assert_eq!(
+        check_citation(&w, "app/session.py", 14, "14:  return True").found,
+        Found::AtLine
+    );
+    assert_eq!(
+        check_citation(&w, "app/session.py", 14, "    return True... (cut)").found,
+        Found::AtLine
+    );
+    // a blank line in the file between two quoted lines is not a mismatch
+    let c = check_citation(&w, "app/session.py", 9, "return token\ndef logout(token):");
+    assert_eq!(c.found, Found::AtLine, "{c:?}");
+    assert_eq!(c.text, "    return token\n\n\ndef logout(token):");
+    // a readable file is never taken for a withheld one whose name differs only by case
+    let both = Workspace::from_imported(&[
+        file("NOTES.TXT", "the plan is settled here\n", Level::Internal),
+        file("notes.txt", "secret plan\n", Level::Restricted),
+    ])
+    .0;
+    assert_eq!(
+        check_citation(&both, "NOTES.TXT", 1, "the plan is settled here").found,
+        Found::AtLine
+    );
+    assert_eq!(
+        check_citation(&both, "notes.txt", 1, "secret plan").found,
+        Found::Withheld
+    );
+}

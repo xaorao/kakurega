@@ -103,7 +103,7 @@ pub(super) async fn attempt(axum::Extension(svc): Svc, Json(b): Json<BreakBody>)
         svc2.attachments
             .lock()
             .expect("lock")
-            .add(now(), id.clone(), parsed, material.len())
+            .add(now(), id.clone(), parsed, material.len(), 0)
             .map_err(|_| {
                 "remove an attached file first: there is no room for the planted one".to_string()
             })?;

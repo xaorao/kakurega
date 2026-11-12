@@ -1,8 +1,14 @@
 import { Show } from "solid-js";
 import { t } from "../i18n";
 
-/** The folder home written as ~, so a screen does not spell out the owner's user name. */
-export const shortPath = (p: string) => p.replace(/^\/(Users|home)\/[^/]+(?=\/|$)/, "~");
+/** The owner's home folder written as ~, so a screen does not spell out their user name. Only their own home, as the
+ *  service reports it (`api.config().home`): another person's folder, or /Users/Shared, is shown as it is, and until the home
+ *  is known nothing is shortened. */
+let home: string | null = null;
+export const learnHome = (p: string | null | undefined) => {
+  home = p && p.startsWith("/") && p.length > 1 ? p.replace(/\/+$/, "") : null;
+};
+export const shortPath = (p: string) => (home !== null && (p === home || p.startsWith(`${home}/`)) ? `~${p.slice(home.length)}` : p);
 
 /** The folder the owner has chosen: its name with a check, and where it is (the home folder written as ~, the whole path
  *  in the title). */

@@ -70,7 +70,7 @@ export function SavedPrompts(props: { text: () => string; onUse: (text: string) 
               {(v, i) => (
                 <>
                   <label for={`prompt-var-${i()}`}>{v.name}</label>
-                  <input id={`prompt-var-${i()}`} list={v.options.length ? `prompt-var-opts-${i()}` : undefined} value={values()[v.raw] ?? ""} maxlength="2000" onInput={(e) => { setBad(""); setValues({ ...values(), [v.raw]: e.currentTarget.value }); }} />
+                  <input id={`prompt-var-${i()}`} list={v.options.length ? `prompt-var-opts-${i()}` : undefined} value={Object.prototype.hasOwnProperty.call(values(), v.name) ? values()[v.name] : ""} maxlength="2000" onInput={(e) => { setBad(""); setValues({ ...values(), [v.name]: e.currentTarget.value }); }} />
                   <Show when={v.options.length > 0}>
                     <datalist id={`prompt-var-opts-${i()}`}><For each={v.options}>{(o) => <option value={o} />}</For></datalist>
                   </Show>

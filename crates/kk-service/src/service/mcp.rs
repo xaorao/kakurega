@@ -418,7 +418,7 @@ pub(super) async fn mcp_get(axum::Extension(svc): Svc) -> Response {
     // what packs the owner imported suggest, minus what is already added under that name and what the owner dismissed
     let have: Vec<String> = servers.iter().map(|(n, _, _)| n.to_lowercase()).collect();
     let suggested: Vec<Value> = c
-        .prepare("SELECT pack, name, key_id, body FROM pack_servers WHERE dismissed = 0 ORDER BY pack, name")
+        .prepare("SELECT pack, name, key_id, body FROM pack_suggestions WHERE dismissed = 0 AND key_id IN (SELECT key_id FROM pack_publishers) ORDER BY pack, key_id, name")
         .ok()
         .map(|mut st| {
             st.query_map([], |r| {
@@ -443,6 +443,8 @@ pub(super) async fn mcp_get(axum::Extension(svc): Svc) -> Response {
 #[serde(deny_unknown_fields)]
 pub(super) struct DismissBody {
     pack: String,
+    /// The publisher's key: two publishers' packs may share a name.
+    publisher: String,
     name: String,
 }
 
@@ -456,8 +458,8 @@ pub(super) async fn suggested_dismiss(
         store
             .connection()
             .execute(
-                "UPDATE pack_servers SET dismissed = 1 WHERE pack = ?1 AND name = ?2",
-                kk_vault::rusqlite::params![b.pack, b.name],
+                "UPDATE pack_suggestions SET dismissed = 1 WHERE pack = ?1 AND key_id = ?2 AND name = ?3",
+                kk_vault::rusqlite::params![b.pack, b.publisher, b.name],
             )
             .unwrap_or(0)
     };

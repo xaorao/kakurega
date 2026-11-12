@@ -46,7 +46,19 @@ pub const MAX_KEPT: usize = 100;
 impl Questions {
     /// The questions kept from before. One that was being answered when the service stopped failed.
     pub fn load(c: &kk_vault::rusqlite::Connection) -> Questions {
-        let mut q = Questions::default();
+        // the last number given out is kept apart from the questions, so forgetting every question never gives an old
+        // number to a new one
+        let mut q = Questions {
+            next: c
+                .query_row(
+                    "SELECT last FROM id_counters WHERE kind = 'question'",
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )
+                .map(|n| u64::try_from(n).unwrap_or(0))
+                .unwrap_or(0),
+            ..Questions::default()
+        };
         let Ok(mut stmt) = c.prepare("SELECT id, body FROM questions") else {
             return q;
         };
@@ -81,6 +93,15 @@ pub fn save(c: &kk_vault::rusqlite::Connection, q: &Question) -> bool {
     c.execute(
         "INSERT INTO questions(id, body) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET body = excluded.body",
         (&q.id, &body),
+    )
+    .is_ok()
+}
+
+/// Records that numbers up to `n` have been given out.
+pub fn note_number(c: &kk_vault::rusqlite::Connection, n: u64) -> bool {
+    c.execute(
+        "INSERT INTO id_counters(kind, last) VALUES ('question', ?1) ON CONFLICT(kind) DO UPDATE SET last = max(last, excluded.last)",
+        [i64::try_from(n).unwrap_or(i64::MAX)],
     )
     .is_ok()
 }

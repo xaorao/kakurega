@@ -115,6 +115,8 @@ fn serve(args: &[String]) -> Result<(), String> {
         worker_binary,
     } = setup_from_flags(args, false)?;
     let scratch = data.join("scratch");
+    // copies of project files left by a check that was cut off when the service stopped are removed at the next start
+    let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
     let keys = kk_service::keys::load_keys(&data)?;
     let runner = Arc::new(ReviewRunner {

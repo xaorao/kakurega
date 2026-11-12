@@ -1835,7 +1835,7 @@ fn sv17_chat_is_bounded_uses_notes_as_data_and_logs_no_text() {
         "/api/memories",
         json!({"text": "Acme pays invoices on the 20th", "level": "confidential"}),
     );
-    let (st, r) = w.post("/api/chat", json!({"message": "When does Acme pay invoices?", "held": 2, "history": [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]}));
+    let (st, r) = w.post("/api/chat", json!({"message": "When does Acme pay invoices?", "held": 1, "history": [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]}));
     assert_eq!(st, 200, "{r}");
     let seen = r["reply"].as_str().unwrap();
     assert!(
@@ -11033,7 +11033,7 @@ fn sv108_a_chat_sent_without_a_session_leaves_every_kept_conversation_and_the_se
     let before = w.get(&format!("/api/sessions/{id}")).1;
     let (st, r) = w.post(
         "/api/chat",
-        json!({"message": "Zephyrbloom private aside", "held": 2, "history": [{"role": "user", "content": "Quillfeather kept question"}, {"role": "assistant", "content": "ok"}]}),
+        json!({"message": "Zephyrbloom private aside", "held": 1, "history": [{"role": "user", "content": "Quillfeather kept question"}, {"role": "assistant", "content": "ok"}]}),
     );
     assert_eq!((st, &r["saved"]), (200, &json!(false)), "{r}");
     assert_eq!(
@@ -17514,6 +17514,24 @@ fn sv206_a_coding_task_is_offered_only_the_mcp_tools_the_owner_allowed_and_can_c
         summary.contains("write=Err("),
         "the tool that was not allowed is refused: {summary}"
     );
+    // a project kept on confidential hardware or on this computer is handed to no outside tool, and the task says why
+    w.post(
+        "/api/projects",
+        json!({"name": "proj", "folder": proj.to_string_lossy(), "floor": "confidential"}),
+    );
+    let v = start_task(&w);
+    assert_eq!(v["summary"], json!("no outside tools"), "{v}");
+    assert!(
+        v["progress"]
+            .to_string()
+            .contains("Outside tools were not offered"),
+        "{v}"
+    );
+    w.post("/api/projects", json!({"name": "proj", "floor": "any"}));
+    assert!(start_task(&w)["summary"]
+        .as_str()
+        .unwrap()
+        .contains("mcp__srv__echo"));
 }
 
 #[test]
@@ -22736,6 +22754,8 @@ struct SwitchRunner {
     /// When set, the model moves elsewhere while it answers: what a switch asked for during an answer looks like.
     flip: std::sync::atomic::AtomicBool,
     away: std::sync::atomic::AtomicBool,
+    /// When set (and not away), the model is a plain server on another computer, with no hardware proof.
+    lan: std::sync::atomic::AtomicBool,
     asked: Mutex<Vec<String>>,
 }
 
@@ -22744,6 +22764,7 @@ impl SwitchRunner {
         Arc::new(SwitchRunner {
             flip: Default::default(),
             away: Default::default(),
+            lan: Default::default(),
             asked: Mutex::new(Vec::new()),
         })
     }
@@ -22775,6 +22796,8 @@ impl JobRunner for SwitchRunner {
     fn route_info(&self) -> Value {
         if self.away.load(std::sync::atomic::Ordering::SeqCst) {
             json!({"id": "near:m", "class": "verified_tee", "model": "m", "simulated": false, "endpoint": "https://cloud-api.near.ai/v1", "context_tokens": 16384})
+        } else if self.lan.load(std::sync::atomic::Ordering::SeqCst) {
+            json!({"id": "ollama:m", "class": "device_only", "model": "m", "simulated": false, "endpoint": "http://gpu.lan:11434", "context_tokens": 16384})
         } else {
             json!({"id": "ollama:m", "class": "device_only", "model": "m", "simulated": false, "endpoint": "http://127.0.0.1:11434", "context_tokens": 16384})
         }
@@ -23777,9 +23800,13 @@ fn sv278_a_run_that_began_elsewhere_and_then_read_the_project_on_this_computer_d
 }
 
 fn pack_with_servers(seed: u8, name: &str, servers: Value) -> String {
+    pack_with_servers_named(seed, name, &format!("{name}-notes"), servers)
+}
+
+fn pack_with_servers_named(seed: u8, name: &str, method: &str, servers: Value) -> String {
     let signer = kk_evidence::keys::Signer::from_seed([seed; 32]);
     let draft = json!({"format": "kakurega-pack", "version": 1, "name": name, "pack_version": "1.0.0", "not_after": 4_000_000_000i64,
-        "methods": [{"name": format!("{name}-notes"), "description": "d", "triggers": ["scan"], "avoid": [], "body": "Read the scan report first."}],
+        "methods": [{"name": method, "description": "d", "triggers": ["scan"], "avoid": [], "body": "Read the scan report first."}],
         "servers": servers});
     kk_packs::sign_pack(&draft, &signer, 1_000).unwrap()
 }
@@ -23813,10 +23840,11 @@ fn sv279_a_pack_suggests_outside_programs_that_are_shown_never_added_and_can_be_
         (json!(["--stdio"]), json!(["SEMGREP_APP_TOKEN"]))
     );
     // put away, it stays away
+    let publisher = semgrep["publisher"].as_str().unwrap().to_string();
     assert_eq!(
         w.post(
             "/api/mcp/suggested/dismiss",
-            json!({"pack": "scan-kit", "name": "osv"})
+            json!({"pack": "scan-kit", "publisher": publisher, "name": "osv"})
         )
         .1["dismissed"],
         true
@@ -23824,7 +23852,7 @@ fn sv279_a_pack_suggests_outside_programs_that_are_shown_never_added_and_can_be_
     assert_eq!(
         w.post(
             "/api/mcp/suggested/dismiss",
-            json!({"pack": "scan-kit", "name": "nothing"})
+            json!({"pack": "scan-kit", "publisher": publisher, "name": "nothing"})
         )
         .0,
         404
@@ -24201,4 +24229,429 @@ fn sv282_a_team_run_of_a_project_kept_on_this_computer_does_not_start_with_a_mod
         asked,
         "no task of the run reached the model elsewhere"
     );
+}
+
+#[test]
+fn sv283_a_project_kept_privately_is_not_sent_by_a_side_door() {
+    let (_c, w, runner) = switch_service("floor-doors");
+    let away = |on: bool| runner.away.store(on, std::sync::atomic::Ordering::SeqCst);
+    let lan = |on: bool| runner.lan.store(on, std::sync::atomic::Ordering::SeqCst);
+    let root = w.get("/api/fs").1["path"].as_str().unwrap().to_string();
+    let folder = format!("{root}/repo");
+    let file = std::fs::read_dir(&folder)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .find(|p| {
+            p.is_file()
+                && p.extension()
+                    .is_some_and(|x| x == "py" || x == "md" || x == "txt")
+        })
+        .expect("a text file in the sample project");
+    let file = file.to_string_lossy().into_owned();
+    w.post(
+        "/api/projects",
+        json!({"name": "acme", "folder": folder, "floor": "here"}),
+    );
+    // a file of the project, attached by its path from outside any project, is not taken for a model elsewhere
+    away(true);
+    let (s, r) = w.post("/api/attachments/path", json!({"path": file}));
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (409, Some("PROJECT_KEPT_PRIVATELY")),
+        "{r}"
+    );
+    // taken while the model is here, it carries the project's floor: once the model moves, it is not sent with a message
+    away(false);
+    let (s, r) = w.post("/api/attachments/path", json!({"path": file}));
+    assert_eq!(s, 201, "{r}");
+    let id = r["id"].as_str().unwrap().to_string();
+    away(true);
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "Summarise the attached file", "attachments": [id]}),
+    );
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (409, Some("PROJECT_KEPT_PRIVATELY")),
+        "{r}"
+    );
+    away(false);
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "Summarise the attached file", "attachments": [id]}),
+    );
+    assert_eq!(s, 200, "{r}");
+    // a review of another folder whose name is the project's (its notes go into the review) is refused elsewhere
+    std::fs::create_dir_all(format!("{root}/public/acme")).unwrap();
+    std::fs::write(format!("{root}/public/acme/readme.md"), "public text\n").unwrap();
+    w.post(
+        "/api/memories",
+        json!({"text": "acme pricing floor is 42", "level": "internal", "project": "acme"}),
+    );
+    away(true);
+    let (s, r) = w.post(
+        "/api/jobs",
+        json!({"repo": format!("{root}/public/acme"), "recipient": "a reviewer"}),
+    );
+    assert_ne!(s, 202, "{r}");
+    assert!(
+        r.to_string()
+            .contains("the project acme is kept more privately"),
+        "{r}"
+    );
+    // a plain server on another computer is not confidential hardware: a project kept there is not sent to it either
+    away(false);
+    lan(true);
+    w.post(
+        "/api/projects",
+        json!({"name": "acme", "floor": "confidential"}),
+    );
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "What is in the plan?", "project": "acme"}),
+    );
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (409, Some("PROJECT_KEPT_PRIVATELY")),
+        "{r}"
+    );
+    lan(false);
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "What is in the plan?", "project": "acme"}),
+    );
+    assert_eq!(s, 200, "{r}");
+}
+
+#[test]
+fn sv284_a_project_kept_privately_is_never_handed_to_the_outside_agent_and_a_raised_floor_holds_from_the_next_task(
+) {
+    const PLAN: &str = "1 | security-reviewer | after: - | List how the payment key could leak.\n2 | claude-code | after: 1 | Write a function that rotates the key.\n";
+    let handed = || {
+        TEAM_HANDED
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|t| t.contains("floor hand-over"))
+            .count()
+    };
+    let goal = "Rotate the payment key safely (floor hand-over).";
+    let (root, _repo) = repo_copy("team-floor-outside");
+    let runner = team_runner(PLAN);
+    let (_c, w) = team_service(&root, runner.clone());
+    w.post(
+        "/api/projects",
+        json!({"name": "kestrel", "folder": root.join("repo").to_string_lossy()}),
+    );
+    let plan = |w: &Web| {
+        let (s, v) = w.post("/api/team", json!({"goal": goal, "experts": ["security-reviewer", "claude-code"], "project": "kestrel"}));
+        assert_eq!(s, 201, "{v}");
+        v["id"].as_str().unwrap().to_string()
+    };
+    // kept on this computer: the outside task fails in words and nothing is handed over, whatever the owner would say
+    w.post("/api/projects", json!({"name": "kestrel", "floor": "here"}));
+    let id = plan(&w);
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(
+        &w,
+        &id,
+        &["done", "partial", "failed", "waiting", "stopped"],
+    );
+    assert_eq!(v["tasks"][1]["state"], json!("failed"), "{v}");
+    assert!(
+        v["tasks"][1]["note"]
+            .as_str()
+            .unwrap_or("")
+            .contains("kept more privately"),
+        "{v}"
+    );
+    assert_eq!(handed(), 0);
+    // kept on confidential hardware: the same, the agent outside is not confidential hardware
+    w.post(
+        "/api/projects",
+        json!({"name": "kestrel", "floor": "confidential"}),
+    );
+    let id = plan(&w);
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(
+        &w,
+        &id,
+        &["done", "partial", "failed", "waiting", "stopped"],
+    );
+    assert_eq!(v["tasks"][1]["state"], json!("failed"), "{v}");
+    assert_eq!(handed(), 0);
+    // any route: the run waits for the owner's yes; the floor raised meanwhile holds when it goes on, even after a yes
+    w.post("/api/projects", json!({"name": "kestrel", "floor": "any"}));
+    let id = plan(&w);
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(&w, &id, &["waiting"]);
+    assert_eq!(v["tasks"][1]["state"], json!("needs_input"), "{v}");
+    w.post("/api/projects", json!({"name": "kestrel", "floor": "here"}));
+    w.post(
+        &format!("/api/team/{id}/answer"),
+        json!({"task": 2, "answer": "yes"}),
+    );
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(
+        &w,
+        &id,
+        &["done", "partial", "failed", "waiting", "stopped"],
+    );
+    assert_eq!(v["tasks"][1]["state"], json!("failed"), "{v}");
+    assert_eq!(
+        handed(),
+        0,
+        "a yes given before the floor was raised hands nothing over"
+    );
+    // the model moved elsewhere while the run waited, and the floor was raised: the run stops before its next task
+    w.post("/api/projects", json!({"name": "kestrel", "floor": "any"}));
+    let id = plan(&w);
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    team_wait(&w, &id, &["waiting"]);
+    runner.away.store(true, std::sync::atomic::Ordering::SeqCst);
+    w.post("/api/projects", json!({"name": "kestrel", "floor": "here"}));
+    let asked = runner.seen.lock().unwrap().len();
+    w.post(
+        &format!("/api/team/{id}/answer"),
+        json!({"task": 2, "answer": "yes"}),
+    );
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(
+        &w,
+        &id,
+        &[
+            "done",
+            "partial",
+            "failed",
+            "waiting",
+            "stopped",
+            "interrupted",
+        ],
+    );
+    assert!(
+        v["final_note"]
+            .as_str()
+            .unwrap_or("")
+            .contains("the project kestrel"),
+        "{v}"
+    );
+    assert_eq!(
+        runner.seen.lock().unwrap().len(),
+        asked,
+        "nothing more reached the model elsewhere"
+    );
+    assert_eq!(handed(), 0);
+}
+
+#[test]
+fn sv285_a_floor_raised_while_a_team_task_works_holds_from_the_next_task() {
+    use std::sync::atomic::Ordering::SeqCst;
+    const PLAN: &str = "1 | security-reviewer | after: - | List how the payment key could leak.\n2 | software-architect | after: 1 | Say where the key should live.\n";
+    let (root, _repo) = repo_copy("team-floor-raised");
+    let runner = team_runner(PLAN);
+    let (_c, w) = team_service(&root, runner.clone());
+    w.post(
+        "/api/projects",
+        json!({"name": "kestrel", "folder": root.join("repo").to_string_lossy()}),
+    );
+    // the model is on confidential hardware elsewhere and the project may go anywhere when the run starts
+    runner.away.store(true, SeqCst);
+    let (s, v) = w.post("/api/team", json!({"goal": "Decide where the payment key lives (raised floor).", "experts": ["security-reviewer", "software-architect"], "project": "kestrel"}));
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    runner.hold.store(true, SeqCst);
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let started = std::time::Instant::now();
+    while w.get(&format!("/api/team/{id}")).1["tasks"][0]["state"] != json!("running") {
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "task 1 never started"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // while task 1 works, the owner keeps the project on this computer from now on
+    w.post("/api/projects", json!({"name": "kestrel", "floor": "here"}));
+    let asked = runner.seen.lock().unwrap().len();
+    runner.hold.store(false, SeqCst);
+    let v = team_wait(
+        &w,
+        &id,
+        &[
+            "done",
+            "partial",
+            "failed",
+            "waiting",
+            "stopped",
+            "interrupted",
+        ],
+    );
+    assert!(
+        v["final_note"]
+            .as_str()
+            .unwrap_or("")
+            .contains("the project kestrel"),
+        "{v}"
+    );
+    assert_ne!(v["tasks"][1]["state"], json!("done"), "{v}");
+    // task 1's own call is recorded when its answer is released; nothing after it
+    assert_eq!(
+        runner.seen.lock().unwrap().len(),
+        asked + 1,
+        "task 2 was not asked of the model elsewhere"
+    );
+}
+
+#[test]
+fn sv286_a_refused_folder_saves_no_floor_and_a_project_taken_off_the_list_keeps_its_floor_in_sight()
+{
+    let (_c, w, _runner) = switch_service("floor-bookkeeping");
+    let floor_of = |w: &Web, name: &str| {
+        w.get("/api/projects").1["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == name)
+            .map(|p| p["floor"].clone())
+    };
+    // a folder outside the allowed ones is refused, and the floor asked for with it is not saved
+    let (s, _) = w.post(
+        "/api/projects",
+        json!({"name": "ghost", "folder": "/etc", "floor": "here"}),
+    );
+    assert_eq!(s, 422);
+    assert_eq!(floor_of(&w, "ghost"), None, "nothing was made or saved");
+    // a project kept here and taken off the list still shows where its work may go, and the setting still holds
+    w.post("/api/projects", json!({"name": "acme", "floor": "here"}));
+    w.post("/api/projects", json!({"remove": "acme"}));
+    assert_eq!(floor_of(&w, "acme"), Some(json!("here")));
+    // and it can be changed from there
+    w.post("/api/projects", json!({"name": "acme", "floor": "any"}));
+    assert_eq!(floor_of(&w, "acme").unwrap_or(json!("any")), json!("any"));
+}
+
+#[test]
+fn sv287_suggestions_belong_to_their_publisher_and_go_when_the_publisher_is_removed() {
+    let (_c, w, _seen, _root) = instructions_service("packs-publishers");
+    assert_eq!(pin_publisher(&w, 7, "tools").0, 200);
+    assert_eq!(pin_publisher(&w, 8, "other tools").0, 200);
+    let first = pack_with_servers(
+        7,
+        "scan-kit",
+        json!([{"name": "semgrep", "program": "/usr/local/bin/semgrep-mcp"}]),
+    );
+    assert_eq!(w.post("/api/packs/import", json!({"pack": first})).0, 200);
+    let names = |w: &Web| {
+        w.get("/api/mcp").1["suggested"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| {
+                format!(
+                    "{}|{}",
+                    x["publisher"].as_str().unwrap_or(""),
+                    x["program"].as_str().unwrap_or("")
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = names(&w);
+    assert_eq!(before.len(), 1, "{before:?}");
+    // another publisher's pack of the same name keeps its own suggestion beside the first one's
+    let methods = w.get("/api/methods").1.to_string();
+    if !methods.contains("scan-kit-notes") {
+        panic!("the first pack's method is there: {methods}");
+    }
+    let second = pack_with_servers_named(
+        8,
+        "scan-kit",
+        "scan-kit-other-notes",
+        json!([{"name": "semgrep", "program": "/opt/other/semgrep-mcp"}]),
+    );
+    let (s, v) = w.post("/api/packs/import", json!({"pack": second}));
+    assert_eq!(s, 200, "{v}");
+    let both = names(&w);
+    assert_eq!(both.len(), 2, "{both:?}");
+    assert!(
+        both.iter()
+            .any(|n| n.ends_with("/usr/local/bin/semgrep-mcp"))
+            && both.iter().any(|n| n.ends_with("/opt/other/semgrep-mcp"))
+    );
+    // a publisher taken off the list takes its suggestions along; the other publisher's stay
+    let key7 = before[0].split('|').next().unwrap().to_string();
+    assert_eq!(
+        w.post("/api/packs/publishers/remove", json!({"key_id": key7}))
+            .0,
+        200
+    );
+    let after = names(&w);
+    assert_eq!(
+        after,
+        vec![both.iter().find(|n| !n.starts_with(&key7)).unwrap().clone()]
+    );
+}
+
+#[test]
+fn sv288_question_numbers_are_never_given_twice_and_the_owner_is_told_what_made_room() {
+    let (root, _repo) = repo_copy("question-numbers");
+    let proj = root.join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::write(proj.join("a.py"), "def f():\n    return 1\n").unwrap();
+    let runner = || {
+        Arc::new(QuestionRunner {
+            script: vec![question_calls(&[(
+                "answer",
+                json!({"answer": "It returns 1.", "places": [{"file": "a.py", "line": 2, "text": "return 1"}]}),
+            )])],
+            endpoint: "http://127.0.0.1:11434".into(),
+            hold: Default::default(),
+        })
+    };
+    let open = || {
+        let svc = Service::new(&root.join("data"), vec![root.clone()], runner(), true).unwrap();
+        let c = start(Options {
+            extension: Arc::new(Routes(svc)),
+            ..Options::default()
+        })
+        .unwrap();
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        (c, w)
+    };
+    let folder = proj.to_string_lossy().to_string();
+    let ask = |w: &Web| {
+        let (s, v) = w.post(
+            "/api/questions",
+            json!({"folder": folder, "question": "What does f return?", "depth": "quick"}),
+        );
+        assert_eq!(s, 202, "{v}");
+        let id = v["id"].as_str().unwrap().to_string();
+        let started = std::time::Instant::now();
+        while w.get(&format!("/api/questions/{id}")).1["state"] == json!("running") {
+            assert!(started.elapsed() < Duration::from_secs(20));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        (id, v["forgotten"].clone())
+    };
+    let (c, w) = open();
+    let (first, _) = ask(&w);
+    assert_eq!(first, "question-1");
+    assert_eq!(
+        w.post(&format!("/api/questions/{first}/forget"), json!({}))
+            .0,
+        200
+    );
+    drop((c, w));
+    // everything forgotten and the service started again: the next question has a new number
+    let (_c, w) = open();
+    let (second, forgotten) = ask(&w);
+    assert_eq!((second.as_str(), forgotten), ("question-2", json!([])));
+    for _ in 0..99 {
+        ask(&w);
+    }
+    // the 101st makes room by forgetting the oldest answered one, and says so
+    let (newest, forgotten) = ask(&w);
+    assert_eq!(newest, "question-102");
+    assert_eq!(forgotten, json!(["question-2"]));
+    assert_eq!(w.get("/api/questions/question-2").0, 404);
 }

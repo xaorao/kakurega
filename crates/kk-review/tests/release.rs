@@ -100,6 +100,16 @@ fn rs01_a_release_is_a_fixed_set_of_files_and_the_recipient_can_check_it_with_py
         ]
     );
     assert!(draft.removed.iter().any(|r| r.what.contains("withheld")));
+    // the entry says how many files it holds back, which is what the screens count
+    let withheld = f
+        .iter()
+        .filter(|x| x.label.level >= kk_types::label::Level::Restricted)
+        .count();
+    assert!(withheld >= 1);
+    assert_eq!(
+        draft.removed.iter().map(|r| r.files).sum::<usize>(),
+        withheld
+    );
     let dir = std::env::temp_dir().join(format!("kk-recipient-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();

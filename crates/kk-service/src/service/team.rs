@@ -192,11 +192,11 @@ impl Service {
         };
         // from here the run holds words about the owner's files: it is marked as held on this computer, so neither a later
         // task nor the closing answer goes to a model elsewhere, however the model is changed in between
-        {
-            let store = self.store.lock().expect("lock");
-            let _ = store
-                .connection()
-                .execute("UPDATE team_runs SET held = 3 WHERE id = ?1", [id]);
+        if !self.team_hold_here(id) {
+            fail(
+                "the run could not be marked as held on this computer, so the project was not read",
+            );
+            return false;
         }
         let job = match self.start_job(&folder.to_string_lossy(), &format!("team run {id}")) {
             Ok(j) => j,
@@ -294,6 +294,15 @@ impl Service {
     /// answers the task, each line it rests on checked against the files. Like a review's findings, the answer is words
     /// about the owner's files: it is made only with the model on this computer, and the run is held on this computer from
     /// then on. True when the owner stopped the run while it worked.
+    /// Marks a run as holding material of this computer; false when the mark could not be written.
+    fn team_hold_here(&self, id: &str) -> bool {
+        let store = self.store.lock().expect("lock");
+        store
+            .connection()
+            .execute("UPDATE team_runs SET held = 3 WHERE id = ?1", [id])
+            .is_ok_and(|n| n == 1)
+    }
+
     fn team_reader_task(
         self: &Arc<Self>,
         id: &str,
@@ -310,11 +319,11 @@ impl Service {
             fail("the run's project has no folder this program may read; give the project a folder under Projects and plan again");
             return false;
         };
-        {
-            let store = self.store.lock().expect("lock");
-            let _ = store
-                .connection()
-                .execute("UPDATE team_runs SET held = 3 WHERE id = ?1", [id]);
+        if !self.team_hold_here(id) {
+            fail(
+                "the run could not be marked as held on this computer, so the project was not read",
+            );
+            return false;
         }
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -955,6 +964,12 @@ impl Service {
             if self.team_stop_asked(id) {
                 return "stopped";
             }
+            // the project's floor is read again before every task: raised while the run worked, it holds from the next one
+            if let Some((name, _)) = self.floor_above_route(run.project.as_deref(), None) {
+                self.team_set_final(id, None, &super::projects::floor_words(&name));
+                return "stopped";
+            }
+            need = need.max(self.project_floor(run.project.as_deref()));
             let mut tasks = self.team_tasks(id);
             let mut s = slots(&tasks);
             for n in team::settle_skips(&mut s) {
@@ -1087,7 +1102,14 @@ impl Service {
                 continue;
             }
             if t.expert == OUTSIDE_SEAT {
-                self.team_outside_task(id, n, &run.goal, total, t, &earlier_outside);
+                // the coding agent outside is not private: a project kept on this computer or on confidential hardware is
+                // never handed to it, whatever the owner would answer
+                if self.project_floor(run.project.as_deref()) > 1 {
+                    let name = run.project.clone().unwrap_or_default();
+                    self.team_set_task(id, n, State::Failed, "", &format!("the project {name} is kept more privately than an agent outside this program allows, so nothing of it is handed over"), "");
+                } else {
+                    self.team_outside_task(id, n, &run.goal, total, t, &earlier_outside);
+                }
                 self.log_event(
                     "team.task",
                     id,

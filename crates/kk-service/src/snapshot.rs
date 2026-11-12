@@ -90,6 +90,10 @@ pub struct SnapDraft {
     pub digest: String,
     pub files: BTreeMap<String, String>,
     pub removed: Vec<(String, String)>,
+    /// How many files each entry of `removed` holds back, in the same order. Releases kept before it was recorded have none,
+    /// and each of their entries counts as one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_files: Vec<usize>,
     pub not_confirmed: Vec<(String, String)>,
 }
 
@@ -176,6 +180,7 @@ impl Snapshot {
                 .iter()
                 .map(|x| (x.what.clone(), x.why.clone()))
                 .collect(),
+            removed_files: d.removed.iter().map(|x| x.files).collect(),
             not_confirmed: d.not_confirmed.clone(),
         });
         Snapshot {
@@ -298,9 +303,11 @@ impl Snapshot {
             removed: d
                 .removed
                 .iter()
-                .map(|(a, b)| Removal {
+                .enumerate()
+                .map(|(i, (a, b))| Removal {
                     what: a.clone(),
                     why: b.clone(),
+                    files: d.removed_files.get(i).copied().unwrap_or(1),
                 })
                 .collect(),
             not_confirmed: d.not_confirmed.clone(),

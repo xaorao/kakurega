@@ -22,21 +22,93 @@ const MAX_ARGS: usize = 32;
 const MAX_ARG_CHARS: usize = 512;
 const MAX_ENV: usize = 16;
 const MAX_WHY_CHARS: usize = 300;
-/// Variables a suggestion may not ask for: each changes what program runs or what it loads, whatever value is filled in.
+/// Variables a suggestion may not ask for: each changes what program runs, what it loads, where it connects or whom it
+/// trusts, whatever value is filled in. Whole families are refused by their start (every PYTHON*, NODE_*, GIT_* ...).
 const ENV_NEVER: &[&str] = &[
     "PATH",
-    "PYTHONPATH",
-    "PYTHONSTARTUP",
-    "NODE_OPTIONS",
-    "NODE_PATH",
     "BASH_ENV",
     "ENV",
     "SHELL",
     "HOME",
-    "PERL5OPT",
-    "RUBYOPT",
+    "IFS",
+    "PS4",
+    "PROMPT_COMMAND",
+    "ZDOTDIR",
+    "CLASSPATH",
+    "GCONV_PATH",
+    "GLIBC_TUNABLES",
+    "TMPDIR",
+    "EDITOR",
+    "VISUAL",
+    "PAGER",
+    "BROWSER",
+    "LESSOPEN",
+    "TERMINFO",
+    "CURL_CA_BUNDLE",
+    "REQUESTS_CA_BUNDLE",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "FTP_PROXY",
 ];
-const ENV_NEVER_PREFIX: &[&str] = &["LD_", "DYLD_"];
+const ENV_NEVER_PREFIX: &[&str] = &[
+    "LD_", "DYLD_", "PYTHON", "NODE_", "NPM_", "YARN_", "PNPM_", "DENO_", "BUN_", "JAVA_", "JDK_",
+    "_JAVA", "GIT_", "SSL_", "SSH_", "OPENSSL_", "LUA_", "PERL", "RUBY", "GEM_", "BUNDLE_",
+    "CARGO_", "RUSTC", "RUSTUP_", "GO", "PHP", "XDG_", "MALLOC_", "LC_", "DOTNET_", "COMPlus_",
+];
+/// Programs that only start another program, or a shell: named as the program, the card would not say what really runs.
+const LAUNCHERS: &[&str] = &[
+    "env",
+    "sh",
+    "bash",
+    "zsh",
+    "dash",
+    "ksh",
+    "fish",
+    "csh",
+    "tcsh",
+    "busybox",
+    "sudo",
+    "doas",
+    "su",
+    "nohup",
+    "xargs",
+    "nice",
+    "timeout",
+    "time",
+    "exec",
+    "osascript",
+    "open",
+    "script",
+    "watch",
+    "chroot",
+    "setsid",
+    "stdbuf",
+    "caffeinate",
+    "launchctl",
+    "arch",
+    "command",
+    "eval",
+];
+/// Interpreters, and the flags that make them run code given in the arguments rather than a named program.
+const INTERPRETERS: &[&str] = &[
+    "python", "node", "deno", "bun", "perl", "ruby", "php", "lua", "tclsh", "pwsh", "Rscript",
+    "julia",
+];
+const INLINE_CODE: &[&str] = &[
+    "-c",
+    "-e",
+    "-E",
+    "--eval",
+    "-p",
+    "--print",
+    "-r",
+    "--require",
+    "--import",
+    "--loader",
+    "--experimental-loader",
+];
 
 /// An outside tool program a pack suggests. The owner sees exactly this and decides; nothing in it is filled in or run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,8 +214,37 @@ struct Parsed {
     servers: Vec<SuggestedServer>,
 }
 
+/// Text of a bounded length with no control characters and nothing that hides or reorders what is shown (zero-width and
+/// direction marks): the owner reads it on the card exactly as it is.
 fn plain_text(s: &str, max: usize) -> bool {
-    s.chars().count() <= max && !s.chars().any(char::is_control)
+    s.chars().count() <= max
+        && !s.chars().any(char::is_control)
+        && !kk_types::injection::hidden_chars(s)
+        && !s.chars().any(|c| matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2069}' | '\u{feff}' | '\u{061c}' | '\u{180e}' | '\u{00ad}'))
+}
+
+/// Whether a suggested program and its arguments say plainly what runs: not a launcher or a shell, and not an interpreter
+/// told to run code written in the arguments.
+fn says_what_runs(program: &str, args: &[String]) -> bool {
+    let base = program.rsplit('/').next().unwrap_or(program);
+    let stem = base.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+    if LAUNCHERS.contains(&base) || LAUNCHERS.contains(&stem) {
+        return false;
+    }
+    if INTERPRETERS.contains(&stem) {
+        return !args.iter().any(|a| {
+            INLINE_CODE.contains(&a.as_str())
+                || INLINE_CODE
+                    .iter()
+                    .any(|f| f.starts_with("--") && a.starts_with(&format!("{f}=")))
+                || (a.starts_with('-')
+                    && !a.starts_with("--")
+                    && (3..=5).contains(&a.len())
+                    && a[1..].chars().all(|c| c.is_ascii_alphabetic())
+                    && a[1..].contains(['c', 'e', 'E', 'p', 'r']))
+        });
+    }
+    true
 }
 
 fn env_name_ok(n: &str) -> bool {
@@ -213,6 +314,9 @@ fn parse_servers(v: Option<&Value>) -> Result<Vec<SuggestedServer>, Refusal> {
                     "a suggested tool program's arguments are not up to 32 lines of plain text",
                 ))?,
         };
+        if !says_what_runs(program, &args) {
+            return Err(Refusal::Shape("a suggested tool program must be the program itself, named with its arguments: not a launcher or a shell (env, sh, sudo and the like), and not an interpreter given code to run in its arguments"));
+        }
         let env: Vec<String> = match obj.get("env") {
             None => Vec::new(),
             Some(a) => a

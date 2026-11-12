@@ -17,6 +17,9 @@ pub struct Stored {
     pub parsed: Parsed,
     pub bytes: usize,
     pub at: i64,
+    /// The privacy floor of the project the file was read from (see `Service::project_floor`): a file attached from a
+    /// project kept on this computer is not sent with a message to a less private model. 0 for a file given directly.
+    pub floor: i64,
 }
 
 #[derive(Default)]
@@ -46,6 +49,7 @@ impl Store {
         id: String,
         parsed: Parsed,
         bytes: usize,
+        floor: i64,
     ) -> Result<(), Refused> {
         self.expire(now);
         if self.items.len() >= MAX_FILES {
@@ -59,6 +63,7 @@ impl Store {
             parsed,
             bytes,
             at: now,
+            floor,
         });
         Ok(())
     }
@@ -367,9 +372,12 @@ mod tests {
         assert_eq!((MAX_FILES, MAX_PER_MESSAGE), (12, 5));
         let mut s = Store::default();
         for n in 0..MAX_FILES as u8 {
-            assert!(s.add(100, id(n), parsed(&["x"]), 1).is_ok());
+            assert!(s.add(100, id(n), parsed(&["x"]), 1, 0).is_ok());
         }
-        assert_eq!(s.add(100, id(99), parsed(&["x"]), 1), Err(Refused::TooMany));
+        assert_eq!(
+            s.add(100, id(99), parsed(&["x"]), 1, 0),
+            Err(Refused::TooMany)
+        );
         assert!(s.get(100 + TTL_SECS - 1, &id(0)).is_some());
         assert!(
             s.get(100 + TTL_SECS, &id(0)).is_none(),
@@ -377,7 +385,7 @@ mod tests {
         );
         assert!(s.is_empty(), "all expired together");
         assert!(
-            s.add(100 + TTL_SECS, id(1), parsed(&["x"]), 1).is_ok(),
+            s.add(100 + TTL_SECS, id(1), parsed(&["x"]), 1, 0).is_ok(),
             "room again"
         );
         assert!(s.remove(&id(1)) && !s.remove(&id(1)));
@@ -387,9 +395,9 @@ mod tests {
     fn at03_the_text_held_is_limited() {
         let mut s = Store::default();
         let big = "a".repeat(MAX_CHARS / 2 + 1);
-        assert!(s.add(0, id(1), parsed(&[&big]), 1).is_ok());
+        assert!(s.add(0, id(1), parsed(&[&big]), 1, 0).is_ok());
         assert_eq!(
-            s.add(0, id(2), parsed(&[&big]), 1),
+            s.add(0, id(2), parsed(&[&big]), 1, 0),
             Err(Refused::TooMuchText)
         );
         assert_eq!(s.len(), 1);

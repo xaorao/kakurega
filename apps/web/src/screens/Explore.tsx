@@ -40,6 +40,7 @@ export function Explore() {
   const [current, setCurrent] = createSignal<Question | null>(null);
   const [error, setError] = createSignal("");
   const [stopping, setStopping] = createSignal(false);
+  const [madeRoom, setMadeRoom] = createSignal(0);
   const chosen = () => listing()?.path ?? "";
   let timer: number | undefined;
   const halt = () => {
@@ -71,7 +72,8 @@ export function Explore() {
     setError("");
     setCurrent(null);
     try {
-      const { id } = await api.questionStart(chosen(), question().trim(), depth());
+      const { id, forgotten } = await api.questionStart(chosen(), question().trim(), depth());
+      setMadeRoom((forgotten ?? []).length);
       follow(id);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("ex.error"));
@@ -126,6 +128,7 @@ export function Explore() {
         <div class="actions">
           <button class="primary" type="submit" disabled={running() || !chosen() || question().trim().length === 0}>{t("ex.ask")}</button>
           <Show when={running()}><span role="status" class="muted">{t("ex.working")}</span></Show>
+          <Show when={madeRoom() > 0}><span role="status" class="muted">{t(madeRoom() === 1 ? "ex.madeRoom.one" : "ex.madeRoom", { n: madeRoom() })}</span></Show>
           <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
         </div>
       </form>

@@ -735,6 +735,13 @@ cut_short: false,
                     .into(),
             );
         }
+        // the task reads the whole project, so the model it asks must be on this computer
+        if !address_is_this_computer(&self.ollama) {
+            return Err(
+                "the local model's address is not on this computer, so a coding task is not run"
+                    .into(),
+            );
+        }
         // once the owner asks for a stop the model is not asked again, so the task ends at its next step
         let route = Stoppable::wrap(Box::new(self.route().map_err(model_failure)?), stop);
         let (mut ws, left) = Workspace::from_imported(files);
@@ -793,6 +800,10 @@ cut_short: false,
     ) -> Result<kk_service::questions::QuestionOutcome, String> {
         use kk_review::code::Workspace;
         use kk_review::explore::{run_question, SandboxScripts};
+        // the agent reads the whole project, so the model it asks must be on this computer whatever route answers chat
+        if self.scripted.is_none() && !address_is_this_computer(&self.ollama) {
+            return Err("the local model's address is not on this computer, so a question about a project is not answered".into());
+        }
         let (mut ws, left) = Workspace::from_imported(files);
         // the scripted test model works through the same agent with fixed steps: it lists, reads the first source file,
         // runs one script, and answers resting on that file's first line and on one line it made up
@@ -1513,6 +1524,22 @@ mod live {
 /// The Node.js the sandbox runs JavaScript and TypeScript checks with: the path in `KAKU_NODE` when it is a plain absolute path
 /// (as seen inside the sandbox, where `/usr` is visible read-only), else `/usr/bin/node`. A distribution's Node is often built
 /// without the TypeScript parser; the official build from nodejs.org copied to `/usr/local/bin/node` has it.
+/// Whether a model address names this computer: localhost or a loopback address, nothing else.
+fn address_is_this_computer(address: &str) -> bool {
+    let rest = address.split_once("://").map_or(address, |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let hostport = authority.rsplit('@').next().unwrap_or("");
+    let host = if let Some(v6) = hostport.strip_prefix('[') {
+        v6.split(']').next().unwrap_or("")
+    } else {
+        hostport.rsplit_once(':').map_or(hostport, |(h, _)| h)
+    };
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
 /// The fixed steps the scripted test model takes for a question about a project (see `project_question`).
 fn scripted_question_route(ws: &kk_review::code::Workspace) -> kk_route::ScriptedRoute {
     use kk_types::chat::{ChatMessage, ToolCall};
@@ -2328,5 +2355,29 @@ mod route_choice {
             .unwrap_err()
             .contains("test model"));
         assert_eq!(std::fs::read_dir(&d).unwrap().count(), 0);
+    }
+}
+
+#[cfg(test)]
+mod address_tests {
+    #[test]
+    fn only_this_computer_counts() {
+        for yes in [
+            "http://127.0.0.1:11434",
+            "http://localhost:11434/",
+            "http://[::1]:11434",
+            "http://127.0.0.2:1",
+        ] {
+            assert!(super::address_is_this_computer(yes), "{yes}");
+        }
+        for no in [
+            "http://gpu.lan:11434",
+            "http://10.0.0.5:11434",
+            "http://localhost.evil.example:11434",
+            "http://user@1.2.3.4:11434",
+            "https://cloud-api.near.ai/v1",
+        ] {
+            assert!(!super::address_is_this_computer(no), "{no}");
+        }
     }
 }

@@ -91,6 +91,8 @@ pub enum Rejection {
 pub struct Removal {
     pub what: String,
     pub why: String,
+    /// How many of the project's files this entry holds back.
+    pub files: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -364,6 +366,7 @@ pub fn assemble(
                 if withheld.len() == 1 { "file" } else { "files" }
             ),
             why: "labelled secret or restricted; never read by the agent and never released".into(),
+            files: withheld.len(),
         });
     }
     let expires = created + ttl_secs;

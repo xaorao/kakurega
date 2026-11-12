@@ -494,3 +494,6 @@ button.danger:not(.linklike) { border-color: var(--redline); }
 .glance a { color: var(--ink); text-decoration: none; display: inline-flex; align-items: center; min-height: 28px; }
 .glance a:hover { text-decoration: underline; }
 .route-line { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 13px; }
+/* a suggested program's arguments, one per line, so where one ends and the next begins is plain */
+.args { margin: 0; padding-left: 28px; display: grid; gap: 4px; font-size: 13px; }
+.args code { white-space: pre-wrap; word-break: break-all; }

@@ -192,9 +192,13 @@ pub(super) async fn packs_publisher_remove(
 ) -> Response {
     let n = {
         let store = svc.store.lock().expect("lock");
-        store
-            .connection()
-            .execute("DELETE FROM pack_publishers WHERE key_id = ?1", [&b.key_id])
+        let c = store.connection();
+        // what a publisher's packs suggested goes with the publisher: it is not shown as coming from a pack the owner trusts
+        let _ = c.execute(
+            "DELETE FROM pack_suggestions WHERE key_id = ?1",
+            [&b.key_id],
+        );
+        c.execute("DELETE FROM pack_publishers WHERE key_id = ?1", [&b.key_id])
             .unwrap_or(0)
     };
     svc.log_event("pack.publisher_removed", &b.key_id, &[]);
@@ -274,6 +278,8 @@ pub(super) async fn packs_import(axum::Extension(svc): Svc, Json(b): Json<Import
                 let store = svc.store.lock().expect("lock");
                 let c = store.connection();
                 let _ = c.execute("DELETE FROM methods WHERE name = ?1", [&done.name]);
+                // no name of the pack was in use before it (checked above), so every earlier text kept for it is the pack's
+                let _ = c.execute("DELETE FROM method_versions WHERE name = ?1", [&done.name]);
             }
             return refuse(&e);
         }
@@ -282,12 +288,16 @@ pub(super) async fn packs_import(axum::Extension(svc): Svc, Json(b): Json<Import
     {
         let store = svc.store.lock().expect("lock");
         let c = store.connection();
-        let _ = c.execute("DELETE FROM pack_servers WHERE pack = ?1", [&checked.name]);
+        // a newer version of the same publisher's pack replaces its suggestions; another publisher's pack of that name keeps its own
+        let _ = c.execute(
+            "DELETE FROM pack_suggestions WHERE pack = ?1 AND key_id = ?2",
+            kk_vault::rusqlite::params![checked.name, checked.key_id.as_str()],
+        );
         for s in &checked.servers {
             let body = json!({"program": s.program, "args": s.args, "env": s.env, "why": s.why})
                 .to_string();
             let _ = c.execute(
-                "INSERT INTO pack_servers(pack, name, key_id, body, dismissed, at) VALUES (?1, ?2, ?3, ?4, 0, ?5)",
+                "INSERT INTO pack_suggestions(pack, name, key_id, body, dismissed, at) VALUES (?1, ?2, ?3, ?4, 0, ?5)",
                 kk_vault::rusqlite::params![checked.name, s.name, checked.key_id.as_str(), body, now()],
             );
         }

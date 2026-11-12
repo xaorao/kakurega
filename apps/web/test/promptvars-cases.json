@@ -1,0 +1,191 @@
+{
+ "fields": [
+  {
+   "text": "Write to {{client}} in a {{tone:formal|casual|very: polite}} tone about {{client}}. Today is {{current_date}}.",
+   "want": [
+    {
+     "name": "client",
+     "options": []
+    },
+    {
+     "name": "tone",
+     "options": [
+      "formal",
+      "casual",
+      "very: polite"
+     ]
+    }
+   ]
+  },
+  {
+   "text": "{{{name}}}",
+   "want": [
+    {
+     "name": "name",
+     "options": []
+    }
+   ]
+  },
+  {
+   "text": "{{tone:a|b}} and {{tone}}",
+   "want": [
+    {
+     "name": "tone",
+     "options": [
+      "a",
+      "b"
+     ]
+    }
+   ]
+  },
+  {
+   "text": "{{tone}} then {{tone:a|b}}",
+   "want": [
+    {
+     "name": "tone",
+     "options": [
+      "a",
+      "b"
+     ]
+    }
+   ]
+  },
+  {
+   "text": "{{😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀}}",
+   "want": [
+    {
+     "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+     "options": []
+    }
+   ]
+  },
+  {
+   "text": "{{aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}}",
+   "want": []
+  },
+  {
+   "text": "{{current_date:x}} {{ ISO_DATETIME }} {{Current_Datetime: y}}",
+   "want": []
+  },
+  {
+   "text": "{{constructor}} {{toString}} {{__proto__}}",
+   "want": [
+    {
+     "name": "constructor",
+     "options": []
+    },
+    {
+     "name": "toString",
+     "options": []
+    },
+    {
+     "name": "__proto__",
+     "options": []
+    }
+   ]
+  },
+  {
+   "text": "no {single} braces, {{}} or {{a\nb}} here",
+   "want": []
+  },
+  {
+   "text": "{{ a : x | | y }}",
+   "want": [
+    {
+     "name": "a",
+     "options": [
+      "x",
+      "y"
+     ]
+    }
+   ]
+  },
+  {
+   "text": "{{a} {{b}}",
+   "want": [
+    {
+     "name": "b",
+     "options": []
+    }
+   ]
+  }
+ ],
+ "fill": [
+  {
+   "text": "Hi {{name}}, {{tone:a|b}} / {{tone}}",
+   "values": {
+    "name": "Ann",
+    "tone": " a "
+   },
+   "want": {
+    "text": "Hi Ann, a / a"
+   }
+  },
+  {
+   "text": "{{{name}}}",
+   "values": {
+    "name": "X"
+   },
+   "want": {
+    "text": "{X}"
+   }
+  },
+  {
+   "text": "{{constructor}}",
+   "values": {},
+   "want": {
+    "missing": [
+     "constructor"
+    ]
+   }
+  },
+  {
+   "text": "{{constructor}} {{toString}}",
+   "values": {
+    "constructor": "c",
+    "toString": "t"
+   },
+   "want": {
+    "text": "c t"
+   }
+  },
+  {
+   "text": "{{a}} {{b}}",
+   "values": {
+    "a": "{{b}}",
+    "b": "B"
+   },
+   "want": {
+    "text": "{{b}} B"
+   }
+  },
+  {
+   "text": "{{a}} {{b}}",
+   "values": {
+    "a": "  ",
+    "b": "B"
+   },
+   "want": {
+    "missing": [
+     "a"
+    ]
+   }
+  },
+  {
+   "text": "keep {{aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}} as text, fill {{x}}",
+   "values": {
+    "x": "1"
+   },
+   "want": {
+    "text": "keep {{aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}} as text, fill 1"
+   }
+  },
+  {
+   "text": "Plain prompt.",
+   "values": {},
+   "want": {
+    "text": "Plain prompt."
+   }
+  }
+ ]
+}
