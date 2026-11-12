@@ -472,7 +472,7 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
             <div class="card stack">
               <h2>{t("rel.nothing")}</h2>
               <p>{t("rel.nothingBody")}</p>
-              <For each={r().not_confirmed}>{(n) => <p class="muted">{n.title}: {n.why}</p>}</For>
+              <For each={r().not_confirmed}>{(n) => <p class="muted">{n.title}: {t("review.whyChecker")} <span lang="en">{n.why}</span></p>}</For>
             </div>
           }>
             <div class="card release-summary" role="region" aria-label={t("rel.summary.label")}>

@@ -197,6 +197,15 @@ try:
     rc, out, err = k("chat", "--session", sid or "", "And who can read them?")
     check("in words a lost turn says it was NOT saved and why", (rc == 4 and "NOT saved" in err and "disk" in err) or rc == 0, f"{rc} {out} {err}")
 
+    # notes brought in from another assistant: a note the store could not write is counted apart from refused ones, and the
+    # command fails when any was not saved
+    notes = work / "notes"
+    notes.mkdir(exist_ok=True)
+    for i in range(3):
+        (notes / f"note-{i}.md").write_text(f"The payments service retries a failed charge {i + 2} times.\n")
+    rc, out, err = k("memory", "import", str(notes), "--source", "claude-code")
+    check("importing notes on a full disk says how many could NOT be saved, and fails", rc == 1 and "could NOT be saved" in err and "refused 0" in out, f"{rc} {out} {err}")
+
     free()
     rc, out, err = k("chat", "--json", "Question once there is room again")
     text, log = log_entries(a)

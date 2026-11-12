@@ -783,7 +783,32 @@ fn readiness_limited(args: &[String], limit: Duration) -> Result<Vec<Value>, Str
     })
 }
 
-fn web_row() -> Check {
+/// What the running service serves, from its admin.json: `Some(Some(dir))` a web build, `Some(None)` only the API, `None`
+/// when no service answered.
+fn served_ui(dir: &Path) -> Option<Option<PathBuf>> {
+    let v: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("admin.json")).ok()?).ok()?;
+    let ui = v.get("ui")?;
+    Some(ui.as_str().map(PathBuf::from))
+}
+
+fn web_row(running: Option<Option<PathBuf>>) -> Check {
+    match running {
+        Some(Some(p)) => {
+            return Check::new(
+                "web",
+                "Web interface",
+                Status::Ok,
+                "Web build",
+                &format!("served by the running service from {}", p.display()),
+            )
+        }
+        Some(None) => {
+            return Check::new("web", "Web interface", Status::Warn, "Web build", "the running service was started without a web build, so it serves only the API; the terminal workspace still works")
+                .with_fix("Run scripts/setup (it builds the web workspace), then start the service again", false)
+        }
+        None => {}
+    }
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
@@ -802,8 +827,8 @@ fn web_row() -> Check {
             "Web build",
             &std::fs::canonicalize(&p).unwrap_or(p).display().to_string(),
         ),
-        None => Check::new("web", "Web interface", Status::Warn, "Web build", "no apps/web/dist build found, so only the API is served; the terminal workspace still works")
-            .with_fix("Build it with: pnpm --dir apps/web build", false),
+        None => Check::new("web", "Web interface", Status::Warn, "Web build", "no web build found where `kaku serve` looks for one, so it would serve only the API; the terminal workspace still works")
+            .with_fix("Run scripts/setup (it builds the web workspace), or start the service with --ui-dir FOLDER", false),
     }
 }
 
@@ -862,7 +887,8 @@ pub fn gather(args: &[String], skip: &[String], fix: bool, probe: &dyn Probe) ->
         }
     }
     if !skipped("web") {
-        checks.push(web_row());
+        // only a service that answered is believed about what it serves
+        checks.push(web_row(diag.as_ref().and_then(|_| served_ui(&dir))));
     }
     for id in skip {
         checks.push(Check::new(

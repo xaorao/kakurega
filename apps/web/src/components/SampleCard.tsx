@@ -50,7 +50,7 @@ export function SampleCard(props: { onReview: (folder: string) => void }) {
             <button type="button" onClick={() => { leave("kk-meeting-text", state()?.transcript ?? ""); leave("kk-meeting-title", t("sample.meetingName")); location.hash = "#/meeting"; }}>{t("sample.meeting")}</button>
             <button type="button" class="linklike" disabled={busy()} onClick={() => void act(api.sampleRemove)}>{t("sample.remove")}</button>
           </div>
-          <p class="muted">{state()?.note}</p>
+          <p class="muted">{t("sample.note")}</p>
         </Show>
         <Show when={error()}><p role="alert" class="bad">{error()}</p></Show>
       </section>

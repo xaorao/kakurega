@@ -175,6 +175,10 @@ try:
     admin = json.loads((data / "admin.json").read_text())
     base = f"http://127.0.0.1:{admin['port']}"
     adm = lambda path, body=None: json.loads(urllib.request.urlopen(urllib.request.Request(base + path, data=None if body is None else json.dumps(body).encode(), headers={"Authorization": "Bearer " + admin["token"], "content-type": "application/json"}), timeout=60).read())
+    # with no bot token anywhere, pairing says the first step and changes nothing
+    bare = {k: v for k, v in os.environ.items() if k != "TELEGRAM_BOT_TOKEN"}
+    nt = subprocess.run([kaku, "telegram", "pair", "--data-dir", str(data), "--api-base", api], capture_output=True, text=True, env=bare, timeout=30)
+    check("pairing with no bot token names BotFather and set-token, prints no code and changes nothing", nt.returncode == 1 and "BotFather" in nt.stderr and "kaku telegram set-token" in nt.stderr and "/pair " not in nt.stdout and not (data / "telegram.pairing").exists(), f"{nt.returncode} {nt.stdout} {nt.stderr}")
     env = dict(os.environ, TELEGRAM_BOT_TOKEN=TOKEN)
     # pairing names the bot; on a terminal it also draws the link as a QR code, in a pipe it does not
     import pty

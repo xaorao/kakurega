@@ -2296,7 +2296,7 @@ fn import_items(svc: &Service, b: ImportBody, event: &str) -> Response {
             "this is not a Kakurega memory backup, or it has more than 5000 items",
         );
     }
-    let (mut added, mut known, mut refused) = (0usize, 0usize, 0usize);
+    let (mut added, mut known, mut refused, mut not_saved) = (0usize, 0usize, 0usize, 0usize);
     let items = b
         .memories
         .into_iter()
@@ -2328,15 +2328,23 @@ fn import_items(svc: &Service, b: ImportBody, event: &str) -> Response {
                 }
             }
             Ok(_) => known += 1,
+            Err(kk_memory::MemoryError::Storage(_)) => not_saved += 1,
             Err(_) => refused += 1,
         }
     }
     svc.log_event(
         event,
         "memory",
-        &[("added", added.into()), ("refused", refused.into())],
+        &[
+            ("added", added.into()),
+            ("refused", refused.into()),
+            ("not_saved", not_saved.into()),
+        ],
     );
-    Json(json!({"added": added, "already_known": known, "refused": refused})).into_response()
+    Json(
+        json!({"added": added, "already_known": known, "refused": refused, "not_saved": not_saved}),
+    )
+    .into_response()
 }
 
 #[derive(Deserialize)]
@@ -2396,8 +2404,8 @@ async fn memories_import_notes(axum::Extension(svc): Svc, Json(b): Json<NotesImp
             "name the source (letters, digits, - _) and send 1 to 500 notes",
         );
     }
-    let (mut added, mut known, mut refused, mut instruction_like) =
-        (0usize, 0usize, 0usize, 0usize);
+    let (mut added, mut known, mut refused, mut instruction_like, mut not_saved) =
+        (0usize, 0usize, 0usize, 0usize, 0usize);
     for n in b.notes {
         let text = n.text.trim().to_string();
         if text.is_empty() || text.len() > 20_000 {
@@ -2445,6 +2453,8 @@ async fn memories_import_notes(axum::Extension(svc): Svc, Json(b): Json<NotesImp
         match svc.memory.lock().expect("lock").remember(now(), m) {
             Ok(kk_memory::Remembered::Added(_)) => added += 1,
             Ok(_) => known += 1,
+            // the store could not write it: not a refusal of the note, and said apart
+            Err(kk_memory::MemoryError::Storage(_)) => not_saved += 1,
             Err(_) => refused += 1,
         }
     }
@@ -2455,9 +2465,10 @@ async fn memories_import_notes(axum::Extension(svc): Svc, Json(b): Json<NotesImp
             ("source", b.source.clone().into()),
             ("added", added.into()),
             ("refused", refused.into()),
+            ("not_saved", not_saved.into()),
         ],
     );
-    Json(json!({"added": added, "already_known": known, "refused": refused, "instruction_like": instruction_like, "note": "Imported notes are marked untrusted. Notes that read like instructions are kept but never given to a model."})).into_response()
+    Json(json!({"added": added, "already_known": known, "refused": refused, "not_saved": not_saved, "instruction_like": instruction_like, "note": "Imported notes are marked untrusted. Notes that read like instructions are kept but never given to a model."})).into_response()
 }
 
 async fn memory_add(axum::Extension(svc): Svc, Json(b): Json<MemoryBody>) -> Response {

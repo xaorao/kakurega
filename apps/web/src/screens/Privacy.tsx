@@ -29,7 +29,7 @@ function Outbound() {
       case "connector": return t("out.connector", { to: r.to, n: Number(d.items ?? 0) });
       case "release": return t("out.release", { to: r.to });
       case "review": return t("out.review", { to: r.to, calls: Number(d.calls ?? 0), tokens: Number(d.tokens ?? 0) });
-      default: return t("out.held", { where: r.to, secrets: Number(d.secrets ?? 0), orders: Number(d.instructions ?? 0) });
+      default: return t("out.held", { where: doorName(r.to), secrets: Number(d.secrets ?? 0), orders: Number(d.instructions ?? 0) });
     }
   };
   return (
@@ -43,7 +43,7 @@ function Outbound() {
                 {(r) => <li class={r.what === "held" ? "out-row held" : "out-row"}><time class="muted">{new Date(r.at * 1000).toLocaleTimeString()}</time> <span class={r.what === "held" ? "chip ok" : "chip"}>{t(`out.kind.${r.what}`)}</span> {line(r)}</li>}
               </For>
             </ul>
-            <p class="muted">{o().note}</p>
+            <p class="muted">{t("out.note")}</p>
           </>
         )}
       </Show>
@@ -101,6 +101,12 @@ function KeptProjects() {
       </section>
     </Show>
   );
+}
+
+/** The screen a held-back entry came from, in the reader's language; a name this page does not know is shown as written. */
+const DOORS: Record<string, Key> = { chat: "nav.chat", "try to break it": "break.title", documents: "nav.docs", "meeting notes": "nav.meeting" };
+function doorName(door: string): string {
+  return DOORS[door] ? t(DOORS[door]) : door;
 }
 
 export function Privacy() {

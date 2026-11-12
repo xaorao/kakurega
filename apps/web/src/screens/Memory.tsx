@@ -177,7 +177,7 @@ function NotesBackup(props: { onDone: () => void }) {
     setBusy(true); setProblem(""); setMessage("");
     try {
       const r = p.sealed ? await api.restoreNotesSealed(p.b64, typedKey().trim()) : await api.restoreNotes(p.doc);
-      setMessage(t("mem.backup.restored", { added: String(r.added), known: String(r.already_known), refused: String(r.refused) }));
+      setMessage(t("mem.backup.restored", { added: String(r.added), known: String(r.already_known), refused: String(r.refused) }) + ((r.not_saved ?? 0) > 0 ? " " + t("mem.notSaved", { n: r.not_saved ?? 0 }) : ""));
       setPicked(null); setTypedKey("");
       props.onDone();
     } catch (e) { fail(e); } finally { setBusy(false); }
@@ -248,7 +248,7 @@ function ImportNotes(props: { onDone: () => void }) {
     setResult("");
     try {
       const r = await api.importNotes(source().trim(), picked());
-      setResult(t("mem.import.result", { added: r.added, known: r.already_known, refused: r.refused, instr: r.instruction_like }));
+      setResult(t("mem.import.result", { added: r.added, known: r.already_known, refused: r.refused, instr: r.instruction_like }) + ((r.not_saved ?? 0) > 0 ? " " + t("mem.notSaved", { n: r.not_saved ?? 0 }) : ""));
       setPicked([]);
       props.onDone();
     } catch (err) {

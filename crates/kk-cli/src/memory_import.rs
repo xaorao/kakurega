@@ -251,6 +251,14 @@ pub fn run(args: &[String]) -> u8 {
             );
             println!("Added {}, already known {}, refused {} (secrets or empty), {} read like instructions and will never be given to a model.", v["added"], v["already_known"], v["refused"], v["instruction_like"]);
             println!("They are marked untrusted and labelled Internal. Review them with /memory, and correct or forget any.");
+            let lost = v["not_saved"].as_u64().unwrap_or(0);
+            if lost > 0 {
+                eprintln!(
+                    "{}",
+                    kk_types::words::counted(&format!("{lost} note(s) could NOT be saved: the service could not write its store (is the disk full?). Free some space and import again; notes already saved are recognised and not added twice."))
+                );
+                return 1;
+            }
             0
         }
         Ok((st, v)) => {

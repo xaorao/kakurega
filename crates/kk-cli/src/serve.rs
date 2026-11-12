@@ -267,7 +267,11 @@ fn serve(args: &[String]) -> Result<(), String> {
     })
     .map_err(|e| e.to_string())?;
     // the process that wrote it is named, so a shell that started this service can tell it from another one or a stale file
-    let admin = serde_json::json!({"port": companion.addr.port(), "token": companion.security.admin_token(), "pid": std::process::id()});
+    // the web build it serves, so `kaku doctor` reports what this service does rather than guessing
+    let ui = ui_dir
+        .as_ref()
+        .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()));
+    let admin = serde_json::json!({"port": companion.addr.port(), "token": companion.security.admin_token(), "pid": std::process::id(), "ui": ui});
     let _ = std::fs::write(&port_file, companion.addr.port().to_string());
     let admin_path = data.join("admin.json");
     {

@@ -800,6 +800,23 @@ pub fn run(args: &[String]) -> u8 {
     }
     let mut admin = HttpAdmin(admin);
     if args.first().map(String::as_str) == Some("pair") {
+        // a code is of no use without a bot to send it to: the first step is said instead, and nothing is changed
+        let token = match token_or_stored(
+            crate::flag(args, "--token-file")
+                .map(PathBuf::from)
+                .as_deref(),
+            &admin.0,
+        ) {
+            Ok(t) => t,
+            Err(why) if why == NO_TOKEN_SOURCE => {
+                eprintln!("There is no bot to pair with yet. First make one: in Telegram, open @BotFather, send /newbot and follow its steps. Then store the token it gives you with `kaku telegram set-token` (it reads the token without showing it) and run `kaku telegram pair` again. Nothing was changed.");
+                return 1;
+            }
+            Err(why) => {
+                eprintln!("{why}");
+                return 1;
+            }
+        };
         let code: String = {
             let mut b = [0u8; 6];
             getrandom_fill(&mut b);
@@ -826,27 +843,21 @@ pub fn run(args: &[String]) -> u8 {
                 }
             }
         }
-        // when the token is at hand, name the bot so the owner opens the right chat
-        let link = token_or_stored(
-            crate::flag(args, "--token-file")
-                .map(PathBuf::from)
-                .as_deref(),
-            &admin.0,
-        )
-        .ok()
-        .and_then(|token| {
-            let api = crate::flag(args, "--api-base")
-                .unwrap_or_else(|| "https://api.telegram.org".into());
-            let agent = match telegram_agent(&api, 8) {
-                Ok(a) => a,
-                Err(why) => {
-                    eprintln!("{why}");
-                    return None;
-                }
-            };
-            bot_username(&agent, &api, &token)
-        })
-        .and_then(|u| bot_link(&u));
+        // the bot is named, so the owner opens the right chat
+        let link = Some(token)
+            .and_then(|token| {
+                let api = crate::flag(args, "--api-base")
+                    .unwrap_or_else(|| "https://api.telegram.org".into());
+                let agent = match telegram_agent(&api, 8) {
+                    Ok(a) => a,
+                    Err(why) => {
+                        eprintln!("{why}");
+                        return None;
+                    }
+                };
+                bot_username(&agent, &api, &token)
+            })
+            .and_then(|u| bot_link(&u));
         let whom = match &link {
             Some(l) => {
                 format!("Open your bot at {l} and send it this in a private chat within 5 minutes")
