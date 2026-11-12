@@ -1,6 +1,7 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, type BreakResult } from "../api";
 import { t, type Key } from "../i18n";
+import { Verdict } from "../components/Verdict";
 
 /** Starting points a visitor can load into the box: the kinds of text people plant in a file to turn a model against its owner. */
 const IDEAS: { label: Key; text: Key }[] = [
@@ -57,7 +58,7 @@ export function BreakIt() {
       <Show when={result()}>
         {(r) => (
           <div class="card stack" id="break-result" aria-labelledby="h-break-result">
-            <h2 id="h-break-result" class={r().leaked ? "bad" : "ok"}>{r().leaked ? t("break.leaked") : t("break.held")}</h2>
+            <Verdict ok={!r().leaked} word={r().leaked ? t("break.leaked") : t("break.held")} headingId="h-break-result" />
             <p>{t("break.planted")}</p>
             <ul class="plain">
               <li><code class="wrap">{r().planted.key}</code></li>

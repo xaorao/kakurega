@@ -1565,6 +1565,7 @@ export const hi: Record<keyof typeof en, string> = {
   "ver.pinError": "पिन की गई कुंजी base64url में 32 बाइट की सार्वजनिक कुंजी होनी चाहिए।",
   "ver.notValid": "मान्य नहीं",
   "ver.code": "कोड: <c>{code}</c>",
+  "ver.summary": "डाइजेस्ट से मेल खाती फ़ाइलें: {files} · हस्ताक्षरित दावे: {claims} · {recipient} के लिए",
   "ver.valid": "मान्य",
   "ver.established": "स्थापित",
   "ver.est1": "रिलीज़ और उसके {claims} दावों पर <c>{signer}</c> का वैध हस्ताक्षर है।",

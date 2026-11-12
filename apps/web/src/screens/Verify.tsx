@@ -2,6 +2,7 @@ import { createSignal, For, Show } from "solid-js";
 import { b64urlDecode, verifyCapsule, verifyShare } from "@kakurega/verifier";
 import { rich, t, type Key } from "../i18n";
 import { visible } from "../visible";
+import { Verdict } from "../components/Verdict";
 
 function reasonText(code: string): string {
   const key = `reason.${code}` as Key;
@@ -97,9 +98,8 @@ export function Verify() {
       <Show when={result()?.kind === "capsule" ? result()!.r : null}>
         {(r) => (
           <section class="card stack" aria-live="polite">
-            <Show when={r().valid} fallback={<><h2 class="bad">{t("ver.notValid")}</h2><p>{reasonText(r().reason)}</p><p class="muted">{rich("ver.code", { code: r().reason })}</p></>}>
-              <h2 class="ok">{t("ver.valid")}</h2>
-              <p class="muted">{name()}</p>
+            <Show when={r().valid} fallback={<><Verdict ok={false} word={t("ver.notValid")} summary={reasonText(r().reason)} /><p class="muted">{rich("ver.code", { code: r().reason })}</p></>}>
+              <Verdict ok word={t("ver.valid")} summary={`${t("ver.summary", { files: r().fileCount, claims: r().claimCount, recipient: r().recipient })}${name() ? ` · ${name()}` : ""}`} />
               <h2>{t("ver.established")}</h2>
               <ul class="plain">
                 <li>{rich("ver.est1", { claims: r().claimCount, signer: r().signer })}</li>
@@ -131,9 +131,8 @@ export function Verify() {
       <Show when={result()?.kind === "share" ? result()!.r : null}>
         {(r) => (
           <section class="card stack" id="share-result" aria-live="polite">
-            <Show when={r().valid} fallback={<><h2 class="bad">{t("ver.notValid")}</h2><p>{reasonText(r().reason)}</p><p class="muted">{rich("ver.code", { code: r().reason })}</p></>}>
-              <h2 class="ok">{t("ver.valid")}</h2>
-              <p class="muted">{name()}</p>
+            <Show when={r().valid} fallback={<><Verdict ok={false} word={t("ver.notValid")} summary={reasonText(r().reason)} /><p class="muted">{rich("ver.code", { code: r().reason })}</p></>}>
+              <Verdict ok word={t("ver.valid")} summary={name() || undefined} />
               <h2>{t("ver.established")}</h2>
               <ul class="plain wrap">
                 {/* the checker's own sentences: the signer, that each shared file is one of the release's files, and the capsule's digest */}

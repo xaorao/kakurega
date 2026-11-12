@@ -521,4 +521,13 @@ button.danger:not(.linklike) { border-color: var(--redline); }
 .chat-given summary { color: var(--graphite); font-size: 14px; }
 .send-group .primary { order: 2; }
 .composer > p.muted:last-child { font-size: 13px; }
+/* a proof's outcome: a large mark and the verdict in large type, then what it rests on in mono */
+.verdict { display: flex; gap: 16px; align-items: center; padding: 4px 0; }
+.verdict-mark { flex: 0 0 auto; width: 44px; height: 44px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 600; }
+.verdict.ok .verdict-mark { background: var(--cipher); color: var(--paper); }
+.verdict.bad .verdict-mark { background: var(--redline); color: var(--on-redline); }
+.verdict-word { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; }
+.verdict.ok .verdict-word { color: var(--cipher-text); }
+.verdict.bad .verdict-word { color: var(--redline); }
+.verdict-summary { margin: 4px 0 0; font-family: var(--font-mono); font-size: 13px; color: var(--graphite); overflow-wrap: anywhere; }
 

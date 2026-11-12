@@ -1563,6 +1563,7 @@ export const en = {
   "ver.pinError": "The pinned key must be a 32-byte public key in base64url.",
   "ver.notValid": "Not valid",
   "ver.code": "Code: <c>{code}</c>",
+  "ver.summary": "files matching their digests: {files} · signed claims: {claims} · for {recipient}",
   "ver.valid": "Valid",
   "ver.established": "Established",
   "ver.est1": "The release and its claims ({claims} in all) carry a valid signature from <c>{signer}</c>.",
