@@ -235,7 +235,9 @@ pub fn run(args: &[String]) -> u8 {
         admin: false,
         method: kk_tui::app::Method::Post,
         path: "/api/memories/import-notes".into(),
-        body: Some(json!({"source": source, "notes": payload})),
+        body: Some(
+            json!({"source": source, "notes": payload, "from": std::fs::canonicalize(dir).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| dir.to_string()), "project": crate::flag(args, "--project")}),
+        ),
         stream: false,
     };
     match http.run(&req).result {

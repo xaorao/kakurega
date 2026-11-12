@@ -22757,6 +22757,8 @@ struct SwitchRunner {
     /// When set (and not away), the model is a plain server on another computer, with no hardware proof.
     lan: std::sync::atomic::AtomicBool,
     asked: Mutex<Vec<String>>,
+    /// What the model answers when asked for notes or a skill from a conversation.
+    notes: Mutex<String>,
 }
 
 impl SwitchRunner {
@@ -22766,6 +22768,7 @@ impl SwitchRunner {
             away: Default::default(),
             lan: Default::default(),
             asked: Mutex::new(Vec::new()),
+            notes: Mutex::new("[]".into()),
         })
     }
     fn note(&self, m: &[kk_types::chat::ChatMessage]) {
@@ -22818,7 +22821,7 @@ impl JobRunner for SwitchRunner {
     }
     fn summarize(&self, m: Vec<kk_types::chat::ChatMessage>) -> Result<String, String> {
         self.note(&m);
-        Ok("[]".into())
+        Ok(self.notes.lock().unwrap().clone())
     }
 }
 
@@ -24654,4 +24657,368 @@ fn sv288_question_numbers_are_never_given_twice_and_the_owner_is_told_what_made_
     assert_eq!(newest, "question-102");
     assert_eq!(forgotten, json!(["question-2"]));
     assert_eq!(w.get("/api/questions/question-2").0, 404);
+}
+
+/// A project "vault" kept on this computer, with one file, in the switching service's root; returns the file's path.
+fn vault_project(w: &Web, root: &str) -> String {
+    let folder = format!("{root}/vaultdocs");
+    std::fs::create_dir_all(&folder).unwrap();
+    let file = format!("{folder}/secret.txt");
+    std::fs::write(&file, "VAULTMARK-7Q: Acme Freight pays 4.2 million.\n").unwrap();
+    let (s, v) = w.post(
+        "/api/projects",
+        json!({"name": "vault", "folder": folder, "floor": "here"}),
+    );
+    assert_eq!(s, 200, "{v}");
+    file
+}
+
+fn upload(w: &Web, name: &str, bytes: &[u8]) -> (u16, Value) {
+    w.post_raw(&format!("/api/attachments?name={name}"), bytes)
+}
+
+#[test]
+fn sv289_a_project_file_is_known_by_its_bytes_and_its_level_is_read_when_it_is_sent() {
+    let (_c, w, runner) = switch_service("floor-bytes");
+    let away = |on: bool| runner.away.store(on, std::sync::atomic::Ordering::SeqCst);
+    let root = w.get("/api/fs").1["path"].as_str().unwrap().to_string();
+    let file = vault_project(&w, &root);
+    let bytes = std::fs::read(&file).unwrap();
+    // a file chosen in a browser arrives as bytes only: the same bytes in the project's folder make it the project's
+    away(true);
+    let (s, v) = upload(&w, "copy.txt", &bytes);
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("PROJECT_KEPT_PRIVATELY")),
+        "{v}"
+    );
+    away(false);
+    let (s, v) = upload(&w, "copy.txt", &bytes);
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    away(true);
+    let (s, v) = w.post(
+        "/api/chat",
+        json!({"message": "Summarise it", "attachments": [id]}),
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("PROJECT_KEPT_PRIVATELY")),
+        "{v}"
+    );
+    // other bytes are no project's
+    let (s, _) = upload(&w, "other.txt", b"a note that is nobody's project\n");
+    assert_eq!(s, 201);
+    // a hard link elsewhere in the allowed folders is the same file
+    let link = format!("{root}/elsewhere-link.txt");
+    let _ = std::fs::remove_file(&link);
+    std::fs::hard_link(&file, &link).unwrap();
+    let (s, v) = w.post("/api/attachments/path", json!({"path": link}));
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("PROJECT_KEPT_PRIVATELY")),
+        "{v}"
+    );
+    // a level raised after the file was attached holds when it is sent
+    away(false);
+    w.post("/api/projects", json!({"name": "vault", "floor": "any"}));
+    away(true);
+    let (s, v) = upload(&w, "copy.txt", &bytes);
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    w.post("/api/projects", json!({"name": "vault", "floor": "here"}));
+    let (s, v) = w.post(
+        "/api/chat",
+        json!({"message": "Summarise it", "attachments": [id]}),
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("PROJECT_KEPT_PRIVATELY")),
+        "{v}"
+    );
+    // a project taken off the list keeps guarding its folder while its level stays
+    away(false);
+    w.post("/api/projects", json!({"remove": "vault"}));
+    away(true);
+    let (s, v) = w.post("/api/attachments/path", json!({"path": file}));
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("PROJECT_KEPT_PRIVATELY")),
+        "{v}"
+    );
+    let (s, v) = upload(&w, "copy.txt", &bytes);
+    assert_eq!(s, 409, "{v}");
+    // and once its level is any, the folder is free
+    w.post("/api/projects", json!({"name": "vault", "floor": "any"}));
+    assert_eq!(
+        w.post("/api/attachments/path", json!({"path": file})).0,
+        201
+    );
+}
+
+#[test]
+fn sv290_notes_and_skills_taken_from_a_conversation_keep_the_projects_it_drew_on() {
+    let (_c, w, runner) = switch_service("floor-notes");
+    let away = |on: bool| runner.away.store(on, std::sync::atomic::Ordering::SeqCst);
+    let root = w.get("/api/fs").1["path"].as_str().unwrap().to_string();
+    let file = vault_project(&w, &root);
+    *runner.notes.lock().unwrap() =
+        json!([{"text": "Acme Freight pays 4.2 million.", "why": "message 1"}]).to_string();
+    let session = |w: &Web| {
+        w.post("/api/sessions", json!({"title": ""})).1["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let notes_of = |w: &Web, id: &str| -> (u16, Value) {
+        let (s, v) = w.post(&format!("/api/sessions/{id}/suggest-notes"), json!({}));
+        assert_eq!(s, 200, "{v}");
+        let (_, l) = w.get(&format!("/api/sessions/{id}/suggested-notes"));
+        let sid = l["suggestions"][0]["id"]
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| panic!("a suggestion: {v} {l}"));
+        w.post(
+            &format!("/api/sessions/{id}/suggested-notes/{sid}/accept"),
+            json!({}),
+        )
+    };
+    // a conversation with no project that was given the vault's file: its notes are the vault's
+    let a = session(&w);
+    let (_, att) = w.post("/api/attachments/path", json!({"path": file}));
+    let att = att["id"].as_str().unwrap().to_string();
+    let (s, v) = w.post(
+        "/api/chat",
+        json!({"message": "What does the file say?", "session": a, "attachments": [att]}),
+    );
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = notes_of(&w, &a);
+    assert_eq!(s, 200, "{v}");
+    let mid = v["id"].as_str().unwrap().to_string();
+    let listed = w.get("/api/memories").1.to_string();
+    assert!(
+        listed.contains("Acme Freight") && listed.contains("vault"),
+        "{listed}"
+    );
+    let _ = mid;
+    // moved to another project, it still holds the vault's material: no note of it can be the other project's alone
+    let b = session(&w);
+    *runner.notes.lock().unwrap() =
+        json!([{"text": "The vault figures were checked twice.", "why": "message 1"}]).to_string();
+    w.post(
+        "/api/chat",
+        json!({"message": "Vault figures?", "session": b, "project": "vault"}),
+    );
+    let (s, v) = w.post(
+        "/api/chat",
+        json!({"message": "And now about the open work", "session": b, "project": "open"}),
+    );
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = notes_of(&w, &b);
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("MORE_THAN_ONE_PROJECT")),
+        "{v}"
+    );
+    // nor does it go to a model elsewhere after the move
+    away(true);
+    let (s, v) = w.post(
+        "/api/chat",
+        json!({"message": "Anything else?", "session": b, "project": "open"}),
+    );
+    assert_ne!(s, 200, "{v}");
+    away(false);
+    // a conversation held on confidential hardware that drew on a project's file: raising that project's level later keeps
+    // the conversation from the model elsewhere, though the conversation is in another project
+    w.post("/api/projects", json!({"name": "vault", "floor": "any"}));
+    away(true);
+    let c2 = session(&w);
+    let (s, att2) = w.post("/api/attachments/path", json!({"path": file}));
+    assert_eq!(s, 201, "{att2}");
+    let att2 = att2["id"].as_str().unwrap().to_string();
+    let (s, v) = w.post(
+        "/api/chat",
+        json!({"message": "Read it", "session": c2, "project": "open", "attachments": [att2]}),
+    );
+    assert_eq!(s, 200, "{v}");
+    w.post("/api/projects", json!({"name": "vault", "floor": "here"}));
+    let (s, v) = w.post(
+        "/api/chat",
+        json!({"message": "And again?", "session": c2, "project": "open"}),
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("KEPT_MORE_PRIVATELY")),
+        "{v}"
+    );
+    away(false);
+    // a skill is given to every model, so none is made from either conversation
+    for id in [&a, &b] {
+        let (s, v) = w.post(&format!("/api/sessions/{id}/suggest-skill"), json!({}));
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (409, Some("PROJECT_KEPT_PRIVATELY")),
+            "{v}"
+        );
+    }
+}
+
+#[test]
+fn sv291_a_team_run_never_hands_an_attached_file_of_a_kept_project_to_the_outside_agent() {
+    const PLAN: &str = "1 | security-reviewer | after: - | List the figures in the attached file.\n2 | claude-code | after: 1 | Turn them into a README.\n";
+    let goal = "Write a README from the figures (attached floor).";
+    let handed = || {
+        TEAM_HANDED
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|t| t.contains("VAULTMARK") || t.contains("attached floor"))
+            .count()
+    };
+    let (root, _repo) = repo_copy("team-floor-attached");
+    let runner = team_runner(PLAN);
+    let (_c, w) = team_service(&root, runner.clone());
+    let folder = root.join("vaultdocs");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("secret.txt"),
+        "VAULTMARK-7Q: Acme Freight pays 4.2 million.\n",
+    )
+    .unwrap();
+    w.post(
+        "/api/projects",
+        json!({"name": "vault", "folder": folder.to_string_lossy(), "floor": "here"}),
+    );
+    let (s, v) = w.post_raw(
+        "/api/attachments?name=secret.txt",
+        &std::fs::read(folder.join("secret.txt")).unwrap(),
+    );
+    assert_eq!(s, 201, "{v}");
+    let att = v["id"].as_str().unwrap().to_string();
+    // the run names another project (or none): the file's own project still decides
+    let (s, v) = w.post("/api/team", json!({"goal": goal, "experts": ["security-reviewer", "claude-code"], "attachments": [att]}));
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(
+        &w,
+        &id,
+        &["done", "partial", "failed", "waiting", "stopped"],
+    );
+    assert_eq!(v["tasks"][1]["state"], json!("failed"), "{v}");
+    assert_eq!(handed(), 0);
+    // and with the model moved elsewhere, a run that holds the file does not go on
+    let (s, v) = w.post("/api/team", json!({"goal": goal, "experts": ["security-reviewer", "claude-code"], "attachments": [att]}));
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    runner.away.store(true, std::sync::atomic::Ordering::SeqCst);
+    let asked = runner.seen.lock().unwrap().len();
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(
+        &w,
+        &id,
+        &[
+            "done",
+            "partial",
+            "failed",
+            "waiting",
+            "stopped",
+            "interrupted",
+        ],
+    );
+    assert!(
+        v["final_note"]
+            .as_str()
+            .unwrap_or("")
+            .contains("the project vault"),
+        "{v}"
+    );
+    assert_eq!(runner.seen.lock().unwrap().len(), asked);
+}
+
+#[test]
+fn sv292_notes_imported_from_a_project_folder_are_that_projects() {
+    let (_c, w, _runner) = switch_service("floor-import");
+    let root = w.get("/api/fs").1["path"].as_str().unwrap().to_string();
+    vault_project(&w, &root);
+    let (s, v) = w.post("/api/memories/import-notes", json!({"source": "markdown", "from": format!("{root}/vaultdocs/memory"), "notes": [{"name": "pay", "kind": "project", "text": "Acme Freight is paid by wire."}]}));
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w.post("/api/memories/import-notes", json!({"source": "markdown", "notes": [{"name": "general", "kind": "user", "text": "The owner reads in the morning."}]}));
+    assert_eq!(s, 200, "{v}");
+    let all = w.get("/api/memories").1;
+    let of = |t: &str| all.to_string().contains(t);
+    assert!(of("Acme Freight is paid by wire.") && of("The owner reads in the morning."));
+    let notes = all["memories"].as_array().cloned().unwrap_or_default();
+    let project = |t: &str| {
+        notes
+            .iter()
+            .find(|m| m["text"].as_str() == Some(t))
+            .map(|m| m["project"].clone())
+    };
+    assert_eq!(
+        project("Acme Freight is paid by wire."),
+        Some(json!("vault")),
+        "{all}"
+    );
+    assert_eq!(
+        project("The owner reads in the morning."),
+        Some(Value::Null),
+        "{all}"
+    );
+}
+
+#[test]
+fn sv293_an_experts_own_instruction_is_hidden_like_the_rest_and_is_in_what_was_sent() {
+    let (_c, w, runner) = switch_service("roundtable-hidden");
+    let (st, v) = w.post(
+        "/api/methods",
+        method_body(
+            "house-counsel",
+            json!(["contract"]),
+            "Answer as Meridian Capital's house counsel would: cautious and specific.",
+        ),
+    );
+    assert_eq!(st, 200, "{v}");
+    let hash = v["hash"].as_str().unwrap().to_string();
+    assert_eq!(
+        w.post(
+            "/api/methods/approve",
+            json!({"name": "house-counsel", "hash": hash})
+        )
+        .0,
+        200
+    );
+    assert_eq!(
+        w.post("/api/hidden-names", json!({"add": "Meridian Capital"}))
+            .0,
+        200
+    );
+    // the model is elsewhere, so names on the list are hidden from it
+    runner.away.store(true, std::sync::atomic::Ordering::SeqCst);
+    let (st, lines) = roundtable(
+        &w,
+        json!({"message": "Should we sign the lease?", "experts": ["security-reviewer", "method:house-counsel"]}),
+    );
+    assert_eq!(st, 200, "{lines:?}");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l["expert"] == "method:house-counsel" && l.get("answer").is_some()),
+        "{lines:?}"
+    );
+    let asked = runner.asked.lock().unwrap().clone();
+    assert!(
+        asked.iter().any(|q| q.contains("house counsel would")),
+        "{asked:?}"
+    );
+    assert!(
+        !asked.iter().any(|q| q.contains("Meridian Capital")),
+        "{asked:?}"
+    );
+    // what the owner can read was sent holds the instruction, as it was sent
+    let sent = w.get("/api/chat/sent").1.to_string();
+    assert!(
+        sent.contains("house counsel would") && !sent.contains("Meridian Capital"),
+        "{sent}"
+    );
 }

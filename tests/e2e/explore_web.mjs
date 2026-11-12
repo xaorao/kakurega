@@ -16,7 +16,7 @@ rmSync(work, { recursive: true, force: true });
 const root = join(work, "root");
 const shop = join(root, "shop");
 mkdirSync(join(shop, "app"), { recursive: true });
-writeFileSync(join(shop, "app/session.py"), "SESSIONS = {}\n\n\ndef logout(token):\n    # the token is forgotten here\n    return True\n");
+writeFileSync(join(shop, "app/session.py"), "SESSIONS = {}  # \u200b\u202e} = SNOISSES\n\n\ndef logout(token):\n    # the token is forgotten here\n    return True\n");
 writeFileSync(join(shop, "app/__init__.py"), "");
 // a project file that would run before any script and fake its result, and one that would stand in for a standard module
 writeFileSync(join(shop, "sitecustomize.py"), "print('FAKED: all checks passed')\nimport sys\nsys.exit(0)\n");
@@ -90,6 +90,8 @@ try {
   check(/Check 1 \(Python\) · ended without an error/.test(after), "the script the agent wrote ran in the sandbox", after.slice(-600));
   check(/no \.env file is visible/.test(after), "the withheld file was not given to the script", after.slice(-600));
   check(!/FAKED/.test(after), "a project file cannot run before the script or replace a standard module", after.slice(-600));
+  const passages = await page.locator("pre.passage").allTextContents();
+  check(passages.some((t) => t.includes("\ufffd")) && !passages.some((t) => /[\u200b\u202e]/.test(t)), "hidden and direction-changing characters in a cited line are shown as marks", JSON.stringify(passages).slice(0, 300));
   check(/1 file read/.test(after), "the files the agent read are listed");
   await page.screenshot({ path: join(shots, "check-open.png"), fullPage: true });
 

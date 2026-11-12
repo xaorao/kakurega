@@ -582,6 +582,19 @@ pub(super) async fn session_suggest_method(
     if let Some(refusal) = super::kept_elsewhere(&svc, &id) {
         return refusal;
     }
+    // a skill is given to every model, so it is not made from a conversation that holds material of a project kept privately
+    let kept_privately = match super::session_note_project(&svc, &id) {
+        Ok(Some(p)) => svc.project_floor(Some(&p)) > 0,
+        Ok(None) => false,
+        Err(_) => true,
+    };
+    if kept_privately {
+        return super::error(
+            StatusCode::CONFLICT,
+            "PROJECT_KEPT_PRIVATELY",
+            "this conversation holds material of a project kept privately, and a skill is given to every model, so no skill is made from it",
+        );
+    }
     let need = super::kept_level(&svc, &id);
     let mut request = crate::extraction::request(&turns, &crate::extraction::iso_date(now()));
     request[0] = kk_types::chat::ChatMessage::new("system", LEARN_INSTRUCTIONS);

@@ -3,6 +3,7 @@ import { ChosenFolder } from "../components/ChosenFolder";
 import { api, ApiError, type Question, type QuestionDepth, type QuestionPlace } from "../api";
 import { LoadState } from "../components/LoadState";
 import { t, type Key } from "../i18n";
+import { visible } from "../visible";
 
 const DEPTHS: QuestionDepth[] = ["quick", "normal", "thorough"];
 const FOLDER_KEY = "kk-explore-folder";
@@ -135,7 +136,7 @@ export function Explore() {
       <Show when={current()}>
         {(c) => (
           <section class="card stack" aria-labelledby="h-ex-answer" aria-busy={running()}>
-            <h2 id="h-ex-answer">{c().question}</h2>
+            <h2 id="h-ex-answer">{visible(c().question)}</h2>
             <p class="muted">{c().project ?? c().folder} · {t(`ex.depth.${c().depth}` as Key)}</p>
             <Show when={c().state === "running"}>
               <ul class="plain stack" aria-live="polite"><For each={c().progress}>{(p) => <li class="muted">{p}</li>}</For></ul>
@@ -150,7 +151,7 @@ export function Explore() {
                 <>
                   <Show when={a().ending !== "answered"}><p class="warn" role="status">{t(`ex.ending.${a().ending}` as Key)}</p></Show>
                   <Show when={a().text}>
-                    <p class="mem-text"><strong>{t("ex.saysModel")}:</strong> {a().text}</p>
+                    <p class="mem-text"><strong>{t("ex.saysModel")}:</strong> {visible(a().text)}</p>
                   </Show>
                   <Show when={a().places.length > 0} fallback={<Show when={a().ending === "answered" || a().ending === "unchecked"}><p class="warn">{t("ex.noPlaces")}</p></Show>}>
                     <p class={a().unchecked === 0 ? "ok" : "warn"}>{t("ex.checked", { n: a().places.length, found: a().checked })}</p>
@@ -159,9 +160,9 @@ export function Explore() {
                       <For each={a().places}>
                         {(p) => (
                           <li class="stack">
-                            <p><code>{p.file}:{p.found.state === "moved" ? p.found.line : p.line}</code> <span class={checked(p) ? "chip ok" : "chip bad"}>{placeWord(p)}</span></p>
-                            <Show when={checked(p)} fallback={<p class="muted">{t("ex.modelWrote")} <code>{p.quote}</code></p>}>
-                              <pre class="passage" tabindex="0">{p.text}</pre>
+                            <p><code>{visible(p.file)}:{p.found.state === "moved" ? p.found.line : p.line}</code> <span class={checked(p) ? "chip ok" : "chip bad"}>{placeWord(p)}</span></p>
+                            <Show when={checked(p)} fallback={<p class="muted">{t("ex.modelWrote")} <code>{visible(p.quote)}</code></p>}>
+                              <pre class="passage" tabindex="0">{visible(p.text)}</pre>
                             </Show>
                           </li>
                         )}
@@ -169,22 +170,22 @@ export function Explore() {
                     </ul>
                   </Show>
                   <Show when={a().corrected}><p class="muted">{t("ex.corrected")}</p></Show>
-                  <Show when={a().not_found}><p class="muted"><strong>{t("ex.notFound")}:</strong> {a().not_found}</p></Show>
+                  <Show when={a().not_found}><p class="muted"><strong>{t("ex.notFound")}:</strong> {visible(a().not_found ?? "")}</p></Show>
                   <For each={a().checks}>
                     {(k, i) => (
                       <details>
                         <summary>{t("ex.check", { n: i() + 1, language: k.language === "javascript" ? "JavaScript" : "Python" })} · {t(!k.run.ran ? "ex.check.notRun" : k.run.timed_out ? "ex.check.timedOut" : k.run.exit_ok ? "ex.check.ok" : "ex.check.error")}</summary>
                         <p class="muted">{t("ex.check.what")}</p>
-                        <pre class="passage" tabindex="0">{k.script}</pre>
+                        <pre class="passage" tabindex="0">{visible(k.script)}</pre>
                         <p class="muted">{t("ex.check.printed")}</p>
-                        <pre class="passage" tabindex="0">{k.run.output || t("ex.check.nothing")}</pre>
+                        <pre class="passage" tabindex="0">{k.run.output ? visible(k.run.output) : t("ex.check.nothing")}</pre>
                       </details>
                     )}
                   </For>
                   <Show when={a().files_read.length > 0}>
                     <details>
                       <summary>{t(a().files_read.length === 1 ? "ex.read.one" : "ex.read", { n: a().files_read.length })}</summary>
-                      <ul class="plain"><For each={a().files_read}>{(f) => <li><code>{f}</code></li>}</For></ul>
+                      <ul class="plain"><For each={a().files_read}>{(f) => <li><code>{visible(f)}</code></li>}</For></ul>
                     </details>
                   </Show>
                   <p class="muted">{t("ex.footer", { turns: a().turns, seconds: Math.max(1, Math.round(a().elapsed_ms / 1000)), route: a().route })}{a().withheld > 0 ? ` ${t(a().withheld === 1 ? "ex.withheld.one" : "ex.withheld", { n: a().withheld })}` : ""}</p>
@@ -205,7 +206,7 @@ export function Explore() {
             <For each={earlier()?.questions}>
               {(x) => (
                 <li>
-                  <button type="button" class="link" onClick={() => follow(x.id)}>{x.question}</button>{" "}
+                  <button type="button" class="link" onClick={() => follow(x.id)}>{visible(x.question)}</button>{" "}
                   <span class="muted">{x.project ?? ""}</span>{" "}
                   <span class="chip">{x.state === "answered" ? t("ex.checked.short", { n: (x.checked ?? 0) + (x.unchecked ?? 0), found: x.checked ?? 0 }) : t(`ex.state.${x.state}` as Key)}</span>
                 </li>

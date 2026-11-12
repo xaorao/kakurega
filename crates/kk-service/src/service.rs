@@ -489,6 +489,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS team_runs(id TEXT PRIMARY KEY, goal TEXT NOT NULL, project TEXT, status TEXT NOT NULL, final TEXT, final_note TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL, updated INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS team_tasks(run TEXT NOT NULL, n INTEGER NOT NULL, expert TEXT NOT NULL, expert_name TEXT NOT NULL, after TEXT NOT NULL, task TEXT NOT NULL, state TEXT NOT NULL, result TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', question TEXT NOT NULL DEFAULT '', asked TEXT NOT NULL DEFAULT '[]', attempts INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(run, n));
              CREATE TABLE IF NOT EXISTS project_floor(project TEXT PRIMARY KEY, level INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS kept_folders(project TEXT PRIMARY KEY, folder TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS project_settings(project TEXT PRIMARY KEY, notes_only INTEGER NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS secrets(name TEXT PRIMARY KEY, value BLOB NOT NULL, stored_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS ext_token(id INTEGER PRIMARY KEY CHECK (id = 1), hash BLOB NOT NULL, origin TEXT NOT NULL, created INTEGER NOT NULL);
@@ -587,6 +588,26 @@ fn init_store(v: &Vault) -> Result<(), String> {
         v.connection()
             .execute_batch("ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0; ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;")
             .map_err(|e| e.to_string())?;
+    }
+    // stores made before conversations and team runs remembered the projects of what was attached to them
+    for (table, column) in [("sessions", "sources"), ("team_runs", "sources")] {
+        let has: bool = {
+            let c = v.connection();
+            let mut st = c
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .map_err(|e| e.to_string())?;
+            let names: Vec<String> = st
+                .query_map([], |r| r.get::<_, String>(1))
+                .map_err(|e| e.to_string())?
+                .flatten()
+                .collect();
+            names.iter().any(|n| n == column)
+        };
+        if !has {
+            v.connection()
+                .execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} TEXT;"))
+                .map_err(|e| e.to_string())?;
+        }
     }
     // stores made when a pack's suggestions were known by pack and name only: two publishers' packs of one name are
     // told apart by the publisher's key now
@@ -2282,12 +2303,36 @@ struct NoteIn {
 struct NotesImport {
     source: String,
     notes: Vec<NoteIn>,
+    /// The folder the notes were read from: when it is a project's folder (or inside one), the notes are that project's.
+    #[serde(default)]
+    from: Option<String>,
+    /// The project the notes belong to, named by the owner.
+    #[serde(default)]
+    project: Option<String>,
 }
 
 /// Notes brought in from another assistant's files. They arrive as untrusted data at the Internal level: shown with their
 /// origin, usable as facts, never as instructions, and refused if they look like secrets. The owner can correct or forget
 /// each one like any other note.
 async fn memories_import_notes(axum::Extension(svc): Svc, Json(b): Json<NotesImport>) -> Response {
+    // notes read from a project's folder are that project's, so its level holds for them
+    if b.project
+        .as_deref()
+        .is_some_and(|p| !kk_memory::valid_project(p))
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_PROJECT",
+            "a project name is a folder name of 1 to 80 plain characters",
+        );
+    }
+    let project: Option<String> = b.project.clone().or_else(|| {
+        b.from
+            .as_deref()
+            .map(std::path::Path::new)
+            .and_then(|d| svc.folder_floor_named(d))
+            .map(|(name, _)| name)
+    });
     let src_ok = !b.source.is_empty()
         && b.source.len() <= 40
         && b.source
@@ -2327,7 +2372,7 @@ async fn memories_import_notes(axum::Extension(svc): Svc, Json(b): Json<NotesImp
             text,
             label: kk_types::label::Label::new(kk_types::label::Level::Internal).untrusted(),
             subject: None,
-            project: None,
+            project: project.clone(),
             reason: format!(
                 "imported from {}{}{}",
                 b.source,
@@ -3631,7 +3676,7 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
         )));
     }
     let mut attached_names: Vec<String> = Vec::new();
-    let mut attached_floor = 0i64;
+    let mut attached_projects: Vec<String> = Vec::new();
     {
         let mut store = svc.attachments.lock().expect("lock");
         for id in &b.attachments {
@@ -3639,13 +3684,17 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
                 .then(|| {
                     store
                         .get(now(), id)
-                        .map(|s| (s.parsed.name.clone(), s.floor))
+                        .map(|s| (s.parsed.name.clone(), s.projects.clone()))
                 })
                 .flatten()
             {
-                Some((n, f)) => {
+                Some((n, ps)) => {
                     attached_names.push(n);
-                    attached_floor = attached_floor.max(f);
+                    for p in ps {
+                        if !attached_projects.contains(&p) {
+                            attached_projects.push(p);
+                        }
+                    }
                 }
                 None => {
                     return Err(Box::new(error(
@@ -3666,6 +3715,8 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
     if let Some(refusal) = svc.floor_refusal(b.project.as_deref(), None) {
         return Err(Box::new(refusal));
     }
+    // the levels the attachments' projects have now: one raised since the file was attached holds
+    let attached_floor = svc.projects_floor(&attached_projects);
     if svc.route_level() < attached_floor {
         return Err(Box::new(error(
             StatusCode::CONFLICT,
@@ -3720,6 +3771,25 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
                 r.get(0)
             })
             .unwrap_or(None);
+        // what this conversation holds came from the projects it was in and the projects of what was attached to it; a move
+        // to another project, or out of one, keeps them, so its level and the notes taken from it stay theirs
+        let mut sources = session_sources_in(c, &id);
+        for p in stored.iter().chain(attached_projects.iter()) {
+            if (clear_project
+                || b.project.as_ref().is_some_and(|n| n != p)
+                || attached_projects.contains(p))
+                && !sources.contains(p)
+            {
+                sources.push(p.clone());
+            }
+        }
+        let _ = c.execute(
+            "UPDATE sessions SET sources = ?2 WHERE id = ?1",
+            kk_vault::rusqlite::params![
+                id,
+                serde_json::to_string(&sources).unwrap_or_else(|_| "[]".into())
+            ],
+        );
         if clear_project {
             let _ = c.execute("UPDATE sessions SET project = NULL WHERE id = ?1", [&id]);
         } else if let Some(p) = &b.project {
@@ -3782,7 +3852,7 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
         })
         .collect();
     Ok(ChatRun {
-        need: kept_level(svc, &id),
+        need: kept_level(svc, &id).max(floor),
         started: std::time::Instant::now(),
         body: ChatBody { history, ..b },
         kept: Some(id),
@@ -4471,9 +4541,23 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
             ));
             return;
         }
+        // each expert's instruction (a skill's text, for a method seat) is sent too: it is hidden like the rest and is part of
+        // what the owner can read was sent
+        for e in &chosen {
+            ctx.messages
+                .push(kk_types::chat::ChatMessage::new("system", &e.instruction));
+        }
         let swap = svc2.hide_messages(&mut ctx.messages);
         ctx.swapped = swap.as_ref().map_or(0, |s| s.total());
         svc2.remember_sent(&ctx.messages, &ctx.excluded_notes);
+        // they are the last ones: the note about placeholders, when there is one, goes near the top
+        let first_instruction = ctx.messages.len() - chosen.len();
+        let instructions: Vec<String> = ctx
+            .messages
+            .split_off(first_instruction)
+            .into_iter()
+            .map(|m| m.content)
+            .collect();
         let shown = |piece: &str| {
             swap.as_ref()
                 .map_or_else(|| piece.to_string(), |s| s.show(piece))
@@ -4493,7 +4577,7 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
         let mut answers: Vec<(experts::Seat, String)> = Vec::new();
         let mut missing: Vec<experts::Seat> = Vec::new();
         let mut gone = false;
-        for e in &chosen {
+        for (i, e) in chosen.iter().enumerate() {
             if tx
                 .send(line(
                     json!({"expert": e.id, "name": e.name, "state": "asking"}),
@@ -4508,7 +4592,7 @@ async fn chat_roundtable(axum::Extension(svc): Svc, Json(b): Json<RoundtableBody
             let at = usize::from(messages.first().is_some_and(|m| m.role == "system"));
             messages.insert(
                 at,
-                kk_types::chat::ChatMessage::new("system", &e.instruction),
+                kk_types::chat::ChatMessage::new("system", &instructions[i]),
             );
             let started = std::time::Instant::now();
             let estimated = kk_route::tokens::estimate_messages(&messages);
@@ -4840,8 +4924,55 @@ fn kept_level(svc: &Service, id: &str) -> i64 {
             )
             .unwrap_or((0, None))
     };
-    // a conversation in a project is never given to a model less private than the project allows
+    // a conversation in a project is never given to a model less private than the project allows, nor less private than
+    // the projects it drew on
+    let sources = {
+        let store = svc.store.lock().expect("lock");
+        session_sources_in(store.connection(), id)
+    };
     held.max(svc.project_floor(project.as_deref()))
+        .max(svc.projects_floor(&sources))
+}
+
+/// The projects a kept conversation drew on besides the one it is in now (see `chat_validate`).
+fn session_sources_in(c: &kk_vault::rusqlite::Connection, id: &str) -> Vec<String> {
+    c.query_row("SELECT sources FROM sessions WHERE id = ?1", [id], |r| {
+        r.get::<_, Option<String>>(0)
+    })
+    .ok()
+    .flatten()
+    .and_then(|t| serde_json::from_str(&t).ok())
+    .unwrap_or_default()
+}
+
+/// The one project notes taken from a kept conversation belong to: the project it is in, or else the one project it drew
+/// on. None when it is no project's. An error when it holds material of more than one project, so no note of it can
+/// belong to one of them alone.
+fn session_note_project(svc: &Service, id: &str) -> Result<Option<String>, String> {
+    let (project, sources) = {
+        let store = svc.store.lock().expect("lock");
+        let c = store.connection();
+        let project: Option<String> = c
+            .query_row("SELECT project FROM sessions WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap_or(None);
+        (project, session_sources_in(c, id))
+    };
+    let mut all: Vec<String> = project.iter().cloned().collect();
+    for p in sources {
+        if !all.contains(&p) {
+            all.push(p);
+        }
+    }
+    match all.len() {
+        0 => Ok(None),
+        1 => Ok(all.pop()),
+        _ => Err(format!(
+            "this conversation holds material of more than one project ({}), so no note is taken from it: a note belongs to one project",
+            all.join(", ")
+        )),
+    }
 }
 
 /// The refusal for reading a kept conversation with a model less private than the one it was held with.
@@ -5430,16 +5561,11 @@ async fn session_note_accept(
     axum::Extension(svc): Svc,
     UrlPath((id, sid)): UrlPath<(String, String)>,
 ) -> Response {
-    // a fact read from a conversation that names a project belongs to that project
-    let project: Option<String> = svc
-        .store
-        .lock()
-        .expect("lock")
-        .connection()
-        .query_row("SELECT project FROM sessions WHERE id = ?1", [&id], |r| {
-            r.get(0)
-        })
-        .unwrap_or(None);
+    // a fact read from a conversation belongs to the project it is in, or to the one project it drew on
+    let project = match session_note_project(&svc, &id) {
+        Ok(p) => p,
+        Err(why) => return error(StatusCode::CONFLICT, "MORE_THAN_ONE_PROJECT", &why),
+    };
     match svc
         .memory
         .lock()
@@ -5508,7 +5634,21 @@ async fn attachment_upload(
     Query(q): Query<AttachQuery>,
     body: axum::body::Bytes,
 ) -> Response {
-    attach_bytes(svc, q.name.as_deref().unwrap_or(""), body).await
+    // a file chosen in a browser arrives without its path: the projects whose folder holds the same bytes are its projects
+    let projects = {
+        let (svc2, bytes) = (svc.clone(), body.clone());
+        tokio::task::spawn_blocking(move || svc2.projects_holding(None, &bytes))
+            .await
+            .unwrap_or_default()
+    };
+    if let Some(name) = svc.projects_above_route(&projects) {
+        return error(
+            StatusCode::CONFLICT,
+            "PROJECT_KEPT_PRIVATELY",
+            &projects::floor_words(&name),
+        );
+    }
+    attach_bytes_from(svc, q.name.as_deref().unwrap_or(""), body, projects).await
 }
 
 #[derive(Deserialize)]
@@ -5588,11 +5728,10 @@ async fn attachment_from_path(
         );
     };
     // a file of a project kept more privately than the model in use is not taken at all, and one that is taken carries
-    // its project's floor into every message it goes with
+    // its projects into every message it goes with
     if let Some(refusal) = svc.floor_refusal(None, Some(&path)) {
         return refusal;
     }
-    let floor = svc.folder_floor(&path);
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -5607,10 +5746,11 @@ async fn attachment_from_path(
             "that file is kept out of conversations: its name says it holds secrets or keys",
         );
     }
+    let reading = path.clone();
     let read = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
         use std::io::Read;
-        let f =
-            std::fs::File::open(&path).map_err(|_| "the file could not be opened".to_string())?;
+        let f = std::fs::File::open(&reading)
+            .map_err(|_| "the file could not be opened".to_string())?;
         let mut bytes = Vec::new();
         f.take(ATTACH_BODY_MAX as u64 + 1)
             .read_to_end(&mut bytes)
@@ -5622,15 +5762,34 @@ async fn attachment_from_path(
     })
     .await;
     match read {
-        Ok(Ok(bytes)) => match range {
-            None => attach_bytes_from(svc, &name, axum::body::Bytes::from(bytes), floor).await,
-            Some((start, end)) => match select_lines(&name, &bytes, start, end) {
-                Ok((named, picked)) => {
-                    attach_bytes_from(svc, &named, axum::body::Bytes::from(picked), floor).await
+        Ok(Ok(bytes)) => {
+            // its folder's projects, and those holding the same bytes elsewhere (a hard link, a copy)
+            let projects = {
+                let (svc2, whole, at) = (svc.clone(), bytes.clone(), path.clone());
+                tokio::task::spawn_blocking(move || svc2.projects_holding(Some(&at), &whole))
+                    .await
+                    .unwrap_or_default()
+            };
+            if let Some(name) = svc.projects_above_route(&projects) {
+                return error(
+                    StatusCode::CONFLICT,
+                    "PROJECT_KEPT_PRIVATELY",
+                    &projects::floor_words(&name),
+                );
+            }
+            match range {
+                None => {
+                    attach_bytes_from(svc, &name, axum::body::Bytes::from(bytes), projects).await
                 }
-                Err(why) => error(StatusCode::BAD_REQUEST, "BAD_LINES", &why),
-            },
-        },
+                Some((start, end)) => match select_lines(&name, &bytes, start, end) {
+                    Ok((named, picked)) => {
+                        attach_bytes_from(svc, &named, axum::body::Bytes::from(picked), projects)
+                            .await
+                    }
+                    Err(why) => error(StatusCode::BAD_REQUEST, "BAD_LINES", &why),
+                },
+            }
+        }
         Ok(Err(m)) => error(StatusCode::BAD_REQUEST, "READ_FAILED", &m),
         Err(_) => error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -5641,15 +5800,15 @@ async fn attachment_from_path(
 }
 
 async fn attach_bytes(svc: Arc<Service>, raw_name: &str, body: axum::body::Bytes) -> Response {
-    attach_bytes_from(svc, raw_name, body, 0).await
+    attach_bytes_from(svc, raw_name, body, Vec::new()).await
 }
 
-/// `attach_bytes` for a file read from a folder: the floor of the project that folder belongs to goes with it.
+/// `attach_bytes` for a file that belongs to these projects: they go with it.
 async fn attach_bytes_from(
     svc: Arc<Service>,
     raw_name: &str,
     body: axum::body::Bytes,
-    floor: i64,
+    projects: Vec<String>,
 ) -> Response {
     let name = match kk_parse::clean_name(raw_name) {
         Ok(n) => n,
@@ -5694,7 +5853,7 @@ async fn attach_bytes_from(
         .attachments
         .lock()
         .expect("lock")
-        .add(now(), id, parsed, bytes, floor);
+        .add(now(), id, parsed, bytes, projects);
     match added {
         Ok(()) => {
             svc.log_event(

@@ -63,18 +63,116 @@ impl Service {
             .unwrap_or(0)
     }
 
+    /// Every project folder with its project's name and level: the folders of listed projects, and the folders of projects
+    /// taken off the list while they were kept privately (their level still guards the folder).
+    fn project_folders(&self) -> Vec<(String, String, i64)> {
+        let store = self.store.lock().expect("lock");
+        let c = store.connection();
+        c.prepare(
+            "SELECT p.name, p.folder, coalesce(f.level, 0) FROM projects p LEFT JOIN project_floor f ON f.project = p.name WHERE p.folder IS NOT NULL \
+             UNION SELECT k.project, k.folder, f.level FROM kept_folders k JOIN project_floor f ON f.project = k.project",
+        )
+        .and_then(|mut st| {
+            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .map(|it| it.flatten().collect())
+        })
+        .unwrap_or_default()
+    }
+
+    /// The projects a piece of material belongs to: those whose folder holds its path, and those whose folder holds a file
+    /// with exactly these bytes. A file chosen in the browser arrives without its path, and a hard link has another path, so
+    /// the bytes are what tells. Bounded: at most `MAX_WALK` entries are looked at across all folders, with `.git`,
+    /// `node_modules`, `target` and virtual environments left out; only files of the same size are read.
+    pub(super) fn projects_holding(
+        &self,
+        path: Option<&std::path::Path>,
+        bytes: &[u8],
+    ) -> Vec<String> {
+        const MAX_WALK: usize = 100_000;
+        let folders = self.project_folders();
+        let mut out: Vec<String> = Vec::new();
+        if let Some(path) = path {
+            let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+            for (name, folder, _) in &folders {
+                let f = std::path::Path::new(folder);
+                let f = f.canonicalize().unwrap_or_else(|_| f.to_path_buf());
+                if path.starts_with(&f) && !out.contains(name) {
+                    out.push(name.clone());
+                }
+            }
+        }
+        if bytes.is_empty() {
+            return out;
+        }
+        let want = bytes.len() as u64;
+        let mut seen = 0usize;
+        for (name, folder, _) in &folders {
+            if out.contains(name) {
+                continue;
+            }
+            let mut stack = vec![std::path::PathBuf::from(folder)];
+            'walk: while let Some(dir) = stack.pop() {
+                let Ok(rd) = std::fs::read_dir(&dir) else {
+                    continue;
+                };
+                for e in rd.flatten() {
+                    seen += 1;
+                    if seen > MAX_WALK {
+                        break 'walk;
+                    }
+                    let Ok(ft) = e.file_type() else { continue };
+                    if ft.is_symlink() {
+                        continue;
+                    }
+                    if ft.is_dir() {
+                        let n = e.file_name();
+                        if !matches!(
+                            n.to_str(),
+                            Some(
+                                ".git"
+                                    | "node_modules"
+                                    | "target"
+                                    | ".venv"
+                                    | "venv"
+                                    | "__pycache__"
+                            )
+                        ) {
+                            stack.push(e.path());
+                        }
+                    } else if ft.is_file()
+                        && e.metadata().is_ok_and(|m| m.len() == want)
+                        && std::fs::read(e.path()).is_ok_and(|b| b == bytes)
+                    {
+                        out.push(name.clone());
+                        break 'walk;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The highest level among these projects, as it is now.
+    pub(super) fn projects_floor(&self, projects: &[String]) -> i64 {
+        projects
+            .iter()
+            .map(|p| self.project_floor(Some(p)))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The project among these whose level is above the route in use now, if any.
+    pub(super) fn projects_above_route(&self, projects: &[String]) -> Option<String> {
+        let level = self.route_level();
+        projects
+            .iter()
+            .find(|p| self.project_floor(Some(p)) > level)
+            .cloned()
+    }
+
     /// The highest floor of the projects whose folder holds this path, with that project's name.
     pub(super) fn folder_floor_named(&self, path: &std::path::Path) -> Option<(String, i64)> {
-        let rows: Vec<(String, String, i64)> = {
-            let store = self.store.lock().expect("lock");
-            let c = store.connection();
-            c.prepare("SELECT p.name, p.folder, f.level FROM projects p JOIN project_floor f ON f.project = p.name WHERE p.folder IS NOT NULL")
-                .and_then(|mut st| {
-                    st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-                        .map(|it| it.flatten().collect())
-                })
-                .unwrap_or_default()
-        };
+        let rows = self.project_folders();
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         rows.into_iter()
             .filter(|(_, folder, _)| {
@@ -193,9 +291,13 @@ pub(super) async fn change(axum::Extension(svc): Svc, Json(b): Json<ProjectBody>
             }
             let n = {
                 let store = svc.store.lock().expect("lock");
-                store
-                    .connection()
-                    .execute("DELETE FROM projects WHERE name = ?1", [name])
+                let c = store.connection();
+                // its level stays, so its folder stays guarded by it: the files in it are still the project's
+                let _ = c.execute(
+                    "INSERT INTO kept_folders(project, folder) SELECT p.name, p.folder FROM projects p JOIN project_floor f ON f.project = p.name WHERE p.name = ?1 AND p.folder IS NOT NULL ON CONFLICT(project) DO UPDATE SET folder = excluded.folder",
+                    [name],
+                );
+                c.execute("DELETE FROM projects WHERE name = ?1", [name])
                     .unwrap_or(0)
             };
             if n > 0 {
@@ -231,6 +333,7 @@ pub(super) async fn change(axum::Extension(svc): Svc, Json(b): Json<ProjectBody>
                 let store = svc.store.lock().expect("lock");
                 let c = store.connection();
                 let done = if level == 0 {
+                    let _ = c.execute("DELETE FROM kept_folders WHERE project = ?1", [name]);
                     c.execute("DELETE FROM project_floor WHERE project = ?1", [name])
                 } else {
                     c.execute(

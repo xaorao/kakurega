@@ -59,6 +59,9 @@ struct RunRow {
     goal: String,
     project: Option<String>,
     attachments: Vec<String>,
+    /// The projects of the files attached to the run, kept when it was planned: the files go after two hours, what the
+    /// experts made of them stays.
+    sources: Vec<String>,
     /// The most private route level this run has worked at; what it holds is not handed to a lesser one.
     held: i64,
     status: String,
@@ -623,7 +626,7 @@ impl Service {
         store
             .connection()
             .query_row(
-                "SELECT id, goal, project, status, final, final_note, created, updated, attachments, coalesce(held, (SELECT CASE WHEN count(*) > 0 THEN 3 ELSE 0 END FROM team_tasks t WHERE t.run = team_runs.id AND t.result <> '')) FROM team_runs WHERE id = ?1",
+                "SELECT id, goal, project, status, final, final_note, created, updated, attachments, coalesce(held, (SELECT CASE WHEN count(*) > 0 THEN 3 ELSE 0 END FROM team_tasks t WHERE t.run = team_runs.id AND t.result <> '')), sources FROM team_runs WHERE id = ?1",
                 [id],
                 |r| {
                     Ok(RunRow {
@@ -640,6 +643,10 @@ impl Service {
                             .and_then(|t| serde_json::from_str(&t).ok())
                             .unwrap_or_default(),
                         held: r.get(9)?,
+                        sources: r
+                            .get::<_, Option<String>>(10)?
+                            .and_then(|t| serde_json::from_str(&t).ok())
+                            .unwrap_or_default(),
                     })
                 },
             )
@@ -913,6 +920,11 @@ impl Service {
             self.team_set_final(id, None, &super::projects::floor_words(&name));
             return "stopped";
         }
+        // and so may the projects its attached files belong to
+        if let Some(name) = self.projects_above_route(&run.sources) {
+            self.team_set_final(id, None, &super::projects::floor_words(&name));
+            return "stopped";
+        }
         let body = ChatBody {
             message: run.goal.clone(),
             history: Vec::new(),
@@ -942,6 +954,11 @@ impl Service {
             return "stopped";
         }
         need = need.max(self.project_floor(run.project.as_deref()));
+        if let Some(name) = self.projects_above_route(&run.sources) {
+            self.team_set_final(id, None, &super::projects::floor_words(&name));
+            return "stopped";
+        }
+        need = need.max(self.projects_floor(&run.sources));
         if run.held > need {
             self.team_set_final(id, None, MORE_PRIVATE);
             return "stopped";
@@ -969,7 +986,13 @@ impl Service {
                 self.team_set_final(id, None, &super::projects::floor_words(&name));
                 return "stopped";
             }
-            need = need.max(self.project_floor(run.project.as_deref()));
+            if let Some(name) = self.projects_above_route(&run.sources) {
+                self.team_set_final(id, None, &super::projects::floor_words(&name));
+                return "stopped";
+            }
+            need = need
+                .max(self.project_floor(run.project.as_deref()))
+                .max(self.projects_floor(&run.sources));
             let mut tasks = self.team_tasks(id);
             let mut s = slots(&tasks);
             for n in team::settle_skips(&mut s) {
@@ -1104,7 +1127,11 @@ impl Service {
             if t.expert == OUTSIDE_SEAT {
                 // the coding agent outside is not private: a project kept on this computer or on confidential hardware is
                 // never handed to it, whatever the owner would answer
-                if self.project_floor(run.project.as_deref()) > 1 {
+                if self
+                    .project_floor(run.project.as_deref())
+                    .max(self.projects_floor(&run.sources))
+                    > 1
+                {
                     let name = run.project.clone().unwrap_or_default();
                     self.team_set_task(id, n, State::Failed, "", &format!("the project {name} is kept more privately than an agent outside this program allows, so nothing of it is handed over"), "");
                 } else {
@@ -1292,6 +1319,21 @@ pub(super) async fn team_plan(axum::Extension(svc): Svc, Json(b): Json<PlanBody>
         Ok(run) => run.body.project,
         Err(resp) => return *resp,
     };
+    // the projects the attached files belong to, kept with the run
+    let sources: Vec<String> = {
+        let mut store = svc.attachments.lock().expect("lock");
+        let mut out: Vec<String> = Vec::new();
+        for a in &b.attachments {
+            if let Some(s) = store.get(now(), a) {
+                for p in &s.projects {
+                    if !out.contains(p) {
+                        out.push(p.clone());
+                    }
+                }
+            }
+        }
+        out
+    };
     let mut ids: Vec<String> = if b.experts.is_empty() {
         let mut all: Vec<String> = experts::EXPERTS.iter().map(|e| e.id.to_string()).collect();
         all.extend(
@@ -1402,8 +1444,8 @@ pub(super) async fn team_plan(axum::Extension(svc): Svc, Json(b): Json<PlanBody>
         let c = store.connection();
         let at = now();
         let _ = c.execute(
-            "INSERT INTO team_runs(id, goal, project, status, final, final_note, created, updated, attachments) VALUES(?1, ?2, ?3, 'planned', NULL, '', ?4, ?4, ?5)",
-            kk_vault::rusqlite::params![id, goal, project, at, serde_json::to_string(&b.attachments).unwrap_or_else(|_| "[]".into())],
+            "INSERT INTO team_runs(id, goal, project, status, final, final_note, created, updated, attachments, sources) VALUES(?1, ?2, ?3, 'planned', NULL, '', ?4, ?4, ?5, ?6)",
+            kk_vault::rusqlite::params![id, goal, project, at, serde_json::to_string(&b.attachments).unwrap_or_else(|_| "[]".into()), serde_json::to_string(&sources).unwrap_or_else(|_| "[]".into())],
         );
         for t in &plan {
             let name = seat_name(&t.expert);
