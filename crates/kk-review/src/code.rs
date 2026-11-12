@@ -115,6 +115,32 @@ impl Workspace {
         &self.files
     }
 
+    /// Whether this path is one of the files withheld from the model (compared without case).
+    pub fn withheld(&self, path: &str) -> bool {
+        self.reserved.contains(&path.to_lowercase())
+    }
+
+    /// How many files are withheld from the model.
+    pub fn withheld_count(&self) -> usize {
+        self.reserved.len()
+    }
+
+    /// Runs one of the tools that only read (list_files, read_file, search_text); a tool that writes is refused.
+    pub fn call_read_only(&mut self, name: &str, args: &Value) -> Result<String, String> {
+        match name {
+            "list_files" | "read_file" | "search_text" => self.call(name, args),
+            other => Err(format!("there is no tool called {}", plain(other, 40))),
+        }
+    }
+
+    /// The tools that only read, as the model sees them.
+    pub fn read_tool_specs() -> Vec<ToolSpec> {
+        Self::tool_specs()
+            .into_iter()
+            .filter(|t| matches!(t.name.as_str(), "list_files" | "read_file" | "search_text"))
+            .collect()
+    }
+
     /// A path the task may write: relative, plain, inside the project, not a restricted file, not a secret's usual name, not
     /// inside version control or a folder of generated files.
     pub fn writable(&self, path: &str) -> Result<(), String> {

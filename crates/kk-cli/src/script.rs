@@ -1655,6 +1655,311 @@ pub fn team(args: &[String]) -> u8 {
     })
 }
 
+const EXPLORE_USAGE: &str = "usage: kaku explore DIR QUESTION... [--depth quick|normal|thorough] [--json] [--timeout SECONDS]\n       kaku explore show ID | list | forget ID";
+
+fn question_id_ok(id: &str) -> bool {
+    id.strip_prefix("question-")
+        .is_some_and(|n| !n.is_empty() && n.len() <= 18 && n.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// A question and its answer as text: the agent's words, each line it rests on with what the file holds there (a line not
+/// in the file is shown as the agent's words), the scripts run with what they printed.
+fn print_question(v: &Value) {
+    println!(
+        "{}  {}",
+        clean(v["id"].as_str().unwrap_or("")),
+        clean(v["question"].as_str().unwrap_or(""))
+    );
+    if v["state"] == "failed" {
+        println!("No answer: {}", clean(v["failure"].as_str().unwrap_or("")));
+        return;
+    }
+    let a = &v["answer"];
+    match a["ending"].as_str().unwrap_or("") {
+        "answered" => {}
+        "unchecked" => println!("The agent answered without naming the lines its answer rests on, so nothing in it was checked."),
+        "turn_limit" => println!("The agent used all its steps without answering. Ask again more narrowly, or with --depth thorough."),
+        "stuck" => println!("The agent repeated the same step and was stopped."),
+        "stopped" => println!("Stopped."),
+        _ => println!("The model stopped answering part way."),
+    }
+    if let Some(t) = a["text"].as_str().filter(|t| !t.is_empty()) {
+        println!(
+            "\nThe agent's answer:\n  {}",
+            clean(t).replace('\n', "\n  ")
+        );
+    }
+    let places = a["places"].as_array().cloned().unwrap_or_default();
+    if places.is_empty() {
+        println!("\nIt names no line it rests on, so nothing in it was checked.");
+    } else {
+        println!(
+            "\n{} of the {} {} it rests on {} found:",
+            a["checked"],
+            places.len(),
+            plural(places.len() as u64, "line", "lines"),
+            if places.len() == 1 { "was" } else { "were" }
+        );
+        println!(
+            "(A line found shows the answer rests on real code, not that the answer is right.)"
+        );
+        for p in &places {
+            let file = clean(p["file"].as_str().unwrap_or("?"));
+            match p["found"]["state"].as_str().unwrap_or("") {
+                s @ ("at_line" | "moved") => {
+                    let at = if s == "moved" {
+                        &p["found"]["line"]
+                    } else {
+                        &p["line"]
+                    };
+                    println!("  {file}:{at}  found");
+                    for l in p["text"].as_str().unwrap_or("").lines() {
+                        println!("      {}", clean(l));
+                    }
+                }
+                other => println!(
+                    "  {file}:{}  {}; the agent wrote: {}",
+                    p["line"],
+                    match other {
+                        "not_found" => "NOT in the file",
+                        "too_short" => "too short to check",
+                        "withheld" => "a withheld file the agent could not read",
+                        _ => "no such file",
+                    },
+                    clean(p["quote"].as_str().unwrap_or(""))
+                ),
+            }
+        }
+    }
+    if let Some(nf) = a["not_found"].as_str().filter(|t| !t.is_empty()) {
+        println!("\nWhat it could not find: {}", clean(nf));
+    }
+    for (i, k) in a["checks"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+    {
+        let run = &k["run"];
+        println!(
+            "\nCheck {} ({}), run in the sealed sandbox: {}. Script:",
+            i + 1,
+            clean(k["language"].as_str().unwrap_or("")),
+            if run["ran"] != true {
+                "could not be run"
+            } else if run["timed_out"] == true {
+                "stopped after 30 seconds"
+            } else if run["exit_ok"] == true {
+                "ended without an error"
+            } else {
+                "ended with an error"
+            }
+        );
+        for l in k["script"].as_str().unwrap_or("").lines() {
+            println!("      {}", clean(l));
+        }
+        println!("  It printed:");
+        for l in run["output"].as_str().unwrap_or("").lines() {
+            println!("      {}", clean(l));
+        }
+    }
+    let read = a["files_read"].as_array().map_or(0, Vec::len) as u64;
+    let withheld = a["withheld"].as_u64().unwrap_or(0);
+    println!(
+        "\n{read} {} read, {} {}.{}",
+        plural(read, "file", "files"),
+        a["turns"],
+        plural(a["turns"].as_u64().unwrap_or(0), "step", "steps"),
+        if withheld > 0 {
+            format!(
+                " {withheld} {} withheld from the agent.",
+                plural(withheld, "file was", "files were")
+            )
+        } else {
+            String::new()
+        }
+    );
+}
+
+/// `kaku explore DIR QUESTION`: an agent reads the project on this computer and answers; every line its answer rests on is
+/// checked against the file. Exit 0 when every line was found, 3 when the answer rests on a line that was not, or on none.
+pub fn explore(args: &[String]) -> u8 {
+    let json_mode = args.iter().any(|a| a == "--json");
+    let words = plain_words(
+        args,
+        &[
+            "--data-dir",
+            "--timeout",
+            "--depth",
+            "--model",
+            "--ollama",
+            "--root",
+            "--scripted",
+            "--ui-dir",
+            "--context",
+            "--transport",
+            "--vm",
+            "--worker-bin",
+            "--launcher",
+        ],
+    );
+    let Some(first) = words.first().cloned() else {
+        return fail(json_mode, USAGE, EXPLORE_USAGE);
+    };
+    let depth = crate::flag(args, "--depth").unwrap_or_else(|| "normal".into());
+    if !matches!(depth.as_str(), "quick" | "normal" | "thorough") {
+        return fail(json_mode, USAGE, EXPLORE_USAGE);
+    }
+    let timeout = crate::flag(args, "--timeout")
+        .and_then(|t| t.parse::<u64>().ok())
+        .unwrap_or(3600)
+        .clamp(10, 86_400);
+    crate::tui::with_service(&serve_args(args), |data| {
+        let http = match connect(data, json_mode) {
+            Ok(h) => h,
+            Err(c) => return c,
+        };
+        let get = |id: &str| call(&http, Method::Get, &format!("/api/questions/{id}"), None);
+        let answer = |r: Result<(u16, Value), String>, ok: u16| -> Result<Value, u8> {
+            match r {
+                Ok((s, v)) if s == ok => Ok(v),
+                Ok((s, v)) => {
+                    let (m, c) = refusal(s, &v);
+                    Err(fail(json_mode, c, &m))
+                }
+                Err(e) => Err(fail(json_mode, UNAVAILABLE, &e)),
+            }
+        };
+        let verdict = |v: &Value| -> u8 {
+            let a = &v["answer"];
+            if v["state"] != "answered" {
+                FAILED
+            } else if a["places"].as_array().is_none_or(Vec::is_empty) || a["unchecked"] != 0 {
+                NOTHING
+            } else {
+                OK
+            }
+        };
+        match first.as_str() {
+            "list" => match answer(call(&http, Method::Get, "/api/questions", None), 200) {
+                Ok(v) => {
+                    for q in v["questions"].as_array().into_iter().flatten() {
+                        say(json_mode, q, || {
+                            format!(
+                                "{}  {}  {}",
+                                clean(q["id"].as_str().unwrap_or("")),
+                                clean(q["state"].as_str().unwrap_or("")),
+                                clean(q["question"].as_str().unwrap_or(""))
+                            )
+                        });
+                    }
+                    OK
+                }
+                Err(c) => c,
+            },
+            "show" | "forget" => {
+                let Some(id) = words.get(1).filter(|i| question_id_ok(i)) else {
+                    return fail(json_mode, USAGE, "a question is named like question-3");
+                };
+                if first == "forget" {
+                    return match answer(
+                        call(
+                            &http,
+                            Method::Post,
+                            &format!("/api/questions/{id}/forget"),
+                            Some(json!({})),
+                        ),
+                        200,
+                    ) {
+                        Ok(v) => {
+                            say(json_mode, &v, || format!("{id} is forgotten"));
+                            OK
+                        }
+                        Err(c) => c,
+                    };
+                }
+                match answer(get(id), 200) {
+                    Ok(v) => {
+                        if json_mode {
+                            println!("{v}")
+                        } else {
+                            print_question(&v)
+                        }
+                        verdict(&v)
+                    }
+                    Err(c) => c,
+                }
+            }
+            _ => {
+                let Ok(folder) = std::path::Path::new(&first).canonicalize() else {
+                    return fail(
+                        json_mode,
+                        USAGE,
+                        &format!("that folder does not exist\n{EXPLORE_USAGE}"),
+                    );
+                };
+                let question = words[1..].join(" ");
+                if question.trim().is_empty() {
+                    return fail(json_mode, USAGE, EXPLORE_USAGE);
+                }
+                let id = match answer(
+                    call(
+                        &http,
+                        Method::Post,
+                        "/api/questions",
+                        Some(
+                            json!({"folder": folder.to_string_lossy(), "question": question, "depth": depth}),
+                        ),
+                    ),
+                    202,
+                ) {
+                    Ok(v) => clean(v["id"].as_str().unwrap_or("")),
+                    Err(c) => return c,
+                };
+                say(
+                    json_mode,
+                    &json!({"event": "started", "question": id}),
+                    || {
+                        format!("{id} started; the agent reads the project on this computer, and nothing is changed")
+                    },
+                );
+                let started = Instant::now();
+                let mut shown = 0usize;
+                let v = loop {
+                    let v = match answer(get(&id), 200) {
+                        Ok(v) => v,
+                        Err(c) => return c,
+                    };
+                    let progress = v["progress"].as_array().cloned().unwrap_or_default();
+                    for p in progress.iter().skip(shown) {
+                        let line = clean(p.as_str().unwrap_or(""));
+                        say(
+                            json_mode,
+                            &json!({"event": "progress", "question": id, "detail": line}),
+                            || format!("{id}  {line}"),
+                        );
+                    }
+                    shown = progress.len();
+                    if v["state"] != "running" {
+                        break v;
+                    }
+                    if started.elapsed() > Duration::from_secs(timeout) {
+                        return fail(json_mode, UNAVAILABLE, &format!("{id} was not answered within {timeout} seconds; it is still running, see it with kaku explore show {id}"));
+                    }
+                    std::thread::sleep(Duration::from_millis(700));
+                };
+                if json_mode {
+                    println!("{}", json!({"event": "finished", "question": v}));
+                } else {
+                    print_question(&v);
+                }
+                verdict(&v)
+            }
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

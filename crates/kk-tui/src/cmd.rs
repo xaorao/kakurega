@@ -163,6 +163,15 @@ pub enum Command {
     },
     /// `/code show|apply|undo [ID]`: read the last (or named) coding task's patch, apply it after a yes, or put it back.
     CodeAct(&'static str, Option<String>),
+    /// `/explore [quick|thorough] FOLDER : QUESTION`: an agent reads the project on this computer and answers; every line it
+    /// rests on is checked against the file.
+    Explore {
+        depth: &'static str,
+        folder: String,
+        question: String,
+    },
+    /// `/explore show [ID]`: the last (or named) question and its answer.
+    ExploreShow(Option<String>),
     /// `/model`: the models installed on this computer; `/model NAME`: answer with that one from now on.
     Model(Option<String>),
     /// Branch the open kept conversation, keeping its first N messages (all when none is given).
@@ -237,6 +246,7 @@ pub const NAMES: &[&str] = &[
     "memory",
     "ask",
     "code",
+    "explore",
     "aside",
     "roundtable",
     "team",
@@ -310,6 +320,9 @@ pub fn describe(name: &str) -> &'static str {
         "memory" => "list or search saved notes",
         "ask" => "ask about documents; every quote is checked",
         "code" => "have a local model change a project; you read the patch before anything changes",
+        "explore" => {
+            "ask a question about a project's code; every line the answer rests on is checked"
+        }
         "aside" => "ask something that stays out of the conversation and is not saved",
         "roundtable" => "ask 2 to 5 experts one question, each alone; a lead says what to do",
         "team" => {
@@ -424,6 +437,7 @@ pub fn usage(name: &str) -> &'static str {
         "stilltrue" => "/stilltrue ID",
         "ask" => "/ask FOLDER : QUESTION",
         "code" => "/code FOLDER : TASK | /code show|apply|undo [ID]",
+        "explore" => "/explore [quick|thorough] FOLDER : QUESTION | /explore show [ID]",
         "aside" => "/aside QUESTION",
         "roundtable" => "/roundtable EXPERT,EXPERT[,EXPERT] : QUESTION   (alone, it lists the experts)",
         "team" => "/team plan GOAL | /team start|stop|show [ID] | /team answer TASK TEXT | /team delete ID   (alone, it lists your runs)",
@@ -528,6 +542,38 @@ pub fn parse(line: &str) -> Result<Command, String> {
                     }
                     _ => Err(format!("usage: {}", usage("code"))),
                 },
+            }
+        }
+        "explore" => {
+            let mut words = rest.split_whitespace();
+            match (words.next(), words.next(), words.next()) {
+                (Some("show"), None, None) => Ok(Command::ExploreShow(None)),
+                (Some("show"), Some(i), None) => {
+                    if i.strip_prefix("question-").is_some_and(|n| {
+                        !n.is_empty() && n.len() <= 18 && n.chars().all(|c| c.is_ascii_digit())
+                    }) {
+                        Ok(Command::ExploreShow(Some(i.to_string())))
+                    } else {
+                        Err("a question is named like question-3".into())
+                    }
+                }
+                _ => {
+                    let (depth, body) = match rest.split_once(' ') {
+                        Some(("quick", b)) => ("quick", b),
+                        Some(("thorough", b)) => ("thorough", b),
+                        _ => ("normal", rest),
+                    };
+                    match body.split_once(" : ") {
+                        Some((f, q)) if !f.trim().is_empty() && !q.trim().is_empty() => {
+                            Ok(Command::Explore {
+                                depth,
+                                folder: f.trim().to_string(),
+                                question: q.trim().to_string(),
+                            })
+                        }
+                        _ => Err(format!("usage: {}", usage("explore"))),
+                    }
+                }
             }
         }
         "model" if rest.is_empty() => Ok(Command::Model(None)),

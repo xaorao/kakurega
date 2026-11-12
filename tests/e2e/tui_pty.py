@@ -199,6 +199,8 @@ try:
     check("/where says where the data goes and that nothing has left this computer", wait_for(r"Where your data goes", 30) is not None and wait_for(r"a scripted test model; nothing is sent to any model", 15) is not None and wait_for(r"Left this computer \(from the signed log\): nothing", 15) is not None, screen_text()[-500:].replace("\n", " | "))
     send("/route\r")
     check("/route is the same list", wait_for(r"(Where your data goes[\s\S]*){2}", 30) is not None)
+    send("/explore quick payments-service : Where is the session checked?\r")
+    check("/explore answers about a project, with each line it rests on checked against the file", wait_for(r"of the 2 lines it rests on were found in the files", 120) is not None and wait_for(r"NOT in the file; the agent wrote:", 15) is not None, screen_text()[-600:].replace("\n", " | "))
     send("a plain question about rounding\r")
     _m = wait_for(r"answer: about \d+ tokens in [\d.]+ (ms|s)", 60)
     check("after a chat answer the footer says how long the answer is and how long it took", _m is not None, screen_text()[-500:].replace("\n", " | ") if _m is None else _m.group(0))

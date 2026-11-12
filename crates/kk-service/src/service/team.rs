@@ -143,7 +143,12 @@ pub(super) const OUTSIDE_SEAT: &str = "claude-code";
 /// worker, sandbox and broker every review uses; no expert reads files any other way.
 pub(super) const REVIEW_SEAT: &str = "project-review";
 pub(super) const REVIEW_NAME: &str = "Project reviewer";
-const REVIEW_NOT_HANDED: &str = "(this answer is a review's findings, or was written after reading them; it is not handed to an agent outside this program. Open the run to read it)";
+const REVIEW_NOT_HANDED: &str = "(this answer holds words about the project's files (a review's findings or a reading of the code), or was written after reading them; it is not handed to an agent outside this program. Open the run to read it)";
+/// The seat whose task is answered by reading the run's project folder on this computer: the same question agent as
+/// "Ask a project", every line its answer rests on checked against the files.
+pub(super) const READER_SEAT: &str = "project-reader";
+pub(super) const READER_NAME: &str = "Code reader";
+pub(super) const READER_SUMMARY: &str = "Reads the files of the run's project folder on this computer and answers its task from them. Every line its answer rests on is checked against the file, and it may run a short script in the sealed sandbox. Its answer is handed to the other experts only while the model is on this computer.";
 pub(super) const REVIEW_SUMMARY: &str = "Reviews the files of the run's project folder in the sealed sandbox and reports only the defects it could reproduce. It is the same review as New review, whatever its task says, so give it the task of reviewing the project. It takes minutes, and it needs a project that has a folder.";
 const OUTSIDE_SUMMARY: &str = "The coding agent installed on this computer. Not private: each task for it is shown to the owner first and sent only on their yes. Give it only a task that needs none of the owner's files.";
 /// How a question to the owner about a hand-over begins, so it is told apart from an expert's own question.
@@ -282,6 +287,141 @@ impl Service {
                 self.team_set_task(id, n, State::Done, &kept, &format!("from the sandboxed review {job}; open it under Reviews for the files and the proof"), "");
             }
         }
+        false
+    }
+
+    /// A task whose expert is the code reader: the question agent reads the run's project folder on this computer and
+    /// answers the task, each line it rests on checked against the files. Like a review's findings, the answer is words
+    /// about the owner's files: it is made only with the model on this computer, and the run is held on this computer from
+    /// then on. True when the owner stopped the run while it worked.
+    fn team_reader_task(
+        self: &Arc<Self>,
+        id: &str,
+        n: usize,
+        run: &RunRow,
+        question: &str,
+    ) -> bool {
+        let fail = |why: &str| self.team_set_task(id, n, State::Failed, "", why, "");
+        if self.route_for_owner()["stays_here"] != true {
+            fail("the model in use is not on this computer, and the code reader reads the project's files only with a model on this computer; choose it in Settings");
+            return false;
+        }
+        let Some(folder) = self.team_project_folder(run.project.as_deref()) else {
+            fail("the run's project has no folder this program may read; give the project a folder under Projects and plan again");
+            return false;
+        };
+        {
+            let store = self.store.lock().expect("lock");
+            let _ = store
+                .connection()
+                .execute("UPDATE team_runs SET held = 3 WHERE id = ?1", [id]);
+        }
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            // the owner's stop of the run reaches the reader at its next step
+            let (svc, run_id, stop, done) =
+                (self.clone(), id.to_string(), stop.clone(), done.clone());
+            std::thread::spawn(move || {
+                while !done.load(std::sync::atomic::Ordering::SeqCst) {
+                    if svc.team_stop_asked(&run_id) {
+                        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                }
+            });
+        }
+        let imported = kk_review::import::scan_tree(&folder, kk_types::label::Level::Internal);
+        let result = self.runner.project_question(
+            &imported.files,
+            question,
+            kk_review::explore::Depth::Normal,
+            &|_| {},
+            &stop,
+        );
+        done.store(true, std::sync::atomic::Ordering::SeqCst);
+        if stop.load(std::sync::atomic::Ordering::SeqCst) {
+            return true;
+        }
+        let o = match result {
+            Ok(o) => o,
+            Err(why) => {
+                fail(&format!(
+                    "the code reader could not answer: {}",
+                    why.chars()
+                        .filter(|c| !c.is_control())
+                        .take(200)
+                        .collect::<String>()
+                ));
+                return false;
+            }
+        };
+        let r = &o.report;
+        if r.answer.trim().is_empty() {
+            fail("the code reader gave no answer");
+            return false;
+        }
+        let found = r.citations.iter().filter(|c| c.found.checked()).count();
+        let mut text = format!("{}\n", r.answer.trim());
+        if r.citations.is_empty() {
+            text.push_str(
+                "(It names no line of the project it rests on, so nothing in it was checked.)\n",
+            );
+        } else {
+            text.push_str(&format!(
+                "Lines it rests on, checked against the project's files ({found} of {} found):\n",
+                r.citations.len()
+            ));
+            for c in &r.citations {
+                match &c.found {
+                    kk_review::explore::Found::AtLine | kk_review::explore::Found::Moved { .. } => {
+                        let at = match c.found {
+                            kk_review::explore::Found::Moved { line } => line,
+                            _ => c.line,
+                        };
+                        let shown: String = c
+                            .text
+                            .lines()
+                            .next()
+                            .unwrap_or("")
+                            .trim()
+                            .chars()
+                            .take(200)
+                            .collect();
+                        text.push_str(&format!("- {}:{at}: {shown}\n", c.file));
+                    }
+                    _ => text.push_str(&format!(
+                        "- {}:{}: NOT in the file (the reader's words; do not rely on it)\n",
+                        c.file, c.line
+                    )),
+                }
+            }
+        }
+        for k in &r.checks {
+            let out: String = k.run.output.lines().take(6).collect::<Vec<_>>().join(" | ");
+            text.push_str(&format!(
+                "A script it ran in the sandbox printed: {}\n",
+                out.chars().take(300).collect::<String>()
+            ));
+        }
+        // a line of the owner's files that holds a key is not handed on, whatever the detector at import missed
+        if kk_secrets::holds_secret(&text) || kk_secrets::spoken::holds(&text) {
+            fail("the code reader's answer holds what looks like a key or a password, so it is not handed on; ask the question under Ask a project to read it");
+            return false;
+        }
+        let kept: String = text.chars().take(MAX_RESULT_CHARS).collect();
+        self.team_set_task(
+            id,
+            n,
+            State::Done,
+            &kept,
+            &format!(
+                "from reading the project folder; {found} of {} lines found",
+                r.citations.len()
+            ),
+            "",
+        );
         false
     }
 
@@ -426,6 +566,16 @@ impl Service {
                     instruction: String::new(),
                 },
                 REVIEW_SUMMARY.to_string(),
+            ));
+        }
+        if id == READER_SEAT {
+            return Some((
+                Seat {
+                    id: id.to_string(),
+                    name: READER_NAME.to_string(),
+                    instruction: String::new(),
+                },
+                READER_SUMMARY.to_string(),
             ));
         }
         if id == OUTSIDE_SEAT {
@@ -858,7 +1008,7 @@ impl Service {
             // that follows a review, directly or through other tasks, is not offered either
             let mut from_review: std::collections::BTreeSet<usize> = tasks
                 .iter()
-                .filter(|x| x.expert == REVIEW_SEAT)
+                .filter(|x| x.expert == REVIEW_SEAT || x.expert == READER_SEAT)
                 .map(|x| x.n)
                 .collect();
             loop {
@@ -893,6 +1043,23 @@ impl Service {
                 .collect();
             if t.expert == REVIEW_SEAT {
                 let stopped = self.team_review_task(id, n, &run);
+                need = need.max(self.team_run(id).map_or(0, |r| r.held));
+                self.log_event(
+                    "team.task",
+                    id,
+                    &[
+                        ("task", n.into()),
+                        ("attempt", ((t.attempts + 1) as usize).into()),
+                    ],
+                );
+                if stopped {
+                    self.team_unbegin_task(id, n);
+                    return "stopped";
+                }
+                continue;
+            }
+            if t.expert == READER_SEAT {
+                let stopped = self.team_reader_task(id, n, &run, &question);
                 need = need.max(self.team_run(id).map_or(0, |r| r.held));
                 self.log_event(
                     "team.task",
@@ -1111,12 +1278,13 @@ pub(super) async fn team_plan(axum::Extension(svc): Svc, Json(b): Json<PlanBody>
             "a lead can hand work to at most 24 experts",
         );
     }
-    if ids.iter().any(|i| i == REVIEW_SEAT) && svc.team_project_folder(project.as_deref()).is_none()
+    if ids.iter().any(|i| i == REVIEW_SEAT || i == READER_SEAT)
+        && svc.team_project_folder(project.as_deref()).is_none()
     {
         return refuse(
             StatusCode::BAD_REQUEST,
             "NO_PROJECT_FOLDER",
-            "the project reviewer needs a project that has a folder: choose one for this run, or give the project a folder under Projects",
+            "the project reviewer and the code reader need a project that has a folder: choose one for this run, or give the project a folder under Projects",
         );
     }
     let mut roster: Vec<(String, String)> = Vec::new();
@@ -1227,6 +1395,9 @@ pub(super) async fn team_plan(axum::Extension(svc): Svc, Json(b): Json<PlanBody>
 fn seat_name(id: &str) -> String {
     if id == REVIEW_SEAT {
         return REVIEW_NAME.to_string();
+    }
+    if id == READER_SEAT {
+        return READER_NAME.to_string();
     }
     match id.strip_prefix(METHOD_PREFIX) {
         Some(name) => name.to_string(),

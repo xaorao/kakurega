@@ -55,6 +55,22 @@ try:
     check("no approval was requested or given by the command", adm("/admin/approvals")["approvals"] == [] and not adm(f"/admin/jobs/{job}").get("delivered"), str(adm("/admin/approvals")))
     check("a script gets the instruction, not a bypass", "cannot approve" in events[-1]["note"])
 
+    # a question about the project: the line the scripted agent made up is not found, so the command says so and exits 3
+    rc, out, err = k("explore", str(work / "root/payments-service"), "Where", "is", "the", "session", "checked?", "--depth", "quick", "--json")
+    lines = [json.loads(l) for l in out.strip().splitlines()] if out.strip() else []
+    fin = lines[-1]["question"] if lines and lines[-1].get("event") == "finished" else {}
+    a = fin.get("answer", {})
+    check("explore --json follows the question to its answer, with each line checked", rc == 3 and lines[0]["event"] == "started" and a.get("checked") == 1 and a.get("unchecked") == 1, f"{rc} {out[-400:]} {err[-200:]}")
+    check("the withheld .env file was neither read nor given to the script", ".env" not in a.get("files_read", []) and "no .env file is visible" in a["checks"][0]["run"]["output"], json.dumps(a)[:400])
+    qid = fin.get("id", "")
+    rc, out, _ = k("explore", "show", qid)
+    check("explore show in words marks the made-up line as not in the file", rc == 3 and "NOT in the file; the agent wrote:" in out and "1 of the 2 lines it rests on were found:" in out, out[-500:])
+    rc, out, _ = k("explore", "show", "../../etc/passwd")
+    check("a question's name is checked before anything is asked", rc == 2, out)
+    rc, out, _ = k("explore", "forget", qid)
+    rc2, out2, _ = k("explore", "list", "--json")
+    check("explore forget removes it", rc == 0 and qid not in out2, out + out2)
+
     rc, out, _ = k("jobs", "--json")
     listed = json.loads(out)["jobs"]
     check("jobs lists the review with its state", rc == 0 and listed and listed[0]["id"] == job and listed[0]["state"] == "ready", out)

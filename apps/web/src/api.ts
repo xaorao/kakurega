@@ -279,6 +279,16 @@ async function attachFile(file: File): Promise<AttachmentSummary> {
 }
 
 export type CodeChange = { path: string; kind: "added" | "modified" | "deleted"; diff: string; added: number; removed: number };
+export type QuestionDepth = "quick" | "normal" | "thorough";
+/** Where a cited text was found: at the line cited, at another line, or not at all (and why). */
+export interface QuestionPlace { file: string; line: number; quote: string; found: { state: "at_line" | "moved" | "not_found" | "too_short" | "withheld" | "no_such_file"; line?: number }; text: string }
+export interface QuestionCheck { language: string; script: string; run: { ran: boolean; exit_ok: boolean; timed_out: boolean; output: string } }
+export interface QuestionRow { id: string; question: string; project: string | null; folder: string; state: "running" | "answered" | "failed"; created: number; checked: number | null; unchecked: number | null }
+export interface Question {
+  id: string; folder: string; project: string | null; question: string; depth: QuestionDepth; created: number;
+  state: "running" | "answered" | "failed"; failure: string; progress: string[];
+  answer?: { ending: "answered" | "unchecked" | "turn_limit" | "stuck" | "model_failed" | "stopped"; note: string; text: string; not_found: string; places: QuestionPlace[]; checked: number; unchecked: number; checks: QuestionCheck[]; files_read: string[]; steps: string[]; turns: number; withheld: number; corrected: boolean; route: string; elapsed_ms: number };
+}
 export type CodeTask = {
   id: string;
   task: string;
@@ -465,7 +475,11 @@ export const api = {
   codeGet: (id: string) => request<CodeTask>("GET", `/api/code/${id}`),
   codeApply: (id: string, digest: string) => request<{ applied: boolean; files: number }>("POST", `/api/code/${id}/apply`, { digest }),
   /** Asks a running review or coding task to stop. `at_once` is false when it can only end at its own end. */
-  stopWork: (kind: "review" | "code", id: string) => request<{ stopping: boolean; at_once: boolean }>("POST", `/api/${kind === "review" ? "jobs" : "code"}/${encodeURIComponent(id)}/stop`, {}),
+  stopWork: (kind: "review" | "code" | "question", id: string) => request<{ stopping: boolean; at_once: boolean }>("POST", `/api/${kind === "review" ? "jobs" : kind === "code" ? "code" : "questions"}/${encodeURIComponent(id)}/stop`, {}),
+  questionStart: (folder: string, question: string, depth: QuestionDepth) => request<{ id: string }>("POST", "/api/questions", { folder, question, depth }),
+  questionList: () => request<{ questions: QuestionRow[]; max: number }>("GET", "/api/questions"),
+  questionGet: (id: string) => request<Question>("GET", `/api/questions/${encodeURIComponent(id)}`),
+  questionForget: (id: string) => request<{ forgotten: boolean }>("POST", `/api/questions/${encodeURIComponent(id)}/forget`, {}),
   codeUndo: (id: string) => request<{ undone: boolean }>("POST", `/api/code/${id}/undo`, {}),
   readiness: () => request<Readiness>("GET", "/api/readiness"),
   fs: (path?: string) => request<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>("GET", `/api/fs${path ? `?path=${encodeURIComponent(path)}` : ""}`),

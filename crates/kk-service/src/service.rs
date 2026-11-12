@@ -80,6 +80,18 @@ pub trait JobRunner: Send + Sync {
     ) -> Result<crate::coding::CodeOutcome, String> {
         Err("coding tasks are not available in this configuration".into())
     }
+    /// Answers a question about a project: an agent reads the project's files (the ones the importer did not withhold) and may
+    /// run a short script in the sandbox; every place its answer rests on is checked against the files. Nothing is changed.
+    fn project_question(
+        &self,
+        _files: &[kk_review::import::ImportedFile],
+        _question: &str,
+        _depth: kk_review::explore::Depth,
+        _progress: &dyn Fn(&str),
+        _stop: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<crate::questions::QuestionOutcome, String> {
+        Err("questions about a project are not available in this configuration".into())
+    }
     /// Like `code_task`, for a task the owner may stop (see `run_stoppable`).
     fn code_task_stoppable(
         &self,
@@ -329,6 +341,7 @@ pub struct Service {
     attachments: Mutex<crate::attachments::Store>,
     fix_locks: fixfiles::JobLocks,
     coding: Mutex<crate::coding::Tasks>,
+    questions: Mutex<crate::questions::Questions>,
     /// Outside-tool calls waiting for the owner's yes or no (tools set to ask).
     mcp_pending: Mutex<Vec<mcp::PendingCall>>,
     mcp_pending_seq: std::sync::atomic::AtomicU64,
@@ -441,6 +454,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
             "CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, meta TEXT NOT NULL, snap TEXT);
              CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY, body TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS code_tasks(id TEXT PRIMARY KEY, body TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS questions(id TEXT PRIMARY KEY, body TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS fix_files(job TEXT NOT NULL, n INTEGER NOT NULL, file TEXT NOT NULL, orig BLOB NOT NULL, sha_after TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (job, n, file));
              CREATE TABLE IF NOT EXISTS fix_snapshots(job TEXT NOT NULL, n INTEGER NOT NULL, file TEXT NOT NULL, orig BLOB NOT NULL, sha_after TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (job, n));
              CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, title TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL, project TEXT);
@@ -918,6 +932,7 @@ impl Service {
             &[("version", env!("CARGO_PKG_VERSION").into())],
         );
         let coding = crate::coding::Tasks::load(store.connection());
+        let questions = crate::questions::Questions::load(store.connection());
         let svc = Arc::new(Service {
             data_dir: data_dir.to_path_buf(),
             roots,
@@ -948,6 +963,7 @@ impl Service {
             attachments: Mutex::new(crate::attachments::Store::default()),
             fix_locks: fixfiles::JobLocks::default(),
             coding: Mutex::new(coding),
+            questions: Mutex::new(questions),
             mcp_pending: Mutex::new(Vec::new()),
             mcp_pending_seq: std::sync::atomic::AtomicU64::new(0),
             lease_skew: std::sync::atomic::AtomicI64::new(0),
@@ -1352,6 +1368,7 @@ mod outbound;
 mod packs;
 mod projects;
 mod prompts;
+mod questions;
 mod sample;
 mod share;
 mod swap;
@@ -4316,7 +4333,7 @@ async fn experts_list(axum::Extension(svc): Svc) -> Json<Value> {
         // private and is asked nothing without the owner's yes on the exact text
         "teammates": svc.runner.handoff_tool().map(|tool| vec![json!({"id": team::OUTSIDE_SEAT, "name": tool, "summary": "The coding agent installed on this computer. Not private: each task for it is shown to you first and sent only on your yes."})]).unwrap_or_default(),
         // offered for team runs only: the seat that reviews the project's files in the sandbox
-        "workers": [{"id": team::REVIEW_SEAT, "name": team::REVIEW_NAME, "summary": team::REVIEW_SUMMARY}],
+        "workers": [{"id": team::REVIEW_SEAT, "name": team::REVIEW_NAME, "summary": team::REVIEW_SUMMARY}, {"id": team::READER_SEAT, "name": team::READER_NAME, "summary": team::READER_SUMMARY}],
         "min": MIN_PARTICIPANTS, "max": MAX_PARTICIPANTS,
     }))
 }
@@ -8104,6 +8121,24 @@ async fn work(axum::Extension(svc): Svc) -> Json<Value> {
             }
         }
     }
+    {
+        let g = svc.questions.lock().expect("lock");
+        for q in g
+            .list
+            .values()
+            .filter(|q| q.state == crate::questions::State::Running)
+        {
+            items.push(item(
+                "question",
+                &q.id,
+                &q.question,
+                "running",
+                q.created,
+                q.created,
+                true,
+            ));
+        }
+    }
     items.extend(
         svc.team_working()
             .into_iter()
@@ -10095,6 +10130,13 @@ impl Extension for Routes {
             .route("/api/code/{id}/apply", post(code_apply))
             .route("/api/code/{id}/undo", post(code_undo))
             .route("/api/code/{id}/stop", post(work_stop))
+            .route(
+                "/api/questions",
+                get(questions::list).post(questions::start),
+            )
+            .route("/api/questions/{id}", get(questions::get))
+            .route("/api/questions/{id}/forget", post(questions::forget))
+            .route("/api/questions/{id}/stop", post(work_stop))
             .route("/api/jobs/{id}/stop", post(work_stop))
             .route("/api/models", get(models_list))
             .route("/api/model", post(model_choose))

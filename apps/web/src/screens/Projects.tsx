@@ -26,6 +26,7 @@ export function Projects() {
   };
   const ask = (p: ProjectRow) => { leave("kk-docs-folder", p.folder ?? ""); location.hash = "#/docs"; };
   const chat = (p: ProjectRow) => { leave("kk-chat-project", p.name); location.hash = "#/chat"; };
+  const explore = (p: ProjectRow) => { leave("kk-explore-folder", p.folder ?? ""); location.hash = "#/explore"; };
   return (
     <section class="stack wide" aria-labelledby="h-proj">
       <h1 id="h-proj">{t("proj.title")}</h1>
@@ -55,6 +56,7 @@ export function Projects() {
                   <div class="actions">
                     <button type="button" onClick={() => chat(p)}>{t("proj.chat")}</button>
                     <Show when={p.folder && p.folder_available}><button type="button" onClick={() => ask(p)}>{t("proj.ask")}</button></Show>
+                    <Show when={p.folder && p.folder_available}><button type="button" onClick={() => explore(p)}>{t("proj.explore")}</button></Show>
                     <a class="button" href="#/instructions">{t("proj.instructions")}</a>
                     <a class="button" href="#/memory">{t("proj.notes")}</a>
                     <Show when={p.listed}><button type="button" class="linklike" onClick={() => void change({ remove: p.name }, t("proj.removed"))}>{t("proj.remove")} <span class="sr">{p.name}</span></button></Show>

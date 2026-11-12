@@ -385,6 +385,8 @@ details.steps li code { white-space: normal; }
 /* roundtable */
 .rt-experts { border: 0; padding: 0; margin: 0; display: grid; gap: 12px; }
 .rt-experts legend { font-weight: 600; padding: 0; margin-bottom: 4px; }
+.choices { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+.choices legend { font-size: 13px; font-weight: 500; color: var(--stone); padding: 0; margin-bottom: 6px; }
 .rt-group h2 { font-size: 13px; margin: 0 0 4px; color: var(--graphite); font-weight: 600; }
 .rt-expert { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; min-height: 24px; }
 .rt-expert input { margin-top: 3px; flex: none; }

@@ -8329,3 +8329,98 @@ fn tu_shown_data_is_never_reworded_and_earlier_messages_carry_their_level() {
     let r = enter(&mut a, "fresh");
     assert!(r[0].body.as_ref().unwrap().get("held").is_none());
 }
+
+#[test]
+fn tu_ex01_a_question_is_followed_to_its_answer_and_a_line_not_in_the_file_is_never_shown_as_code()
+{
+    let mut app = booted();
+    // the depth word is optional; a folder name is read under the first root the service gave
+    let r = enter(
+        &mut app,
+        "/explore thorough /home/u/shop : Does logout revoke the token?",
+    );
+    assert_eq!(
+        (r.len(), r[0].path.as_str(), r[0].method),
+        (1, "/api/questions", Method::Post)
+    );
+    let body = r[0].body.as_ref().unwrap();
+    assert_eq!(
+        (
+            body["folder"].as_str(),
+            body["question"].as_str(),
+            body["depth"].as_str()
+        ),
+        (
+            Some("/home/u/shop"),
+            Some("Does logout revoke the token?"),
+            Some("thorough")
+        )
+    );
+    app.handle(ok(&r[0], 202, json!({"id": "question-1"})));
+    let poll = app.handle(Event::Tick);
+    let p = poll
+        .iter()
+        .find(|q| q.path == "/api/questions/question-1")
+        .expect("the question is polled");
+    app.handle(ok(
+        p,
+        200,
+        json!({"id": "question-1", "state": "running", "progress": ["the model reads 2 files"]}),
+    ));
+    assert!(text(&app).contains("the model reads 2 files"));
+    let busy = enter(&mut app, "/explore /home/u/shop : another?");
+    assert!(busy.is_empty() && text(&app).contains("still being answered"));
+    let poll = app.handle(Event::Tick);
+    let p = poll
+        .iter()
+        .find(|q| q.path == "/api/questions/question-1")
+        .unwrap();
+    app.handle(ok(p, 200, json!({
+        "id": "question-1", "state": "answered", "question": "Does logout revoke the token?",
+        "answer": {"ending": "answered", "text": "No: logout returns True.", "not_found": "",
+            "places": [
+                {"file": "app/session.py", "line": 6, "quote": "return True", "found": {"state": "at_line"}, "text": "    return True"},
+                {"file": "app/session.py", "line": 2, "quote": "SESSIONS.pop(token)", "found": {"state": "not_found"}, "text": ""}],
+            "checked": 1, "unchecked": 1,
+            "checks": [{"language": "python", "script": "print(1)", "run": {"ran": true, "exit_ok": true, "timed_out": false, "output": "still logged in: alice\n"}}],
+            "files_read": ["app/session.py"], "steps": [], "turns": 4, "withheld": 1, "corrected": true, "route": "ollama:x", "elapsed_ms": 3200}
+    })));
+    let t = text(&app);
+    assert!(t.contains("No: logout returns True."), "{t}");
+    assert!(
+        t.contains("1 of the 2 lines it rests on were found in the files:"),
+        "{t}"
+    );
+    assert!(
+        t.contains("app/session.py:6  found") && t.contains("      return True"),
+        "{t}"
+    );
+    assert!(
+        t.contains("app/session.py:2  NOT in the file; the agent wrote: SESSIONS.pop(token)"),
+        "{t}"
+    );
+    assert!(
+        t.contains(
+            "Check 1 (python), run in the sealed sandbox: ended without an error. It printed:"
+        ) && t.contains("still logged in: alice"),
+        "{t}"
+    );
+    assert!(
+        t.contains("1 file read, 4 steps, 3 s. 1 file was withheld from the agent."),
+        "{t}"
+    );
+    assert!(
+        app.handle(Event::Tick)
+            .iter()
+            .all(|q| !q.path.starts_with("/api/questions")),
+        "an answered question is not polled again"
+    );
+    // shown again on asking, and a bad name is refused before anything is sent
+    let r = enter(&mut app, "/explore show");
+    assert_eq!(r[0].path, "/api/questions/question-1");
+    assert!(enter(&mut app, "/explore show ../etc").is_empty());
+    assert!(
+        enter(&mut app, "/explore no colon here").is_empty()
+            && text(&app).contains("usage: /explore")
+    );
+}

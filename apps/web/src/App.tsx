@@ -23,6 +23,7 @@ const Documents = lazy(() => import("./screens/Documents").then((m) => ({ defaul
 const Meeting = lazy(() => import("./screens/Meeting").then((m) => ({ default: m.Meeting })));
 const BreakIt = lazy(() => import("./screens/BreakIt").then((m) => ({ default: m.BreakIt })));
 const CodeTask = lazy(() => import("./screens/CodeTask").then((m) => ({ default: m.CodeTask })));
+const Explore = lazy(() => import("./screens/Explore").then((m) => ({ default: m.Explore })));
 const Inbox = lazy(() => import("./screens/Inbox").then((m) => ({ default: m.Inbox })));
 import { notifier } from "./notifier";
 import { Palette, type PaletteItem } from "./components/Palette";
@@ -312,6 +313,7 @@ export function App() {
       { id: "projects", label: t("nav.projects"), group: t("palette.screens"), run: go("#/projects") },
       { id: "handoff", label: t("nav.handoff"), group: t("palette.screens"), run: go("#/handoff") },
       { id: "code", label: t("nav.code"), group: t("palette.screens"), run: go("#/code") },
+      { id: "explore", label: t("nav.explore"), group: t("palette.screens"), run: go("#/explore") },
       { id: "chat", label: t("nav.chat"), group: t("palette.screens"), run: go("#/chat") },
       { id: "roundtable", label: t("nav.roundtable"), group: t("palette.screens"), run: go("#/roundtable") },
       { id: "team", label: t("nav.team"), group: t("palette.screens"), run: go("#/team") },
@@ -365,6 +367,7 @@ export function App() {
               <a href="#/chat" class={hash() === "#/chat" ? "navlink active" : "navlink"}>{t("nav.chat")}</a>
               <a href="#/docs" class={hash() === "#/docs" ? "navlink active" : "navlink"}>{t("nav.docs")}</a>
               <a href="#/meeting" class={hash() === "#/meeting" ? "navlink active" : "navlink"}>{t("nav.meeting")}</a>
+              <a href="#/explore" class={hash() === "#/explore" ? "navlink active" : "navlink"}>{t("nav.explore")}</a>
               <a href="#/code" class={hash() === "#/code" ? "navlink active" : "navlink"}>{t("nav.code")}</a>
               <a href="#/roundtable" class={hash() === "#/roundtable" ? "navlink active" : "navlink"}>{t("nav.roundtable")}</a>
               <a href="#/team" class={hash().startsWith("#/team") ? "navlink active" : "navlink"}>{t("nav.team")}</a>
@@ -411,7 +414,7 @@ export function App() {
               <ErrorBoundary fallback={(_err, reset) => <section class="card stack" role="alert"><p>{t("app.crashed")}</p><button onClick={reset}>{t("app.reload")}</button></section>}>
               <Show when={config()}>
                 {(c) => (
-                  <Show when={hash() !== "#/memory" && hash() !== "#/instructions" && hash() !== "#/settings" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/roundtable" && !hash().startsWith("#/team") && hash() !== "#/docs" && hash() !== "#/meeting" && hash() !== "#/skills" && hash() !== "#/projects" && hash() !== "#/handoff" && hash() !== "#/break" && hash() !== "#/code" && hash() !== "#/inbox" && hash() !== "#/agent" && hash() !== "#/privacy"} fallback={hash() === "#/settings" ? <Settings /> : hash() === "#/instructions" ? <Instructions /> : hash() === "#/privacy" ? <Privacy /> : hash() === "#/agent" ? <AgentAccess /> : hash() === "#/inbox" ? <Inbox /> : hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/roundtable" ? <Roundtable /> : hash().startsWith("#/team") ? <Team id={hash().slice(7)} /> : hash() === "#/docs" ? <Documents /> : hash() === "#/meeting" ? <Meeting /> : hash() === "#/skills" ? <Skills /> : hash() === "#/projects" ? <Projects /> : hash() === "#/handoff" ? <Handoff /> : hash() === "#/break" ? <BreakIt /> : hash() === "#/code" ? <CodeTask /> : <Memory />}>
+                  <Show when={hash() !== "#/memory" && hash() !== "#/instructions" && hash() !== "#/settings" && hash() !== "#/activity" && hash() !== "#/chat" && hash() !== "#/roundtable" && !hash().startsWith("#/team") && hash() !== "#/docs" && hash() !== "#/meeting" && hash() !== "#/skills" && hash() !== "#/projects" && hash() !== "#/handoff" && hash() !== "#/break" && hash() !== "#/code" && hash() !== "#/explore" && hash() !== "#/inbox" && hash() !== "#/agent" && hash() !== "#/privacy"} fallback={hash() === "#/settings" ? <Settings /> : hash() === "#/instructions" ? <Instructions /> : hash() === "#/privacy" ? <Privacy /> : hash() === "#/agent" ? <AgentAccess /> : hash() === "#/inbox" ? <Inbox /> : hash() === "#/activity" ? <Activity /> : hash() === "#/chat" ? <Chat /> : hash() === "#/roundtable" ? <Roundtable /> : hash().startsWith("#/team") ? <Team id={hash().slice(7)} /> : hash() === "#/docs" ? <Documents /> : hash() === "#/meeting" ? <Meeting /> : hash() === "#/skills" ? <Skills /> : hash() === "#/projects" ? <Projects /> : hash() === "#/handoff" ? <Handoff /> : hash() === "#/break" ? <BreakIt /> : hash() === "#/code" ? <CodeTask /> : hash() === "#/explore" ? <Explore /> : <Memory />}>
                     <Show when={jobId()} fallback={<NewReview config={c()} onStarted={(id) => { void refresh(); location.hash = `#/job/${id}`; }} />}>
                     {(id) => <ReviewView id={id()} config={c()} onUpdate={() => void refresh()} />}
                     </Show>

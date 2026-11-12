@@ -19017,6 +19017,11 @@ struct TeamRunner {
     cut: std::sync::atomic::AtomicBool,
     /// When set, the model is said to be on confidential hardware elsewhere, not on this computer.
     away: std::sync::atomic::AtomicBool,
+    /// What the code reader's model does, step by step, and the question it was given.
+    reader: Mutex<Vec<kk_types::chat::ChatMessage>>,
+    reader_asked: Mutex<Vec<String>>,
+    /// When set, the model moves elsewhere as soon as the code reader has answered.
+    away_after_reader: std::sync::atomic::AtomicBool,
 }
 
 impl TeamRunner {
@@ -19053,6 +19058,38 @@ impl TeamRunner {
 static TEAM_HANDED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 impl JobRunner for TeamRunner {
+    fn project_question(
+        &self,
+        files: &[kk_review::import::ImportedFile],
+        question: &str,
+        depth: kk_review::explore::Depth,
+        _progress: &dyn Fn(&str),
+        stop: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<kk_service::questions::QuestionOutcome, String> {
+        self.reader_asked.lock().unwrap().push(question.to_string());
+        let (mut ws, _) = kk_review::code::Workspace::from_imported(files);
+        let route = kk_route::ScriptedRoute::new(
+            "scripted",
+            kk_route::RouteClass::DeviceOnly,
+            false,
+            self.reader.lock().unwrap().clone(),
+        );
+        let report =
+            kk_review::explore::run_question(&route, &mut ws, question, depth, None, &|| {
+                stop.load(std::sync::atomic::Ordering::SeqCst)
+            });
+        if self
+            .away_after_reader
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            self.away.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        Ok(kk_service::questions::QuestionOutcome {
+            report,
+            route: "ollama:x".into(),
+            elapsed_ms: 5,
+        })
+    }
     fn handoff_tool(&self) -> Option<String> {
         Some("Claude Code 9.9".into())
     }
@@ -19148,6 +19185,9 @@ fn team_runner(plan: &str) -> Arc<TeamRunner> {
         die: Default::default(),
         cut: Default::default(),
         away: Default::default(),
+        reader: Mutex::new(Vec::new()),
+        reader_asked: Mutex::new(Vec::new()),
+        away_after_reader: Default::default(),
     })
 }
 
@@ -23199,5 +23239,528 @@ fn sv274_a_review_makes_a_team_run_private_and_what_followed_it_is_not_handed_ou
             && !q.contains("Token not revoked")
             && q.contains("not handed to an agent outside"),
         "{q}"
+    );
+}
+
+/// A runner that answers a question about a project with the real question agent and a scripted model, the way the real
+/// runner does with the model on this computer.
+struct QuestionRunner {
+    script: Vec<kk_types::chat::ChatMessage>,
+    endpoint: String,
+    /// While set, the answer does not come until the question is stopped.
+    hold: std::sync::atomic::AtomicBool,
+}
+
+impl JobRunner for QuestionRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> kk_review::job::JobReport {
+        CannedRunner { confirm: true }.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        json!({"id": "ollama:x", "class": "device_only", "model": "x", "simulated": false, "endpoint": self.endpoint})
+    }
+    fn project_question(
+        &self,
+        files: &[kk_review::import::ImportedFile],
+        question: &str,
+        depth: kk_review::explore::Depth,
+        progress: &dyn Fn(&str),
+        stop: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<kk_service::questions::QuestionOutcome, String> {
+        while self.hold.load(std::sync::atomic::Ordering::SeqCst)
+            && !stop.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let (mut ws, _) = kk_review::code::Workspace::from_imported(files);
+        progress("reading");
+        let route = kk_route::ScriptedRoute::new(
+            "scripted",
+            kk_route::RouteClass::DeviceOnly,
+            false,
+            self.script.clone(),
+        );
+        let report =
+            kk_review::explore::run_question(&route, &mut ws, question, depth, None, &|| {
+                stop.load(std::sync::atomic::Ordering::SeqCst)
+            });
+        Ok(kk_service::questions::QuestionOutcome {
+            report,
+            route: "ollama:x".into(),
+            elapsed_ms: 5,
+        })
+    }
+}
+
+fn question_calls(list: &[(&str, Value)]) -> kk_types::chat::ChatMessage {
+    let mut m = kk_types::chat::ChatMessage::new("assistant", "");
+    m.tool_calls = list
+        .iter()
+        .enumerate()
+        .map(|(i, (n, a))| kk_types::chat::ToolCall {
+            id: format!("c{i}"),
+            name: n.to_string(),
+            arguments: a.clone(),
+        })
+        .collect();
+    m
+}
+
+fn wait_question(w: &Web, id: &str) -> Value {
+    for _ in 0..400 {
+        let (_, v) = w.get(&format!("/api/questions/{id}"));
+        if v["state"] != "running" {
+            return v;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    panic!("the question was not answered");
+}
+
+#[test]
+fn sv275_a_question_about_a_project_is_answered_with_its_places_checked_and_the_withheld_file_unread(
+) {
+    let (root, _repo) = repo_copy("question-flow");
+    let proj = root.join("proj");
+    std::fs::create_dir_all(proj.join("app")).unwrap();
+    std::fs::write(proj.join("app/session.py"), "SESSIONS = {}\n\n\ndef logout(token):\n    # the token is forgotten here\n    return True\n").unwrap();
+    std::fs::write(
+        proj.join(".env"),
+        format!("API_TOKEN={}{}\n", "sk_li", "ve_abcdefghijklmnop0123"),
+    )
+    .unwrap();
+    let runner = Arc::new(QuestionRunner {
+        script: vec![
+            question_calls(&[("read_file", json!({"path": ".env"}))]),
+            question_calls(&[("read_file", json!({"path": "app/session.py"}))]),
+            question_calls(&[(
+                "answer",
+                json!({"answer": "No: logout returns True and leaves the token in SESSIONS.", "places": [
+                {"file": "app/session.py", "line": 6, "text": "return True"},
+                {"file": "app/session.py", "line": 2, "text": "SESSIONS.pop(token)"}]}),
+            )]),
+            question_calls(&[(
+                "answer",
+                json!({"answer": "No: logout returns True and leaves the token in SESSIONS.", "places": [
+                {"file": "app/session.py", "line": 6, "text": "return True"},
+                {"file": "app/session.py", "line": 2, "text": "SESSIONS.pop(token)"}]}),
+            )]),
+        ],
+        endpoint: "http://127.0.0.1:11434".into(),
+        hold: Default::default(),
+    });
+    let svc = Service::new(&root.join("data"), vec![root.clone()], runner.clone(), true).unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let folder = proj.to_string_lossy().to_string();
+
+    // refused before anything runs
+    assert_eq!(
+        Web::new(c.addr)
+            .post(
+                "/api/questions",
+                json!({"folder": folder, "question": "x?"})
+            )
+            .0,
+        401
+    );
+    for (body, code) in [
+        (json!({"folder": folder, "question": "  "}), "BAD_QUESTION"),
+        (
+            json!({"folder": folder, "question": format!("is {}{} used?", "sk_li", "ve_abcdefghijklmnop0123")}),
+            "SECRET_IN_QUESTION",
+        ),
+        (
+            json!({"folder": folder, "question": "the password for the staging router is Blue42Harbor; where is it used?"}),
+            "SECRET_IN_QUESTION",
+        ),
+        (
+            json!({"folder": folder, "question": "ok?", "depth": "forever"}),
+            "BAD_DEPTH",
+        ),
+        (json!({"folder": "/etc", "question": "ok?"}), "NOT_ALLOWED"),
+        (
+            json!({"folder": root.join("data").to_string_lossy(), "question": "what keys are here?"}),
+            "NOT_ALLOWED",
+        ),
+    ] {
+        let (s, r) = w.post("/api/questions", body.clone());
+        assert_eq!(r["error"]["code"], code, "{body}: {s} {r}");
+    }
+    assert_eq!(w.get("/api/questions").1["questions"], json!([]));
+
+    // answered
+    let (s, r) = w.post("/api/questions", json!({"folder": folder, "question": "Does logout revoke the session token?", "depth": "quick"}));
+    assert_eq!(s, 202, "{r}");
+    let id = r["id"].as_str().unwrap().to_string();
+    let v = wait_question(&w, &id);
+    assert_eq!(v["state"], "answered", "{v}");
+    let a = &v["answer"];
+    assert_eq!(
+        (
+            a["ending"].as_str(),
+            a["checked"].as_i64(),
+            a["unchecked"].as_i64()
+        ),
+        (Some("answered"), Some(1), Some(1)),
+        "{v}"
+    );
+    assert_eq!(
+        a["places"][0]["text"], "    return True",
+        "the line as the file has it"
+    );
+    assert_eq!(a["places"][1]["found"]["state"], "not_found");
+    assert_eq!(
+        a["files_read"],
+        json!(["app/session.py"]),
+        "the .env read was refused"
+    );
+    assert_eq!(a["withheld"], 1);
+    assert!(
+        !v.to_string().contains("ve_abcdefghijklmnop0123"),
+        "the key is nowhere in what is kept or shown"
+    );
+    let listed = w.get("/api/questions").1;
+    assert_eq!(
+        (
+            listed["questions"][0]["id"].as_str(),
+            listed["questions"][0]["checked"].as_i64()
+        ),
+        (Some(id.as_str()), Some(1))
+    );
+    // kept across a restart
+    drop(c);
+    drop(svc);
+    let svc = Service::new(&root.join("data"), vec![root.clone()], runner.clone(), true).unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    assert_eq!(
+        w.get(&format!("/api/questions/{id}")).1["answer"]["checked"],
+        1
+    );
+
+    // one at a time, listed as work, stoppable; a stopped question offers no answer
+    runner.hold.store(true, std::sync::atomic::Ordering::SeqCst);
+    let id2 = w
+        .post(
+            "/api/questions",
+            json!({"folder": folder, "question": "Where are tokens kept?"}),
+        )
+        .1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (s, r) = w.post(
+        "/api/questions",
+        json!({"folder": folder, "question": "And another?"}),
+    );
+    assert_eq!((s, r["error"]["code"].as_str()), (429, Some("BUSY")));
+    let work = w.get("/api/work").1;
+    assert!(
+        work["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["kind"] == "question" && i["id"] == id2.as_str() && i["can_stop"] == true),
+        "{work}"
+    );
+    assert_eq!(
+        w.post(&format!("/api/questions/{id2}/forget"), json!({})).1["error"]["code"],
+        "RUNNING"
+    );
+    assert_eq!(
+        w.post(&format!("/api/questions/{id2}/stop"), json!({})).0,
+        200
+    );
+    let v = wait_question(&w, &id2);
+    assert_eq!(
+        (v["state"].as_str(), v["failure"].as_str()),
+        (Some("failed"), Some("stopped by you")),
+        "{v}"
+    );
+    assert!(v.get("answer").is_none());
+    runner
+        .hold
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    // forgotten
+    assert_eq!(
+        w.post(&format!("/api/questions/{id}/forget"), json!({})).1["forgotten"],
+        true
+    );
+    assert_eq!(w.get(&format!("/api/questions/{id}")).0, 404);
+}
+
+#[test]
+fn sv276_a_question_is_refused_when_the_model_is_not_on_this_computer() {
+    let (root, _repo) = repo_copy("question-away");
+    let runner = Arc::new(QuestionRunner {
+        script: Vec::new(),
+        endpoint: "https://cloud-api.near.ai/v1".into(),
+        hold: Default::default(),
+    });
+    let svc = Service::new(&root.join("data"), vec![root.clone()], runner, true).unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (s, r) = w.post(
+        "/api/questions",
+        json!({"folder": root.join("repo").to_string_lossy(), "question": "Where is login?"}),
+    );
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (403, Some("NOT_LOCAL")),
+        "{r}"
+    );
+}
+
+#[test]
+fn sv277_a_team_run_hands_a_task_to_the_code_reader_whose_checked_answer_goes_on_and_never_outside()
+{
+    const PLAN: &str = "1 | project-reader | after: - | Find whether logout revokes the session token (reader test).\n2 | plain-writer | after: 1 | Explain the answer for the board.\n3 | claude-code | after: 2 | Write a fix plan (reader test).\n";
+    let (root, _repo) = repo_copy("team-reader");
+    let proj = root.join("proj");
+    std::fs::create_dir_all(proj.join("app")).unwrap();
+    std::fs::write(proj.join("app/session.py"), "SESSIONS = {}\n\n\ndef logout(token):\n    # the token is forgotten here\n    return True\n").unwrap();
+    std::fs::write(
+        proj.join(".env"),
+        format!("API_TOKEN={}{}\n", "sk_li", "ve_abcdefghijklmnop0123"),
+    )
+    .unwrap();
+    let runner = team_runner(PLAN);
+    let call = |name: &str, args: Value| {
+        let mut m = kk_types::chat::ChatMessage::new("assistant", "");
+        m.tool_calls = vec![kk_types::chat::ToolCall {
+            id: "r1".into(),
+            name: name.into(),
+            arguments: args,
+        }];
+        m
+    };
+    *runner.reader.lock().unwrap() = vec![
+        call("read_file", json!({"path": "app/session.py"})),
+        call(
+            "answer",
+            json!({"answer": "No: logout returns True and leaves the token in SESSIONS.", "places": [{"file": "app/session.py", "line": 6, "text": "return True"}, {"file": "app/session.py", "line": 2, "text": "SESSIONS.pop(token)"}]}),
+        ),
+        call(
+            "answer",
+            json!({"answer": "No: logout returns True and leaves the token in SESSIONS.", "places": [{"file": "app/session.py", "line": 6, "text": "return True"}, {"file": "app/session.py", "line": 2, "text": "SESSIONS.pop(token)"}]}),
+        ),
+    ];
+    let (_c, w) = team_service(&root, runner.clone());
+    // the seat is offered with the other workers, and needs a project with a folder
+    let roster = w.get("/api/experts").1;
+    assert!(
+        roster["workers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["id"] == "project-reader" && x["name"] == "Code reader"),
+        "{roster}"
+    );
+    let (s, r) = w.post("/api/team", json!({"goal": "Check logout (reader test).", "experts": ["project-reader", "plain-writer"]}));
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (400, Some("NO_PROJECT_FOLDER")),
+        "{r}"
+    );
+    w.post(
+        "/api/projects",
+        json!({"name": "kestrel", "folder": proj.to_string_lossy()}),
+    );
+    let (s, v) = w.post("/api/team", json!({"goal": "Check logout (reader test).", "experts": ["project-reader", "plain-writer", "claude-code"], "project": "kestrel"}));
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(&w, &id, &["waiting"]);
+    assert_eq!(team_states(&v), ["done", "done", "needs_input"], "{v}");
+    let result = v["tasks"][0]["result"].as_str().unwrap();
+    assert!(result.starts_with("No: logout returns True"), "{result}");
+    assert!(
+        result.contains("1 of 2 found")
+            && result.contains("app/session.py:6: return True")
+            && result.contains("app/session.py:2: NOT in the file"),
+        "{result}"
+    );
+    assert!(!v.to_string().contains("ve_abcdefghijklmnop0123"));
+    // the reader was asked the task, not the owner's notes; the writer after it was handed its checked answer
+    assert!(runner.reader_asked.lock().unwrap()[0]
+        .contains("Find whether logout revokes the session token"));
+    // the hand-over text for the coding agent outside carries neither the reader's answer nor the writer's, which read it
+    let q = v["tasks"][2]["question"].as_str().unwrap();
+    assert!(
+        q.starts_with("[hand-over]")
+            && !q.contains("return True")
+            && !q.contains("SESSIONS")
+            && q.contains("not handed to an agent outside"),
+        "{q}"
+    );
+    // having read the project, the run does not go on with a model elsewhere
+    runner.away.store(true, std::sync::atomic::Ordering::SeqCst);
+    w.post(
+        &format!("/api/team/{id}/answer"),
+        json!({"task": 3, "answer": "no"}),
+    );
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(
+        &w,
+        &id,
+        &[
+            "stopped",
+            "waiting",
+            "interrupted",
+            "done",
+            "partial",
+            "failed",
+        ],
+    );
+    assert!(
+        v["final_note"]
+            .as_str()
+            .unwrap_or("")
+            .contains("more private model"),
+        "{v}"
+    );
+    runner
+        .away
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    // with the model elsewhere the reader does not read the project at all
+    let asked = runner.reader_asked.lock().unwrap().len();
+    runner.away.store(true, std::sync::atomic::Ordering::SeqCst);
+    let (_, v) = w.post("/api/team", json!({"goal": "Check logout again (reader test).", "experts": ["project-reader", "plain-writer", "claude-code"], "project": "kestrel"}));
+    let id2 = v["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{v}"))
+        .to_string();
+    w.post(&format!("/api/team/{id2}/start"), json!({}));
+    let v = team_wait(
+        &w,
+        &id2,
+        &[
+            "stopped",
+            "waiting",
+            "interrupted",
+            "done",
+            "partial",
+            "failed",
+        ],
+    );
+    assert_eq!(v["tasks"][0]["state"], "failed", "{v}");
+    assert!(
+        v["tasks"][0]["note"]
+            .as_str()
+            .unwrap()
+            .contains("not on this computer"),
+        "{v}"
+    );
+    assert_eq!(
+        runner.reader_asked.lock().unwrap().len(),
+        asked,
+        "the reader was not asked"
+    );
+}
+
+#[test]
+fn sv278_a_run_that_began_elsewhere_and_then_read_the_project_on_this_computer_does_not_send_on_what_it_read(
+) {
+    use std::sync::atomic::Ordering::SeqCst;
+    const PLAN: &str = "1 | plain-writer | after: - | Say what logout should do (switch test).\n2 | project-reader | after: 1 | Find whether logout revokes the token (switch test).\n3 | plain-writer | after: 2 | Explain it for the board (switch test).\n";
+    let (root, _repo) = repo_copy("team-reader-switch");
+    let proj = root.join("proj");
+    std::fs::create_dir_all(proj.join("app")).unwrap();
+    std::fs::write(
+        proj.join("app/session.py"),
+        "def logout(token):\n    return True\n",
+    )
+    .unwrap();
+    let runner = team_runner(PLAN);
+    let call = |name: &str, args: Value| {
+        let mut m = kk_types::chat::ChatMessage::new("assistant", "");
+        m.tool_calls = vec![kk_types::chat::ToolCall {
+            id: "r1".into(),
+            name: name.into(),
+            arguments: args,
+        }];
+        m
+    };
+    *runner.reader.lock().unwrap() = vec![
+        call("read_file", json!({"path": "app/session.py"})),
+        call(
+            "answer",
+            json!({"answer": "It returns True and keeps the token.", "places": [{"file": "app/session.py", "line": 2, "text": "return True"}]}),
+        ),
+    ];
+    let (_c, w) = team_service(&root, runner.clone());
+    w.post(
+        "/api/projects",
+        json!({"name": "kestrel", "folder": proj.to_string_lossy()}),
+    );
+    // planned and begun with the model elsewhere; it moves here before the reader, and away again right after it
+    runner.away.store(true, SeqCst);
+    runner.hold.store(true, SeqCst);
+    let (_, v) = w.post("/api/team", json!({"goal": "Check logout (switch test).", "experts": ["plain-writer", "project-reader"], "project": "kestrel"}));
+    let id = v["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{v}"))
+        .to_string();
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let started = std::time::Instant::now();
+    while w.get(&format!("/api/team/{id}")).1["tasks"][0]["state"] != "running" {
+        assert!(started.elapsed() < Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    runner.away.store(false, SeqCst);
+    runner.away_after_reader.store(true, SeqCst);
+    runner.hold.store(false, SeqCst);
+    let v = team_wait(
+        &w,
+        &id,
+        &[
+            "stopped",
+            "waiting",
+            "interrupted",
+            "done",
+            "partial",
+            "failed",
+        ],
+    );
+    assert_eq!(
+        v["tasks"][1]["state"], "done",
+        "the reader answered on this computer: {v}"
+    );
+    assert_ne!(
+        v["tasks"][2]["state"], "done",
+        "what it read was not sent on to the model elsewhere: {v}"
+    );
+    let leaked = runner
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|m| m.iter().any(|x| x.content.contains("keeps the token")));
+    assert!(
+        !leaked,
+        "no question holding the reader's answer reached a model"
     );
 }

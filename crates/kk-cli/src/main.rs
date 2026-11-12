@@ -53,6 +53,8 @@ Usage:
   kaku code DIR TASK... [--json]                          a local model changes the project in memory, its tests run in the sandbox; shows the patch, applies only when you say
   kaku code show|apply|undo ID, kaku code list              read, apply (--digest from the patch) or undo a coding task
   kaku jobs [--json] | kaku findings JOB [--json] | kaku follow JOB [--timeout S]   list reviews, read what one found, watch one until it ends
+  kaku explore DIR QUESTION... [--depth quick|normal|thorough] [--json]   an agent reads the project on this computer and answers; every line it rests on is checked (exit 3 if one is not found)
+  kaku explore show ID | list | forget ID          read, list or forget questions about projects
   kaku ask QUESTION --folder DIR [--json]   ask about the documents in a folder; every quote is checked (exit 3 if any is not found)
   kaku chat MESSAGE|- [--json] [--keep | --session ID]   one message to the private assistant; nothing is kept unless --keep starts a kept conversation or --session continues one
   kaku team plan GOAL [--experts ID,ID] | list | show ID | start ID [--wait] | stop ID | answer ID TASK TEXT | delete ID   a lead splits a goal into tasks for experts; nothing runs until you start the plan
@@ -137,6 +139,7 @@ fn main() -> ExitCode {
                 | "chat"
                 | "roundtable"
                 | "team"
+                | "explore"
         )
         && args[1..].iter().any(|a| a == "--help" || a == "-h");
     let first = if wants_help {
@@ -180,6 +183,7 @@ fn main() -> ExitCode {
         Some("follow") => script::follow(&args),
         Some("ask") => script::ask(&args),
         Some("code") => script::code(&args),
+        Some("explore") => script::explore(&args),
         Some("chat") => script::chat(&args),
         Some("roundtable") => script::roundtable(&args),
         Some("team") => script::team(&args),

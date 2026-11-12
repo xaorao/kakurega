@@ -9,6 +9,7 @@ pub mod experts;
 mod extraction;
 mod fixfiles;
 pub mod keys;
+pub mod questions;
 pub mod report;
 pub mod service;
 pub mod snapshot;

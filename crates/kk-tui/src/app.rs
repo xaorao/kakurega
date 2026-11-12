@@ -301,6 +301,9 @@ enum Intent {
     CodeStart,
     CodePoll(String),
     CodeShow,
+    ExploreStart,
+    ExplorePoll(String),
+    ExploreShow,
     CodeApply(String),
     CodeUndo(String),
 }
@@ -378,6 +381,10 @@ pub struct App {
     inflight_polls: BTreeSet<String>,
     /// The coding task being followed, whether a read of it is in flight, and how many progress lines were shown.
     code_watch: Option<(String, bool, usize)>,
+    /// The question being answered: its id, whether a poll is in flight, and how many progress lines were shown.
+    explore_watch: Option<(String, bool, usize)>,
+    /// The last question shown, for `/explore show`.
+    explore_shown: Option<String>,
     /// The last coding task whose patch was shown, with the digest shown.
     code_shown: Option<(String, String)>,
     approval_watch_inflight: bool,
@@ -540,6 +547,8 @@ impl App {
             watching: BTreeMap::new(),
             inflight_polls: BTreeSet::new(),
             code_watch: None,
+            explore_watch: None,
+            explore_shown: None,
             code_shown: None,
             approval_watch_inflight: false,
             chat_history: Vec::new(),
@@ -662,6 +671,144 @@ impl App {
     }
 
     /// A coding task's result: how it ended, the kernel's own test run, concerns, and the patch, file by file.
+    /// A question and its answer: the agent's words, then each line it rests on with what the file holds there, then the
+    /// scripts run and what they printed. A line that is not in the file is shown as the agent's words, never as code.
+    fn show_question(&mut self, v: &Value) {
+        let id = clean(v["id"].as_str().unwrap_or(""));
+        self.explore_shown = Some(id.clone());
+        let title = format!("{id}: {}", clean(v["question"].as_str().unwrap_or("")));
+        if v["state"] == "failed" {
+            self.push(
+                Kind::Error,
+                Some(&title),
+                vec![format!(
+                    "No answer: {}",
+                    clean(v["failure"].as_str().unwrap_or(""))
+                )],
+            );
+            return;
+        }
+        let a = &v["answer"];
+        let mut lines: Vec<String> = Vec::new();
+        let ending = a["ending"].as_str().unwrap_or("");
+        if ending != "answered" {
+            lines.extend(text_lines(&match ending {
+                "unchecked" => "The agent answered without naming the lines its answer rests on, so nothing in it was checked.".to_string(),
+                "turn_limit" => "The agent used all its steps without answering. Ask again more narrowly, or with thorough.".to_string(),
+                "stuck" => "The agent repeated the same step and was stopped.".to_string(),
+                "stopped" => "Stopped by you.".to_string(),
+                _ => "The model stopped answering part way.".to_string(),
+            }));
+        }
+        if let Some(text) = a["text"].as_str().filter(|t| !t.is_empty()) {
+            lines.push("The agent's answer:".into());
+            lines.extend(text_lines(text).into_iter().map(|l| format!("  {l}")));
+        }
+        let places = a["places"].as_array().cloned().unwrap_or_default();
+        if places.is_empty() {
+            lines.push("It names no line it rests on, so nothing in it was checked.".into());
+        } else {
+            let found = a["checked"].as_u64().unwrap_or(0);
+            lines.push(if places.len() == 1 {
+                format!("{found} of the 1 line it rests on was found in the file:")
+            } else {
+                format!(
+                    "{found} of the {} lines it rests on were found in the files:",
+                    places.len()
+                )
+            });
+            lines.push(
+                "(A line found shows the answer rests on real code, not that the answer is right.)"
+                    .into(),
+            );
+            for p in &places {
+                let file = clean(p["file"].as_str().unwrap_or("?"));
+                let state = p["found"]["state"].as_str().unwrap_or("");
+                let at = p["found"]["line"]
+                    .as_u64()
+                    .unwrap_or(p["line"].as_u64().unwrap_or(0));
+                match state {
+                    "at_line" | "moved" => {
+                        lines.push(format!(
+                            "  {file}:{at}  found{}",
+                            if state == "moved" {
+                                " (at another line than cited)"
+                            } else {
+                                ""
+                            }
+                        ));
+                        for l in p["text"].as_str().unwrap_or("").lines().take(6) {
+                            lines.push(format!("      {}", clean(l)));
+                        }
+                    }
+                    other => {
+                        let why = match other {
+                            "not_found" => "NOT in the file",
+                            "too_short" => "too short to check",
+                            "withheld" => "a withheld file the agent could not read",
+                            _ => "no such file",
+                        };
+                        lines.push(format!(
+                            "  {file}:{}  {why}; the agent wrote: {}",
+                            p["line"],
+                            clean(p["quote"].as_str().unwrap_or(""))
+                        ));
+                    }
+                }
+            }
+        }
+        if let Some(nf) = a["not_found"].as_str().filter(|t| !t.is_empty()) {
+            lines.push(format!("What it could not find: {}", clean(nf)));
+        }
+        for (i, k) in a["checks"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+        {
+            let run = &k["run"];
+            let how = if run["ran"] != true {
+                "could not be run"
+            } else if run["timed_out"] == true {
+                "stopped after 30 seconds"
+            } else if run["exit_ok"] == true {
+                "ended without an error"
+            } else {
+                "ended with an error"
+            };
+            lines.push(format!(
+                "Check {} ({}), run in the sealed sandbox: {how}. It printed:",
+                i + 1,
+                clean(k["language"].as_str().unwrap_or(""))
+            ));
+            for l in run["output"].as_str().unwrap_or("").lines().take(12) {
+                lines.push(format!("      {}", clean(l)));
+            }
+        }
+        let read = a["files_read"].as_array().map_or(0, Vec::len);
+        let withheld = a["withheld"].as_u64().unwrap_or(0);
+        lines.push(counted(&format!(
+            "{read} file(s) read, {} step(s), {} s.{}",
+            a["turns"].as_u64().unwrap_or(0),
+            (a["elapsed_ms"].as_u64().unwrap_or(0) / 1000).max(1),
+            if withheld > 0 {
+                counted(&format!(
+                    " {withheld} file(s) were withheld from the agent."
+                ))
+            } else {
+                String::new()
+            }
+        )));
+        let kind =
+            if ending == "answered" && a["unchecked"].as_u64() == Some(0) && !places.is_empty() {
+                Kind::Ok
+            } else {
+                Kind::Info
+            };
+        self.push(kind, Some(&title), lines);
+    }
+
     fn show_code(&mut self, v: &Value) {
         let id = clean(v["id"].as_str().unwrap_or(""));
         let state = v["state"].as_str().unwrap_or("");
@@ -1540,6 +1687,20 @@ impl App {
                         *inflight = true;
                         let path = format!("/api/team/{id}");
                         out.push(self.req(Intent::TeamPoll, false, Method::Get, &path, None));
+                    }
+                }
+                if let Some((id, inflight, _)) = &mut self.explore_watch {
+                    if !*inflight {
+                        *inflight = true;
+                        let path = format!("/api/questions/{id}");
+                        let id = id.clone();
+                        out.push(self.req(
+                            Intent::ExplorePoll(id),
+                            false,
+                            Method::Get,
+                            &path,
+                            None,
+                        ));
                     }
                 }
                 if let Some((id, inflight, _)) = &mut self.code_watch {
@@ -2791,6 +2952,54 @@ impl App {
                 &format!("/api/memories/{id}/{action}"),
                 Some(json!({})),
             )],
+            Command::Explore {
+                depth,
+                folder,
+                question,
+            } => {
+                if self.explore_watch.is_some() {
+                    self.say(
+                        Kind::Warn,
+                        "A question is still being answered; it is shown here when it finishes.",
+                    );
+                    return Vec::new();
+                }
+                let path = if folder.starts_with('/') {
+                    folder
+                } else {
+                    match self.roots.first() {
+                        Some(r) => format!(
+                            "{}/{}",
+                            r.trim_end_matches('/'),
+                            folder.trim_start_matches("./")
+                        ),
+                        None => folder,
+                    }
+                };
+                vec![self.req(
+                    Intent::ExploreStart,
+                    false,
+                    Method::Post,
+                    "/api/questions",
+                    Some(json!({"folder": path, "question": question, "depth": depth})),
+                )]
+            }
+            Command::ExploreShow(id) => {
+                let Some(id) = id.or_else(|| self.explore_shown.clone()) else {
+                    self.say(
+                        Kind::Warn,
+                        "No question yet. Ask one with /explore FOLDER : QUESTION.",
+                    );
+                    return Vec::new();
+                };
+                vec![self.req(
+                    Intent::ExploreShow,
+                    false,
+                    Method::Get,
+                    &format!("/api/questions/{id}"),
+                    None,
+                )]
+            }
             Command::Code { folder, task } => {
                 if self.code_watch.is_some() {
                     self.say(
@@ -4775,6 +4984,51 @@ impl App {
                         Some(&format!("Fix {n}")),
                         lines,
                     );
+                }
+                Vec::new()
+            }
+            Intent::ExploreStart => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let id = clean(body["id"].as_str().unwrap_or(""));
+                self.say(Kind::Info, format!("{id}: the agent reads the project on this computer. Nothing is changed and nothing leaves."));
+                self.explore_watch = Some((id, false, 0));
+                Vec::new()
+            }
+            Intent::ExplorePoll(id) => {
+                if !ok {
+                    self.explore_watch = None;
+                    self.say(
+                        Kind::Error,
+                        format!("{}: {}", clean(&id), err_text(status, &body)),
+                    );
+                    return Vec::new();
+                }
+                let shown = self.explore_watch.as_ref().map(|w| w.2).unwrap_or(0);
+                let progress = body["progress"].as_array().cloned().unwrap_or_default();
+                if !self.quiet {
+                    for p in progress.iter().skip(shown) {
+                        self.say(
+                            Kind::Info,
+                            format!("{}: {}", clean(&id), clean(p.as_str().unwrap_or(""))),
+                        );
+                    }
+                }
+                if body["state"] == "running" {
+                    self.explore_watch = Some((id, false, progress.len()));
+                } else {
+                    self.explore_watch = None;
+                    self.show_question(&body);
+                }
+                Vec::new()
+            }
+            Intent::ExploreShow => {
+                if ok {
+                    self.show_question(&body);
+                } else {
+                    self.say(Kind::Error, err_text(status, &body));
                 }
                 Vec::new()
             }

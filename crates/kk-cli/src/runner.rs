@@ -783,6 +783,60 @@ cut_short: false,
         })
     }
 
+    fn project_question(
+        &self,
+        files: &[kk_review::import::ImportedFile],
+        question: &str,
+        depth: kk_review::explore::Depth,
+        progress: &dyn Fn(&str),
+        stop: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<kk_service::questions::QuestionOutcome, String> {
+        use kk_review::code::Workspace;
+        use kk_review::explore::{run_question, SandboxScripts};
+        let (mut ws, left) = Workspace::from_imported(files);
+        // the scripted test model works through the same agent with fixed steps: it lists, reads the first source file,
+        // runs one script, and answers resting on that file's first line and on one line it made up
+        let route: Box<dyn kk_route::Route> = if self.scripted.is_some() {
+            Box::new(scripted_question_route(&ws))
+        } else {
+            Stoppable::wrap(Box::new(self.route().map_err(model_failure)?), stop)
+        };
+        progress(&match left.restricted {
+            0 => format!("the model reads {} files", ws.files().len()),
+            1 => format!("the model reads {} files; 1 is withheld because it holds secrets or private data", ws.files().len()),
+            n => format!("the model reads {} files; {n} are withheld because they hold secrets or private data", ws.files().len()),
+        });
+        let scripts = SandboxScripts {
+            transport: &self.transport,
+            scratch: &self.scratch,
+            python: "/usr/bin/python3".into(),
+            node: sandbox_node(),
+        };
+        let started = std::time::Instant::now();
+        let asked_to_stop = || stop.load(std::sync::atomic::Ordering::SeqCst);
+        let report = run_question(
+            route.as_ref(),
+            &mut ws,
+            question,
+            depth,
+            Some(&scripts),
+            &asked_to_stop,
+        );
+        if asked_to_stop() {
+            return Err(kk_review::job::STOPPED_BY_OWNER.into());
+        }
+        progress("the places the answer rests on were checked against the files");
+        Ok(kk_service::questions::QuestionOutcome {
+            report,
+            route: if self.scripted.is_some() {
+                "scripted-test-model".into()
+            } else {
+                format!("ollama:{}", self.model_name())
+            },
+            elapsed_ms: started.elapsed().as_millis() as u64,
+        })
+    }
+
     fn local_models(&self) -> Vec<String> {
         if self.scripted.is_some() {
             return Vec::new();
@@ -1459,6 +1513,57 @@ mod live {
 /// The Node.js the sandbox runs JavaScript and TypeScript checks with: the path in `KAKU_NODE` when it is a plain absolute path
 /// (as seen inside the sandbox, where `/usr` is visible read-only), else `/usr/bin/node`. A distribution's Node is often built
 /// without the TypeScript parser; the official build from nodejs.org copied to `/usr/local/bin/node` has it.
+/// The fixed steps the scripted test model takes for a question about a project (see `project_question`).
+fn scripted_question_route(ws: &kk_review::code::Workspace) -> kk_route::ScriptedRoute {
+    use kk_types::chat::{ChatMessage, ToolCall};
+    let call = |name: &str, args: serde_json::Value| {
+        let mut m = ChatMessage::new("assistant", "");
+        m.tool_calls = vec![ToolCall {
+            id: format!("scripted-{name}"),
+            name: name.into(),
+            arguments: args,
+        }];
+        m
+    };
+    let source = ws
+        .files()
+        .iter()
+        .find(|(p, t)| p.ends_with(".py") && t.lines().any(|l| l.trim().chars().count() >= 8))
+        .or_else(|| {
+            ws.files()
+                .iter()
+                .find(|(_, t)| t.lines().any(|l| l.trim().chars().count() >= 8))
+        });
+    let (path, line, text) = source
+        .and_then(|(p, t)| {
+            t.lines()
+                .enumerate()
+                .find(|(_, l)| l.trim().chars().count() >= 8)
+                .map(|(i, l)| (p.clone(), i + 1, l.trim().to_string()))
+        })
+        .unwrap_or_default();
+    let places = serde_json::json!([
+        {"file": path, "line": line, "text": text},
+        {"file": path, "line": line + 1, "text": "this line was invented by the scripted test model"}
+    ]);
+    let answer = serde_json::json!({"answer": "Scripted test answer: it rests on the first line of the file named below. This is not a real model.", "places": places, "not_found": "nothing; this is a scripted test model"});
+    kk_route::ScriptedRoute::new(
+        "scripted-test-model",
+        kk_route::RouteClass::DeviceOnly,
+        true,
+        vec![
+            call("list_files", serde_json::json!({})),
+            call("read_file", serde_json::json!({"path": path})),
+            call(
+                "run_check",
+                serde_json::json!({"language": "python", "script": "import os\nseen = [f for _, _, fs in os.walk('.') for f in fs]\nprint(len(seen), 'files visible to the script;', 'a .env file is visible' if '.env' in seen else 'no .env file is visible')\n"}),
+            ),
+            call("answer", answer.clone()),
+            call("answer", answer),
+        ],
+    )
+}
+
 pub fn sandbox_node() -> String {
     choose_node(std::env::var("KAKU_NODE").ok())
 }

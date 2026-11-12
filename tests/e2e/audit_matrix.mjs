@@ -57,7 +57,7 @@ const browser = await chromium.launch({ executablePath: chrome, headless: true }
 const routes = [
   ["new-review", "#/"], ["waiting", "#/inbox"], ["documents", "#/docs"], ["chat", "#/chat"], ["memory", "#/memory"],
   ["instructions", "#/instructions"], ["skills", "#/skills"], ["meeting", "#/meeting"], ["break", "#/break"], ["settings", "#/settings"], ["privacy", "#/privacy"], ["agent-access", "#/agent"], ["activity", "#/activity"],
-  ["projects", "#/projects"], ["code", "#/code"], ["roundtable", "#/roundtable"], ["team", "#/team"], ["handoff", "#/handoff"],
+  ["projects", "#/projects"], ["code", "#/code"], ["explore", "#/explore"], ["roundtable", "#/roundtable"], ["team", "#/team"], ["handoff", "#/handoff"],
   ...(jobId ? [["review", `#/job/${jobId}`]] : []),
 ];
 const viewports = quick ? [["desktop", 1280, 860]] : [["desktop", 1280, 860], ["phone", 390, 844]];
