@@ -340,7 +340,8 @@ export function Methods() {
   const [data, { refetch }] = createResource(() => api.methods().catch(() => null));
   const [status, setStatus] = createSignal("");
   const [writing, setWriting] = createSignal(false);
-  const changed = (message: string) => { setStatus(message); void refetch(); };
+  // said once the list shows the change
+  const changed = (message: string) => { void (async () => { await refetch(); setStatus(message); })(); };
   return (
     <div class="card stack" aria-labelledby="h-met">
       <h2 id="h-met">{t("met.heading")}</h2>

@@ -42,6 +42,7 @@ await page.goto(origin + "/#/skills");
 await page.getByRole("heading", { name: "Methods" }).waitFor();
 const shelf = page.locator("#bundled-methods");
 const items = shelf.locator("li[data-bundled]");
+await items.first().waitFor();
 check((await items.count()) >= 15 && (await shelf.locator(".rt-group h4").count()) >= 4, "the skills that come with the program are listed by group");
 check(await shelf.isVisible() && (await page.locator("#met-new-name").count()) === 0, "they are in view as a gallery, and no empty form is open");
 check(await page.getByText("No methods yet.").isVisible(), "none of them is in the owner's list until added");

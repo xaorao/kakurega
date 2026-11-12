@@ -747,12 +747,17 @@ export function Memory() {
       setError(err instanceof ApiError ? err.message : t("mem.error"));
     }
   };
+  // a change is said once the list shows it, so the words never sit beside the old list
+  const settled = async (msg?: string) => {
+    await refetch();
+    setNote(msg ?? "");
+  };
   return (
     <section class="stack wide" aria-labelledby="h-mem">
       <h1 id="h-mem">{t("mem.title")}</h1>
       <p class="lead">{t("mem.lead")}</p>
       <Show when={left()}>{(l) => <LeftBehindCard left={l()} onDone={() => setLeft(null)} />}</Show>
-      <Held onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />
+      <Held onChange={(msg) => void settled(msg)} onLeft={setLeft} />
       <Suggestions jobId="browser" heading="sug.browser.heading" lead="sug.browser.lead" onChange={() => void refetch()} />
       <div>
         <label class="sr" for="mem-search">{t("mem.search")}</label>
@@ -799,7 +804,7 @@ export function Memory() {
       </section>
       <ul class="plain stack">
         <For each={items()} fallback={<li class="muted">{items.loading ? t("review.loading") : query().trim() || filtering() ? t("mem.nomatch") : t("mem.none")}</li>}>
-          {(m) => <Item m={m} pinned={pinned()?.has(m.id)} onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />}
+          {(m) => <Item m={m} pinned={pinned()?.has(m.id)} onChange={(msg) => void settled(msg)} onLeft={setLeft} />}
         </For>
       </ul>
       <form class="card stack" onSubmit={add}>
@@ -822,12 +827,12 @@ export function Memory() {
       </form>
       {/* the notes come first; looking after them (duplicates, disagreements, what was put away, bringing notes in, backups) comes after */}
       <h2 class="mem-section">{t("mem.section.tidy")}</h2>
-      <Similar onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />
-      <Disagreements onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
-      <Merged onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
-      <Quiet onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
-      <Archived onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} onLeft={setLeft} />
-      <ReviewSources onChange={(msg) => { setNote(msg ?? ""); void refetch(); }} />
+      <Similar onChange={(msg) => void settled(msg)} onLeft={setLeft} />
+      <Disagreements onChange={(msg) => void settled(msg)} />
+      <Merged onChange={(msg) => void settled(msg)} />
+      <Quiet onChange={(msg) => void settled(msg)} />
+      <Archived onChange={(msg) => void settled(msg)} onLeft={setLeft} />
+      <ReviewSources onChange={(msg) => void settled(msg)} />
       <h2 class="mem-section">{t("mem.section.bring")}</h2>
       <ImportNotes onDone={() => void refetch()} />
       <NotesBackup onDone={() => void refetch()} />

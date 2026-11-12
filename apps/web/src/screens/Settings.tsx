@@ -21,9 +21,10 @@ function HiddenNames() {
     setDone("");
     try {
       const r = await fn();
-      setDone(r.changed ? said : t("set.pii.same"));
       setName("");
+      // said once the list shows it, so the words never sit beside a list that still has the old entry
       await refetch();
+      setDone(r.changed ? said : t("set.pii.same"));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : t("set.hide.error"));
     }
@@ -67,9 +68,10 @@ function PiiAllow() {
     setDone("");
     try {
       const r = await fn();
-      setDone(r.changed ? said : t("set.pii.same"));
       setEntry("");
+      // said once the list shows it, so the words never sit beside a list that still has the old entry
       await refetch();
+      setDone(r.changed ? said : t("set.pii.same"));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : t("set.pii.error"));
     }

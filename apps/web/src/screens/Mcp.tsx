@@ -123,7 +123,8 @@ export function Mcp() {
   const [args, setArgs] = createSignal("");
   const [env, setEnv] = createSignal("");
   const [problem, setProblem] = createSignal("");
-  const changed = (message: string) => { if (message) setStatus(message); void refetch(); };
+  // said once the list shows the change
+  const changed = (message: string) => { void (async () => { await refetch(); if (message) setStatus(message); })(); };
   const [adding, setAdding] = createSignal(false);
   const add = async () => {
     setProblem("");
