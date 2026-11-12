@@ -139,7 +139,7 @@ function Badge(props: { config: Config }) {
           <span class="dot" /> {t("badge.private")}
         </span>
       </Show>
-      <span class="badge" title={t("badge.sandbox.title")}>
+      <span class="badge" title={`${t("badge.sandbox.title")} (${r().transport ?? ""})`}>
         {sandboxWords(r().transport)}
       </span>
       <Show when={props.config.approvals?.asks_every_release}>

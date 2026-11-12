@@ -883,7 +883,11 @@ export function Chat() {
           </span>
         </nav>
       </Show>
-      <p class="lead">{t("chat.lead")}</p>
+      <p class="lead">{t("chat.leadShort")}</p>
+      <details class="chat-given">
+        <summary>{t("chat.givenTitle")}</summary>
+        <p class="muted">{t("chat.lead")}</p>
+      </details>
       <p class="muted">{session() ? t("chat.noteKept") : t("chat.note")}</p>
       <Show when={summaryText()}>
         <details class="card stack summary-shown"><summary>{t("chat.summaryShow")}</summary><p class="muted">{t("chat.summaryExplain")}</p><p class="mem-text">{summaryText()}</p></details>
@@ -1051,14 +1055,6 @@ export function Chat() {
           </Show>
         </Show>
         <Show when={slashNote()}><p class="muted" role="status">{slashNote()}</p></Show>
-        <div class="actions">
-          <button class="primary" type="submit" disabled={busy() || text().trim().length === 0}>{t("chat.send")}</button>
-          <Show when={busy()}><button type="button" onClick={() => abort?.abort()}>{t("chat.stop")}</button></Show>
-          <button type="button" disabled={busy() || turns().length === 0} onClick={() => { setTurns([]); heldLevel = 0; setError(""); setSendFailed(false); forgetSent(draftKey(session())); hist = idleHistory(); }}>{t("chat.clear")}</button>
-          <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
-          <Show when={sendFailed() && error() && !busy() && text().trim().length > 0}><button type="button" onClick={() => void send()}>{t("chat.retry")}</button></Show>
-          <Show when={recovered()}><span role="status" class="muted">{t("chat.recovered")}</span></Show>
-        </div>
         <RouteLine />
         <div
           class={dragging() ? "stack attach drop" : "stack attach"}
@@ -1073,6 +1069,15 @@ export function Chat() {
             <span class="muted">{t("files.drop")}</span>
             <Show when={dragging()}><strong role="status">{t("files.dropNow")}</strong></Show>
             <Show when={reading()}><span role="status" class="muted">{reading()}</span></Show>
+            <span class="send-group">
+              <button class="primary" type="submit" disabled={busy() || text().trim().length === 0}>{t("chat.send")}</button>
+              <Show when={busy()}><button type="button" onClick={() => abort?.abort()}>{t("chat.stop")}</button></Show>
+              <button type="button" disabled={busy() || turns().length === 0} onClick={() => { setTurns([]); heldLevel = 0; setError(""); setSendFailed(false); forgetSent(draftKey(session())); hist = idleHistory(); }}>{t("chat.clear")}</button>
+              <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
+              <Show when={sendFailed() && error() && !busy() && text().trim().length > 0}><button type="button" onClick={() => void send()}>{t("chat.retry")}</button></Show>
+              <Show when={recovered()}><span role="status" class="muted">{t("chat.recovered")}</span></Show>
+
+            </span>
           </div>
           <Show when={fileInfo()}><p role="alert" class="bad">{fileInfo()}</p></Show>
           <Show when={files().length > 0}>
