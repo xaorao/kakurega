@@ -601,7 +601,7 @@ try {
     await glance.getByRole("status").waitFor();
     const shownNotes = await page.locator(".mem").count();
     const line = await glance.getByRole("status").innerText();
-    check("the notes at a glance count what the list shows, from untrusted text, never used and ending soon", new RegExp(`^${shownNotes} note\\(s\\); \\d+ from untrusted text; \\d+ never given to a model; \\d+ ending within 14 days; \\d+ held back for a check\\.$`).test(line), `${shownNotes} vs ${line}`);
+    check("the notes at a glance count what the list shows, from untrusted text, never used and ending soon", new RegExp(`^Notes: ${shownNotes}\\. From untrusted text: \\d+\\. Never given to a model: \\d+\\. Ending within 14 days: \\d+\\. Held back for a check: \\d+\\.$`).test(line), `${shownNotes} vs ${line}`);
     await glance.getByLabel("Project").selectOption("payments-service");
     await page.locator(".mem", { hasText: "rounded half up" }).waitFor();
     await page.waitForFunction(() => document.querySelectorAll(".mem").length === 1);
@@ -631,7 +631,7 @@ try {
     await page.reload();
     await page.getByRole("region", { name: "Your notes at a glance" }).getByRole("status").waitFor();
     const glance2 = page.getByRole("region", { name: "Your notes at a glance" });
-    check("the glance counts the note that ends soon", (await glance2.getByRole("status").innerText()).includes("1 ending within 14 days"), await glance2.getByRole("status").innerText());
+    check("the glance counts the note that ends soon", (await glance2.getByRole("status").innerText()).includes("Ending within 14 days: 1."), await glance2.getByRole("status").innerText());
     await glance2.getByLabel("Ending within 14 days").check();
     await page.waitForFunction(() => document.querySelectorAll(".mem").length === 1);
     check("the Ending within 14 days filter keeps only the note that ends soon", (await page.locator(".mem").innerText()).includes("launch discount"));
