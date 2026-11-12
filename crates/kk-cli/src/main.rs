@@ -285,6 +285,11 @@ pub fn data_dir(args: &[String]) -> std::path::PathBuf {
         flag(args, "--profile"),
         std::env::var("KAKU_PROFILE").ok(),
     ) {
+        // a folder named relative to where the command runs is made whole, so every part (the sandbox machine included,
+        // which sees paths as they are written) finds the same folder
+        Ok((dir, _)) if dir.is_relative() => std::env::current_dir()
+            .map(|here| here.join(&dir))
+            .unwrap_or(dir),
         Ok((dir, _)) => dir,
         Err(why) => {
             eprintln!("{why}");

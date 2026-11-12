@@ -762,7 +762,8 @@ fn readiness_limited(args: &[String], limit: Duration) -> Result<Vec<Value>, Str
         ollama: setup.ollama,
         transport: setup.transport,
         worker_binary: setup.worker_binary,
-        scratch: PathBuf::new(),
+        // the folder a service on this data folder would hand the sandbox, so its check is about the real place
+        scratch: crate::data_dir(args).join("scratch"),
         commitment_key: [0u8; 32],
         max_turns: 1,
         scripted: None,

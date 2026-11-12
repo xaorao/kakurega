@@ -797,7 +797,8 @@ cut_short: false,
             runner: r,
             interpreter: match r {
                 Runner::Python => "/usr/bin/python3".into(),
-                Runner::Node => "/usr/bin/node".into(),
+                // the same Node.js the checks use
+                Runner::Node => sandbox_node(),
                 Runner::Rust => "/usr/bin/rustc".into(),
             },
         });
@@ -1575,7 +1576,7 @@ mod live {
 }
 
 /// The Node.js the sandbox runs JavaScript and TypeScript checks with: the path in `KAKU_NODE` when it is a plain absolute path
-/// (as seen inside the sandbox, where `/usr` is visible read-only), else `/usr/bin/node`. A distribution's Node is often built
+/// (as seen inside the sandbox, where `/usr` is visible read-only), else `/usr/local/bin/node`. A distribution's Node is often built
 /// without the TypeScript parser; the official build from nodejs.org copied to `/usr/local/bin/node` has it.
 /// Whether a model address names this computer: localhost or a loopback address, nothing else.
 fn address_is_this_computer(address: &str) -> bool {
@@ -1688,7 +1689,9 @@ fn rust_check(rustc_version: Option<&str>, gcc: bool) -> Value {
 fn choose_node(setting: Option<String>) -> String {
     match setting {
         Some(p) if plain_absolute_path(&p) => p,
-        _ => "/usr/bin/node".to_string(),
+        // where scripts/provision-vm puts the official Node.js build: a distribution's /usr/bin/node is usually too old to
+        // run TypeScript
+        _ => "/usr/local/bin/node".to_string(),
     }
 }
 
@@ -1838,11 +1841,9 @@ mod node_check_tests {
 
     #[test]
     fn nc04_kaku_node_is_used_only_when_it_is_a_plain_path_and_the_default_stays_otherwise() {
-        assert_eq!(choose_node(None), "/usr/bin/node");
-        assert_eq!(
-            choose_node(Some("/usr/local/bin/node".into())),
-            "/usr/local/bin/node"
-        );
+        // the default is where scripts/provision-vm puts the official build
+        assert_eq!(choose_node(None), "/usr/local/bin/node");
+        assert_eq!(choose_node(Some("/usr/bin/node".into())), "/usr/bin/node");
         for bad in [
             "node",
             "/usr/bin/node --inspect",
@@ -1850,7 +1851,11 @@ mod node_check_tests {
             "",
             "/a b",
         ] {
-            assert_eq!(choose_node(Some(bad.into())), "/usr/bin/node", "{bad:?}");
+            assert_eq!(
+                choose_node(Some(bad.into())),
+                "/usr/local/bin/node",
+                "{bad:?}"
+            );
         }
     }
 }
