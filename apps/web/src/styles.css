@@ -497,3 +497,6 @@ button.danger:not(.linklike) { border-color: var(--redline); }
 /* a suggested program's arguments, one per line, so where one ends and the next begins is plain */
 .args { margin: 0; padding-left: 28px; display: grid; gap: 4px; font-size: 13px; }
 .args code { white-space: pre-wrap; word-break: break-all; }
+/* a long status (a failure's reason with a path in it) wraps inside its card instead of running off the screen */
+.chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+

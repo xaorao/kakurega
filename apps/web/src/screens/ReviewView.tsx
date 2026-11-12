@@ -46,11 +46,17 @@ function Progress(props: { job: Job }) {
     <ol class="steps" aria-label={t("progress.label")}>
       <For each={STAGES}>
         {([key, label]) => {
-          const done = () => reached().has(key) && (finished() || STAGES.findIndex(([k]) => k === key) < STAGES.findIndex(([k]) => !reached().has(k)));
-          const active = () => reached().has(key) && !done();
+          // a step is done when a later one began, or the review ended well; the step a failed review stopped in is
+          // marked as that, never with the tick of a proof; the last step reached of a running review is in progress
+          const at = STAGES.findIndex(([k]) => k === key);
+          const later = () => STAGES.some(([k], i) => i > at && reached().has(k));
+          const failedJob = () => props.job.state === "failed";
+          const done = () => reached().has(key) && (later() || (finished() && !failedJob()));
+          const failed = () => reached().has(key) && !done() && finished() && failedJob();
+          const active = () => reached().has(key) && !done() && !failed();
           return (
-            <li class={done() ? "done" : active() ? "active" : ""}>
-              <span class="mark" aria-hidden="true">{done() ? "✓" : active() ? "…" : ""}</span>
+            <li class={done() ? "done" : failed() ? "fail" : active() ? "active" : ""}>
+              <span class="mark" aria-hidden="true">{done() ? "✓" : failed() ? "✕" : active() ? "…" : ""}</span>
               <span>{t(label)}</span>
               <span class="sub">{props.job.events.filter((e) => e.stage === key).map((e) => e.detail).join(" ")}</span>
             </li>

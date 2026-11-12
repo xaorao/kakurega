@@ -24,7 +24,7 @@ function Outbound() {
     switch (r.what) {
       case "model": return t("out.model", { to: r.to, chars: Number(d.chars ?? 0), n: Number(d.placeholders ?? 0) });
       case "search": return t("out.search", { n: Number(d.results ?? 0) });
-      case "pages": return t("out.pages", { n: Number(d.pages ?? 0) });
+      case "pages": return t(Number(d.pages ?? 0) === 1 ? "out.pages.one" : "out.pages", { n: Number(d.pages ?? 0) });
       case "tool": return t("out.tool", { to: r.to });
       case "connector": return t("out.connector", { to: r.to, n: Number(d.items ?? 0) });
       case "release": return t("out.release", { to: r.to });
@@ -84,6 +84,25 @@ function Glance(props: { f: PrivacyFacts }) {
   );
 }
 
+/** The projects whose work may not go to every model, with where each may go: the page that says where data goes says
+ *  this too. Nothing is shown when every project may go to the model chosen in Settings. */
+function KeptProjects() {
+  const [list] = createResource(() => api.projects().catch(() => null));
+  const kept = () => (list()?.projects ?? []).filter((p) => p.floor === "here" || p.floor === "confidential");
+  return (
+    <Show when={kept().length > 0}>
+      <section class="card stack" id="pv-projects" aria-labelledby="h-pv-projects">
+        <h2 id="h-pv-projects">{t("privacy.projects.title")}</h2>
+        <p>{t("privacy.projects.lead")}</p>
+        <ul class="plain">
+          <For each={kept()}>{(p) => <li><strong>{p.name}</strong> <span class="chip ok">{t(`proj.floor.${p.floor}` as Key)}</span></li>}</For>
+        </ul>
+        <p><a class="line-link" href="#/projects">{t("privacy.projects.change")}</a></p>
+      </section>
+    </Show>
+  );
+}
+
 export function Privacy() {
   const [facts] = createResource(() => api.privacy().catch(() => null));
   return (
@@ -94,6 +113,7 @@ export function Privacy() {
         {(f) => (
           <>
             <Glance f={f()} />
+            <KeptProjects />
             <Outbound />
             <Card id="break" title="break.title">
               <p>{t("break.card")}</p>

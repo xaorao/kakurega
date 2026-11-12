@@ -257,6 +257,8 @@ export function App() {
       setConfig(c);
       setJobs(j.jobs);
       setPaired(true);
+      // what waits for the owner is counted at once, not at the first ten-second look
+      void api.inbox().then((inbox) => setWaiting(inbox?.count ?? 0)).catch(() => {});
     } catch (e) {
       // A refused answer from the service means "not paired"; no answer at all means the service is not there.
       if (e instanceof ApiError) setPaired(false);
