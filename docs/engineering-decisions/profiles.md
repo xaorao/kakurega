@@ -2,7 +2,7 @@
 
 1. What a user expects: to keep separate lives apart on one computer (work and private, or one client and another), each with its own keys, memory, skills, connectors and settings, to see which one is in use, to switch, and to remove one for good.
 2. Strongest references: Hermes (MIT, 29a61cb7) `hermes_cli/profiles.py`; Ghast Workbench (closed, no licence; from our product map: each profile owns a wallet, a vault key, a database, bridge credentials, MCP configuration and sync settings).
-3. Approach: a profile is a complete data folder. Everything this product keeps already lives inside its data folder (the vault key file, every database, the signing key, the approval key blob, connector tokens, settings), so two folders share nothing by construction. No code path reads across folders.
+3. Approach: a profile is a complete data folder. Everything this product keeps already lives inside its data folder (the vault key file, every database, the signing key, the approval key blob, connector tokens, settings), so two folders share nothing by construction. A service never takes a file, a project or a review target from inside the program's own data folder (which holds every profile), even when a folder above it is allowed (sv271).
 4. Quality criteria: a name can never leave the profiles folder; a profile that was asked for and does not exist is an error, never a silent use of another profile's data; removal needs the name typed and is refused while a service runs there; the app says which profile it is in.
 
 ## Reading record

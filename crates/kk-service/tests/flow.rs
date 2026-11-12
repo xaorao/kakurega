@@ -22984,3 +22984,44 @@ fn sv270_a_reviews_findings_are_never_offered_for_hand_over_and_a_yes_is_not_spe
     );
     assert_eq!(sent(), 1, "the yes was spent once");
 }
+
+#[test]
+fn sv271_the_programs_own_data_folder_is_never_a_file_or_project_to_work_on_even_inside_an_allowed_folder(
+) {
+    // the allowed folder is the one above the data folder, as the home folder is when no folder is named
+    let (root, _repo) = repo_copy("own-data");
+    let runner = SwitchRunner::new();
+    let data = root.join("data");
+    let svc = Service::new(&data, vec![root.clone()], runner, true).unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    fs::write(data.join("planted.txt"), "inside the data folder").unwrap();
+    let inside = data.join("planted.txt");
+    let (s, v) = w.post(
+        "/api/attachments/path",
+        json!({"path": inside.to_string_lossy()}),
+    );
+    assert_ne!(s, 201, "a file in the data folder was attached: {v}");
+    let (s, v) = w.post(
+        "/api/jobs",
+        json!({"repo": data.to_string_lossy(), "recipient": "x"}),
+    );
+    assert_ne!(s, 201, "the data folder was reviewed: {v}");
+    let (s, v) = w.post(
+        "/api/projects",
+        json!({"name": "own", "folder": data.to_string_lossy()}),
+    );
+    assert_ne!(s, 200, "the data folder became a project: {v}");
+    // a file beside it is still fine
+    fs::write(root.join("notes.txt"), "ordinary notes").unwrap();
+    let (s, v) = w.post(
+        "/api/attachments/path",
+        json!({"path": root.join("notes.txt").to_string_lossy()}),
+    );
+    assert_eq!(s, 201, "{v}");
+}

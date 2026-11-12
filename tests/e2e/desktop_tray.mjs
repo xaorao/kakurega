@@ -190,6 +190,15 @@ try {
     }
   });
   check("the page itself still cannot take a picture of the screen", perms !== "granted", perms);
+  // the preview draws a picture as large as a real screen's (several megabytes), and leaves nothing behind
+  const big = await shell(app, async ({ nativeImage }) => {
+    // noise does not compress, so this picture is as heavy as a busy screen at full resolution
+    const w = 1800, h = 1100, raw = Buffer.alloc(w * h * 4);
+    for (let i = 0; i < raw.length; i += 4) { raw[i] = (i * 7) & 255; raw[i + 1] = (i * 13 + (i >> 9)) & 255; raw[i + 2] = Math.floor(Math.random() * 256); raw[i + 3] = 255; }
+    const png = nativeImage.createFromBitmap(raw, { width: w, height: h }).toPNG();
+    return globalThis.kakuregaShell.previewShows(png);
+  });
+  check("the preview window really draws a picture of several megabytes, and its folder is removed afterwards", big.bytes > 2.5 * 1024 * 1024 && big.colours > 10 && big.left_behind === 0, JSON.stringify(big));
   await shell(app, () => globalThis.kakuregaShell.setCapture(null, null));
 
   // closing the window keeps Kakurega in the menu bar (macOS)

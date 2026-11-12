@@ -107,6 +107,10 @@ pub trait JobRunner: Send + Sync {
     fn handoff_run(&self, _text: &str) -> Result<String, String> {
         Err("no outside coding agent is installed on this computer".into())
     }
+    /// `handoff_run`, ended early when `stop` says so. A runner that cannot stop part-way runs to the end.
+    fn handoff_run_until(&self, text: &str, _stop: &dyn Fn() -> bool) -> Result<String, String> {
+        self.handoff_run(text)
+    }
     /// The read-only GitHub connector: whether a client id is set, whether an account is connected and which, a sign-in
     /// that waits for the owner. Never a token or a device code.
     fn github_status(&self) -> Value {
@@ -1088,14 +1092,37 @@ impl Service {
     }
 
     /// A regular file the service may read: its real path, after links are resolved, lies inside one of the roots.
+    /// The folder this program keeps its own data in: this service's data folder, or, when that is a profile
+    /// (`.../profiles/NAME`), the folder all profiles live under. Nothing in it is a file or project the owner works on:
+    /// it holds the vault keys, the admin token and every profile's data, and no question, attachment or review may read it,
+    /// even when a folder above it (the home folder) is allowed.
+    fn private_home(&self) -> PathBuf {
+        let own = self
+            .data_dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.data_dir.clone());
+        match own.parent() {
+            Some(p) if p.file_name().is_some_and(|n| n == "profiles") => {
+                p.parent().map(Path::to_path_buf).unwrap_or(own)
+            }
+            _ => own,
+        }
+    }
+
     fn allowed_file(&self, p: &str) -> Option<PathBuf> {
         let c = Path::new(p).canonicalize().ok()?;
-        (c.is_file() && self.roots.iter().any(|r| c.starts_with(r))).then_some(c)
+        (c.is_file()
+            && self.roots.iter().any(|r| c.starts_with(r))
+            && !c.starts_with(self.private_home()))
+        .then_some(c)
     }
 
     fn allowed_dir(&self, p: &str) -> Option<PathBuf> {
         let c = Path::new(p).canonicalize().ok()?;
-        (c.is_dir() && self.roots.iter().any(|r| c.starts_with(r))).then_some(c)
+        (c.is_dir()
+            && self.roots.iter().any(|r| c.starts_with(r))
+            && !c.starts_with(self.private_home()))
+        .then_some(c)
     }
 
     fn push_event(self: &Arc<Self>, id: &str, stage: &str, detail: &str) {

@@ -83,6 +83,26 @@ check("the variable, the saved choice, --profile and --data-dir pick the folder 
       "profiles/work" in by_env and "profiles/work" in out2 and str(work / "elsewhere") in out3 and "profiles" not in out4, f"{by_env} | {out2} | {out3} | {out4}")
 k("profile", "use", "default")
 
+# the flag may stand anywhere and no command sees an extra word among its own
+where = [k("--profile", "work", "config", "path")[1], k("config", "--profile", "work", "path")[1], k("config", "path", "--profile", "work")[1]]
+check("--profile works before the command, in the middle and at the end", all("profiles/work" in o for o in where), str(where))
+rc, out, _ = k("--profile", "work", "profile", "list", "--json")
+rows = {p["name"]: p["current"] for p in json.loads(out)["profiles"]} if rc == 0 else {}
+check("with --profile the list marks that profile as the one in use", rows == {"default": False, "work": True}, out)
+import subprocess as _sp
+try:
+    p = _sp.run([str(kaku), "telegram", "clear-token", "--profile", "work"], capture_output=True, text=True, timeout=20, env=env)
+    quick = (p.returncode, (p.stdout + p.stderr)[:160])
+except _sp.TimeoutExpired:
+    quick = ("still running", "")
+check("a command with its own action word still does that action under --profile (it does not start something else)", quick[0] != "still running", str(quick))
+plain = k("log", "verify")
+under = k("log", "verify", "--profile", "work")
+front = k("--profile", "work", "log", "verify")
+check("a command that takes words reads them the same with the flag at either end", plain[0] == under[0] == front[0] and plain[2] == under[2] == front[2], f"{plain[0]} {under[0]} {front[0]} {under[2][:120]}")
+rc, _, err = k("config", "path", "--profile")
+check("--profile with no name is refused in words", rc == 2 and "needs a profile" in err, err)
+
 a = serve("--profile", "work")
 b = serve()
 try:

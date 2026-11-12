@@ -69,3 +69,17 @@ No critical finding. Each finding was checked against the code; CONFIRMED means 
 Also corrected because the reviewer showed them false: the README's "on every path" sentence about passwords, the LIMITS line about what the detector misses, and the sentence about where hiding applies.
 
 OPEN from this audit: none critical or high. Not done: a test that drives M4 through a real MCP client; the desktop honouring `KAKUREGA_HOME` while the terminal does not (a development override, written here).
+
+## Third read (a second reviewer session read 77b821a..e0939a5 end to end; its findings were validated here)
+| # | Finding | Verdict | What was done | Evidence |
+|---|---|---|---|---|
+| 1 | `--profile NAME` was turned into `--data-dir DIR` placed after the command's name, in front of the command's own words, so commands with an action word did something else (`kaku telegram clear-token --profile X` started the bridge) or failed | CONFIRMED by reading | Nothing is inserted any more: the flag is taken out wherever it stands, checked, and handed on as the `KAKU_PROFILE` variable that the one resolver reads | `profile_cli.py` 18 (the flag before, inside and after a command; a command with an action word; one that takes words; no name given) |
+| 2 | The capture preview put a picture of several megabytes inside a page address, which the browser engine refuses above about 2 MiB, so a real capture would end "refused" | INFERRED by the reviewer, not reproduced; treated as real | The picture is written to a folder only this user can read and shown from the file; the folder is removed with the window | `desktop_tray.mjs` 28: a 1800 by 1100 noise picture over 2.5 MiB is really drawn (many colours in the window's own snapshot) and nothing is left behind |
+| 3 | Stop did not end a hand-over that was running | CONFIRMED by reading | The wait ends at once on stop; the text had already gone, and the task says so | read; NOT TESTED by a run with the real program |
+| 4 | Finding the coding agent ran its program with no time limit inside a page's request | CONFIRMED | Five-second limit; the lookup is warmed at start and refreshed on the side | kk-cli ho tests; `run.mjs` 511 |
+| 5 | `kaku profile list` marked the saved choice even when the variable chose another | CONFIRMED | The mark follows what commands use now | `profile_cli.py` |
+| 6 | "No code path reads across folders" was false when no folder is named: the home folder is then allowed, and it holds every profile's keys | CONFIRMED by reading | The program's own data folder (all profiles) can no longer be attached, reviewed or made a project, whatever folder above it is allowed | kk-service sv271 |
+| 7 | A short provider token with a placeholder word between dashes was set aside (`glpat-…-your-…`) | CONFIRMED | A body of sixteen or more characters with digits, capitals, small letters and fourteen different characters is never a placeholder | kk-secrets sg15 |
+| 8 | A help flag after `chat`, `roundtable` or `team` printed usage | CONFIRMED, harmless | Those take free text and are left alone | read |
+
+Not covered by sv271: a review of an allowed folder that itself contains the data folder still walks into it; the secret detector and the label rules are what stand in the way there. Written as a limit.

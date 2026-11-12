@@ -262,7 +262,12 @@ pub fn run_in(home: &Path, args: &[String], interactive: bool) -> i32 {
     };
     match words.as_slice() {
         [] | ["list"] => {
-            let cur = current(home);
+            // the star is on the profile commands use right now: the variable (or --profile) when set, else the saved choice
+            let cur = std::env::var("KAKU_PROFILE")
+                .ok()
+                .map(|n| n.trim().to_string())
+                .filter(|n| !n.is_empty() && exists(home, n))
+                .unwrap_or_else(|| current(home));
             let mut rows = vec![DEFAULT.to_string()];
             rows.extend(names(home));
             let list: Vec<serde_json::Value> = rows

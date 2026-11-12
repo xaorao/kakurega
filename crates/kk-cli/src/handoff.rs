@@ -18,6 +18,10 @@ const PASSED_ON: &[&str] = &[
 ];
 /// The options, checked against `claude --help` of 2.1: one answer and exit; no built-in tools; only the tool servers
 /// given here, which is none; no session kept on disk; one JSON object as the result.
+/// Said when the owner stopped the work while the agent was answering.
+pub const STOPPED: &str =
+    "stopped by you while the coding agent was answering; the text had already gone to it";
+
 const ARGS: &[&str] = &[
     "-p",
     // no settings source at all (user, project, local): the owner's hooks do not run on the text and their own
@@ -81,12 +85,27 @@ pub fn tool() -> Option<String> {
 
 fn tool_now() -> Option<String> {
     let program = find()?;
-    let out = Command::new(program)
+    // asked with a time limit: a program that hangs on its version is treated as not installed, and no page waits for it
+    let mut child = Command::new(program)
         .arg("--version")
         .stdin(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .output()
+        .spawn()
         .ok()?;
+    let started = Instant::now();
+    loop {
+        match child.try_wait().ok()? {
+            Some(_) => break,
+            None if started.elapsed() > Duration::from_secs(5) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            None => std::thread::sleep(Duration::from_millis(20)),
+        }
+    }
+    let out = child.wait_with_output().ok()?;
     let version: String = String::from_utf8_lossy(&out.stdout)
         .split_whitespace()
         .next()
@@ -117,6 +136,11 @@ pub fn answer_in(stdout: &str) -> Result<String, String> {
 
 /// Runs it once on exactly this text and returns its answer.
 pub fn run(text: &str) -> Result<String, String> {
+    run_until(text, &|| false)
+}
+
+/// `run`, ended at once when `stop` says so. The text has gone to the agent's maker by then; only the wait ends.
+pub fn run_until(text: &str, stop: &dyn Fn() -> bool) -> Result<String, String> {
     let program = find().ok_or("Claude Code is not installed on this computer")?;
     let mut raw = [0u8; 8];
     std::fs::File::open("/dev/urandom")
@@ -175,6 +199,11 @@ pub fn run(text: &str) -> Result<String, String> {
                         "Claude Code did not answer within five minutes and was stopped"
                             .to_string(),
                     );
+                }
+                None if stop() => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(STOPPED.to_string());
                 }
                 None => std::thread::sleep(Duration::from_millis(100)),
             }

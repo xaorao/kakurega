@@ -93,44 +93,36 @@ Options for every command: --profile NAME (a profile made with `kaku profile new
 
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
-    // `--profile NAME` is turned into the data folder it names, once, here: every command already knows `--data-dir`
-    if args.first().map(String::as_str) != Some("profile") {
-        if let Some(i) = args.iter().position(|a| a == "--profile") {
-            let Some(name) = args.get(i + 1).cloned() else {
-                eprintln!("--profile needs a profile's name");
-                return ExitCode::from(2);
-            };
-            args.drain(i..=i + 1);
-            if flag(&args, "--data-dir").is_none() {
-                match profile::resolve(&profile::home(), None, Some(name), None) {
-                    Ok((dir, _)) => {
-                        let at = match args.first() {
-                            Some(first) if !first.starts_with('-') => 1,
-                            Some(_) => 0,
-                            None => {
-                                args.push("tui".into());
-                                1
-                            }
-                        };
-                        args.splice(
-                            at..at,
-                            ["--data-dir".to_string(), dir.to_string_lossy().into_owned()],
-                        );
-                    }
-                    Err(why) => {
-                        eprintln!("{why}");
-                        return ExitCode::from(2);
-                    }
-                }
-            }
+    // `--profile NAME` may stand anywhere. It is taken out of the arguments here, checked, and handed on as the
+    // KAKU_PROFILE variable, which `data_dir` reads: no command sees an extra word among its own, and a service this
+    // command starts works in the same profile. `--data-dir` still wins over it.
+    if let Some(i) = args.iter().position(|a| a == "--profile") {
+        let Some(name) = args.get(i + 1).cloned() else {
+            eprintln!("--profile needs a profile's name");
+            return ExitCode::from(2);
+        };
+        args.drain(i..=i + 1);
+        if let Err(why) = profile::resolve(&profile::home(), None, Some(name.clone()), None) {
+            eprintln!("{why}");
+            return ExitCode::from(2);
         }
+        // set before any thread exists
+        std::env::set_var("KAKU_PROFILE", name.trim());
     }
     // a help flag after a command asks for help, never for the command to run (`kaku serve --help` must not start a service).
     // Commands that take free text or run another program keep their arguments as they are.
     let wants_help = args.len() > 1
         && !matches!(
             args[0].as_str(),
-            "parse-attachment" | "crash-probe" | "ask" | "code" | "notes" | "mcp"
+            "parse-attachment"
+                | "crash-probe"
+                | "ask"
+                | "code"
+                | "notes"
+                | "mcp"
+                | "chat"
+                | "roundtable"
+                | "team"
         )
         && args[1..].iter().any(|a| a == "--help" || a == "-h");
     let first = if wants_help {

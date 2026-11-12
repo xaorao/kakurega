@@ -724,6 +724,9 @@ fn sg15_a_random_key_that_spells_a_placeholder_word_by_chance_is_still_a_key() {
         );
         assert_eq!(scan(&key).len(), 1, "{key}");
     }
+    // a short provider token (a GitLab one has twenty characters after its prefix) with the word standing between dashes
+    let short = format!("{}{}", "glpat-", "a8Z-your-Q3mW9xLp2Kd");
+    assert_eq!(scan(&short).len(), 1, "{short}");
     // what a person writes as a placeholder is still not a key
     for doc in [
         format!(

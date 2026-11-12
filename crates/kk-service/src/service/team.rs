@@ -340,7 +340,10 @@ impl Service {
                         ("swapped", 0usize.into()),
                     ],
                 );
-                match self.runner.handoff_run(&text) {
+                match self
+                    .runner
+                    .handoff_run_until(&text, &|| self.team_stop_asked(id))
+                {
                     Ok(reply) => {
                         let kept: String = reply.chars().take(MAX_RESULT_CHARS).collect();
                         self.team_set_task(id, n, State::Done, &kept, "answered by the coding agent on this computer after your yes; not private", "");

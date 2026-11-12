@@ -1387,8 +1387,8 @@ pub fn placeholder_body(body: &str) -> bool {
         return true;
     }
     // A random body can spell one of these words by chance (`...UtemyoUrvm...` holds "your"), and a real key must never be
-    // set aside as documentation for that. So a body that looks random (long, with digits, capitals and small letters, and
-    // many different characters) is never a placeholder, and elsewhere the word counts only when it stands on its own
+    // set aside as documentation for that. So a body that looks random (sixteen or more characters with digits, capitals and small letters,
+    // and fourteen or more different characters) is never a placeholder, and elsewhere the word counts only when it stands on its own
     // (`PUT_YOUR_TOKEN_HERE`, `your-key-here`, `YourTokenGoesHere`), not when letters run into it on either side.
     let (mut digit, mut upper, mut lower) = (false, false, false);
     for c in body.chars() {
@@ -1396,7 +1396,7 @@ pub fn placeholder_body(body: &str) -> bool {
         upper |= c.is_ascii_uppercase();
         lower |= c.is_ascii_lowercase();
     }
-    if body.len() >= 24 && digit && upper && lower && distinct.len() >= 16 {
+    if body.len() >= 16 && digit && upper && lower && distinct.len() >= 14 {
         return false;
     }
     let l = body.to_ascii_lowercase();

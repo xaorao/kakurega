@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, shell, systemPreferences, session, Notification, Tray, Menu, nativeImage, desktopCapturer, screen } from "electron";
 import { spawn, execFile } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync, chmodSync, readdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -259,13 +259,21 @@ async function grabScreen() {
   }
 }
 
-/** Shows the picture in a window that runs no script and has no bridge, and asks with a native dialog on it. */
-async function confirmPicture(png) {
-  if (captureTestAnswer !== null) return captureTestAnswer;
+/**
+ * Opens the picture in a window that runs no script and has no bridge. The picture is put in a folder of its own that
+ * only this user can read and shown from there: a picture of a large screen is several megabytes, more than a page
+ * address may hold, so it cannot be handed to the window inside an address. `close()` removes the window and the folder.
+ */
+async function openPreview(png) {
   const image = nativeImage.createFromBuffer(png);
   const { width, height } = image.getSize();
   const area = screen.getPrimaryDisplay().workAreaSize;
   const scale = Math.min(1, (area.width * 0.6) / Math.max(1, width), (area.height * 0.6) / Math.max(1, height));
+  const dir = mkdtempSync(join(app.getPath("temp"), "kakurega-preview-"));
+  chmodSync(dir, 0o700);
+  writeFileSync(join(dir, "shot.png"), png, { mode: 0o600 });
+  const title = t("capture.preview.title").replace(/[<>&]/g, "");
+  writeFileSync(join(dir, "preview.html"), `<!doctype html><meta charset="utf-8"><title>${title}</title><body style="margin:0;background:#111"><img alt="" style="display:block;width:100vw;height:100vh;object-fit:contain" src="shot.png">`, { mode: 0o600 });
   const preview = new BrowserWindow({
     width: Math.max(320, Math.round(width * scale)),
     height: Math.max(200, Math.round(height * scale)),
@@ -280,8 +288,24 @@ async function confirmPicture(png) {
   preview.setMenuBarVisibility(false);
   preview.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   preview.webContents.on("will-navigate", (e) => e.preventDefault());
+  const close = () => {
+    if (!preview.isDestroyed()) preview.destroy();
+    rmSync(dir, { recursive: true, force: true });
+  };
   try {
-    await preview.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><meta charset="utf-8"><title>${t("capture.preview.title")}</title><body style="margin:0;background:#111"><img alt="" style="display:block;width:100vw;height:100vh;object-fit:contain" src="data:image/png;base64,${png.toString("base64")}">`)}`);
+    await preview.loadFile(join(dir, "preview.html"));
+  } catch (e) {
+    close();
+    throw e;
+  }
+  return { preview, close };
+}
+
+/** Shows the picture and asks with a native dialog on its window. */
+async function confirmPicture(png) {
+  if (captureTestAnswer !== null) return captureTestAnswer;
+  const { preview, close } = await openPreview(png);
+  try {
     const r = await dialog.showMessageBox(preview, {
       type: "question",
       message: t("capture.confirm.message"),
@@ -293,7 +317,7 @@ async function confirmPicture(png) {
     });
     return r.response === 0;
   } finally {
-    if (!preview.isDestroyed()) preview.destroy();
+    close();
   }
 }
 
@@ -521,6 +545,20 @@ if (!runsFromAsar) {
       return lastCapture;
     },
     lastCapture: () => lastCapture,
+    // opens the preview of this picture with no dialog, says whether the picture is really drawn in it, and closes it
+    previewShows: async (png) => {
+      const before = readdirSync(app.getPath("temp")).filter((n) => n.startsWith("kakurega-preview-")).length;
+      const { preview, close } = await openPreview(png);
+      await sleep(400);
+      const shot = await preview.webContents.capturePage();
+      const bitmap = shot.toBitmap();
+      // the window's own background is one dark colour; a drawn picture has many
+      const seen = new Set();
+      for (let i = 0; i + 3 < bitmap.length && seen.size < 40; i += 4 * 97) seen.add(`${bitmap[i]},${bitmap[i + 1]},${bitmap[i + 2]}`);
+      close();
+      const after = readdirSync(app.getPath("temp")).filter((n) => n.startsWith("kakurega-preview-")).length;
+      return { colours: seen.size, bytes: png.length, left_behind: after - before };
+    },
   });
 }
 

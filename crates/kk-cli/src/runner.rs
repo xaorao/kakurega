@@ -844,6 +844,10 @@ cut_short: false,
         crate::handoff::run(text)
     }
 
+    fn handoff_run_until(&self, text: &str, stop: &dyn Fn() -> bool) -> Result<String, String> {
+        crate::handoff::run_until(text, stop)
+    }
+
     fn github_status(&self) -> Value {
         match self.route_dir.as_deref() {
             Some(dir) => crate::github::status(dir),
