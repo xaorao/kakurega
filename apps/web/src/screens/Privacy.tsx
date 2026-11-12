@@ -1,6 +1,6 @@
 import { For, Show, createResource, onCleanup } from "solid-js";
 import { api, type OutboundRow, type PrivacyFacts } from "../api";
-import { t, type Key, locale } from "../i18n";
+import { t, type Key, locale, rich } from "../i18n";
 import { modelKey } from "../privacy";
 import { whenToday } from "../when";
 
@@ -131,6 +131,14 @@ export function Privacy() {
             <Card id="model" title="privacy.model.title">
               <p>{t(modelKey(f().model), { name: f().model.name ?? f().model.id, host: f().model.host ?? "" })}</p>
               <p class="muted">{t("privacy.model.sent")}</p>
+              {/* the confidential choice is named where the owner reads where answers are made, not only deep in Settings */}
+              <Show when={f().model.class === "verified_tee"} fallback={<p id="pv-near-option">{t("privacy.model.nearOption")} <a href="#/settings">{t("privacy.model.nearChoose")}</a></p>}>
+                <p id="pv-near-proof">{t("privacy.model.nearProof")} <a href="#/settings">{t("privacy.model.nearProofOpen")}</a></p>
+              </Show>
+            </Card>
+            <Card id="capsule" title="privacy.capsule.title">
+              <p>{rich("privacy.capsule.body")}</p>
+              <p><a class="button" href="/verify?from=workspace" id="pv-verify">{t("nav.verify")}</a></p>
             </Card>
             <Card id="notes" title="privacy.notes.title">
               <p>{t("privacy.notes.body", { n: f().notes.count })}</p>

@@ -34,6 +34,8 @@ function isShare(bytes: Uint8Array): boolean {
 type Checked = { kind: "capsule"; r: any } | { kind: "share"; r: any };
 
 export function Verify() {
+  // the workspace's menu opens this page with ?from=workspace (it sends no referrer); a recipient's plain link has none
+  const fromWorkspace = new URLSearchParams(location.search).get("from") === "workspace";
   const [result, setResult] = createSignal<Checked | null>(null);
   const [name, setName] = createSignal("");
   const [pin, setPin] = createSignal("");
@@ -85,6 +87,8 @@ export function Verify() {
 
   return (
     <main class="verify stack wide">
+      {/* opened from the workspace's menu: a way back; a recipient who only has this page sees none */}
+      <Show when={fromWorkspace}><p><a href="/">{t("ver.back")}</a></p></Show>
       <h1>{t("ver.title")}</h1>
       <p class="lead">{rich("ver.lead")}</p>
       <div class="card stack" onDragOver={(e) => e.preventDefault()} onDrop={drop}>

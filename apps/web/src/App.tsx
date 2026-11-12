@@ -384,6 +384,7 @@ export function App() {
       { id: "privacy", label: t("nav.privacy"), group: t("palette.screens"), run: go("#/privacy") },
       { id: "agent", label: t("nav.agent"), group: t("palette.screens"), run: go("#/agent") },
       { id: "activity", label: t("nav.activity"), group: t("palette.screens"), run: go("#/activity") },
+      { id: "verify", label: t("nav.verify"), group: t("palette.screens"), run: () => { location.href = "/verify?from=workspace"; } },
       { id: "shortcuts", label: t("kb.title"), group: t("palette.screens"), run: () => setHelpOpen(true) },
     ];
     const reviews: PaletteItem[] = jobs().map((j) => ({ id: `job-${j.id}`, label: t("nav.sub", { state: t(`state.${j.state}` as never), recipient: j.recipient }) + ` · ${j.id}`, group: t("palette.reviews"), run: go(`#/job/${j.id}`) }));
@@ -442,6 +443,7 @@ export function App() {
               <a href="#/break" class={hash() === "#/break" ? "navlink active" : "navlink"}>{t("break.title")}</a>
               <a href="#/agent" class={hash() === "#/agent" ? "navlink active" : "navlink"}>{t("nav.agent")}</a>
               <a href="#/activity" class={hash() === "#/activity" ? "navlink active" : "navlink"}>{t("nav.activity")}</a>
+              <a href="/verify?from=workspace" class="navlink">{t("nav.verify")}</a>
               <a href="#/settings" class={hash() === "#/settings" ? "navlink active" : "navlink"}>{t("nav.settings")}</a>
               <label class="sr" for="search">{t("nav.search.label")}</label>
               <input
