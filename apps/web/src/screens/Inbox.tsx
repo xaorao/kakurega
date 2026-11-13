@@ -24,15 +24,6 @@ export function Inbox() {
     <section class="stack wide" aria-labelledby="h-inbox">
       <h1 id="h-inbox">{t("inbox.title")}</h1>
       <Lead text={t("inbox.lead")} />
-      <div class="card stack">
-        <Show when={notify() !== "unsupported"} fallback={<p class="muted">{t("inbox.notify.unsupported")}</p>}>
-          <label class="row-check">
-            <input type="checkbox" checked={notify() === "on"} onChange={(e) => void flip(e.currentTarget.checked)} aria-describedby="notify-help" />
-            <span>{t("inbox.notify.label")}</span>
-          </label>
-          <p id="notify-help" class="muted">{notify() === "denied" ? t("inbox.notify.denied") : t("inbox.notify.help")}</p>
-        </Show>
-      </div>
       <Show when={inbox()} fallback={<LoadState loading={inbox.loading} retry={() => void refetch()} />}>
         {(r) => (
           <Show when={r().items.length > 0} fallback={<p class="card" role="status">{t("inbox.empty")}</p>}>
@@ -53,6 +44,15 @@ export function Inbox() {
           </Show>
         )}
       </Show>
+      <div class="stack notify-row">
+        <Show when={notify() !== "unsupported"} fallback={<p class="muted">{t("inbox.notify.unsupported")}</p>}>
+          <label class="row-check">
+            <input type="checkbox" checked={notify() === "on"} onChange={(e) => void flip(e.currentTarget.checked)} aria-describedby="notify-help" />
+            <span>{t("inbox.notify.label")}</span>
+          </label>
+          <p id="notify-help" class="muted">{notify() === "denied" ? t("inbox.notify.denied") : t("inbox.notify.help")}</p>
+        </Show>
+      </div>
     </section>
   );
 }

@@ -273,7 +273,7 @@ function Control(props: { s: Setting }) {
           <span>{t("set.single.on")}</span>
         </label>
       )}
-      {props.s.kind === "link" && <a class="button" href={props.s.target}>{t("set.open")}</a>}
+      {props.s.kind === "link" && <a class="open-link" href={props.s.target}>{t("set.open")} <span aria-hidden="true">→</span></a>}
       {props.s.kind === "shortcuts" && <button type="button" onClick={() => window.dispatchEvent(new Event("kk-show-shortcuts"))}>{t("set.keys.open")}</button>}
     </>
   );
