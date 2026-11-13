@@ -67,7 +67,8 @@ await page.getByRole("link", { name: "Team", exact: true }).click();
 await page.getByRole("heading", { name: "Team", exact: true }).waitFor();
 const plan = page.getByRole("button", { name: "Make a plan" });
 check(await plan.isDisabled(), "a plan cannot be asked for without a goal");
-check(/No runs yet/.test(await page.locator("main").innerText()), "an empty list says so");
+// the list is asked for when the screen opens; wait for its answer, not the clock
+check(await page.getByText(/No runs yet/).first().waitFor({ timeout: 10000 }).then(() => true, () => false), "an empty list says so");
 await page.getByLabel("The goal").fill("Decide where our payment key should live and tell the board.");
 await plan.click();
 // what the page shows if the plan never comes is saved, so a slow or refused plan can be told apart

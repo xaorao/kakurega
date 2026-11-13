@@ -33,7 +33,8 @@ const srv = createServer((q, r) => {
   r.end(readFileSync(p));
 }).listen(0, "127.0.0.1");
 await new Promise((r) => srv.on("listening", r));
-const origin = `http://127.0.0.1:${srv.address().port}`;
+// SITE_URL checks the deployed site in place of the local copy: the same visitor, the real host and its real headers
+const origin = (process.env.SITE_URL ?? `http://127.0.0.1:${srv.address().port}`).replace(/\/$/, "");
 const chrome = join(homedir(), "Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing");
 const browser = await chromium.launch({ executablePath: chrome, headless: true });
 const check = (cond, what) => { console.log(cond ? "PASS" : "FAIL", what); if (!cond) process.exitCode = 1; };
@@ -116,6 +117,14 @@ for (const [name, viewport, scheme] of [["desktop-light", { width: 1440, height:
   check(outside.length === 0, `${name}: nothing was asked of any other host: ${outside.slice(0, 3).join(", ")}`);
   check(problems.length === 0, `${name}: no console errors or failed requests: ${problems.join(" | ")}`);
   await ctx.close();
+}
+if (process.env.SITE_URL) {
+  for (const hidden of ["/vercel.json", "/.env.local", "/.gitignore", "/.vercel/project.json"]) {
+    const r = await fetch(origin + hidden);
+    check(r.status === 404, `the host does not serve ${hidden}: ${r.status}`);
+  }
+  const head = await fetch(origin + "/");
+  check(/default-src 'none'/.test(head.headers.get("content-security-policy") ?? "") && head.headers.get("x-frame-options") === "DENY", "the host sends the page's security policy");
 }
 await browser.close();
 srv.close();
