@@ -1,6 +1,9 @@
 // Choosing where the model runs, as a person does it in Settings: local model first, then NEAR AI Cloud with a model
-// name and an account key, then back. The key here is made up, so nothing can be answered by NEAR; what is checked is the
-// switch itself, where the key ends up, what is shown, and that the choice is kept for the next start.
+// name and an account key, then back. The first key is made up, so nothing can be answered by NEAR; what is checked is the
+// switch itself, where the key ends up, what is shown, and that the choice is kept for the next start. With a real account
+// key (KAKU_TEST_NEAR_KEY_FILE, a file of NEAR_AI_API_KEY=... lines, and KAKU_TEST_NEAR_MODEL), the real key is then typed
+// into Settings the same way, a question is asked in Chat and answered from NEAR's confidential hardware, and the key is
+// forgotten again at the end.
 //   node tests/e2e/route_web.mjs      screenshots in target/route-web/
 
 import { chromium } from "playwright-core";
@@ -111,6 +114,41 @@ const reply = await page.evaluate(async () => {
   return { status: r.status, body: await r.json() };
 });
 check(reply.status === 200 && reply.body.route.stays_here === true, "a question is answered by the model on this computer");
+
+const nearModel = process.env.KAKU_TEST_NEAR_MODEL;
+const keyFile = process.env.KAKU_TEST_NEAR_KEY_FILE;
+if (nearModel && keyFile) {
+  // the real key, typed into Settings as a person pastes it; it is never printed
+  const realKey = readFileSync(keyFile, "utf8").split("\n").map((l) => l.trim()).find((l) => l.startsWith("NEAR_AI_API_KEY="))?.slice("NEAR_AI_API_KEY=".length) ?? "";
+  check(realKey.length > 10, "a real account key was read from the key file");
+  await page.fill("#route-model", nearModel);
+  await page.fill("#route-key", realKey);
+  await page.getByRole("button", { name: "Save and use NEAR AI Cloud" }).click();
+  await page.getByText("NEAR AI Cloud answers from now on").waitFor({ timeout: 60000 });
+  check((await page.locator("#route-current").innerText()).includes(`${nearModel} on NEAR AI Cloud`), "with the real key the route in use is NEAR, with the model named");
+  await page.getByRole("link", { name: "Chat", exact: true }).click();
+  await page.getByLabel("Your message").waitFor();
+  await page.getByLabel("Your message").fill("In one short sentence: what is a session token?");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ timeout: 30000 }).catch(() => {});
+  await page.waitForFunction(() => { const b = [...document.querySelectorAll("button")].find((x) => x.textContent?.trim() === "Stop"); return document.querySelectorAll(".msg").length >= 2 && (!b || b.disabled); }, null, { timeout: 240000 });
+  const answer = await page.locator(".msg").last().innerText();
+  check(/token/i.test(answer) && answer.length > 20, "the question is answered: " + answer.replace(/\s+/g, " ").slice(0, 160));
+  check(await page.locator("#badge-tee").isVisible(), "the header says the answer comes from NEAR AI's confidential hardware");
+  await page.screenshot({ path: join(work, "3-near-answer.png"), fullPage: true });
+  const where = await page.evaluate(async () => {
+    const r = await fetch("/api/usage", { credentials: "same-origin" });
+    return await r.json();
+  });
+  check(where.routes.some((r) => r.route === `near:${nearModel}` && r.class === "verified_tee" && r.turns >= 1), "the usage record counts the reply on NEAR");
+  check(!(await page.content()).includes(realKey) && !log().includes(realKey), "the real key is in neither the page nor the service's output");
+  const realHolding = filesHolding(data, realKey);
+  check(realHolding.length === 1 && realHolding[0] === "near.key", "on disk the real key is in one file only: " + realHolding.join(", "));
+  await page.goto(new URL(link).origin + "/#/settings");
+  await page.waitForSelector("#route-current");
+  await page.getByRole("button", { name: "Use the model on this computer" }).click();
+  await page.getByText("The model on this computer answers from now on.").waitFor();
+}
 await page.getByRole("button", { name: "Forget the saved key" }).click();
 await page.getByText("The saved key was removed from this computer.").waitFor();
 check(!existsSync(join(data, "near.key")) && filesHolding(data, KEY).length === 0, "the key is gone from this computer");

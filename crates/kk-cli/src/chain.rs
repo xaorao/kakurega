@@ -418,7 +418,7 @@ pub fn run(args: &[String]) -> u8 {
                             "  by {} on {}; model signatures the contract verified: {}",
                             clean(text(&e["registered_by"])),
                             when(&e["registered_at"]),
-                            e["receipts"].as_array().map_or(0, Vec::len)
+                            registered_count(&e)
                         );
                     }
                     0
@@ -953,23 +953,18 @@ pub fn run(args: &[String]) -> u8 {
                 when(&e["registered_at"])
             );
             println!("That account proved it controls the capsule's signing key.");
-            let on_chain = e["receipts"].as_array().cloned().unwrap_or_default();
-            println!("Model signatures the contract verified: {}", on_chain.len());
-            let missing = report
-                .receipts
-                .iter()
-                .filter(|r| {
-                    !on_chain.iter().any(|c| {
-                        c["signer"] == json!(r.signer)
-                            && c["request_sha256"] == json!(r.request_sha256)
-                            && c["response_sha256"] == json!(r.response_sha256)
-                    })
-                })
-                .count();
-            if missing > 0 {
-                println!(
+            println!(
+                "Model signatures the contract verified: {}",
+                registered_count(&e)
+            );
+            match registered_against(&e, &report.receipts) {
+                Registered::Same { missing: 0 } => {}
+                Registered::Same { missing } => println!(
                     "  {missing} of this capsule's model signatures were not registered with it."
-                );
+                ),
+                Registered::Different => println!(
+                    "  The model signatures registered with it are not this capsule's own: their digest differs."
+                ),
             }
             for (key, record) in &hardware {
                 match record {
@@ -1000,9 +995,98 @@ pub fn run(args: &[String]) -> u8 {
     }
 }
 
+/// How many model signatures a registry entry says the contract verified: the count of a registry that keeps their digest, or
+/// the list of an older one that kept each.
+fn registered_count(e: &Value) -> u64 {
+    e["receipt_count"]
+        .as_u64()
+        .or_else(|| e["receipts"].as_array().map(|a| a.len() as u64))
+        .unwrap_or(0)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Registered {
+    /// The registered signatures are this capsule's own, the first ones in its order; `missing` were left out.
+    Same { missing: usize },
+    /// They are not: their digest is not the digest of this capsule's.
+    Different,
+}
+
+/// Whether the signatures registered with an entry are this capsule's own. A registry that keeps their digest is compared with
+/// the digest of the capsule's first `receipt_count` receipts (the ones a registration carries); an older one is compared
+/// receipt by receipt.
+fn registered_against(e: &Value, receipts: &[kk_evidence::capsule::ReceiptReport]) -> Registered {
+    if let Some(digest) = e["receipts_sha256"].as_str() {
+        let n = e["receipt_count"].as_u64().unwrap_or(0) as usize;
+        if n > receipts.len() || kk_evidence::registry::receipts_digest(&receipts[..n]) != digest {
+            return Registered::Different;
+        }
+        return Registered::Same {
+            missing: receipts.len() - n,
+        };
+    }
+    let on_chain = e["receipts"].as_array().cloned().unwrap_or_default();
+    Registered::Same {
+        missing: receipts
+            .iter()
+            .filter(|r| {
+                !on_chain.iter().any(|c| {
+                    c["signer"] == json!(r.signer)
+                        && c["request_sha256"] == json!(r.request_sha256)
+                        && c["response_sha256"] == json!(r.response_sha256)
+                })
+            })
+            .count(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cc08_the_registered_signatures_are_matched_to_the_capsules_by_digest_and_an_older_registry_by_each(
+    ) {
+        let r = |n: u8| kk_evidence::capsule::ReceiptReport {
+            completion_id: format!("c{n}"),
+            signer: format!("{n:02x}").repeat(32),
+            model: "Qwen/Qwen3.8-27B".into(),
+            request_sha256: format!("{:02x}", n + 10).repeat(32),
+            response_sha256: format!("{:02x}", n + 20).repeat(32),
+            signature: format!("{:02x}", n + 30).repeat(64),
+        };
+        let mine: Vec<_> = (1..=20).map(r).collect();
+        let digest =
+            |rs: &[kk_evidence::capsule::ReceiptReport]| kk_evidence::registry::receipts_digest(rs);
+        // all twenty registered
+        let all = json!({"receipts_sha256": digest(&mine), "receipt_count": 20});
+        assert_eq!(registered_count(&all), 20);
+        assert_eq!(
+            registered_against(&all, &mine),
+            Registered::Same { missing: 0 }
+        );
+        // the first sixteen registered, four left out
+        let first = json!({"receipts_sha256": digest(&mine[..16]), "receipt_count": 16});
+        assert_eq!(
+            registered_against(&first, &mine),
+            Registered::Same { missing: 4 }
+        );
+        // another capsule's signatures, more than this capsule has, or one changed: not this capsule's
+        let mut changed = mine.clone();
+        changed[19].signature = "ff".repeat(64);
+        assert_eq!(registered_against(&all, &changed), Registered::Different);
+        let more = json!({"receipts_sha256": digest(&mine), "receipt_count": 21});
+        assert_eq!(registered_against(&more, &mine), Registered::Different);
+        // an older registry kept each receipt
+        let older = json!({"receipts": [
+            {"signer": mine[0].signer, "request_sha256": mine[0].request_sha256, "response_sha256": mine[0].response_sha256}
+        ]});
+        assert_eq!(registered_count(&older), 1);
+        assert_eq!(
+            registered_against(&older, &mine[..3]),
+            Registered::Same { missing: 2 }
+        );
+    }
 
     #[test]
     fn cc01_chain_times_read_as_dates() {

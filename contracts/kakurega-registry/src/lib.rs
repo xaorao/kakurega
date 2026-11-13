@@ -41,8 +41,9 @@ use near_sdk::{
 pub mod hardware;
 pub use hardware::Attested;
 
-/// The most receipts one registration may carry. A review makes a handful of model calls; a larger set is split over capsules.
-pub const MAX_RECEIPTS: usize = 16;
+/// The most receipts one registration may carry. Every one is verified here (about half a TGas each); what is kept is their
+/// digest and the model keys they name, so a long review costs its registrant no more storage than a short one.
+pub const MAX_RECEIPTS: usize = 128;
 /// What a binding signature covers is prefixed, so a signature made for another purpose can never be reused here.
 pub const BINDING_PREFIX: &str = "kakurega-register-v2";
 const MAX_MODEL_LEN: usize = 200;
@@ -108,14 +109,14 @@ pub struct ReceiptArg {
     pub signature: String,
 }
 
-/// A receipt whose signature this contract verified.
+/// One model key among a registration's receipts, every one of which this contract verified: for which model, how many of
+/// the receipts it signed, and when this contract last saw its hardware quote verified.
 #[near(serializers = [json, borsh])]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VerifiedReceipt {
+pub struct SignerSeen {
     pub signer: String,
     pub model: String,
-    pub request_sha256: String,
-    pub response_sha256: String,
+    pub receipts: u32,
     /// When this contract last saw the signer's hardware quote verified, if it had by the time of registration: block time in
     /// nanoseconds. `None` says only that no such record existed here, not that the hardware is absent.
     pub signer_attested_at: Option<U64>,
@@ -129,7 +130,12 @@ pub struct Entry {
     pub registered_at: U64,
     /// The Ed25519 key that signed the capsule, proven by the registering account.
     pub capsule_signer: String,
-    pub receipts: Vec<VerifiedReceipt>,
+    /// SHA-256, in hex, of the receipts as registered (one line each, in their order: the text the binding signature covers).
+    /// Every one of them was verified here; a reader re-computes it from the capsule's own receipts to see they are the same.
+    pub receipts_sha256: String,
+    pub receipt_count: u32,
+    /// The model keys the receipts name, in the order each first appears.
+    pub signers: Vec<SignerSeen>,
     /// The order this capsule was registered for, if any.
     pub order: Option<U64>,
 }
@@ -738,10 +744,10 @@ impl Registry {
         );
         if order.require_hardware {
             require!(
-                !entry.receipts.is_empty(),
+                entry.receipt_count > 0,
                 "the order asks for model receipts and the capsule carries none"
             );
-            for r in &entry.receipts {
+            for r in &entry.signers {
                 let fresh = self.attested.get(&r.signer).is_some_and(|a| {
                     a.tcb_status == "UpToDate" && a.attested_at.0 >= order.opened_at.0
                 });
@@ -1113,10 +1119,8 @@ impl Registry {
             !is_small_order(&key),
             "the capsule signer is not a usable key"
         );
-        let mut message = format!(
-            "{BINDING_PREFIX}:{capsule_sha256}:{}:{account}",
-            receipts_digest(&receipts)
-        );
+        let receipts_sha256 = receipts_digest(&receipts);
+        let mut message = format!("{BINDING_PREFIX}:{capsule_sha256}:{receipts_sha256}:{account}");
         if let Some(id) = order {
             message.push_str(&format!(":{ORDER_SUFFIX}:{id}"));
         }
@@ -1124,22 +1128,32 @@ impl Registry {
             env::ed25519_verify(&sig, message.as_bytes(), &key),
             "the binding signature does not verify for this account"
         );
-        let mut verified: Vec<VerifiedReceipt> = Vec::with_capacity(receipts.len());
+        let mut signers: Vec<SignerSeen> = Vec::new();
+        let mut seen: Vec<(&str, &str, &str)> = Vec::with_capacity(receipts.len());
         for r in &receipts {
             require!(
                 receipt_holds(r),
                 "a receipt is malformed or its signature does not verify"
             );
-            let one = VerifiedReceipt {
-                signer: r.signer.clone(),
-                model: r.model.clone(),
-                request_sha256: r.request_sha256.clone(),
-                response_sha256: r.response_sha256.clone(),
-                signer_attested_at: self.attested.get(&r.signer).map(|a| a.attested_at),
-            };
-            require!(!verified.contains(&one), "a receipt is listed twice");
-            verified.push(one);
+            seen.push((&r.signer, &r.request_sha256, &r.response_sha256));
+            match signers
+                .iter_mut()
+                .find(|s| s.signer == r.signer && s.model == r.model)
+            {
+                Some(s) => s.receipts += 1,
+                None => signers.push(SignerSeen {
+                    signer: r.signer.clone(),
+                    model: r.model.clone(),
+                    receipts: 1,
+                    signer_attested_at: self.attested.get(&r.signer).map(|a| a.attested_at),
+                }),
+            }
         }
+        seen.sort_unstable();
+        require!(
+            seen.windows(2).all(|w| w[0] != w[1]),
+            "a receipt is listed twice"
+        );
         let key_text = entry_key(&capsule_sha256, &capsule_signer);
         require!(
             self.entries.get(&key_text).is_none(),
@@ -1149,7 +1163,9 @@ impl Registry {
             registered_by: account.clone(),
             registered_at: U64(env::block_timestamp()),
             capsule_signer,
-            receipts: verified,
+            receipts_sha256,
+            receipt_count: receipts.len() as u32,
+            signers,
             order: order.map(U64),
         };
         let before = storage_from.unwrap_or_else(env::storage_usage);
@@ -1169,7 +1185,7 @@ impl Registry {
         }
         env::log_str(&format!(
             "EVENT_JSON:{{\"standard\":\"kakurega\",\"version\":\"1.0.0\",\"event\":\"registered\",\"data\":[{{\"capsule_sha256\":\"{capsule_sha256}\",\"registered_by\":\"{account}\",\"receipts\":{}}}]}}",
-            entry.receipts.len()
+            entry.receipt_count
         ));
         entry
     }
@@ -1255,10 +1271,22 @@ mod tests {
         let mut r = fresh();
         let (cap, model) = (key(1), key(2));
         let rc = receipt(&model, "Qwen/Qwen3.8-27B", &h('b'), &h('c'));
-        let e = reg(&mut r, &cap, DIGEST, vec![rc], "alice.testnet");
+        let e = reg(&mut r, &cap, DIGEST, vec![rc.clone()], "alice.testnet");
         assert_eq!(e.registered_by.as_str(), "alice.testnet");
         assert_eq!(e.registered_at.0, 1_700_000_000_000_000_000);
-        assert_eq!(e.receipts.len(), 1);
+        assert_eq!(
+            (e.receipt_count, e.receipts_sha256.clone()),
+            (1, receipts_digest(&[rc]))
+        );
+        assert_eq!(
+            e.signers,
+            vec![SignerSeen {
+                signer: signer_hex(&model),
+                model: "Qwen/Qwen3.8-27B".into(),
+                receipts: 1,
+                signer_attested_at: None
+            }]
+        );
         assert_eq!(r.get(DIGEST.into(), signer_hex(&cap)).unwrap(), e);
         assert_eq!(r.total().0, 1);
     }
@@ -1697,10 +1725,55 @@ mod tests {
             "alice.testnet",
         );
         assert_eq!(
-            e.receipts[0].signer_attested_at,
+            e.signers[0].signer_attested_at,
             Some(U64(1_700_000_000_000_000_000))
         );
-        assert_eq!(e.receipts[1].signer_attested_at, None);
+        assert_eq!(e.signers[1].signer_attested_at, None);
+    }
+
+    #[test]
+    fn rg30_a_long_reviews_receipts_are_each_verified_and_kept_as_their_digest_and_the_keys_they_name()
+     {
+        let mut r = fresh();
+        let (cap, model, other) = (key(1), key(2), key(3));
+        let hx = |n: usize, salt: u8| format!("{:02x}{}", salt, format!("{n:062x}"));
+        let mut many: Vec<ReceiptArg> = (0..MAX_RECEIPTS - 1)
+            .map(|n| receipt(&model, "Qwen/Qwen3.8-27B", &hx(n, 0xaa), &hx(n, 0xbb)))
+            .collect();
+        many.push(receipt(&other, "zai-org/GLM-5.1", &h('d'), &h('e')));
+        let e = reg(&mut r, &cap, DIGEST, many.clone(), "alice.testnet");
+        assert_eq!(e.receipt_count as usize, MAX_RECEIPTS);
+        assert_eq!(e.receipts_sha256, receipts_digest(&many));
+        assert_eq!(
+            e.signers
+                .iter()
+                .map(|s| (s.model.as_str(), s.receipts))
+                .collect::<Vec<_>>(),
+            vec![
+                ("Qwen/Qwen3.8-27B", MAX_RECEIPTS as u32 - 1),
+                ("zai-org/GLM-5.1", 1)
+            ]
+        );
+        // what is kept does not grow with the number of receipts
+        let stored = near_sdk::borsh::to_vec(&e).unwrap().len();
+        assert!(
+            stored < 600,
+            "an entry of {MAX_RECEIPTS} receipts takes {stored} bytes"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "a receipt is malformed or its signature does not verify")]
+    fn rg31_one_bad_signature_among_many_refuses_the_whole_registration() {
+        let mut r = fresh();
+        let (cap, model) = (key(1), key(2));
+        let hx = |n: usize, salt: u8| format!("{:02x}{}", salt, format!("{n:062x}"));
+        let mut many: Vec<ReceiptArg> = (0..40)
+            .map(|n| receipt(&model, "m", &hx(n, 0xaa), &hx(n, 0xbb)))
+            .collect();
+        // the last one's answer digest no longer matches what the model signed
+        many[39].response_sha256 = h('f');
+        reg(&mut r, &cap, DIGEST, many, "alice.testnet");
     }
 
     #[test]

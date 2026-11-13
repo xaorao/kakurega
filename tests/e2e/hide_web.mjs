@@ -1,7 +1,8 @@
 // Names hidden from a model that is not on this computer, as a person does it: list a name in Settings, ask in Chat, read the
 // answer with the real values, open "What was sent to the model" and see placeholders there.
-// This needs a model elsewhere, so it runs only when ANTHROPIC_API_KEY is set (the outside test route); otherwise it says so.
-//   ANTHROPIC_API_KEY=... node tests/e2e/hide_web.mjs      screenshots in target/hide-web/
+// This needs a model elsewhere: NEAR AI Cloud (KAKU_TEST_NEAR_MODEL with KAKU_TEST_NEAR_KEY_FILE), or the outside test route
+// when ANTHROPIC_API_KEY is set; otherwise it says so.
+//   KAKU_TEST_NEAR_MODEL=Qwen/Qwen3.8-27B KAKU_TEST_NEAR_KEY_FILE=FILE node tests/e2e/hide_web.mjs      screenshots in target/hide-web/
 
 import { chromium } from "playwright-core";
 import { spawn } from "node:child_process";
@@ -10,8 +11,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
-if (!process.env.ANTHROPIC_API_KEY) {
-  console.log("SKIP hide_web: no ANTHROPIC_API_KEY, so there is no model elsewhere to hide names from");
+// KAKU_TEST_NEAR_MODEL and KAKU_TEST_NEAR_KEY_FILE run the model work on NEAR AI Cloud's confidential hardware instead
+const nearModel = process.env.KAKU_TEST_NEAR_MODEL;
+const near = nearModel ? ["--route", "near", "--near-model", nearModel, "--near-key-file", process.env.KAKU_TEST_NEAR_KEY_FILE ?? ""] : null;
+if (!near && !process.env.ANTHROPIC_API_KEY) {
+  console.log("SKIP hide_web: no NEAR model or ANTHROPIC_API_KEY, so there is no model elsewhere to hide names from");
   process.exit(0);
 }
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -21,7 +25,7 @@ const root = join(work, "root");
 mkdirSync(root, { recursive: true });
 const chrome = join(homedir(), "Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing");
 const model = process.env.KK_OUTSIDE_MODEL || "anthropic:claude-sonnet-5-5";
-const server = spawn(join(repo, "target/debug/kaku"), ["serve", "--data-dir", join(work, "data"), "--root", root, "--route", "outside", "--outside-model", model, "--ui-dir", join(repo, "apps/web/dist")], { stdio: ["ignore", "pipe", "pipe"] });
+const server = spawn(join(repo, "target/debug/kaku"), ["serve", "--data-dir", join(work, "data"), "--root", root, ...(near ?? ["--route", "outside", "--outside-model", model]), "--ui-dir", join(repo, "apps/web/dist")], { stdio: ["ignore", "pipe", "pipe"] });
 process.on("exit", () => { try { server.kill(); } catch {} });
 let log = "";
 server.stdout.on("data", (d) => (log += d));

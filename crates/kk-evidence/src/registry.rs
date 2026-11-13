@@ -8,7 +8,7 @@ use crate::capsule::{sha256_hex, ReceiptReport};
 /// What the contract prefixes, so a signature made for another purpose can never be used there.
 pub const BINDING_PREFIX: &str = "kakurega-register-v2";
 /// The most receipts one registration carries on chain.
-pub const MAX_CHAIN_RECEIPTS: usize = 16;
+pub const MAX_CHAIN_RECEIPTS: usize = 128;
 
 /// Whether `name` has the form of a NEAR account id: 2 to 64 characters, lowercase letters and digits in parts joined by
 /// single `-`, `_` or `.` separators.
@@ -105,9 +105,11 @@ mod tests {
         let d = "a".repeat(64);
         assert!(binding_message("ABC", &[], "alice.testnet", None).is_none());
         assert!(binding_message(&d.to_uppercase(), &[], "alice.testnet", None).is_none());
-        let many: Vec<ReceiptReport> = (0..17).map(|_| receipt('a')).collect();
+        let many: Vec<ReceiptReport> = (0..=MAX_CHAIN_RECEIPTS).map(|_| receipt('a')).collect();
         assert!(binding_message(&d, &many, "alice.testnet", None).is_none());
-        assert!(binding_message(&d, &many[..16], "alice.testnet", None).is_some());
+        assert!(binding_message(&d, &many[..MAX_CHAIN_RECEIPTS], "alice.testnet", None).is_some());
+        // the same number the contract takes
+        assert_eq!(MAX_CHAIN_RECEIPTS, 128);
         for bad in [
             "",
             "a",
@@ -129,7 +131,7 @@ mod tests {
         for good in [
             "alice.testnet",
             "a1",
-            "kakurega-registry-35d13d.testnet",
+            "kakurega-registry-c68af3.testnet",
             "x_y.near",
             &"a".repeat(64),
         ] {

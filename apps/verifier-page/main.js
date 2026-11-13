@@ -68,7 +68,7 @@ function hardwareItems(h) {
 
 function showChain(box, place, found) {
   box.replaceChildren();
-  const { entry, hardware, order, unregistered } = found;
+  const { entry, hardware, order, count, unregistered, different } = found;
   if (!entry) {
     const v = el("div", "Not registered on NEAR under this signing key", "verdict");
     v.setAttribute("role", "status");
@@ -82,11 +82,13 @@ function showChain(box, place, found) {
     row("Registered by", plain(entry.registered_by), true);
     row("When", when(entry.registered_at));
     row("Where", place, true);
-    const n = Array.isArray(entry.receipts) ? entry.receipts.length : 0;
+    const n = count;
     box.append(dl);
     box.append(el("p", "That account proved to the contract that it controls the capsule's signing key."));
     box.append(el("p", n === 0 ? "No model signatures were registered with it." : n === 1 ? "The contract verified 1 model signature registered with it." : `The contract verified ${n} model signatures registered with it.`));
-    if (unregistered > 0) {
+    if (different) {
+      box.append(el("p", "The model signatures registered with it are not this capsule's own: their digest differs.", "bad"));
+    } else if (unregistered > 0) {
       box.append(el("p", `${unregistered} of this capsule's model signatures were not registered with it.`, "note"));
     }
   }

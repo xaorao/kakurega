@@ -2,7 +2,7 @@
 // it sends the capsule's digest and the keys named in it to that RPC, and nothing else.
 
 export const NETWORKS = {
-  testnet: { rpc: "https://rpc.testnet.fastnear.com", registry: "kakurega-registry-35d13d.testnet" },
+  testnet: { rpc: "https://rpc.testnet.fastnear.com", registry: "kakurega-registry-c68af3.testnet" },
   mainnet: { rpc: "https://rpc.mainnet.fastnear.com", registry: "" },
 };
 
@@ -105,9 +105,32 @@ export async function lookup(network, registry, capsuleSha256, signerHex, receip
   if (entry && typeof entry.order === "string" && /^\d{1,20}$/.test(entry.order)) {
     order = { id: entry.order, order: await call("order", { order_id: entry.order }) };
   }
-  const onChain = entry && Array.isArray(entry.receipts) ? entry.receipts : [];
+  const { count, unregistered, different } = await matchReceipts(entry, receipts);
+  return { entry, hardware, order, count, unregistered, different };
+}
+
+/** SHA-256, in hex, of receipts as the registry reads them: one line each, `signer:model:request:response:signature`. */
+export async function receiptsDigest(receipts) {
+  const text = receipts.map((r) => `${r.signer}:${r.model}:${r.requestSha256}:${r.responseSha256}:${r.signature}\n`).join("");
+  const d = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+  return [...d].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Whether the model signatures registered with an entry are this capsule's own. A registry that keeps their digest is compared
+ * with the digest of the capsule's first `receipt_count` receipts (the ones a registration carries); an older one, which kept
+ * each receipt, is compared receipt by receipt.
+ */
+export async function matchReceipts(entry, receipts) {
+  if (!entry) return { count: 0, unregistered: 0, different: false };
+  if (typeof entry.receipts_sha256 === "string") {
+    const count = Number.isSafeInteger(entry.receipt_count) ? entry.receipt_count : 0;
+    if (count > receipts.length || (await receiptsDigest(receipts.slice(0, count))) !== entry.receipts_sha256) return { count, unregistered: 0, different: true };
+    return { count, unregistered: receipts.length - count, different: false };
+  }
+  const onChain = Array.isArray(entry.receipts) ? entry.receipts : [];
   const unregistered = receipts.filter(
     (r) => !onChain.some((c) => c.signer === r.signer && c.request_sha256 === r.requestSha256 && c.response_sha256 === r.responseSha256),
   ).length;
-  return { entry, hardware, order, unregistered };
+  return { count: onChain.length, unregistered, different: false };
 }

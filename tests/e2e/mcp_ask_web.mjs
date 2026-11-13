@@ -14,6 +14,10 @@ import { homedir } from "node:os";
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const work = join(repo, "target/mcp-ask-web");
 const model = process.argv[2] ?? "qwen2.5-coder:7b";
+// KAKU_TEST_NEAR_MODEL and KAKU_TEST_NEAR_KEY_FILE run the model work on NEAR AI Cloud's confidential hardware instead
+const nearModel = process.env.KAKU_TEST_NEAR_MODEL;
+const near = nearModel ? ["--route", "near", "--near-model", nearModel, "--near-key-file", process.env.KAKU_TEST_NEAR_KEY_FILE ?? ""] : null;
+
 rmSync(work, { recursive: true, force: true });
 const root = join(work, "root");
 const proj = join(root, "proj");
@@ -21,7 +25,7 @@ mkdirSync(join(proj, "src"), { recursive: true });
 writeFileSync(join(proj, "src/app.py"), "def add(a, b):\n    return a - b\n");
 const fake = join(repo, "target/debug/fake_mcp");
 const chrome = join(homedir(), "Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing");
-const server = spawn(join(repo, "target/debug/kaku"), ["serve", "--data-dir", join(work, "data"), "--root", root, "--model", model, "--ui-dir", join(repo, "apps/web/dist")], { stdio: ["ignore", "pipe", "pipe"] });
+const server = spawn(join(repo, "target/debug/kaku"), ["serve", "--data-dir", join(work, "data"), "--root", root, "--model", model, ...(near ?? []), "--ui-dir", join(repo, "apps/web/dist")], { stdio: ["ignore", "pipe", "pipe"] });
 let log = "";
 server.stdout.on("data", (d) => (log += d));
 server.stderr.on("data", (d) => (log += d));

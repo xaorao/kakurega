@@ -886,6 +886,7 @@ export const en = {
   "chat.private": "Private: answered on this computer",
   "chat.test": "Test model: this is a scripted reply, not a real model",
   "chat.remote": "Answered by the model at {host}, not on this computer",
+  "chat.remote.tee": "Answered in confidential hardware at {host}, whose proof was checked first; not on this computer",
   "chat.unknownPlace": "Where the model that answered runs is not reported",
   "web.title": "Add pages from the web",
   "web.lead": "Off by default. You list the exact addresses; you see them before anything is requested. Your question, notes and files are never sent. Pages are untrusted data.",

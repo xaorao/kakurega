@@ -778,7 +778,7 @@ export function Chat() {
       heldLevel = Math.max(heldLevel, r.level ?? 0);
       const noModel = r.route.id === "none";
       if (!noModel) window.dispatchEvent(new Event("kk:model-ok"));
-      const foot = noModel ? [t("chat.noModel"), t("chat.notesUsed", { n: r.notes_used })] : [r.route.simulated ? t("chat.test") : r.route.stays_here === false ? (r.route.host ? t("chat.remote", { host: r.route.host }) : t("chat.unknownPlace")) : t("chat.private"), t("chat.notesUsed", { n: r.notes_used })];
+      const foot = noModel ? [t("chat.noModel"), t("chat.notesUsed", { n: r.notes_used })] : [r.route.simulated ? t("chat.test") : r.route.stays_here === false ? (r.route.host ? t(r.route.class === "verified_tee" ? "chat.remote.tee" : "chat.remote", { host: r.route.host }) : t("chat.unknownPlace")) : t("chat.private"), t("chat.notesUsed", { n: r.notes_used })];
       // said first: the text above stops before the model had finished
       if (r.cut_short) foot.unshift(t("chat.cutShort"));
       if (r.swapped) foot.push(t("chat.swapped", { n: r.swapped }));

@@ -10,6 +10,7 @@ import { mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
+import { verifyCapsule } from "../../packages/verifier-js/src/index.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const work = join(repo, "target/verifier-page");
@@ -152,6 +153,8 @@ await cctx.route("https://rpc.testnet.fastnear.com/**", async (route) => {
   let result = null;
   const m = body.params.method_name;
   if (m === "get" && mode === "registered") result = { registered_by: "alice.testnet\u001b[2J", registered_at: "1700000000000000000", capsule_signer: args.capsule_signer, receipts: [], order: "4" };
+  // the registry that keeps the receipts' digest: this capsule's own, or another's
+  if (m === "get" && (mode === "digest" || mode === "digest-other")) result = { registered_by: "alice.testnet", registered_at: "1700000000000000000", capsule_signer: args.capsule_signer, receipts_sha256: mode === "digest" ? ownDigest : "00".repeat(32), receipt_count: 2, signers: [], order: null };
   if (m === "hardware" && mode === "registered" && calls.filter((c) => c.method === "hardware").length === 1) result = { signer: args.signer, tcb_status: "UpToDate", attested_at: "1700000100000000000", attested_by: "alice.testnet", compose_sha256: "cd".repeat(32), advisory_ids: [], mr_td: "ef".repeat(48) };
   if (m === "order") result = { state: "Paid", amount: "497090000000000000000000", fee: "9941800000000000000000", token: null, client: "carl.testnet", reviewer: "alice.testnet" };
   return route.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, result: { result: Array.from(Buffer.from(JSON.stringify(result))) } }) });
@@ -170,7 +173,7 @@ const chainText = await cp.locator("#chain").innerText();
 const digest = createHash("sha256").update(bytes).digest("hex");
 const signerHex = Buffer.from(key, "base64url").toString("hex");
 const allowed = new Set(["capsule_sha256", "capsule_signer", "signer", "order_id"]);
-check(calls.length === 4 && calls.every((c) => c.account === "kakurega-registry-35d13d.testnet" && Object.keys(c.args).every((k) => allowed.has(k))) && calls[0].args.capsule_sha256 === digest && calls[0].args.capsule_signer === signerHex, "the RPC was asked four things, with the digest, the signer key, two model keys and the order number and nothing else: " + JSON.stringify(calls.map((c) => [c.method, Object.keys(c.args)])));
+check(calls.length === 4 && calls.every((c) => c.account === "kakurega-registry-c68af3.testnet" && Object.keys(c.args).every((k) => allowed.has(k))) && calls[0].args.capsule_sha256 === digest && calls[0].args.capsule_signer === signerHex, "the RPC was asked four things, with the digest, the signer key, two model keys and the order number and nothing else: " + JSON.stringify(calls.map((c) => [c.method, Object.keys(c.args)])));
 check(calls.every((c) => !("cookie" in c.headers) && !("referer" in c.headers)), "with no cookie and no referrer");
 check(/alice\.testnet\[2J/.test(chainText) && !chainText.includes("\u001b") && /2023-11-14 22:13:20 UTC/.test(chainText), "the registering account and the time are shown, with control characters from the chain removed");
 check(/2 of this capsule's model signatures were not registered/.test(chainText), "model signatures the chain does not hold for this capsule are counted");
@@ -179,6 +182,23 @@ check(/Registered for order 4/.test(chainText) && /0\.49709 NEAR/.test(chainText
 check(/Amount: 0\.49709 NEAR to the reviewer/.test(chainText) && /Fee on top: 0\.00994 NEAR, to the registry's fee account/.test(chainText), "the order's fee is shown apart from the reviewer's amount");
 check(/does not establish/.test(chainText) && /claim in the capsule is true/.test(chainText) && /quote is recent/.test(chainText) && /GPU/.test(chainText), "and what the chain does not establish is said");
 await cp.screenshot({ path: join(work, "chain-registered.png"), fullPage: true });
+
+// a registry that keeps the digest of the receipts it verified: the page re-computes it from this capsule's own receipts
+const report = await verifyCapsule(readFileSync(two), {});
+const lines = report.receipts.map((r) => `${r.signer}:${r.model}:${r.requestSha256}:${r.responseSha256}:${r.signature}\n`).join("");
+var ownDigest = createHash("sha256").update(lines).digest("hex");
+check(report.receipts.length === 2 && report.receipts.every((r) => /^[0-9a-f]{128}$/.test(r.signature)), "the capsule's two receipts are read with their signatures");
+mode = "digest";
+await cp.locator("#lookup").click();
+await cp.getByText("The contract verified 2 model signatures registered with it.").waitFor();
+let digestText = await cp.locator("#chain").innerText();
+check(!/not registered with it/.test(digestText) && !/not this capsule's own/.test(digestText), "every one of the capsule's signatures is matched by the registered digest");
+mode = "digest-other";
+await cp.locator("#lookup").click();
+await cp.getByText("not this capsule's own").waitFor();
+digestText = await cp.locator("#chain").innerText();
+check(/The model signatures registered with it are not this capsule's own: their digest differs\./.test(digestText), "a registered digest that is not this capsule's is said plainly");
+await cp.screenshot({ path: join(work, "chain-digest-other.png"), fullPage: true });
 
 mode = "unregistered";
 await cp.locator("#lookup").click();
@@ -243,7 +263,8 @@ check(/does not give pages the Web Crypto functions/.test(await nc.locator(".ver
 await noCrypto.close();
 
 // LIVE, only when asked: the capsule that tests/e2e/chain_register.py registered on testnet, read by the page itself
-const liveCapsule = join(repo, "target/chain-register-tmp/review.kkg");
+// (KAKU_LIVE_CAPSULE names another registered capsule, such as one a real NEAR review delivered)
+const liveCapsule = process.env.KAKU_LIVE_CAPSULE || join(repo, "target/chain-register-tmp/review.kkg");
 if (process.env.KAKU_LIVE_CHAIN === "1") {
   const { existsSync } = await import("node:fs");
   if (!existsSync(liveCapsule)) {
@@ -256,7 +277,7 @@ if (process.env.KAKU_LIVE_CHAIN === "1") {
     await lp.locator("#lookup").click();
     await lp.locator("#chain-out .verdict").waitFor({ timeout: 30000 });
     const live = await lp.locator("#chain").innerText();
-    check(/Registered by\s+kakurega-[a-z0-9-]+\.testnet/.test(live) && /kakurega-registry-35d13d\.testnet on NEAR testnet/.test(live), "LIVE: the page reads a real registration from NEAR testnet by itself");
+    check(/Registered by\s+kakurega-[a-z0-9-]+\.testnet/.test(live) && /kakurega-registry-c68af3\.testnet on NEAR testnet/.test(live), "LIVE: the page reads a real registration from NEAR testnet by itself");
     await lp.screenshot({ path: join(work, "chain-live.png"), fullPage: true });
   }
 }

@@ -291,7 +291,7 @@ async function checkReceipt(r) {
   const keyBytes = hexToBytes(signer);
   if (classifyPublicKey(keyBytes) !== "ok") stop("receipt_key");
   if (!(await verifySignature(keyBytes, enc.encode(text), hexToBytes(sig)))) stop("receipt_signature");
-  return { completionId: id, signer, model: parsed.model, requestSha256: parsed.request, responseSha256: parsed.response };
+  return { completionId: id, signer, model: parsed.model, requestSha256: parsed.request, responseSha256: parsed.response, signature: sig };
 }
 
 function decodeEnvelope(v) {

@@ -209,7 +209,11 @@ async fn the_registry_works_on_a_real_runtime() -> testresult::TestResult {
         )
         .await;
     assert_eq!(got["registered_by"], "alice.sandbox");
-    assert_eq!(got["receipts"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        (got["receipt_count"].clone(), got["receipts_sha256"].clone()),
+        (json!(1), json!(receipts_digest(std::slice::from_ref(&rc))))
+    );
+    assert_eq!(got["signers"][0]["receipts"], json!(1));
     assert_eq!(e.view(&contract, "total", json!({})).await, json!("1"));
 
     // First registration wins.
@@ -1589,5 +1593,76 @@ async fn testnet_an_order_is_opened_and_paid_for_the_reviewers_capsule() -> test
             "everything owed reached the fee account, sent by the client"
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_long_reviews_128_receipts_are_each_verified_on_a_real_runtime_within_the_gas_and_at_a_small_storage_cost()
+-> testresult::TestResult {
+    let wasm = std::fs::read(cargo_near_build::build_with_cli(Default::default())?)?;
+    let e = start().await?;
+    let contract = e.account("registry.sandbox", 20).await;
+    near_api::Contract::deploy(contract.clone())
+        .use_code(wasm)
+        .with_init_call(
+            "new",
+            json!({"verifier": "verifier.sandbox", "token": null, "min_token_order": null}),
+        )?
+        .with_signer(e.key.clone())
+        .send_to(&e.net)
+        .await?
+        .assert_success();
+    let alice = e.account("alice.sandbox", 10).await;
+    let (cap, model) = (key(1), key(2));
+    let receipts: Vec<Value> = (0..128u32)
+        .map(|n| {
+            receipt(
+                &model,
+                "Qwen/Qwen3.8-27B",
+                &format!("{n:064x}"),
+                &format!("{:064x}", n + 1000),
+            )
+        })
+        .collect();
+    let digest = "cd".repeat(32);
+    let args = json!({
+        "capsule_sha256": digest,
+        "capsule_signer": hex(cap.verifying_key().as_bytes()),
+        "binding_signature": bind(&cap, &digest, &receipts, "alice.sandbox"),
+        "receipts": receipts,
+    });
+    let before = e.balance(&alice).await;
+    let done = near_api::Contract(contract.clone())
+        .call_function("register", args)
+        .transaction()
+        .gas(NearGas::from_tgas(300))
+        .deposit(NearToken::from_near(1))
+        .with_signer(alice.clone(), e.key.clone())
+        .send_to(&e.net)
+        .await?
+        .into_full()
+        .unwrap();
+    let burnt = done.total_gas_burnt;
+    done.into_result().map_err(|e| format!("{e:?}"))?;
+    println!("128 receipts: {burnt} gas burnt");
+    assert!(
+        burnt.as_tgas() < 150,
+        "all 128 signatures are checked well inside a transaction's gas: {burnt}"
+    );
+    let spent = before - e.balance(&alice).await;
+    assert!(
+        spent < NEAR / 50,
+        "storage and gas together cost under 0.02 NEAR, spent {spent}"
+    );
+    let got = e
+        .view(
+            &contract,
+            "get",
+            json!({ "capsule_sha256": digest, "capsule_signer": hex(cap.verifying_key().as_bytes()) }),
+        )
+        .await;
+    assert_eq!(got["receipt_count"], json!(128));
+    assert_eq!(got["receipts_sha256"], json!(receipts_digest(&receipts)));
+    assert_eq!(got["signers"][0]["receipts"], json!(128));
     Ok(())
 }

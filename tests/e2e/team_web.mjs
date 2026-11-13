@@ -24,7 +24,10 @@ const port = 18000 + (process.pid % 1000);
 const procs = [];
 process.on("exit", () => { for (const p of procs) { try { p.kill(); } catch {} } });
 let how;
-if (real?.startsWith("anthropic:")) {
+if (real?.startsWith("near:")) {
+  // a model on NEAR AI Cloud's confidential hardware: the account key file comes from KAKU_TEST_NEAR_KEY_FILE
+  how = ["--route", "near", "--near-model", real.slice(5), "--near-key-file", process.env.KAKU_TEST_NEAR_KEY_FILE ?? ""];
+} else if (real?.startsWith("anthropic:")) {
   // the outside test model: the key comes from the environment (ANTHROPIC_API_KEY), never from an argument
   how = ["--route", "outside", "--outside-model", real];
 } else if (real) {
