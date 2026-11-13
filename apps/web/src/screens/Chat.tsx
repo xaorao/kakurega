@@ -5,7 +5,7 @@ import { visible } from "../visible";
 import { exportFileName, tooLarge, transcriptIn, validExportName, type ExportFormat } from "../transcript";
 import { afterInput, closedAtStart, matches as slashMatches, onKey as slashKey, parseLine, slashQuery, validJob, type PopoverState, type SlashCommand } from "../slash";
 import { batch, createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
-import { api, ApiError, streamChat, type AttachmentRead, type AttachmentSummary, type ChatHit, type ChatTurn, type KeptChat, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
+import { api, ApiError, streamChat, type AttachmentRead, type AttachmentSummary, type ChatHit, type ChatTurn, type KeptChat, type Receipt, type GatewayProofResult, type ModelProof, type ResearchPage, type ResearchProposal, type SearchHit, type SearchProposal } from "../api";
 import { t, type Key } from "../i18n";
 import { SavedPrompts } from "../components/SavedPrompts";
 import { Markdown } from "../components/Markdown";
@@ -19,6 +19,37 @@ interface Shown extends ChatTurn {
   attached?: string[];
   foot?: string[];
   notes?: { id: string; text: string; why: string; untrusted: boolean; project?: string | null }[];
+}
+
+/** Under an answer from verified hardware: the model's own signature over this exact question and answer, to read and to copy. */
+function ReceiptLine(props: { receipt: Receipt }) {
+  const [copied, setCopied] = createSignal(false);
+  const r = () => props.receipt;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(r(), null, 2));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* copying is a convenience; the values are shown and can be selected */
+    }
+  };
+  return (
+    <details class="receipt">
+      <summary><span class="chip ok">{t(r().signature_kind === "provider_tee" ? "rcpt.signedModel" : "rcpt.signedGateway")}</span> <span class="muted">{t("rcpt.key", { key: r().signer.slice(0, 16) })}</span></summary>
+      <p class="muted">{t(r().signature_kind === "provider_tee" ? "rcpt.lead" : "rcpt.leadGateway")}</p>
+      <dl class="receipt-facts">
+        <dt>{t("rcpt.model")}</dt><dd><code>{r().model}</code></dd>
+        <dt>{t("rcpt.signer")}</dt><dd><code>{r().signer}</code></dd>
+        <dt>{t("rcpt.request")}</dt><dd><code>{r().request_sha256}</code></dd>
+        <dt>{t("rcpt.answer")}</dt><dd><code>{r().answer_sha256}</code></dd>
+        <dt>{t("rcpt.signature")}</dt><dd><code>{r().signature}</code></dd>
+        <Show when={r().completion_id}><dt>{t("rcpt.id")}</dt><dd><code>{r().completion_id}</code></dd></Show>
+      </dl>
+      <p class="muted">{t("rcpt.limits")}</p>
+      <div class="actions"><button type="button" class="linklike" onClick={copy}>{copied() ? t("chat.copied") : t("rcpt.copy")}</button></div>
+    </details>
+  );
 }
 
 /** Where the next question goes, under the message box: the same facts as "Where your data goes", in one line. */
@@ -567,7 +598,7 @@ export function Chat() {
       const listed = (kept() ?? []).find((k) => k.id === id);
       if (listed) remember(markSeen(seen(), id, listed.updated));
       setProject(r.project ?? "");
-      show(id, r.turns.map(({ role, content }) => ({ role, content })), r.summary?.text ?? "");
+      show(id, r.turns.map(({ role, content, receipt }) => ({ role, content, receipt })), r.summary?.text ?? "");
       setBranches(r.branches ?? []);
       setSuggested([]);
       setNotesInfo("");
@@ -800,7 +831,7 @@ export function Chat() {
       if (r.notes_withheld > 0) foot.push(t("chat.withheld", { n: r.notes_withheld }));
       for (const p of noteNotes(r)) foot.push(t(p.key, { n: p.n }));
       if (r.usage?.summary_text) setSummaryText(r.usage.summary_text);
-      setTurns([...turns(), { role: "assistant", content: r.reply, foot, notes: r.notes }]);
+      setTurns([...turns(), { role: "assistant", content: r.reply, foot, notes: r.notes, receipt: r.receipt ?? null }]);
       // the view of what was sent belongs to this answer only: the service keeps the latest call and nothing older
       setAnsweredAt(turns().length - 1);
       // the files went with this message; the next one starts without them
@@ -820,7 +851,7 @@ export function Chat() {
         try {
           const saved = await api.keptChat(id);
           if (myView === view && exchangeWasSaved(turnsBefore, message, saved.turns)) {
-            setTurns(saved.turns.map(({ role, content }) => ({ role, content })));
+            setTurns(saved.turns.map(({ role, content, receipt }) => ({ role, content, receipt })));
             setSummaryText(saved.summary?.text ?? "");
             setRecovered(true);
             if (session()) await refetch();
@@ -944,6 +975,7 @@ export function Chat() {
               <div class="msg-body">{m.role === "assistant" ? <Markdown text={m.content} /> : <p class="mem-text">{m.content}</p>}</div>
               <Show when={(m.attached ?? []).length > 0}><p class="muted">{t("files.attached", { names: m.attached!.join(", ") })}</p></Show>
               <Show when={m.foot}>{(f) => <p class="muted">{f().join(" · ")}</p>}</Show>
+              <Show when={m.receipt}>{(r) => <ReceiptLine receipt={r()} />}</Show>
               <div class="actions msg-actions">
                 <button type="button" class="linklike" onClick={() => void copyTurn(i(), m.content)}>{copiedAt() === i() ? t("chat.copied") : t("chat.copy")}</button>
                 <Show when={session() && !busy() && editPoint(turns(), i())}>

@@ -397,7 +397,7 @@ impl Route for NearRoute {
             "deployment": deployment,
         });
         if let Ok(mut last) = self.last.lock() {
-            *last = Some(receipt);
+            *last = Some(receipt.clone());
         }
         Ok(Completion {
             message: ChatMessage {
@@ -409,6 +409,7 @@ impl Route for NearRoute {
             prompt_tokens: v["usage"]["prompt_tokens"].as_u64().unwrap_or(0),
             completion_tokens: v["usage"]["completion_tokens"].as_u64().unwrap_or(0),
             cut_short: v["choices"][0]["finish_reason"] == "length",
+            receipt: Some(receipt),
         })
     }
 }

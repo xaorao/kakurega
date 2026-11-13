@@ -8920,3 +8920,38 @@ fn tu110_the_terminal_shows_and_sets_how_far_a_projects_material_may_go() {
     assert!(enter(&mut app, "/private acme nowhere").is_empty());
     assert!(enter(&mut app, "/private acme").is_empty());
 }
+
+#[test]
+fn tu111_an_answer_signed_by_the_models_hardware_says_so_with_the_start_of_the_key_and_nothing_unsafe(
+) {
+    let mut app = booted();
+    let r = enter(&mut app, "what is a session token?");
+    app.handle(ok(&r[0], 200, json!({"reply": "An identifier.", "route": {"simulated": false}, "notes_used": 0,
+        "receipt": {"signer": "89154a43a47684742c3d1753252bb6f49f61da9d8c84fc9b1def2df130cb2d93", "signature_kind": "provider_tee"}})));
+    let t = text(&app);
+    assert!(
+        t.contains("signed by the model's hardware, key 89154a43a4768474…"),
+        "{t}"
+    );
+    // a gateway signature is named as one, and a key with terminal control bytes is shown without them
+    let r = enter(&mut app, "again");
+    app.handle(ok(
+        &r[0],
+        200,
+        json!({"reply": "Yes.", "route": {"simulated": false}, "notes_used": 0,
+        "receipt": {"signer": "ab\u{1b}[2Jcd", "signature_kind": "gateway"}}),
+    ));
+    let t = text(&app);
+    assert!(
+        t.contains("signed by NEAR's gateway, key ab") && !t.contains('\u{1b}'),
+        "{t}"
+    );
+    // no receipt, no line
+    let r = enter(&mut app, "third");
+    app.handle(ok(
+        &r[0],
+        200,
+        json!({"reply": "Third answer.", "route": {"simulated": false}, "notes_used": 0}),
+    ));
+    assert_eq!(text(&app).matches("signed by").count(), 2);
+}

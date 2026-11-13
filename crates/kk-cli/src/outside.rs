@@ -197,6 +197,7 @@ pub fn read_reply(status: u16, v: &Value) -> Result<Completion, RouteError> {
                 .unwrap_or(0),
         completion_tokens: v["usage"]["output_tokens"].as_u64().unwrap_or(0),
         cut_short: v["stop_reason"] == "max_tokens",
+        receipt: None,
     })
 }
 

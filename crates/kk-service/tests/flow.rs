@@ -322,6 +322,7 @@ impl JobRunner for CannedRunner {
                 simulated: true,
                 prompt_tokens: None,
                 cut_short: false,
+                receipt: None,
             });
         }
         if self.confirm {
@@ -337,6 +338,7 @@ impl JobRunner for CannedRunner {
                 simulated: true,
                 prompt_tokens: None,
                 cut_short: false,
+                receipt: None,
             })
         } else {
             Err("no model is running".into())
@@ -3944,6 +3946,7 @@ impl JobRunner for SlowRunner {
                         simulated: true,
                         prompt_tokens: None,
                         cut_short: false,
+                        receipt: None,
                     },
                     stopped: true,
                 });
@@ -3958,6 +3961,7 @@ impl JobRunner for SlowRunner {
                 simulated: true,
                 prompt_tokens: None,
                 cut_short: false,
+                receipt: None,
             },
             stopped: false,
         })
@@ -6466,6 +6470,7 @@ impl JobRunner for ShortRunner {
             simulated: true,
             prompt_tokens: None,
             cut_short: false,
+            receipt: None,
         })
     }
 }
@@ -6583,6 +6588,7 @@ impl JobRunner for SummaryRunner {
             simulated: true,
             prompt_tokens: None,
             cut_short: false,
+            receipt: None,
         })
     }
     fn summarize(&self, m: Vec<kk_types::chat::ChatMessage>) -> Result<String, String> {
@@ -8068,6 +8074,7 @@ impl JobRunner for RouteRunner {
             simulated: false,
             prompt_tokens: None,
             cut_short: false,
+            receipt: None,
         })
     }
 }
@@ -10077,6 +10084,7 @@ impl JobRunner for FileRunner {
             simulated: true,
             prompt_tokens: None,
             cut_short: false,
+            receipt: None,
         })
     }
 }
@@ -18624,6 +18632,7 @@ impl JobRunner for TableRunner {
             simulated: true,
             prompt_tokens: None,
             cut_short,
+            receipt: None,
         };
         if m.iter()
             .any(|x| x.role == "system" && x.content == LEAD_INSTRUCTION)
@@ -19194,6 +19203,7 @@ impl TeamRunner {
             simulated: true,
             prompt_tokens: None,
             cut_short: false,
+            receipt: None,
         }
     }
     fn task_number(m: &[kk_types::chat::ChatMessage]) -> usize {
@@ -23020,6 +23030,7 @@ impl JobRunner for SwitchRunner {
             simulated: false,
             prompt_tokens: None,
             cut_short: false,
+            receipt: None,
         })
     }
     fn summarize(&self, m: Vec<kk_types::chat::ChatMessage>) -> Result<String, String> {
@@ -25839,6 +25850,7 @@ impl JobRunner for NearPriceRunner {
             simulated: false,
             prompt_tokens: Some(100_000),
             cut_short: false,
+            receipt: None,
         })
     }
     fn published_prices(&self) -> Option<Value> {
@@ -26174,4 +26186,132 @@ fn sv302_nears_models_are_listed_for_the_owner_usable_ones_first_and_an_unread_l
     // a configuration with no way to read it
     *runner.prices.lock().unwrap() = None;
     assert_eq!(w.get("/api/route/near-models").0, 409);
+}
+
+struct ReceiptRunner {
+    receipt: Mutex<Option<Value>>,
+}
+
+impl JobRunner for ReceiptRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> JobReport {
+        CannedRunner { confirm: true }.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        json!({"id": "near:Qwen/Qwen3.8-27B", "class": "verified_tee", "model": "Qwen/Qwen3.8-27B", "simulated": false, "endpoint": "https://cloud-api.near.ai/v1", "context_tokens": 65536})
+    }
+    fn chat(&self, _m: Vec<kk_types::chat::ChatMessage>) -> Result<kk_service::ChatReply, String> {
+        Ok(kk_service::ChatReply {
+            text: "The plan is settled.".into(),
+            route_id: "near:Qwen/Qwen3.8-27B".into(),
+            class: "verified_tee".into(),
+            simulated: false,
+            prompt_tokens: Some(100),
+            cut_short: false,
+            receipt: self.receipt.lock().unwrap().clone(),
+        })
+    }
+}
+
+#[test]
+fn sv303_an_answer_from_verified_hardware_carries_the_models_signature_which_is_kept_with_the_conversation(
+) {
+    let (root, _repo) = repo_copy("chat-receipt");
+    let signed = format!("Qwen/Qwen3.8-27B:{}:{}", "a".repeat(64), "b".repeat(64));
+    let good = json!({
+        "completion_id": "chatcmpl-123", "signature_kind": "provider_tee", "signer": "89154a43", "signing_algo": "ed25519",
+        "signed_text": signed, "signature": "c".repeat(128), "e2ee": true, "reply_key_bound": true,
+        "deployment": {"internal": "detail that is not for the screen"}
+    });
+    let runner = Arc::new(ReceiptRunner {
+        receipt: Mutex::new(Some(good)),
+    });
+    let svc = Service::new(&root.join("data"), vec![root.clone()], runner.clone(), true).unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let id = w.post("/api/sessions", json!({"title": ""})).1["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "What is the plan?", "session": id}),
+    );
+    assert_eq!(s, 200, "{r}");
+    let rc = &r["receipt"];
+    assert_eq!(rc["signer"], "89154a43");
+    assert_eq!(rc["model"], "Qwen/Qwen3.8-27B");
+    assert_eq!(rc["request_sha256"], "a".repeat(64));
+    assert_eq!(rc["answer_sha256"], "b".repeat(64));
+    assert_eq!(rc["signature"], "c".repeat(128));
+    assert_eq!(rc["signature_kind"], "provider_tee");
+    assert_eq!(rc["encrypted"], true);
+    // only what a reader can check is shown: nothing else of the route's record
+    assert!(
+        rc.get("deployment").is_none() && rc.get("reply_key_bound").is_none(),
+        "{rc}"
+    );
+
+    // a receipt that is not one (a missing signature, hashes of the wrong shape, a control character) is not shown as one
+    for bad in [
+        json!({"signer": "k", "signed_text": signed}),
+        json!({"signer": "k", "signature": "s", "signed_text": "Qwen:nothex:alsonot"}),
+        json!({"signer": "k\u{1b}[2J", "signature": "s", "signed_text": signed}),
+        json!({"signer": "k", "signature": "s", "signed_text": format!(":{}:{}", "a".repeat(64), "b".repeat(64))}),
+    ] {
+        *runner.receipt.lock().unwrap() = Some(bad.clone());
+        let (_, r) = w.post("/api/chat", json!({"message": "again", "session": id}));
+        assert!(r["receipt"].is_null(), "{bad} gave {}", r["receipt"]);
+    }
+    *runner.receipt.lock().unwrap() = None;
+    let (_, r) = w.post(
+        "/api/chat",
+        json!({"message": "and without one", "session": id}),
+    );
+    assert!(r["receipt"].is_null());
+
+    // reopened, the first answer still has its receipt, the question before it and the later answers have none
+    let (_, kept) = w.get(&format!("/api/sessions/{id}"));
+    let turns = kept["turns"].as_array().unwrap();
+    assert_eq!(turns.len(), 12);
+    assert!(turns[0].get("receipt").is_none());
+    assert_eq!(turns[1]["receipt"]["signature"], "c".repeat(128));
+    assert!(
+        turns[2..].iter().all(|t| t.get("receipt").is_none()),
+        "{kept}"
+    );
+
+    // a branch keeps the receipts of the turns it copies; a branch cut before the answer has none
+    let (s, b) = w.post(&format!("/api/sessions/{id}/fork"), json!({"at": 2}));
+    assert!(s == 200 || s == 201, "{b}");
+    let branch = b["id"].as_str().unwrap().to_string();
+    let (_, bk) = w.get(&format!("/api/sessions/{branch}"));
+    assert_eq!(bk["turns"][1]["receipt"]["signer"], "89154a43");
+    let (_, b0) = w.post(&format!("/api/sessions/{id}/fork"), json!({"at": 1}));
+    let (_, b0k) = w.get(&format!("/api/sessions/{}", b0["id"].as_str().unwrap()));
+    assert!(b0k["turns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|t| t.get("receipt").is_none()));
+
+    // a forgotten conversation is gone (its receipts are deleted in the same step; the store is encrypted, so this test
+    // sees that only through the conversation no longer being there)
+    assert_eq!(
+        w.post(&format!("/api/sessions/{id}/forget"), json!({})).0,
+        200
+    );
+    assert_eq!(w.get(&format!("/api/sessions/{id}")).0, 404);
 }

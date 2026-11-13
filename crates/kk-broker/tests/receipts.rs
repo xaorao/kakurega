@@ -54,6 +54,7 @@ impl Route for Receipting {
             prompt_tokens: 1,
             completion_tokens: 1,
             cut_short: false,
+            receipt: None,
         })
     }
 }
@@ -182,6 +183,7 @@ impl Route for CountingLocal {
             prompt_tokens: 1,
             completion_tokens: 1,
             cut_short: false,
+            receipt: None,
         })
     }
 }

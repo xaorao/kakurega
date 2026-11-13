@@ -599,3 +599,8 @@ td.asked code { overflow-wrap: anywhere; white-space: normal; }
 .model-name { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .change-list li { padding: 2px 0; }
 pre.pr-comment { font-size: 13px; }
+.receipt > summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.receipt-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0; font-size: 13px; }
+.receipt-facts dt { color: var(--stone); }
+.receipt-facts dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 560px) { .receipt-facts { grid-template-columns: 1fr; } }

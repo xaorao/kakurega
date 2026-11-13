@@ -135,6 +135,26 @@ if (nearModel && keyFile) {
   const answer = await page.locator(".msg").last().innerText();
   check(/token/i.test(answer) && answer.length > 20, "the question is answered: " + answer.replace(/\s+/g, " ").slice(0, 160));
   check(await page.locator("#badge-tee").isVisible(), "the header says the answer comes from NEAR AI's confidential hardware");
+  // the model's own signature over this answer is under it, and checks out with nothing but the key and the text signed
+  const line = page.locator("details.receipt").last();
+  await line.waitFor({ timeout: 10000 });
+  check(/signed by the model's hardware/.test(await line.locator("summary").innerText()), "the answer says it was signed by the model's hardware");
+  await line.locator("summary").click();
+  const facts = await line.locator("dl").innerText();
+  const signerKey = /Signing key\s+([0-9a-f]{64})/.exec(facts)?.[1] ?? "";
+  const sigHex = /Signature\s+([0-9a-f]{128})/.exec(facts)?.[1] ?? "";
+  const reqHash = /Question fingerprint \(SHA-256\)\s+([0-9a-f]{64})/.exec(facts)?.[1] ?? "";
+  const ansHash = /Answer fingerprint \(SHA-256\)\s+([0-9a-f]{64})/.exec(facts)?.[1] ?? "";
+  const { createPublicKey, verify: edVerify } = await import("node:crypto");
+  const spki = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), Buffer.from(signerKey, "hex")]);
+  const signedText = `${nearModel}:${reqHash}:${ansHash}`;
+  let sigOk = false;
+  try { sigOk = edVerify(null, Buffer.from(signedText), createPublicKey({ key: spki, format: "der", type: "spki" }), Buffer.from(sigHex, "hex")); } catch {}
+  check(sigOk, "the signature shown verifies with Node's own Ed25519 against the key and the two fingerprints shown: key " + signerKey.slice(0, 12));
+  let forged = false;
+  try { forged = edVerify(null, Buffer.from(signedText.replace(/.$/, (c) => (c === "0" ? "1" : "0"))), createPublicKey({ key: spki, format: "der", type: "spki" }), Buffer.from(sigHex, "hex")); } catch {}
+  check(!forged, "and does not verify for a changed answer fingerprint");
+  await page.screenshot({ path: join(work, "near-receipt.png"), fullPage: true });
   await page.screenshot({ path: join(work, "3-near-answer.png"), fullPage: true });
   const where = await page.evaluate(async () => {
     const r = await fetch("/api/usage", { credentials: "same-origin" });

@@ -247,6 +247,8 @@ pub struct ChatReply {
     pub prompt_tokens: Option<u64>,
     /// The model reached the most it was allowed to write, so the text stops before the model had finished.
     pub cut_short: bool,
+    /// The model's own signature over this exact question and answer, when a verified route answered. None otherwise.
+    pub receipt: Option<Value>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -508,6 +510,7 @@ fn init_store(v: &Vault) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS fix_files(job TEXT NOT NULL, n INTEGER NOT NULL, file TEXT NOT NULL, orig BLOB NOT NULL, sha_after TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (job, n, file));
              CREATE TABLE IF NOT EXISTS fix_snapshots(job TEXT NOT NULL, n INTEGER NOT NULL, file TEXT NOT NULL, orig BLOB NOT NULL, sha_after TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (job, n));
              CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, title TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL, project TEXT);
+             CREATE TABLE IF NOT EXISTS turn_receipts(session TEXT NOT NULL, seq INTEGER NOT NULL, receipt TEXT NOT NULL, PRIMARY KEY(session, seq));
              CREATE TABLE IF NOT EXISTS session_turns(session TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (session, seq));
              CREATE TABLE IF NOT EXISTS session_summaries(session TEXT PRIMARY KEY, upto INTEGER NOT NULL, text TEXT NOT NULL, at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS doc_vectors(model TEXT NOT NULL, hash TEXT NOT NULL, vec BLOB NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(model, hash));
@@ -3871,6 +3874,7 @@ fn no_model_reply() -> ChatReply {
         simulated: false,
         prompt_tokens: None,
         cut_short: false,
+        receipt: None,
     }
 }
 
@@ -4507,7 +4511,36 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
 }
 
 /// Records a finished reply and builds the response body shared by both chat endpoints.
+/// The parts of a route's receipt a reader can check without us: the model's signature over `MODEL:SHA256(request):
+/// SHA256(answer)`, the key that made it and the answer's id. Nothing else of the route's record is shown or kept.
+fn shown_receipt(r: &Value) -> Option<Value> {
+    let text = |k: &str, max: usize| {
+        r[k].as_str()
+            .filter(|v| !v.is_empty() && v.len() <= max && !v.chars().any(char::is_control))
+    };
+    let (signed_text, signature, signer) = (
+        text("signed_text", 600)?,
+        text("signature", 300)?,
+        text("signer", 200)?,
+    );
+    let mut parts = signed_text.rsplitn(3, ':');
+    let (answer, request, model) = (parts.next()?, parts.next()?, parts.next()?);
+    let hex64 = |v: &str| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit());
+    if !hex64(answer) || !hex64(request) || model.is_empty() {
+        return None;
+    }
+    Some(json!({
+        "completion_id": text("completion_id", 200).unwrap_or(""),
+        "signature_kind": text("signature_kind", 40).unwrap_or(""),
+        "signing_algo": text("signing_algo", 40).unwrap_or(""),
+        "signer": signer, "signed_text": signed_text, "signature": signature,
+        "model": model, "request_sha256": request, "answer_sha256": answer,
+        "encrypted": r["e2ee"].as_bool().unwrap_or(false),
+    }))
+}
+
 fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -> Value {
+    let receipt = r.receipt.as_ref().and_then(shown_receipt);
     svc.log_held_back(
         "chat",
         ctx.files_withheld_secrets,
@@ -4523,10 +4556,16 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
             ("chars_out", r.text.chars().count().into()),
         ],
     );
-    let appended = run
-        .kept
-        .as_ref()
-        .map(|id| session_append(svc, id, &run.message_to_keep, &r.text, ctx.level));
+    let appended = run.kept.as_ref().map(|id| {
+        session_append(
+            svc,
+            id,
+            &run.message_to_keep,
+            &r.text,
+            ctx.level,
+            receipt.as_ref(),
+        )
+    });
     let saved = appended == Some(Appended::Saved);
     // why an exchange in a kept conversation was not saved, so the screen never says "full" when it was not
     let not_saved = match appended {
@@ -4556,7 +4595,7 @@ fn chat_finish(svc: &Service, run: &ChatRun, ctx: &ChatContext, r: &ChatReply) -
         );
     }
     let usage = json!({"elapsed_ms": elapsed_ms, "context_tokens": measured.unwrap_or(estimated), "context_tokens_estimate": estimated, "reply_tokens_estimate": kk_route::tokens::estimate_text(&r.text), "context_window": window, "history_turns_sent": ctx.history_sent, "history_turns_dropped": run.history_dropped, "history_turns_summarized": run.summarized, "summary_text": run.summary, "compacted_now": run.compacted_now, "compaction_failed": run.compaction_failed, "estimate": measured.is_none()});
-    json!({"usage": usage, "reply": r.text, "level": ctx.level, "cut_short": r.cut_short, "swapped": ctx.swapped, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated, "stays_here": svc.route_for_owner()["stays_here"], "host": svc.route_for_owner()["host"]}, "instructions_used": ctx.instructions_used, "methods_used": ctx.methods_used, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "files": {"used": ctx.files_used, "trimmed": ctx.files_trimmed, "left_out": ctx.files_left_out, "withheld_instructions": ctx.files_withheld_instructions, "withheld_secrets": ctx.files_withheld_secrets, "withheld_whole": ctx.files_withheld_whole}, "saved": saved, "not_saved": not_saved, "project": run.body.project})
+    json!({"usage": usage, "reply": r.text, "receipt": receipt, "level": ctx.level, "cut_short": r.cut_short, "swapped": ctx.swapped, "route": {"id": r.route_id, "class": r.class, "simulated": r.simulated, "stays_here": svc.route_for_owner()["stays_here"], "host": svc.route_for_owner()["host"]}, "instructions_used": ctx.instructions_used, "methods_used": ctx.methods_used, "notes_used": ctx.notes_used, "notes": ctx.notes_list, "untrusted_notes_used": ctx.untrusted_notes, "notes_withheld": ctx.notes_withheld, "notes_left_out": ctx.notes_left_out, "web_sources_used": ctx.web_used, "web_sources_trimmed": ctx.web_trimmed, "web_sources_left_out": ctx.web_left_out, "files": {"used": ctx.files_used, "trimmed": ctx.files_trimmed, "left_out": ctx.files_left_out, "withheld_instructions": ctx.files_withheld_instructions, "withheld_secrets": ctx.files_withheld_secrets, "withheld_whole": ctx.files_withheld_whole}, "saved": saved, "not_saved": not_saved, "project": run.body.project})
 }
 
 async fn chat(axum::Extension(svc): Svc, Json(b): Json<ChatBody>) -> Response {
@@ -5326,7 +5365,14 @@ enum Appended {
 
 /// Saves one finished exchange. A conversation that has reached its limit stops saving instead of dropping old turns, and
 /// one that was forgotten while its reply was being written saves nothing.
-fn session_append(svc: &Service, id: &str, user: &str, assistant: &str, level: i64) -> Appended {
+fn session_append(
+    svc: &Service,
+    id: &str,
+    user: &str,
+    assistant: &str,
+    level: i64,
+    receipt: Option<&Value>,
+) -> Appended {
     let t = now();
     let store = svc.store.lock().expect("lock");
     let c = store.connection();
@@ -5348,6 +5394,13 @@ fn session_append(svc: &Service, id: &str, user: &str, assistant: &str, level: i
     }
     if c.execute("INSERT INTO session_turns(session, seq, role, content, at) VALUES (?1, ?2, 'user', ?3, ?4), (?1, ?5, 'assistant', ?6, ?4)", kk_vault::rusqlite::params![id, n, user, t, n + 1, assistant]).is_err() {
         return Appended::Failed;
+    }
+    // the model's signature over this answer is kept with the answer it signed
+    if let Some(r) = receipt {
+        let _ = c.execute(
+            "INSERT OR REPLACE INTO turn_receipts(session, seq, receipt) VALUES (?1, ?2, ?3)",
+            kk_vault::rusqlite::params![id, n + 1, r.to_string()],
+        );
     }
     let _ = c.execute(
         "UPDATE sessions SET held = max(coalesce(held, 0), ?2) WHERE id = ?1",
@@ -5675,7 +5728,23 @@ async fn session_get(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) ->
                 })
                 .unwrap_or(None);
             let (parent, fork_at, branches) = session_branches(&svc, &id);
-            Json(json!({"id": id, "held": kept_level(&svc, &id), "project": project, "parent": parent, "fork_at": fork_at, "branches": branches, "summary": summary, "turns": t.into_iter().map(|(role, content)| json!({"role": role, "content": content})).collect::<Vec<_>>()})).into_response()
+            let receipts: std::collections::BTreeMap<i64, Value> = {
+                let store = svc.store.lock().expect("lock");
+                let c = store.connection();
+                c.prepare("SELECT seq, receipt FROM turn_receipts WHERE session = ?1")
+                    .and_then(|mut st| {
+                        st.query_map([&id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+                            .map(|rows| {
+                                rows.flatten()
+                                    .filter_map(|(seq, text)| {
+                                        Some((seq, serde_json::from_str(&text).ok()?))
+                                    })
+                                    .collect()
+                            })
+                    })
+                    .unwrap_or_default()
+            };
+            Json(json!({"id": id, "held": kept_level(&svc, &id), "project": project, "parent": parent, "fork_at": fork_at, "branches": branches, "summary": summary, "turns": t.into_iter().enumerate().map(|(i, (role, content))| match receipts.get(&(i as i64)) { Some(r) => json!({"role": role, "content": content, "receipt": r}), None => json!({"role": role, "content": content}) }).collect::<Vec<_>>()})).into_response()
         }
     }
 }
@@ -5800,12 +5869,17 @@ async fn session_fork(
                 kk_vault::rusqlite::params![new_id, id, b.at as i64],
             )
             .is_ok();
+        let _ = c.execute(
+            "INSERT INTO turn_receipts(session, seq, receipt) SELECT ?1, seq, receipt FROM turn_receipts WHERE session = ?2 AND seq < ?3",
+            kk_vault::rusqlite::params![new_id, id, b.at as i64],
+        );
         // the copy was held as privately as the conversation it was branched from
         let _ = c.execute(
             "UPDATE sessions SET held = (SELECT held FROM sessions WHERE id = ?2) WHERE id = ?1",
             kk_vault::rusqlite::params![new_id, id],
         );
         if !done {
+            let _ = c.execute("DELETE FROM turn_receipts WHERE session = ?1", [&new_id]);
             let _ = c.execute("DELETE FROM session_turns WHERE session = ?1", [&new_id]);
             let _ = c.execute("DELETE FROM sessions WHERE id = ?1", [&new_id]);
             return error(
@@ -6467,6 +6541,7 @@ async fn session_forget(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>)
         let store = svc.store.lock().expect("lock");
         let c = store.connection();
         let _ = c.execute("DELETE FROM session_turns WHERE session = ?1", [&id]);
+        let _ = c.execute("DELETE FROM turn_receipts WHERE session = ?1", [&id]);
         let _ = c.execute("DELETE FROM session_summaries WHERE session = ?1", [&id]);
         c.execute("DELETE FROM sessions WHERE id = ?1", [&id])
             .unwrap_or(0)

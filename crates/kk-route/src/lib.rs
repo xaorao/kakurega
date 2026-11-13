@@ -43,6 +43,9 @@ pub struct Completion {
     pub completion_tokens: u64,
     /// The model stopped because it reached the most tokens it was allowed to write, not because it had finished.
     pub cut_short: bool,
+    /// What a verified route can show about THIS answer: the model's signature over the exact request and answer, and
+    /// the checks it passed. Carried with the answer, so two answers asked for at the same moment cannot swap theirs.
+    pub receipt: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -539,6 +542,7 @@ impl Route for OllamaRoute {
             prompt_tokens: v["prompt_eval_count"].as_u64().unwrap_or(0),
             completion_tokens: v["eval_count"].as_u64().unwrap_or(0),
             cut_short: v["done_reason"] == "length",
+            receipt: None,
         })
     }
 }
@@ -860,6 +864,7 @@ impl Route for ScriptedRoute {
             prompt_tokens: 0,
             completion_tokens: 0,
             cut_short: false,
+            receipt: None,
         })
     }
 }

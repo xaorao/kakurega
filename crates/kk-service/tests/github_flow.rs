@@ -59,6 +59,7 @@ impl JobRunner for Fake {
             simulated: true,
             prompt_tokens: None,
             cut_short: false,
+            receipt: None,
         })
     }
 

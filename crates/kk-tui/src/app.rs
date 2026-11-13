@@ -7321,6 +7321,15 @@ impl App {
                 if body["cut_short"] == true {
                     foot.insert(0, "this answer reached the model's length limit and stops there; ask it to continue".to_string());
                 }
+                // the model's own signature over this answer, checked by the service before the answer was shown
+                if let Some(signer) = body["receipt"]["signer"].as_str() {
+                    let key: String = clean(signer).chars().take(16).collect();
+                    foot.push(if body["receipt"]["signature_kind"] == "provider_tee" {
+                        format!("signed by the model's hardware, key {key}… (the web chat shows the whole receipt)")
+                    } else {
+                        format!("signed by NEAR's gateway, key {key}…")
+                    });
+                }
                 if self.session.is_some() {
                     foot.push(if body["saved"] == true {
                         "saved in the encrypted store".into()

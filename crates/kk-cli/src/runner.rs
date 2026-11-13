@@ -678,6 +678,7 @@ impl JobRunner for ReviewRunner {
                     simulated: true,
                     prompt_tokens: None,
                     cut_short: false,
+                    receipt: None,
                 });
             }
             return Ok(kk_service::ChatReply {
@@ -687,6 +688,7 @@ impl JobRunner for ReviewRunner {
                 simulated: true,
                 prompt_tokens: None,
 cut_short: false,
+    receipt: None,
 });
         }
         let route = self.answer_route().map_err(|e| e.to_string())?;
@@ -701,6 +703,7 @@ cut_short: false,
         Ok(kk_service::ChatReply {
             prompt_tokens: (done.prompt_tokens > 0).then_some(done.prompt_tokens),
             cut_short: done.cut_short,
+            receipt: done.receipt,
             text: done.message.content,
             route_id: route.id().to_string(),
             class: route.class().as_str().to_string(),
@@ -803,6 +806,7 @@ cut_short: false,
                 route_id: route.id().to_string(),
                 class: "device_only".into(),
                 simulated: false,
+                receipt: None,
             },
             stopped: done.stopped,
         })
