@@ -70,7 +70,7 @@ Then, in the browser: choose a project folder, name a recipient, **Start review*
 - Answers from NEAR AI Cloud were run with the owner's test key; running them again needs a key of your own. Everything above that reads the chain or the fixture needs none.
 - NEAR Intents: dry quotes only.
 - Everything on chain is testnet. The registry account has no access keys left, so its code and fee cannot be replaced; `scripts/check-deployed` shows the code is this repository's.
-- There is no hosted demo. Nothing of ours runs on a server.
+- The public site, https://kakurega-eight.vercel.app, is static files: a replay of a real review read from its capsule, and the check page at `/verify/`. Both verify the capsule in your browser. There is no hosted workspace yet, and nothing of ours runs on a server.
 
 ## Tracks
 
