@@ -32,5 +32,10 @@ jobs:
           sudo cp -a "$(rustc --print sysroot)"/. /usr/local/
           sudo ln -sf /usr/local/bin/rustc /usr/bin/rustc
           /usr/bin/rustc --version && /usr/bin/gcc --version | head -1
+      # the review tests start the real worker inside the sandbox, so it is built first and named by its full path
+      - name: Worker
+        run: cargo build --locked -p kk-worker
       - name: Checks
+        env:
+          KK_WORKER_BIN: ${{ github.workspace }}/target/debug/kk-worker
         run: scripts/test
