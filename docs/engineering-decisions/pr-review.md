@@ -1,0 +1,37 @@
+# Reviewing a change (a pull request), not only a folder
+
+Status: decided, not built yet. This file is written before the code, as the project rule asks.
+
+## The four lines
+1. The experience a user expects: "review this pull request" the way they already think of it: point at the change (a branch against its base, or a pull request by number or link), get findings about what the change does, each one tied to changed lines, each one proven, with the same approval and the same capsule as any review; and something to paste into the pull request.
+2. The strongest existing products and implementations: see the matrix. For the hackathon's own request (Illia Polosukhin's list, x.com/ilblackdragon/status/2106269343881519444: "Code review that is fully private - agent that verifiably privately runs code review on private PRs using @near_ai") the two entries are CodeCloak and Hushmark; for pull-request review as a product, PR-Agent (open source), CodeRabbit, Greptile and GitHub Copilot review (closed; presentation only).
+3. The approach: mostly interface on the engine we have. The review agent, the sandbox that reproduces findings, the approval, the capsule and the NEAR route are unchanged. New: reading the two versions of the project from the local git repository without running anything of it; a focus given to the agent (the changed files and lines); findings kept only when they touch the change; the base and head commits and the change's digest in the capsule; a comment ready to paste. Nothing is written to GitHub by us.
+4. The quality bar: on the same pull request, against CodeCloak's paste box and PR-Agent, ours must (a) take the real pull request, not pasted text, (b) report only findings a script reproduced, with none about code the change did not touch, (c) never run or trust anything from the repository's git configuration, (d) say plainly when a change is too large to review whole, and (e) leave a capsule a recipient checks offline and on NEAR.
+
+## Capability matrix
+| Reference (revision) | What it does well | Read | Decision | Why | Our acceptance check |
+|---|---|---|---|---|---|
+| CodeCloak (6b3e630, MIT) | Three auditors in parallel, then each backs or disputes the others' findings, then a moderator; confidence computed by the server from the votes, never by the model; an unreadable vote is never agreement | `lib/near-ai/swarm.ts`, `lib/review/handler.ts` in full | ADAPT the idea later for roundtable-style second opinions; EXCLUDE for the review itself | Our findings are settled by running a reproducer, which is stronger than votes; votes would add seven model calls per review for a weaker signal | A finding is shown only when its script reproduced it |
+| CodeCloak | Fail-closed: attestation with a fresh nonce before any code leaves; every answer's signature checked; pinned measurements (a new gateway image blocks reviews until its hash is allowed) | same files, `lib/near-ai/attestation.ts` skimmed | HAVE | `kk-near` does the same checks before each request; the release rule compares the deployment with NEAR's published releases | existing nr and rn tests |
+| CodeCloak | Honest "Not verified here" panel; code held in memory only | handler | HAVE / BETTER | The code never reaches a server of ours at all: the kernel runs on the owner's computer | LIMITS.md |
+| CodeCloak | Input | handler `parseInput` | BETTER | It takes pasted text or a built-in sample (one file, a size cap); it does not read a pull request. We take the repository and the change | a real two-commit repository in the test |
+| Hushmark (7c3184a, Apache-2.0) | The pull request is never checked out or run; its diff, title and body are read as text | ADR-0009, ADR-0005, README | ADAPT | Same property, stronger form: we read git objects with a library and run only the reproducer, in the sandbox with no network | a hostile `.git/config` (pager, fsmonitor, external diff) changes nothing |
+| Hushmark | Base and head commits pinned when the review starts; a change too large is refused, never reviewed in part silently | ADR-0005 | ADAPT | A review must cover exactly the bytes it names | the capsule names both commits; a change over the limit is refused in words |
+| Hushmark | "Try it in two minutes: open demo PR #8", a receipt checker page | README | ADAPT for presentation (step E) | A judge needs a pull request to look at | the README's demo pull request |
+| Hushmark | GitHub Action and App that set a check on the pull request | `action.py`, `app.py` not read | LATER | Needs a server or a workflow holding the model key, and a write to GitHub; ours is local-first. A comment the owner pastes covers the outcome now | owed list |
+| PR-Agent (8257f6a, MIT) | The change given to the model as hunks with a few lines of context; when it does not fit, whole files are dropped in an order and listed by name, never cut silently | `pr_agent/algo/pr_processing.py` `get_pr_diff` read; the rest of the file mapped | ADAPT (approach) | Our agent reads files itself, so the focus is a list of changed files with their changed line ranges, and what did not fit is named | the focus lists every changed file or names the ones left out |
+| PR-Agent | Describe, review, improve and inline comments as separate commands | mapped only | LATER | One clear action first | owed list |
+
+Not read: Hushmark's Python modules beyond the ADRs and README; PR-Agent beyond `get_pr_diff`; CodeRabbit, Greptile and Copilot review (closed; their public pages are for the presentation step).
+
+## Design
+- Where the change comes from: the owner's local clone. `kaku review DIR --for WHO --change BASE` (and the same choice on the web's New review and in the terminal): the review covers what the checked-out commit changes relative to the merge base with BASE (a branch, a tag or a commit). A pull request is its head branch fetched by the owner (`gh pr checkout N` or `git fetch origin pull/N/head`); the link or number is recorded as a label only. Reading a private pull request through the GitHub connector waits for a real GitHub App to test against (the connector is tested with a stand-in only).
+- Reading git without trusting it: the `gix` library (MIT or Apache-2.0) opens the repository and reads commits, trees and blobs. No git program is run, so nothing in the repository's configuration (hooks, pager, external diff, fsmonitor) can execute. The working tree's uncommitted edits are not part of the review; the page says so when there are any.
+- What the agent is given: the head version of the project as today (secrets withheld, sandbox), plus a focus: each changed file with its changed line ranges and whether it is new or deleted. Its instruction: report defects the change introduces or exposes.
+- What is kept: a finding is offered only if its reproducer confirmed it AND it cites a changed file, or a file that imports one (the sample the reproducer needed already tells us that). Others are listed as "outside this change" and not released.
+- Limits: at most 300 changed files and 2 MB of changed text; over that the review is refused with the counts, not cut.
+- Evidence: the capsule's source statement gains the base and head commit ids and the SHA-256 of the canonical change list.
+- Output: "Copy as a pull-request comment": the confirmed findings as Markdown with file and line, the capsule's digest and how to check it.
+
+## Owed after the first build
+A GitHub check (Action or App) for teams; reading the pull request through the connector; inline comments; a second opinion by votes.
