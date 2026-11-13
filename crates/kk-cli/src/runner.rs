@@ -193,25 +193,75 @@ fn used_so_far(
     Some(used.lock().expect("lock").clone())
 }
 
-/// How long a reading of NEAR AI Cloud's published prices is used before it is read again.
+/// How long a reading of NEAR AI Cloud's published list is used before it is read again, and how long a failed reading is
+/// kept before the list is tried again (so a request never waits on a list that cannot be read).
 const PRICES_FRESH: std::time::Duration = std::time::Duration::from_secs(3600);
+const PRICES_RETRY: std::time::Duration = std::time::Duration::from_secs(300);
 
-/// NEAR AI Cloud's published prices for every model, from its public model list (no key, nothing of the owner's sent), read
-/// at most once an hour; a failed reading is not kept, so the next look tries again.
+/// The last reading of the list: the address it was read from, when, and what it gave (or `{"error"}`).
+static PRICES: std::sync::Mutex<Option<(String, std::time::Instant, Value)>> =
+    std::sync::Mutex::new(None);
+static PRICES_READING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn prices_fresh(base: &str) -> Option<Value> {
+    PRICES
+        .lock()
+        .expect("lock")
+        .as_ref()
+        .filter(|(b, at, v)| {
+            b == base
+                && at.elapsed()
+                    < if v.get("error").is_some() {
+                        PRICES_RETRY
+                    } else {
+                        PRICES_FRESH
+                    }
+        })
+        .map(|(_, _, v)| v.clone())
+}
+
+/// NEAR AI Cloud's published prices and windows for every model, from its public model list (no key, nothing of the
+/// owner's sent), read at most once an hour; a failed reading is tried again after five minutes.
 fn published_prices_cached(base: &str) -> Value {
-    static CACHE: std::sync::Mutex<Option<(String, std::time::Instant, Value)>> =
-        std::sync::Mutex::new(None);
-    if let Some((b, at, v)) = CACHE.lock().expect("lock").as_ref() {
-        if b == base && at.elapsed() < PRICES_FRESH {
-            return v.clone();
-        }
+    if let Some(v) = prices_fresh(base) {
+        return v;
     }
-    let v = match read_published_prices(base) {
-        Ok(v) => v,
-        Err(why) => return json!({"error": why}),
-    };
-    *CACHE.lock().expect("lock") = Some((base.to_string(), std::time::Instant::now(), v.clone()));
+    let v = read_published_prices(base).unwrap_or_else(|why| json!({"error": why}));
+    *PRICES.lock().expect("lock") = Some((base.to_string(), std::time::Instant::now(), v.clone()));
     v
+}
+
+/// The list as last read, without waiting: when it is missing or old, it is read again on a thread of its own and the
+/// next look sees it. A reading that failed gives nothing.
+fn published_prices_now(base: &str) -> Option<Value> {
+    if let Some(v) = prices_fresh(base) {
+        return v.get("error").is_none().then_some(v);
+    }
+    if !PRICES_READING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        let base = base.to_string();
+        std::thread::spawn(move || {
+            published_prices_cached(&base);
+            PRICES_READING.store(false, std::sync::atomic::Ordering::SeqCst);
+        });
+    }
+    let last = PRICES.lock().expect("lock").clone();
+    last.filter(|(b, _, v)| b == base && v.get("error").is_none())
+        .map(|(_, _, v)| v)
+}
+
+/// The most of a NEAR model's published window a conversation is given: four times the local default, enough for long
+/// chats and documents, while a review's many calls stay quick and cost a few cents at most.
+const NEAR_WINDOW_CAP: u64 = 65_536;
+
+/// The window a NEAR model works in: the one NEAR publishes for it, at most [`NEAR_WINDOW_CAP`]; `fallback` when the list
+/// has not been read or does not name the model.
+fn near_window_from(list: Option<&Value>, model: &str, fallback: u32) -> u32 {
+    list.and_then(|l| l["prices"].as_array())
+        .and_then(|ps| ps.iter().find(|p| p["model"] == model))
+        .and_then(|p| p["context_tokens"].as_u64())
+        .filter(|w| *w > 0)
+        .map(|w| w.min(NEAR_WINDOW_CAP) as u32)
+        .unwrap_or(fallback)
 }
 
 fn read_published_prices(base: &str) -> Result<Value, String> {
@@ -259,7 +309,7 @@ fn read_published_prices(base: &str) -> Result<Value, String> {
     Ok(json!({
         "source": list,
         "read_at": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
-        "prices": prices.iter().map(|p| json!({"model": p.model, "currency": p.currency, "input_per_million": p.input_per_million, "output_per_million": p.output_per_million, "cached_input_per_million": p.cached_input_per_million})).collect::<Vec<_>>(),
+        "prices": prices.iter().map(|p| json!({"model": p.model, "currency": p.currency, "input_per_million": p.input_per_million, "output_per_million": p.output_per_million, "cached_input_per_million": p.cached_input_per_million, "context_tokens": p.context_tokens})).collect::<Vec<_>>(),
     }))
 }
 
@@ -325,11 +375,17 @@ impl ReviewRunner {
         reply_room(self.answer_window())
     }
 
-    /// The window of the model that answers questions.
+    /// The window of the model that answers questions: a NEAR model's published one (capped), the outside test model's,
+    /// or the local model's.
     fn answer_window(&self) -> u32 {
         match (self.remote.get(), self.outside.get()) {
+            (Some(near), _) => near_window_from(
+                published_prices_now(near.base_url()).as_ref(),
+                near.model(),
+                self.context_tokens,
+            ),
             (None, Some(_)) => crate::outside::CONTEXT_TOKENS,
-            _ => self.context_tokens,
+            (None, None) => self.context_tokens,
         }
     }
 
@@ -1266,7 +1322,7 @@ cut_short: false,
 
     fn route_info(&self) -> Value {
         if let (Some(near), None) = (self.remote.get(), &self.scripted) {
-            return json!({"id": near.id(), "class": "verified_tee", "model": near.model(), "simulated": false, "endpoint": near.base_url(), "context_tokens": self.context_tokens,
+            return json!({"id": near.id(), "class": "verified_tee", "model": near.model(), "simulated": false, "endpoint": near.base_url(), "context_tokens": self.answer_window(),
                "transport": match &self.transport { Transport::Local => "local sandbox".to_string(), Transport::Lima { vm, .. } => format!("sandbox in the {vm} virtual machine") }});
         }
         if let (Some(out), None) = (self.outside.get(), &self.scripted) {
@@ -1480,6 +1536,35 @@ mod stoppable {
 
 #[cfg(test)]
 mod room {
+    #[test]
+    fn rn_near_window_is_the_published_one_capped_and_the_local_one_until_the_list_is_read() {
+        let list = serde_json::json!({"prices": [
+            {"model": "Qwen/Qwen3.8-27B", "context_tokens": 262_144},
+            {"model": "Qwen/Qwen3-VL-30B-A3B-Instruct", "context_tokens": 16_384},
+            {"model": "levanto/sage-2", "context_tokens": 32_768},
+            {"model": "no/window", "context_tokens": null},
+            {"model": "zero/window", "context_tokens": 0}
+        ]});
+        let w = |m: &str| super::near_window_from(Some(&list), m, 16_384);
+        assert_eq!(w("Qwen/Qwen3.8-27B"), 65_536, "capped");
+        assert_eq!(
+            w("levanto/sage-2"),
+            32_768,
+            "a smaller window is taken as it is"
+        );
+        assert_eq!(w("Qwen/Qwen3-VL-30B-A3B-Instruct"), 16_384);
+        assert_eq!(w("no/window"), 16_384, "no window given: the local one");
+        assert_eq!(w("zero/window"), 16_384);
+        assert_eq!(w("other/model"), 16_384, "a model the list does not name");
+        assert_eq!(
+            super::near_window_from(None, "Qwen/Qwen3.8-27B", 8_192),
+            8_192,
+            "list not read yet"
+        );
+        // with the larger window a NEAR answer gets the most room a reply has
+        assert_eq!(super::reply_room(w("Qwen/Qwen3.8-27B")), 4096);
+    }
+
     #[test]
     fn rn_reply_room_follows_the_window_between_500_and_4096_tokens() {
         // the room the service leaves free for the reply is the most the model is allowed to write

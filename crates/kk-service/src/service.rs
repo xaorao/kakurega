@@ -4361,7 +4361,7 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
             .saturating_sub(kk_route::tokens::estimate_text(FILES_INTRO) + 6),
         _ => u64::MAX,
     };
-    let files_fitted = crate::budget::fit_pages(&file_pages, files_budget);
+    let files_fitted = crate::budget::fit_pages(&file_pages, files_budget, &b.message);
     if !files_fitted.text.is_empty() {
         messages.insert(
             1 + usize::from(instructions_used) + usize::from(!methods_used.is_empty()),
@@ -4381,7 +4381,7 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
             .saturating_sub(kk_route::tokens::estimate_text(WEB_INTRO) + 6),
         _ => u64::MAX,
     };
-    let fitted = crate::budget::fit_pages(&pages, budget);
+    let fitted = crate::budget::fit_pages(&pages, budget, &b.message);
     if !fitted.text.is_empty() {
         messages.insert(
             1 + usize::from(instructions_used) + usize::from(!methods_used.is_empty()),
