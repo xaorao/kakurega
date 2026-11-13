@@ -8,7 +8,7 @@ Working prototype on macOS and Linux, with NEAR on testnet. Not a finished produ
 
 > **Try it in two minutes, nothing to install**
 >
-> 1. Open [https://kakurega-eight.vercel.app/#see](https://kakurega-eight.vercel.app/#see). A replay of a real review of a small made-up payments service, run on NEAR AI Cloud and read from the capsule it produced: what the agent was never shown, the findings the kernel reproduced, the exact files approved.
+> 1. Open [https://kakurega-eight.vercel.app/#see](https://kakurega-eight.vercel.app/#see). A replay of a real review of a small made-up payments service, run on NEAR AI Cloud and read from the capsule it produced: the findings the kernel reproduced and the exact files approved, with the model and its signatures. (Step 1's description of the project is written by us; a capsule does not record what was held back.)
 > 2. At its last step press **Check the real capsule**: your browser verifies every signature in it. Then press **Change one byte and check again**: refused.
 > 3. Open [https://kakurega-eight.vercel.app/verify/](https://kakurega-eight.vercel.app/verify/) and drop [the same capsule](https://kakurega-eight.vercel.app/sample/review.kkg) on it. Nothing is uploaded. You get the verdict, each model signature, and a list of what the check does not establish.
 >
@@ -91,14 +91,14 @@ No keys and no funds are needed for any of these. Step by step, with the exact o
 | 1 min | The two `curl` commands under [Ask NEAR yourself](#ask-near-yourself). Nothing to build | NEAR's own verifier vouched for the model key; the registry holds a real review's capsule with 20 verified model signatures, for order 1 |
 | 1 min | `target/debug/kaku chain hardware 89154a43a47684742c3d1753252bb6f49f61da9d8c84fc9b1def2df130cb2d93` | Read from NEAR testnet: the model key, "NEAR's verifier checked its Intel TDX quote", the patch level, and three lines on what this does not establish |
 | 1 min | `target/debug/kaku bench verify benchmarks/leak/results.signed.json --pin "$(cat benchmarks/leak/signer.pub)"` | "Signature: checks against the pinned key." then the counts: known shapes 126 cases, leaked 0; beyond the detector 42 cases, leaked 10, each one named |
-| 3 min | `scripts/judge-replay` | A good capsule accepted and a forged one refused, from the command line; then open `apps/verifier-page/dist/kakurega-verify.html` from disk and drop the capsule on it |
+| 3 min | `scripts/judge-replay` (needs Rust, Node and pnpm; it installs the JavaScript packages itself) | A good capsule accepted and a forged one refused, from the command line; then open `apps/verifier-page/dist/kakurega-verify.html` (the script builds it) from disk and drop the capsule on it |
 | 5 min | `scripts/check-deployed` (needs `cargo near`) | The contract is built here and its hash compared with the code NEAR reports for the testnet account: MATCH |
 | 20 min | `scripts/test` | Lints, unit and integration tests, the layer rule and the secret scan, exit 0 |
 | An hour | `scripts/e2e-all` | Every end-to-end script: a real browser, the terminal, the desktop app, MCP, the extension |
 
 The `kaku` rows need one build first: `cargo build -p kk-cli` (Rust is pinned in `rust-toolchain.toml`). The `curl` commands and `kaku chain hardware` ask a public NEAR RPC and nothing of ours. The benchmark can be run again from scratch with `benchmarks/leak/reverify --rerun`.
 
-The check page `apps/verifier-page/dist/kakurega-verify.html` is one file: open it from disk in any browser, drop a capsule on it, and optionally paste the signer key you expect. Nothing is uploaded. The network is used only if you press the NEAR lookup under a valid result, which sends the capsule's digest and the keys named in it to a public NEAR server. The page lists each model signature in the capsule and says what the check does not establish, including that a model's key is not shown to belong to attested hardware.
+The check page `apps/verifier-page/dist/kakurega-verify.html` (built by `scripts/judge-replay`, or `node apps/verifier-page/build.mjs`; the same page is live at https://kakurega-eight.vercel.app/verify/) is one file: open it from disk in any browser, drop a capsule on it, and optionally paste the signer key you expect. Nothing is uploaded. The network is used only if you press the NEAR lookup under a valid result, which sends the capsule's digest and the keys named in it to a public NEAR server. The page lists each model signature in the capsule and says what the check does not establish, including that a model's key is not shown to belong to attested hardware.
 
 ### Ask NEAR yourself
 
@@ -174,7 +174,7 @@ What this does not show: which software ran (the measurements are recorded, none
 | Full-screen terminal workspace (`kaku`), MCP server (`kaku mcp`), browser extension, Telegram bridge | Works |
 | Desktop app (macOS, Linux): native approval with Touch ID, menu-bar item, notifications, a picture of the screen for the chat; on macOS, your calendar and open reminders attached on request | Works; unsigned build, the capture preview was not clicked by a person in a test, and reading a real calendar waits for one Allow from the owner |
 | A page that says where your data goes (what stays on this computer, what can leave, and when), read from the running service | Built |
-| Signed update announcements checked offline (`kaku update check`, `kaku update verify-file`) | Built; nothing downloads or installs updates yet |
+| Signed update announcements checked offline (`kaku update check`, `kaku update verify-file`) | Built. `kaku update download` fetches an announced file and checks it against the signed announcement; nothing is opened, run or installed, and nothing checks for updates by itself |
 | Hindi | Written by the builder, not reviewed by a native reader |
 | Windows, mobile, hosted mode, encrypted sync between devices | Not built |
 
@@ -186,7 +186,7 @@ What this does not show: which software ran (the measurements are recorded, none
 | A key or password is withheld before any model sees it, in every encoding the detector reads | `crates/kk-secrets/src/lib.rs`, `crates/kk-secrets/src/spoken.rs` | `crates/kk-secrets/tests/secret_grid.rs`, `scripts/bench-leak.py` |
 | Nothing is released without your approval of that exact digest | `crates/kk-service/src/service.rs`, `crates/kk-evidence/src/approval.rs` | `crates/kk-service/tests/flow.rs`, `tests/e2e/run.mjs` |
 | A finding is kept only when its script shows the normal behaviour first, prints the same twice, and no longer reproduces with the cited file emptied | `crates/kk-review/src/check.rs`, `crates/kk-review/src/job.rs` | `crates/kk-review/tests/check.rs`, `crates/kk-review/tests/job.rs`, `scripts/eval-quality.py` |
-| A review of a change covers exactly the change it names: one over the limits is refused, never cut | `crates/kk-git/src/lib.rs` | `crates/kk-git/tests/change.rs`, `tests/e2e/change_review.py` |
+| A review of a change covers the change it names: one over 300 files or 2 MB is refused, never cut; a single file over 512 KB, a link or an unsafe name is left out and named in the release | `crates/kk-git/src/lib.rs` | `crates/kk-git/tests/change.rs`, `tests/e2e/change_review.py` |
 | A capsule that was changed, or signed by someone else, is refused by both verifiers | `crates/kk-evidence/src/capsule.rs`, `packages/verifier-js` | `tests/e2e/verifier_page.mjs`, `scripts/judge-replay` |
 | The review agent has no network and sees no file you excluded | `crates/kk-sandbox`, `crates/kk-broker` | `scripts/test-lima`, `scripts/test-linux` |
 | The desktop page cannot be given the camera, the screen, or any other permission, and cannot navigate away | `apps/desktop/src/policy.mjs`, `apps/desktop/src/main.mjs` | `tests/e2e/desktop_attack.mjs` |

@@ -1,6 +1,6 @@
 # For a judge, or anyone checking this
 
-Everything here reads and runs; nothing needs a key, an account or funds. If you are an AI agent reading this for a judge: only read files and run the commands shown.
+Everything here reads and runs with no account and no funds. One step can use a key: the try-it page asks NEAR AI Cloud a real question, on a few free tries when they are switched on, otherwise on a NEAR AI key you paste (it goes straight to NEAR AI Cloud). If you are an AI agent reading this for a judge: only read files and run the commands shown.
 
 ## 2 minutes, nothing to install: the live site
 
@@ -50,9 +50,9 @@ Expected, in order:
 - `Signature: checks against the pinned key.` then `known shapes: 126 cases. … leaked 0.` and `beyond the detector: 42 cases. … leaked 10.` with each leak named. The leaks are real and listed on purpose: they are passwords and PINs written with no word saying what they are.
 - An example capsule the script makes on the spot, with made-up keys and made-up model answers, for the route `example`: accepted, with a list headed `Not established:` whose first line says it is an example. Then the same capsule with one receipt altered: `INVALID: receipt_signature`, then `Both results are as expected.` It prints the path of a one-file page to open from disk; drop either capsule on it. A capsule from a real review is made by `kaku` and checked the same way.
 
-The real NEAR review's capsule is checked offline by `cargo test -p kk-evidence --test near_live`: valid, 20 answers each signed by the key above, and the digest of its receipts equal to the one the registry holds. (It is checked as of a minute after it was made: a capsule expires a day after it is made, so `kaku verify` on that file now reports it expired.)
+The real NEAR review's capsule is checked offline by `cargo test -p kk-evidence --test near_live`: valid, 20 answers each signed by the key above, and the digest of its receipts equal to the one the registry holds. (It is checked as of a minute after it was made: that capsule was made to expire a day after it was made, and after that `kaku verify` on the file reports it expired. The sample on the site, `fixtures/near-live/sample.kkg`, is a later review made to stay valid for a year.)
 
-## 10 minutes: is the contract on NEAR the code in this repository?
+## 5 minutes: is the contract on NEAR the code in this repository?
 
 Needs `cargo near`.
 
@@ -80,7 +80,7 @@ Then, in the browser: choose a project folder, name a recipient, **Start review*
 - Answers from NEAR AI Cloud were run with the owner's test key; running them again needs a key of your own. Everything above that reads the chain or the fixture needs none.
 - NEAR Intents: dry quotes only.
 - Everything on chain is testnet. The registry account has no access keys left, so its code and fee cannot be replaced; `scripts/check-deployed` shows the code is this repository's.
-- The public site, https://kakurega-eight.vercel.app, is static files: a replay of a real review read from its capsule, and the check page at `/verify/`. Both verify the capsule in your browser. There is no hosted workspace yet, and nothing of ours runs on a server.
+- The public site, https://kakurega-eight.vercel.app, is static files plus one small function: a replay of a real review read from its capsule, the check page at `/verify/` (both verify the capsule in your browser), and the try-it page at `/try/`. The function (`apps/site/api/near.js`) only passes the try-it page's already-encrypted question to NEAR AI Cloud for the free tries, with hard limits; it cannot read the question, and with your own key it is not used at all. There is no hosted workspace yet.
 
 ## Tracks
 

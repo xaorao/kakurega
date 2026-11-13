@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Replays the recipient side of a Kakurega proof capsule with no account, no key and no network:
 # builds the standalone check page, makes a good capsule and a forged one, and checks both with the command line.
-# Needs Rust and Node. Usage: scripts/judge-replay
+# Needs Rust, Node and pnpm (the script installs the JavaScript packages itself on a fresh clone). Usage: scripts/judge-replay
 set -euo pipefail
 cd "$(dirname "$0")/.."
 out=target/judge-replay
 rm -rf "$out" && mkdir -p "$out"
+[ -d node_modules ] || pnpm install --frozen-lockfile
 cargo build -q -p kk-cli
 cargo run -q -p kk-evidence --example make_receipt_capsules -- "$out"
 (cd apps/verifier-page && node build.mjs)

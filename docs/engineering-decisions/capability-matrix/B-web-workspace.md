@@ -44,7 +44,7 @@ Browser storage in the web app (VERIFIED by grep): `localStorage` keys `kk-theme
 
 Third-party libraries named in the matrix, licences from `npm view <pkg> license` (VERIFIED, run): `@pierre/diffs@1.6.1`, `@pierre/highlights@0.2.0`, `@pierre/trees@1.0.0-beta.6`: Apache-2.0 (this closes the open item in `web-shell.md` "Not verified"). `@kobalte/core`, `@kitlangton/solid-motion`, `@tanstack/solid-virtual`, `@corvu/drawer`, `@solid-primitives/event-listener`, `@solidjs/router`, `@tanstack/solid-query`, `marked`, `shiki`, `katex`, `mermaid`, `vite-plugin-pwa`, `@monaco-editor/react`: MIT. `dompurify`: (MPL-2.0 OR Apache-2.0). `@codesandbox/sandpack-react`: Apache-2.0.
 
-### 1.3 OpenCode files read (all under `/Users/prateektripathi/near/private-ai/inspiration/opencode/packages/`)
+### 1.3 OpenCode files read (all under the local clone's `packages/`)
 
 Depth: "full" = every line; "range" = those lines of the stated total.
 

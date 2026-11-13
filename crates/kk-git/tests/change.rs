@@ -155,6 +155,27 @@ fn gt02_what_cannot_be_reviewed_is_refused_in_words() {
     }
     .to_string()
     .contains("whole or not at all"));
+    // few files, each small enough to be read, together over the byte limit: refused with the size too
+    let heavy = repo("heavy");
+    git(&heavy, &["checkout", "-q", "-b", "heavy"]);
+    let each = kk_git::MAX_FILE_BYTES - 1024;
+    let count = kk_git::MAX_BYTES / each + 1;
+    for i in 0..count {
+        std::fs::write(
+            heavy.join(format!("src/h{i}.txt")),
+            vec![b'a' + i as u8; each],
+        )
+        .unwrap();
+    }
+    git(&heavy, &["add", "-A"]);
+    git(&heavy, &["commit", "-q", "-m", "heavy"]);
+    match read_change(&heavy, "main") {
+        Err(GitError::TooLarge { files, bytes }) => {
+            assert_eq!(files, count);
+            assert_eq!(bytes, count * each);
+        }
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]

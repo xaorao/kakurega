@@ -108,13 +108,13 @@
           "id": "II-03",
           "text": "Touch ID approval on a real Mac delivered a release end to end",
           "kind": "human",
-          "evidence_needed": "Prateek touches the sensor once on an approval; the delivered capsule verifies"
+          "evidence_needed": "The owner touches the sensor once on an approval; the delivered capsule verifies"
         },
         {
           "id": "II-04",
           "text": "Shell choice with a fair measurement: comparable Tauri v2 spike measured against Electron (docs/engineering-decisions/desktop-shell.md). Recommendation recorded: move to Tauri once it passes the same boundary checks and II-12 exists. The owner decides.",
           "kind": "human",
-          "evidence_needed": "Prateek accepts the recommendation (Tauri after boundary checks and approval binding), or keeps Electron"
+          "evidence_needed": "The owner accepts the recommendation (Tauri after boundary checks and approval binding), or keeps Electron"
         },
         {
           "id": "II-05",

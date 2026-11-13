@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# a fresh clone has no JavaScript packages yet; the lockfile decides exactly what is installed
+[ -d node_modules ] || pnpm install --frozen-lockfile
 python3 scripts/scan_secrets.py --selftest
 python3 scripts/scan_secrets.py
 python3 scripts/check_layers.py --selftest
