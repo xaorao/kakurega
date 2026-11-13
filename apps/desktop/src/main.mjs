@@ -16,6 +16,18 @@ import { KAKU_HELPERS, bundledPaths, checkPart, readManifest } from "./bundle.mj
 import { createCapture, pickSource, MAX_PICTURE_BYTES } from "./capture.mjs";
 import { chooseProfile, currentProfile, profileDir, profileNames, DEFAULT as DEFAULT_PROFILE } from "./profiles.mjs";
 
+// After a crash or a forced quit macOS asks, in a box of its own, whether to reopen the app's windows, and holds the app
+// until someone answers: nothing of ours runs meanwhile, so the service is not started and the tray is not there. This
+// app restores its own state (the service keeps everything), so macOS is told not to keep or restore window state.
+if (process.platform === "darwin") {
+  try {
+    systemPreferences.setUserDefault("ApplePersistenceIgnoreState", "boolean", true);
+    systemPreferences.setUserDefault("NSQuitAlwaysKeepsWindows", "boolean", false);
+  } catch {
+    // a default that cannot be written leaves the system's own behaviour
+  }
+}
+
 // The data folder: the one named for a test or a special set-up, else the profile in use (see profiles.mjs).
 const profilesHome = process.env.KAKUREGA_HOME ?? join(homedir(), ".kakurega");
 const profileName = process.env.KAKUREGA_DATA_DIR ? null : currentProfile(profilesHome);

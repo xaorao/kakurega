@@ -10,6 +10,8 @@ restore_crash_dialogs() {
   if [ -n "$crash_before" ]; then defaults write com.apple.CrashReporter DialogType "$crash_before"; else defaults delete com.apple.CrashReporter DialogType 2>/dev/null || true; fi
 }
 trap restore_crash_dialogs EXIT
+# a run that is stopped from outside puts the setting back too
+trap 'restore_crash_dialogs; exit 143' TERM INT HUP
 defaults write com.apple.CrashReporter DialogType none
 scripts/e2e
 cargo build -p kk-cli

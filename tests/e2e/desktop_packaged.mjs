@@ -70,7 +70,10 @@ async function launchGood(label, extraEnv = {}, opts = {}) {
   let r;
   for (let attempt = 0; attempt < 6; attempt++) {
     r = await launch(label, extraEnv, opts);
-    if (r.served || !r.stillRunning) break;
+    if (r.served) break;
+    // a launch that ended without serving right after another one was killed is usually the one before it still letting
+    // go of its lock or its port: wait a moment and start it again. A launch that can never serve still fails its check.
+    if (!r.stillRunning) await new Promise((res) => setTimeout(res, 1500));
   }
   return r;
 }
@@ -89,6 +92,11 @@ async function launchRefused(label) {
 const clean = await launchGood("clean");
 check("the packaged app starts from its asar and its companion serves the workspace", clean.served);
 check("the packaged app starts its companion with approvals closed to anything but an enrolled key", clean.companionLine.includes("--require-approver"), clean.companionLine);
+
+// after a crash macOS would hold the next start behind its own "reopen windows?" box, with nothing of ours running;
+// the app turns that off for itself on its first start (found when a crashed test copy blocked every later start)
+const ignore = spawnSync("defaults", ["read", "org.kakurega.desktop", "ApplePersistenceIgnoreState"], { encoding: "utf8" });
+check("the app has told macOS not to hold it behind a reopen-windows box after a crash", ignore.stdout.trim() === "1", ignore.stdout + ignore.stderr);
 
 const asarPath = pkg.asarPath;
 const backup = join(work, "app.asar.orig");
