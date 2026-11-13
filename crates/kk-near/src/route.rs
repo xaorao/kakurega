@@ -295,6 +295,11 @@ impl Route for NearRoute {
             "max_tokens": request.max_tokens,
             "temperature": request.temperature,
         });
+        // a model that thinks first spends the answer's room on that thinking; with a small room (a tool step, a JSON reply)
+        // nothing is left for the answer, so the thinking is turned off with the setting NEAR AI Cloud documents for it
+        for (key, value) in thinking_off(&self.model) {
+            body[key] = value;
+        }
         if !request.tools.is_empty() {
             body["tools"] = Value::Array(
                 request
@@ -326,6 +331,14 @@ impl Route for NearRoute {
         }
         let choice = &v["choices"][0]["message"];
         let content = choice["content"].as_str().unwrap_or("");
+        if content.trim().is_empty()
+            && choice["tool_calls"].as_array().is_none_or(|c| c.is_empty())
+            && v["choices"][0]["finish_reason"] == "length"
+        {
+            return Err(RouteError::BadResponse(
+                "the model spent all the room for its answer thinking, and gave no answer".into(),
+            ));
+        }
         if content.len() > MAX_REPLY_BYTES {
             return Err(RouteError::BadResponse(
                 "the answer is larger than this product reads".into(),
@@ -377,5 +390,53 @@ impl Route for NearRoute {
             completion_tokens: v["usage"]["completion_tokens"].as_u64().unwrap_or(0),
             cut_short: v["choices"][0]["finish_reason"] == "length",
         })
+    }
+}
+
+/// The request settings that keep a model from thinking before it answers, by the names NEAR AI Cloud documents per model
+/// family (docs.near.ai/cloud/reasoning-models): `chat_template_kwargs.enable_thinking` for Qwen and GLM-5.1,
+/// `chat_template_kwargs.thinking` for Kimi, and a low `reasoning_effort` where thinking cannot be switched off (GLM-5.3
+/// Flash, gpt-oss). Nothing for a model with no documented setting: such a model may still think, and an answer it leaves
+/// empty is reported as such.
+pub fn thinking_off(model: &str) -> Vec<(&'static str, Value)> {
+    let m = model.to_ascii_lowercase();
+    if m.starts_with("moonshotai/kimi") {
+        vec![("chat_template_kwargs", json!({"thinking": false}))]
+    } else if m.starts_with("z-ai/glm-5.3-flash") || m.starts_with("openai/gpt-oss") {
+        vec![("reasoning_effort", json!("low"))]
+    } else if m.starts_with("qwen/") || m.starts_with("zai-org/glm") {
+        vec![("chat_template_kwargs", json!({"enable_thinking": false}))]
+    } else {
+        Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod thinking_tests {
+    use super::*;
+
+    #[test]
+    fn th01_each_model_family_gets_the_setting_its_documentation_names() {
+        assert_eq!(
+            thinking_off("Qwen/Qwen3.8-27B"),
+            vec![("chat_template_kwargs", json!({"enable_thinking": false}))]
+        );
+        assert_eq!(
+            thinking_off("zai-org/GLM-5.1-FP8"),
+            vec![("chat_template_kwargs", json!({"enable_thinking": false}))]
+        );
+        assert_eq!(
+            thinking_off("moonshotai/kimi-k2.6"),
+            vec![("chat_template_kwargs", json!({"thinking": false}))]
+        );
+        assert_eq!(
+            thinking_off("z-ai/glm-5.3-flash"),
+            vec![("reasoning_effort", json!("low"))]
+        );
+        assert_eq!(
+            thinking_off("openai/gpt-oss-120b"),
+            vec![("reasoning_effort", json!("low"))]
+        );
+        assert!(thinking_off("deepseek-ai/DeepSeek-V4.1-Flash-1017").is_empty());
     }
 }

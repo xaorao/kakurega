@@ -239,3 +239,28 @@ fn nr08_a_route_without_end_to_end_encryption_or_with_a_bad_model_name_cannot_be
         );
     }
 }
+
+#[test]
+fn nr_th01_a_thinking_model_is_asked_to_answer_without_thinking_and_the_others_are_sent_as_before()
+{
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let gw = rt.block_on(Gateway::start(Faults::default()));
+    let route = NearRoute::with_options(gw.options(), "Qwen/Qwen3.8-27B").unwrap();
+    let c = route.complete(&ask("Anything?"));
+    let wire = gw.wire.lock().unwrap().join("\n");
+    assert!(
+        wire.contains("\"chat_template_kwargs\":{\"enable_thinking\":false}"),
+        "{c:?} {wire}"
+    );
+    let r = rig(Faults::default());
+    r.route.complete(&ask("Anything?")).unwrap();
+    let wire = r.gw.wire.lock().unwrap().join("\n");
+    assert!(
+        !wire.contains("chat_template_kwargs") && !wire.contains("reasoning_effort"),
+        "{wire}"
+    );
+}

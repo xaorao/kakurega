@@ -15,6 +15,10 @@ const USAGE: &str = "usage:
                                           publish a delivered review's capsule digest and model receipts on NEAR (testnet);
                                           with --order, for that order, which the contract then pays out
   kaku chain order ID                     what an order holds
+  kaku chain order open --reviewer ACCOUNT --reviewer-key KEY --scope DIGEST --near AMOUNT --key-file FILE [--account NAME]
+                   [--hours N] [--require-hardware] [--yes]
+                                          set NEAR aside for a review (testnet): paid to the reviewer only for a capsule signed by
+                                          KEY and registered for this order before the deadline, with the registry's fee on top
   kaku chain storage ACCOUNT [--deposit NEAR | --withdraw] [--key-file FILE [--account NAME]]
                                           NEAR an account set aside at the registry for its token orders' storage;
                                           --deposit adds to the paying account's, --withdraw takes it all back (testnet)
@@ -207,6 +211,7 @@ pub fn run(args: &[String]) -> u8 {
         "--hours",
         "--client",
         "--deposit",
+        "--near",
     ];
     let mut words: Vec<&String> = Vec::new();
     let mut skip = false;
@@ -712,6 +717,107 @@ pub fn run(args: &[String]) -> u8 {
                 }
             }
         }
+        (Some("order"), Some(w)) if w.as_str() == "open" => {
+            let need = |name: &str| crate::flag(args, name);
+            let (Some(reviewer), Some(key), Some(scope), Some(near), Some(file)) = (
+                need("--reviewer"),
+                need("--reviewer-key"),
+                need("--scope"),
+                need("--near"),
+                need("--key-file"),
+            ) else {
+                eprintln!("{USAGE}");
+                return 2;
+            };
+            if key.starts_with("ed25519:") {
+                eprintln!("that is the capsule key's ed25519: fingerprint, not the key: give the \"signing key\" line kaku verify prints for one of the reviewer's capsules");
+                return 2;
+            }
+            let hex64 = |s: &str| {
+                s.len() == 64 && s.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
+            };
+            if !kk_evidence::registry::is_account_id(&reviewer) || !hex64(&key) || !hex64(&scope) {
+                eprintln!("the reviewer is a NEAR account; the reviewer key (the \"signing key\" line of kaku verify on one of the reviewer's capsules, not its ed25519: fingerprint) and the scope digest are 64 lowercase hex digits each");
+                return 2;
+            }
+            let Some(amount) = to_units(&near, 24).filter(|y| *y > 0) else {
+                eprintln!("--near is the amount the reviewer receives, such as 0.25");
+                return 2;
+            };
+            let hours = match crate::flag(args, "--hours").map(|h| h.parse::<u64>()) {
+                None => 72,
+                Some(Ok(h)) if (1..=8760).contains(&h) => h,
+                _ => {
+                    eprintln!("--hours is a number from 1 to 8760");
+                    return 2;
+                }
+            };
+            let payer = match Payer::from_key_file(
+                std::path::Path::new(&file),
+                crate::flag(args, "--account").as_deref(),
+            ) {
+                Ok(p) => p,
+                Err(e) => return fail(&e),
+            };
+            let (reviews, fee, total) = match rt.block_on(chain.price(amount)) {
+                Ok(p) => p,
+                Err(e) => return fail(&e),
+            };
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let require_hardware = args.iter().any(|a| a == "--require-hardware");
+            let terms = json!({
+                "reviewer": reviewer,
+                "reviewer_key": key,
+                "scope_sha256": scope,
+                "deadline": (u128::from(now + hours * 3600) * 1_000_000_000).to_string(),
+                "require_hardware": require_hardware,
+            });
+            let near_words = |y: u128| units(&json!({"y": y.to_string()}), "y");
+            if !as_json {
+                println!("An order at {place}, paid by {}:", payer.account);
+                println!("  {} goes to {} for a capsule signed by key {}…, registered for this order within {hours} hours", near_words(reviews), clean(&reviewer), &key[..16]);
+                println!("  Kakurega's fee on top: {}; you attach {} and room for the order's record, and what is not used comes back", near_words(fee), near_words(total));
+                if require_hardware {
+                    println!("  paid only if every model answer in the capsule is signed by a key whose hardware quote this registry saw verified after the order opened");
+                }
+                println!("  if nothing is registered in time, anyone can send the amount and the fee back to {}", payer.account);
+            }
+            if !args.iter().any(|a| a == "--yes") {
+                use std::io::{BufRead, IsTerminal, Write};
+                if !std::io::stdin().is_terminal() {
+                    eprintln!("no order was opened: confirm at a terminal, or pass --yes");
+                    return 2;
+                }
+                print!("Type yes to open the order: ");
+                let _ = std::io::stdout().flush();
+                let mut line = String::new();
+                if std::io::stdin().lock().read_line(&mut line).is_err() || line.trim() != "yes" {
+                    println!("No order was opened.");
+                    return 3;
+                }
+            }
+            match rt.block_on(chain.open_order(
+                &payer,
+                terms,
+                kk_chain::NearToken::from_yoctonear(amount),
+            )) {
+                Err(e) => fail(&e),
+                Ok((sent, id)) => {
+                    if as_json {
+                        println!(
+                            "{}",
+                            json!({"order": id, "transaction": sent.transaction, "gas_tgas": sent.gas_tgas, "registry": chain.registry()})
+                        );
+                    } else {
+                        println!("Order {id} opened. Transaction {} ({:.1} Tgas). Register the capsule for it with: kaku chain register JOB --order {id} --key-file ...", sent.transaction, sent.gas_tgas);
+                    }
+                    0
+                }
+            }
+        }
         (Some("order"), Some(id)) => {
             let Ok(id) = id.parse::<u64>() else {
                 eprintln!("an order is named by its number");
@@ -1043,6 +1149,84 @@ mod tests {
             "a withdrawal names the key file that pays for it"
         );
         assert_eq!(run(&["fees", "extra"]), 2);
+        assert_eq!(
+            run(&["order", "open"]),
+            2,
+            "an order names its reviewer, key, scope, amount and payer"
+        );
+        let fp = format!("ed25519:{}", "cd".repeat(32));
+        assert_eq!(
+            run(&[
+                "order",
+                "open",
+                "--reviewer",
+                "rita.testnet",
+                "--reviewer-key",
+                &fp,
+                "--scope",
+                &"ab".repeat(32),
+                "--near",
+                "0.1",
+                "--key-file",
+                "/nonexistent"
+            ]),
+            2,
+            "a fingerprint is not taken for the key"
+        );
+        let key = "ab".repeat(32);
+        assert_eq!(
+            run(&[
+                "order",
+                "open",
+                "--reviewer",
+                "Not An Account",
+                "--reviewer-key",
+                &key,
+                "--scope",
+                &key,
+                "--near",
+                "0.1",
+                "--key-file",
+                "/nonexistent"
+            ]),
+            2
+        );
+        assert_eq!(
+            run(&[
+                "order",
+                "open",
+                "--reviewer",
+                "rita.testnet",
+                "--reviewer-key",
+                &key,
+                "--scope",
+                &key,
+                "--near",
+                "nothing",
+                "--key-file",
+                "/nonexistent"
+            ]),
+            2
+        );
+        assert_eq!(
+            run(&[
+                "order",
+                "open",
+                "--reviewer",
+                "rita.testnet",
+                "--reviewer-key",
+                &key,
+                "--scope",
+                &key,
+                "--near",
+                "0.1",
+                "--key-file",
+                "/nonexistent",
+                "--hours",
+                "0"
+            ]),
+            2
+        );
         assert_eq!(run(&["storage", "Not An Account"]), 2);
         assert_eq!(
             run(&["storage", "carl.testnet", "--deposit", "0.01"]),

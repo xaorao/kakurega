@@ -57,6 +57,12 @@ pub fn run(args: &[String]) -> u8 {
                 " (key taken from the capsule; pin it to be sure who signed)"
             }
         );
+        if let Some(k) = report.signer_public {
+            println!(
+                "signing key {} (the value an order on NEAR names as the reviewer key)",
+                k.iter().map(|b| format!("{b:02x}")).collect::<String>()
+            );
+        }
         println!("recipient {}", report.recipient.as_deref().unwrap_or("?"));
         println!(
             "assurance {} via {}",
