@@ -20,6 +20,7 @@ kk-companion = { path = "../kk-companion" }
 kk-service = { path = "../kk-service" }
 kk-memory = { path = "../kk-memory" }
 kk-review = { path = "../kk-review" }
+kk-git = { path = "../kk-git" }
 kk-route = { path = "../kk-route" }
 kk-near = { path = "../kk-near" }
 kk-chain = { path = "../kk-chain" }

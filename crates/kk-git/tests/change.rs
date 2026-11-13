@@ -208,3 +208,90 @@ fn gt03_nothing_a_repository_configures_is_run_and_links_are_named_not_followed(
         assert!(!set.changes.iter().any(|c| c.path == "link"));
     }
 }
+
+#[test]
+fn gt04_the_lines_a_change_wrote_are_found_in_the_new_version() {
+    use kk_git::{changed_lines, Change};
+    let c = |old: Option<&str>, new: Option<&str>| Change {
+        path: "f.py".into(),
+        kind: Kind::Modified,
+        old: old.map(|s| s.as_bytes().to_vec()),
+        new: new.map(|s| s.as_bytes().to_vec()),
+    };
+    // one line replaced in the middle, two added at the end
+    let old = "a\nb\nc\nd\ne\n";
+    let new = "a\nB\nc\nd\ne\nf\ng\n";
+    assert_eq!(
+        changed_lines(&c(Some(old), Some(new))),
+        vec![(2, 2), (6, 7)]
+    );
+    // a line removed writes nothing
+    assert_eq!(changed_lines(&c(Some(old), Some("a\nc\nd\ne\n"))), vec![]);
+    // an added file is all its lines; a deleted one has none; bytes that are not text have none
+    assert_eq!(changed_lines(&c(None, Some("x\ny\n"))), vec![(1, 2)]);
+    assert_eq!(changed_lines(&c(Some(old), None)), vec![]);
+    let mut binary = c(Some(old), None);
+    binary.new = Some(vec![0xff, 0xfe, 0x00]);
+    assert_eq!(changed_lines(&binary), vec![]);
+    // neighbouring edits are one range
+    assert_eq!(
+        changed_lines(&c(Some("a\nb\nc\n"), Some("A\nB\nc\n"))),
+        vec![(1, 2)]
+    );
+}
+
+#[test]
+fn gt05_the_committed_version_is_written_out_not_what_lies_on_disk_and_unsafe_names_never() {
+    use kk_git::{export_head, safe_path};
+    let dir = repo("export");
+    feature(&dir);
+    // on disk only: an edit, a new file, a secrets file that was never committed
+    std::fs::write(dir.join("src/new.py"), "Y = 999\n").unwrap();
+    std::fs::write(dir.join(".env"), "KEY=1\n").unwrap();
+    let dest = dir
+        .join("..")
+        .join(format!("kk-git-export-out-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dest);
+    let left = export_head(&dir, &dest, 1000).unwrap();
+    assert!(left.is_empty(), "{left:?}");
+    assert_eq!(
+        std::fs::read_to_string(dest.join("src/new.py")).unwrap(),
+        "Y = 2\n"
+    );
+    assert!(dest.join("src/session.py").exists() && dest.join("src/keep.py").exists());
+    assert!(
+        !dest.join(".env").exists()
+            && !dest.join("old.txt").exists()
+            && !dest.join(".git").exists()
+    );
+    // an existing folder is never written into, and too many files is refused
+    assert!(export_head(&dir, &dest, 1000).is_err());
+    let other = dir
+        .join("..")
+        .join(format!("kk-git-export-two-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&other);
+    assert!(export_head(&dir, &other, 2).is_err());
+    for bad in [
+        "",
+        "/etc/passwd",
+        "../up",
+        "a/../b",
+        "a//b",
+        "./a",
+        ".git/config",
+        "a/.GIT/hooks/x",
+        "a\\b",
+        "a\nb",
+    ] {
+        assert!(!safe_path(bad), "{bad:?}");
+    }
+    for good in [
+        "a.py",
+        "src/auth/session.py",
+        ".github/workflows/ci.yml",
+        ".gitignore",
+        "a b/c d.txt",
+    ] {
+        assert!(safe_path(good), "{good:?}");
+    }
+}

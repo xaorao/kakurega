@@ -90,3 +90,5 @@ Signature checking fallback in the recipient's checker (`packages/verifier-js`):
 Naming the packaged macOS app (`apps/desktop/scripts/package.mjs`, `brand`): the steps (rename the app, its program and each helper app, and set their names, identities, version and usage texts) follow `@electron/packager` (BSD 2-Clause, Copyright 2015 Max Ogden and other contributors, https://github.com/electron/packager, `src/mac.ts`); written anew here, no code copied.
 
 Reading a change from a local git repository (`crates/kk-git`): the `gix` library by Sebastian Thiel and contributors (MIT or Apache-2.0, https://github.com/GitoxideLabs/gitoxide), used unchanged as a dependency; no git program is run.
+
+Finding which lines a change wrote (`crates/kk-git`): the `similar` library by Armin Ronacher (Apache-2.0, https://github.com/mitsuhiko/similar), used unchanged as a dependency.

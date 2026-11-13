@@ -193,3 +193,117 @@ pub fn read_change(dir: &Path, base: &str) -> Result<ChangeSet, GitError> {
         left_out,
     })
 }
+
+/// The line ranges of the new version that the change wrote (added or replaced), 1-based and inclusive, merged when they
+/// touch. A file that is not text, or a deleted file, has none; an added file is one range over all of it.
+pub fn changed_lines(change: &Change) -> Vec<(u32, u32)> {
+    let Some(new) = change
+        .new
+        .as_deref()
+        .and_then(|b| std::str::from_utf8(b).ok())
+    else {
+        return Vec::new();
+    };
+    let total = new.lines().count() as u32;
+    let Some(old) = change.old.as_deref() else {
+        return if total == 0 {
+            Vec::new()
+        } else {
+            vec![(1, total)]
+        };
+    };
+    let Ok(old) = std::str::from_utf8(old) else {
+        return if total == 0 {
+            Vec::new()
+        } else {
+            vec![(1, total)]
+        };
+    };
+    let diff = similar::TextDiff::from_lines(old, new);
+    let mut out: Vec<(u32, u32)> = Vec::new();
+    for op in diff.ops() {
+        let (tag, _, range) = op.as_tag_tuple();
+        if !matches!(tag, similar::DiffTag::Insert | similar::DiffTag::Replace) || range.is_empty()
+        {
+            continue;
+        }
+        let (from, to) = (range.start as u32 + 1, range.end as u32);
+        match out.last_mut() {
+            Some(last) if from <= last.1 + 1 => last.1 = last.1.max(to),
+            _ => out.push((from, to)),
+        }
+    }
+    out
+}
+
+/// SHA-256 input for a change, the same on every computer: the two commits, then one line per changed file with its kind.
+pub fn canonical(set: &ChangeSet) -> String {
+    let mut text = format!("base {}\nhead {}\n", set.base, set.head);
+    for c in &set.changes {
+        let kind = match c.kind {
+            Kind::Added => "added",
+            Kind::Modified => "modified",
+            Kind::Deleted => "deleted",
+        };
+        text.push_str(&format!("{kind} {}\n", c.path));
+    }
+    text
+}
+
+/// Whether a path from a tree is safe to write under a folder: relative, with no empty, `.`, `..` or `.git` part and no
+/// backslash or control character. Git itself refuses such names, but a repository's objects can be written by anything.
+pub fn safe_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= 1024
+        && !path.starts_with('/')
+        && !path.chars().any(|c| c.is_control() || c == '\\')
+        && path.split('/').all(|part| {
+            !part.is_empty() && part != "." && part != ".." && !part.eq_ignore_ascii_case(".git")
+        })
+}
+
+/// Writes the files of the checked-out commit of the repository at `dir` into the new folder `dest`: what is committed,
+/// not what is on disk beside it. Links, nested repositories, files over [`MAX_FILE_BYTES`] and unsafe names are not
+/// written and are returned with why. At most `max_files` files are written; more is an error.
+pub fn export_head(
+    dir: &Path,
+    dest: &Path,
+    max_files: usize,
+) -> Result<Vec<(String, &'static str)>, GitError> {
+    let repo = gix::open_opts(dir, gix::open::Options::isolated())
+        .map_err(|_| GitError::NotARepository)?;
+    let head = repo.head_commit().map_err(|_| GitError::NoHead)?;
+    let all = entries(&head.tree().map_err(unreadable)?)?;
+    if all.len() > max_files {
+        return Err(GitError::Unreadable(format!(
+            "the commit holds {} files; at most {max_files} are reviewed",
+            all.len()
+        )));
+    }
+    std::fs::create_dir(dest).map_err(unreadable)?;
+    let mut left_out = Vec::new();
+    for (path, (id, plain)) in &all {
+        if !plain {
+            left_out.push((path.clone(), "a link or a nested repository, not a file"));
+            continue;
+        }
+        if !safe_path(path) {
+            left_out.push((
+                path.chars().filter(|c| !c.is_control()).take(200).collect(),
+                "a name that cannot be written safely",
+            ));
+            continue;
+        }
+        let blob = repo.find_blob(*id).map_err(unreadable)?;
+        if blob.data.len() > MAX_FILE_BYTES {
+            left_out.push((path.clone(), "larger than a file that is read"));
+            continue;
+        }
+        let to = dest.join(path);
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent).map_err(unreadable)?;
+        }
+        std::fs::write(&to, &blob.data).map_err(unreadable)?;
+    }
+    Ok(left_out)
+}

@@ -357,7 +357,107 @@ impl Route for SharedNear {
     }
 }
 
+/// What a review is told about a change read from git.
+fn change_focus(set: &kk_git::ChangeSet, base_name: &str) -> kk_review::job::ChangeFocus {
+    kk_review::job::ChangeFocus {
+        base: set.base.clone(),
+        head: set.head.clone(),
+        base_name: base_name.to_string(),
+        files: set
+            .changes
+            .iter()
+            .map(|c| kk_review::job::ChangedFile {
+                path: c.path.clone(),
+                kind: match c.kind {
+                    kk_git::Kind::Added => "added",
+                    kk_git::Kind::Modified => "modified",
+                    kk_git::Kind::Deleted => "deleted",
+                }
+                .to_string(),
+                lines: kk_git::changed_lines(c),
+            })
+            .collect(),
+        digest: kk_evidence::capsule::sha256_hex(kk_git::canonical(set).as_bytes()),
+    }
+}
+
 impl ReviewRunner {
+    #[allow(clippy::too_many_arguments)]
+    fn review(
+        &self,
+        repo: &Path,
+        change: Option<kk_review::job::ChangeFocus>,
+        recipient: &str,
+        job_name: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+        stop: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> JobReport {
+        let cfg = JobConfig {
+            change,
+            stop: Some(stop.clone()),
+            repo: repo.to_path_buf(),
+            recipient: recipient.to_string(),
+            default_level: Level::Internal,
+            worker_binary: self.worker_binary.clone(),
+            transport: self.transport.clone(),
+            scratch: self.scratch.clone(),
+            python: "/usr/bin/python3".into(),
+            node: sandbox_node(),
+            rustc: sandbox_rustc(),
+            max_turns: self.max_turns,
+            second_look_files: 12,
+            now,
+            ttl_secs: 86_400,
+            policy_version: "policy-1".into(),
+            commitment_key: self.commitment_key,
+            job_name: job_name.to_string(),
+            extra_files: extra,
+            semgrep: kk_review::pattern::from_setting(
+                std::env::var("KAKU_SEMGREP").ok().as_deref(),
+            ),
+        };
+        if let Some(path) = &self.scripted {
+            let script: Vec<ChatMessage> = match std::fs::read_to_string(path)
+                .ok()
+                .and_then(|t| serde_json::from_str(&t).ok())
+            {
+                Some(s) => s,
+                None => {
+                    let mut r = run_job(&cfg, RouteSet::new(vec![]), vec![], progress);
+                    r.error = Some("the scripted test model file is unreadable".into());
+                    return r;
+                }
+            };
+            let route =
+                ScriptedRoute::new("scripted-test-model", RouteClass::DeviceOnly, false, script);
+            let ev = vec![route.evidence()];
+            return run_job(
+                &cfg,
+                RouteSet::new(vec![Stoppable::wrap(Box::new(route), stop)]),
+                ev,
+                progress,
+            );
+        }
+        match self.review_route() {
+            Ok(route) => {
+                let ev = vec![route.evidence()];
+                run_job(
+                    &cfg,
+                    RouteSet::new(vec![Stoppable::wrap(route, stop)]),
+                    ev,
+                    progress,
+                )
+            }
+            Err(e) => {
+                let mut r = run_job(&cfg, RouteSet::new(vec![]), vec![], progress);
+                r.error = Some(e.to_string());
+                r
+            }
+        }
+    }
+
     fn model_name(&self) -> String {
         self.model.read().map(|m| m.clone()).unwrap_or_default()
     }
@@ -488,67 +588,69 @@ impl JobRunner for ReviewRunner {
         progress: &dyn Fn(&str, &str),
         stop: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> JobReport {
-        let cfg = JobConfig {
-            stop: Some(stop.clone()),
-            repo: repo.to_path_buf(),
-            recipient: recipient.to_string(),
-            default_level: Level::Internal,
-            worker_binary: self.worker_binary.clone(),
-            transport: self.transport.clone(),
-            scratch: self.scratch.clone(),
-            python: "/usr/bin/python3".into(),
-            node: sandbox_node(),
-            rustc: sandbox_rustc(),
-            max_turns: self.max_turns,
-            second_look_files: 12,
-            now,
-            ttl_secs: 86_400,
-            policy_version: "policy-1".into(),
-            commitment_key: self.commitment_key,
-            job_name: job_name.to_string(),
-            extra_files: extra,
-            semgrep: kk_review::pattern::from_setting(
-                std::env::var("KAKU_SEMGREP").ok().as_deref(),
+        self.review(repo, None, recipient, job_name, now, extra, progress, stop)
+    }
+
+    fn change_preview(&self, repo: &Path, base: &str) -> Result<Value, String> {
+        let set = kk_git::read_change(repo, base).map_err(|e| e.to_string())?;
+        let focus = change_focus(&set, base);
+        Ok(json!({
+            "base": focus.base, "head": focus.head, "base_name": focus.base_name, "digest": focus.digest,
+            "files": focus.files.iter().map(|f| json!({"path": f.path, "kind": f.kind, "lines": f.lines})).collect::<Vec<_>>(),
+            "left_out": set.left_out.iter().map(|(p, why)| json!({"path": p, "why": why})).collect::<Vec<_>>(),
+        }))
+    }
+
+    fn run_change(
+        &self,
+        repo: &Path,
+        base: &str,
+        recipient: &str,
+        job_name: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+        stop: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> JobReport {
+        progress(
+            "change",
+            "reading what the checked-out commit changes, from the repository's own records",
+        );
+        let set = match kk_git::read_change(repo, base) {
+            Ok(s) => s,
+            Err(e) => return JobReport::not_started(&e.to_string()),
+        };
+        // the committed version is what is reviewed: written out beside the other scratch files, under the folder's own
+        // name (a review's notes are found by that name), and removed when the review ends
+        let name = repo
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "project".into());
+        let holder = self
+            .scratch
+            .join(format!("change-{}-{}", std::process::id(), job_name));
+        let _ = std::fs::remove_dir_all(&holder);
+        if let Err(e) = std::fs::create_dir_all(&holder) {
+            return JobReport::not_started(&format!(
+                "the committed version could not be written out for the review: {e}"
+            ));
+        }
+        let out = holder.join(&name);
+        let report = match kk_git::export_head(repo, &out, kk_review::import::MAX_FILES) {
+            Err(e) => JobReport::not_started(&e.to_string()),
+            Ok(_) => self.review(
+                &out,
+                Some(change_focus(&set, base)),
+                recipient,
+                job_name,
+                now,
+                extra,
+                progress,
+                stop,
             ),
         };
-        if let Some(path) = &self.scripted {
-            let script: Vec<ChatMessage> = match std::fs::read_to_string(path)
-                .ok()
-                .and_then(|t| serde_json::from_str(&t).ok())
-            {
-                Some(s) => s,
-                None => {
-                    let mut r = run_job(&cfg, RouteSet::new(vec![]), vec![], progress);
-                    r.error = Some("the scripted test model file is unreadable".into());
-                    return r;
-                }
-            };
-            let route =
-                ScriptedRoute::new("scripted-test-model", RouteClass::DeviceOnly, false, script);
-            let ev = vec![route.evidence()];
-            return run_job(
-                &cfg,
-                RouteSet::new(vec![Stoppable::wrap(Box::new(route), stop)]),
-                ev,
-                progress,
-            );
-        }
-        match self.review_route() {
-            Ok(route) => {
-                let ev = vec![route.evidence()];
-                run_job(
-                    &cfg,
-                    RouteSet::new(vec![Stoppable::wrap(route, stop)]),
-                    ev,
-                    progress,
-                )
-            }
-            Err(e) => {
-                let mut r = run_job(&cfg, RouteSet::new(vec![]), vec![], progress);
-                r.error = Some(e.to_string());
-                r
-            }
-        }
+        let _ = std::fs::remove_dir_all(&holder);
+        report
     }
 
     fn chat(

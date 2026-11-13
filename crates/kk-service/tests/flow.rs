@@ -192,6 +192,7 @@ impl JobRunner for CannedRunner {
             Vec::new()
         };
         JobReport {
+            change: None,
             fixes,
             method_suggestions: if recipient == "method-suggester" {
                 let l = kk_types::label::Label::new(kk_types::label::Level::Internal).untrusted();

@@ -47,6 +47,72 @@ pub struct JobConfig {
     pub semgrep: Result<PathBuf, String>,
     /// Set to true by the owner to end the review: the sandboxed worker is ended at once and nothing is prepared for release.
     pub stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// When the review is of a change (a branch against its base, a pull request) and not of the whole project.
+    pub change: Option<ChangeFocus>,
+}
+
+/// One file a change touches: where it is, what happened to it, and the lines of its new version the change wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangedFile {
+    pub path: String,
+    /// "added", "modified" or "deleted".
+    pub kind: String,
+    pub lines: Vec<(u32, u32)>,
+}
+
+/// The change a review is about. The project the agent reads is the version after the change; this says what the change is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangeFocus {
+    /// The commit the change is measured from and the commit reviewed, in hex.
+    pub base: String,
+    pub head: String,
+    /// What the owner called the base ("main", "origin/release"): shown, never trusted.
+    pub base_name: String,
+    pub files: Vec<ChangedFile>,
+    /// SHA-256, in hex, of the change's canonical list (the two commits and each changed file with its kind).
+    pub digest: String,
+}
+
+/// What a finding outside the change is told: it is not confirmed for this review.
+pub const OUTSIDE_CHANGE: &str = "this finding is about code the change did not touch and its check does not run any file the change touched, so it is not part of this review of the change; review the whole folder to release it";
+
+impl ChangeFocus {
+    /// The task the agent is given: the change, file by file, and what counts as a finding about it.
+    pub fn task(&self) -> String {
+        let mut t = String::from("Review a change to this project for security defects it introduces or exposes. The project you can read is the version AFTER the change. The change is:\n");
+        for f in self.files.iter().take(300) {
+            let lines = if f.lines.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    ", lines {}",
+                    f.lines
+                        .iter()
+                        .take(40)
+                        .map(|(a, b)| if a == b {
+                            a.to_string()
+                        } else {
+                            format!("{a}-{b}")
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            t.push_str(&format!("- {} ({}{})\n", f.path, f.kind, lines));
+        }
+        t.push_str("Read the changed files first, then whatever they call or are called by. Report only a defect that the change introduces or that runs through a changed file, cite the changed file and line where you can, and make the reproducer exercise a changed file. A defect in code the change did not touch and that no changed file reaches is not part of this review. Report only defects you have confirmed.");
+        t
+    }
+
+    /// Whether a checked finding touches the change: it cites a changed file, or its check ran one.
+    pub fn touches(&self, finding_file: &str, sample: &[String]) -> bool {
+        let changed = |p: &str| {
+            self.files
+                .iter()
+                .any(|f| f.kind != "deleted" && f.path == p)
+        };
+        changed(finding_file) || sample.iter().any(|p| changed(p))
+    }
 }
 
 /// What a review that the owner stopped reports as its error.
@@ -113,6 +179,40 @@ pub struct JobReport {
     pub model_usage: Vec<serde_json::Value>,
     pub final_taint: Option<Label>,
     pub error: Option<String>,
+    /// The change this review was about, when it was one.
+    pub change: Option<ChangeFocus>,
+}
+
+impl JobReport {
+    /// The report of a review that could not begin: nothing was read, nothing was asked of any model, and `why` says so.
+    pub fn not_started(why: &str) -> JobReport {
+        let man = manifest(&[]);
+        JobReport {
+            change: None,
+            fixes: Vec::new(),
+            memory_suggestions: Vec::new(),
+            method_suggestions: Vec::new(),
+            files: Vec::new(),
+            imported: 0,
+            skipped: Vec::new(),
+            withheld: Vec::new(),
+            injection_suspects: Vec::new(),
+            commitment: keyed_commitment(&[0u8; 32], &man),
+            manifest: man,
+            worker_exit: None,
+            worker_stderr: String::new(),
+            findings: Vec::new(),
+            unparsed_findings: 0,
+            pattern: crate::pattern::PatternScan::default(),
+            draft: Err(Rejection::NothingConfirmed),
+            audit: Vec::new(),
+            route_evidence: Vec::new(),
+            route_receipts: Vec::new(),
+            model_usage: Vec::new(),
+            final_taint: None,
+            error: Some(why.to_string()),
+        }
+    }
 }
 
 pub fn run_job(
@@ -145,6 +245,7 @@ pub fn run_job(
         ),
     );
     let mut report = JobReport {
+        change: cfg.change.clone(),
         fixes: Vec::new(),
         memory_suggestions: Vec::new(),
         method_suggestions: Vec::new(),
@@ -213,7 +314,10 @@ pub fn run_job(
     let launch = WorkerLaunch {
         binary: cfg.worker_binary.clone(),
         system_prompt: SYSTEM_PROMPT.into(),
-        task: TASK.into(),
+        task: cfg
+            .change
+            .as_ref()
+            .map_or_else(|| TASK.to_string(), ChangeFocus::task),
         tools_json: serde_json::to_string(&specs).unwrap_or_default(),
         max_turns: cfg.max_turns,
         second_look_files: cfg.second_look_files,
@@ -320,9 +424,18 @@ pub fn run_job(
                 .cloned()
         };
         let Some(chosen) = chosen else { continue };
-        let Some(checked) = repair.borrow_mut().finding(&chosen) else {
+        let Some(mut checked) = repair.borrow_mut().finding(&chosen) else {
             continue;
         };
+        // in a review of a change, a confirmed finding that does not touch the change is not offered for release
+        if let Some(change) = &cfg.change {
+            if checked.check.status == crate::check::CheckStatus::Reproduced
+                && !change.touches(&checked.finding.file, &checked.check.sample_paths)
+            {
+                checked.check.status =
+                    crate::check::CheckStatus::Unavailable(OUTSIDE_CHANGE.into());
+            }
+        }
         report
             .findings
             .push((checked.finding.clone(), checked.check.clone()));

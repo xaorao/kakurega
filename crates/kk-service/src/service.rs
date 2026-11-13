@@ -44,6 +44,29 @@ pub trait JobRunner: Send + Sync {
     ) -> JobReport {
         self.run(repo, recipient, job_name, now, extra, progress)
     }
+    /// What the checked-out commit of the git repository at `repo` changes relative to its merge base with `base` (a
+    /// branch, a tag or a commit): `{"base", "head", "base_name", "digest", "files": [{"path", "kind", "lines"}],
+    /// "left_out": [{"path", "why"}]}`. Read without running git or anything the repository configures. The words of
+    /// the refusal otherwise.
+    fn change_preview(&self, _repo: &Path, _base: &str) -> Result<Value, String> {
+        Err("reviewing a change is not available in this configuration".into())
+    }
+    /// A review of that change: the committed version is reviewed, the agent is told what the change is, and only
+    /// confirmed findings that touch it are offered. A runner that cannot do this reports so and reviews nothing.
+    #[allow(clippy::too_many_arguments)]
+    fn run_change(
+        &self,
+        _repo: &Path,
+        _base: &str,
+        _recipient: &str,
+        _job_name: &str,
+        _now: i64,
+        _extra: Vec<kk_review::import::ImportedFile>,
+        _progress: &dyn Fn(&str, &str),
+        _stop: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> JobReport {
+        JobReport::not_started("reviewing a change is not available in this configuration")
+    }
     /// Whether this runner ends a review or a coding task part-way when asked, or only at its end.
     fn stops_part_way(&self) -> bool {
         false

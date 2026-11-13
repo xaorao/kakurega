@@ -92,6 +92,7 @@ fn config_for(name: &str, transport: Transport, worker_binary: PathBuf) -> JobCo
     };
     fs::create_dir_all(&scratch).unwrap();
     JobConfig {
+        change: None,
         repo: materialize(),
         recipient: "acme-audit".into(),
         default_level: Level::Internal,
