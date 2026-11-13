@@ -1597,6 +1597,10 @@ try {
     await page.getByRole("button", { name: "Copied" }).waitFor();
     const clip = await page.evaluate(() => navigator.clipboard.readText());
     check("Copy table puts tab-separated lines on the clipboard: headers, then each row, the link's words and address in plain text", clip === "Item\tCost\tNote\ntea\t3\t<b>hot</b>\ncoffee\t10\tmenu (example.com)\n", JSON.stringify(clip));
+    // the same table as a file: the browser saves it (nothing is sent), cells quoted where a comma or quote needs it
+    const [tableFile] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Download as CSV" }).click()]);
+    const csvText = readFileSync(await tableFile.path(), "utf8");
+    check("Download as CSV saves the table as a file named table.csv with the same cells", tableFile.suggestedFilename() === "table.csv" && csvText === "Item,Cost,Note\r\ntea,3,<b>hot</b>\r\ncoffee,10,menu (example.com)\r\n", JSON.stringify(csvText));
     await page.unroute("**/api/chat/stream");
     await page.getByRole("button", { name: "Clear" }).click();
     await page.waitForTimeout(300);

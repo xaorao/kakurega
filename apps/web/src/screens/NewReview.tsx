@@ -81,6 +81,8 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
   onCleanup(() => clearInterval(poll));
 
   const [ask, setAsk] = createSignal("");
+  // the owner's own saved prompts, offered where work begins (read from this computer; none are sent anywhere by being shown)
+  const [mine] = createResource(() => api.prompts().then((r) => r.prompts.slice(0, 3)).catch(() => []));
   const askNow = (e: Event) => {
     e.preventDefault();
     if (!ask().trim()) return;
@@ -162,6 +164,12 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
           <li><a class="way" href="#/docs"><strong>{t("start.way.docs")}</strong><span class="muted">{t("start.way.docs.sub")}</span></a></li>
           <li><a class="way" href="#/meeting"><strong>{t("start.way.meeting")}</strong><span class="muted">{t("start.way.meeting.sub")}</span></a></li>
         </ul>
+        <Show when={(mine() ?? []).length > 0}>
+          <div class="start-mine" role="group" aria-label={t("start.mine")}>
+            <span class="muted">{t("start.mine")}</span>
+            <For each={mine()}>{(p) => <button type="button" class="chip-button" title={p.text.slice(0, 300)} onClick={() => { setAsk(p.text); document.getElementById("start-ask")?.focus(); }}>{p.name}</button>}</For>
+          </div>
+        </Show>
       </div>
       <h2 id="h-review" class="section-title">{t("new.title")}</h2>
       <p class="greeting">{t("new.greeting")}</p>

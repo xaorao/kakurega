@@ -731,3 +731,8 @@ button.primary:disabled { background: var(--line); color: var(--graphite); borde
 .menu-toggle { width: fit-content; }
 .menu-toggle::before { content: "☰"; font-size: 14px; }
 textarea::placeholder, input::placeholder { color: var(--fog); }
+
+/* the owner's saved prompts under the ways to begin: quiet chips that fill the box, never send by themselves */
+.start-mine { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.start-mine .muted { font-size: 13px; }
+.chip-button { font-size: 14px; padding: 6px 12px; min-height: 36px; border-radius: 999px; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

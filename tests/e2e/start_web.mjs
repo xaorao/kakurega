@@ -82,6 +82,25 @@ await page.getByRole("link", { name: /^Meeting notes Decisions/ }).click();
 await page.waitForURL(/#\/meeting/);
 check(true, "Meeting notes opens that screen");
 
+// the owner's saved prompts: none on a new install, so no row; once saved, a chip fills the box and sends nothing
+await page.goto(origin + "/#/");
+await page.getByRole("button", { name: /^Review a folder/ }).waitFor();
+check((await page.getByRole("group", { name: "Your saved prompts" }).count()) === 0, "with no saved prompts the start screen shows no row for them");
+const saved = await page.evaluate(async () => {
+  const csrf = (await (await fetch("/api/session", { credentials: "same-origin" })).json()).csrf;
+  const r = await fetch("/api/prompts", { method: "POST", headers: { "Content-Type": "application/json", "x-kk-csrf": csrf }, credentials: "same-origin", body: JSON.stringify({ name: "Weekly risk note <b>", text: "List this week's three biggest risks in the payments service." }) });
+  return r.status;
+});
+check(saved === 200, "a prompt was saved through the service: " + saved);
+await page.reload();
+const chip = page.getByRole("group", { name: "Your saved prompts" }).getByRole("button", { name: "Weekly risk note <b>" });
+await chip.waitFor({ timeout: 10000 });
+check((await page.locator(".start-mine b").count()) === 0, "a prompt's name is shown as text, never as markup");
+const before = await page.locator(".msg.user").count();
+await chip.click();
+check((await page.locator("#start-ask").inputValue()) === "List this week's three biggest risks in the payments service.", "choosing a saved prompt fills the box with its text");
+check(/#\/$|#$|\/$/.test(new URL(page.url()).hash || "#/") && (await page.locator(".msg.user").count()) === before, "and nothing is sent until the owner asks");
+
 // a phone
 const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark" });
 const pp = await phone.newPage();

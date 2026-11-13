@@ -54,7 +54,7 @@ test("md06 a model cannot hide text in a link label or fake a different host", (
 });
 
 import { readFileSync } from "node:fs";
-import { MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, parse as parseMd, tableToTsv, plain } from "../src/markdown.ts";
+import { MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, parse as parseMd, tableToCsv, tableToTsv, plain } from "../src/markdown.ts";
 
 const cell = (v) => [{ t: "text", v }];
 
@@ -141,4 +141,18 @@ test("md27 text that merely has pipes in a code block, a list or a quote is not 
   assert.equal(parseMd("```\n| a | b |\n|---|---|\n```")[0].t, "code");
   assert.ok(!parseMd("- | a | b |\n- |---|---|").some((b) => b.t === "table"));
   assert.ok(!parseMd("> | a | b |\n> |---|---|").some((b) => b.t === "table"));
+});
+
+test("a table saved as CSV quotes what needs it and never hands a spreadsheet a formula", () => {
+  const [b] = parseMd('| Item | Note |\n| --- | --- |\n| tea, green | said "hot" |\n| =HYPERLINK("http://evil.example","x") | +1 |\n| -2 | @SUM(A1) |');
+  assert.equal(b.t, "table");
+  const csv = tableToCsv(b);
+  const lines = csv.split("\r\n");
+  assert.equal(lines[0], "Item,Note");
+  assert.equal(lines[1], '"tea, green","said ""hot"""');
+  // every cell a spreadsheet would run starts with an apostrophe instead
+  assert.ok(lines[2].startsWith(`"'=HYPERLINK(`), lines[2]);
+  assert.ok(lines[2].endsWith(",'+1"), lines[2]);
+  assert.equal(lines[3], "'-2,'@SUM(A1)");
+  assert.ok(csv.endsWith("\r\n"));
 });

@@ -160,6 +160,17 @@ export function tableToTsv(b: Extract<Block, { t: "table" }>): string {
   return [b.head, ...b.rows].map((r) => r.map(cell).join("\t")).join("\n") + "\n";
 }
 
+/** The table as a CSV file's text. A cell that a spreadsheet would run as a formula (it starts with =, +, - or @, or with
+ *  a tab or carriage return) gets a leading apostrophe, so text a model wrote cannot act when the file is opened. */
+export function tableToCsv(b: Extract<Block, { t: "table" }>): string {
+  const cell = (v: Inline[]) => {
+    let s = plain(v).replace(/[\r\n]+/g, " ").trim();
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  return [b.head, ...b.rows].map((r) => r.map(cell).join(",")).join("\r\n") + "\r\n";
+}
+
 export function parse(input: string): Block[] {
   const lines = visible(input.slice(0, MAX_INPUT)).replace(/\r\n?/g, "\n").split("\n");
   const blocks: Block[] = [];

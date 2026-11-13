@@ -41,6 +41,8 @@ export const en = {
   "nav.menu": "Menu",
   "nav.more": "More",
   "lead.more": "More about this",
+  "start.mine": "Your saved prompts",
+  "md.downloadTable": "Download as CSV",
   "code.placeholder": "For example: make logout remove the session on the server, and add a test for it",
   "ins.placeholder": "For example: answer in short bullets; British spelling; never suggest a paid service",
   "chat.placeholder": "Ask anything. Type / for commands.",

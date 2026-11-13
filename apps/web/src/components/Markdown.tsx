@@ -1,6 +1,6 @@
 import { Code } from "./Code";
 import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
-import { inline, parse, tableToTsv, type Align, type Block, type Inline } from "../markdown";
+import { inline, parse, tableToCsv, tableToTsv, type Align, type Block, type Inline } from "../markdown";
 import { t } from "../i18n";
 
 function Inlines(props: { v: Inline[] }) {
@@ -58,9 +58,20 @@ function TableBlock(props: { b: Extract<Block, { t: "table" }> }) {
       /* copying is a convenience; the cells are still selectable */
     }
   };
+  // saved by the browser from this page's memory: the table goes to the owner's Downloads folder and nowhere else
+  const download = () => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([tableToCsv(props.b)], { type: "text/csv" }));
+    a.download = "table.csv";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
   return (
     <div class="tablebox">
-      <div class="actions"><button type="button" class="link" onClick={copy}>{copied() ? t("md.copied") : t("md.copyTable")}</button></div>
+      <div class="actions">
+        <button type="button" class="link" onClick={copy}>{copied() ? t("md.copied") : t("md.copyTable")}</button>
+        <button type="button" class="link" onClick={download}>{t("md.downloadTable")}</button>
+      </div>
       <div class="tablewrap" role="region" aria-label={t("md.table")} tabindex="0">
         <table>
           <thead>
