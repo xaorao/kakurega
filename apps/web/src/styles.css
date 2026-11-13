@@ -658,8 +658,7 @@ ul.plain.start-ways { display: grid; grid-template-columns: repeat(4, minmax(0, 
 .composer.stack > p.muted { order: 8; font-size: 12px; }
 .composer textarea { min-height: 48px; }
 
-/* a control that takes focus is scrolled clear of the message box fixed at the bottom, and the box shows focus plainly */
-@media (min-width: 861px) and (min-height: 640px) { html { scroll-padding-bottom: calc(var(--composer-h, 0px) + 32px); } }
+/* the box shows focus plainly. (No scroll padding for the fixed box: with it the browser keeps scrolling to move the box's own buttons out of the padded zone, which they can never leave, and they cannot be clicked.) */
 .composer:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
 .start-ask:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
 
@@ -684,3 +683,8 @@ ul.plain.start-ways { display: grid; grid-template-columns: repeat(4, minmax(0, 
 }
 .safeguards .badge { border: 0; padding: 0 4px; color: var(--graphite); background: transparent; }
 .safeguards { flex-direction: column; gap: 2px; }
+/* the message box says only what is needed (nothing here appears or goes with focus: a box that changes size under the pointer cannot be clicked) */
+.composer .attach .actions > span.muted:not([role]) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* rows of look-alike buttons: the many are quiet, the one that matters is not */
+.gallery button:not(.primary), .rt-expert button:not(.primary) { font-size: 14px; padding: 6px 12px; min-height: 34px; }
+.tiles + * { margin-top: 4px; }

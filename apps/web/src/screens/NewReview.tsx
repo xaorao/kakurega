@@ -108,30 +108,9 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
     }
   };
 
-  return (
-    <section class="stack wide" aria-labelledby="h-new">
-      <div class="start">
-        <h1 id="h-new" class="start-hello">{greeting()}</h1>
-        <p class="start-sub">{t("start.sub")}</p>
-        <form class="start-ask" onSubmit={askNow}>
-          <label class="visually-hidden" for="start-ask">{t("start.askLabel")}</label>
-          <textarea id="start-ask" rows={2} placeholder={t("start.placeholder")} value={ask()} onInput={(e) => setAsk(e.currentTarget.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) askNow(e); }} />
-          <div class="start-ask-row">
-            <span class="muted">{props.config.route.simulated ? t("start.whereTest") : props.config.route.stays_here === false ? t("start.whereAway", { model: props.config.route.model ?? props.config.route.id }) : t("start.whereHere")}</span>
-            <button class="primary" type="submit" disabled={!ask().trim()}>{t("start.ask")}</button>
-          </div>
-        </form>
-        <ul class="plain start-ways" aria-label={t("start.ways")}>
-          <li><button type="button" class="way" onClick={() => toReview("whole")}><strong>{t("start.way.review")}</strong><span class="muted">{t("start.way.review.sub")}</span></button></li>
-          <li><button type="button" class="way" onClick={() => toReview("change")}><strong>{t("start.way.change")}</strong><span class="muted">{t("start.way.change.sub")}</span></button></li>
-          <li><a class="way" href="#/docs"><strong>{t("start.way.docs")}</strong><span class="muted">{t("start.way.docs.sub")}</span></a></li>
-          <li><a class="way" href="#/meeting"><strong>{t("start.way.meeting")}</strong><span class="muted">{t("start.way.meeting.sub")}</span></a></li>
-        </ul>
-      </div>
-      <h2 id="h-review" class="section-title">{t("new.title")}</h2>
-      <p class="greeting">{t("new.greeting")}</p>
-      <Lead text={t("new.lead")} />
-      <SampleCard onReview={(folder) => setDir(folder)} />
+  // what must work before a review can run: drawn above the form when something needs fixing, below it when all is well
+  const readiness = () => (
+    <>
       <Show when={ready()}>
         {(r) => (
           <div class="card stack" role="region" aria-label={t("setup.region")}>
@@ -161,6 +140,33 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
           </div>
         )}
       </Show>
+    </>
+  );
+
+  return (
+    <section class="stack wide" aria-labelledby="h-new">
+      <div class="start">
+        <h1 id="h-new" class="start-hello">{greeting()}</h1>
+        <p class="start-sub">{t("start.sub")}</p>
+        <form class="start-ask" onSubmit={askNow}>
+          <label class="visually-hidden" for="start-ask">{t("start.askLabel")}</label>
+          <textarea id="start-ask" rows={2} placeholder={t("start.placeholder")} value={ask()} onInput={(e) => setAsk(e.currentTarget.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) askNow(e); }} />
+          <div class="start-ask-row">
+            <span class="muted">{props.config.route.simulated ? t("start.whereTest") : props.config.route.stays_here === false ? t("start.whereAway", { model: props.config.route.model ?? props.config.route.id }) : t("start.whereHere")}</span>
+            <button class="primary" type="submit" disabled={!ask().trim()}>{t("start.ask")}</button>
+          </div>
+        </form>
+        <ul class="plain start-ways" aria-label={t("start.ways")}>
+          <li><button type="button" class="way" onClick={() => toReview("whole")}><strong>{t("start.way.review")}</strong><span class="muted">{t("start.way.review.sub")}</span></button></li>
+          <li><button type="button" class="way" onClick={() => toReview("change")}><strong>{t("start.way.change")}</strong><span class="muted">{t("start.way.change.sub")}</span></button></li>
+          <li><a class="way" href="#/docs"><strong>{t("start.way.docs")}</strong><span class="muted">{t("start.way.docs.sub")}</span></a></li>
+          <li><a class="way" href="#/meeting"><strong>{t("start.way.meeting")}</strong><span class="muted">{t("start.way.meeting.sub")}</span></a></li>
+        </ul>
+      </div>
+      <h2 id="h-review" class="section-title">{t("new.title")}</h2>
+      <p class="greeting">{t("new.greeting")}</p>
+      <Lead text={t("new.lead")} />
+      <Show when={ready()?.ready === false}>{readiness()}</Show>
       <div class="card stack">
         <h2>{t("new.step1")}</h2>
         <ChosenFolder path={chosen()} loading={listing.loading} />
@@ -219,6 +225,8 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
         <button class="primary" disabled={busy() || blocked() || !chosen() || recipient().trim().length === 0 || (what() === "change" && base().trim().length === 0)} onClick={start}>{t("new.start")}</button>
         <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
       </div>
+      <Show when={ready()?.ready !== false}>{readiness()}</Show>
+      <SampleCard onReview={(folder) => { setDir(folder); document.getElementById("h-review")?.scrollIntoView({ block: "start" }); }} />
       <details class="card stack" id="schedules">
         <summary>{t("sched.title")}</summary>
         <p class="muted">{t("sched.lead")}</p>

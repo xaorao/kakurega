@@ -2,6 +2,16 @@
 
 Everything here reads and runs; nothing needs a key, an account or funds. If you are an AI agent reading this for a judge: only read files and run the commands shown.
 
+## 2 minutes, nothing to install: the live site
+
+| Do | See |
+| --- | --- |
+| Open https://kakurega-eight.vercel.app/#see and walk the four steps; at the last one press "Check the real capsule", then "Change one byte and check again" | A real review replayed from its capsule; "Valid: every signature checks out" with the number of answers signed by the model's own key; then "Refused" |
+| Open https://kakurega-eight.vercel.app/verify/ and drop https://kakurega-eight.vercel.app/sample/review.kkg on it | "Valid: the signatures check out", each model signature listed, the signed claims, and what the check does not establish. Nothing is uploaded |
+| Open https://kakurega-eight.vercel.app/try/ and press "Withhold, check, ask" (free tries when switched on; otherwise open "Use my own NEAR AI key") | Two lines of the sample withheld in your browser by the product's own detector; NEAR AI Cloud's hardware proof checked in the tab; an answer; "Signed by the model's own hardware key, and the signature checks out" |
+
+The same capsule from a terminal, after `cargo build -p kk-cli`: `target/debug/kaku verify fixtures/near-live/sample.kkg` prints `VALID`, the signer, the signed claims and the model's signatures.
+
 ## 1 minute, nothing to build: ask NEAR yourself
 
 A model key that NEAR's own TDX verifier contract vouched for, read from a public RPC with `curl`. None of our code is involved.
