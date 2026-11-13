@@ -75,6 +75,32 @@ const tryResult = await build({
 });
 const tryScript = (Array.isArray(tryResult) ? tryResult[0] : tryResult).output.find((o) => o.type === "chunk").code;
 
+// the proof page's script: asks NEAR's public RPC from the visitor's browser and compares with proof.json
+const proofResult = await build({
+  root: here,
+  logLevel: "warn",
+  configFile: false,
+  resolve: { alias: { "@kakurega/verifier": resolve(repo, "packages/verifier-js/src/index.js"), "@kakurega/canon": resolve(repo, "packages/canon-js/src/index.js") } },
+  build: { write: false, minify: true, target: "es2022", lib: { entry: resolve(here, "proof.js"), formats: ["iife"], name: "KakuregaProof", fileName: "proof" } },
+});
+const proofScript = (Array.isArray(proofResult) ? proofResult[0] : proofResult).output.find((o) => o.type === "chunk").code;
+const proofFacts = JSON.parse(readFileSync(join(here, "proof-facts.json"), "utf8"));
+if (createHash("sha256").update(readFileSync(join(repo, proofFacts.registered_capsule.file))).digest("hex") !== proofFacts.registered_capsule.capsule_sha256) throw new Error("proof-facts.json names a registered capsule whose file in the repository has another hash");
+const call = (method_name, args) => ({ jsonrpc: "2.0", id: 1, method: "query", params: { request_type: "call_function", finality: "final", account_id: proofFacts.registry, method_name, args_base64: Buffer.from(JSON.stringify(args)).toString("base64") } });
+const query = (request_type) => ({ jsonrpc: "2.0", id: 1, method: "query", params: { request_type, finality: "final", account_id: proofFacts.registry } });
+const proof = {
+  about: "Claims Kakurega makes about its contract on NEAR, each with the exact request to POST to the RPC and the answer to expect. Reads only.",
+  ...proofFacts,
+  sample_capsule: { url: "sample/review.kkg", sha256: createHash("sha256").update(capsuleBytes).digest("hex"), model: facts.model, model_key: facts.model_key, signed_answers: facts.answers },
+  claims: [
+    { id: "keys", claim: "The registry account has no access keys, so its code and fee cannot be replaced.", request: query("view_access_key_list"), expect: "result.keys is an empty list" },
+    { id: "code", claim: "The code on NEAR is the contract built from the repository.", request: query("view_account"), expect: `result.code_hash, decoded from base58 to hex, equals ${proofFacts.code_sha256} (scripts/check-deployed rebuilds and compares)` },
+    { id: "hardware", claim: "NEAR's TDX verifier contract vouched for the model key that signed the sample capsule's answers.", request: call("hardware", { signer: facts.model_key }), expect: `result.result (bytes of JSON) has signer ${facts.model_key} and tcb_status UpToDate; method verifier returns ${proofFacts.verifier}` },
+    { id: "order", claim: "A capsule was registered for a paid order that required a hardware record, with its model signatures verified by the contract.", request: call("get", proofFacts.registered_capsule && { capsule_sha256: proofFacts.registered_capsule.capsule_sha256, capsule_signer: proofFacts.registered_capsule.capsule_signer }), expect: `receipt_count ${proofFacts.registered_capsule.receipt_count}, order "${proofFacts.registered_capsule.order}"; method order {"order_id":"${proofFacts.registered_capsule.order}"} returns state Paid and require_hardware true` },
+    { id: "counts", claim: "Live counts and the fixed fee.", request: call("total", {}), expect: `a number as a string; orders_total likewise; fee_terms returns bps ${proofFacts.fee_bps}` },
+  ],
+};
+
 // Kakurega's own secret detector for the browser: the same crate the product uses, with nothing it can import
 const wasmBuilt = spawnSync("cargo", ["build", "--quiet", "--release", "--target", "wasm32-unknown-unknown", "--manifest-path", join(here, "wasm/Cargo.toml")], { encoding: "utf8", cwd: repo });
 if (wasmBuilt.status !== 0) throw new Error("the detector did not build for the browser (rustup target add wasm32-unknown-unknown): " + wasmBuilt.stderr.slice(-400));
@@ -94,6 +120,11 @@ writeFileSync(join(out, "try.js"), tryScript);
 mkdirSync(join(out, "try"), { recursive: true });
 mkdirSync(join(out, "api"), { recursive: true });
 cpSync(join(here, "try.html"), join(out, "try/index.html"));
+mkdirSync(join(out, "proof"), { recursive: true });
+cpSync(join(here, "proof.html"), join(out, "proof/index.html"));
+writeFileSync(join(out, "proof.js"), proofScript);
+writeFileSync(join(out, "proof.json"), JSON.stringify(proof, null, 2));
+writeFileSync(join(out, "llms.txt"), readFileSync(join(here, "llms.txt"), "utf8").replaceAll("{{MODEL}}", facts.model).replaceAll("{{ANSWERS}}", String(facts.answers)).replaceAll("{{REGISTRY}}", proofFacts.registry));
 cpSync(wasmPath, join(out, "kk_secrets.wasm"));
 cpSync(join(here, "api/near.js"), join(out, "api/near.js"));
 writeFileSync(join(out, "package.json"), JSON.stringify({ private: true, type: "module" }));

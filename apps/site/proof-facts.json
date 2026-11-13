@@ -1,0 +1,19 @@
+{
+  "network": "testnet",
+  "rpc": "https://rpc.testnet.fastnear.com",
+  "registry": "kakurega-registry-c68af3.testnet",
+  "code_sha256": "bfeeba19e6131053211d8809ff9fcbc6f9d43927d1ec242d8bba384a016ec3c5",
+  "verifier": "tee-verifier-2026-07-22.testnet",
+  "fee_bps": 200,
+  "registered_capsule": {
+    "capsule_sha256": "2d2f9450a88fab653909a09c3c1a992929e308a0120feb5380a13ea381b99f8b",
+    "capsule_signer": "d48949fd672796dd58880341608d6a2fc26e28ade3f323a24792226a324a43ee",
+    "receipt_count": 20,
+    "order": "1",
+    "file": "fixtures/near-live/review.kkg"
+  },
+  "transactions": {
+    "hardware_attested": "EqCuP7TZmqsgotmj1go7oFg2mzN2qnzRKgmNeXzfhmY",
+    "capsule_registered": "HvDR4pNUarYwdALySuJR5zNjzxNE7zmxh5KwfXTreSpT"
+  }
+}

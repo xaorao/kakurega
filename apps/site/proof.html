@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proof: ask NEAR yourself, from your browser · Kakurega</title>
+<meta name="description" content="Six claims about Kakurega's contract on NEAR, each asked of NEAR's public RPC from your browser and compared with what this site says. No wallet, no key.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230a0a0a'/%3E%3Crect x='8' y='14' width='16' height='4' rx='1' fill='%23ffffff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+<header class="nav">
+  <a class="brand" href="../"><svg class="mark" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><rect width="32" height="32" rx="8" fill="currentColor"/><rect x="8" y="14" width="16" height="4" rx="1" class="mark-bar"/></svg><span>kakurega</span></a>
+  <nav aria-label="Sections">
+    <a href="../#how">How it works</a>
+    <a href="../#see">See it work</a>
+    <a href="../proof/">Proof</a>
+    <a href="../#limits">Limits</a>
+  </nav>
+  <a class="button dark" href="../verify/">Check a capsule <span aria-hidden="true">→</span></a>
+</header>
+
+<main id="main" class="try">
+  <p class="kicker"><span class="pill live"><span class="dot" aria-hidden="true"></span>Read live from NEAR testnet</span> Nothing here is taken on our word</p>
+  <h1 class="try-title">Ask NEAR yourself.</h1>
+  <p class="lede">Each line below is a claim this project makes about its contract on NEAR. Your browser asks NEAR's public RPC and compares the answer. No wallet, no key, nothing signed; the only requests leave for the RPC.</p>
+  <div class="actions"><button type="button" class="button dark" data-run>Ask NEAR</button> <strong data-summary aria-live="polite"></strong></div>
+
+  <ol class="try-steps proof-steps">
+    <li data-check="keys"><h2>1. Nobody can change the contract</h2><p class="note">The account <span class="mono" data-registry></span> has no access keys, so no one, us included, can replace its code or its fee.</p><div data-out></div></li>
+    <li data-check="code"><h2>2. The code on NEAR is the code in the repository</h2><p class="note">The hash NEAR reports for the account, against the hash of the contract built from the repository (<span class="mono">scripts/check-deployed</span> rebuilds it and compares).</p><div data-out></div></li>
+    <li data-check="capsule"><h2>3. The sample review is signed by the model that wrote it</h2><p class="note">The capsule on this site is verified in this tab; every answer in it carries the model's own signature.</p><div data-out></div></li>
+    <li data-check="hardware"><h2>4. NEAR's own verifier vouches for that model key</h2><p class="note">Our contract handed the key's Intel TDX quote to NEAR's verifier contract and recorded what it answered. This asks for that record.</p><div data-out></div></li>
+    <li data-check="order"><h2>5. A review was paid for only after its proof was on chain</h2><p class="note">An order that required a hardware record; the contract verified the capsule's model signatures before the money could move.</p><div data-out></div></li>
+    <li data-check="counts"><h2>6. What the registry holds right now</h2><p class="note">Counts read from the contract, and the fee written into its code.</p><div data-out></div></li>
+  </ol>
+
+  <section class="try-notes" aria-labelledby="h-what">
+    <h2 id="h-what">What this shows, and what it does not</h2>
+    <ul class="plain">
+      <li>Everything is NEAR <strong>testnet</strong>. The amounts are test tokens. The numbers are small because the product is a prototype: they are the real counts, not rounded up.</li>
+      <li>Check 2 compares with a hash this site states. To take nobody's word, run <span class="mono">scripts/check-deployed</span> in the repository: it builds the contract and compares it with NEAR itself.</li>
+      <li>A hardware record shows the model ran on a machine Intel's collateral accepts at that patch level. It does not show that an answer is right.</li>
+      <li>The same claims for a program to read: <a href="../proof.json">proof.json</a> (each claim with the exact RPC request and the expected answer) and <a href="../llms.txt">llms.txt</a>.</li>
+    </ul>
+  </section>
+</main>
+
+<footer class="foot">
+  <span class="brand"><svg class="mark" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><rect width="32" height="32" rx="8" fill="currentColor"/><rect x="8" y="14" width="16" height="4" rx="1" class="mark-bar"/></svg><span>kakurega</span></span>
+  <span>隠れ家: a hideout.</span>
+  <a href="../">Back to the start</a>
+</footer>
+<script src="../proof.js" defer></script>
+</body>
+</html>

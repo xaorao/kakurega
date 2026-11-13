@@ -7,6 +7,7 @@ Everything here reads and runs with no account and no funds. One step can use a 
 | Do | See |
 | --- | --- |
 | Open https://kakurega-eight.vercel.app/#see and walk the four steps; at the last one press "Check the real capsule", then "Change one byte and check again" | A real review replayed from its capsule; "Valid: every signature checks out" with the number of answers signed by the model's own key; then "Refused" |
+| Open https://kakurega-eight.vercel.app/proof/ | Your browser asks NEAR's public RPC six questions about the registry contract and ticks each one: no access keys, the code hash, the sample capsule's signatures, the model key NEAR's verifier vouched for, a paid order, live counts. "All 6 checks match". The same as data: `/proof.json`, `/llms.txt` |
 | Open https://kakurega-eight.vercel.app/verify/ and drop https://kakurega-eight.vercel.app/sample/review.kkg on it | "Valid: the signatures check out", each model signature listed, the signed claims, and what the check does not establish. Nothing is uploaded |
 | Open https://kakurega-eight.vercel.app/try/ and press "Withhold, check, ask" (free tries when switched on; otherwise open "Use my own NEAR AI key") | Two lines of the sample withheld in your browser by the product's own detector; NEAR AI Cloud's hardware proof checked in the tab; an answer; "Signed by the model's own hardware key, and the signature checks out" |
 

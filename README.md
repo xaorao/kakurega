@@ -1,8 +1,8 @@
 # Kakurega
 
-**A private AI workspace in which a gate outside the model decides what may leave your computer, and the person who receives the result checks it offline.**
+**To get an AI to review your private code or read your contracts, you hand them over and hope. Kakurega does the work without the handing over: a gate outside the model decides what may leave your computer, and the person who receives the result checks it offline.**
 
-[See a real review](https://kakurega-eight.vercel.app/#see) · [Check a capsule](https://kakurega-eight.vercel.app/verify/) · [Check it yourself](#check-it-yourself) · [For judges](docs/JUDGES.md) · [Every feature](docs/FEATURES.md) · [Limits](docs/LIMITS.md)
+[See a real review](https://kakurega-eight.vercel.app/#see) · [Ask NEAR yourself](https://kakurega-eight.vercel.app/proof/) · [Check a capsule](https://kakurega-eight.vercel.app/verify/) · [Check it yourself](#check-it-yourself) · [For judges](docs/JUDGES.md) · [Every feature](docs/FEATURES.md) · [Limits](docs/LIMITS.md)
 
 Working prototype on macOS and Linux, with NEAR on testnet. Not a finished product: read [the limits](docs/LIMITS.md) before relying on it.
 
@@ -11,6 +11,8 @@ Working prototype on macOS and Linux, with NEAR on testnet. Not a finished produ
 > 1. Open [https://kakurega-eight.vercel.app/#see](https://kakurega-eight.vercel.app/#see). A replay of a real review of a small made-up payments service, run on NEAR AI Cloud and read from the capsule it produced: the findings the kernel reproduced and the exact files approved, with the model and its signatures. (Step 1's description of the project is written by us; a capsule does not record what was held back.)
 > 2. At its last step press **Check the real capsule**: your browser verifies every signature in it. Then press **Change one byte and check again**: refused.
 > 3. Open [https://kakurega-eight.vercel.app/verify/](https://kakurega-eight.vercel.app/verify/) and drop [the same capsule](https://kakurega-eight.vercel.app/sample/review.kkg) on it. Nothing is uploaded. You get the verdict, each model signature, and a list of what the check does not establish.
+>
+> 4. Open [https://kakurega-eight.vercel.app/proof/](https://kakurega-eight.vercel.app/proof/). Your browser asks NEAR's public RPC six questions about the contract (no access keys, code hash, the model key NEAR's verifier vouched for, a paid order, live counts) and compares each answer. The same claims as data, for a program: [proof.json](https://kakurega-eight.vercel.app/proof.json), [llms.txt](https://kakurega-eight.vercel.app/llms.txt).
 >
 > With a terminal and nothing built: [ask NEAR yourself](#ask-near-yourself) which model key NEAR's own verifier contract vouched for. It is the key that signed every answer in that capsule.
 
@@ -56,6 +58,8 @@ One review, from folder to recipient:
 | 6. Record, if you choose | `kaku chain register` publishes the capsule's digest and its model receipts on NEAR testnet, after showing exactly what becomes public. | `contracts/kakurega-registry` |
 
 ## Why NEAR
+
+"Code review that is fully private - agent that verifiably privately runs code review on private PRs using @near_ai" is on Illia Polosukhin's public list of things to build on NEAR ([post](https://x.com/ilblackdragon/status/2106269343881519444)). The flagship here is that review: `kaku review DIR --for WHO --change main` reviews a branch against its base as for a pull request, on a model in NEAR AI Cloud's confidential hardware, with every answer signed by that model's key and every finding reproduced in a sandbox. It reads the repository on your computer; it does not connect to GitHub.
 
 | NEAR piece | What it does here | State |
 | --- | --- | --- |

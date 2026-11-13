@@ -212,3 +212,8 @@ button.button:disabled { opacity: 0.45; cursor: not-allowed; }
 .try-notes { margin-top: 40px; border-top: 1px solid var(--line); padding-top: 28px; }
 .try-notes h2 { font-size: 24px; }
 @media (max-width: 860px) { .try-grid { grid-template-columns: minmax(0, 1fr); } .try-form { position: static; } }
+.proof-steps { margin-top: 20px; max-width: 860px; }
+.proof-steps .note strong { font-weight: 500; color: var(--ink); }
+.proof-steps .mono { overflow-wrap: anywhere; }
+[data-summary].ok { color: var(--cipher-text); }
+[data-summary].bad { color: #c2410c; }
