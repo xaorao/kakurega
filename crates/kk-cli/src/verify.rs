@@ -85,6 +85,19 @@ pub fn run(args: &[String]) -> u8 {
                 );
             }
         }
+        // signed text is still someone else's text: printed without anything that could steer a terminal
+        let shown = |t: &str| t.chars().filter(|c| !c.is_control()).collect::<String>();
+        if let Some(id) = &report.capsule_id {
+            println!("capsule {}", shown(id));
+        }
+        if !report.claims.is_empty() {
+            println!("\nSigned claims (signed and bound to this release; a signature does not make them true):");
+            for (i, c) in report.claims.iter().enumerate() {
+                println!("  {}. {}", i + 1, shown(&c.statement));
+                println!("     rests on: {}", shown(&c.evidence.join(", ")));
+                println!("     how to check: {}", shown(&c.how_to_check));
+            }
+        }
         println!("\nEstablished:");
         for e in &report.established {
             println!("  + {e}");

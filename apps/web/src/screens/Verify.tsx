@@ -112,6 +112,15 @@ export function Verify() {
                 <li>{rich("ver.est3", { recipient: r().recipient, expires: when(r().expires, locale()) })}</li>
                 <Show when={r().signerPinned}><li>{t("ver.est4")}</li></Show>
               </ul>
+              <Show when={(r().claims ?? []).length > 0}>
+                <h2>{t("ver.claims")}</h2>
+                <p class="muted">{t("ver.claimsLead")}</p>
+                <ol class="stack">
+                  <For each={r().claims}>
+                    {(c: any) => <li><strong>{c.statement}</strong><p class="muted">{t("ver.claimRests", { files: c.evidence.join(", ") })}</p><p class="muted">{t("ver.claimHow", { how: c.howToCheck })}</p></li>}
+                  </For>
+                </ol>
+              </Show>
               <Show when={(r().receipts ?? []).length > 0}>
                 <h2>{t("ver.receipts")}</h2>
                 <p class="muted">{t("ver.receiptsLead")}</p>

@@ -230,7 +230,21 @@ pub fn assemble_with(
     let mut n = 0;
     for (finding, check) in results {
         if check.status != CheckStatus::Reproduced {
-            not_confirmed.push((finding.title.clone(), format!("{:?}", check.status)));
+            not_confirmed.push((
+                finding.title.clone(),
+                match &check.status {
+                    CheckStatus::Reproduced => String::new(),
+                    CheckStatus::NotReproduced => {
+                        "the kernel ran the script and the defect did not reproduce".into()
+                    }
+                    CheckStatus::Nondeterministic => {
+                        "the script gave different output on two runs, so it proves nothing".into()
+                    }
+                    CheckStatus::Failed(m) => format!("the check failed: {m}"),
+                    CheckStatus::Unavailable(m) => m.clone(),
+                    CheckStatus::NotRun(m) => format!("the check could not be run: {m}"),
+                },
+            ));
             continue;
         }
         if names_sandbox_path(&finding.reproducer) {

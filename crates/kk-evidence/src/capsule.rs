@@ -212,6 +212,19 @@ pub struct Report {
     pub receipts: Vec<ReceiptReport>,
     pub established: Vec<String>,
     pub not_established: Vec<String>,
+    /// The capsule's own name, as signed in the release statement.
+    pub capsule_id: Option<String>,
+    /// What the signer claims, in the order signed: each statement, the released files it rests on, and how to check
+    /// it. Signed, bound to this release, and not thereby true.
+    pub claims: Vec<ClaimReport>,
+}
+
+/// One signed claim of a capsule that verified.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimReport {
+    pub statement: String,
+    pub evidence: Vec<String>,
+    pub how_to_check: String,
 }
 
 fn fail(reason: &'static str) -> Report {
@@ -227,6 +240,8 @@ fn fail(reason: &'static str) -> Report {
         receipts: Vec::new(),
         established: Vec::new(),
         not_established: Vec::new(),
+        capsule_id: None,
+        claims: Vec::new(),
     }
 }
 
@@ -615,6 +630,7 @@ pub fn verify(bytes: &[u8], opts: &VerifyOptions) -> Report {
     }
 
     let release_digest = sha256_hex(&release_env.payload);
+    let mut claim_reports: Vec<ClaimReport> = Vec::new();
     for c in &claims {
         if !exact_keys(
             c,
@@ -645,6 +661,23 @@ pub fn verify(bytes: &[u8], opts: &VerifyOptions) -> Report {
                 return fail("claim_evidence_missing");
             }
         }
+        let (Some(statement), Some(how)) = (
+            str_of(member(c, "statement")),
+            str_of(member(c, "how_to_check")),
+        ) else {
+            return fail("claim_shape");
+        };
+        claim_reports.push(ClaimReport {
+            statement: statement.to_string(),
+            evidence: ev
+                .iter()
+                .filter_map(|v| match v {
+                    Value::Str(n) => Some(n.clone()),
+                    _ => None,
+                })
+                .collect(),
+            how_to_check: how.to_string(),
+        });
     }
 
     let signer = signer.expect("at least one envelope verified");
@@ -686,5 +719,7 @@ pub fn verify(bytes: &[u8], opts: &VerifyOptions) -> Report {
         receipts,
         established,
         not_established: not_established_all,
+        capsule_id: Some(capsule_id.to_string()),
+        claims: claim_reports,
     }
 }

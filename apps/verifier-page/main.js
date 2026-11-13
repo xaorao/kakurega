@@ -258,6 +258,19 @@ function show(r, bytes) {
   if (r.expires) row("Expires", new Date(r.expires * 1000).toISOString().replace("T", " ").slice(0, 19) + " UTC");
   row("Capsule id", r.capsuleId, true);
   out.append(dl);
+  const cs = r.claims || [];
+  if (cs.length) {
+    out.append(el("h2", "What the signer claims"));
+    out.append(el("p", "Signed and bound to this release. A signature does not make a claim true: each one says how to check it.", "note"));
+    const ol = document.createElement("ol");
+    for (const c of cs) {
+      const li = document.createElement("li");
+      // shown as text only: nothing in a claim is ever treated as markup
+      li.append(el("strong", c.statement), el("p", `Rests on: ${c.evidence.join(", ")}`, "note"), el("p", `How to check: ${c.howToCheck}`, "note"));
+      ol.append(li);
+    }
+    out.append(ol);
+  }
   const rs = r.receipts || [];
   if (rs.length) {
     out.append(

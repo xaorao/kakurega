@@ -240,6 +240,7 @@ async function run(bytes, pinned, now, expectedRecipient) {
       if (!isStr(item)) stop("claim_shape");
       if (!names.has(item)) stop("claim_evidence_missing");
     }
+    if (!isStr(c.get("statement")) || !isStr(c.get("how_to_check"))) stop("claim_shape");
   }
   return {
     valid: true,
@@ -252,6 +253,7 @@ async function run(bytes, pinned, now, expectedRecipient) {
     signerPinned: isPinned,
     fileCount: names.size,
     claimCount: claims.length,
+    claims: claims.map((c) => ({ statement: c.get("statement"), evidence: [...c.get("evidence")], howToCheck: c.get("how_to_check") })),
     receipts,
     created: Number(created),
     expires: Number(expires),

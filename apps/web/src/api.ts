@@ -220,6 +220,7 @@ export interface ChatSent { messages: { role: string; content: string }[]; cut: 
 export interface PrivacyFacts { github?: { connected: boolean }; coding_agent?: { installed: string | null }; model: { class: string; id: string; name?: string | null; simulated: boolean; host: string | null; stays_here: boolean }; search: { on: boolean; host: string | null }; extension: { on: boolean }; telegram: { on: boolean }; agents: { tools_open: string[]; calls_are_logged: boolean }; notes: { count: number; encrypted_at_rest: boolean }; approvals: { signing_key_enrolled: boolean }; updates: { checks_in_background: boolean } }
 export interface Lease { tool: string; remaining: number; expires_at: number; issued_at: number }
 export interface InboxItem { kind: "approval_waiting" | "ready_to_review" | "ready_to_deliver" | "failed" | "suggestions" | "team_planned" | "team_question" | "team_interrupted"; job?: string; recipient?: string; team?: string; title?: string; task?: number; since: number; what: string; count?: number }
+export interface ChangeView { base: string; head: string; base_name: string; digest: string; files: { path: string; kind: "added" | "modified" | "deleted"; lines: [number, number][] }[]; left_out?: { path: string; why: string }[] }
 export interface Schedule { id: string; repo: string; recipient: string; every_hours: number; next_at: number }
 export interface ScheduleRun { schedule: string; at: number; outcome: string; job: string | null }
 export interface ResearchItem { url: string; host?: string; allowed: boolean; reason?: string }
@@ -508,7 +509,8 @@ export const api = {
   codeUndo: (id: string) => request<{ undone: boolean }>("POST", `/api/code/${id}/undo`, {}),
   readiness: () => request<Readiness>("GET", "/api/readiness"),
   fs: (path?: string) => request<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>("GET", `/api/fs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
-  startJob: (repo: string, recipient: string) => request<{ id: string }>("POST", "/api/jobs", { repo, recipient }),
+  startJob: (repo: string, recipient: string, base?: string) => request<{ id: string }>("POST", "/api/jobs", base ? { repo, recipient, base } : { repo, recipient }),
+  changePreview: (repo: string, base: string) => request<ChangeView>("GET", `/api/change?repo=${encodeURIComponent(repo)}&base=${encodeURIComponent(base)}`),
   jobs: () => request<{ jobs: Job[] }>("GET", "/api/jobs"),
   job: (id: string) => request<Job>("GET", `/api/jobs/${id}`),
   files: (id: string) => request<{ files: FileEntry[] }>("GET", `/api/jobs/${id}/files`),

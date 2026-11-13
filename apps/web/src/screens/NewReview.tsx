@@ -2,7 +2,7 @@ import { LoadState } from "../components/LoadState";
 import { ChosenFolder } from "../components/ChosenFolder";
 import { SampleCard } from "../components/SampleCard";
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
-import { api, ApiError, type Config, type Readiness } from "../api";
+import { api, ApiError, type ChangeView, type Config, type Readiness } from "../api";
 import { rich, t } from "../i18n";
 
 export function NewReview(props: { config: Config; onStarted: (id: string) => void }) {
@@ -19,6 +19,27 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
   const [recipient, setRecipient] = createSignal("");
   const [error, setError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  const [what, setWhat] = createSignal<"whole" | "change">("whole");
+  const [base, setBase] = createSignal("main");
+  const [change, setChange] = createSignal<ChangeView | null>(null);
+  const [changeError, setChangeError] = createSignal("");
+  const [changeBusy, setChangeBusy] = createSignal(false);
+  const showChange = async () => {
+    setChangeBusy(true);
+    setChangeError("");
+    setChange(null);
+    const [folder, from] = [chosen(), base().trim()];
+    try {
+      const c = await api.changePreview(folder, from);
+      // an answer for a folder or a base that is no longer the one on screen is not shown
+      if (folder === chosen() && from === base().trim()) setChange(c);
+    } catch (e) {
+      setChangeError(e instanceof ApiError ? e.message : t("new.base.error"));
+    } finally {
+      setChangeBusy(false);
+    }
+  };
+  const ranges = (l: [number, number][]) => l.slice(0, 8).map(([a, b]) => (a === b ? `${a}` : `${a}-${b}`)).join(", ") + (l.length > 8 ? ", …" : "");
   const chosen = () => listing()?.path ?? "";
   const [ready, { refetch }] = createResource<Readiness | null>(() => api.readiness().catch(() => null));
   const blocked = () => ready()?.ready === false;
@@ -61,7 +82,7 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
     setBusy(true);
     setError("");
     try {
-      const r = await api.startJob(chosen(), recipient().trim());
+      const r = await api.startJob(chosen(), recipient().trim(), what() === "change" ? base().trim() : undefined);
       props.onStarted(r.id);
     } catch (e) {
       // the service is already running as many reviews as it allows: a normal state, said in the page's language
@@ -125,13 +146,42 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
         </div>
       </div>
       <div class="card stack">
+        <h2 id="h-what">{t("new.what")}</h2>
+        <fieldset class="choices" aria-labelledby="h-what">
+          <label class="row-check"><input type="radio" name="new-what" value="whole" checked={what() === "whole"} onChange={() => setWhat("whole")} /><span>{t("new.what.whole")}</span></label>
+          <label class="row-check"><input type="radio" name="new-what" value="change" checked={what() === "change"} onChange={() => setWhat("change")} /><span>{t("new.what.change")}</span></label>
+        </fieldset>
+        <Show when={what() === "change"}>
+          <p class="muted">{t("new.what.changeHelp")}</p>
+          <label for="base">{t("new.base.label")}</label>
+          <div class="actions">
+            <input id="base" value={base()} autocapitalize="off" autocomplete="off" spellcheck={false} onInput={(e) => { setBase(e.currentTarget.value); setChange(null); setChangeError(""); }} />
+            <button type="button" disabled={changeBusy() || !chosen() || base().trim().length === 0} onClick={showChange}>{t("new.base.show")}</button>
+          </div>
+          <Show when={changeError()}><p role="alert" class="bad">{changeError()}</p></Show>
+          <Show when={change()}>
+            {(c) => (
+              <div class="stack" role="status">
+                <p><strong>{c().files.length === 1 ? t("new.base.count.one") : t("new.base.count", { n: c().files.length })}</strong> · <span class="muted">{t("new.base.commits", { head: c().head.slice(0, 12), base: c().base.slice(0, 12) })}</span></p>
+                <ul class="plain change-list">
+                  <For each={c().files.slice(0, 200)}>
+                    {(f) => <li><code>{f.path}</code> <span class="muted">{t(`new.base.kind.${f.kind}`)}{f.lines.length > 0 ? ` · ${t("new.base.lines", { l: ranges(f.lines) })}` : ""}</span></li>}
+                  </For>
+                </ul>
+                <Show when={(c().left_out ?? []).length > 0}><p class="muted">{t("new.base.leftOut", { n: (c().left_out ?? []).length })}</p></Show>
+              </div>
+            )}
+          </Show>
+        </Show>
+      </div>
+      <div class="card stack">
         <h2>{t("new.step2")}</h2>
         <label for="recipient">{t("new.recipient.label")}</label>
         <input id="recipient" placeholder={t("new.recipient.placeholder")} value={recipient()} onInput={(e) => setRecipient(e.currentTarget.value)} />
         <p class="muted">{t("new.recipient.help")}</p>
       </div>
       <div class="actions">
-        <button class="primary" disabled={busy() || blocked() || !chosen() || recipient().trim().length === 0} onClick={start}>{t("new.start")}</button>
+        <button class="primary" disabled={busy() || blocked() || !chosen() || recipient().trim().length === 0 || (what() === "change" && base().trim().length === 0)} onClick={start}>{t("new.start")}</button>
         <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
       </div>
       <details class="card stack" id="schedules">

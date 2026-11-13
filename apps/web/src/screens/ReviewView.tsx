@@ -1,3 +1,4 @@
+import { prComment } from "../prcomment";
 import { Code } from "../components/Code";
 import { serverText as serverTextIn } from "../serverText";
 import { sizeText } from "../attach";
@@ -313,6 +314,37 @@ function fromB64url(text: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
+/** The delivered release as a comment for a pull request: made from the released files only, copied by the owner, sent nowhere. */
+function PrComment(props: { files: { name: string; text: string | null }[]; digest: string }) {
+  const text = createMemo(() => prComment(props.files, props.digest));
+  const [copied, setCopied] = createSignal(false);
+  const [shown, setShown] = createSignal(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text() ?? "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // the clipboard is a convenience; the text is shown so it can be selected
+      setShown(true);
+    }
+  };
+  return (
+    <Show when={text()}>
+      {(c) => (
+        <div class="stack">
+          <div class="actions">
+            <button type="button" onClick={copy}>{copied() ? t("pr.copied") : t("pr.copy")}</button>
+            <button type="button" class="link" aria-expanded={shown()} onClick={() => setShown(!shown())}>{shown() ? t("pr.hide") : t("pr.show")}</button>
+          </div>
+          <p class="muted">{t("pr.help")}</p>
+          <Show when={shown()}><pre class="pr-comment" tabindex="0" aria-label={t("pr.label")}>{c()}</pre></Show>
+        </div>
+      )}
+    </Show>
+  );
+}
+
 /** One finding of a delivered review as a file with a proof, for someone who was not the recipient. */
 function ShareOne(props: { jobId: string }) {
   const [list] = createResource(() => props.jobId, (id) => api.shareable(id).catch(() => ({ findings: [], signer_public: "" })));
@@ -566,6 +598,7 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
                     <p class="ok">{rich("appr.delivered", { name: d().name, signer: d().signer.slice(0, 24) + "…" })}</p>
                     <p><a class="button" href={`/api/jobs/${props.job.id}/capsule`} download="review.kkg">{t("appr.download")}</a></p>
                     <p class="muted">{rich("appr.giveRecipient")}</p>
+                    <PrComment files={r().files ?? []} digest={r().digest ?? ""} />
                     <ShareOne jobId={props.job.id} />
                   </div>
                 )}
