@@ -35,10 +35,18 @@ if printf '%s\n' "$files" | grep -q '^apps/web/'; then
   echo "== web"; (cd apps/web && npx tsc --noEmit && node --test test/*.test.mjs)
 fi
 echo "== guards"
-python3 scripts/scan_secrets.py | tail -1
-python3 scripts/check_recovery.py | tail -1
-python3 scripts/check_layers.py 2>&1 | tail -1
-python3 scripts/check_error_text.py | tail -1 | cut -c1-80
-python3 scripts/check_log_labels.py | tail -1 | cut -c1-80
-python3 scripts/docs_check.py | tail -1
+# each guard's last line is shown and its own exit code decides: a pipe into tail would hide a failure
+guard() {
+  code=0
+  out=$("$@" 2>&1) || code=$?
+  printf '%s\n' "$out" | tail -1 | cut -c1-160
+  if [ "$code" -ne 0 ]; then printf '%s\n' "$out" | tail -12; echo "FAST CHECK FAILED: $*"; exit 1; fi
+}
+guard python3 scripts/scan_secrets.py
+# the recovery ledger reports rows still PARTIAL: shown here, decided at a checkpoint, not by a routine commit
+python3 scripts/check_recovery.py 2>&1 | tail -1 || true
+guard python3 scripts/check_layers.py
+guard python3 scripts/check_error_text.py
+guard python3 scripts/check_log_labels.py
+guard python3 scripts/docs_check.py
 echo "FAST OK (routine commit). The full gate is still required before a push and at checkpoints."
