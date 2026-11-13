@@ -68,7 +68,8 @@ export default async function handler(req, res) {
   const key = process.env.NEAR_AI_RELAY_KEY;
   if (!key) return refuse(res, 503, "NO_FREE_TRIES", "Free tries are switched off. Paste your own NEAR AI key to continue.");
   const url = new URL(req.url, "http://relay");
-  const path = url.searchParams.get("path") ?? "";
+  // a host that adds a slash to the end of an address does not change which request this is
+  const path = (url.searchParams.get("path") ?? "").replace(/\/+$/, "");
   url.searchParams.delete("path");
   const rule = PATHS.find((p) => p.re.test(path));
   if (!rule || rule.method !== req.method) return refuse(res, 404, "NOT_RELAYED", "This relay passes on four requests of NEAR AI Cloud and no others.");

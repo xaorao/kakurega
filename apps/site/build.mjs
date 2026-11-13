@@ -107,7 +107,7 @@ const scripts = inline("script");
 const styles = inline("style");
 if (scripts.length === 0 || styles.length === 0) throw new Error("the check page has no inline script or style to name in its policy");
 const config = JSON.parse(readFileSync(join(here, "vercel.json"), "utf8"));
-const rule = config.headers.find((h) => h.source === "/verify/(.*)")?.headers.find((h) => h.key === "Content-Security-Policy");
+const rule = config.headers.find((h) => h.source === "/verify(/.*)?")?.headers.find((h) => h.key === "Content-Security-Policy");
 if (!rule || !rule.value.includes("script-src 'unsafe-inline'") || !rule.value.includes("style-src 'unsafe-inline'")) throw new Error("vercel.json no longer has the check page's policy in the form this step rewrites");
 rule.value = rule.value.replace("script-src 'unsafe-inline'", `script-src ${scripts.join(" ")}`).replace("style-src 'unsafe-inline'", `style-src ${styles.join(" ")}`);
 writeFileSync(join(out, "vercel.json"), JSON.stringify(config, null, 2));

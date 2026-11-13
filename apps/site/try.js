@@ -108,8 +108,10 @@ function fail(step, error) {
   const o = out(step);
   o.replaceChildren(el("p", "Stopped here.", "bad"));
   const said = error?.code ? `${error.code}: ${error.message ?? ""}` : String(error?.message ?? error);
-  o.append(el("p", said.replace(/\s+/g, " ").slice(0, 400), "note"));
-  if (/TRIES_USED|ALL_USED|NO_FREE_TRIES|429|503/.test(said)) o.append(el("p", "Open “Use my own NEAR AI key” above and paste a key from cloud.near.ai to go on.", "note"));
+  // the relay's own refusals, in plain words; anything else as it was reported
+  const free = /HTTP 503|NO_FREE_TRIES/.test(said) ? "Free tries on our key are switched off right now." : /HTTP 429|TRIES_USED|ALL_USED/.test(said) ? "Today's free tries are used." : null;
+  o.append(el("p", free ?? said.replace(/\s+/g, " ").slice(0, 400), "note"));
+  if (free) o.append(el("p", "Open “Use my own NEAR AI key” on the left and paste a key from cloud.near.ai to go on. It goes straight to NEAR AI Cloud.", "note"));
 }
 
 async function run(e) {
