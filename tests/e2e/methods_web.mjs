@@ -41,7 +41,8 @@ await page.goto(link);
 await page.waitForSelector("nav");
 await page.goto(origin + "/#/skills");
 await page.getByRole("heading", { name: "Methods" }).waitFor();
-check(await page.getByText("No methods yet.").isVisible(), "a new install has no methods and says so");
+// the list is read from the service after the heading is drawn: wait for the line, not the clock
+check(await page.getByText("No methods yet.").waitFor({ timeout: 10000 }).then(() => true, () => false), "a new install has no methods and says so");
 await page.locator("#met-new-open").click();
 await page.locator("#met-new-name").fill("fruit-first");
 await page.locator("#met-new-desc").fill("Start answers with a fruit");

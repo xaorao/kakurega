@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError, streamRoundtable, type ExpertInfo, type RoundtableResolution } from "../api";
 import { LoadState } from "../components/LoadState";
@@ -109,8 +110,10 @@ export function Roundtable() {
   return (
     <section class="stack" aria-labelledby="rt-title">
       <h1 id="rt-title">{t("rt.title")}</h1>
-      <p class="muted">{t("rt.lead")}</p>
+      <Lead text={t("rt.lead")} />
       <form class="card stack" onSubmit={ask}>
+        <label for="rt-question">{t("rt.question")}</label>
+        <textarea id="rt-question" rows="3" maxlength="4000" value={question()} disabled={busy()} onInput={(e) => setQuestion(e.currentTarget.value)} />
         <fieldset class="rt-experts">
           <legend>{t("rt.choose", { min: min(), max: max() })}</legend>
           <Show when={roster()} fallback={<LoadState loading={roster.loading} retry={() => void refetchRoster()} />}>
@@ -132,8 +135,6 @@ export function Roundtable() {
           </For>
           <p class="muted" aria-live="polite">{t("rt.count", { n: chosen().length, min: min(), max: max() })}</p>
         </fieldset>
-        <label for="rt-question">{t("rt.question")}</label>
-        <textarea id="rt-question" rows="3" maxlength="4000" value={question()} disabled={busy()} onInput={(e) => setQuestion(e.currentTarget.value)} />
         <div class="rt-actions">
           <button class="primary" type="submit" disabled={!ready()}>{t("rt.ask")}</button>
           <Show when={busy()}><button type="button" onClick={() => stop?.abort()}>{t("chat.stop")}</button></Show>

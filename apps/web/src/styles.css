@@ -676,7 +676,8 @@ ul.plain.start-ways { display: grid; grid-template-columns: repeat(4, minmax(0, 
 .monogram { background: var(--veil) !important; color: var(--stone) !important; border: 1px solid var(--line); }
 #chat-input::placeholder { color: var(--fog); }
 @media (max-width: 640px) {
-  .card table, section > table { display: block; overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+  .card table, section > table { table-layout: fixed; }
+  .card td, .card th, section > table td, section > table th { overflow-wrap: anywhere; word-break: break-word; }
   .card code { overflow-wrap: anywhere; }
   .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .menu-toggle { margin: 8px 16px 0; min-height: 36px; }
@@ -690,7 +691,7 @@ ul.plain.start-ways { display: grid; grid-template-columns: repeat(4, minmax(0, 
 .tiles + * { margin-top: 4px; }
 
 /* a link to another screen reads as a link, not as one more button */
-.open-link { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; font-size: 15px; width: fit-content; }
+.open-link { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; font-size: 15px; width: fit-content; display: inline-flex; align-items: center; gap: 4px; min-height: 44px; min-width: 44px; }
 .notify-row { margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
 /* a warning says it once, in ordinary ink beside a mark, not in paragraphs of colour */
 .card p.warn, .card p.bad { border-left: 3px solid currentColor; padding-left: 10px; }
@@ -705,3 +706,20 @@ section[aria-labelledby="h-privacy"] > section.card[aria-labelledby^="pv-"] { bo
 section[aria-labelledby="h-privacy"] > section.card[aria-labelledby^="pv-"] h2 { font-size: 16px; }
 .card > h2 { font-size: 17px; }
 select, .theme select { appearance: none; -webkit-appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--graphite) 50%), linear-gradient(135deg, var(--graphite) 50%, transparent 50%); background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; padding-right: 30px; background-color: var(--paper); }
+
+/* roundtable: the question first; an expert is a compact row whose whole surface is the choice; the action stays in reach */
+.rt-expert { position: relative; padding: 8px 34px 8px 10px; align-items: center; }
+.rt-expert input { position: absolute; opacity: 0; width: 100%; height: 100%; inset: 0; margin: 0; cursor: pointer; }
+.rt-expert:has(input:disabled) input { cursor: not-allowed; }
+.rt-expert:has(input:checked)::after { content: "✓"; position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--cipher); font-weight: 600; }
+.rt-group h2 { font-size: 12px; letter-spacing: 0.04em; margin: 14px 0 6px; }
+.rt-actions { position: sticky; bottom: 0; z-index: 1; background: var(--paper); padding: 10px 0 14px; margin-bottom: -18px; border-top: 1px solid var(--line); }
+section.card[hidden] { display: none; }
+.tiles[hidden] { display: none; }
+#packs-fold > summary h3, details > summary > h3 { display: inline; font-size: 15px; font-weight: 500; }
+
+/* release page: one primary action (the approval itself); a long finding scrolls inside its own frame; files fit a phone */
+pre.finding-text { max-height: 18rem; overflow: auto; }
+.release-files { overflow-x: auto; max-width: 100%; }
+.release-summary { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+@media (max-width: 640px) { pre.finding-text { font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }  }

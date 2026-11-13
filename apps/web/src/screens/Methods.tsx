@@ -3,6 +3,7 @@ import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, type Method, type MethodVersion, type BundledMethod, type PackCatalog, type PackCatalogEntry } from "../api";
 import { t, type Key, locale } from "../i18n";
 import { hueOf, initials } from "../monogram";
+import { Lead } from "../components/Lead";
 import { when } from "../when";
 
 const words = (text: string) => text.split(",").map((w) => w.trim()).filter(Boolean);
@@ -346,8 +347,7 @@ export function Methods() {
   return (
     <div class="card stack" aria-labelledby="h-met">
       <h2 id="h-met">{t("met.heading")}</h2>
-      <p class="muted">{t("met.lead")}</p>
-      <p class="muted">{t("met.limits")}</p>
+      <Lead text={`${t("met.lead")} ${t("met.limits")}`} />
       <Show when={status()}><p role="status" class="ok">{status()}</p></Show>
       <Proposals onChanged={changed} />
       <Show when={data()} fallback={<LoadState loading={data.loading} retry={() => void refetch()} />}>
@@ -355,7 +355,7 @@ export function Methods() {
           <>
             <Show when={d().methods.length === 0}><p class="muted">{t("met.none")}</p></Show>
             <ul class="plain stack"><For each={d().methods}>{(m) => <Row m={m} onChanged={changed} />}</For></ul>
-            <Show when={writing()} fallback={<div class="actions"><button type="button" id="met-new-open" onClick={() => { setWriting(true); queueMicrotask(() => document.getElementById("met-new-name")?.focus()); }}>{t("met.write")}</button></div>}>
+            <Show when={writing()} fallback={<div class="actions"><button class="primary" type="button" id="met-new-open" onClick={() => { setWriting(true); queueMicrotask(() => document.getElementById("met-new-name")?.focus()); }}>{t("met.write")}</button></div>}>
               <section class="card stack" aria-labelledby="h-met-new">
                 <h3 id="h-met-new">{t("met.new")}</h3>
                 <Form onDone={(m) => { setWriting(false); changed(m); }} onCancel={() => setWriting(false)} />

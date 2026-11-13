@@ -521,7 +521,7 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
               </p>
               {/* a release the disclosure check blocks cannot be approved, so it is not offered as the next step */}
               <Show when={!props.job.delivered && r().disclosure?.verdict !== "block"}>
-                <button type="button" class="primary" onClick={() => document.getElementById("approval-card")?.scrollIntoView({ behavior: "smooth", block: "start" })}>{t("rel.summary.go")}</button>
+                <button type="button" onClick={() => document.getElementById("approval-card")?.scrollIntoView({ behavior: "smooth", block: "start" })}>{t("rel.summary.go")}</button>
               </Show>
             </div>
             <div class="card stack">

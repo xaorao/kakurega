@@ -764,13 +764,13 @@ export function Memory() {
         <label class="sr" for="mem-search">{t("mem.search")}</label>
         <input id="mem-search" type="search" placeholder={t("mem.search")} value={query()} onInput={(e) => setQuery(e.currentTarget.value)} />
       </div>
-      <section class="card stack" aria-labelledby="h-mem-glance">
+      <section class="card stack" aria-labelledby="h-mem-glance" hidden={stats() ? stats()!.total === 0 && stats()!.held === 0 : false}>
         <h2 id="h-mem-glance">{t("mem.glance.heading")}</h2>
         <Show when={stats()} fallback={<p class="muted">{t("mem.glance.unknown")}</p>}>
           {(s) => (
             <>
               <p role="status" class="sr">{t("mem.glance.line", { total: s().total, untrusted: s().untrusted, unused: s().never_used, soon: s().ending_within_14_days, held: s().held })}</p>
-              <dl class="tiles" aria-hidden="true">
+              <dl class="tiles" aria-hidden="true" hidden={s().total === 0 && s().held === 0}>
                 <div class="tile"><dt>{t("mem.tile.total")}</dt><dd>{s().total}</dd></div>
                 <div class="tile"><dt>{t("mem.tile.untrusted")}</dt><dd>{s().untrusted}</dd></div>
                 <div class="tile"><dt>{t("mem.tile.unused")}</dt><dd>{s().never_used}</dd></div>
