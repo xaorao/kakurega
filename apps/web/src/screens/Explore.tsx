@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { ChosenFolder, shortPath } from "../components/ChosenFolder";
 import { api, ApiError, type Question, type QuestionDepth, type QuestionPlace } from "../api";
@@ -94,7 +95,7 @@ export function Explore() {
   return (
     <section class="stack wide" aria-labelledby="h-ex">
       <h1 id="h-ex">{t("ex.title")}</h1>
-      <p class="lead">{t("ex.lead")}</p>
+      <Lead text={t("ex.lead")} />
       <div class="card stack">
         <h2>{t("ex.step1")}</h2>
         <ChosenFolder path={chosen()} loading={listing.loading} />

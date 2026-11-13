@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { ChosenFolder, shortPath } from "../components/ChosenFolder";
 import { api, ApiError, type CodeTask as Task } from "../api";
@@ -93,7 +94,7 @@ export function CodeTask() {
     <section class="stack wide" aria-labelledby="h-code">
       <h1 id="h-code">{t("code.title")}</h1>
       <McpPending />
-      <p class="lead">{t("code.lead")}</p>
+      <Lead text={t("code.lead")} />
       <div class="card stack">
         <h2>{t("code.step1")}</h2>
         <ChosenFolder path={chosen()} loading={listing.loading} />

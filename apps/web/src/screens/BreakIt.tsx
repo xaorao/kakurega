@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, type BreakResult } from "../api";
 import { t, type Key } from "../i18n";
@@ -36,7 +37,7 @@ export function BreakIt() {
   return (
     <section class="stack wide" aria-labelledby="h-break">
       <h1 id="h-break">{t("break.title")}</h1>
-      <p class="lead">{t("break.lead")}</p>
+      <Lead text={t("break.lead")} />
       <Show when={stats()}>
         {(s) => <p id="break-count" class={s().leaks > 0 ? "bad" : s().attempts > 0 ? "ok-text" : "muted"}>{s().leaks === 0 && s().attempts > 0 ? "✓ " : ""}{t("break.count", { attempts: s().attempts, leaks: s().leaks })}</p>}
       </Show>

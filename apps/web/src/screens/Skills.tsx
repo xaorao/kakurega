@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { t } from "../i18n";
 import { Methods } from "./Methods";
 import { Mcp } from "./Mcp";
@@ -8,7 +9,7 @@ export function Skills() {
   return (
     <section class="stack wide" aria-labelledby="h-skills">
       <h1 id="h-skills">{t("skills.title")}</h1>
-      <p class="lead">{t("skills.lead")}</p>
+      <Lead text={t("skills.lead")} />
       <Methods />
       <Mcp />
       <GitHub />

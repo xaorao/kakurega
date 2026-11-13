@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { createSignal, For, Show } from "solid-js";
 import { api, ApiError, type MeetingNotes, type MeetingPoint } from "../api";
 import { t } from "../i18n";
@@ -74,7 +75,7 @@ export function Meeting() {
   return (
     <section class="stack wide" aria-labelledby="h-meet">
       <h1 id="h-meet">{t("meet.title")}</h1>
-      <p class="lead">{t("meet.lead")}</p>
+      <Lead text={t("meet.lead")} />
       <form class="card stack" onSubmit={(e) => void write(e)}>
         <label for="meet-title">{t("meet.name")}</label>
         <input id="meet-title" value={title()} maxlength="120" placeholder={t("meet.nameHint")} onInput={(e) => setTitle(e.currentTarget.value)} />

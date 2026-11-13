@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError, type NearModel } from "../api";
 import { LOCALES, locale, setLocale, t, type Key, type Locale } from "../i18n";
@@ -337,7 +338,7 @@ export function Settings() {
   return (
     <section class="stack wide" aria-labelledby="h-set">
       <h1 id="h-set">{t("set.title")}</h1>
-      <p class="lead">{t("set.lead")}</p>
+      <Lead text={t("set.lead")} />
       <label class="sr" for="set-search">{t("set.search")}</label>
       <input id="set-search" type="search" maxlength="100" placeholder={t("set.search")} value={q()} onInput={(e) => setQ(e.currentTarget.value)} />
       <Show when={q().trim() !== ""}><p class="muted" role="status">{found().length === 0 ? t("set.none") : t("set.found", { n: found().length })}</p></Show>

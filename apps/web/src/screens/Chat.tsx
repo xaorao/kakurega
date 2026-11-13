@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { againPoint, editPoint, type BranchPoint } from "../branching";
 import { carriesFiles, fileNotes, fingerprint, pastedFiles, room, sizeText, MAX_BYTES } from "../attach";
 import { findMatches, stepTo, type Match } from "../find";
@@ -944,7 +945,7 @@ export function Chat() {
           </span>
         </nav>
       </Show>
-      <p class="lead">{t("chat.leadShort")}</p>
+      <Lead text={t("chat.leadShort")} />
       <details class="chat-given">
         <summary>{t("chat.givenTitle")}</summary>
         <p class="muted">{t("chat.lead")}</p>
@@ -1021,6 +1022,7 @@ export function Chat() {
           ref={box}
           id="chat-input"
           rows="2"
+          placeholder={t("chat.placeholder")}
           value={text()}
           role="combobox"
           aria-expanded={slashOpen()}

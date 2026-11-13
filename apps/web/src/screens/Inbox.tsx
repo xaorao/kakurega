@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { LoadState } from "../components/LoadState";
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api } from "../api";
@@ -22,7 +23,7 @@ export function Inbox() {
   return (
     <section class="stack wide" aria-labelledby="h-inbox">
       <h1 id="h-inbox">{t("inbox.title")}</h1>
-      <p class="lead">{t("inbox.lead")}</p>
+      <Lead text={t("inbox.lead")} />
       <div class="card stack">
         <Show when={notify() !== "unsupported"} fallback={<p class="muted">{t("inbox.notify.unsupported")}</p>}>
           <label class="row-check">

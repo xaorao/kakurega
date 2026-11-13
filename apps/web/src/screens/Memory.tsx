@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 import { copyNames, leftBehind, type LeftBehind } from "../forgotten";
 import { api, ApiError, type MemoryItem } from "../api";
@@ -755,7 +756,7 @@ export function Memory() {
   return (
     <section class="stack wide" aria-labelledby="h-mem">
       <h1 id="h-mem">{t("mem.title")}</h1>
-      <p class="lead">{t("mem.lead")}</p>
+      <Lead text={t("mem.lead")} />
       <Show when={left()}>{(l) => <LeftBehindCard left={l()} onDone={() => setLeft(null)} />}</Show>
       <Held onChange={(msg) => void settled(msg)} onLeft={setLeft} />
       <Suggestions jobId="browser" heading="sug.browser.heading" lead="sug.browser.lead" onChange={() => void refetch()} />

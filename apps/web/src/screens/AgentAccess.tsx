@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { LoadState } from "../components/LoadState";
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError } from "../api";
@@ -51,7 +52,7 @@ export function AgentAccess() {
   return (
     <section class="stack wide" aria-labelledby="h-agent">
       <h1 id="h-agent">{t("agent.title")}</h1>
-      <p class="lead">{t("agent.lead")}</p>
+      <Lead text={t("agent.lead")} />
       <div class="card stack">
         <p>{t("agent.how")}</p>
         <p><code>kaku mcp --leased</code></p>

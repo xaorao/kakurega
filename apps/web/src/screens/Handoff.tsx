@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { createResource, createSignal, Show } from "solid-js";
 import { api, ApiError, type HandoffProposal } from "../api";
 import { t } from "../i18n";
@@ -49,7 +50,7 @@ export function Handoff() {
   return (
     <section class="stack wide" aria-labelledby="h-hand">
       <h1 id="h-hand">{t("hand.title")}</h1>
-      <p class="lead">{t("hand.lead")}</p>
+      <Lead text={t("hand.lead")} />
       <Show when={status()} fallback={<p class="muted" role="status">{status.loading ? t("review.loading") : t("hand.error")}</p>}>
         {(s) => (
           <Show when={s().available} fallback={<p class="card" id="hand-none">{t("hand.none")}</p>}>

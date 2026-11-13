@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, type ProjectFloor, type ProjectRow } from "../api";
 import { t, type Key } from "../i18n";
@@ -41,7 +42,7 @@ export function Projects() {
   return (
     <section class="stack wide" aria-labelledby="h-proj">
       <h1 id="h-proj">{t("proj.title")}</h1>
-      <p class="lead">{t("proj.lead")}</p>
+      <Lead text={t("proj.lead")} />
       <form class="card stack" onSubmit={(e) => { e.preventDefault(); void change({ name: name().trim(), ...(folder().trim() ? { folder: folder().trim() } : {}) }, t("proj.saved")); }}>
         <h2>{t("proj.new")}</h2>
         <label for="proj-name">{t("proj.name")}</label>

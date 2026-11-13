@@ -40,6 +40,8 @@ export const en = {
   "nav.heading": "Reviews",
   "nav.menu": "Menu",
   "nav.more": "More",
+  "lead.more": "More about this",
+  "chat.placeholder": "Ask anything. Type / for commands.",
   "nav.search.label": "Search reviews",
   "nav.search.placeholder": "Search reviews (Cmd+K)",
   "nav.none": "None yet.",

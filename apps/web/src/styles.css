@@ -662,3 +662,25 @@ ul.plain.start-ways { display: grid; grid-template-columns: repeat(4, minmax(0, 
 @media (min-width: 861px) and (min-height: 640px) { html { scroll-padding-bottom: calc(var(--composer-h, 0px) + 32px); } }
 .composer:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
 .start-ask:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* UI pass 2: one sentence first, the rest one click away; quieter helpers; tables that fit a phone */
+.lead-block { display: flex; flex-direction: column; gap: 4px; max-width: 68ch; }
+.lead { color: var(--graphite); }
+.lead-more > summary { cursor: pointer; font-size: 14px; color: var(--graphite); width: fit-content; }
+.lead-more > p { margin: 6px 0 0; font-size: 15px; color: var(--graphite); }
+.greeting { font-weight: 400; font-size: 16px; color: var(--graphite); }
+.card p.muted, .card .muted { font-size: 14px; }
+.tile dd { font-size: 18px; }
+.banner { padding: 6px 20px; font-size: 14px; font-weight: 400; }
+.banner-note { border-left: 3px solid var(--amber); border-top: 0; border-right: 0; border-bottom: 0; background: transparent; border-radius: 0; padding: 4px 0 4px 12px; font-size: 15px; }
+.banner-note.leaves { border-left-color: var(--redline); background: transparent; }
+.monogram { background: var(--veil) !important; color: var(--stone) !important; border: 1px solid var(--line); }
+#chat-input::placeholder { color: var(--fog); }
+@media (max-width: 640px) {
+  .card table, section > table { display: block; overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+  .card code { overflow-wrap: anywhere; }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .menu-toggle { margin: 8px 16px 0; min-height: 36px; }
+}
+.safeguards .badge { border: 0; padding: 0 4px; color: var(--graphite); background: transparent; }
+.safeguards { flex-direction: column; gap: 2px; }

@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError } from "../api";
 import { LoadState } from "../components/LoadState";
@@ -81,7 +82,7 @@ export function Instructions() {
   return (
     <section class="stack wide" aria-labelledby="h-ins">
       <h1 id="h-ins">{t("ins.title")}</h1>
-      <p class="lead">{t("ins.lead")}</p>
+      <Lead text={t("ins.lead")} />
       <p class="muted">{t("ins.limits")}</p>
       <Show when={settings() ? data() : null} fallback={<LoadState loading={data.loading || settings.loading} retry={retry} />}>
         {(d) => (

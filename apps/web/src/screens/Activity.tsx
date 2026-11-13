@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError, type RoutePrice, type WorkItem } from "../api";
 import { LoadState } from "../components/LoadState";
@@ -204,7 +205,7 @@ export function Activity() {
   return (
     <section class="stack wide" aria-labelledby="h-act">
       <h1 id="h-act">{t("act.title")}</h1>
-      <p class="lead">{t("act.lead")}</p>
+      <Lead text={t("act.lead")} />
       <WorkingNow />
       <UsageCard />
       <Show when={log()} fallback={<LoadState loading={log.loading} retry={() => void refetch()} />}>

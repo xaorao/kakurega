@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { LoadState } from "../components/LoadState";
 import { ChosenFolder } from "../components/ChosenFolder";
 import { SampleCard } from "../components/SampleCard";
@@ -129,7 +130,7 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
       </div>
       <h2 id="h-review" class="section-title">{t("new.title")}</h2>
       <p class="greeting">{t("new.greeting")}</p>
-      <p class="lead">{t("new.lead")}</p>
+      <Lead text={t("new.lead")} />
       <SampleCard onReview={(folder) => setDir(folder)} />
       <Show when={ready()}>
         {(r) => (

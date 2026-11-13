@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { For, Show, createResource, onCleanup } from "solid-js";
 import { api, type OutboundRow, type PrivacyFacts } from "../api";
 import { t, type Key, locale, rich } from "../i18n";
@@ -119,7 +120,7 @@ export function Privacy() {
   return (
     <section class="stack wide" aria-labelledby="h-privacy">
       <h1 id="h-privacy">{t("privacy.title")}</h1>
-      <p class="lead">{t("privacy.lead")}</p>
+      <Lead text={t("privacy.lead")} />
       <Show when={facts()} fallback={<p class="muted" role="status">{facts.loading ? t("inbox.loading") : t("privacy.unavailable")}</p>}>
         {(f) => (
           <>

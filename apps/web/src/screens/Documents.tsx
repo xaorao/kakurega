@@ -1,3 +1,4 @@
+import { Lead } from "../components/Lead";
 import { LoadState } from "../components/LoadState";
 import { ChosenFolder } from "../components/ChosenFolder";
 import { takeHint } from "../components/SampleCard";
@@ -103,7 +104,7 @@ export function Documents() {
   return (
     <section class="stack wide" aria-labelledby="h-docs">
       <h1 id="h-docs">{t("docs.title")}</h1>
-      <p class="lead">{t("docs.lead")}</p>
+      <Lead text={t("docs.lead")} />
       <div class="card stack">
         <h2>{t("docs.step1")}</h2>
         <ChosenFolder path={chosen()} loading={listing.loading} />

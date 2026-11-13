@@ -5,7 +5,7 @@ use kk_sandbox::{
 };
 use std::fs;
 use std::net::{TcpListener, UdpSocket};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
@@ -16,7 +16,7 @@ fn scratch(tag: &str) -> PathBuf {
     d
 }
 
-fn py_spec(dir: &PathBuf, code: &str, env: &[(&str, String)]) -> SandboxSpec {
+fn py_spec(dir: &Path, code: &str, env: &[(&str, String)]) -> SandboxSpec {
     let script = dir.join("w.py");
     fs::write(&script, code).expect("script");
     let mut spec = SandboxSpec::new("/usr/bin/python3");
@@ -290,7 +290,7 @@ fn r13_r15_host_processes_are_invisible_and_privilege_escalation_is_closed() {
     );
 }
 
-fn limited(dir: &PathBuf, code: &str, f: impl FnOnce(&mut Limits)) -> SandboxSpec {
+fn limited(dir: &Path, code: &str, f: impl FnOnce(&mut Limits)) -> SandboxSpec {
     let mut spec = py_spec(dir, code, &[]);
     f(&mut spec.limits);
     spec
