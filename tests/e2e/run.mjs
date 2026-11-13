@@ -2169,7 +2169,9 @@ try {
     await page.getByRole("button", { name: "Yes, forget it" }).click();
     const card = page.getByRole("region", { name: "Copies left in your conversations" });
     await card.waitFor();
-    check("forgetting a note names the conversation that still holds its words, by its title", (await card.getByText("Door codes").count()) === 1 && (await card.getByText("its words hold the note").count()) === 1);
+    // the card is drawn before its list is filled: wait for the line it is read for, not the clock
+    await card.getByText("Door codes").first().waitFor({ timeout: 10000 }).catch(() => {});
+    check("forgetting a note names the conversation that still holds its words, by its title", (await card.getByText("Door codes").count()) === 1 && (await card.getByText("its words hold the note").count()) === 1, (await card.innerText()).slice(0, 300));
     check("a conversation that does not hold it is not named", (await card.getByText("Holiday plans").count()) === 0);
     check("the typed history that holds it is named with its own button", (await card.getByText("Lines of the terminal's saved history that hold it: 1.").count()) === 1 && (await card.getByRole("button", { name: "Clear the terminal's saved history" }).count()) === 1);
     check("forgetting did not delete the conversation by itself", (await page.evaluate(async (id) => { const r = await fetch(`/api/sessions/${id}`, { credentials: "same-origin" }); await r.text(); return r.status; }, setup.chat)) === 200);
