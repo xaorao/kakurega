@@ -199,9 +199,9 @@ page.on("requestfailed", async (r) => {
     return;
   }
   // Also classified as a harness artifact: an idempotent GET that the browser cancelled because the page was reloaded or
-  // navigated while it was in flight (the screens poll /api/fs, /api/readiness and /api/jobs, and the privacy page reads /api/projects; a typeface the page asks for when it first shows monospaced text is a read like these). A POST or any other failure
+  // navigated while it was in flight (the screens poll /api/fs, /api/readiness and /api/jobs, the privacy page reads /api/projects, and the line under the message box reads /api/privacy; a typeface the page asks for when it first shows monospaced text is a read like these). A POST or any other failure
   // still counts.
-  if (r.method() === "GET" && r.failure()?.errorText === "net::ERR_ABORTED" && /\/(api\/(fs|readiness|jobs|sessions|memories|inbox|events|schedules|projects)|favicon\.svg|assets\/[\w.-]+\.woff2?)(\?|$)/.test(new URL(r.url()).pathname + new URL(r.url()).search)) return;
+  if (r.method() === "GET" && r.failure()?.errorText === "net::ERR_ABORTED" && /\/(api\/(fs|readiness|jobs|sessions|memories|inbox|events|schedules|projects|privacy)|favicon\.svg|assets\/[\w.-]+\.woff2?)(\?|$)/.test(new URL(r.url()).pathname + new URL(r.url()).search)) return;
   problems.push("requestfailed: " + r.url() + " " + r.failure()?.errorText);
 });
 page.on("response", (r) => r.status() >= 500 && problems.push("http " + r.status() + " " + r.url()));
