@@ -6,6 +6,29 @@ use kk_types::label::Level;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
+/// How many days a release may be delivered and checked after it is made: one unless the owner asked for more when the
+/// service was started (`--release-days`). A report meant to be kept or published needs longer than a hand-over does.
+pub static RELEASE_DAYS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+/// The most days a release may be valid for.
+pub const MAX_RELEASE_DAYS: u32 = 730;
+
+/// What `--release-days` was given, as a number of days: a whole number from 1 to [`MAX_RELEASE_DAYS`].
+pub fn release_days(given: Option<&str>) -> Result<u32, String> {
+    match given {
+        None => Ok(1),
+        Some(v) => v
+            .parse::<u32>()
+            .ok()
+            .filter(|n| (1..=MAX_RELEASE_DAYS).contains(n))
+            .ok_or_else(|| {
+                format!(
+                    "--release-days must be a whole number of days from 1 to {MAX_RELEASE_DAYS}"
+                )
+            }),
+    }
+}
+
 pub struct ReviewRunner {
     /// The local model that answers. The owner can change it while the service runs (`choose_model`).
     pub model: std::sync::RwLock<String>,
@@ -409,7 +432,7 @@ impl ReviewRunner {
             max_turns: self.max_turns,
             second_look_files: 12,
             now,
-            ttl_secs: 86_400,
+            ttl_secs: 86_400 * i64::from(RELEASE_DAYS.load(std::sync::atomic::Ordering::Relaxed)),
             policy_version: "policy-1".into(),
             commitment_key: self.commitment_key,
             job_name: job_name.to_string(),
@@ -2840,4 +2863,19 @@ fn calendar_helper() -> Result<crate::calendar::Helper, String> {
         crate::calendar::find().ok_or_else(|| kk_service::CALENDAR_UNAVAILABLE.to_string())?;
     let confined = std::env::var("KAKU_CALENDAR_UNCONFINED").ok().as_deref() != Some("1");
     Ok(crate::calendar::Helper { exe, confined })
+}
+
+#[cfg(test)]
+mod release_days_tests {
+    use super::release_days;
+
+    #[test]
+    fn rd01_a_release_is_valid_for_one_day_unless_the_owner_asks_for_more_within_two_years() {
+        assert_eq!(release_days(None), Ok(1));
+        assert_eq!(release_days(Some("365")), Ok(365));
+        assert_eq!(release_days(Some("730")), Ok(730));
+        for bad in ["0", "731", "-1", "1.5", "a year", ""] {
+            assert!(release_days(Some(bad)).is_err(), "{bad}");
+        }
+    }
 }

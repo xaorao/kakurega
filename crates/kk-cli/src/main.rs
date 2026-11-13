@@ -47,6 +47,7 @@ Usage:
                                     --linear (or KAKU_LINEAR=1) is plain lines in and out for screen readers and pipes;
                                     the theme setting (dark or light, in config.toml or KAKU_THEME) uses fixed colours measured for that background
   kaku serve [--require-approver] [--data-dir DIR] [--ui-dir DIR] [--root DIR]... [--model NAME] [--ollama URL] [--context TOKENS]
+             [--release-days N]   how long a release stays valid for delivery and checking (1 to 730 days; 1 unless given)
              [--route near --near-model NAME [--near-key-file FILE] [--near-url URL]]   answer on NEAR AI Cloud's confidential hardware (the key: NEAR_AI_API_KEY or the file)
              [--route outside --outside-model anthropic:MODEL]   for testing only: answer chat, roundtable and team questions with a hosted model that is NOT private (the key: ANTHROPIC_API_KEY); reviews stay on the local model
              [--transport lima|local] [--vm NAME] [--worker-bin PATH] [--launcher PATH]

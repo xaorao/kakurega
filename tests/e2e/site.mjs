@@ -17,7 +17,9 @@ mkdirSync(work, { recursive: true });
 const built = spawnSync("node", [join(repo, "apps/site/build.mjs")], { encoding: "utf8" });
 if (built.status !== 0) throw new Error(built.stderr);
 const dir = join(repo, "apps/site/dist");
-const types = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".png": "image/png", ".kkg": "application/octet-stream" };
+const types = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".json": "application/json", ".png": "image/png", ".kkg": "application/octet-stream" };
+// the headers the host will send (vercel.json), sent here too, so the policy is proven not to break the pages
+const rules = JSON.parse(readFileSync(join(dir, "vercel.json"), "utf8")).headers.map((h) => ({ re: new RegExp("^" + h.source + "$"), headers: h.headers }));
 const asked = [];
 const srv = createServer((q, r) => {
   asked.push(q.url);
@@ -26,6 +28,8 @@ const srv = createServer((q, r) => {
   if (existsSync(p) && statSync(p).isDirectory()) p = join(p, "index.html");
   if (!existsSync(p)) { r.statusCode = 404; return r.end("not found"); }
   r.setHeader("content-type", types[extname(p)] ?? "application/octet-stream");
+  const path = q.url.split("?")[0];
+  for (const rule of rules) if (rule.re.test(path)) for (const h of rule.headers) r.setHeader(h.key, h.value);
   r.end(readFileSync(p));
 }).listen(0, "127.0.0.1");
 await new Promise((r) => srv.on("listening", r));
@@ -64,6 +68,31 @@ for (const [name, viewport, scheme] of [["desktop-light", { width: 1440, height:
   await page.screenshot({ path: join(work, `${name}-full.png`), fullPage: true });
 
   if (name === "desktop-light") {
+    // the replay: every fact in it comes from the capsule, and the last step checks the capsule here
+    const facts = JSON.parse(readFileSync(join(dir, "replay.json"), "utf8"));
+    const told = spawnSync(join(repo, "target/debug/kaku"), ["verify", join(dir, "sample/review.kkg")], { encoding: "utf8" });
+    check(told.status === 0 && told.stdout.includes(`signer ${facts.model_key.slice(0, 12)}`) && told.stdout.includes(`Model answers signed by their model (${facts.answers})`), "the page's facts about the capsule are what `kaku verify` says about it: " + facts.model_key.slice(0, 12) + ", " + facts.answers + " answers");
+    const hero = await page.locator(".hero").innerText();
+    check((await page.locator(".receipt").innerText()).includes(facts.model_key) && (await page.locator("#check .lede").innerText()).includes(`${facts.answers} answers`), "the receipt card names that key and that number of answers");
+    const tab = (n) => page.getByRole("tab", { name: new RegExp("^" + n + "\\.") });
+    await tab(1).focus();
+    await page.keyboard.press("ArrowRight");
+    check((await tab(2).getAttribute("aria-selected")) === "true" && (await page.locator("#rp-2").isVisible()) && !(await page.locator("#rp-1").isVisible()), "the steps of the replay can be walked with the arrow keys");
+    const shownFindings = await page.locator("#rp-2 .findings li strong").allInnerTexts();
+    check(shownFindings.length === facts.findings.length && facts.findings.every((f, i) => shownFindings[i].startsWith(f.title)), `step 2 lists the capsule's ${facts.findings.length} findings by their titles`);
+    await tab(3).click();
+    check((await page.locator("#rp-3 tbody tr").count()) === facts.files.length && facts.files.length >= 5, `step 3 lists the release's ${facts.files.length} files`);
+    await tab(4).click();
+    check(await page.getByRole("button", { name: "Change one byte and check again" }).isDisabled(), "there is nothing to break before the real check has run");
+    await page.getByRole("button", { name: "Check the real capsule" }).click();
+    await page.getByText("Valid: every signature checks out").waitFor({ timeout: 20000 });
+    check((await page.locator("[data-verdict]").innerText()).includes(`${facts.answers} answers signed by the model's own key`), "step 4 checks the real capsule in the page and counts its signed answers");
+    await page.getByRole("button", { name: "Change one byte and check again" }).click();
+    await page.getByText("Refused: the file is not what was signed").waitFor({ timeout: 20000 });
+    check(true, "and refuses it with one byte changed");
+    await page.screenshot({ path: join(work, "replay-refused.png") });
+    check(/Live on NEAR testnet/.test(hero) && /built on\s+NEAR AI Cloud/i.test(hero.replace(/\s+/g, " ")), "the top says where it is live and what it is built on");
+
     // do what the page says: download the capsule, drop it on the check page
     const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("link", { name: "1. Download the capsule" }).click()]);
     const capsule = join(work, "review.kkg");
@@ -73,8 +102,8 @@ for (const [name, viewport, scheme] of [["desktop-light", { width: 1440, height:
     await page.setInputFiles("#file", capsule);
     await page.getByText("Valid: the signatures check out").waitFor({ timeout: 20000 });
     const body = await page.locator("main").innerText();
-    check(/Qwen\/Qwen3\.8-27B/.test(body) && /89154a43a476/.test(body), "the sample capsule is valid on the check page and shows the model and the key the landing page names");
-    check((body.match(/Qwen\/Qwen3\.8-27B/g) ?? []).length >= 20, "it lists the twenty signed answers the landing page promises");
+    check(body.includes(facts.model) && body.includes(facts.model_key.slice(0, 12)), "the sample capsule is valid on the check page and shows the model and the key the landing page names");
+    check(body.split(facts.model).length - 1 >= facts.answers, `it lists the ${facts.answers} signed answers the landing page promises`);
     const bytes = readFileSync(capsule);
     bytes[Math.floor(bytes.length / 2)] ^= 0x01;
     const bad = join(work, "changed.kkg");

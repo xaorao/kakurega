@@ -121,6 +121,10 @@ pub fn setup_from_flags(args: &[String], quiet: bool) -> Result<Setup, String> {
         ));
     }
     let model = crate::flag(args, "--model").unwrap_or_else(|| default_model(&ollama));
+    crate::runner::RELEASE_DAYS.store(
+        crate::runner::release_days(crate::flag(args, "--release-days").as_deref())?,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     let default_transport = if cfg!(target_os = "linux") {
         "local"
     } else {

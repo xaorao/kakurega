@@ -35,7 +35,9 @@ const check = (name, ok, detail = "") => {
   ok ? passed++ : failed++;
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${!ok && detail ? `  ${detail}` : ""}`);
 };
-const server = spawn(kaku, ["serve", "--data-dir", data, "--root", root, "--model", model, ...near, "--ui-dir", join(repo, "apps/web/dist")], { stdio: ["ignore", "pipe", "pipe"] });
+// KAKU_TEST_RELEASE_DAYS makes the release valid for that many days (a sample meant to be kept)
+const days = process.env.KAKU_TEST_RELEASE_DAYS ? ["--release-days", process.env.KAKU_TEST_RELEASE_DAYS] : [];
+const server = spawn(kaku, ["serve", "--data-dir", data, "--root", root, "--model", model, ...near, ...days, "--ui-dir", join(repo, "apps/web/dist")], { stdio: ["ignore", "pipe", "pipe"] });
 process.on("exit", () => { try { server.kill(); } catch {} });
 let log = "";
 server.stdout.on("data", (d) => (log += d));
