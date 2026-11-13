@@ -695,3 +695,13 @@ ul.plain.start-ways { display: grid; grid-template-columns: repeat(4, minmax(0, 
 /* a warning says it once, in ordinary ink beside a mark, not in paragraphs of colour */
 .card p.warn, .card p.bad { border-left: 3px solid currentColor; padding-left: 10px; }
 .card p.warn { color: var(--ink); border-left-color: var(--amber); }
+
+/* UI pass 2, long pages: what folds is a quiet row, not one more box; the privacy page's facts are a list under its summary */
+details.card { border-width: 0 0 1px; border-radius: 0; background: transparent; padding: 12px 2px; }
+details.card:not([open]) { padding-top: 12px; padding-bottom: 12px; }
+details.card[open] { padding-bottom: 18px; }
+details.card > summary { font-weight: 500; }
+section[aria-labelledby="h-privacy"] > section.card[aria-labelledby^="pv-"] { border-width: 0 0 1px; border-radius: 0; background: transparent; padding: 14px 2px; }
+section[aria-labelledby="h-privacy"] > section.card[aria-labelledby^="pv-"] h2 { font-size: 16px; }
+.card > h2 { font-size: 17px; }
+select, .theme select { appearance: none; -webkit-appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--graphite) 50%), linear-gradient(135deg, var(--graphite) 50%, transparent 50%); background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; padding-right: 30px; background-color: var(--paper); }
