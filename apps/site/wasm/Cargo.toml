@@ -1,0 +1,19 @@
+[package]
+name = "kk-secrets-wasm"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+kk-secrets = { path = "../../../crates/kk-secrets" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+panic = "abort"
+strip = true
+
+[workspace]

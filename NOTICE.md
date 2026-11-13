@@ -92,3 +92,5 @@ Naming the packaged macOS app (`apps/desktop/scripts/package.mjs`, `brand`): the
 Reading a change from a local git repository (`crates/kk-git`): the `gix` library by Sebastian Thiel and contributors (MIT or Apache-2.0, https://github.com/GitoxideLabs/gitoxide), used unchanged as a dependency; no git program is run.
 
 Finding which lines a change wrote (`crates/kk-git`): the `similar` library by Armin Ronacher (Apache-2.0, https://github.com/mitsuhiko/similar), used unchanged as a dependency.
+
+The public site's try-it page (`apps/site/try.js`) uses NEAR AI's official client for browsers, `@nearai/inference-sdk` 0.3.0 (MIT, https://github.com/nearai/inference-sdk), unchanged as a dependency and bundled into the page.

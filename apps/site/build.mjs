@@ -65,6 +65,22 @@ const result = await build({
 });
 const script = (Array.isArray(result) ? result[0] : result).output.find((o) => o.type === "chunk").code;
 
+// the try-it page's script: NEAR's official client for browsers, bundled so the page loads nothing from anywhere else
+const tryResult = await build({
+  root: here,
+  logLevel: "warn",
+  configFile: false,
+  define: { "process.env.NODE_ENV": '"production"', global: "globalThis" },
+  build: { write: false, minify: true, target: "es2022", lib: { entry: resolve(here, "try.js"), formats: ["iife"], name: "KakuregaTry", fileName: "try" } },
+});
+const tryScript = (Array.isArray(tryResult) ? tryResult[0] : tryResult).output.find((o) => o.type === "chunk").code;
+
+// Kakurega's own secret detector for the browser: the same crate the product uses, with nothing it can import
+const wasmBuilt = spawnSync("cargo", ["build", "--quiet", "--release", "--target", "wasm32-unknown-unknown", "--manifest-path", join(here, "wasm/Cargo.toml")], { encoding: "utf8", cwd: repo });
+if (wasmBuilt.status !== 0) throw new Error("the detector did not build for the browser (rustup target add wasm32-unknown-unknown): " + wasmBuilt.stderr.slice(-400));
+const wasmPath = join(here, "wasm/target/wasm32-unknown-unknown/release/kk_secrets_wasm.wasm");
+if (WebAssembly.Module.imports(new WebAssembly.Module(readFileSync(wasmPath))).length !== 0) throw new Error("the detector's browser build imports something; it must import nothing");
+
 rmSync(out, { recursive: true, force: true });
 mkdirSync(join(out, "verify"), { recursive: true });
 mkdirSync(join(out, "sample"), { recursive: true });
@@ -74,6 +90,13 @@ const left = html.match(/\{\{[A-Z_]+\}\}/g);
 if (left) throw new Error("the page has places nothing filled: " + left.join(", "));
 writeFileSync(join(out, "index.html"), html);
 writeFileSync(join(out, "site.js"), script);
+writeFileSync(join(out, "try.js"), tryScript);
+mkdirSync(join(out, "try"), { recursive: true });
+mkdirSync(join(out, "api"), { recursive: true });
+cpSync(join(here, "try.html"), join(out, "try/index.html"));
+cpSync(wasmPath, join(out, "kk_secrets.wasm"));
+cpSync(join(here, "api/near.js"), join(out, "api/near.js"));
+writeFileSync(join(out, "package.json"), JSON.stringify({ private: true, type: "module" }));
 writeFileSync(join(out, "replay.json"), JSON.stringify(facts));
 cpSync(join(here, "site.css"), join(out, "site.css"));
 // the check page is one file with its script and its style inside it: the host is told the exact hashes of those two,

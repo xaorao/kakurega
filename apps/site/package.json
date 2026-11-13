@@ -1,0 +1,10 @@
+{
+  "name": "@kakurega/site",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "The public site: landing page, check page, a real capsule, and a page that runs one private question on NEAR AI Cloud from the browser.",
+  "dependencies": {
+    "@nearai/inference-sdk": "0.3.0"
+  }
+}

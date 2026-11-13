@@ -1,0 +1,41 @@
+// the relay's refusals, exercised without any network: no key, wrong path, other site, other model, too long, too many
+import handler, { limits } from "../../apps/site/api/near.js";
+import { Readable } from "node:stream";
+const call = async (method, path, { headers = {}, body, key = "test-key" } = {}) => {
+  if (key) process.env.NEAR_AI_RELAY_KEY = key; else delete process.env.NEAR_AI_RELAY_KEY;
+  const req = body === undefined ? Readable.from([]) : Readable.from([Buffer.from(typeof body === "string" ? body : JSON.stringify(body))]);
+  req.method = method; req.url = "/api/near?path=" + path; req.headers = { host: "site.example", ...headers };
+  const res = { headers: {}, setHeader(k, v) { this.headers[k] = v; }, end(b) { this.body = b?.toString?.() ?? ""; } };
+  await handler(req, res);
+  return { status: res.statusCode, code: (() => { try { return JSON.parse(res.body).error.code; } catch { return null; } })() };
+};
+const ok = { model: limits.MODEL, max_tokens: 100, messages: [] };
+const same = { origin: "https://site.example", "x-forwarded-for": "203.0.113.9" };
+const out = [];
+const expect = async (name, p, want) => { const r = await p; out.push(`${r.status === want[0] && r.code === want[1] ? "PASS" : "FAIL"} ${name}: ${r.status} ${r.code}`); };
+// fetch is replaced so nothing leaves: it records what would be sent
+let sent = [];
+globalThis.fetch = async (u, init) => { sent.push({ u, auth: init.headers.authorization, hasClientAuth: Object.keys(init.headers).filter((k) => /api-key|cookie/i.test(k)) }); return new Response("{}", { status: 200, headers: { "content-type": "application/json" } }); };
+await expect("no key in the environment", call("GET", "attestation/report", { key: null }), [503, "NO_FREE_TRIES"]);
+await expect("a path that is not relayed", call("GET", "files"), [404, "NOT_RELAYED"]);
+await expect("a path that tries to climb", call("GET", "attestation/report/../../models"), [404, "NOT_RELAYED"]);
+await expect("the right path with the wrong method", call("POST", "attestation/report", { headers: same, body: ok }), [404, "NOT_RELAYED"]);
+await expect("a chat from another site's page", call("POST", "chat/completions", { headers: { origin: "https://evil.example" }, body: ok }), [403, "OTHER_SITE"]);
+await expect("a chat with no Origin at all", call("POST", "chat/completions", { body: ok }), [403, "OTHER_SITE"]);
+await expect("another model", call("POST", "chat/completions", { headers: same, body: { ...ok, model: "openai/gpt" } }), [400, "OTHER_MODEL"]);
+await expect("the hardware report of another model", call("GET", "attestation/report%26model=x&model=other"), [404, "NOT_RELAYED"]);
+await expect("no limit on the answer", call("POST", "chat/completions", { headers: same, body: { model: limits.MODEL, messages: [] } }), [400, "TOO_LONG"]);
+await expect("an answer longer than allowed", call("POST", "chat/completions", { headers: same, body: { ...ok, max_tokens: limits.MAX_TOKENS + 1 } }), [400, "TOO_LONG"]);
+await expect("a streamed answer", call("POST", "chat/completions", { headers: same, body: { ...ok, stream: true } }), [400, "NO_STREAM"]);
+await expect("tools", call("POST", "chat/completions", { headers: same, body: { ...ok, tools: [{}] } }), [400, "NOT_PLAIN"]);
+await expect("a body over the size limit", call("POST", "chat/completions", { headers: same, body: JSON.stringify({ ...ok, pad: "x".repeat(limits.MAX_BODY) }) }), [413, "TOO_LARGE"]);
+await expect("text that is not JSON", call("POST", "chat/completions", { headers: same, body: "not json" }), [400, "NOT_JSON"]);
+sent = [];
+for (let i = 0; i < limits.PER_ADDRESS_A_DAY; i++) await expect(`free try ${i + 1} is passed on`, call("POST", "chat/completions", { headers: { ...same, authorization: "Bearer visitor-key", "x-api-key": "v", cookie: "c=1" }, body: ok }), [200, null]);
+await expect("one more from the same address", call("POST", "chat/completions", { headers: same, body: ok }), [429, "TRIES_USED"]);
+out.push(`${sent.length === limits.PER_ADDRESS_A_DAY && sent.every((s) => s.auth === "Bearer test-key" && s.hasClientAuth.length === 0 && s.u === "https://cloud-api.near.ai/v1/chat/completions") ? "PASS" : "FAIL"} what is passed on carries the site's key, never the visitor's headers, to the one address: ${JSON.stringify(sent[0])}`);
+sent = [];
+await expect("the model's details", call("GET", "model/Qwen/Qwen3.8-27B"), [200, null]);
+out.push(`${sent[0]?.u === "https://cloud-api.near.ai/v1/model/Qwen%2FQwen3.8-27B" ? "PASS" : "FAIL"} the model's name goes on as one path segment: ${sent[0]?.u}`);
+console.log(out.join("\n"));
+if (out.some((l) => l.startsWith("FAIL"))) process.exit(1);

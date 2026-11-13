@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Try it: one private question, checked in your browser · Kakurega</title>
+<meta name="description" content="Paste code with a secret in it. Your browser withholds the secret, checks NEAR AI Cloud's hardware proof, sends the rest encrypted, and checks the model's signature on the answer.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230a0a0a'/%3E%3Crect x='8' y='14' width='16' height='4' rx='1' fill='%23ffffff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+<header class="nav">
+  <a class="brand" href="../"><svg class="mark" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><rect width="32" height="32" rx="8" fill="currentColor"/><rect x="8" y="14" width="16" height="4" rx="1" class="mark-bar"/></svg><span>kakurega</span></a>
+  <nav aria-label="Sections">
+    <a href="../#how">How it works</a>
+    <a href="../#see">See it work</a>
+    <a href="../#limits">Limits</a>
+  </nav>
+  <a class="button dark" href="../verify/">Check a capsule <span aria-hidden="true">→</span></a>
+</header>
+
+<main id="main" class="try">
+  <p class="kicker"><span class="pill live"><span class="dot" aria-hidden="true"></span>Runs in your browser</span> A small part of Kakurega, live</p>
+  <h1 class="try-title">Ask one private question.<br>Watch every check.</h1>
+  <p class="lede">Paste code that has a secret in it. Your browser withholds the secret with Kakurega's own detector, checks the hardware proof of the model on NEAR AI Cloud, sends the rest encrypted to that model's key, and checks the model's signature on the answer. No server of ours can read the question or the answer.</p>
+
+  <div class="try-grid">
+    <form class="try-form" data-form>
+      <label for="code">Code to ask about</label>
+      <textarea id="code" rows="15" spellcheck="false" maxlength="6000" data-code></textarea>
+      <p class="note" data-count></p>
+      <details class="own-key">
+        <summary>Use my own NEAR AI key</summary>
+        <label for="key">Your key goes from this page straight to NEAR AI Cloud and is kept nowhere.</label>
+        <input id="key" type="password" autocomplete="off" spellcheck="false" maxlength="400" data-key>
+      </details>
+      <div class="actions">
+        <button type="submit" class="button dark" data-run>Withhold, check, ask</button>
+        <span class="note" data-tries></span>
+      </div>
+    </form>
+
+    <ol class="try-steps" aria-live="polite">
+      <li data-step="withhold"><h2>1. Withheld on your computer</h2><p class="note">Kakurega's secret detector, compiled to WebAssembly, runs in this tab. A line that holds a key is replaced before anything is sent.</p><div data-out></div></li>
+      <li data-step="proof"><h2>2. The hardware proof, checked here</h2><p class="note">Intel TDX and NVIDIA evidence for NEAR's gateway and for the model, against a fresh challenge from this page.</p><div data-out></div></li>
+      <li data-step="ask"><h2>3. Sent encrypted, answered</h2><p class="note">The question is encrypted in this tab to the key that proof vouches for.</p><div data-out></div></li>
+      <li data-step="sign"><h2>4. The model's signature, checked here</h2><p class="note">The model signs the exact bytes it received and sent.</p><div data-out></div></li>
+    </ol>
+  </div>
+
+  <section class="try-notes" aria-labelledby="h-what">
+    <h2 id="h-what">What this page is, and is not</h2>
+    <ul class="plain">
+      <li>It runs two real parts of Kakurega in your browser: the secret detector and the checked, encrypted route to NEAR AI Cloud. The product itself reviews whole projects in a sandbox, proves each finding with a script and releases signed capsules; this page does none of that.</li>
+      <li>A free try goes through a relay of ours that adds our NEAR AI key. It handles the encrypted request and cannot read it. It allows one model, short answers and a few tries a day. With your own key the page talks to NEAR AI Cloud directly.</li>
+      <li>A browser cannot check the identity of the connection itself the way the desktop does. The question is still encrypted to the key the hardware proof vouches for.</li>
+      <li>The detector knows the shapes of real keys and passwords said as passwords. A password made of ordinary words is not recognised.</li>
+    </ul>
+  </section>
+</main>
+
+<footer class="foot">
+  <span class="brand"><svg class="mark" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><rect width="32" height="32" rx="8" fill="currentColor"/><rect x="8" y="14" width="16" height="4" rx="1" class="mark-bar"/></svg><span>kakurega</span></span>
+  <span>隠れ家: a hideout.</span>
+  <a href="../">Back to the start</a>
+</footer>
+<script src="../try.js" defer></script>
+</body>
+</html>

@@ -17,16 +17,17 @@ mkdirSync(work, { recursive: true });
 const built = spawnSync("node", [join(repo, "apps/site/build.mjs")], { encoding: "utf8" });
 if (built.status !== 0) throw new Error(built.stderr);
 const dir = join(repo, "apps/site/dist");
-const types = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".json": "application/json", ".png": "image/png", ".kkg": "application/octet-stream" };
+const types = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".json": "application/json", ".png": "image/png", ".wasm": "application/wasm", ".kkg": "application/octet-stream" };
 // the headers the host will send (vercel.json), sent here too, so the policy is proven not to break the pages
 const rules = JSON.parse(readFileSync(join(dir, "vercel.json"), "utf8")).headers.map((h) => ({ re: new RegExp("^" + h.source + "$"), headers: h.headers }));
 const asked = [];
 const srv = createServer((q, r) => {
   asked.push(q.url);
-  let p = join(dir, decodeURIComponent(q.url.split("?")[0]));
+  const path0 = q.url.split("?")[0];
+  let p = join(dir, decodeURIComponent(path0));
   if (!p.startsWith(dir)) { r.statusCode = 400; return r.end(); }
   if (existsSync(p) && statSync(p).isDirectory()) p = join(p, "index.html");
-  if (!existsSync(p)) { r.statusCode = 404; return r.end("not found"); }
+  if (!existsSync(p) || path0.startsWith("/api/") || path0 === "/vercel.json" || path0 === "/package.json") { r.statusCode = 404; return r.end("not found"); }
   r.setHeader("content-type", types[extname(p)] ?? "application/octet-stream");
   const path = q.url.split("?")[0];
   for (const rule of rules) if (rule.re.test(path)) for (const h of rule.headers) r.setHeader(h.key, h.value);
