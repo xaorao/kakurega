@@ -19,5 +19,8 @@ jobs:
         run: rustup toolchain install 1.94.1 --profile minimal -c rustfmt -c clippy && rustup default 1.94.1
       - name: Install
         run: pnpm install --frozen-lockfile
+      # the review sandbox shows a program only /usr, so the JavaScript checks need Node there (as on a user's machine)
+      - name: Node where the sandbox can see it
+        run: sudo install -m 755 "$(command -v node)" /usr/bin/node && /usr/bin/node --version
       - name: Checks
         run: scripts/test
