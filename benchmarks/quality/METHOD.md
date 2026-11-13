@@ -23,6 +23,20 @@ Does the review loop give better findings than asking the same model to review t
 
 In each Kakurega run the model proposed 8 findings; the sandbox confirmed 2 and turned down 6 (a script whose result did not depend on the file it cited, a script whose result changed between two runs, a script that ended in an error, a script that concluded the defect was absent).
 
+## On NEAR AI Cloud, the same comparison with a larger model (`results-near.json`)
+Rerun with `Qwen/Qwen3.8-27B` on NEAR AI Cloud in both arms: the plain arm asks it directly over NEAR's API with every file in one prompt; the Kakurega arm is the real review on the service's NEAR route (confidential hardware, each answer's signature checked). Same project, same scoring, three runs each. Script: `KAKU_TEST_NEAR_KEY_FILE=FILE scripts/eval-quality.py near:Qwen/Qwen3.8-27B 3`.
+
+| | planted defect found | false findings (total, worst run) | arguable | seconds per run | cost of the three runs |
+|---|---|---|---|---|---|
+| Plain | 3 of 3 | 6, 2 | 3 | 3 to 4 | about USD 0.0007 |
+| Kakurega | 3 of 3 | 1, 1 | 3 | 55 to 65 | about USD 0.013 |
+
+- Every false finding of the plain arm was about `.env`: it was handed the secrets file with the rest and reported its contents as findings. Kakurega never gives that file to the model.
+- Kakurega's one false finding (third run) is in `payments/api/handlers.py`: "handle_charge enforces no upper bound on amount". The sandbox did confirm the behaviour (a charge of 10^12 cents is accepted), so it is a true statement about the code; it counts as false because the fixture's truth file does not list it, and the scoring was not changed after the run. Its explanation leans on `docs/vendor-notes.md`, which this fixture marks as untrusted text.
+- Every finding the larger model proposed was confirmed by its own script (none turned down), against 6 of 8 turned down with the small local model; the review took about a third of the local model's time.
+- Cost at NEAR's published price (0.04 and 1.35 US dollars a million tokens read and written): the service's usage record shows 129,079 tokens read and 5,818 written for the three reviews. A prompt NEAR reads again from its cache is billed less, so this is at most what was charged.
+- The limits below apply unchanged: one small project, one planted defect, one model per run.
+
 ## What this run changed in the product
 The first run of this eval had the review find the planted defect in 0 of 3 runs: the small model read two files, said "no defects" and kept saying so. The review now gives every source file a second look on its own once the model says it is done: a fresh question "what could be wrong in this file", then for each suspicion a fresh request to prove it with a script or say it is not real. The scripts go to the same sandbox check as any finding. See `docs/engineering-decisions/worker-loop.md`.
 

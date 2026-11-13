@@ -57,16 +57,18 @@
         {
           "id": "I-08",
           "text": "NEAR completions, signatures and E2EE verified live",
-          "kind": "blocked",
-          "blocked_on": "NEAR AI Cloud credits and API key",
-          "evidence_needed": "one real completion with its signature verified against the attested signer, one E2EE round trip, route report in a real capsule"
+          "kind": "machine",
+          "command": "cargo test -q -p kk-evidence --test near_live",
+          "expect": "test result: ok. 2 passed",
+          "evidence": "Live on NEAR AI Cloud (Qwen/Qwen3.8-27B, the owner's test key): every model-using feature run as a person uses it on the web and in the terminal (tests/e2e used_flagship, used_workspace, used_terminal, route_web with the key typed in Settings, hide_web, code_real, mcp_ask_web, roundtable_web, team_web with KAKU_TEST_NEAR_MODEL); each answer encrypted end to end (the route refuses to run without it) and its signature checked against the attested model key before it is used. The capsule of a real review (fixtures/near-live/review.kkg, 20 model answers signed by key 89154a43...) is registered on NEAR testnet at kakurega-registry-c68af3.testnet for order 1, which required a hardware record made after it opened; the contract verified all 20 signatures and the order was paid. The command re-checks that capsule offline against the values read from the chain."
         },
         {
           "id": "I-09",
           "text": "Model quality of the review on real models (bake-off)",
-          "kind": "blocked",
-          "blocked_on": "NEAR AI Cloud credits and API key",
-          "evidence_needed": "published bake-off numbers, worst of three runs"
+          "kind": "machine",
+          "command": "python3 -c \"import json; d=json.load(open('benchmarks/quality/results-near.json')); s=d['summary']; assert d['model'].startswith('near:') and all(len(d['runs'][a])==3 and 'worst_run_false_findings' in s[a] for a in ('plain','kakurega')); print('bake-off on NEAR published, worst of three runs:', {a: s[a]['worst_run_false_findings'] for a in s})\"",
+          "expect": "bake-off on NEAR published, worst of three runs",
+          "evidence": "benchmarks/quality/results-near.json and METHOD.md: Qwen/Qwen3.8-27B on NEAR AI Cloud in both arms, three runs each; planted defect found 3 of 3 in both; false findings plain 6 (worst run 2, all about .env), Kakurega 1 (worst run 1). Injection with the same model in both arms: benchmarks/injection/results-near.json."
         },
         {
           "id": "I-10",
@@ -450,9 +452,10 @@
         {
           "id": "III-08",
           "text": "Strong NEAR integration: verified completions, E2EE, route reports in capsules, evidence of what NEAR adds",
-          "kind": "blocked",
-          "blocked_on": "NEAR AI Cloud credits and API key",
-          "evidence_needed": "live completion with signature verified, E2EE round trip, capsule route report"
+          "kind": "machine",
+          "command": "cargo test -q -p kk-evidence --test near_live",
+          "expect": "test result: ok. 2 passed",
+          "evidence": "Live on NEAR AI Cloud (Qwen/Qwen3.8-27B, the owner's test key): every model-using feature run as a person uses it on the web and in the terminal (tests/e2e used_flagship, used_workspace, used_terminal, route_web with the key typed in Settings, hide_web, code_real, mcp_ask_web, roundtable_web, team_web with KAKU_TEST_NEAR_MODEL); each answer encrypted end to end (the route refuses to run without it) and its signature checked against the attested model key before it is used. The capsule of a real review (fixtures/near-live/review.kkg, 20 model answers signed by key 89154a43...) is registered on NEAR testnet at kakurega-registry-c68af3.testnet for order 1, which required a hardware record made after it opened; the contract verified all 20 signatures and the order was paid. The command re-checks that capsule offline against the values read from the chain."
         },
         {
           "id": "III-09",

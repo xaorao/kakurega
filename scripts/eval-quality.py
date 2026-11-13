@@ -15,6 +15,9 @@ apart ("arguable"), neither as a hit nor as false. Reported per arm: every run, 
   scripts/eval-quality.py [MODEL] [RUNS]        needs Ollama with MODEL, target/debug/kaku, and the Lima sandbox VM
 Writes benchmarks/quality/results.json. The model runs on this computer, so the cost in money is nothing; the tokens are
 recorded so a price can be applied.
+  scripts/eval-quality.py near:MODEL [RUNS]     the same with a model on NEAR AI Cloud (account key file in
+                                                KAKU_TEST_NEAR_KEY_FILE): the plain arm asks it directly, the review runs on
+                                                it in confidential hardware; writes benchmarks/quality/results-near.json
 LIMITS: one small project with one defect; one model; a handful of runs. It shows whether confirming findings removes
 false ones on this project. It is not a measure of how good the reviews are in general.
 """
@@ -26,9 +29,42 @@ MODEL = sys.argv[1] if len(sys.argv) > 1 else "qwen2.5-coder:7b"
 RUNS = int(sys.argv[2]) if len(sys.argv) > 2 else 3
 truth = json.load(open(repo / "fixtures/synthetic-repo.truth.json"))
 REAL = truth["real_defects"][0]
-work = repo / "target/eval-quality"
+NEAR = MODEL[len("near:"):] if MODEL.startswith("near:") else None
+work = repo / ("target/eval-quality-near" if NEAR else "target/eval-quality")
 kaku = repo / "target/debug/kaku"
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def near_key():
+    """The NEAR AI Cloud account key, from the file KAKU_TEST_NEAR_KEY_FILE names (lines of NAME=value). Never printed."""
+    for line in open(os.environ["KAKU_TEST_NEAR_KEY_FILE"]).read().splitlines():
+        if line.strip().startswith("NEAR_AI_API_KEY="):
+            return line.split("=", 1)[1].strip()
+    raise SystemExit("KAKU_TEST_NEAR_KEY_FILE holds no NEAR_AI_API_KEY line")
+
+
+def near_thinking_off(model):
+    """The documented setting that has each model family answer without thinking first (docs.near.ai/cloud/reasoning-models),
+    the same one the product's NEAR route sends."""
+    m = model.lower()
+    if "kimi" in m:
+        return {"chat_template_kwargs": {"thinking": False}}
+    if "glm-5.3-flash" in m or "gpt-oss" in m:
+        return {"reasoning_effort": "low"}
+    if m.startswith("qwen/") or m.startswith("zai-org/glm"):
+        return {"chat_template_kwargs": {"enable_thinking": False}}
+    return {}
+
+
+def near_ask(model, messages, max_tokens=2048):
+    """One answer from the model on NEAR AI Cloud, asked directly over its OpenAI-compatible API: the plain way of using it,
+    with none of the product's checks. Returns the text and the token counts."""
+    body = {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0.3, **near_thinking_off(model)}
+    req = urllib.request.Request("https://cloud-api.near.ai/v1/chat/completions", data=json.dumps(body).encode(),
+                                 headers={"content-type": "application/json", "authorization": "Bearer " + near_key()})
+    r = json.load(urllib.request.urlopen(req, timeout=300))
+    u = r.get("usage") or {}
+    return r["choices"][0]["message"].get("content") or "", u.get("prompt_tokens", 0), u.get("completion_tokens", 0)
 
 
 def project(dest):
@@ -66,7 +102,11 @@ def plain(dest):
     prompt = ("Review this project for security defects. Reply with one JSON array and nothing else: "
               "[{\"file\": path, \"line\": number, \"summary\": text}]. Report only real defects.\n\n" + "\n\n".join(parts))
     started = time.time()
-    r = json.load(opener.open(urllib.request.Request("http://127.0.0.1:11434/api/chat", data=json.dumps({"model": MODEL, "stream": False, "options": {"temperature": 0.3, "num_ctx": 16384}, "messages": [{"role": "user", "content": prompt}]}).encode(), headers={"content-type": "application/json"}), timeout=1800))
+    if NEAR:
+        text, tin, tout = near_ask(NEAR, [{"role": "user", "content": prompt}])
+        r = {"message": {"content": text}, "prompt_eval_count": tin, "eval_count": tout}
+    else:
+        r = json.load(opener.open(urllib.request.Request("http://127.0.0.1:11434/api/chat", data=json.dumps({"model": MODEL, "stream": False, "options": {"temperature": 0.3, "num_ctx": 16384}, "messages": [{"role": "user", "content": prompt}]}).encode(), headers={"content-type": "application/json"}), timeout=1800))
     text = r["message"]["content"]
     m = re.search(r"\[.*\]", text, re.S)
     try:
@@ -125,7 +165,8 @@ def main():
         project(dest)
         rows["plain"].append(plain(dest))
         print("plain   ", i, rows["plain"][-1], flush=True)
-    server = subprocess.Popen([str(kaku), "serve", "--data-dir", str(work / "data"), "--root", str(work / "root"), "--model", MODEL, "--ui-dir", str(repo / "apps/web/dist")], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    route = ["--route", "near", "--near-model", NEAR, "--near-key-file", os.environ["KAKU_TEST_NEAR_KEY_FILE"]] if NEAR else ["--model", MODEL]
+    server = subprocess.Popen([str(kaku), "serve", "--data-dir", str(work / "data"), "--root", str(work / "root"), *route, "--ui-dir", str(repo / "apps/web/dist")], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
         base = None
         end = time.time() + 60
@@ -148,7 +189,7 @@ def main():
     for arm, rs in rows.items():
         summary[arm] = {"runs": len(rs), "found_real_in": sum(r["found_real"] for r in rs), "false_findings_total": sum(r["false_findings"] for r in rs), "arguable_findings_total": sum(r["arguable_findings"] for r in rs), "worst_run_false_findings": max(r["false_findings"] for r in rs), "found_real_in_every_run": all(r["found_real"] for r in rs), "seconds_slowest": max(r["seconds"] for r in rs), "seconds_fastest": min(r["seconds"] for r in rs)}
     commit = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    out = repo / "benchmarks/quality/results.json"
+    out = repo / ("benchmarks/quality/results-near.json" if NEAR else "benchmarks/quality/results.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"type": "kakurega-quality-eval", "version": 1, "model": MODEL, "commit": commit, "ran_at": int(time.time()), "project": "fixtures/synthetic-repo", "real_defect": REAL, "runs": rows, "summary": summary, "kakurega_usage": usage, "money": "the model runs on this computer: no charge"}, indent=1, sort_keys=True) + "\n")
     print(json.dumps(summary, indent=1))

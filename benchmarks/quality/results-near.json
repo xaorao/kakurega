@@ -1,0 +1,177 @@
+{
+ "commit": "9bbac0f51cd59084a8fd172691c01cc6bac5cfdf",
+ "kakurega_usage": {
+  "from": 1791953942,
+  "note": "Token counts are the model's own where it gave them (measured_turns) and an estimate otherwise. A cost uses the price you entered for a route (/api/usage/prices); for a NEAR AI Cloud model without one, the price NEAR publishes in its public model list. A prompt NEAR reads again from its cache is billed less, so a cost at the input price is at most what was charged. A local model costs nothing here.",
+  "routes": [
+   {
+    "avg_ms": 49370,
+    "class": "verified_tee",
+    "cost": {
+     "amount": 0.013017,
+     "cached_input_per_million": 0.018,
+     "currency": "USD",
+     "input_per_million": 0.04,
+     "output_per_million": 1.35,
+     "read_at": 1794545943,
+     "source": "published",
+     "source_url": "https://cloud-api.near.ai/v1/model/list",
+     "tokens_estimated": false
+    },
+    "max_ms": 53973,
+    "measured_turns": 3,
+    "price_unknown": null,
+    "prompt_tokens": 129079,
+    "reply_tokens": 5818,
+    "reply_tokens_per_second": 39.3,
+    "route": "near:Qwen/Qwen3.8-27B",
+    "simulated": false,
+    "turns": 3
+   }
+  ],
+  "to": 1794545942,
+  "total": {
+   "cost": [
+    {
+     "amount": 0.013017,
+     "currency": "USD"
+    }
+   ],
+   "prompt_tokens": 129079,
+   "reply_tokens": 5818,
+   "turns": 3
+  }
+ },
+ "model": "near:Qwen/Qwen3.8-27B",
+ "money": "the model runs on this computer: no charge",
+ "project": "fixtures/synthetic-repo",
+ "ran_at": 1794545943,
+ "real_defect": {
+  "file": "payments/auth/session.py",
+  "line": 15,
+  "summary": "logout does not remove the token from ACTIVE_TOKENS, so validate() keeps accepting it"
+ },
+ "runs": {
+  "kakurega": [
+   {
+    "arguable_findings": 1,
+    "confirmed_files": [
+     "payments/auth/session.py",
+     "payments/auth/tokens.py"
+    ],
+    "false_files": [],
+    "false_findings": 0,
+    "found_real": true,
+    "not_confirmed": 0,
+    "proposed": 2,
+    "release_held_a_secret": false,
+    "reported": 2,
+    "seconds": 65,
+    "state": "ready"
+   },
+   {
+    "arguable_findings": 1,
+    "confirmed_files": [
+     "payments/auth/session.py",
+     "payments/auth/tokens.py"
+    ],
+    "false_files": [],
+    "false_findings": 0,
+    "found_real": true,
+    "not_confirmed": 0,
+    "proposed": 2,
+    "release_held_a_secret": false,
+    "reported": 2,
+    "seconds": 60,
+    "state": "ready"
+   },
+   {
+    "arguable_findings": 1,
+    "confirmed_files": [
+     "payments/api/handlers.py",
+     "payments/auth/session.py",
+     "payments/auth/tokens.py"
+    ],
+    "false_files": [
+     "payments/api/handlers.py"
+    ],
+    "false_findings": 1,
+    "found_real": true,
+    "not_confirmed": 0,
+    "proposed": 3,
+    "release_held_a_secret": false,
+    "reported": 3,
+    "seconds": 55,
+    "state": "ready"
+   }
+  ],
+  "plain": [
+   {
+    "answer_held_a_secret": false,
+    "arguable_findings": 1,
+    "false_files": [
+     ".env"
+    ],
+    "false_findings": 2,
+    "found_real": true,
+    "readable": true,
+    "reported": 4,
+    "seconds": 4,
+    "tokens_in": 965,
+    "tokens_out": 162
+   },
+   {
+    "answer_held_a_secret": false,
+    "arguable_findings": 1,
+    "false_files": [
+     ".env"
+    ],
+    "false_findings": 2,
+    "found_real": true,
+    "readable": true,
+    "reported": 4,
+    "seconds": 3,
+    "tokens_in": 965,
+    "tokens_out": 109
+   },
+   {
+    "answer_held_a_secret": false,
+    "arguable_findings": 1,
+    "false_files": [
+     ".env"
+    ],
+    "false_findings": 2,
+    "found_real": true,
+    "readable": true,
+    "reported": 4,
+    "seconds": 4,
+    "tokens_in": 965,
+    "tokens_out": 157
+   }
+  ]
+ },
+ "summary": {
+  "kakurega": {
+   "arguable_findings_total": 3,
+   "false_findings_total": 1,
+   "found_real_in": 3,
+   "found_real_in_every_run": true,
+   "runs": 3,
+   "seconds_fastest": 55,
+   "seconds_slowest": 65,
+   "worst_run_false_findings": 1
+  },
+  "plain": {
+   "arguable_findings_total": 3,
+   "false_findings_total": 6,
+   "found_real_in": 3,
+   "found_real_in_every_run": true,
+   "runs": 3,
+   "seconds_fastest": 3,
+   "seconds_slowest": 4,
+   "worst_run_false_findings": 2
+  }
+ },
+ "type": "kakurega-quality-eval",
+ "version": 1
+}

@@ -8,12 +8,21 @@ A model key that NEAR's own TDX verifier contract vouched for, read from a publi
 
 ```sh
 ARGS=$(printf '{"signer":"89154a43a47684742c3d1753252bb6f49f61da9d8c84fc9b1def2df130cb2d93"}' | base64)
-curl -s https://rpc.testnet.fastnear.com -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"query","params":{"request_type":"call_function","finality":"final","account_id":"kakurega-registry-35d13d.testnet","method_name":"hardware","args_base64":"'"$ARGS"'"}}' | python3 -c "import json,sys; print(bytes(json.load(sys.stdin)['result']['result']).decode())"
+curl -s https://rpc.testnet.fastnear.com -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"query","params":{"request_type":"call_function","finality":"final","account_id":"kakurega-registry-c68af3.testnet","method_name":"hardware","args_base64":"'"$ARGS"'"}}' | python3 -c "import json,sys; print(bytes(json.load(sys.stdin)['result']['result']).decode())"
 ```
 
-Expected: JSON that starts `{"signer":"89154a43…","tcb_status":"UpToDate","advisory_ids":[],"mr_td":"df4d77c8…`. The transaction that wrote it: [`J7VgHsK6…`](https://testnet.nearblocks.io/txns/J7VgHsK6R4eGa96s3fT41n1nnQmsRYEFYMY3TbCvPL4H). In it our contract passed a fresh NEAR AI Cloud quote for `Qwen/Qwen3.8-27B` to `tee-verifier-2026-07-22.testnet`, and recorded the key only after that contract accepted it.
+Expected: JSON that starts `{"signer":"89154a43…","tcb_status":"UpToDate","advisory_ids":[],"mr_td":"df4d77c8…`. The transaction that wrote it: [`EqCuP7TZ…`](https://testnet.nearblocks.io/txns/EqCuP7TZmqsgotmj1go7oFg2mzN2qnzRKgmNeXzfhmY). In it our contract passed a fresh NEAR AI Cloud quote for `Qwen/Qwen3.8-27B` to `tee-verifier-2026-07-22.testnet`, and recorded the key only after that contract accepted it.
 
-What this does not show: which software ran (the measurements are recorded, none is approved by the contract), and nothing about the GPU.
+Then the capsule of a real review that ran on that model, registered for a paid order that required this hardware record:
+
+```sh
+ARGS=$(printf '{"capsule_sha256":"2d2f9450a88fab653909a09c3c1a992929e308a0120feb5380a13ea381b99f8b","capsule_signer":"d48949fd672796dd58880341608d6a2fc26e28ade3f323a24792226a324a43ee"}' | base64)
+curl -s https://rpc.testnet.fastnear.com -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"query","params":{"request_type":"call_function","finality":"final","account_id":"kakurega-registry-c68af3.testnet","method_name":"get","args_base64":"'"$ARGS"'"}}' | python3 -c "import json,sys; print(bytes(json.load(sys.stdin)['result']['result']).decode())"
+```
+
+Expected: `"receipt_count":20`, one signer `89154a43…` for `Qwen/Qwen3.8-27B` with `"receipts":20`, and `"order":"1"`: the contract verified all 20 model signatures in the registration ([`HvDR4pNU…`](https://testnet.nearblocks.io/txns/HvDR4pNUarYwdALySuJR5zNjzxNE7zmxh5KwfXTreSpT)). The capsule itself is `fixtures/near-live/review.kkg`; its SHA-256 is the `capsule_sha256` above.
+
+What this does not show: which software ran (the measurements are recorded, none is approved by the contract), nothing about the GPU, and nothing about whether the review's findings are right.
 
 ## 5 minutes: build one program and check four things
 
@@ -27,9 +36,11 @@ scripts/judge-replay
 ```
 
 Expected, in order:
-- `Recorded at kakurega-registry-35d13d.testnet on NEAR testnet:` then the key, `NEAR's verifier checked its Intel TDX quote against Intel's collateral on 2026-11-13 00:45:07 UTC`, `Intel patch level then: UpToDate`, and a list headed `This does not establish:`.
+- `Recorded at kakurega-registry-c68af3.testnet on NEAR testnet:` then the key, `NEAR's verifier checked its Intel TDX quote against Intel's collateral on 2026-11-13 04:46:56 UTC`, `Intel patch level then: UpToDate`, and a list headed `This does not establish:`.
 - `Signature: checks against the pinned key.` then `known shapes: 126 cases. … leaked 0.` and `beyond the detector: 42 cases. … leaked 10.` with each leak named. The leaks are real and listed on purpose: they are passwords and PINs written with no word saying what they are.
 - An example capsule the script makes on the spot, with made-up keys and made-up model answers, for the route `example`: accepted, with a list headed `Not established:` whose first line says it is an example. Then the same capsule with one receipt altered: `INVALID: receipt_signature`, then `Both results are as expected.` It prints the path of a one-file page to open from disk; drop either capsule on it. A capsule from a real review is made by `kaku` and checked the same way.
+
+The real NEAR review's capsule is checked offline by `cargo test -p kk-evidence --test near_live`: valid, 20 answers each signed by the key above, and the digest of its receipts equal to the one the registry holds. (It is checked as of a minute after it was made: a capsule expires a day after it is made, so `kaku verify` on that file now reports it expired.)
 
 ## 10 minutes: is the contract on NEAR the code in this repository?
 
@@ -39,7 +50,7 @@ Needs `cargo near`.
 scripts/check-deployed
 ```
 
-Expected: two equal lines `built here : beffd8af…3395` and `on testnet: beffd8af…3395  (kakurega-registry-35d13d.testnet)`, then `MATCH: the account runs exactly this build`. The account has no access keys left, so nobody can replace that code or its fee: `kaku chain fees` shows the fee, 2% on top of the reviewer's amount, sent only to `kakurega-fees-d5de2a.testnet`. The build is not the reproducible Docker one, and the script says so: another machine may produce different bytes from the same source.
+Expected: two equal lines `built here : bfeeba19…c3c5` and `on testnet: bfeeba19…c3c5  (kakurega-registry-c68af3.testnet)`, then `MATCH: the account runs exactly this build`. The account has no access keys left, so nobody can replace that code or its fee: `kaku chain fees` shows the fee, 2% on top of the reviewer's amount, sent only to `kakurega-fees-d5de2a.testnet`. The build is not the reproducible Docker one, and the script says so: another machine may produce different bytes from the same source.
 
 ## 30 minutes: use it
 
@@ -52,14 +63,13 @@ target/debug/kaku serve          # prints a one-time link; open it
 
 Then, in the browser: choose a project folder, name a recipient, **Start review**. When it ends, read **Protection** (what was withheld from the model), **Findings** (only what the kernel reproduced) and **Release** (the exact files and the digest). Approve with `target/debug/kaku approve`, deliver, download the capsule, and check it with `target/debug/kaku verify FILE`. **Try to break it** in the sidebar lets you write your own attack next to two fresh secrets. **Chat**, **Check a confidential model's hardware proof**, with the model name `Qwen/Qwen3.8-27B`, runs the hardware check live against NEAR AI Cloud with no key (about ten seconds).
 
-`tests/e2e/used_flagship.mjs` walks the same path by itself with a real local model and saves screenshots.
+`tests/e2e/used_flagship.mjs` walks the same path by itself with a real local model and saves screenshots. With your own NEAR AI Cloud account key the same walk runs on NEAR's confidential hardware: `KAKU_TEST_NEAR_MODEL=Qwen/Qwen3.8-27B KAKU_TEST_NEAR_KEY_FILE=FILE node tests/e2e/used_flagship.mjs` (FILE holds a line `NEAR_AI_API_KEY=...` and is readable by you only), or start the app with `kaku serve --route near --near-model Qwen/Qwen3.8-27B --near-key-file FILE`, or type the key in Settings.
 
 ## What is not live, said once
 
-- No answer has been produced by a model on NEAR AI Cloud from this app: that needs an account key we do not have yet. The route, the encryption and the signature check are built and tested against recorded answers. The hardware check above is live.
-- No capsule from a real NEAR answer is registered on testnet, for the same reason. Registration itself was run on testnet with a capsule from a local model.
+- Answers from NEAR AI Cloud were run with the owner's test key; running them again needs a key of your own. Everything above that reads the chain or the fixture needs none.
 - NEAR Intents: dry quotes only.
-- Everything on chain is testnet. The deploying account still holds a full-access key, so the contract could be replaced; `scripts/check-deployed` tells you if it was.
+- Everything on chain is testnet. The registry account has no access keys left, so its code and fee cannot be replaced; `scripts/check-deployed` shows the code is this repository's.
 - There is no hosted demo. Nothing of ours runs on a server.
 
 ## Tracks

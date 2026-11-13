@@ -3,8 +3,8 @@
 This file is the plain list. `docs/TESTING.md` says which test checks what and what runs only by hand; `program/ACCEPTANCE_MANIFEST.json` gives each acceptance row the command that proves it; the status of every planned capability is in `program/parity_registry.json` (most are not built).
 
 ## Not verified, and why
-- NEAR AI Cloud completions, encrypted inference, signed responses and image provenance: the NEAR API key and credits do not exist yet. Only model attestation was verified, against real public evidence.
-- Quality of any real model's review or chat. Local small models find few defects; no bake-off was run.
+- NEAR AI Cloud completions, encrypted inference and signed responses ARE verified live, with one model (`Qwen/Qwen3.8-27B`) and the owner's test key: every feature that uses a model was run on it, and a real review's capsule is registered on testnet for a paid order. Not verified: other NEAR models (each family needs its own setting to answer without thinking first; four families are covered from NEAR's documentation, untested live), image provenance, and long use (many hours, rate limits, an account that runs out of credit mid-review: the route stops and says so, tested against a simulated gateway only).
+- Quality of real models' reviews beyond one small project: the bake-off (`benchmarks/quality`) runs on one fixture with one planted defect, with a small local model and with Qwen3.8-27B on NEAR. It is not a measure of review quality in general.
 - A person other than the builder using the product unaided. No first-time-user test has been observed.
 - Real Touch ID. The desktop approval flow is tested with the operating-system prompt stubbed.
 - Telegram: the bridge was checked once on a real phone (pairing, a status reply and a review notification, observed by the owner) and against a fake Telegram server. Delivery retries, flood control and 4xx/5xx handling are unit-tested only; long-running reliability (days, reconnects, many chats) is not tested. Chat is a transport for counts and ids: approvals are never done through chat.
