@@ -110,6 +110,8 @@ pub enum Command {
     Review {
         folder: String,
         recipient: String,
+        /// Review only what the checked-out commit changes relative to this branch, tag or commit.
+        base: Option<String>,
     },
     Reviews,
     Open(Option<String>),
@@ -445,7 +447,7 @@ pub fn takes_arguments(name: &str) -> bool {
 
 pub fn usage(name: &str) -> &'static str {
     match name {
-        "review" => "/review FOLDER for RECIPIENT",
+        "review" => "/review FOLDER for RECIPIENT [against BASE]",
         "open" => "/open [JOB]",
         "findings" => "/findings [JOB]",
         "fixes" => "/fixes [JOB]",
@@ -774,6 +776,15 @@ pub fn parse(line: &str) -> Result<Command, String> {
             let Some((folder, recipient)) = rest.rsplit_once(" for ") else {
                 return Err(format!("usage: {}", usage("review")));
             };
+            // "against main" at the end makes it a review of the change measured from that branch, tag or commit
+            let (recipient, base) = match recipient.rsplit_once(" against ") {
+                Some((who, base))
+                    if !base.trim().is_empty() && !base.trim().contains(char::is_whitespace) =>
+                {
+                    (who, Some(base.trim().to_string()))
+                }
+                _ => (recipient, None),
+            };
             let (folder, recipient) = (folder.trim(), recipient.trim());
             if folder.is_empty() || recipient.is_empty() {
                 return Err(format!("usage: {}", usage("review")));
@@ -781,6 +792,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
             Ok(Command::Review {
                 folder: typed_folder(folder),
                 recipient: recipient.to_string(),
+                base,
             })
         }
         "open" => job_arg(rest).map(Command::Open),

@@ -74,14 +74,33 @@ fn tu01_commands_parse_and_hostile_input_is_refused_with_a_usage_hint() {
         cmd::parse("  /Review  my-app   for   acme audit  "),
         Ok(Command::Review {
             folder: "my-app".into(),
-            recipient: "acme audit".into()
+            recipient: "acme audit".into(),
+            base: None
         })
     );
     assert_eq!(
         cmd::parse("/review a for b for c"),
         Ok(Command::Review {
             folder: "a for b".into(),
-            recipient: "c".into()
+            recipient: "c".into(),
+            base: None
+        })
+    );
+    // "against BASE" at the end asks for a review of the change; a base with a space in it is part of the recipient
+    assert_eq!(
+        cmd::parse("/review my-app for acme audit against origin/main"),
+        Ok(Command::Review {
+            folder: "my-app".into(),
+            recipient: "acme audit".into(),
+            base: Some("origin/main".into())
+        })
+    );
+    assert_eq!(
+        cmd::parse("/review my-app for team against the odds"),
+        Ok(Command::Review {
+            folder: "my-app".into(),
+            recipient: "team against the odds".into(),
+            base: None
         })
     );
     assert_eq!(

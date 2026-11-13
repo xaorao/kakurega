@@ -2874,7 +2874,11 @@ impl App {
                 None,
             )],
             Command::Reviews => vec![self.req(Intent::Jobs, false, Method::Get, "/api/jobs", None)],
-            Command::Review { folder, recipient } => {
+            Command::Review {
+                folder,
+                recipient,
+                base,
+            } => {
                 let path = if folder.starts_with('/') {
                     folder
                 } else {
@@ -2892,7 +2896,10 @@ impl App {
                     false,
                     Method::Post,
                     "/api/jobs",
-                    Some(json!({"repo": path, "recipient": recipient})),
+                    Some(match base {
+                        Some(b) => json!({"repo": path, "recipient": recipient, "base": b}),
+                        None => json!({"repo": path, "recipient": recipient}),
+                    }),
                 )]
             }
             Command::Open(j) => {

@@ -198,6 +198,32 @@ pub fn assemble(
     created: i64,
     ttl_secs: i64,
 ) -> Result<ReleaseDraft, Rejection> {
+    assemble_with(
+        results,
+        project_files,
+        recipient,
+        policy_version,
+        created,
+        ttl_secs,
+        None,
+    )
+}
+
+/// The name of the file that states which change a release is about.
+pub const CHANGE_FILE: &str = "change.txt";
+
+/// Like [`assemble`]; with `change_note` the release also carries that text as `change.txt`, so the owner approves it
+/// with the rest and the capsule signs it.
+#[allow(clippy::too_many_arguments)]
+pub fn assemble_with(
+    results: &[(Finding, CheckResult)],
+    project_files: &BTreeMap<String, &ImportedFile>,
+    recipient: &str,
+    policy_version: &str,
+    created: i64,
+    ttl_secs: i64,
+    change_note: Option<&str>,
+) -> Result<ReleaseDraft, Rejection> {
     let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut not_confirmed = Vec::new();
     let mut index_entries: Vec<Value> = Vec::new();
@@ -341,6 +367,9 @@ pub fn assemble(
     let index = Value::Object(vec![("findings".into(), Value::Array(index_entries))]);
     files.insert("index.json".into(), canon::serialize(&index).into_bytes());
     files.insert("run-check.py".into(), VERIFY_SCRIPT.as_bytes().to_vec());
+    if let Some(note) = change_note {
+        files.insert(CHANGE_FILE.into(), note.as_bytes().to_vec());
+    }
 
     let withheld: Vec<&ImportedFile> = project_files
         .values()
@@ -434,6 +463,18 @@ pub fn claims_for(draft: &ReleaseDraft) -> Vec<kk_evidence::capsule::ClaimSpec> 
             statement: title,
             evidence,
             how_to_check: how_to_check.into(),
+        });
+    }
+    if let Some(first) = draft
+        .files
+        .get(CHANGE_FILE)
+        .and_then(|b| std::str::from_utf8(b).ok())
+        .and_then(|t| t.lines().next())
+    {
+        out.push(kk_evidence::capsule::ClaimSpec {
+            statement: first.to_string(),
+            evidence: vec![CHANGE_FILE.to_string()],
+            how_to_check: "With the repository at hand: `git rev-parse HEAD` on the reviewed branch gives the reviewed commit and `git merge-base HEAD BASE` gives the base commit named in change.txt; the change digest is the SHA-256 of the list that file describes. Without the repository these are the owner's signed statement, not something this capsule proves.".into(),
         });
     }
     out

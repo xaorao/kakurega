@@ -384,16 +384,24 @@ pub fn follow(args: &[String]) -> u8 {
 
 pub fn review(args: &[String]) -> u8 {
     let json_mode = args.iter().any(|a| a == "--json");
-    let dir_arg = positional(args, 1, &["--for", "--timeout"])
+    let dir_arg = positional(args, 1, &["--for", "--timeout", "--change"])
         .into_iter()
         .next();
     let (Some(dir_arg), Some(recipient)) = (dir_arg, crate::flag(args, "--for")) else {
         return fail(
             json_mode,
             USAGE,
-            "usage: kaku review DIR --for RECIPIENT [--json] [--timeout SECONDS]",
+            "usage: kaku review DIR --for RECIPIENT [--change BASE] [--json] [--timeout SECONDS]\n  --change BASE  review only what the checked-out commit changes relative to BASE (a branch, a tag or a commit), as for a pull request",
         );
     };
+    let base = crate::flag(args, "--change");
+    if args.iter().any(|a| a == "--change") && base.is_none() {
+        return fail(
+            json_mode,
+            USAGE,
+            "name the base after --change: a branch, a tag or a commit",
+        );
+    }
     let timeout = crate::flag(args, "--timeout")
         .and_then(|t| t.parse::<u64>().ok())
         .unwrap_or(3600)
@@ -410,7 +418,7 @@ pub fn review(args: &[String]) -> u8 {
             &http,
             Method::Post,
             "/api/jobs",
-            Some(json!({"repo": repo.to_string_lossy(), "recipient": recipient})),
+            Some(json!({"repo": repo.to_string_lossy(), "recipient": recipient, "base": base})),
         ) {
             Ok((202, v)) => v["id"].as_str().unwrap_or("").to_string(),
             Ok((s, v)) => {

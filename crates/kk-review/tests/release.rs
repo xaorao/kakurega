@@ -1429,3 +1429,101 @@ fn rs_not_run_a_review_whose_checks_could_not_start_is_refused_as_not_run_not_as
     );
     assert!(matches!(r, Err(Rejection::NothingConfirmed)), "{r:?}");
 }
+
+#[test]
+fn rs40_a_release_about_a_change_carries_the_change_in_what_is_approved_and_signed() {
+    use kk_review::job::{ChangeFocus, ChangedFile};
+    use kk_review::release::{assemble_with, claims_for, CHANGE_FILE};
+    let f = files();
+    let idx = index(&f);
+    let focus = ChangeFocus {
+        base: "a".repeat(40),
+        head: "b".repeat(40),
+        base_name: "main".into(),
+        files: vec![
+            ChangedFile {
+                path: "payments/auth/session.py".into(),
+                kind: "modified".into(),
+                lines: vec![(3, 4)],
+            },
+            ChangedFile {
+                path: "payments/secret_plan.py".into(),
+                kind: "added".into(),
+                lines: vec![(1, 2)],
+            },
+        ],
+        digest: "c".repeat(64),
+    };
+    let note = focus.note();
+    let args = (
+        &[(finding(), confirmed())][..],
+        "acme-audit",
+        "policy-1",
+        1_700_000_000,
+        86_400,
+    );
+    let plain = assemble(args.0, &idx, args.1, args.2, args.3, args.4).unwrap();
+    let draft = assemble_with(args.0, &idx, args.1, args.2, args.3, args.4, Some(&note)).unwrap();
+    // the statement is one of the released files, so the digest the owner approves covers it
+    let text = String::from_utf8(draft.files[CHANGE_FILE].clone()).unwrap();
+    assert!(
+        text.contains(&format!("reviewed commit: {}", "b".repeat(40))),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("base commit: {}", "a".repeat(40))),
+        "{text}"
+    );
+    assert!(
+        text.contains("files changed: 2 (1 added, 1 modified, 0 deleted)"),
+        "{text}"
+    );
+    assert!(text.contains(&"c".repeat(64)), "{text}");
+    // no file name of the private project is in it
+    assert!(
+        !text.contains("session.py") && !text.contains("secret_plan"),
+        "{text}"
+    );
+    assert_ne!(draft.digest, plain.digest);
+    assert!(!plain.files.contains_key(CHANGE_FILE));
+    // a signed claim names it, after the findings' claims, and says what it does not prove
+    let claims = claims_for(&draft);
+    assert_eq!(claims.len(), claims_for(&plain).len() + 1);
+    let last = claims.last().unwrap();
+    assert!(last.statement.starts_with(
+        "This review is of a change: commit bbbbbbbbbbbb measured from commit aaaaaaaaaaaa"
+    ));
+    assert_eq!(last.evidence, vec![CHANGE_FILE.to_string()]);
+    assert!(last.how_to_check.contains("the owner's signed statement"));
+    // the capsule verifies, and a changed commit in the statement breaks it
+    let signer = Signer::from_seed([5u8; 32]);
+    let bytes = build_capsule(
+        &draft,
+        &signer,
+        &"ab".repeat(32),
+        38,
+        "device_only",
+        &claims,
+        &[],
+    );
+    let opts = VerifyOptions {
+        pinned_keys: Some(vec![signer.public()]),
+        now: 1_700_000_100,
+        expected_recipient: Some("acme-audit".into()),
+    };
+    let report = capsule::verify(&bytes, &opts);
+    assert!(report.valid, "{report:?}");
+    let mut tampered = bytes.clone();
+    let marker = b"\"change.txt\":\"";
+    let pos = tampered
+        .windows(marker.len())
+        .rposition(|w| w == marker)
+        .unwrap()
+        + marker.len();
+    tampered[pos + 8] = if tampered[pos + 8] == b'A' {
+        b'B'
+    } else {
+        b'A'
+    };
+    assert!(!capsule::verify(&tampered, &opts).valid);
+}

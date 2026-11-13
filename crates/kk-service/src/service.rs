@@ -299,6 +299,9 @@ struct Job {
     events: Vec<Event>,
     approval: Option<String>,
     delivered: Option<Delivered>,
+    /// When the review is of a change: the base as the owner named it, the two commits, the digest and the changed files.
+    #[serde(default)]
+    change: Option<Value>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -1338,9 +1341,34 @@ impl Service {
     }
 
     pub fn start_job(self: &Arc<Self>, repo: &str, recipient: &str) -> Result<String, String> {
+        self.start_review(repo, recipient, None)
+    }
+
+    /// What the checked-out commit of the folder changes relative to `base`, for the owner to see before a review of it.
+    pub fn change_preview(&self, repo: &str, base: &str) -> Result<Value, String> {
         let dir = self
             .allowed_dir(repo)
             .ok_or("that folder is not available")?;
+        self.runner.change_preview(&dir, base.trim())
+    }
+
+    /// Starts a review of the folder, or with `base` a review of what its checked-out commit changes relative to that
+    /// branch, tag or commit.
+    pub fn start_review(
+        self: &Arc<Self>,
+        repo: &str,
+        recipient: &str,
+        base: Option<&str>,
+    ) -> Result<String, String> {
+        let dir = self
+            .allowed_dir(repo)
+            .ok_or("that folder is not available")?;
+        let base = base.map(str::trim).filter(|b| !b.is_empty());
+        // a change that cannot be read is refused now, in words, before anything is recorded or sent
+        let change = match base {
+            Some(b) => Some(self.runner.change_preview(&dir, b)?),
+            None => None,
+        };
         // the review is given the notes of the project named like the folder, and the folder's own project's files
         let named = dir.file_name().map(|n| n.to_string_lossy().into_owned());
         if let Some((name, _)) = self.floor_above_route(named.as_deref(), Some(&dir)) {
@@ -1405,6 +1433,7 @@ impl Service {
                 events: vec![Event::new("queued", "waiting to start")],
                 approval: None,
                 delivered: None,
+                change: change.clone(),
             };
             g.jobs.insert(id.clone(), job.clone());
             (id, job)
@@ -1414,19 +1443,23 @@ impl Service {
         let (jid, rec) = (id.clone(), recipient.to_string());
         let extra = self.memory_files(&dir, recipient);
         let stop = self.stop_switch(&id);
+        let base = base.map(str::to_string);
         std::thread::spawn(move || {
             let svc2 = svc.clone();
             let jid2 = jid.clone();
             let report = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                svc.runner.run_stoppable(
-                    &dir,
-                    &rec,
-                    &jid,
-                    now(),
-                    extra,
-                    &move |stage, detail| svc2.push_event(&jid2, stage, detail),
-                    &stop,
-                )
+                let progress =
+                    move |stage: &str, detail: &str| svc2.push_event(&jid2, stage, detail);
+                match &base {
+                    Some(b) => {
+                        svc.runner
+                            .run_change(&dir, b, &rec, &jid, now(), extra, &progress, &stop)
+                    }
+                    None => {
+                        svc.runner
+                            .run_stoppable(&dir, &rec, &jid, now(), extra, &progress, &stop)
+                    }
+                }
             }));
             let stopped = svc.stop_switch_done(&jid);
             let (job, snap) = {
@@ -1539,7 +1572,7 @@ impl Service {
             JobState::Failed(m) => ("failed", m.clone()),
         };
         json!({
-            "id": j.id, "repo": j.repo.to_string_lossy(), "recipient": j.recipient, "created": j.created,
+            "id": j.id, "repo": j.repo.to_string_lossy(), "recipient": j.recipient, "change": j.change, "created": j.created,
             "state": state, "note": note,
             "events": j.events.iter().map(|e| json!({"at": e.at, "stage": e.stage, "detail": e.detail})).collect::<Vec<_>>(),
             "summary": snap.map(|s| s.summary.clone()),
@@ -1553,6 +1586,22 @@ impl Service {
 struct StartBody {
     repo: String,
     recipient: String,
+    /// A branch, tag or commit: review only what the checked-out commit changes relative to it.
+    #[serde(default)]
+    base: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ChangeQuery {
+    repo: String,
+    base: String,
+}
+
+async fn change_preview(axum::Extension(svc): Svc, Query(q): Query<ChangeQuery>) -> Response {
+    match svc.change_preview(&q.repo, &q.base) {
+        Ok(v) => Json(v).into_response(),
+        Err(m) => error(StatusCode::BAD_REQUEST, "BAD_CHANGE", &m),
+    }
 }
 
 #[derive(Deserialize)]
@@ -8610,7 +8659,7 @@ async fn fs_list(axum::Extension(svc): Svc, Query(q): Query<PathQuery>) -> Respo
 }
 
 async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -> Response {
-    start_response(svc.start_job(&b.repo, &b.recipient))
+    start_response(svc.start_review(&b.repo, &b.recipient, b.base.as_deref()))
 }
 
 /// 202 with the review's id; 429 when the most allowed reviews are already running; 400 for anything else wrong with the request.
@@ -10703,7 +10752,7 @@ async fn admin_jobs_list(axum::Extension(svc): Svc) -> Json<Value> {
 }
 
 async fn admin_job_start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -> Response {
-    start_response(svc.start_job(&b.repo, &b.recipient))
+    start_response(svc.start_review(&b.repo, &b.recipient, b.base.as_deref()))
 }
 
 #[derive(Deserialize)]
@@ -10963,6 +11012,7 @@ impl Extension for Routes {
                 post(suggestion_dismiss),
             )
             .route("/api/fs", get(fs_list))
+            .route("/api/change", get(change_preview))
             .route("/api/schedules", get(schedules_list).post(schedule_new))
             .route("/api/schedules/{id}/delete", post(schedule_delete))
             .route("/api/events", get(events))
@@ -11258,6 +11308,7 @@ mod away_tests {
         Job {
             id: format!("job-{n}"),
             repo: PathBuf::from("/x"),
+            change: None,
             recipient: format!("who-{n}"),
             created: 1,
             state,

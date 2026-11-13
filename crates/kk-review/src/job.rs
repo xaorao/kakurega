@@ -1,6 +1,6 @@
 use crate::check::{parse_finding, CheckResult, Finding};
 use crate::import::{keyed_commitment, manifest, scan_tree, Imported, Manifest};
-use crate::release::{assemble, Rejection, ReleaseDraft};
+use crate::release::{Rejection, ReleaseDraft};
 use crate::repair::Repair;
 use kk_broker::{AuditEvent, Broker, BrokerConfig};
 use kk_kernel::{ArtifactHandle, JobKey};
@@ -102,6 +102,24 @@ impl ChangeFocus {
         }
         t.push_str("Read the changed files first, then whatever they call or are called by. Report only a defect that the change introduces or that runs through a changed file, cite the changed file and line where you can, and make the reproducer exercise a changed file. A defect in code the change did not touch and that no changed file reaches is not part of this review. Report only defects you have confirmed.");
         t
+    }
+
+    /// What the release says about the change, as `change.txt`: the two commits, how many files, and the digest. No
+    /// file name of the private project is in it; the digest covers them.
+    pub fn note(&self) -> String {
+        let count = |k: &str| self.files.iter().filter(|f| f.kind == k).count();
+        format!(
+            "This review is of a change: commit {} measured from commit {}.\nreviewed commit: {}\nbase commit: {}\nfiles changed: {} ({} added, {} modified, {} deleted)\nchange digest (SHA-256): {}\nThe digest is the SHA-256 of this text: \"base BASE_COMMIT\" and a line end, \"head REVIEWED_COMMIT\" and a line end, then for each changed file in path order its kind (added, modified or deleted), a space, its path and a line end.\nOnly findings that cite a changed file, or whose check runs one, are in this release. Code the change did not touch is not covered by this release.\n",
+            &self.head[..self.head.len().min(12)],
+            &self.base[..self.base.len().min(12)],
+            self.head,
+            self.base,
+            self.files.len(),
+            count("added"),
+            count("modified"),
+            count("deleted"),
+            self.digest
+        )
     }
 
     /// Whether a checked finding touches the change: it cites a changed file, or its check ran one.
@@ -550,13 +568,14 @@ pub fn run_job(
         }
     }
     progress("release", "preparing the release");
-    report.draft = assemble(
+    report.draft = crate::release::assemble_with(
         &report.findings,
         &index,
         &cfg.recipient,
         &cfg.policy_version,
         cfg.now,
         cfg.ttl_secs,
+        cfg.change.as_ref().map(ChangeFocus::note).as_deref(),
     );
     // checks the sandbox could not start neither confirm nor refute anything: the review failed, it is not a clean result
     if let Err(Rejection::ChecksNotRun(why)) = &report.draft {

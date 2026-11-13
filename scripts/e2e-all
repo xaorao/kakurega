@@ -31,6 +31,7 @@ python3 tests/e2e/tui_mentions.py
 python3 tests/e2e/tui_mentions_lines.py
 python3 tests/e2e/tui_notes_only.py
 python3 tests/e2e/script_cli.py
+python3 tests/e2e/change_review.py
 python3 tests/e2e/telegram_proxy.py
 python3 tests/e2e/chain_register.py
 node tests/e2e/readiness.mjs
