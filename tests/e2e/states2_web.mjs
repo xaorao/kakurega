@@ -50,7 +50,7 @@ const open = (summary) => async () => { await page.getByText(summary, { exact: t
 const cases = [
   ["Activity: the signed log", "#/activity", "/api/log", "Nothing recorded yet."],
   ["Activity: what is working now", "#/activity", "/api/work", "Nothing is working right now."],
-  ["Activity: prices entered", "#/activity", "/api/usage/prices", "No price entered. No cost is shown.", open("Prices you entered")],
+  ["Activity: prices entered", "#/activity", "/api/usage/prices", "No price entered. A NEAR AI Cloud model is costed at NEAR's published price; other routes show no cost.", open("Prices you entered")],
   ["Instructions", "#/instructions", "/api/instructions", null],
   ["Instructions: the per-project switches", "#/instructions", "/api/project-settings", null],
   ["Code task: earlier tasks", "#/code", "/api/code", null],

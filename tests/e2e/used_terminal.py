@@ -22,7 +22,10 @@ from pathlib import Path
 
 repo = Path(__file__).resolve().parent.parent.parent
 model = sys.argv[1] if len(sys.argv) > 1 else "qwen2.5-coder:7b"
-work = repo / "target/used-terminal"
+# KAKU_TEST_NEAR_MODEL and KAKU_TEST_NEAR_KEY_FILE run the model work on NEAR AI Cloud's confidential hardware instead
+near_model = os.environ.get("KAKU_TEST_NEAR_MODEL")
+near = ["--route", "near", "--near-model", near_model, "--near-key-file", os.environ.get("KAKU_TEST_NEAR_KEY_FILE", "")] if near_model else []
+work = repo / ("target/used-terminal-near" if near_model else "target/used-terminal")
 subprocess.run(["pkill", "-f", "kaku serve --data-dir " + str(work)], capture_output=True)
 shutil.rmtree(work, ignore_errors=True)
 (work / "root").mkdir(parents=True)
@@ -49,7 +52,7 @@ master, slave = pty.openpty()
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
 env = dict(os.environ, TERM="xterm-256color", LANG="en_US.UTF-8")
 env.pop("NO_COLOR", None)
-proc = subprocess.Popen([str(kaku), "tui", "--data-dir", str(data), "--root", str(work / "root"), "--model", model, "--ui-dir", str(repo / "apps/web/dist")],
+proc = subprocess.Popen([str(kaku), "tui", "--data-dir", str(data), "--root", str(work / "root"), "--model", model, *near, "--ui-dir", str(repo / "apps/web/dist")],
                         stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True)
 os.close(slave)
 raw = b""
@@ -96,16 +99,27 @@ try:
     check("the workspace opens and says the service is ready", wait_for(r"kakurega", 60) is not None and wait_for(r"ready", 90) is not None)
     save("1-open")
     send("/model\r")
-    check("/model names the real model in use", wait_for(re.escape(model), 30) is not None, screen.text()[-400:])
+    if near_model:
+        check("/model names the NEAR model in use and how to pick another", wait_for(re.escape(near_model), 30) is not None and wait_for(r"/route near MODEL", 30) is not None, screen.text()[-400:])
+    else:
+        check("/model names the real model in use", wait_for(re.escape(model), 30) is not None, screen.text()[-400:])
     send("In one short sentence: what is a session token?\r")
     m = wait_for(r"answer: about \d+ tokens in [\d.]+ (ms|s)", 240)
-    check("a question is answered by the model on this computer, with how long it took", m is not None and re.search(r"token", screen.text(), re.I) is not None, screen.text()[-500:].replace("\n", " | "))
+    if near_model:
+        check("a question is answered by the NEAR model, with how long it took, and the header says confidential hardware", m is not None and "confidential hardware" in screen.text() and near_model in screen.text(), screen.text()[-500:].replace("\n", " | "))
+    else:
+        check("a question is answered by the model on this computer, with how long it took", m is not None and re.search(r"token", screen.text(), re.I) is not None, screen.text()[-500:].replace("\n", " | "))
     print(f"chat answered at {round(time.time() - t0)} s: {m.group(0) if m else ''}", flush=True)
     save("2-answer")
     send("/where\r")
-    where = wait_for(r"Where your data goes", 30) is not None and wait_for(r"Left this computer \(from the signed log\): nothing", 30) is not None
-    text = screen.text()
-    check("/where says the model is on this computer, lists each door, and that nothing has left", where and "on this computer. Your questions do not leave it." in text and "Web search: off" in text, text[-700:].replace("\n", " | "))
+    if near_model:
+        where = wait_for(r"Where your data goes", 30) is not None and wait_for(r"questions to a model elsewhere [1-9]", 30) is not None
+        text = screen.text()
+        check("/where says the model is in confidential hardware, that questions go there encrypted, and counts the question sent", where and "in confidential hardware at cloud-api.near.ai. Questions go there encrypted" in text and "Web search: off" in text, text[-700:].replace("\n", " | "))
+    else:
+        where = wait_for(r"Where your data goes", 30) is not None and wait_for(r"Left this computer \(from the signed log\): nothing", 30) is not None
+        text = screen.text()
+        check("/where says the model is on this computer, lists each door, and that nothing has left", where and "on this computer. Your questions do not leave it." in text and "Web search: off" in text, text[-700:].replace("\n", " | "))
     save("3-where")
     send("/review payments-service for Acme audit\r")
     started = time.time()
@@ -129,7 +143,10 @@ try:
         check("delivery produces a capsule file", wait_for(r"Delivered", 60) is not None and ".kkg" in screen.text(), screen.text()[-400:].replace("\n", " | "))
         save("7-delivered")
         send("/where\r")
-        check("/where then counts one release as having left, and nothing else", wait_for(r"releases 1\.", 30) is not None and re.search(r"questions to a model elsewhere 0", screen.text()) is not None, screen.text()[-500:].replace("\n", " | "))
+        if near_model:
+            check("/where then counts one release besides the questions to the confidential model", wait_for(r"releases 1\.", 30) is not None, screen.text()[-500:].replace("\n", " | "))
+        else:
+            check("/where then counts one release as having left, and nothing else", wait_for(r"releases 1\.", 30) is not None and re.search(r"questions to a model elsewhere 0", screen.text()) is not None, screen.text()[-500:].replace("\n", " | "))
     send("/quit\r")
     pump(3)
     if proc.poll() is None:

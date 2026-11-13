@@ -396,3 +396,56 @@ pub(super) async fn change(axum::Extension(svc): Svc, Json(b): Json<ProjectBody>
         _ => refuse("give a name to make or change a project, or remove with a name"),
     }
 }
+
+impl Service {
+    /// Why an agent that reads a whole project (a question about it, or a coding task) may not start now, or `None`. It
+    /// works with the review's model, so the same levels hold: this computer, or confidential hardware whose proof is
+    /// checked, never a hosted model without one; a project kept more privately than the model in use is not read; and on a
+    /// model elsewhere the signed log records it before anything is sent, or nothing is.
+    pub(super) fn agent_refusal(&self, door: &str, folder: &std::path::Path) -> Option<Response> {
+        self.agent_check(door, folder)
+            .map(|(status, code, why)| error(status, code, &why))
+    }
+
+    /// The same check, as a status, a code and the words, for a caller that is not answering a request (a team run's code
+    /// reader). A pass on a model elsewhere has been written to the signed log when this returns.
+    pub(super) fn agent_check(
+        &self,
+        door: &str,
+        folder: &std::path::Path,
+    ) -> Option<(StatusCode, &'static str, String)> {
+        let what = if door == "coding" {
+            "a coding task"
+        } else {
+            "a question about a project"
+        };
+        if self.route_level() < 2 {
+            return Some((
+                StatusCode::FORBIDDEN,
+                "NOT_PRIVATE",
+                format!("{what} lets the model read the whole project, so it runs only with a model on this computer or in confidential hardware whose proof is checked; choose one in Settings"),
+            ));
+        }
+        if let Some((name, _)) = self.floor_above_route(None, Some(folder)) {
+            return Some((
+                StatusCode::CONFLICT,
+                "PROJECT_KEPT_PRIVATELY",
+                floor_words(&name),
+            ));
+        }
+        if self.route_level() < 3 {
+            let host = self.route_for_owner()["host"]
+                .as_str()
+                .unwrap_or("another computer")
+                .to_string();
+            if !self.log_event("outbound.agent", &host, &[("door", door.into())]) {
+                return Some((
+                    StatusCode::INSUFFICIENT_STORAGE,
+                    "LOG_UNAVAILABLE",
+                    super::swap::LOG_UNWRITABLE.to_string(),
+                ));
+            }
+        }
+        None
+    }
+}

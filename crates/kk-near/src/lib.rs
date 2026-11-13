@@ -7,6 +7,7 @@ use nearai_inference_sdk::{
 };
 use std::fmt;
 
+pub mod prices;
 pub mod release;
 pub mod route;
 

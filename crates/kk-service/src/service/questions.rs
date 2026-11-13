@@ -1,6 +1,6 @@
-//! Questions about a project, from the owner's screens: one is answered at a time, only by a model on this computer (the
-//! agent reads the whole project), only about a folder the service may read, and the answer is kept with the places it
-//! rests on as the files showed them.
+//! Questions about a project, from the owner's screens: one is answered at a time, only about a folder the service may read,
+//! only by a model on this computer or in confidential hardware whose proof is checked (the agent reads the whole project,
+//! as a review's does), and the answer is kept with the places it rests on as the files showed them.
 
 use super::*;
 use crate::questions::{self as q, Question, State};
@@ -58,12 +58,8 @@ pub(super) async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -
             "that folder is not available",
         );
     };
-    if svc.route_for_owner()["stays_here"] != true {
-        return error(
-            StatusCode::FORBIDDEN,
-            "NOT_LOCAL",
-            "a question about a project lets the model read the whole project, so it is answered only by a model on this computer; choose one in Settings",
-        );
+    if let Some(refusal) = svc.agent_refusal("question", &folder) {
+        return refusal;
     }
     let (id, forgotten) = {
         let mut g = svc.questions.lock().expect("lock");
@@ -158,6 +154,9 @@ pub(super) async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -
         let mut result =
             svc2.runner
                 .project_question(&imported.files, &question, depth, &progress, &stop);
+        if let Ok(o) = &result {
+            svc2.record_model_use(o.usage.as_ref());
+        }
         if svc2.stop_switch_done(&id2) {
             result = Err(kk_review::job::STOPPED_BY_OWNER.into());
         }
@@ -209,7 +208,7 @@ pub(super) async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -
     // 100 questions are kept: the oldest answered ones that made room for this one are named
     (
         StatusCode::ACCEPTED,
-        Json(json!({"id": id, "forgotten": forgotten})),
+        Json(json!({"id": id, "forgotten": forgotten, "model": where_the_model_is(&svc)})),
     )
         .into_response()
 }
@@ -285,4 +284,11 @@ pub(super) async fn forget(axum::Extension(svc): Svc, UrlPath(id): UrlPath<Strin
     drop(g);
     svc.log_event("question.forgotten", &id, &[]);
     Json(json!({"forgotten": true})).into_response()
+}
+
+/// Where the model an agent works with is, for the line that says a question or a coding task started: on this computer, or
+/// at a host (in confidential hardware, the only other place an agent is allowed).
+pub(super) fn where_the_model_is(svc: &Service) -> Value {
+    let r = svc.route_for_owner();
+    json!({"stays_here": r["stays_here"] == true, "class": r["class"], "host": r["host"]})
 }

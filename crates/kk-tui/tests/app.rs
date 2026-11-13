@@ -8781,3 +8781,44 @@ fn tu_cal01_at_calendar_attaches_the_calendar_through_its_own_route_and_then_sen
         "{t}"
     );
 }
+
+#[test]
+fn tu107b_on_nears_confidential_hardware_model_says_which_model_and_how_to_pick_another() {
+    let mut app = booted();
+    let r = enter(&mut app, "/model");
+    app.handle(ok(
+        &r[0],
+        200,
+        json!({"current": "Qwen/Qwen3.8-27B", "installed": [], "can_choose": false, "stays_here": false, "class": "verified_tee"}),
+    ));
+    let all = text(&app);
+    assert!(
+        all.contains("Answering with: Qwen/Qwen3.8-27B")
+            && all.contains("On NEAR AI Cloud, in confidential hardware")
+            && all.contains("/route near MODEL")
+            && !all.contains("Nothing to choose"),
+        "{all}"
+    );
+}
+
+#[test]
+fn tu85b_a_near_models_cost_at_its_published_price_is_named_and_a_few_thousandths_do_not_read_as_nothing(
+) {
+    let mut app = booted();
+    let r = enter(&mut app, "/usage");
+    app.handle(ok(&r[0], 200, json!({"from": 0, "to": 1, "routes": [
+        {"route": "near:Qwen/Qwen3.8-27B", "class": "verified_tee", "simulated": false, "turns": 7, "prompt_tokens": 26691, "measured_turns": 7, "reply_tokens": 2463, "avg_ms": 9000, "max_ms": 20000, "reply_tokens_per_second": 40.0, "cost": {"amount": 0.004393, "currency": "USD", "tokens_estimated": false, "source": "published", "input_per_million": 0.04, "output_per_million": 1.35}},
+        {"route": "near:z-ai/glm-5.3-flash", "class": "verified_tee", "simulated": false, "turns": 1, "prompt_tokens": 10, "measured_turns": 1, "reply_tokens": 5, "avg_ms": 10, "max_ms": 10, "reply_tokens_per_second": 1.0, "cost": null, "price_unknown": "NEAR AI Cloud's price list could not be read: timed out\u{1b}[2J"},
+    ], "total": {"turns": 8, "prompt_tokens": 26701, "reply_tokens": 2468, "cost": [{"currency": "USD", "amount": 0.004393}]}, "note": "n"})));
+    let t = text(&app);
+    assert!(
+        t.contains("about USD 0.0044 at NEAR AI Cloud's published price"),
+        "{t}"
+    );
+    assert!(
+        t.contains("no cost shown (NEAR AI Cloud's price list could not be read: timed out")
+            && !t.contains('\u{1b}'),
+        "{t}"
+    );
+    assert!(t.contains("USD 0.0044"), "the total keeps its digits: {t}");
+}

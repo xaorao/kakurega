@@ -51,10 +51,10 @@ Usage:
              [--route outside --outside-model anthropic:MODEL]   for testing only: answer chat, roundtable and team questions with a hosted model that is NOT private (the key: ANTHROPIC_API_KEY); reviews stay on the local model
              [--transport lima|local] [--vm NAME] [--worker-bin PATH] [--launcher PATH]
   kaku review DIR --for RECIPIENT [--json] [--timeout SECONDS]   start a review and follow it; ends at awaiting_approval (exit 0), 3 nothing to release, 4 failed
-  kaku code DIR TASK... [--json]                          a local model changes the project in memory, its tests run in the sandbox; shows the patch, applies only when you say
+  kaku code DIR TASK... [--json]                          the model changes the project in memory, its tests run in the sandbox; shows the patch, applies only when you say
   kaku code show|apply|undo ID, kaku code list              read, apply (--digest from the patch) or undo a coding task
   kaku jobs [--json] | kaku findings JOB [--json] | kaku follow JOB [--timeout S]   list reviews, read what one found, watch one until it ends
-  kaku explore DIR QUESTION... [--depth quick|normal|thorough] [--json]   an agent reads the project on this computer and answers; every line it rests on is checked (exit 3 if one is not found)
+  kaku explore DIR QUESTION... [--depth quick|normal|thorough] [--json]   an agent reads the project and answers (with the model here or in confidential hardware); every line it rests on is checked (exit 3 if one is not found)
   kaku explore show ID | list | forget ID          read, list or forget questions about projects
   kaku ask QUESTION --folder DIR [--json]   ask about the documents in a folder; every quote is checked (exit 3 if any is not found)
   kaku chat MESSAGE|- [--json] [--keep | --session ID]   one message to the private assistant; nothing is kept unless --keep starts a kept conversation or --session continues one

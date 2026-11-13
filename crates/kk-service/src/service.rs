@@ -118,6 +118,12 @@ pub trait JobRunner: Send + Sync {
     ) -> Result<crate::coding::CodeOutcome, String> {
         self.code_task(files, task, progress, external)
     }
+    /// NEAR AI Cloud's published prices, read from its public model list: `{"source", "read_at", "prices": [{"model",
+    /// "currency", "input_per_million", "output_per_million", "cached_input_per_million"}]}`, or `{"error"}` when the list
+    /// could not be read. None from a runner that has no way to read it.
+    fn published_prices(&self) -> Option<Value> {
+        None
+    }
     /// The models this runner could answer with, installed on this computer. Empty when the choice is fixed.
     fn local_models(&self) -> Vec<String> {
         Vec::new()
@@ -3070,14 +3076,14 @@ fn prices_all(svc: &Service) -> Vec<(String, f64, f64, String)> {
         .unwrap_or_default()
 }
 
-/// The prices the owner entered, one for each route: for a million tokens read and a million written. This program does not
-/// know any provider's prices; these are only the owner's own numbers, used to estimate a cost on the usage page.
+/// The prices the owner entered, one for each route: for a million tokens read and a million written. They are the owner's
+/// own numbers, used to estimate a cost on the usage page, and come before the price NEAR AI Cloud publishes for its models.
 async fn prices_get(axum::Extension(svc): Svc) -> Response {
     Json(json!({
         "prices": prices_all(&svc).iter().map(|(route, i, o, cur)| json!({"route": route, "input_per_million": i, "output_per_million": o, "currency": cur})).collect::<Vec<_>>(),
         "max_prices": MAX_PRICES,
         "max_price": MAX_PRICE,
-        "note": "These are numbers you entered. The usage page multiplies them by the tokens counted; nothing is looked up and nothing is sent anywhere.",
+        "note": "These are numbers you entered. The usage page multiplies them by the tokens counted, and a price entered here comes before the one NEAR AI Cloud publishes for its models; what you type is sent nowhere.",
     }))
     .into_response()
 }
@@ -3149,7 +3155,8 @@ async fn prices_set(axum::Extension(svc): Svc, Json(b): Json<PriceBody>) -> Resp
 }
 
 /// What each route answered between two moments (the last 30 days by default): replies, tokens in and out, how many counts
-/// came from the model itself, and how long replies took. Tokens and time only: this program knows no prices.
+/// came from the model itself, and how long replies took; and a cost, at the price the owner entered or, for a NEAR AI Cloud
+/// model without one, at the price NEAR publishes. No words of any conversation are read.
 async fn usage_summary(
     axum::Extension(svc): Svc,
     query: Result<Query<UsageQuery>, axum::extract::rejection::QueryRejection>,
@@ -3172,6 +3179,29 @@ async fn usage_summary(
     }
     // read before the store is locked below: the store's lock is not re-entrant
     let prices = prices_all(&svc);
+    // a NEAR model the owner gave no price for is costed at NEAR AI Cloud's own published price; the list is read only
+    // when such a line exists (it is public and carries nothing of the owner's)
+    let near_unpriced = {
+        let store = svc.store.lock().expect("lock");
+        store
+            .connection()
+            .query_row(
+                "SELECT count(*) FROM usage_ledger WHERE at >= ?1 AND at < ?2 AND route LIKE 'near:%' AND simulated = 0",
+                kk_vault::rusqlite::params![from, to],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+            > 0
+    };
+    let published = if near_unpriced {
+        let svc2 = svc.clone();
+        tokio::task::spawn_blocking(move || svc2.runner.published_prices())
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
     let store = svc.store.lock().expect("lock");
     let c = store.connection();
     let Ok(mut st) = c.prepare(
@@ -3200,15 +3230,42 @@ async fn usage_summary(
     let routes: Vec<Value> = rows
         .iter()
         .map(|(route, class, sim, turns, prompt, measured, reply, ms, max)| {
-            // a cost only for a real model that has a price the owner entered; a test model costs nothing
-            let cost = prices
+            // a cost only for a real model: at the price the owner entered, else, for a NEAR model, at NEAR AI Cloud's
+            // published one; a test model costs nothing
+            let entered = prices
                 .iter()
                 .find(|(r, ..)| r == route)
+                .map(|(_, i, o, cur)| (*i, *o, cur.clone(), json!({"source": "entered"})));
+            let listed = || {
+                let model = route.strip_prefix("near:")?;
+                let p = published.as_ref()?["prices"]
+                    .as_array()?
+                    .iter()
+                    .find(|p| p["model"] == model)?;
+                Some((
+                    p["input_per_million"].as_f64()?,
+                    p["output_per_million"].as_f64()?,
+                    p["currency"].as_str()?.to_string(),
+                    json!({"source": "published", "source_url": published.as_ref()?["source"], "read_at": published.as_ref()?["read_at"], "cached_input_per_million": p["cached_input_per_million"]}),
+                ))
+            };
+            let cost = entered
+                .or_else(listed)
                 .filter(|_| *sim == 0)
-                .map(|(_, i, o, cur)| {
+                .map(|(i, o, cur, from)| {
                     let amount = (*prompt as f64 * i + *reply as f64 * o) / 1_000_000.0;
                     *cost_totals.entry(cur.clone()).or_insert(0.0) += amount;
-                    json!({"amount": (amount * 10_000.0).round() / 10_000.0, "currency": cur, "tokens_estimated": measured < turns})
+                    let mut c = json!({"amount": (amount * 1_000_000.0).round() / 1_000_000.0, "currency": cur, "tokens_estimated": measured < turns, "input_per_million": i, "output_per_million": o});
+                    if let (Some(c), Some(from)) = (c.as_object_mut(), from.as_object()) {
+                        c.extend(from.clone());
+                    }
+                    c
+                });
+            // a NEAR model with no price the owner entered, whose published price could not be read: said, not guessed
+            let price_unknown = (cost.is_none() && *sim == 0 && route.starts_with("near:"))
+                .then(|| match published.as_ref().and_then(|p| p["error"].as_str()) {
+                    Some(why) => format!("NEAR AI Cloud's price list could not be read: {why}"),
+                    None => "NEAR AI Cloud's price list does not name this model".to_string(),
                 });
             json!({
                 "route": route, "class": class, "simulated": *sim != 0, "turns": turns,
@@ -3216,6 +3273,7 @@ async fn usage_summary(
                 "avg_ms": if *turns > 0 { ms / turns } else { 0 }, "max_ms": max,
                 "reply_tokens_per_second": if *ms > 0 { (*reply as f64 * 1000.0 / *ms as f64 * 10.0).round() / 10.0 } else { 0.0 },
                 "cost": cost,
+                "price_unknown": price_unknown,
             })
         })
         .collect();
@@ -3223,9 +3281,9 @@ async fn usage_summary(
         "turns": rows.iter().map(|r| r.3).sum::<i64>(),
         "prompt_tokens": rows.iter().map(|r| r.4).sum::<i64>(),
         "reply_tokens": rows.iter().map(|r| r.6).sum::<i64>(),
-        "cost": cost_totals.iter().map(|(c, a)| json!({"currency": c, "amount": (a * 10_000.0).round() / 10_000.0})).collect::<Vec<_>>(),
+        "cost": cost_totals.iter().map(|(c, a)| json!({"currency": c, "amount": (a * 1_000_000.0).round() / 1_000_000.0})).collect::<Vec<_>>(),
     });
-    Json(json!({"from": from, "to": to, "routes": routes, "total": total, "note": "Token counts are the model's own where it gave them (measured_turns) and an estimate otherwise. A cost is shown only for a model route you entered a price for (/api/usage/prices): this program knows no provider's prices."})).into_response()
+    Json(json!({"from": from, "to": to, "routes": routes, "total": total, "note": "Token counts are the model's own where it gave them (measured_turns) and an estimate otherwise. A cost uses the price you entered for a route (/api/usage/prices); for a NEAR AI Cloud model without one, the price NEAR publishes in its public model list. A prompt NEAR reads again from its cache is billed less, so a cost at the input price is at most what was charged. A local model costs nothing here."})).into_response()
 }
 
 const MAX_INSTRUCTION_CHARS: usize = 4000;
@@ -6349,8 +6407,8 @@ struct CodeBody {
     task: String,
 }
 
-/// Starts a coding task. Only one runs at a time, only on a model that runs on this computer (the whole project is read by it),
-/// and only on a folder the service may read.
+/// Starts a coding task. Only one runs at a time, only on a folder the service may read, and (the whole project is read by
+/// it) only with a model on this computer or in confidential hardware whose proof is checked, as a review is.
 async fn code_start(axum::Extension(svc): Svc, Json(b): Json<CodeBody>) -> Response {
     let task = b.task.trim().to_string();
     if task.is_empty() || task.chars().count() > 2000 || !chat_clean(&task) {
@@ -6374,12 +6432,8 @@ async fn code_start(axum::Extension(svc): Svc, Json(b): Json<CodeBody>) -> Respo
             "that folder is not available",
         );
     };
-    if svc.route_for_owner()["stays_here"] != true {
-        return error(
-            StatusCode::FORBIDDEN,
-            "NOT_LOCAL",
-            "a coding task reads the whole project, so it runs only on a model on this computer",
-        );
+    if let Some(refusal) = svc.agent_refusal("coding", &repo) {
+        return refusal;
     }
     let id = {
         let mut g = svc.coding.lock().expect("lock");
@@ -6446,6 +6500,10 @@ async fn code_start(axum::Extension(svc): Svc, Json(b): Json<CodeBody>) -> Respo
             external.as_ref(),
             &stop,
         );
+        // what it used of the model is recorded whether or not the owner stopped it: the tokens were spent either way
+        if let Ok(o) = &result {
+            svc2.record_model_use(o.usage.as_ref());
+        }
         if svc2.stop_switch_done(&id2) {
             // the owner stopped it: no patch is offered, whether or not the runner could end early
             result = Err(kk_review::job::STOPPED_BY_OWNER.into());
@@ -6464,7 +6522,11 @@ async fn code_start(axum::Extension(svc): Svc, Json(b): Json<CodeBody>) -> Respo
         drop(g);
         svc2.log_event("code.finished", &id2, &[]);
     });
-    (StatusCode::ACCEPTED, Json(json!({"id": id}))).into_response()
+    (
+        StatusCode::ACCEPTED,
+        Json(json!({"id": id, "model": questions::where_the_model_is(&svc)})),
+    )
+        .into_response()
 }
 
 async fn code_list(axum::Extension(svc): Svc) -> Json<Value> {
@@ -6641,6 +6703,8 @@ async fn models_list(axum::Extension(svc): Svc) -> Response {
         "current": route["model"],
         "installed": installed,
         "can_choose": here && installed.len() > 1,
+        "stays_here": here,
+        "class": route["class"],
     }))
     .into_response()
 }
@@ -7461,6 +7525,21 @@ impl Service {
             self.log_event("agent.lease.refunded", tool, &[]);
         }
         json!({"refunded": gave == 1})
+    }
+
+    /// Adds what a project question or a coding task used of the model to the usage ledger, as one line.
+    pub(super) fn record_model_use(&self, used: Option<&crate::questions::ModelUse>) {
+        if let Some(u) = used.filter(|u| u.calls > 0) {
+            self.record_usage(
+                &u.route,
+                &u.class,
+                u.simulated,
+                u.prompt_tokens,
+                u.prompt_tokens + u.completion_tokens > 0,
+                u.completion_tokens,
+                u.elapsed_ms as i64,
+            );
+        }
     }
 
     /// Adds one finished reply to the usage ledger: which route answered, how many tokens went in and came out and whether

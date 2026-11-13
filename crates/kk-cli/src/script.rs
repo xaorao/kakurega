@@ -239,9 +239,7 @@ pub fn sessions(args: &[String]) -> u8 {
 
 pub fn findings(args: &[String]) -> u8 {
     let json_mode = args.iter().any(|a| a == "--json");
-    let Some(job) = args.iter().skip(1).find(|a| {
-        !a.starts_with("--") && Some((*a).as_str()) != crate::flag(args, "--data-dir").as_deref()
-    }) else {
+    let Some(job) = positional(args, 1, &[]).into_iter().next() else {
         return fail(json_mode, USAGE, "usage: kaku findings JOB [--json]");
     };
     if !job.starts_with("job-") || job.len() > 24 || !job[4..].chars().all(|c| c.is_ascii_digit()) {
@@ -360,11 +358,7 @@ fn follow_job(http: &Http, id: &str, json_mode: bool, timeout: u64) -> u8 {
 /// `kaku follow JOB`: watch a review that is already running (or finished) until it ends.
 pub fn follow(args: &[String]) -> u8 {
     let json_mode = args.iter().any(|a| a == "--json");
-    let Some(job) = args.iter().skip(1).find(|a| {
-        !a.starts_with("--")
-            && Some((*a).as_str()) != crate::flag(args, "--data-dir").as_deref()
-            && Some((*a).as_str()) != crate::flag(args, "--timeout").as_deref()
-    }) else {
+    let Some(job) = positional(args, 1, &["--timeout"]).into_iter().next() else {
         return fail(
             json_mode,
             USAGE,
@@ -390,12 +384,9 @@ pub fn follow(args: &[String]) -> u8 {
 
 pub fn review(args: &[String]) -> u8 {
     let json_mode = args.iter().any(|a| a == "--json");
-    let dir_arg = args.iter().skip(1).find(|a| {
-        !a.starts_with("--")
-            && Some((*a).as_str()) != crate::flag(args, "--for").as_deref()
-            && Some((*a).as_str()) != crate::flag(args, "--data-dir").as_deref()
-            && Some((*a).as_str()) != crate::flag(args, "--timeout").as_deref()
-    });
+    let dir_arg = positional(args, 1, &["--for", "--timeout"])
+        .into_iter()
+        .next();
     let (Some(dir_arg), Some(recipient)) = (dir_arg, crate::flag(args, "--for")) else {
         return fail(
             json_mode,
@@ -454,11 +445,7 @@ fn unchecked_lines(v: &Value) -> Vec<String> {
 pub fn ask(args: &[String]) -> u8 {
     let json_mode = args.iter().any(|a| a == "--json");
     let folder = crate::flag(args, "--folder");
-    let question = args.iter().skip(1).find(|a| {
-        !a.starts_with("--")
-            && Some((*a).as_str()) != folder.as_deref()
-            && Some((*a).as_str()) != crate::flag(args, "--data-dir").as_deref()
-    });
+    let question = positional(args, 1, &["--folder"]).into_iter().next();
     let (Some(question), Some(folder)) = (question, folder) else {
         return fail(
             json_mode,
@@ -564,11 +551,7 @@ pub fn chat(args: &[String]) -> u8 {
             );
         }
     }
-    let arg = args.iter().skip(1).find(|a| {
-        (!a.starts_with("--") || a.as_str() == "-")
-            && Some((*a).as_str()) != crate::flag(args, "--data-dir").as_deref()
-            && Some((*a).as_str()) != session.as_deref()
-    });
+    let arg = positional(args, 1, &["--session"]).into_iter().next();
     let message = match arg.map(String::as_str) {
         Some("-") | None if !std::io::stdin().is_terminal() => {
             let mut buf = String::new();
@@ -682,11 +665,7 @@ pub fn conversation_markdown(id: &str, turns: &[Value]) -> String {
 /// readable by the owner only).
 fn session_export(args: &[String]) -> u8 {
     let out_path = crate::flag(args, "--out");
-    let Some(id) = args.iter().find(|a| {
-        !a.starts_with("--")
-            && Some((*a).as_str()) != crate::flag(args, "--data-dir").as_deref()
-            && Some((*a).as_str()) != out_path.as_deref()
-    }) else {
+    let Some(id) = positional(args, 0, &["--out"]).into_iter().next() else {
         return fail(false, USAGE, "usage: kaku sessions export ID [--out FILE]");
     };
     if !session_id_ok(id) {
@@ -745,20 +724,42 @@ fn session_export(args: &[String]) -> u8 {
 
 /// The words of a command that are not flags or flag values, after the command name.
 fn plain_words(args: &[String], with_value: &[&str]) -> Vec<String> {
+    positional(args, 1, with_value)
+        .into_iter()
+        .cloned()
+        .collect()
+}
+
+/// The words of a command that are not flags or a flag's value, in order from `from`. The service's flags (`WITH_VALUE`) and
+/// the command's own flags that take a value are skipped with their value wherever they stand, so `--route near` before a
+/// question is never read as the question.
+fn positional<'a>(args: &'a [String], from: usize, own: &[&str]) -> Vec<&'a String> {
     let mut out = Vec::new();
-    let mut i = 1;
+    let mut i = from;
     while i < args.len() {
         let a = &args[i];
-        if with_value.contains(&a.as_str()) {
+        if WITH_VALUE.contains(&a.as_str()) || own.contains(&a.as_str()) {
             i += 2;
             continue;
         }
         if !a.starts_with("--") {
-            out.push(a.clone());
+            out.push(a);
         }
         i += 1;
     }
     out
+}
+
+/// Where an agent that reads the project works, in the words of its start line.
+fn agent_place(model: &Value) -> String {
+    if model["stays_here"] == false {
+        format!(
+            "the agent reads the project with the model in confidential hardware at {}, which is given the files it reads",
+            clean(model["host"].as_str().unwrap_or("another computer"))
+        )
+    } else {
+        "the agent reads the project on this computer".into()
+    }
 }
 
 const CODE_USAGE: &str = "usage: kaku code DIR TASK... [--json] [--timeout SECONDS]\n       kaku code show ID | apply ID --digest DIGEST | undo ID | list";
@@ -1009,11 +1010,15 @@ pub fn code(args: &[String]) -> u8 {
                     ),
                     202,
                 ) {
-                    Ok(v) => clean(v["id"].as_str().unwrap_or("")),
+                    Ok(v) => (
+                        clean(v["id"].as_str().unwrap_or("")),
+                        agent_place(&v["model"]),
+                    ),
                     Err(c) => return c,
                 };
+                let (id, place) = id;
                 say(json_mode, &json!({"event": "started", "task": id}), || {
-                    format!("{id} started; nothing on disk changes until you apply it")
+                    format!("{id} started; {place}; nothing on disk changes until you apply it")
                 });
                 let started = Instant::now();
                 let mut shown = 0usize;
@@ -1091,11 +1096,7 @@ pub fn roundtable(args: &[String]) -> u8 {
     let json_mode = args.iter().any(|a| a == "--json");
     let list = args.iter().any(|a| a == "--list");
     let experts = crate::flag(args, "--experts");
-    let question = args.iter().skip(1).find(|a| {
-        !a.starts_with("--")
-            && Some((*a).as_str()) != crate::flag(args, "--data-dir").as_deref()
-            && Some((*a).as_str()) != experts.as_deref()
-    });
+    let question = positional(args, 1, &["--experts"]).into_iter().next();
     let usage = "usage: kaku roundtable QUESTION --experts ID,ID[,ID...] [--json]   (kaku roundtable --list names the experts)";
     if !list && (question.is_none() || experts.is_none()) {
         return fail(json_mode, USAGE, usage);
@@ -1871,7 +1872,7 @@ fn print_question(v: &Value) {
     }
 }
 
-/// `kaku explore DIR QUESTION`: an agent reads the project on this computer and answers; every line its answer rests on is
+/// `kaku explore DIR QUESTION`: an agent reads the project (with the model here or in confidential hardware) and answers; every line its answer rests on is
 /// checked against the file. Exit 0 when every line was found, 3 when the answer rests on a line that was not, or on none.
 pub fn explore(args: &[String]) -> u8 {
     let json_mode = args.iter().any(|a| a == "--json");
@@ -2016,7 +2017,10 @@ pub fn explore(args: &[String]) -> u8 {
                     202,
                 ) {
                     Ok(v) => (
-                        clean(v["id"].as_str().unwrap_or("")),
+                        (
+                            clean(v["id"].as_str().unwrap_or("")),
+                            agent_place(&v["model"]),
+                        ),
                         v["forgotten"]
                             .as_array()
                             .map(|a| {
@@ -2028,12 +2032,12 @@ pub fn explore(args: &[String]) -> u8 {
                     ),
                     Err(c) => return c,
                 };
-                let (id, forgotten) = id;
+                let ((id, place), forgotten) = id;
                 say(
                     json_mode,
                     &json!({"event": "started", "question": id, "forgotten": forgotten}),
                     || {
-                        let mut line = format!("{id} started; the agent reads the project on this computer, and nothing is changed");
+                        let mut line = format!("{id} started; {place}, and nothing is changed");
                         if !forgotten.is_empty() {
                             line.push_str(&format!(
                                 "\n100 questions are kept: {} {} forgotten to make room",
@@ -2083,6 +2087,64 @@ pub fn explore(args: &[String]) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ex02_the_service_flags_and_their_values_are_never_read_as_a_commands_input_wherever_they_stand(
+    ) {
+        let a = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let near = [
+            "--route",
+            "near",
+            "--near-model",
+            "Qwen/Qwen3.8-27B",
+            "--near-key-file",
+            "/home/me/.secrets/near-ai.env",
+        ];
+        // before, between and after the words: only the words are left
+        let mut explore = vec!["explore"];
+        explore.extend(near);
+        explore.extend(["proj", "Where", "--depth", "quick", "is", "logout?"]);
+        explore.extend(["--data-dir", "/d"]);
+        assert_eq!(
+            plain_words(&a(&explore), &["--depth"]),
+            a(&["proj", "Where", "is", "logout?"])
+        );
+        let mut chat = vec!["chat"];
+        chat.extend(near);
+        chat.push("hello there");
+        assert_eq!(
+            positional(&a(&chat), 1, &["--session"]),
+            vec![&"hello there".to_string()]
+        );
+        let mut review = vec!["review", "--route", "near", "--for", "Acme", "proj"];
+        review.extend(["--outside-model", "m", "--near-url", "https://x"]);
+        assert_eq!(
+            positional(&a(&review), 1, &["--for", "--timeout"]),
+            vec![&"proj".to_string()]
+        );
+        // a flag the command does not take a value for leaves the next word a word
+        assert_eq!(
+            positional(&a(&["chat", "--keep", "hi"]), 1, &["--session"]),
+            vec![&"hi".to_string()]
+        );
+    }
+
+    #[test]
+    fn ex03_the_start_line_says_where_the_agents_model_is() {
+        assert_eq!(
+            agent_place(&json!({"stays_here": true})),
+            "the agent reads the project on this computer"
+        );
+        let away = agent_place(
+            &json!({"stays_here": false, "class": "verified_tee", "host": "cloud-api.near.ai\u{1b}[2J"}),
+        );
+        assert!(
+            away.contains("confidential hardware at cloud-api.near.ai")
+                && away.contains("given the files it reads")
+                && !away.contains('\u{1b}'),
+            "{away}"
+        );
+    }
 
     #[test]
     fn ex_busy_the_limit_on_reviews_running_at_once_is_a_refusal_with_the_services_own_words_not_a_crash(

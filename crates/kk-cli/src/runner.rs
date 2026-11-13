@@ -124,6 +124,155 @@ impl Route for Stoppable {
     }
 }
 
+/// A route that adds up what it was used for: calls, tokens and time, for the usage record of a project question or a coding
+/// task. Everything else about it is the route inside.
+struct Counting {
+    inner: Box<dyn Route>,
+    used: std::sync::Arc<std::sync::Mutex<kk_service::questions::ModelUse>>,
+}
+
+impl Counting {
+    fn wrap(
+        inner: Box<dyn Route>,
+    ) -> (
+        Box<dyn Route>,
+        std::sync::Arc<std::sync::Mutex<kk_service::questions::ModelUse>>,
+    ) {
+        let used = std::sync::Arc::new(std::sync::Mutex::new(kk_service::questions::ModelUse {
+            route: inner.id().to_string(),
+            class: inner.class().as_str().to_string(),
+            simulated: inner.evidence().simulated,
+            ..Default::default()
+        }));
+        (
+            Box::new(Counting {
+                inner,
+                used: used.clone(),
+            }),
+            used,
+        )
+    }
+}
+
+impl Route for Counting {
+    fn id(&self) -> &str {
+        self.inner.id()
+    }
+    fn class(&self) -> RouteClass {
+        self.inner.class()
+    }
+    fn tee_verified(&self) -> bool {
+        self.inner.tee_verified()
+    }
+    fn reply_key_bound(&self) -> bool {
+        self.inner.reply_key_bound()
+    }
+    fn evidence(&self) -> kk_route::RouteEvidence {
+        self.inner.evidence()
+    }
+    fn complete(
+        &self,
+        request: &kk_route::CompletionRequest,
+    ) -> Result<kk_route::Completion, kk_route::RouteError> {
+        let started = std::time::Instant::now();
+        let answer = self.inner.complete(request);
+        if let Ok(c) = &answer {
+            let mut u = self.used.lock().expect("lock");
+            u.calls += 1;
+            u.prompt_tokens += c.prompt_tokens;
+            u.completion_tokens += c.completion_tokens;
+            u.elapsed_ms += started.elapsed().as_millis() as u64;
+        }
+        answer
+    }
+}
+
+fn used_so_far(
+    used: &std::sync::Arc<std::sync::Mutex<kk_service::questions::ModelUse>>,
+) -> Option<kk_service::questions::ModelUse> {
+    Some(used.lock().expect("lock").clone())
+}
+
+/// How long a reading of NEAR AI Cloud's published prices is used before it is read again.
+const PRICES_FRESH: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// NEAR AI Cloud's published prices for every model, from its public model list (no key, nothing of the owner's sent), read
+/// at most once an hour; a failed reading is not kept, so the next look tries again.
+fn published_prices_cached(base: &str) -> Value {
+    static CACHE: std::sync::Mutex<Option<(String, std::time::Instant, Value)>> =
+        std::sync::Mutex::new(None);
+    if let Some((b, at, v)) = CACHE.lock().expect("lock").as_ref() {
+        if b == base && at.elapsed() < PRICES_FRESH {
+            return v.clone();
+        }
+    }
+    let v = match read_published_prices(base) {
+        Ok(v) => v,
+        Err(why) => return json!({"error": why}),
+    };
+    *CACHE.lock().expect("lock") = Some((base.to_string(), std::time::Instant::now(), v.clone()));
+    v
+}
+
+fn read_published_prices(base: &str) -> Result<Value, String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(15)))
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let list = format!(
+        "{}/{}",
+        base.trim_end_matches('/'),
+        kk_near::prices::LIST_PATH
+    );
+    let mut prices = Vec::new();
+    let mut offset = 0u64;
+    // a list of a few hundred models at most; more pages than this is not a price list
+    for _ in 0..10 {
+        let mut r = agent
+            .get(&format!("{list}?limit=100&offset={offset}"))
+            .call()
+            .map_err(|e| format!("could not reach {}: {e}", host_of(base)))?;
+        if r.status().as_u16() != 200 {
+            return Err(format!(
+                "{} answered {}",
+                host_of(base),
+                r.status().as_u16()
+            ));
+        }
+        let page: Value = r
+            .body_mut()
+            .with_config()
+            .limit(4 * 1024 * 1024)
+            .read_json()
+            .map_err(|_| format!("{} did not answer with a model list", host_of(base)))?;
+        prices.extend(kk_near::prices::parse_list(&page));
+        match kk_near::prices::next_offset(&page) {
+            Some(next) => offset = next,
+            None => break,
+        }
+    }
+    if prices.is_empty() {
+        return Err(format!("{} gave no prices", host_of(base)));
+    }
+    Ok(json!({
+        "source": list,
+        "read_at": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+        "prices": prices.iter().map(|p| json!({"model": p.model, "currency": p.currency, "input_per_million": p.input_per_million, "output_per_million": p.output_per_million, "cached_input_per_million": p.cached_input_per_million})).collect::<Vec<_>>(),
+    }))
+}
+
+fn host_of(base: &str) -> String {
+    base.split("://")
+        .nth(1)
+        .unwrap_or(base)
+        .split('/')
+        .next()
+        .unwrap_or("NEAR AI Cloud")
+        .to_string()
+}
+
 /// The one NEAR route, shared by everything that asks it a question.
 struct SharedNear(std::sync::Arc<kk_near::route::NearRoute>);
 
@@ -786,21 +935,21 @@ cut_short: false,
                     .into(),
             );
         }
-        // the task reads the whole project, so the model it asks must be on this computer
-        if !address_is_this_computer(&self.ollama) {
+        // the task reads the whole project, so it works with the review's model: NEAR AI Cloud's confidential hardware when
+        // the owner chose it, else the model on this computer, never the unproven outside model
+        if self.remote.get().is_none() && !address_is_this_computer(&self.ollama) {
             return Err(
                 "the local model's address is not on this computer, so a coding task is not run"
                     .into(),
             );
         }
         // once the owner asks for a stop the model is not asked again, so the task ends at its next step
-        let route = Stoppable::wrap(
-            Box::new(
-                self.route()
-                    .map_err(|e| model_failure(e, &self.model_name(), &self.ollama))?,
-            ),
+        let (route, used) = Counting::wrap(Stoppable::wrap(
+            self.review_route()
+                .map_err(|e| model_failure(e, &self.model_name(), &self.ollama))?,
             stop,
-        );
+        ));
+        let route_name = route.id().to_string();
         let (mut ws, left) = Workspace::from_imported(files);
         let runner = detect_runner(ws.files());
         let tester = runner.map(|r| SandboxTester {
@@ -828,7 +977,22 @@ cut_short: false,
             external,
         );
         if stop.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(kk_review::job::STOPPED_BY_OWNER.into());
+            // nothing is offered (the service ends it as stopped by the owner); what it used of the model is still recorded
+            return Ok(kk_service::coding::CodeOutcome {
+                ending: "Stopped".into(),
+                summary: kk_review::job::STOPPED_BY_OWNER.into(),
+                turns: report.turns,
+                steps: Default::default(),
+                step_args: Default::default(),
+                step_labels: Default::default(),
+                test_runs: Default::default(),
+                kernel_test: None,
+                test_command: None,
+                changes: Default::default(),
+                left_restricted: left.restricted,
+                route: route_name,
+                usage: used_so_far(&used),
+            });
         }
         progress("the tests run again on the final files, by the kernel");
         let kernel_test = tester.as_ref().map(|t| t.run(ws.files()));
@@ -844,7 +1008,8 @@ cut_short: false,
             test_command: tester.as_ref().map(|t| t.command()),
             changes: ws.changes(),
             left_restricted: left.restricted,
-            route: format!("ollama:{}", self.model_name()),
+            route: route_name,
+            usage: used_so_far(&used),
         })
     }
 
@@ -858,8 +1023,12 @@ cut_short: false,
     ) -> Result<kk_service::questions::QuestionOutcome, String> {
         use kk_review::code::Workspace;
         use kk_review::explore::{run_question, SandboxScripts};
-        // the agent reads the whole project, so the model it asks must be on this computer whatever route answers chat
-        if self.scripted.is_none() && !address_is_this_computer(&self.ollama) {
+        // the agent reads the whole project, so it works with the review's model: NEAR AI Cloud's confidential hardware when
+        // the owner chose it (its proof checked first), else the model on this computer, never the unproven outside model
+        if self.scripted.is_none()
+            && self.remote.get().is_none()
+            && !address_is_this_computer(&self.ollama)
+        {
             return Err("the local model's address is not on this computer, so a question about a project is not answered".into());
         }
         let (mut ws, left) = Workspace::from_imported(files);
@@ -867,17 +1036,16 @@ cut_short: false,
         ws.lone_returns_as_lines();
         // the scripted test model works through the same agent with fixed steps: it lists, reads the first source file,
         // runs one script, and answers resting on that file's first line and on one line it made up
-        let route: Box<dyn kk_route::Route> = if self.scripted.is_some() {
+        let (route, used) = Counting::wrap(if self.scripted.is_some() {
             Box::new(scripted_question_route(&ws))
         } else {
             Stoppable::wrap(
-                Box::new(
-                    self.route()
-                        .map_err(|e| model_failure(e, &self.model_name(), &self.ollama))?,
-                ),
+                self.review_route()
+                    .map_err(|e| model_failure(e, &self.model_name(), &self.ollama))?,
                 stop,
             )
-        };
+        });
+        let route_name = route.id().to_string();
         progress(&match left.restricted {
             0 => kk_types::words::counted(&format!("the model reads {} file(s)", ws.files().len())),
             1 => kk_types::words::counted(&format!("the model reads {} file(s); 1 is withheld because it holds secrets or private data", ws.files().len())),
@@ -910,10 +1078,23 @@ cut_short: false,
             route: if self.scripted.is_some() {
                 "scripted-test-model".into()
             } else {
-                format!("ollama:{}", self.model_name())
+                route_name
             },
             elapsed_ms: started.elapsed().as_millis() as u64,
+            usage: used_so_far(&used),
         })
+    }
+
+    fn published_prices(&self) -> Option<Value> {
+        if self.scripted.is_some() {
+            return None;
+        }
+        let base = self
+            .remote
+            .get()
+            .map(|n| n.base_url().to_string())
+            .unwrap_or_else(|| kk_near::sdk::DEFAULT_NEAR_AI_CLOUD_BASE_URL.to_string());
+        Some(published_prices_cached(&base))
     }
 
     fn local_models(&self) -> Vec<String> {

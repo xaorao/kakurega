@@ -181,24 +181,25 @@ impl Service {
     /// listed with the other reviews, runs in the sandbox, and can be stopped), and what it could reproduce becomes the
     /// task's result. True when the owner stopped the run while it worked.
     ///
-    /// The findings are words about the owner's files, so they are handed on only while the model the other experts use
-    /// is on this computer; a review's findings otherwise leave only through a release the owner approves.
+    /// The findings are words about the owner's files, so they are handed on only to experts whose model is on this computer
+    /// or in confidential hardware whose proof is checked (the levels a review itself may run at), and the run is then held
+    /// at that level: never handed to a hosted model with no hardware proof, however the model is changed later. Otherwise a
+    /// review's findings leave only through a release the owner approves.
     fn team_review_task(self: &Arc<Self>, id: &str, n: usize, run: &RunRow) -> bool {
         let fail = |why: &str| self.team_set_task(id, n, State::Failed, "", why, "");
-        if self.runner.route_info()["class"] != "device_only" {
-            fail("the model in use is not on this computer, and a review's findings are handed to other experts only when it is; choose the model on this computer in Settings, or start a review yourself");
+        let level = self.route_level();
+        if level < 2 {
+            fail("the model in use is neither on this computer nor in confidential hardware whose proof is checked, and a review's findings are handed only to such experts; choose one in Settings, or start a review yourself");
             return false;
         }
         let Some(folder) = self.team_project_folder(run.project.as_deref()) else {
             fail("the run's project has no folder this program may read; give the project a folder under Projects and plan again");
             return false;
         };
-        // from here the run holds words about the owner's files: it is marked as held on this computer, so neither a later
-        // task nor the closing answer goes to a model elsewhere, however the model is changed in between
-        if !self.team_hold_here(id) {
-            fail(
-                "the run could not be marked as held on this computer, so the project was not read",
-            );
+        // from here the run holds words about the owner's files: it is held at this model's level, so neither a later task
+        // nor the closing answer goes to a less private model, however the model is changed in between
+        if !self.team_hold_at(id, level) {
+            fail("the run could not be marked as held at this model's level, so the project was not read");
             return false;
         }
         let job = match self.start_job(&folder.to_string_lossy(), &format!("team run {id}")) {
@@ -298,11 +299,16 @@ impl Service {
     /// about the owner's files: it is made only with the model on this computer, and the run is held on this computer from
     /// then on. True when the owner stopped the run while it worked.
     /// Marks a run as holding material of this computer; false when the mark could not be written.
-    fn team_hold_here(&self, id: &str) -> bool {
+    /// Holds the run at `level` (3 this computer, 2 confidential hardware): it never goes to a model of a lower level after this.
+    /// A run held higher already stays there.
+    fn team_hold_at(&self, id: &str, level: i64) -> bool {
         let store = self.store.lock().expect("lock");
         store
             .connection()
-            .execute("UPDATE team_runs SET held = 3 WHERE id = ?1", [id])
+            .execute(
+                "UPDATE team_runs SET held = MAX(COALESCE(held, 0), ?2) WHERE id = ?1",
+                kk_vault::rusqlite::params![id, level],
+            )
             .is_ok_and(|n| n == 1)
     }
 
@@ -314,18 +320,23 @@ impl Service {
         question: &str,
     ) -> bool {
         let fail = |why: &str| self.team_set_task(id, n, State::Failed, "", why, "");
-        if self.route_for_owner()["stays_here"] != true {
-            fail("the model in use is not on this computer, and the code reader reads the project's files only with a model on this computer; choose it in Settings");
+        let level = self.route_level();
+        if level < 2 {
+            fail("the model in use is neither on this computer nor in confidential hardware whose proof is checked, and what the code reader finds in the project's files is handed only to such experts; choose one in Settings");
             return false;
         }
         let Some(folder) = self.team_project_folder(run.project.as_deref()) else {
             fail("the run's project has no folder this program may read; give the project a folder under Projects and plan again");
             return false;
         };
-        if !self.team_hold_here(id) {
-            fail(
-                "the run could not be marked as held on this computer, so the project was not read",
-            );
+        // a project kept more privately than the model in use is not read, and on a model elsewhere the signed log records
+        // the reader before any file is sent, as for a question about a project asked on its own
+        if let Some((_, _, why)) = self.agent_check("question", &folder) {
+            fail(&why);
+            return false;
+        }
+        if !self.team_hold_at(id, level) {
+            fail("the run could not be marked as held at this model's level, so the project was not read");
             return false;
         }
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -353,6 +364,9 @@ impl Service {
             &stop,
         );
         done.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Ok(o) = &result {
+            self.record_model_use(o.usage.as_ref());
+        }
         if stop.load(std::sync::atomic::Ordering::SeqCst) {
             return true;
         }

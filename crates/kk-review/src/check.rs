@@ -336,6 +336,62 @@ pub fn ts_closure(
     script_closure(entry, files, &TS_EXTENSIONS)
 }
 
+/// How the files a cited file reaches are found, for one language.
+type Closure = fn(&str, &BTreeMap<String, &ImportedFile>) -> Result<Vec<String>, ClosureError>;
+
+/// The files put in the sandbox for a finding's check: the cited file's closure, joined with the closure of every project file
+/// the reproducer itself imports by a literal name. A check that goes through another part of the project (the handler in
+/// front of the cited code, say) then finds that part. A withheld file is refused whichever way it is reached, and a name
+/// that is not a project file adds nothing. Rust builds the whole crate already.
+pub fn reproducer_sample(
+    finding: &Finding,
+    files: &BTreeMap<String, &ImportedFile>,
+) -> Result<Vec<String>, ClosureError> {
+    let (closure, named): (Closure, Vec<String>) = match finding.language {
+        Language::Python => (python_closure, {
+            let mut named = Vec::new();
+            for m in imports_of(&finding.reproducer) {
+                let parts: Vec<&str> = m.split('.').collect();
+                for n in 1..=parts.len() {
+                    named.extend(
+                        module_paths(&parts[..n].join("."))
+                            .into_iter()
+                            .filter(|p| files.contains_key(p)),
+                    );
+                }
+            }
+            named
+        }),
+        Language::JavaScript | Language::TypeScript => {
+            let exts: &[&str] = if finding.language == Language::JavaScript {
+                &JS_EXTENSIONS
+            } else {
+                &TS_EXTENSIONS
+            };
+            // the reproducer runs from the project's top folder, so its relative names start there
+            let named = js_specifiers(&finding.reproducer)
+                .iter()
+                .filter(|s| s.starts_with('.'))
+                .filter_map(|s| script_resolve("repro", s, files, exts))
+                .collect();
+            let closure: Closure = if finding.language == Language::JavaScript {
+                js_closure
+            } else {
+                ts_closure
+            };
+            (closure, named)
+        }
+        Language::Rust => return rust_closure(&finding.file, files),
+    };
+    let mut all: BTreeSet<String> = closure(&finding.file, files)?.into_iter().collect();
+    for path in named {
+        if !all.contains(&path) {
+            all.extend(closure(&path, files)?);
+        }
+    }
+    Ok(all.into_iter().collect())
+}
+
 /// The files the compiler needs to build the crate a Rust finding is in: its whole module tree.
 pub fn rust_closure(
     entry: &str,
@@ -527,13 +583,7 @@ pub fn run_reproducer(
             sample_paths: vec![],
         };
     }
-    let closure = match finding.language {
-        Language::Python => python_closure(&finding.file, files),
-        Language::JavaScript => js_closure(&finding.file, files),
-        Language::TypeScript => ts_closure(&finding.file, files),
-        Language::Rust => rust_closure(&finding.file, files),
-    };
-    let sample_paths = match closure {
+    let sample_paths = match reproducer_sample(finding, files) {
         Ok(p) => p,
         Err(ClosureError::NeedsRestrictedFile(p)) => {
             return CheckResult {

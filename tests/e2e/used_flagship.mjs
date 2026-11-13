@@ -14,7 +14,10 @@ import { homedir } from "node:os";
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../..");
 const model = process.argv[2] ?? "qwen2.5-coder:7b";
-const work = join(repo, "target/used-flagship");
+// KAKU_TEST_NEAR_MODEL and KAKU_TEST_NEAR_KEY_FILE run the model work on NEAR AI Cloud's confidential hardware instead
+const nearModel = process.env.KAKU_TEST_NEAR_MODEL;
+const near = nearModel ? ["--route", "near", "--near-model", nearModel, "--near-key-file", process.env.KAKU_TEST_NEAR_KEY_FILE ?? ""] : [];
+const work = join(repo, nearModel ? "target/used-flagship-near" : "target/used-flagship");
 rmSync(work, { recursive: true, force: true });
 const root = join(work, "root");
 const project = join(root, "payments-service");
@@ -32,7 +35,7 @@ const check = (name, ok, detail = "") => {
   ok ? passed++ : failed++;
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${!ok && detail ? `  ${detail}` : ""}`);
 };
-const server = spawn(kaku, ["serve", "--data-dir", data, "--root", root, "--model", model, "--ui-dir", join(repo, "apps/web/dist")], { stdio: ["ignore", "pipe", "pipe"] });
+const server = spawn(kaku, ["serve", "--data-dir", data, "--root", root, "--model", model, ...near, "--ui-dir", join(repo, "apps/web/dist")], { stdio: ["ignore", "pipe", "pipe"] });
 process.on("exit", () => { try { server.kill(); } catch {} });
 let log = "";
 server.stdout.on("data", (d) => (log += d));
@@ -61,7 +64,8 @@ try {
   const skip = page.getByRole("button", { name: "Skip the rest" });
   if (await skip.count()) await skip.click();
   const badges = await page.locator(".badges").innerText();
-  check("the header says the model runs on this computer and names it", /Private: model runs on this computer/.test(badges) && badges.includes(model), badges);
+  if (nearModel) check("the header says the model runs on NEAR AI's confidential hardware and names it", /Private: NEAR AI confidential hardware/.test(badges) && badges.includes(nearModel), badges);
+  else check("the header says the model runs on this computer and names it", /Private: model runs on this computer/.test(badges) && badges.includes(model), badges);
 
   // ---- a review, start to delivered capsule ----
   await page.getByRole("button", { name: "payments-service" }).click();
@@ -115,7 +119,12 @@ try {
   check("the recipient's web page accepts the same capsule", /Not established/.test(await v.locator("main").innerText()));
   await v.close();
   const out = await page.evaluate(async () => (await (await fetch("/api/outbound")).json()));
-  check("the list of what left this computer names the release and nothing else", (out.rows ?? []).length === 1 && out.rows[0].what === "release" && out.totals?.model === 0, JSON.stringify(out).slice(0, 300));
+  if (nearModel) {
+    check("the capsule carries answers signed by the NEAR model's own key", /Model answers signed by their model \(\d+\)/.test(cli.stdout) && cli.stdout.includes(nearModel), cli.stdout.slice(0, 400));
+    check("the list of what left this computer names the release and the review's questions to the confidential model, and nothing else", (out.rows ?? []).some((r) => r.what === "release") && (out.rows ?? []).some((r) => r.what === "review" && r.to === "verified_tee") && (out.rows ?? []).every((r) => ["release", "review", "model"].includes(r.what)), JSON.stringify(out).slice(0, 400));
+  } else {
+    check("the list of what left this computer names the release and nothing else", (out.rows ?? []).length === 1 && out.rows[0].what === "release" && out.totals?.model === 0, JSON.stringify(out).slice(0, 300));
+  }
 
   // ---- a question about an attached contract ----
   await page.goto(base + "/#/chat");

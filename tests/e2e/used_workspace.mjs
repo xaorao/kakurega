@@ -14,7 +14,10 @@ import { homedir } from "node:os";
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../..");
 const model = process.argv[2] ?? "qwen2.5-coder:7b";
-const work = join(repo, "target/used-workspace");
+// KAKU_TEST_NEAR_MODEL and KAKU_TEST_NEAR_KEY_FILE run the model work on NEAR AI Cloud's confidential hardware instead
+const nearModel = process.env.KAKU_TEST_NEAR_MODEL;
+const near = nearModel ? ["--route", "near", "--near-model", nearModel, "--near-key-file", process.env.KAKU_TEST_NEAR_KEY_FILE ?? ""] : [];
+const work = join(repo, nearModel ? "target/used-workspace-near" : "target/used-workspace");
 rmSync(work, { recursive: true, force: true });
 const root = join(work, "root");
 const project = join(root, "payments-service");
@@ -33,7 +36,7 @@ const check = (name, ok, detail = "") => {
   ok ? passed++ : failed++;
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${!ok && detail ? `  ${detail}` : ""}`);
 };
-const server = spawn(join(repo, "target/debug/kaku"), ["serve", "--data-dir", join(work, "data"), "--root", root, "--model", model, "--ui-dir", join(repo, "apps/web/dist")], { stdio: ["ignore", "pipe", "pipe"] });
+const server = spawn(join(repo, "target/debug/kaku"), ["serve", "--data-dir", join(work, "data"), "--root", root, "--model", model, ...near, "--ui-dir", join(repo, "apps/web/dist")], { stdio: ["ignore", "pipe", "pipe"] });
 process.on("exit", () => { try { server.kill(); } catch {} });
 let log = "";
 server.stdout.on("data", (d) => (log += d));
@@ -146,7 +149,13 @@ await step("team with the project reviewer", async () => {
   const left = await page.locator("main").innerText();
   const leftCard = flat(await page.locator("section, .card", { has: page.getByRole("heading", { name: "What left this computer" }) }).last().innerText());
   // what was kept from the model is listed as held back; nothing is listed as sent
-  check("team: after all of it, the list holds only what was held back, nothing that was sent", /held back/.test(leftCard) && !/\b(sent to|released|searched|fetched|model elsewhere)\b/i.test(leftCard.split("the log holds no words.")[1] ?? ""), leftCard.slice(-500));
+  if (nearModel) {
+    // what went out went to the confidential model only: no release, no search, no page, no outside program
+    const out = await page.evaluate(async () => (await (await fetch("/api/outbound")).json()));
+    check("team: after all of it, what left went only to the confidential model, and what was kept back is listed as held back", /held back/.test(leftCard) && (out.rows ?? []).length > 0 && (out.rows ?? []).every((r) => ["model", "review", "gap", "held"].includes(r.what) || r.what === "held_back"), JSON.stringify(out).slice(0, 500));
+  } else {
+    check("team: after all of it, the list holds only what was held back, nothing that was sent", /held back/.test(leftCard) && !/\b(sent to|released|searched|fetched|model elsewhere)\b/i.test(leftCard.split("the log holds no words.")[1] ?? ""), leftCard.slice(-500));
+  }
 });
 
 await step("a skill from a conversation", async () => {

@@ -13,6 +13,22 @@ pub struct QuestionOutcome {
     pub report: ExploreReport,
     pub route: String,
     pub elapsed_ms: u64,
+    /// What it used of the model, for the usage record; none from a runner that does not count.
+    #[serde(default)]
+    pub usage: Option<ModelUse>,
+}
+
+/// What a project question or a coding task used of the model: which route, how many calls and tokens, how long. For the
+/// usage record (and so the cost a model elsewhere charges); never any words.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelUse {
+    pub route: String,
+    pub class: String,
+    pub simulated: bool,
+    pub calls: u64,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub elapsed_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

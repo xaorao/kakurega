@@ -13,7 +13,7 @@ function label(kind: string): string {
 const DAY = 86_400;
 const day = (secs: number) => new Date(secs * 1000).toISOString().slice(0, 10);
 
-/** The prices the owner typed for a million tokens read and written, per model route. This program knows no provider's prices. */
+/** The prices the owner typed for a million tokens read and written, per model route. They come before NEAR's published price. */
 function Prices(props: { routes: string[]; onChange: () => void }) {
   const [list, { refetch }] = createResource(() => api.prices().then((r): RoutePrice[] | null => r.prices).catch(() => null));
   const [route, setRoute] = createSignal("");
@@ -74,9 +74,10 @@ function Prices(props: { routes: string[]; onChange: () => void }) {
   );
 }
 
-const money = (amount: number, currency: string) => `${currency} ${amount.toFixed(4)}`;
+/** Four decimals, or two significant digits for less than a cent, so a NEAR question that cost a few millionths does not read as nothing. */
+const money = (amount: number, currency: string) => `${currency} ${amount !== 0 && Math.abs(amount) < 0.01 ? amount.toFixed(Math.min(8, Math.max(0, 1 - Math.floor(Math.log10(Math.abs(amount)))))) : amount.toFixed(4)}`;
 
-/** What each model route answered over a range of days: replies, tokens in and out, how fast, and a cost where the owner typed a price. */
+/** What each model route answered over a range of days: replies, tokens in and out, how fast, and a cost at the owner's price or, for a NEAR AI Cloud model, at NEAR's published one. */
 function UsageCard() {
   const nowSecs = Math.floor(Date.now() / 1000);
   const [from, setFrom] = createSignal(day(nowSecs - 29 * DAY));
@@ -127,7 +128,7 @@ function UsageCard() {
                       <td>{r.prompt_tokens}{r.measured_turns < r.turns ? "*" : ""}</td>
                       <td>{r.reply_tokens}</td>
                       <td>{t("use.speed", { ms: r.avg_ms, tps: r.reply_tokens_per_second })}</td>
-                      <Show when={u().routes.some((x) => x.cost)}><td>{r.cost ? `${money(r.cost.amount, r.cost.currency)}${r.cost.tokens_estimated ? "*" : ""}` : "–"}</td></Show>
+                      <Show when={u().routes.some((x) => x.cost)}><td>{r.cost ? `${money(r.cost.amount, r.cost.currency)}${r.cost.tokens_estimated ? "*" : ""}${r.cost.source === "published" ? " †" : ""}` : <span title={r.price_unknown ?? undefined}>–</span>}</td></Show>
                     </tr>
                   )}
                 </For>
@@ -136,6 +137,12 @@ function UsageCard() {
             </table>
             </div>
             <p class="muted">{t("use.note")}</p>
+            <For each={u().routes.filter((r) => r.cost?.source === "published")}>
+              {(r) => <p class="muted use-published">{t("use.published", { route: r.route, in: money(r.cost!.input_per_million, r.cost!.currency), out: money(r.cost!.output_per_million, r.cost!.currency) })}</p>}
+            </For>
+            <For each={u().routes.filter((r) => r.price_unknown)}>
+              {(r) => <p class="muted">{t("use.priceUnknown", { route: r.route, why: r.price_unknown! })}</p>}
+            </For>
           </Show>
           <Prices routes={u().routes.filter((r) => !r.simulated).map((r) => r.route)} onChange={() => void refetchUsage()} />
           </>

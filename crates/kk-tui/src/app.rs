@@ -5564,8 +5564,12 @@ impl App {
                     for m in &installed {
                         lines.push(format!("  {} {m}", if *m == current { "*" } else { " " }));
                     }
+                } else if body["class"] == "verified_tee" {
+                    lines.push("On NEAR AI Cloud, in confidential hardware. /route near MODEL answers with another of its confidential models; /route local [MODEL] with one on this computer.".to_string());
+                } else if body["stays_here"] == false {
+                    lines.push("Not on this computer. /route local [MODEL] answers with a model on this computer instead.".to_string());
                 } else {
-                    lines.push("Nothing to choose: no other model that can answer is installed on this computer, or the model is not run here.".to_string());
+                    lines.push("Nothing to choose: no other model that can answer is installed on this computer.".to_string());
                 }
                 self.push(Kind::Info, Some("Model"), lines);
                 Vec::new()
@@ -5723,15 +5727,17 @@ impl App {
                     + n("pages")
                     + n("tool")
                     + n("connector")
-                    + n("release");
+                    + n("release")
+                    + n("program")
+                    + n("agent");
                 self.say(
                     Kind::Info,
                     if left == 0 {
                         format!("Left this computer (from the signed log): nothing. Held back from a model: {}.", n("held"))
                     } else {
                         format!(
-                            "Left this computer (from the signed log): questions to a model elsewhere {}, reviews with a model elsewhere {}, searches {}, page fetches {}, tool calls {}, reads from GitHub {}, releases {}. Held back from a model: {}.",
-                            n("model"), n("review"), n("search"), n("pages"), n("tool"), n("connector"), n("release"), n("held")
+                            "Left this computer (from the signed log): questions to a model elsewhere {}, reviews with a model elsewhere {}, project questions and coding tasks with a model elsewhere {}, searches {}, page fetches {}, tool calls {}, outside programs {}, reads from GitHub {}, releases {}. Held back from a model: {}.",
+                            n("model"), n("review"), n("agent"), n("search"), n("pages"), n("tool"), n("program"), n("connector"), n("release"), n("held")
                         )
                     },
                 );
@@ -5758,15 +5764,27 @@ impl App {
                         .as_object()
                         .map(|c| {
                             format!(
-                                ", about {} {:.4}{}",
-                                clean(c["currency"].as_str().unwrap_or("?")),
-                                c["amount"].as_f64().unwrap_or(0.0),
+                                ", about {}{}{}",
+                                money(
+                                    c["currency"].as_str().unwrap_or("?"),
+                                    c["amount"].as_f64().unwrap_or(0.0)
+                                ),
                                 if c["tokens_estimated"] == true {
                                     "*"
                                 } else {
                                     ""
+                                },
+                                if c.get("source").and_then(Value::as_str) == Some("published") {
+                                    " at NEAR AI Cloud's published price"
+                                } else {
+                                    ""
                                 }
                             )
+                        })
+                        .or_else(|| {
+                            r["price_unknown"]
+                                .as_str()
+                                .map(|why| format!(", no cost shown ({})", clean(why)))
                         })
                         .unwrap_or_default();
                     lines.push(format!(
@@ -5785,10 +5803,9 @@ impl App {
                     .map(|a| {
                         a.iter()
                             .map(|c| {
-                                format!(
-                                    "{} {:.4}",
-                                    clean(c["currency"].as_str().unwrap_or("?")),
-                                    c["amount"].as_f64().unwrap_or(0.0)
+                                money(
+                                    c["currency"].as_str().unwrap_or("?"),
+                                    c["amount"].as_f64().unwrap_or(0.0),
                                 )
                             })
                             .collect()
@@ -7906,4 +7923,16 @@ pub fn context_meter(tokens: u64, window: Option<u64>, counted: bool) -> String 
         ),
         None => format!("context {tilde}{}", k(tokens)),
     }
+}
+
+/// An amount of money as the usage view shows it: four decimals, or two significant digits for less than a cent, so a NEAR
+/// question that cost a few millionths of a dollar does not read as nothing.
+fn money(currency: &str, amount: f64) -> String {
+    let n = if amount != 0.0 && amount.abs() < 0.01 {
+        let digits = (2 - amount.abs().log10().floor() as i32 - 1).clamp(0, 8) as usize;
+        format!("{amount:.digits$}")
+    } else {
+        format!("{amount:.4}")
+    };
+    format!("{} {n}", clean(currency))
 }

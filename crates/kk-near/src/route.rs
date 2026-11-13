@@ -222,6 +222,9 @@ fn map_error(e: InferenceError) -> RouteError {
         Some(429 | 502 | 503 | 504) => {
             RouteError::Busy(format!("status {}", http_status(&e).unwrap_or(0)))
         }
+        Some(400) => RouteError::BadResponse(
+            "NEAR AI Cloud refused the request as one it cannot take (status 400)".into(),
+        ),
         Some(s) => RouteError::BadResponse(format!("status {s}")),
         None => match e {
             InferenceError::Api(ApiError::Transport { .. }) => {
@@ -230,6 +233,23 @@ fn map_error(e: InferenceError) -> RouteError {
             _ => RouteError::NotVerified(describe(&e)),
         },
     }
+}
+
+/// The conversation with every system message folded, in order, into one at the start: the confidential models' chat formats
+/// take a system message only first (Qwen: "System message must be at the beginning"), and a question with attached files,
+/// notes or pages carries several.
+pub fn one_system(messages: &[ChatMessage]) -> Vec<ChatMessage> {
+    let system: Vec<&str> = messages
+        .iter()
+        .filter(|m| m.role == "system")
+        .map(|m| m.content.as_str())
+        .collect();
+    let mut out = Vec::with_capacity(messages.len());
+    if !system.is_empty() {
+        out.push(ChatMessage::new("system", &system.join("\n\n")));
+    }
+    out.extend(messages.iter().filter(|m| m.role != "system").cloned());
+    out
 }
 
 fn to_openai(m: &ChatMessage) -> Value {
@@ -291,7 +311,7 @@ impl Route for NearRoute {
         let mut body = json!({
             "model": self.model,
             "stream": false,
-            "messages": request.messages.iter().map(to_openai).collect::<Vec<_>>(),
+            "messages": one_system(&request.messages).iter().map(to_openai).collect::<Vec<_>>(),
             "max_tokens": request.max_tokens,
             "temperature": request.temperature,
         });
@@ -414,6 +434,24 @@ pub fn thinking_off(model: &str) -> Vec<(&'static str, Value)> {
 #[cfg(test)]
 mod thinking_tests {
     use super::*;
+
+    #[test]
+    fn os01_every_system_message_is_folded_into_one_at_the_start_in_order() {
+        let m = vec![
+            ChatMessage::new("system", "rules"),
+            ChatMessage::new("user", "earlier question"),
+            ChatMessage::new("assistant", "earlier answer"),
+            ChatMessage::new("system", "files: notes.txt"),
+            ChatMessage::new("user", "now"),
+        ];
+        let out = one_system(&m);
+        let roles: Vec<&str> = out.iter().map(|m| m.role.as_str()).collect();
+        assert_eq!(roles, ["system", "user", "assistant", "user"]);
+        assert_eq!(out[0].content, "rules\n\nfiles: notes.txt");
+        assert_eq!(out[3].content, "now");
+        let none = vec![ChatMessage::new("user", "hi")];
+        assert_eq!(one_system(&none).len(), 1);
+    }
 
     #[test]
     fn th01_each_model_family_gets_the_setting_its_documentation_names() {

@@ -32,6 +32,8 @@ pub(super) fn row_of(e: &Value) -> Option<Value> {
         "release.delivery_finished" => {
             ("release", subject.to_string(), json!({"state": d["state"]}))
         }
+        // a question about a project, or a coding task, that worked with a model elsewhere: the files it read went there
+        "outbound.agent" => ("agent", subject.to_string(), json!({"door": d["door"]})),
         "outbound.review" => (
             "review",
             subject.to_string(),
@@ -90,6 +92,7 @@ pub(super) async fn list(axum::Extension(svc): Svc) -> Response {
         "held",
         "gap",
         "program",
+        "agent",
     ] {
         totals.insert(
             what.into(),

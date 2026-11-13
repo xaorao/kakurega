@@ -1,0 +1,199 @@
+{
+ "models": [
+  {
+   "modelId": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+   "inputCostPerToken": {
+    "amount": 300,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "outputCostPerToken": {
+    "amount": 1200,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "costPerImage": {
+    "amount": 0,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "cacheReadCostPerToken": {
+    "amount": 6,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "metadata": {
+    "verifiable": true,
+    "contextLength": 1048576,
+    "modelDisplayName": "DeepSeek V4.1 Flash 1017",
+    "attestationSupported": true
+   }
+  },
+  {
+   "modelId": "google/gemini-2.5-pro",
+   "inputCostPerToken": {
+    "amount": 1250,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "outputCostPerToken": {
+    "amount": 10000,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "costPerImage": {
+    "amount": 0,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "metadata": {
+    "verifiable": false,
+    "contextLength": 1000000,
+    "modelDisplayName": "Gemini 2.5 Pro",
+    "attestationSupported": false
+   }
+  },
+  {
+   "modelId": "openai/gpt-5",
+   "inputCostPerToken": {
+    "amount": 1250,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "outputCostPerToken": {
+    "amount": 10000,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "costPerImage": {
+    "amount": 0,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "cacheReadCostPerToken": {
+    "amount": 125,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "textPricing": {
+    "version": 1,
+    "currency": "USD",
+    "unit": "million_tokens",
+    "tiers": {
+     "default": {
+      "short": {
+       "uncachedInput": "1.25",
+       "cachedInput": "0.125",
+       "output": "10.00"
+      }
+     },
+     "flex": {
+      "short": {
+       "uncachedInput": "0.625",
+       "cachedInput": "0.0625",
+       "output": "5.00"
+      }
+     },
+     "priority": {
+      "short": {
+       "uncachedInput": "2.50",
+       "cachedInput": "0.25",
+       "output": "20.00"
+      }
+     }
+    }
+   },
+   "metadata": {
+    "verifiable": false,
+    "contextLength": 400000,
+    "modelDisplayName": "OpenAI GPT-5",
+    "attestationSupported": false
+   }
+  },
+  {
+   "modelId": "openai/whisper-large-v3",
+   "inputCostPerToken": {
+    "amount": 10,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "outputCostPerToken": {
+    "amount": 10,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "costPerImage": {
+    "amount": 0,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "metadata": {
+    "verifiable": true,
+    "contextLength": 448,
+    "modelDisplayName": "Whisper Large v3",
+    "attestationSupported": true
+   }
+  },
+  {
+   "modelId": "Qwen/Qwen3.8-27B",
+   "inputCostPerToken": {
+    "amount": 40,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "outputCostPerToken": {
+    "amount": 1350,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "costPerImage": {
+    "amount": 0,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "cacheReadCostPerToken": {
+    "amount": 18,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "metadata": {
+    "verifiable": true,
+    "contextLength": 262144,
+    "modelDisplayName": "Qwen 3.8 27B",
+    "attestationSupported": true
+   }
+  },
+  {
+   "modelId": "z-ai/glm-5.3-flash",
+   "inputCostPerToken": {
+    "amount": 80,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "outputCostPerToken": {
+    "amount": 500,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "costPerImage": {
+    "amount": 0,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "cacheReadCostPerToken": {
+    "amount": 12,
+    "scale": 9,
+    "currency": "USD"
+   },
+   "metadata": {
+    "verifiable": true,
+    "contextLength": 1048576,
+    "modelDisplayName": "GLM 5.3 Flash",
+    "attestationSupported": true
+   }
+  }
+ ],
+ "limit": 100,
+ "offset": 0,
+ "total": 6
+}

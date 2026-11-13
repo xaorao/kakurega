@@ -138,9 +138,19 @@ function Badge(props: { config: Config; modelDown: boolean }) {
       <Show
         when={r().stays_here !== false || r().simulated}
         fallback={
-          <span class="badge warn" title={t("badge.remote.title", { host: r().host ?? "" })}>
-            {r().host ? t("badge.remote", { host: r().host ?? "" }) : t("badge.unknown")}
-          </span>
+          <Show
+            when={r().class === "verified_tee"}
+            fallback={
+              <span class="badge warn" title={t("badge.remote.title", { host: r().host ?? "" })}>
+                {r().host ? t("badge.remote", { host: r().host ?? "" }) : t("badge.unknown")}
+              </span>
+            }
+          >
+            {/* off this computer, but on hardware whose proof is checked before each question, answers signed by the model */}
+            <span class="badge ok" id="badge-tee" title={t("badge.tee.title", { host: r().host ?? "" })}>
+              <span class="dot" /> {t("badge.tee")}
+            </span>
+          </Show>
         }
       >
         <span class="badge ok" title={t("badge.private.title")}>

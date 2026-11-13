@@ -30,6 +30,9 @@ pub struct CodeOutcome {
     pub changes: Vec<Change>,
     pub left_restricted: usize,
     pub route: String,
+    /// What it used of the model, for the usage record (kept from older tasks as none).
+    #[serde(default)]
+    pub usage: Option<crate::questions::ModelUse>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

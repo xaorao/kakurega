@@ -1,10 +1,10 @@
 use kk_review::check::{
     apply_all, apply_fix, clean_text, compare_test_runs, consolidate, is_test_path, js_closure,
     missing_package, names_sandbox_path, node_has_typescript, node_major, parse_finding, parse_fix,
-    parse_node_test, parse_unittest, python_closure, run_project_tests, run_project_tests_for,
-    run_reproducer, ts_closure, typescript_environment_problem, unfence, unified_diff,
-    unified_diff_all, verify_fix, verify_fix_with_tests, CheckEnv, CheckStatus, ClosureError, Edit,
-    Finding, Fix, FixStatus, Language, TestRun, TestVerdict,
+    parse_node_test, parse_unittest, python_closure, reproducer_sample, run_project_tests,
+    run_project_tests_for, run_reproducer, ts_closure, typescript_environment_problem, unfence,
+    unified_diff, unified_diff_all, verify_fix, verify_fix_with_tests, CheckEnv, CheckStatus,
+    ClosureError, Edit, Finding, Fix, FixStatus, Language, TestRun, TestVerdict,
 };
 use kk_review::import::{scan_tree, ImportedFile};
 use kk_sandbox::{Exit, Transport};
@@ -2602,4 +2602,110 @@ fn ck_el01_a_failed_script_is_described_by_its_error_and_its_exit_in_words() {
     assert_eq!(kk_sandbox::Exit::Code(1).to_string(), "exit code 1");
     assert_eq!(kk_sandbox::Exit::Signal(9).to_string(), "signal 9");
     assert_eq!(kk_sandbox::Exit::TimedOut.to_string(), "the time limit");
+}
+
+/// The reproducer a confidential model on NEAR AI Cloud wrote for the planted defect: it goes through the API handler.
+const THROUGH_THE_HANDLER: &str = "from payments.auth import session\nfrom payments.api import handlers\n\nt = session.login(\"alice\")\nassert session.validate(t) is True\nassert handlers.handle_charge(t, 100) == {\"status\": 200, \"charged\": 100}\nprint(\"CONTROL_OK\")\n\nhandlers.handle_logout(t)\nif session.validate(t) and handlers.handle_charge(t, 100)[\"status\"] == 200:\n    print(\"REPRODUCED\")\nelse:\n    print(\"NOT REPRODUCED\")\n";
+
+#[test]
+fn c60_a_reproducer_that_goes_through_another_part_of_the_project_gets_that_part_and_never_a_withheld_file(
+) {
+    let files = fixture_files();
+    let idx = index(&files);
+    let sample = reproducer_sample(&finding(THROUGH_THE_HANDLER), &idx).unwrap();
+    for p in [
+        "payments/auth/session.py",
+        "payments/auth/tokens.py",
+        "payments/api/__init__.py",
+        "payments/api/handlers.py",
+    ] {
+        assert!(sample.contains(&p.to_string()), "{p} in {sample:?}");
+    }
+    assert!(!sample.iter().any(|p| p.contains("env")), "{sample:?}");
+    // a reproducer naming only the cited code gets exactly the cited file's closure, as before
+    assert_eq!(
+        reproducer_sample(&finding(REPRO), &idx).unwrap(),
+        python_closure("payments/auth/session.py", &idx).unwrap()
+    );
+    // a reproducer that names no project module still gets the cited file's closure
+    assert_eq!(
+        reproducer_sample(
+            &finding("import runpy\nrunpy.run_path('payments/auth/session.py')\n"),
+            &idx
+        )
+        .unwrap(),
+        python_closure("payments/auth/session.py", &idx).unwrap()
+    );
+    // a name that is not a project file adds nothing, and a module of the standard library is not looked for
+    let extra = format!("import os, json\nfrom payments.nowhere import x\n{REPRO}");
+    assert_eq!(
+        reproducer_sample(&finding(&extra), &idx).unwrap(),
+        python_closure("payments/auth/session.py", &idx).unwrap()
+    );
+    // reaching a withheld file through the reproducer's own import is refused, as through the cited file
+    let mut with_secret: Vec<ImportedFile> = files.clone();
+    for f in &mut with_secret {
+        if f.path == "payments/api/handlers.py" {
+            f.label = kk_types::label::Label::new(Level::Restricted).with_compartment("secrets");
+        }
+    }
+    assert_eq!(
+        reproducer_sample(&finding(THROUGH_THE_HANDLER), &index(&with_secret)),
+        Err(ClosureError::NeedsRestrictedFile(
+            "payments/api/handlers.py".into()
+        ))
+    );
+}
+
+#[test]
+fn c61_a_script_reproducer_gets_the_files_it_names_from_the_top_folder() {
+    let mk = |path: &str, text: &str| ImportedFile {
+        path: path.into(),
+        sha256: kk_evidence::capsule::sha256_hex(text.as_bytes()),
+        bytes: text.as_bytes().to_vec(),
+        label: kk_types::label::Label::new(Level::Internal),
+        notes: vec![],
+    };
+    let files = vec![
+        mk("src/auth/session.js", "export const login = (u) => u;\n"),
+        mk(
+            "src/api/handlers.js",
+            "import { login } from '../auth/session.js';\nexport const charge = (t) => login(t);\n",
+        ),
+        mk("src/api/util.js", "export const id = (x) => x;\n"),
+    ];
+    let idx = index(&files);
+    let mut f = finding("import { charge } from './src/api/handlers.js';\nconsole.log(charge('a') === 'a' ? 'REPRODUCED' : 'NOT REPRODUCED');\n");
+    f.file = "src/auth/session.js".into();
+    f.language = Language::JavaScript;
+    assert_eq!(
+        reproducer_sample(&f, &idx).unwrap(),
+        vec!["src/api/handlers.js", "src/auth/session.js"]
+    );
+    // a name that climbs above the top folder adds nothing
+    f.reproducer = "import x from '../outside.js';\n".into();
+    assert_eq!(
+        reproducer_sample(&f, &idx).unwrap(),
+        vec!["src/auth/session.js"]
+    );
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn c62_the_reproducer_through_the_handler_confirms_the_planted_defect_in_the_sandbox() {
+    let files = fixture_files();
+    let idx = index(&files);
+    let t = transport();
+    let env = CheckEnv {
+        transport: &t,
+        scratch: &scratch(),
+        python: "/usr/bin/python3",
+        node: "/usr/bin/node",
+        rustc: "/usr/bin/rustc",
+    };
+    let r = run_reproducer(&finding(THROUGH_THE_HANDLER), &idx, &env);
+    assert_eq!(r.status, CheckStatus::Reproduced, "{r:?}");
+    assert!(r
+        .sample_paths
+        .contains(&"payments/api/handlers.py".to_string()));
 }

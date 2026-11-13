@@ -13146,7 +13146,7 @@ fn sv129_the_owner_can_enter_a_price_for_a_route_and_the_usage_shows_a_cost_only
         inp > 0.0 && out > 0.0,
         "the reply has tokens in both directions: {u}"
     );
-    let expect = ((inp * 400000.5 + out * 900000.0) / 1e6 * 1e4).round() / 1e4;
+    let expect = ((inp * 400000.5 + out * 900000.0) / 1e6 * 1e6).round() / 1e6;
     assert!(
         expect > 1.0,
         "a cost large enough to see after rounding: {expect}"
@@ -15847,7 +15847,12 @@ impl JobRunner for CodeRunner {
         self.inner.run(repo, recipient, job, now, extra, progress)
     }
     fn route_info(&self) -> Value {
-        json!({"id": "ollama:x", "class": "device_only", "model": "x", "simulated": false, "endpoint": self.endpoint})
+        // NEAR AI Cloud's address stands for its confidential hardware, whose proof was checked
+        if self.endpoint.contains("near.ai") {
+            json!({"id": "near:x", "class": "verified_tee", "model": "x", "simulated": false, "endpoint": self.endpoint})
+        } else {
+            json!({"id": "ollama:x", "class": "device_only", "model": "x", "simulated": false, "endpoint": self.endpoint})
+        }
     }
     fn code_task(
         &self,
@@ -15892,6 +15897,7 @@ impl JobRunner for CodeRunner {
             changes: ws.changes(),
             left_restricted: left.restricted,
             route: "ollama:x".into(),
+            usage: None,
         })
     }
 }
@@ -16172,7 +16178,7 @@ fn sv175_a_patch_adding_a_secret_is_never_applied_and_a_remote_route_or_odd_task
         assert!(st == 400 || st == 403 || st == 422, "{bad} -> {st}");
     }
     let mut remote = standard_runner();
-    remote.endpoint = "https://cloud-api.near.ai".into();
+    remote.endpoint = "https://models.example.com".into();
     let (_c2, w2, proj2) = code_service("code-remote", remote);
     assert_eq!(
         w2.post(
@@ -19172,6 +19178,10 @@ struct TeamRunner {
     reader_asked: Mutex<Vec<String>>,
     /// When set, the model moves elsewhere as soon as the code reader has answered.
     away_after_reader: std::sync::atomic::AtomicBool,
+    /// When set, the model is a hosted one with no hardware proof (it wins over `away`).
+    hosted: std::sync::atomic::AtomicBool,
+    /// When set, the model becomes a hosted one as soon as a review has run.
+    hosted_after_review: std::sync::atomic::AtomicBool,
 }
 
 impl TeamRunner {
@@ -19238,6 +19248,7 @@ impl JobRunner for TeamRunner {
             report,
             route: "ollama:x".into(),
             elapsed_ms: 5,
+            usage: None,
         })
     }
     fn handoff_tool(&self) -> Option<String> {
@@ -19260,12 +19271,22 @@ impl JobRunner for TeamRunner {
         extra: Vec<kk_review::import::ImportedFile>,
         progress: &dyn Fn(&str, &str),
     ) -> kk_review::job::JobReport {
-        self.inner.run(repo, recipient, job, now, extra, progress)
+        let report = self.inner.run(repo, recipient, job, now, extra, progress);
+        if self
+            .hosted_after_review
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            self.hosted.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        report
     }
     fn route_info(&self) -> Value {
         let mut v = self.inner.route_info();
         v["context_tokens"] = json!(4096);
-        if self.away.load(std::sync::atomic::Ordering::SeqCst) {
+        if self.hosted.load(std::sync::atomic::Ordering::SeqCst) {
+            v["class"] = json!("hosted");
+            v["endpoint"] = json!("https://api.example.com/v1");
+        } else if self.away.load(std::sync::atomic::Ordering::SeqCst) {
             v["class"] = json!("verified_tee");
             v["endpoint"] = json!("https://cloud-api.near.ai/v1");
         } else {
@@ -19338,6 +19359,8 @@ fn team_runner(plan: &str) -> Arc<TeamRunner> {
         reader: Mutex::new(Vec::new()),
         reader_asked: Mutex::new(Vec::new()),
         away_after_reader: Default::default(),
+        hosted: Default::default(),
+        hosted_after_review: Default::default(),
     })
 }
 
@@ -22888,7 +22911,8 @@ fn sv266_the_project_reviewer_runs_a_real_review_of_the_runs_project_and_hands_o
 }
 
 #[test]
-fn sv267_a_reviews_findings_are_not_handed_to_experts_whose_model_is_elsewhere() {
+fn sv267_a_reviews_findings_are_not_handed_to_experts_whose_model_is_a_hosted_one_with_no_hardware_proof(
+) {
     const PLAN: &str = "1 | project-review | after: - | Review the project.\n2 | plain-writer | after: 1 | Say what was found.\n";
     let (root, _repo) = repo_copy("team-review-away");
     let runner = team_runner(PLAN);
@@ -22900,7 +22924,9 @@ fn sv267_a_reviews_findings_are_not_handed_to_experts_whose_model_is_elsewhere()
     let (s, v) = w.post("/api/team", json!({"goal": "Review the project.", "experts": ["project-review", "plain-writer"], "project": "kestrel"}));
     assert_eq!(s, 201, "{v}");
     let id = v["id"].as_str().unwrap().to_string();
-    runner.away.store(true, std::sync::atomic::Ordering::SeqCst);
+    runner
+        .hosted
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     w.post(&format!("/api/team/{id}/start"), json!({}));
     let v = team_wait(&w, &id, &["done", "failed", "partial"]);
     assert_eq!(v["tasks"][0]["state"], json!("failed"), "{v}");
@@ -22908,7 +22934,7 @@ fn sv267_a_reviews_findings_are_not_handed_to_experts_whose_model_is_elsewhere()
         v["tasks"][0]["note"]
             .as_str()
             .unwrap()
-            .contains("not on this computer"),
+            .contains("neither on this computer nor in confidential hardware"),
         "{v}"
     );
     assert_eq!(
@@ -23449,6 +23475,8 @@ fn sv274_a_review_makes_a_team_run_private_and_what_followed_it_is_not_handed_ou
 struct QuestionRunner {
     script: Vec<kk_types::chat::ChatMessage>,
     endpoint: String,
+    /// The model is in confidential hardware whose proof was checked (NEAR AI Cloud), not on this computer.
+    tee: bool,
     /// While set, the answer does not come until the question is stopped.
     hold: std::sync::atomic::AtomicBool,
 }
@@ -23466,7 +23494,11 @@ impl JobRunner for QuestionRunner {
         CannedRunner { confirm: true }.run(repo, recipient, job, now, extra, progress)
     }
     fn route_info(&self) -> Value {
-        json!({"id": "ollama:x", "class": "device_only", "model": "x", "simulated": false, "endpoint": self.endpoint})
+        if self.tee {
+            json!({"id": "near:x", "class": "verified_tee", "model": "x", "simulated": false, "endpoint": self.endpoint})
+        } else {
+            json!({"id": "ollama:x", "class": "device_only", "model": "x", "simulated": false, "endpoint": self.endpoint})
+        }
     }
     fn project_question(
         &self,
@@ -23497,6 +23529,20 @@ impl JobRunner for QuestionRunner {
             report,
             route: "ollama:x".into(),
             elapsed_ms: 5,
+            usage: Some(kk_service::questions::ModelUse {
+                route: if self.tee { "near:x" } else { "ollama:x" }.into(),
+                class: if self.tee {
+                    "verified_tee"
+                } else {
+                    "device_only"
+                }
+                .into(),
+                simulated: false,
+                calls: 3,
+                prompt_tokens: 1200,
+                completion_tokens: 80,
+                elapsed_ms: 5,
+            }),
         })
     }
 }
@@ -23556,6 +23602,7 @@ fn sv275_a_question_about_a_project_is_answered_with_its_places_checked_and_the_
             )]),
         ],
         endpoint: "http://127.0.0.1:11434".into(),
+        tee: false,
         hold: Default::default(),
     });
     let svc = Service::new(&root.join("data"), vec![root.clone()], runner.clone(), true).unwrap();
@@ -23721,11 +23768,12 @@ fn sv275_a_question_about_a_project_is_answered_with_its_places_checked_and_the_
 }
 
 #[test]
-fn sv276_a_question_is_refused_when_the_model_is_not_on_this_computer() {
+fn sv276_a_question_is_refused_when_the_model_is_elsewhere_with_no_hardware_proof() {
     let (root, _repo) = repo_copy("question-away");
     let runner = Arc::new(QuestionRunner {
         script: Vec::new(),
         endpoint: "https://cloud-api.near.ai/v1".into(),
+        tee: false,
         hold: Default::default(),
     });
     let svc = Service::new(&root.join("data"), vec![root.clone()], runner, true).unwrap();
@@ -23742,8 +23790,17 @@ fn sv276_a_question_is_refused_when_the_model_is_not_on_this_computer() {
     );
     assert_eq!(
         (s, r["error"]["code"].as_str()),
-        (403, Some("NOT_LOCAL")),
+        (403, Some("NOT_PRIVATE")),
         "{r}"
+    );
+    assert!(r["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("confidential hardware whose proof is checked"));
+    assert_eq!(
+        w.get("/api/outbound").1["totals"]["agent"],
+        0,
+        "nothing left"
     );
 }
 
@@ -23858,9 +23915,11 @@ fn sv277_a_team_run_hands_a_task_to_the_code_reader_whose_checked_answer_goes_on
     runner
         .away
         .store(false, std::sync::atomic::Ordering::SeqCst);
-    // with the model elsewhere the reader does not read the project at all
+    // with a hosted model that has no hardware proof the reader does not read the project at all
     let asked = runner.reader_asked.lock().unwrap().len();
-    runner.away.store(true, std::sync::atomic::Ordering::SeqCst);
+    runner
+        .hosted
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     let (_, v) = w.post("/api/team", json!({"goal": "Check logout again (reader test).", "experts": ["project-reader", "plain-writer", "claude-code"], "project": "kestrel"}));
     let id2 = v["id"]
         .as_str()
@@ -23884,13 +23943,55 @@ fn sv277_a_team_run_hands_a_task_to_the_code_reader_whose_checked_answer_goes_on
         v["tasks"][0]["note"]
             .as_str()
             .unwrap()
-            .contains("not on this computer"),
+            .contains("neither on this computer nor in confidential hardware"),
         "{v}"
     );
     assert_eq!(
         runner.reader_asked.lock().unwrap().len(),
         asked,
         "the reader was not asked"
+    );
+    assert_eq!(
+        w.get("/api/outbound").1["totals"]["agent"],
+        0,
+        "nothing of the project left"
+    );
+
+    // in confidential hardware whose proof is checked the reader reads it, logged first as having left
+    runner
+        .hosted
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    runner.away.store(true, std::sync::atomic::Ordering::SeqCst);
+    let (_, v) = w.post("/api/team", json!({"goal": "Check logout on confidential hardware (reader test).", "experts": ["project-reader", "plain-writer", "claude-code"], "project": "kestrel"}));
+    let id3 = v["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{v}"))
+        .to_string();
+    w.post(&format!("/api/team/{id3}/start"), json!({}));
+    let v = team_wait(
+        &w,
+        &id3,
+        &[
+            "stopped",
+            "waiting",
+            "interrupted",
+            "done",
+            "partial",
+            "failed",
+        ],
+    );
+    assert!(
+        runner.reader_asked.lock().unwrap().len() > asked,
+        "the reader was asked: {v}"
+    );
+    let out = w.get("/api/outbound").1;
+    assert!(
+        out["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["what"] == "agent" && r["detail"]["door"] == "question"),
+        "{out}"
     );
 }
 
@@ -24783,6 +24884,7 @@ fn sv288_question_numbers_are_never_given_twice_and_the_owner_is_told_what_made_
                 json!({"answer": "It returns 1.", "places": [{"file": "a.py", "line": 2, "text": "return 1"}]}),
             )])],
             endpoint: "http://127.0.0.1:11434".into(),
+            tee: false,
             hold: Default::default(),
         })
     };
@@ -25497,4 +25599,393 @@ fn sv296_the_calendar_is_attached_only_on_request_macos_is_asked_only_then_and_i
         (201, Some("calendar-next-1-day.md")),
         "{v}"
     );
+}
+
+#[test]
+fn sv297_on_confidential_hardware_the_project_reviewer_hands_its_findings_on_and_the_run_never_goes_to_a_hosted_model_after(
+) {
+    const PLAN: &str = "1 | project-review | after: - | Review the project.\n2 | plain-writer | after: 1 | Say what was found.\n";
+    let (root, _repo) = repo_copy("team-review-tee");
+    let runner = team_runner(PLAN);
+    let (_c, w) = team_service(&root, runner.clone());
+    w.post(
+        "/api/projects",
+        json!({"name": "kestrel", "folder": root.join("repo").to_string_lossy()}),
+    );
+    // on confidential hardware whose proof is checked: the review runs and its findings reach the next expert
+    runner.away.store(true, std::sync::atomic::Ordering::SeqCst);
+    let (_, v) = w.post("/api/team", json!({"goal": "Review the project.", "experts": ["project-review", "plain-writer"], "project": "kestrel"}));
+    let id = v["id"].as_str().unwrap().to_string();
+    w.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(&w, &id, &["done", "failed", "partial"]);
+    assert_eq!(
+        (
+            v["tasks"][0]["state"].as_str(),
+            v["tasks"][1]["state"].as_str()
+        ),
+        (Some("done"), Some("done")),
+        "{v}"
+    );
+    assert_eq!(
+        w.get("/api/jobs").1["jobs"].as_array().map_or(0, Vec::len),
+        1,
+        "the review ran"
+    );
+    let seen = runner.seen.lock().unwrap().clone();
+    assert!(
+        seen.iter()
+            .any(|m| m.iter().any(|x| x.content.contains("Token not revoked"))),
+        "the reproduced finding reached the next expert on confidential hardware"
+    );
+
+    // the same plan, but the model becomes a hosted one once the review has run: the next task is refused, held at level 2
+    let runner = team_runner(PLAN);
+    let (root2, _r2) = repo_copy("team-review-tee-then-hosted");
+    let (_c2, w2) = team_service(&root2, runner.clone());
+    w2.post(
+        "/api/projects",
+        json!({"name": "kestrel", "folder": root2.join("repo").to_string_lossy()}),
+    );
+    runner.away.store(true, std::sync::atomic::Ordering::SeqCst);
+    runner
+        .hosted_after_review
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let (_, v) = w2.post("/api/team", json!({"goal": "Review the project.", "experts": ["project-review", "plain-writer"], "project": "kestrel"}));
+    let id = v["id"].as_str().unwrap().to_string();
+    w2.post(&format!("/api/team/{id}/start"), json!({}));
+    let v = team_wait(&w2, &id, &["done", "failed", "partial", "stopped"]);
+    assert_eq!(v["tasks"][0]["state"], json!("done"), "{v}");
+    assert_ne!(v["tasks"][1]["state"], json!("done"), "{v}");
+    assert!(
+        v["final_note"]
+            .as_str()
+            .is_some_and(|n| n.contains("more private model")),
+        "the run says why it did not go on: {v}"
+    );
+    let seen = runner.seen.lock().unwrap().clone();
+    assert!(
+        !seen
+            .iter()
+            .any(|m| m.iter().any(|x| x.content.contains("Token not revoked"))),
+        "nothing about the project reached the hosted model"
+    );
+}
+
+#[test]
+fn sv298_project_questions_and_coding_work_in_confidential_hardware_logged_first_never_on_a_hosted_model_or_a_project_kept_here(
+) {
+    // a question, on NEAR AI Cloud's confidential hardware: answered, logged as having left before it ran, its tokens recorded
+    let (root, _repo) = repo_copy("question-tee");
+    let proj = root.join("proj");
+    std::fs::create_dir_all(proj.join("app")).unwrap();
+    std::fs::write(
+        proj.join("app/session.py"),
+        "SESSIONS = {}\n\n\ndef logout(token):\n    return True\n",
+    )
+    .unwrap();
+    let runner = Arc::new(QuestionRunner {
+        script: vec![
+            question_calls(&[("read_file", json!({"path": "app/session.py"}))]),
+            question_calls(&[(
+                "answer",
+                json!({"answer": "No: logout returns True.", "places": [{"file": "app/session.py", "line": 5, "text": "return True"}]}),
+            )]),
+        ],
+        endpoint: "https://cloud-api.near.ai/v1".into(),
+        tee: true,
+        hold: Default::default(),
+    });
+    let svc = Service::new(&root.join("data"), vec![root.clone()], runner, true).unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let folder = proj.to_string_lossy().to_string();
+    let (s, r) = w.post(
+        "/api/questions",
+        json!({"folder": folder, "question": "Does logout revoke the token?", "depth": "quick"}),
+    );
+    assert_eq!(s, 202, "{r}");
+    let v = wait_question(&w, r["id"].as_str().unwrap());
+    assert_eq!(v["state"], "answered", "{v}");
+    let out = w.get("/api/outbound").1;
+    let rows: Vec<&Value> = out["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["what"] == "agent")
+        .collect();
+    assert_eq!(rows.len(), 1, "{out}");
+    assert_eq!(
+        (rows[0]["to"].as_str(), rows[0]["detail"]["door"].as_str()),
+        (Some("cloud-api.near.ai"), Some("question")),
+        "{out}"
+    );
+    let usage = w.get("/api/usage").1;
+    let line = usage["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["route"] == "near:x")
+        .cloned()
+        .unwrap_or_else(|| panic!("no usage line for the question: {usage}"));
+    assert_eq!(
+        (
+            line["class"].as_str(),
+            line["prompt_tokens"].as_i64(),
+            line["reply_tokens"].as_i64()
+        ),
+        (Some("verified_tee"), Some(1200), Some(80)),
+        "{usage}"
+    );
+
+    // the same folder in a project kept on this computer: refused, and nothing more is logged as having left
+    w.post("/api/projects", json!({"name": "acme", "folder": folder}));
+    let (s, v) = w.post("/api/projects", json!({"name": "acme", "floor": "here"}));
+    assert_eq!(s, 200, "{v}");
+    let (s, r) = w.post(
+        "/api/questions",
+        json!({"folder": folder, "question": "Where is login?"}),
+    );
+    assert_eq!(
+        (s, r["error"]["code"].as_str()),
+        (409, Some("PROJECT_KEPT_PRIVATELY")),
+        "{r}"
+    );
+    assert_eq!(w.get("/api/outbound").1["totals"]["agent"], 1);
+    drop(w);
+    drop(c);
+
+    // a coding task, on confidential hardware: it runs, logged first
+    let mut near = standard_runner();
+    near.endpoint = "https://cloud-api.near.ai/v1".into();
+    let (_c, w, proj) = code_service("code-tee", near);
+    let (st, r) = w.post(
+        "/api/code",
+        json!({"folder": proj.to_string_lossy(), "task": "Fix add"}),
+    );
+    assert_eq!(st, 202, "{r}");
+    assert_eq!(wait_code(&w, r["id"].as_str().unwrap())["state"], "ready");
+    let out = w.get("/api/outbound").1;
+    assert!(
+        out["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["what"] == "agent"
+                && r["detail"]["door"] == "coding"
+                && r["to"] == "cloud-api.near.ai"),
+        "{out}"
+    );
+
+    // on a model elsewhere with no hardware proof the task is refused before anything is read or logged
+    let mut hosted = standard_runner();
+    hosted.endpoint = "https://models.example.com/v1".into();
+    let (_c, w, proj) = code_service("code-hosted", hosted);
+    let (st, r) = w.post(
+        "/api/code",
+        json!({"folder": proj.to_string_lossy(), "task": "Fix add"}),
+    );
+    assert_eq!(
+        (st, r["error"]["code"].as_str()),
+        (403, Some("NOT_PRIVATE")),
+        "{r}"
+    );
+    assert_eq!(w.get("/api/outbound").1["totals"]["agent"], 0);
+    assert_eq!(w.get("/api/code").1["tasks"], json!([]));
+}
+
+/// A runner on NEAR AI Cloud whose chat answers come back counted, and whose published price list is whatever the test sets.
+struct NearPriceRunner {
+    prices: Mutex<Option<Value>>,
+    looked: std::sync::atomic::AtomicUsize,
+    near: std::sync::atomic::AtomicBool,
+}
+
+impl JobRunner for NearPriceRunner {
+    fn run(
+        &self,
+        repo: &Path,
+        recipient: &str,
+        job: &str,
+        now: i64,
+        extra: Vec<kk_review::import::ImportedFile>,
+        progress: &dyn Fn(&str, &str),
+    ) -> JobReport {
+        CannedRunner { confirm: true }.run(repo, recipient, job, now, extra, progress)
+    }
+    fn route_info(&self) -> Value {
+        if self.near.load(std::sync::atomic::Ordering::SeqCst) {
+            json!({"id": "near:Qwen/Qwen3.8-27B", "class": "verified_tee", "model": "Qwen/Qwen3.8-27B", "simulated": false, "endpoint": "https://cloud-api.near.ai/v1", "context_tokens": 16384})
+        } else {
+            json!({"id": "ollama:m", "class": "device_only", "model": "m", "simulated": false, "endpoint": "http://127.0.0.1:11434", "context_tokens": 16384})
+        }
+    }
+    fn chat(&self, _m: Vec<kk_types::chat::ChatMessage>) -> Result<kk_service::ChatReply, String> {
+        let near = self.near.load(std::sync::atomic::Ordering::SeqCst);
+        Ok(kk_service::ChatReply {
+            text: "The plan is settled.".into(),
+            route_id: if near {
+                "near:Qwen/Qwen3.8-27B"
+            } else {
+                "ollama:m"
+            }
+            .into(),
+            class: if near { "verified_tee" } else { "device_only" }.into(),
+            simulated: false,
+            prompt_tokens: Some(100_000),
+            cut_short: false,
+        })
+    }
+    fn published_prices(&self) -> Option<Value> {
+        self.looked
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.prices.lock().unwrap().clone()
+    }
+}
+
+#[test]
+fn sv299_a_near_model_is_costed_at_nears_published_price_unless_the_owner_entered_one_and_an_unread_list_is_said_not_guessed(
+) {
+    let (root, _repo) = repo_copy("near-price");
+    let runner = Arc::new(NearPriceRunner {
+        prices: Mutex::new(Some(
+            json!({"source": "https://cloud-api.near.ai/v1/model/list", "read_at": 1_794_542_823u64, "prices": [
+                {"model": "Qwen/Qwen3.8-27B", "currency": "USD", "input_per_million": 0.04, "output_per_million": 1.35, "cached_input_per_million": 0.018},
+                {"model": "z-ai/glm-5.3-flash", "currency": "USD", "input_per_million": 0.08, "output_per_million": 0.5, "cached_input_per_million": 0.012}
+            ]}),
+        )),
+        looked: Default::default(),
+        near: Default::default(),
+    });
+    let svc = Service::new(&root.join("data"), vec![root.clone()], runner.clone(), true).unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let looked = || runner.looked.load(std::sync::atomic::Ordering::SeqCst);
+
+    // with only the model on this computer used, nothing is looked up and nothing costs anything
+    assert_eq!(
+        w.post("/api/chat", json!({"message": "What is the plan?"}))
+            .0,
+        200
+    );
+    let (_, u) = w.get("/api/usage");
+    assert!(
+        u["routes"][0]["cost"].is_null() && u["routes"][0]["price_unknown"].is_null(),
+        "{u}"
+    );
+    assert_eq!(
+        looked(),
+        0,
+        "the list is read only when a NEAR line needs it"
+    );
+
+    // a NEAR answer: costed at the published price, and said to be
+    runner.near.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        w.post("/api/chat", json!({"message": "And on NEAR?"})).0,
+        200
+    );
+    let (_, u) = w.get("/api/usage");
+    let row = u["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["route"] == "near:Qwen/Qwen3.8-27B")
+        .cloned()
+        .unwrap();
+    let (inp, out) = (
+        row["prompt_tokens"].as_f64().unwrap(),
+        row["reply_tokens"].as_f64().unwrap(),
+    );
+    assert_eq!(inp, 100_000.0, "{row}");
+    let expect = ((inp * 0.04 + out * 1.35) / 1e6 * 1e6).round() / 1e6;
+    assert_eq!(
+        (
+            row["cost"]["amount"].as_f64(),
+            row["cost"]["currency"].as_str(),
+            row["cost"]["source"].as_str(),
+            row["cost"]["source_url"].as_str(),
+            row["cost"]["input_per_million"].as_f64()
+        ),
+        (
+            Some(expect),
+            Some("USD"),
+            Some("published"),
+            Some("https://cloud-api.near.ai/v1/model/list"),
+            Some(0.04)
+        ),
+        "{row}"
+    );
+    assert!(
+        expect > 0.0 && expect < 0.01,
+        "a few thousandths of a dollar: {expect}"
+    );
+    assert_eq!(
+        u["total"]["cost"],
+        json!([{"currency": "USD", "amount": expect}])
+    );
+    assert!(u["note"]
+        .as_str()
+        .unwrap()
+        .contains("at most what was charged"));
+
+    // a price the owner entered comes first
+    let (s, v) = w.post("/api/usage/prices", json!({"route": "near:Qwen/Qwen3.8-27B", "input_per_million": 1, "output_per_million": 2, "currency": "EUR"}));
+    assert_eq!(s, 200, "{v}");
+    let (_, u) = w.get("/api/usage");
+    let row = u["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["route"] == "near:Qwen/Qwen3.8-27B")
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        (
+            row["cost"]["currency"].as_str(),
+            row["cost"]["source"].as_str()
+        ),
+        (Some("EUR"), Some("entered")),
+        "{row}"
+    );
+    w.post(
+        "/api/usage/prices",
+        json!({"route": "near:Qwen/Qwen3.8-27B", "remove": true}),
+    );
+
+    // the list could not be read: no cost, and the reason in words
+    *runner.prices.lock().unwrap() =
+        Some(json!({"error": "could not reach cloud-api.near.ai: timed out"}));
+    let (_, u) = w.get("/api/usage");
+    let row = u["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["route"] == "near:Qwen/Qwen3.8-27B")
+        .cloned()
+        .unwrap();
+    assert!(row["cost"].is_null(), "{row}");
+    assert!(
+        row["price_unknown"]
+            .as_str()
+            .unwrap()
+            .contains("price list could not be read: could not reach"),
+        "{row}"
+    );
+    assert_eq!(u["total"]["cost"], json!([]));
+    // a list that does not name the model: said too
+    *runner.prices.lock().unwrap() = Some(
+        json!({"source": "x", "read_at": 1, "prices": [{"model": "other/m", "currency": "USD", "input_per_million": 1.0, "output_per_million": 1.0}]}),
+    );
+    let (_, u) = w.get("/api/usage");
+    assert!(u.to_string().contains("does not name this model"), "{u}");
 }
