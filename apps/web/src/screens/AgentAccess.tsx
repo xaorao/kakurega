@@ -49,13 +49,14 @@ export function AgentAccess() {
       setError(err instanceof ApiError ? err.message : t("agent.error.failed"));
     }
   };
+  const [copied, setCopied] = createSignal(false);
   return (
     <section class="stack wide" aria-labelledby="h-agent">
       <h1 id="h-agent">{t("agent.title")}</h1>
       <Lead text={t("agent.lead")} />
       <div class="card stack">
         <p>{t("agent.how")}</p>
-        <p><code>kaku mcp --leased</code></p>
+        <p class="cmd-row"><code>kaku mcp --leased</code> <button type="button" class="link" onClick={async () => { try { await navigator.clipboard.writeText("kaku mcp --leased"); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* the command is still selectable */ } }}>{copied() ? t("md.copied") : t("md.copy")}</button></p>
         <p class="muted">{t("agent.limits")}</p>
       </div>
       <div class="card stack" role="region" aria-label={t("agent.active")}>
