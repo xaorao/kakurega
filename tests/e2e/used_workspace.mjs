@@ -88,6 +88,7 @@ await step("documents", async () => {
 });
 
 await step("meeting", async () => {
+  await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
   await page.getByRole("link", { name: "Meeting notes" }).click();
   await page.waitForSelector("#meet-text");
   await page.setInputFiles("#meet-file", transcript);
@@ -173,6 +174,7 @@ await step("a skill from a conversation", async () => {
   const said = await page.locator(".notes-find [role=status]").innerText();
   console.log(`skill suggestion after ${lap()} s: ${said}`);
   check("skills: the conversation's way of working is suggested as a skill that waits", /Suggested the skill/.test(said), said);
+  await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
   await page.getByRole("link", { name: "Skills", exact: true }).click();
   await page.getByRole("heading", { name: "Suggested ways of working" }).waitFor({ timeout: 20000 });
   const card = await page.locator("section", { has: page.getByRole("heading", { name: "Suggested ways of working" }) }).last().innerText();

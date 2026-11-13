@@ -98,6 +98,7 @@ try {
   // kept, listed as earlier, forgotten
   await page.reload();
   await page.waitForSelector("nav");
+  await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
   await page.getByRole("link", { name: "Ask a project" }).click();
   await page.getByRole("heading", { name: "Earlier questions" }).waitFor();
   const earlier = page.getByRole("button", { name: "Does logout revoke the session token?" });

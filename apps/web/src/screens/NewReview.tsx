@@ -4,6 +4,7 @@ import { SampleCard } from "../components/SampleCard";
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError, type ChangeView, type Config, type Readiness } from "../api";
 import { rich, t } from "../i18n";
+import { askFromStart } from "../composer";
 
 export function NewReview(props: { config: Config; onStarted: (id: string) => void }) {
   const [dir, setDir] = createSignal<string | undefined>(undefined);
@@ -78,6 +79,20 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
   }, 1500);
   onCleanup(() => clearInterval(poll));
 
+  const [ask, setAsk] = createSignal("");
+  const askNow = (e: Event) => {
+    e.preventDefault();
+    if (!ask().trim()) return;
+    askFromStart(ask().trim());
+    location.hash = "#/chat";
+  };
+  const toReview = (kind: "whole" | "change") => {
+    setWhat(kind);
+    document.getElementById("h-review")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  };
+  const hour = new Date().getHours();
+  const greeting = () => t(hour < 5 ? "start.night" : hour < 12 ? "start.morning" : hour < 18 ? "start.afternoon" : "start.evening");
+
   const start = async () => {
     setBusy(true);
     setError("");
@@ -94,7 +109,25 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
 
   return (
     <section class="stack wide" aria-labelledby="h-new">
-      <h1 id="h-new">{t("new.title")}</h1>
+      <div class="start">
+        <h1 id="h-new" class="start-hello">{greeting()}</h1>
+        <p class="start-sub">{t("start.sub")}</p>
+        <form class="start-ask" onSubmit={askNow}>
+          <label class="visually-hidden" for="start-ask">{t("start.askLabel")}</label>
+          <textarea id="start-ask" rows={2} placeholder={t("start.placeholder")} value={ask()} onInput={(e) => setAsk(e.currentTarget.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) askNow(e); }} />
+          <div class="start-ask-row">
+            <span class="muted">{props.config.route.simulated ? t("start.whereTest") : props.config.route.stays_here === false ? t("start.whereAway", { model: props.config.route.model ?? props.config.route.id }) : t("start.whereHere")}</span>
+            <button class="primary" type="submit" disabled={!ask().trim()}>{t("start.ask")}</button>
+          </div>
+        </form>
+        <ul class="plain start-ways" aria-label={t("start.ways")}>
+          <li><button type="button" class="way" onClick={() => toReview("whole")}><strong>{t("start.way.review")}</strong><span class="muted">{t("start.way.review.sub")}</span></button></li>
+          <li><button type="button" class="way" onClick={() => toReview("change")}><strong>{t("start.way.change")}</strong><span class="muted">{t("start.way.change.sub")}</span></button></li>
+          <li><a class="way" href="#/docs"><strong>{t("start.way.docs")}</strong><span class="muted">{t("start.way.docs.sub")}</span></a></li>
+          <li><a class="way" href="#/meeting"><strong>{t("start.way.meeting")}</strong><span class="muted">{t("start.way.meeting.sub")}</span></a></li>
+        </ul>
+      </div>
+      <h2 id="h-review" class="section-title">{t("new.title")}</h2>
       <p class="greeting">{t("new.greeting")}</p>
       <p class="lead">{t("new.lead")}</p>
       <SampleCard onReview={(folder) => setDir(folder)} />

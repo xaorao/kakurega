@@ -169,3 +169,18 @@ export function exchangeWasSaved(before: number, message: string, saved: readonl
   const answer = saved[before + 1];
   return asked?.role === "user" && asked.content.trim() === message.trim() && answer?.role === "assistant" && answer.content.trim() !== "";
 }
+
+let sendOnOpen = false;
+
+/** A question typed on the start screen: kept as the new conversation's draft and sent as soon as the chat opens. */
+export function askFromStart(text: string): void {
+  saveDraft(draftKey(null), text);
+  sendOnOpen = text.trim().length > 0;
+}
+
+/** Whether the chat was opened by a question from the start screen. True once. */
+export function takeSendOnOpen(): boolean {
+  const v = sendOnOpen;
+  sendOnOpen = false;
+  return v;
+}

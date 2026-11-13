@@ -11,7 +11,7 @@ import { SavedPrompts } from "../components/SavedPrompts";
 import { Markdown } from "../components/Markdown";
 import { HistoryPicker } from "../components/HistoryPicker";
 import { SentView } from "../components/SentView";
-import { draftKey, exchangeWasSaved, opensHistoryPicker, forgetDraft, forgetSent, historyKey, historyStep, idleHistory, loadDraft, rememberSent, retagSent, saveDraft, sentHistory, stopsReply } from "../composer";
+import { draftKey, exchangeWasSaved, opensHistoryPicker, takeSendOnOpen, forgetDraft, forgetSent, historyKey, historyStep, idleHistory, loadDraft, rememberSent, retagSent, saveDraft, sentHistory, stopsReply } from "../composer";
 import { answerLine, meterLine, noteNotes, pageNotes, savedLine, summaryNotes } from "../meter";
 import { baseline, loadSeen, markSeen, saveSeen, unreadIds, type Seen } from "../unread";
 
@@ -453,6 +453,10 @@ export function Chat() {
   // a file handed over by another screen or by the desktop shell (a picture of the screen) is shown where it will be sent from
   onMount(() => {
     if (files().length > 0) queueMicrotask(() => { box?.scrollIntoView({ block: "center" }); box?.focus(); });
+  });
+  // a question typed on the start screen is sent as soon as the chat is on screen
+  onMount(() => {
+    if (takeSendOnOpen() && text().trim()) queueMicrotask(() => formEl?.requestSubmit());
   });
   // A file dropped anywhere on the page is attached here; without this the browser would open it in place of the page and the
   // message being written would be lost. Only drags that carry files count, so dragging selected text shows no drop target.
@@ -1006,7 +1010,7 @@ export function Chat() {
         <textarea
           ref={box}
           id="chat-input"
-          rows="3"
+          rows="2"
           value={text()}
           role="combobox"
           aria-expanded={slashOpen()}

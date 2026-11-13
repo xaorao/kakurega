@@ -45,6 +45,7 @@ const origin = new URL(link).origin;
 
 await page.goto(link);
 await page.waitForSelector("nav");
+await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
 await page.getByRole("link", { name: "Roundtable" }).click();
 await page.getByRole("heading", { name: "Roundtable", exact: true }).waitFor();
 const ask = page.getByRole("button", { name: "Ask the roundtable" });

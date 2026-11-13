@@ -42,6 +42,7 @@ await page.goto(link);
 await page.waitForSelector("nav");
 const skip = page.getByRole("button", { name: "Skip the rest" });
 if (await skip.count()) await skip.click();
+await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
 await page.getByRole("link", { name: "Ask Claude Code" }).click();
 if (!installed) {
   await page.waitForSelector("#hand-none");

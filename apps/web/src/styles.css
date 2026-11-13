@@ -604,3 +604,56 @@ pre.pr-comment { font-size: 13px; }
 .receipt-facts dt { color: var(--stone); }
 .receipt-facts dd { margin: 0; overflow-wrap: anywhere; }
 @media (max-width: 560px) { .receipt-facts { grid-template-columns: 1fr; } }
+
+/* the sidebar: a few main places, the rest folded, the things about trust at the bottom */
+.nav-more { margin-top: 6px; }
+.nav-more > summary { cursor: pointer; color: var(--stone); padding: 8px 12px; border-radius: var(--radius-s); font-size: 14px; }
+.nav-more > summary:hover { background: var(--veil); }
+.nav-more[open] > summary { color: var(--ink); }
+.nav-more h2 { margin: 12px 0 2px; }
+.nav-more .navlink { display: block; }
+.side-foot { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; }
+.side-prefs { display: flex; gap: 8px; padding: 8px 4px 0; }
+.side-prefs .theme { flex: 1; min-width: 0; }
+.side-prefs select { width: 100%; }
+.safeguards { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 4px 0; }
+.safeguards .badge { font-size: 12px; }
+@media (min-width: 861px) { .side { position: sticky; top: 53px; height: calc(100vh - 53px); overflow: auto; } }
+
+/* the start: a greeting, one box to ask in, and four ways to begin */
+.start { display: flex; flex-direction: column; gap: 14px; padding: clamp(8px, 4vh, 40px) 0 8px; }
+.start-hello { font-size: clamp(28px, 4vw, 40px); letter-spacing: -0.02em; margin: 0; }
+.start-sub { color: var(--graphite); max-width: 60ch; margin: 0; }
+.start-ask { border: 1px solid var(--line); border-radius: var(--radius-m); background: var(--paper); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.start-ask:focus-within { border-color: var(--ink); }
+.start-ask textarea { border: 0; background: transparent; resize: none; padding: 6px 8px; font-size: 17px; min-height: 56px; outline: none; box-shadow: none; }
+.start-ask-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 0 4px; }
+.start-ask-row .muted { font-size: 13px; }
+ul.plain.start-ways { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.way { display: flex; flex-direction: column; gap: 4px; width: 100%; height: 100%; text-align: left; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-m); background: var(--paper); color: var(--ink); text-decoration: none; }
+.way:hover { border-color: var(--stone); }
+.way .muted { font-size: 13px; }
+.section-title { margin-top: 28px; font-size: 20px; }
+@media (max-width: 860px) { ul.plain.start-ways { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* the chat: the box you type in stays in reach at the bottom of the window; what was said scrolls above it */
+@media (min-width: 861px) and (min-height: 640px) {
+  .composer { position: sticky; bottom: 16px; z-index: 1; box-shadow: 0 -12px 24px -12px color-mix(in srgb, var(--ink) 14%, transparent), 0 0 0 1px var(--line); }
+  .composer textarea { max-height: 40vh; }
+}
+.composer textarea { border: 0; background: transparent; box-shadow: none; outline: none; resize: none; font-size: 16px; padding: 4px 2px; }
+.composer:focus-within { border-color: var(--stone); }
+.composer .attach .actions > button:not(.primary) { font-size: 14px; padding: 6px 12px; min-height: 36px; }
+.composer .send-group > button:not(.primary) { border-color: transparent; background: transparent; color: var(--graphite); }
+.composer .send-group > button.primary { min-width: 84px; }
+/* what an answer cost and where it came from: there to read, never louder than the answer */
+.msg.assistant > p.muted { font-size: 13px; color: var(--fog); }
+.msg.assistant > p.muted:hover { color: var(--graphite); }
+/* the box stays small: the two folded extras share one line at its foot and take the full width only when opened */
+.composer.stack { display: flex; flex-flow: row wrap; align-items: center; gap: 8px 16px; padding: 12px 16px; }
+.composer.stack > * { flex: 1 1 100%; min-width: 0; margin: 0; }
+.composer.stack > details:not([open]) { flex: 0 0 auto; order: 9; }
+.composer.stack > details:not([open]) > summary { font-size: 13px; color: var(--graphite); font-weight: 400; }
+.composer.stack > details[open] { order: 9; }
+.composer.stack > p.muted { order: 8; font-size: 12px; color: var(--fog); }
+.composer textarea { min-height: 48px; }

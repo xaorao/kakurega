@@ -871,6 +871,7 @@ try {
   await page.reload();
   await page.waitForLoadState("load");
   // agent access: the owner leases the tools that act to a connected agent, sees the lease, and takes it back
+  await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
   await page.getByRole("link", { name: "Agent access" }).click();
   await page.getByRole("heading", { name: "Agent access", exact: true }).waitFor();
   check("with no lease the screen says an agent cannot start reviews or ask for approvals", (await page.getByText("No lease is active.").count()) === 1);
@@ -1921,6 +1922,7 @@ try {
   await axeCheck(page, "documents screen");
   await page.screenshot({ path: join(shots, "14-documents.png") });
   // activity: the signed log lists what happened, downloads, and verifies offline with the CLI
+  await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
   await page.getByRole("link", { name: "Activity" }).click();
   await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();
   await page.getByRole("cell", { name: "Delivery finished" }).first().waitFor();
@@ -1998,6 +2000,7 @@ try {
     await page.setViewportSize({ width: 1280, height: 860 });
   }
   // back to the activity page, where the journey continues
+  await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
   await page.getByRole("link", { name: "Activity" }).click();
   await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();
   check("the activity page never shows memory text or file contents", !rows.join("\n").includes("in-process dictionary") && !rows.join("\n").includes("euros"));
@@ -2190,6 +2193,7 @@ try {
     check("the helper conversation was removed again so the rest of the journey is unchanged", cleaned === 200, String(cleaned));
     await page.getByLabel("Search memories").fill("");
   }
+  await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
   await page.getByRole("link", { name: "Activity" }).click();
   await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();
   await page.locator("#usage").getByRole("cell", { name: /test model/i }).first().waitFor();
@@ -2213,6 +2217,7 @@ try {
   await usageCard.getByRole("alert").waitFor();
   check("a range longer than 366 days is refused", (await usageCard.getByRole("alert").innerText()).includes("366"));
   // the owner's standing instructions: written once, kept, sent with chat questions, and refused if they hold a secret
+  await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
   await page.getByRole("link", { name: "Instructions" }).click();
   await page.getByRole("heading", { name: "Standing instructions", exact: true }).waitFor();
   await page.getByLabel("Instructions for every conversation").fill("Answer in short bullet points.");
@@ -2236,6 +2241,7 @@ try {
   await page.getByText("your instructions applied").first().waitFor();
   check("an answer says that the owner's instructions were sent with it", (await page.locator(".msg.assistant").innerText()).includes("your instructions applied"));
   await page.getByRole("button", { name: "Clear" }).click();
+  await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
   await page.getByRole("link", { name: "Instructions" }).click();
   await page.getByRole("button", { name: "Remove" }).first().click();
   await page.getByText("Removed.").first().waitFor();
@@ -2245,6 +2251,7 @@ try {
   await page.getByText(/notes? used/).first().waitFor();
   check("after removing them the answer no longer says so", !(await page.locator(".msg.assistant").innerText()).includes("your instructions applied"));
   await page.getByRole("button", { name: "Clear" }).click();
+  await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
   await page.getByRole("link", { name: "Activity" }).click();
   await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();
   // the keyboard shortcut list: opened by ?, generated from the table, closed by Escape, and silent while typing
@@ -2269,6 +2276,7 @@ try {
   await kb.waitFor({ state: "detached" });
   check("closing it puts the cursor back where it was", await page.evaluate(() => document.activeElement?.id === "chat-input"));
   await page.getByLabel("Your message").fill("");
+  await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
   await page.getByRole("link", { name: "Activity" }).click();
   await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();
   // settings: one place for every setting, searchable by name, meaning or a word people use
@@ -2401,6 +2409,7 @@ try {
   check("a recipient opening the checker by its plain address sees no link into a workspace", (await page.getByRole("link", { name: "← Back to Kakurega" }).count()) === 0);
   await page.goto(`${base}/#/privacy`);
   await page.getByRole("heading", { name: "Where your data goes", exact: true }).waitFor();
+  await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
   await page.locator("nav").getByRole("link", { name: "Check a capsule" }).click();
   await page.getByRole("heading", { name: "Check a capsule or share" }).waitFor();
   await page.getByRole("link", { name: "← Back to Kakurega" }).click();
@@ -2410,6 +2419,7 @@ try {
   await page.getByRole("heading", { name: "Where your data goes", exact: true }).waitFor();
   await page.locator("#pv-near-option").waitFor();
   await page.screenshot({ path: join(shots, "12b-privacy.png"), fullPage: true });
+  await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
   await page.getByRole("link", { name: "Activity" }).click();
   await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();
   await axeCheck(page, "activity screen");

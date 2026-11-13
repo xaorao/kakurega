@@ -46,6 +46,7 @@ await page.goto(link);
 await page.waitForSelector("nav");
 const skip = page.getByRole("button", { name: "Skip the rest" });
 if (await skip.count()) await skip.click();
+await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
 await page.getByRole("link", { name: "Skills", exact: true }).click();
 await page.waitForSelector("#gh-client");
 check((await page.locator("#github").innerText()).includes("Nothing is ever written to GitHub"), "the card says it only reads");
@@ -87,6 +88,7 @@ check(existsSync(tokenFile), "the token is kept in its own file");
 const token = JSON.parse(readFileSync(tokenFile, "utf8"));
 const secretValues = Object.values(token).filter((v) => typeof v === "string" && v.length > 20);
 check(secretValues.length > 0 && !secretValues.some((v) => log.includes(v)), "no token is in the service's output");
+await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
 await page.getByRole("link", { name: "Skills", exact: true }).click();
 await page.waitForSelector("#gh-account");
 check(!secretValues.some((v) => true) || !(await page.content()).includes(secretValues[0]), "no token is in the page");

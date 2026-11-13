@@ -174,6 +174,7 @@ if (!real) {
   check(afterStop.every((s) => s === "waiting") && /Finished tasks are kept/.test(stopCard), "a stop ends the answer being written and leaves the tasks waiting: " + afterStop.join(",") + " | " + stopCard.replace(/\n/g, " / ").slice(0, 200));
   await shot(page, "5-stopped");
   // leaving the page and coming back finds the run again from the list
+  await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
   await page.getByRole("link", { name: "Roundtable" }).click();
   await page.getByRole("link", { name: "Team", exact: true }).click();
   await page.locator(".team-runs li").first().getByRole("button").click();
@@ -192,6 +193,7 @@ if (!real) {
   check((await page.locator(".team-runs li").count()) === 1, "after a yes the run is gone from the list");
 }
 if (!real) {
+  await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
   await page.getByRole("link", { name: "Activity" }).click();
   await page.locator("#working").waitFor();
   await page.waitForFunction(() => /Nothing is working right now/.test(document.querySelector("#working")?.textContent ?? ""), null, { timeout: 10000 });

@@ -129,6 +129,23 @@ function sandboxWords(transport: string | undefined): string {
   return vm ? t("badge.sandbox.vm", { vm }) : transport;
 }
 
+/** The two standing safeguards, said quietly at the foot of the sidebar: how the sandbox is sealed and who approves a release. */
+function Safeguards(props: { config: Config }) {
+  const r = () => props.config.route;
+  return (
+    <div class="safeguards">
+      <span class="badge" title={`${t("badge.sandbox.title")} (${r().transport ?? ""})`}>
+        {sandboxWords(r().transport)}
+      </span>
+      <Show when={props.config.approvals?.asks_every_release}>
+        <span class="badge" title={t(props.config.approvals?.signing_key_enrolled ? "badge.approvals.signed.title" : "badge.approvals.title")}>
+          {t(props.config.approvals?.signing_key_enrolled ? "badge.approvals.signed" : "badge.approvals")}
+        </span>
+      </Show>
+    </div>
+  );
+}
+
 function Badge(props: { config: Config; modelDown: boolean }) {
   const r = () => props.config.route;
   // the local model's check speaks only for the badge's model when that model is the one on this computer
@@ -155,14 +172,6 @@ function Badge(props: { config: Config; modelDown: boolean }) {
       >
         <span class="badge ok" title={t("badge.private.title")}>
           <span class="dot" /> {t("badge.private")}
-        </span>
-      </Show>
-      <span class="badge" title={`${t("badge.sandbox.title")} (${r().transport ?? ""})`}>
-        {sandboxWords(r().transport)}
-      </span>
-      <Show when={props.config.approvals?.asks_every_release}>
-        <span class="badge" title={t(props.config.approvals?.signing_key_enrolled ? "badge.approvals.signed.title" : "badge.approvals.title")}>
-          {t(props.config.approvals?.signing_key_enrolled ? "badge.approvals.signed" : "badge.approvals")}
         </span>
       </Show>
       <span class={down() ? "badge warn" : "badge"} title={down() ? t("badge.model.down.title") : undefined}>
@@ -201,6 +210,7 @@ export function App() {
   let searchBox: HTMLInputElement | undefined;
   // on a narrow screen the menu is closed until asked for; choosing a page closes it again
   const [menuOpen, setMenuOpen] = createSignal(false);
+  const [moreOpen, setMoreOpen] = createSignal(false);
   createEffect(() => { hash(); setMenuOpen(false); });
   // the desktop shell opens this address after the owner took a picture of the screen: the attachment is handed to the chat once
   createEffect(() => {
@@ -418,8 +428,6 @@ export function App() {
           <header class="top">
             <a class="brand" href="#/">kakurega</a>
             <Show when={config()}>{(c) => <Badge config={c()} modelDown={modelDown()} />}</Show>
-            <LanguagePicker />
-            <ThemePicker />
             <button class="link" onClick={() => setPaletteOpen(true)} aria-keyshortcuts="Control+Shift+P Meta+Shift+P">{t("palette.open")}</button>
             <button class="link" onClick={async () => { await api.logout(); setPaired(false); }}>{t("top.signout")}</button>
           </header>
@@ -434,27 +442,29 @@ export function App() {
             <nav id="side-nav" class={menuOpen() ? "side open" : "side"} aria-label={t("nav.label")}>
               <a class="primary" href="#/">{t("nav.new")}</a>
               <a href="#/inbox" class={hash() === "#/inbox" ? "navlink active" : "navlink"}>{t("nav.inbox")}{waiting() > 0 ? <span class="count" aria-label={t("nav.inboxCount", { n: waiting() })}> ({waiting()})</span> : null}</a>
-              <a href="#/privacy" class={hash() === "#/privacy" ? "navlink active" : "navlink"}>{t("nav.privacy")}</a>
-              <h2>{t("nav.group.work")}</h2>
-              <a href="#/projects" class={hash() === "#/projects" ? "navlink active" : "navlink"}>{t("nav.projects")}</a>
               <a href="#/chat" class={hash() === "#/chat" ? "navlink active" : "navlink"}>{t("nav.chat")}</a>
               <a href="#/docs" class={hash() === "#/docs" ? "navlink active" : "navlink"}>{t("nav.docs")}</a>
-              <a href="#/meeting" class={hash() === "#/meeting" ? "navlink active" : "navlink"}>{t("nav.meeting")}</a>
-              <a href="#/explore" class={hash() === "#/explore" ? "navlink active" : "navlink"}>{t("nav.explore")}</a>
-              <a href="#/code" class={hash() === "#/code" ? "navlink active" : "navlink"}>{t("nav.code")}</a>
-              <a href="#/roundtable" class={hash() === "#/roundtable" ? "navlink active" : "navlink"}>{t("nav.roundtable")}</a>
+              <a href="#/projects" class={hash() === "#/projects" ? "navlink active" : "navlink"}>{t("nav.projects")}</a>
               <a href="#/team" class={hash().startsWith("#/team") ? "navlink active" : "navlink"}>{t("nav.team")}</a>
-              <a href="#/handoff" class={hash() === "#/handoff" ? "navlink active" : "navlink"}>{t("nav.handoff")}</a>
-              <h2>{t("nav.group.knows")}</h2>
               <a href="#/memory" class={hash() === "#/memory" ? "navlink active" : "navlink"}>{t("nav.memory")}</a>
-              <a href="#/instructions" class={hash() === "#/instructions" ? "navlink active" : "navlink"}>{t("nav.instructions")}</a>
-              <a href="#/skills" class={hash() === "#/skills" ? "navlink active" : "navlink"}>{t("nav.skills")}</a>
-              <h2>{t("nav.group.trust")}</h2>
-              <a href="#/break" class={hash() === "#/break" ? "navlink active" : "navlink"}>{t("break.title")}</a>
-              <a href="#/agent" class={hash() === "#/agent" ? "navlink active" : "navlink"}>{t("nav.agent")}</a>
-              <a href="#/activity" class={hash() === "#/activity" ? "navlink active" : "navlink"}>{t("nav.activity")}</a>
-              <a href="/verify?from=workspace" class="navlink">{t("nav.verify")}</a>
-              <a href="#/settings" class={hash() === "#/settings" ? "navlink active" : "navlink"}>{t("nav.settings")}</a>
+              {/* everything else stays one click away; the group opens by itself when one of its screens is shown */}
+              <details id="nav-more" class="nav-more" open={moreOpen() || (hash() === "#/meeting" || hash() === "#/explore" || hash() === "#/code" || hash() === "#/roundtable" || hash() === "#/handoff" || hash() === "#/instructions" || hash() === "#/skills" || hash() === "#/break" || hash() === "#/agent" || hash() === "#/activity")} onToggle={(e) => setMoreOpen(e.currentTarget.open)}>
+                <summary>{t("nav.more")}</summary>
+                <h2>{t("nav.group.work")}</h2>
+                <a href="#/meeting" class={hash() === "#/meeting" ? "navlink active" : "navlink"}>{t("nav.meeting")}</a>
+                <a href="#/explore" class={hash() === "#/explore" ? "navlink active" : "navlink"}>{t("nav.explore")}</a>
+                <a href="#/code" class={hash() === "#/code" ? "navlink active" : "navlink"}>{t("nav.code")}</a>
+                <a href="#/roundtable" class={hash() === "#/roundtable" ? "navlink active" : "navlink"}>{t("nav.roundtable")}</a>
+                <a href="#/handoff" class={hash() === "#/handoff" ? "navlink active" : "navlink"}>{t("nav.handoff")}</a>
+                <h2>{t("nav.group.knows")}</h2>
+                <a href="#/instructions" class={hash() === "#/instructions" ? "navlink active" : "navlink"}>{t("nav.instructions")}</a>
+                <a href="#/skills" class={hash() === "#/skills" ? "navlink active" : "navlink"}>{t("nav.skills")}</a>
+                <h2>{t("nav.group.trust")}</h2>
+                <a href="#/break" class={hash() === "#/break" ? "navlink active" : "navlink"}>{t("break.title")}</a>
+                <a href="#/agent" class={hash() === "#/agent" ? "navlink active" : "navlink"}>{t("nav.agent")}</a>
+                <a href="#/activity" class={hash() === "#/activity" ? "navlink active" : "navlink"}>{t("nav.activity")}</a>
+                <a href="/verify?from=workspace" class="navlink">{t("nav.verify")}</a>
+              </details>
               <label class="sr" for="search">{t("nav.search.label")}</label>
               <input
                 id="search"
@@ -479,6 +489,12 @@ export function App() {
                   )}
                 </For>
               </ul>
+              <div class="side-foot">
+                <a href="#/privacy" class={hash() === "#/privacy" ? "navlink active" : "navlink"}>{t("nav.privacy")}</a>
+                <a href="#/settings" class={hash() === "#/settings" ? "navlink active" : "navlink"}>{t("nav.settings")}</a>
+                <Show when={config()}>{(c) => <Safeguards config={c()} />}</Show>
+                <div class="side-prefs"><LanguagePicker /><ThemePicker /></div>
+              </div>
             </nav>
             <main class="main">
               <Show when={welcome()}>
