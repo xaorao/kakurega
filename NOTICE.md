@@ -94,3 +94,5 @@ Reading a change from a local git repository (`crates/kk-git`): the `gix` librar
 Finding which lines a change wrote (`crates/kk-git`): the `similar` library by Armin Ronacher (Apache-2.0, https://github.com/mitsuhiko/similar), used unchanged as a dependency.
 
 The public site's try-it page (`apps/site/try.js`) uses NEAR AI's official client for browsers, `@nearai/inference-sdk` 0.3.0 (MIT, https://github.com/nearai/inference-sdk), unchanged as a dependency and bundled into the page.
+
+Keeping stray open files out of the sandbox (`crates/kk-sandbox`, `no_stray_descriptors`): the `close_fds` library by cptpcrd (MIT, https://github.com/cptpcrd/close_fds) 0.3.2, used unchanged as a dependency on Linux for its safe "mark close-on-exec" call. Found by the build on GitHub, whose runner hands programs two open descriptors.

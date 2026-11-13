@@ -452,7 +452,18 @@ fn scope_command_named(
             .args(args);
     }
     cmd.env_clear().env("XDG_RUNTIME_DIR", dir);
+    no_stray_descriptors();
     Ok((cmd, unit))
+}
+
+/// Marks every descriptor this process holds beyond the standard three as close-on-exec, so the sandboxed program
+/// inherits none of them. Everything this program opens is already marked so by the standard library; what is left is
+/// whatever the process was started with (a parent that leaks descriptors: a CI runner, an editor, a shell with
+/// redirections), and those would otherwise pass through `systemd-run`, `prlimit` and `bwrap` to the program. The filter
+/// descriptor (see [`FILTER_FD`]) is opened later, by the shell that the launch starts, so it is not affected.
+fn no_stray_descriptors() {
+    #[cfg(target_os = "linux")]
+    close_fds::set_fds_cloexec_threadsafe(3, &[]);
 }
 
 pub fn serve_lines(

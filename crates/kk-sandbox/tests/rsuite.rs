@@ -592,3 +592,58 @@ fn r35_the_filter_file_never_outlives_the_launch() {
         .collect();
     assert!(left.is_empty(), "left behind: {left:?}");
 }
+
+/// Started by `r13` under a shell that holds a descriptor open without close-on-exec, as a leaky parent would.
+#[test]
+#[ignore = "run by r13 with a stray descriptor held open"]
+fn r13_inner_lists_the_descriptors_the_sandboxed_program_sees() {
+    if std::env::var("KK_R13_INNER").is_err() {
+        return;
+    }
+    let dir = scratch("fd-inner");
+    let spec = py_spec(
+        &dir,
+        "import os, json\nprint(json.dumps({'fds': sorted(int(n) for n in os.listdir('/proc/self/fd'))}))\n",
+        &[],
+    );
+    println!("R13 {}", out_of(&spec));
+}
+
+#[test]
+fn r13_a_descriptor_leaked_by_whatever_started_this_program_does_not_reach_the_sandbox() {
+    // this test binary again, started by a shell that holds /etc/hostname open as descriptor 7 with no close-on-exec
+    let exe = std::env::current_exe().unwrap();
+    let o = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(r#"exec 7</etc/hostname; exec "$@""#)
+        .arg("r13")
+        .arg(&exe)
+        .args([
+            "--exact",
+            "r13_inner_lists_the_descriptors_the_sandboxed_program_sees",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("KK_R13_INNER", "1")
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&o.stdout).to_string();
+    let line = out.lines().find(|l| l.contains("R13 ")).unwrap_or_else(|| {
+        panic!(
+            "the inner run printed nothing: {out} {}",
+            String::from_utf8_lossy(&o.stderr)
+        )
+    });
+    let fds: Vec<i32> = line
+        .split("\"fds\": [")
+        .nth(1)
+        .and_then(|s| s.split(']').next())
+        .map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect())
+        .unwrap_or_default();
+    assert!(!fds.is_empty(), "no descriptor list: {line}");
+    assert!(
+        fds.iter().all(|fd| *fd <= 3),
+        "a descriptor the parent leaked reached the sandboxed program: {fds:?}"
+    );
+}
