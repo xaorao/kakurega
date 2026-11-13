@@ -431,6 +431,8 @@ pub struct App {
     pub mode: Mode,
     pub route: String,
     pub ready: Option<bool>,
+    /// The owner asked for the checks by name (`/status`): list every one. At start-up a machine with nothing to fix gets one line.
+    status_asked: bool,
     pub jobs: Vec<JobRow>,
     pub roots: Vec<String>,
     pub quit: bool,
@@ -602,6 +604,7 @@ impl App {
             mode: Mode::Normal,
             route: String::new(),
             ready: None,
+            status_asked: false,
             jobs: Vec::new(),
             roots: Vec::new(),
             quit: false,
@@ -2866,13 +2869,16 @@ impl App {
                     None,
                 )]
             }
-            Command::Status => vec![self.req(
-                Intent::Readiness,
-                false,
-                Method::Get,
-                "/api/readiness",
-                None,
-            )],
+            Command::Status => {
+                self.status_asked = true;
+                vec![self.req(
+                    Intent::Readiness,
+                    false,
+                    Method::Get,
+                    "/api/readiness",
+                    None,
+                )]
+            }
             Command::Reviews => vec![self.req(Intent::Jobs, false, Method::Get, "/api/jobs", None)],
             Command::Review {
                 folder,
@@ -4516,6 +4522,18 @@ impl App {
                                 .collect()
                         })
                         .unwrap_or_default();
+                    let asked = std::mem::take(&mut self.status_asked);
+                    let all_ok = body["checks"]
+                        .as_array()
+                        .is_some_and(|a| !a.is_empty() && a.iter().all(|c| c["ok"] == true));
+                    let checks = if all_ok && !asked && body["ready"] == true {
+                        vec![match body["checks"].as_array().map_or(0, Vec::len) {
+                            1 => "The one check passed. /status shows it.".to_string(),
+                            n => format!("All {n} checks passed. /status lists them."),
+                        }]
+                    } else {
+                        checks
+                    };
                     let kind = if body["ready"] == true {
                         Kind::Ok
                     } else {

@@ -8955,3 +8955,40 @@ fn tu111_an_answer_signed_by_the_models_hardware_says_so_with_the_start_of_the_k
     ));
     assert_eq!(text(&app).matches("signed by").count(), 2);
 }
+
+#[test]
+fn tu112_at_start_a_machine_with_nothing_to_fix_gets_one_line_and_status_lists_every_check() {
+    // at start, all well: one line, and it names the command that lists the checks
+    let app = booted();
+    let t = text(&app);
+    assert!(t.contains("Ready to review"), "{t}");
+    assert!(t.contains("The one check passed. /status shows it."), "{t}");
+    assert!(!t.contains("[ok]   Sandbox"), "{t}");
+    // asked for by name: every check is listed, and the next start-up answer folds again
+    let mut app = booted();
+    let r = enter(&mut app, "/status");
+    app.handle(ok(&r[0], 200, json!({"ready": true, "checks": [{"label": "Sandbox", "ok": true, "detail": "running", "fix": ""}]})));
+    assert!(
+        text(&app).contains("[ok]   Sandbox: running"),
+        "{}",
+        text(&app)
+    );
+    // at start, an optional check that fails is never folded away, nor is a machine that is not ready
+    let mut app = App::new();
+    let reqs = app.start();
+    app.handle(ok(&reqs[1], 200, json!({"ready": true, "checks": [
+        {"label": "Sandbox", "ok": true, "detail": "running", "fix": ""},
+        {"label": "Node", "required": false, "ok": false, "detail": "not found", "fix": "install it"}
+    ]})));
+    let t = text(&app);
+    assert!(
+        t.contains("[optional] Node: not found") && t.contains("fix: install it"),
+        "{t}"
+    );
+    assert!(!t.contains("checks passed"), "{t}");
+    // a hostile answer that says ready with no checks at all is not summed up as "all passed"
+    let mut app = App::new();
+    let reqs = app.start();
+    app.handle(ok(&reqs[1], 200, json!({"ready": true, "checks": []})));
+    assert!(!text(&app).contains("checks passed"), "{}", text(&app));
+}
