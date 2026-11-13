@@ -86,3 +86,5 @@ Typefaces in the web app (`apps/web`): Outfit (Copyright 2021 The Outfit Project
 
 Signature checking fallback in the recipient's checker (`packages/verifier-js`): `@noble/ed25519` 3.2.0 by Paul Miller (MIT, https://github.com/paulmillr/noble-ed25519), used unchanged as a dependency when a browser's Web Crypto has no Ed25519.
 
+
+Naming the packaged macOS app (`apps/desktop/scripts/package.mjs`, `brand`): the steps (rename the app, its program and each helper app, and set their names, identities, version and usage texts) follow `@electron/packager` (BSD 2-Clause, Copyright 2015 Max Ogden and other contributors, https://github.com/electron/packager, `src/mac.ts`); written anew here, no code copied.
