@@ -353,7 +353,7 @@ pub fn describe(name: &str) -> &'static str {
         "team" => {
             "a lead splits a goal into tasks for experts; nothing runs until you start the plan"
         }
-        "stop" => "stop a running review, coding task or team run; alone, it lists what is working",
+        "stop" => "stop a running review, coding task, project question or team run; alone, it lists what is working",
         "remember" => "save a note",
         "correct" => "change a saved note",
         "forget" => "delete a saved note for good",
@@ -468,7 +468,7 @@ pub fn usage(name: &str) -> &'static str {
         "aside" => "/aside QUESTION",
         "roundtable" => "/roundtable EXPERT,EXPERT[,EXPERT] : QUESTION   (alone, it lists the experts)",
         "team" => "/team plan GOAL | /team start|stop|show [ID] | /team answer TASK TEXT | /team delete ID   (alone, it lists your runs)",
-        "stop" => "/stop ID   (job-N, code-N or team-...; alone, it lists what is working)",
+        "stop" => "/stop ID   (job-N, code-N, question-N or team-...; alone, it lists what is working)",
         "correct" => "/correct ID NEW TEXT",
         "forget" => "/forget ID",
         "forgetreview" => "/forgetreview JOB",
@@ -832,6 +832,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 Ok(Command::Stop(None))
             } else if rest.strip_prefix("job-").is_some_and(digits)
                 || rest.strip_prefix("code-").is_some_and(digits)
+                || rest.strip_prefix("question-").is_some_and(digits)
                 || team_id_ok(rest)
             {
                 Ok(Command::Stop(Some(rest.to_string())))

@@ -56,11 +56,11 @@ Usage:
   kaku jobs [--json] | kaku findings JOB [--json] | kaku follow JOB [--timeout S]   list reviews, read what one found, watch one until it ends
   kaku explore DIR QUESTION... [--depth quick|normal|thorough] [--json]   an agent reads the project and answers (with the model here or in confidential hardware); every line it rests on is checked (exit 3 if one is not found)
   kaku explore show ID | list | forget ID          read, list or forget questions about projects
-  kaku ask QUESTION --folder DIR [--json]   ask about the documents in a folder; every quote is checked (exit 3 if any is not found)
+  kaku ask QUESTION --folder DIR [--json]   ask about the documents in a folder (the web's Ask your documents; for Ask a project use kaku explore); every quote is checked (exit 3 if any is not found)
   kaku chat MESSAGE|- [--json] [--keep | --session ID]   one message to the private assistant; nothing is kept unless --keep starts a kept conversation or --session continues one
   kaku team plan GOAL [--experts ID,ID] | list | show ID | start ID [--wait] | stop ID | answer ID TASK TEXT | delete ID   a lead splits a goal into tasks for experts; nothing runs until you start the plan
-  kaku stop ID                      stop a running review (job-N), coding task (code-N) or team run (team-...)
-  kaku work [--json]                what is working now (reviews, coding tasks, team runs) and what has gone quiet
+  kaku stop ID                      stop a running review (job-N), coding task (code-N), project question (question-N) or team run (team-...)
+  kaku work [--json]                what is working now (reviews, coding tasks, project questions, team runs) and what has gone quiet
   kaku roundtable QUESTION --experts ID,ID[,ID...] [--json]   one question to 2 to 5 experts, each alone, then a lead's resolution in four parts (kaku roundtable --list names the experts)
   kaku sessions [--json]            list the kept conversations; `kaku sessions export ID [--out FILE]` writes one as Markdown; these commands cannot approve anything
   kaku pair                         print a new one-time pairing link for the browser
@@ -86,6 +86,7 @@ Usage:
   kaku bench sign|verify FILE          sign the leak benchmark's results, or check a signed results file against a pinned key
   kaku verify FILE [--pin KEY] [--out DIR]   check a capsule or a share offline (KEY: base64url public key); --out writes a share's files into a new folder
   kaku chain hardware KEY | capsule FILE | order ID   what NEAR holds: a model key's hardware record, who registered a capsule, an order (reads only; --network, --registry, --json)
+  kaku chain order open ... | fees | storage ACCOUNT   set NEAR aside for a review, what the registry takes and owes, NEAR set aside for token orders (`kaku chain` alone lists every option)
   kaku chain attest --model NAME --key-file FILE   have NEAR's own verifier check that model's hardware proof and record its signing key (testnet; the account in the key file pays)
   kaku chain register JOB --key-file FILE [--order ID]   publish a delivered review's capsule digest and model receipts on NEAR, after showing exactly what becomes public (testnet)
   kaku chain quote --pay-with SYMBOL@chain --usdc AMOUNT ...   a price from NEAR Intents for paying an order from another chain, with the order's terms as the transfer's message (a dry quote: nothing is sent)

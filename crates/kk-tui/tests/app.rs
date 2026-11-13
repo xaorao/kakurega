@@ -8822,3 +8822,15 @@ fn tu85b_a_near_models_cost_at_its_published_price_is_named_and_a_few_thousandth
     );
     assert!(t.contains("USD 0.0044"), "the total keeps its digits: {t}");
 }
+
+#[test]
+fn tu108_a_running_project_question_can_be_stopped_by_its_id() {
+    let mut app = booted();
+    let r = enter(&mut app, "/stop question-7");
+    assert_eq!(r.len(), 1, "one request");
+    assert_eq!(r[0].path, "/api/questions/question-7/stop");
+    // an id that is none of the four kinds is refused before any request
+    let none = enter(&mut app, "/stop question-");
+    assert!(none.is_empty());
+    assert!(text(&app).contains("question-N"), "{}", text(&app));
+}

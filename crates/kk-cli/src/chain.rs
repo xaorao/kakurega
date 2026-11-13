@@ -380,7 +380,7 @@ pub fn run(args: &[String]) -> u8 {
             }
             if ticket["receipts_left_out"].as_u64().unwrap_or(0) > 0 {
                 println!("{}", kk_types::words::counted(&format!(
-                    "  ({} further receipt(s) in the capsule are not published: a registration carries at most 16)",
+                    "  ({} further receipt(s) in the capsule are not published: a registration carries at most 128)",
                     ticket["receipts_left_out"]
                 )));
             }

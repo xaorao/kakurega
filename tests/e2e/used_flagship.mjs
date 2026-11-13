@@ -121,7 +121,7 @@ try {
   const out = await page.evaluate(async () => (await (await fetch("/api/outbound")).json()));
   if (nearModel) {
     check("the capsule carries answers signed by the NEAR model's own key", /Model answers signed by their model \(\d+\)/.test(cli.stdout) && cli.stdout.includes(nearModel), cli.stdout.slice(0, 400));
-    check("the list of what left this computer names the release and the review's questions to the confidential model, and nothing else", (out.rows ?? []).some((r) => r.what === "release") && (out.rows ?? []).some((r) => r.what === "review" && r.to === "verified_tee") && (out.rows ?? []).every((r) => ["release", "review", "model"].includes(r.what)), JSON.stringify(out).slice(0, 400));
+    check("the list of what left this computer names the release and the review's questions to the confidential model, and nothing else", (out.rows ?? []).some((r) => r.what === "release") && (out.rows ?? []).some((r) => r.what === "review" && r.to === "verified_tee") && (out.rows ?? []).every((r) => ["release", "review", "review_used", "model"].includes(r.what)), JSON.stringify(out).slice(0, 400));
   } else {
     check("the list of what left this computer names the release and nothing else", (out.rows ?? []).length === 1 && out.rows[0].what === "release" && out.totals?.model === 0, JSON.stringify(out).slice(0, 300));
   }

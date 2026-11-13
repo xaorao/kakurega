@@ -1337,6 +1337,11 @@ impl Service {
         if kk_secrets::holds_secret(recipient) {
             return Err("the recipient looks like a secret; use a plain name".into());
         }
+        // the model is not switched between the checks above and the review being listed as running
+        let _steady = self.route_hold();
+        if let Some((name, _)) = self.floor_above_route(named.as_deref(), Some(&dir)) {
+            return Err(projects::floor_words(&name));
+        }
         let (id, first) = {
             let mut g = self.inner.lock().expect("lock");
             // counted under the same lock that adds the review, so a burst of starts cannot slip past the limit
@@ -1353,6 +1358,20 @@ impl Service {
             // everything a review later releases rests on the log, so a review whose start cannot be recorded does not start
             if !self.log_event("job.started", &id, &[("recipient", recipient.into())]) {
                 return Err("the signed log could not be written (is the disk full?), so the review was not started; free some space and start it again".into());
+            }
+            // with a model elsewhere the project's files leave this computer: recorded now, before any does, like a question
+            if self.route_level() < 3 {
+                let class = self.route_for_owner()["class"]
+                    .as_str()
+                    .unwrap_or("?")
+                    .to_string();
+                if !self.log_event(
+                    "outbound.review_started",
+                    &class,
+                    &[("job", id.as_str().into())],
+                ) {
+                    return Err(swap::LOG_UNWRITABLE.into());
+                }
             }
             let job = Job {
                 id: id.clone(),
@@ -1410,7 +1429,7 @@ impl Service {
                             // a review whose model is not on this computer is something that left it
                             if u["class"] != "device_only" {
                                 svc.log_event(
-                                    "outbound.review",
+                                    "outbound.review_used",
                                     u["class"].as_str().unwrap_or("?"),
                                     &[
                                         ("calls", (n("calls") as usize).into()),
@@ -6432,10 +6451,12 @@ async fn code_start(axum::Extension(svc): Svc, Json(b): Json<CodeBody>) -> Respo
             "that folder is not available",
         );
     };
-    if let Some(refusal) = svc.agent_refusal("coding", &repo) {
-        return refusal;
-    }
     let id = {
+        // the model is not switched between this check and the task being listed as running
+        let _steady = svc.route_hold();
+        if let Some(refusal) = svc.agent_refusal("coding", &repo) {
+            return refusal;
+        }
         let mut g = svc.coding.lock().expect("lock");
         if g.list.values().any(|t| {
             matches!(
@@ -6451,6 +6472,9 @@ async fn code_start(axum::Extension(svc): Svc, Json(b): Json<CodeBody>) -> Respo
                 "a coding task is already running; wait for it to finish",
             );
         }
+        if let Some((status, code, why)) = svc.agent_leaves("coding") {
+            return error(status, code, &why);
+        }
         g.next += 1;
         let id = format!("code-{}", g.next);
         let t = crate::coding::Task {
@@ -6461,6 +6485,7 @@ async fn code_start(axum::Extension(svc): Svc, Json(b): Json<CodeBody>) -> Respo
             state: crate::coding::State::Running,
             outcome: None,
             progress: Vec::new(),
+            last: now(),
         };
         if !svc.keep_code(&t) {
             return error(
@@ -6482,6 +6507,7 @@ async fn code_start(axum::Extension(svc): Svc, Json(b): Json<CodeBody>) -> Respo
             if let Some(t) = svc2.coding.lock().expect("lock").list.get_mut(&id2) {
                 if t.progress.len() < 200 {
                     t.progress.push(line.chars().take(200).collect());
+                    t.last = now();
                 }
             }
         };
@@ -8755,7 +8781,7 @@ async fn work(axum::Extension(svc): Svc) -> Json<Value> {
                     &t.task,
                     state,
                     t.created,
-                    t.created,
+                    t.last.max(t.created),
                     state == "running",
                 ));
             }
@@ -8774,7 +8800,7 @@ async fn work(axum::Extension(svc): Svc) -> Json<Value> {
                 &q.question,
                 "running",
                 q.created,
-                q.created,
+                q.last.max(q.created),
                 true,
             ));
         }

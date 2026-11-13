@@ -48,6 +48,9 @@ pub struct Question {
     pub state: State,
     pub outcome: Option<QuestionOutcome>,
     pub progress: Vec<String>,
+    /// When it last showed progress (seconds); 0 in records kept before this was noted, which then count from their start.
+    #[serde(default)]
+    pub last: i64,
 }
 
 #[derive(Default)]

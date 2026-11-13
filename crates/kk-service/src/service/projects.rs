@@ -408,7 +408,7 @@ impl Service {
     }
 
     /// The same check, as a status, a code and the words, for a caller that is not answering a request (a team run's code
-    /// reader). A pass on a model elsewhere has been written to the signed log when this returns.
+    /// reader). It records nothing: `agent_leaves` does, once the work is certain to start.
     pub(super) fn agent_check(
         &self,
         door: &str,
@@ -433,19 +433,61 @@ impl Service {
                 floor_words(&name),
             ));
         }
-        if self.route_level() < 3 {
-            let host = self.route_for_owner()["host"]
-                .as_str()
-                .unwrap_or("another computer")
-                .to_string();
-            if !self.log_event("outbound.agent", &host, &[("door", door.into())]) {
-                return Some((
-                    StatusCode::INSUFFICIENT_STORAGE,
-                    "LOG_UNAVAILABLE",
-                    super::swap::LOG_UNWRITABLE.to_string(),
-                ));
-            }
-        }
         None
+    }
+
+    /// Records, before any file is sent, that an agent is about to work with a model elsewhere (nothing is written for a
+    /// model on this computer). The refusal when the signed log cannot be written: then nothing is sent.
+    pub(super) fn agent_leaves(&self, door: &str) -> Option<(StatusCode, &'static str, String)> {
+        if self.route_level() >= 3 {
+            return None;
+        }
+        let host = self.route_for_owner()["host"]
+            .as_str()
+            .unwrap_or("another computer")
+            .to_string();
+        (!self.log_event("outbound.agent", &host, &[("door", door.into())])).then(|| {
+            (
+                StatusCode::INSUFFICIENT_STORAGE,
+                "LOG_UNAVAILABLE",
+                super::swap::LOG_UNWRITABLE.to_string(),
+            )
+        })
+    }
+
+    /// What is working with the model in use, if anything: a review, a question about a project, a coding task or a team
+    /// run. The model is not switched under them: each was allowed, and recorded, for the model it started with.
+    pub(super) fn work_with_model(&self) -> Option<&'static str> {
+        if self
+            .inner
+            .lock()
+            .expect("lock")
+            .jobs
+            .values()
+            .any(|j| matches!(j.state, JobState::Running))
+        {
+            return Some("a review");
+        }
+        if self
+            .questions
+            .lock()
+            .expect("lock")
+            .list
+            .values()
+            .any(|q| q.state == crate::questions::State::Running)
+        {
+            return Some("a question about a project");
+        }
+        if self
+            .coding
+            .lock()
+            .expect("lock")
+            .list
+            .values()
+            .any(|t| matches!(t.state, crate::coding::State::Running))
+        {
+            return Some("a coding task");
+        }
+        (!self.team_working().is_empty()).then_some("a team run")
     }
 }

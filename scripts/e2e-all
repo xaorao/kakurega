@@ -3,6 +3,14 @@
 # Needs: the Lima VM `kak` (worker build), Playwright's Chromium, a graphical session for the Electron desktop checks.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Several desktop checks crash a window or a tampered app on purpose; macOS would leave a "quit unexpectedly" box on the
+# owner's screen for each. They are hidden for this run only, and the owner's setting is put back however the run ends.
+crash_before=$(defaults read com.apple.CrashReporter DialogType 2>/dev/null || true)
+restore_crash_dialogs() {
+  if [ -n "$crash_before" ]; then defaults write com.apple.CrashReporter DialogType "$crash_before"; else defaults delete com.apple.CrashReporter DialogType 2>/dev/null || true; fi
+}
+trap restore_crash_dialogs EXIT
+defaults write com.apple.CrashReporter DialogType none
 scripts/e2e
 cargo build -p kk-cli
 spikes/enclave/build.sh --test target/debug/kaku-enclave-test >/dev/null

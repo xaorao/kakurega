@@ -151,7 +151,7 @@ const REVIEW_NOT_HANDED: &str = "(this answer holds words about the project's fi
 /// "Ask a project", every line its answer rests on checked against the files.
 pub(super) const READER_SEAT: &str = "project-reader";
 pub(super) const READER_NAME: &str = "Code reader";
-pub(super) const READER_SUMMARY: &str = "Reads the files of the run's project folder on this computer and answers its task from them. Every line its answer rests on is checked against the file, and it may run a short script in the sealed sandbox. Its answer is handed to the other experts only while the model is on this computer.";
+pub(super) const READER_SUMMARY: &str = "Reads the files of the run's project folder on this computer and answers its task from them. Every line its answer rests on is checked against the file, and it may run a short script in the sealed sandbox. Its answer is handed to the other experts only while the model is on this computer or in confidential hardware whose proof is checked.";
 pub(super) const REVIEW_SUMMARY: &str = "Reviews the files of the run's project folder in the sealed sandbox and reports only the defects it could reproduce. It is the same review as New review, whatever its task says, so give it the task of reviewing the project. It takes minutes, and it needs a project that has a folder.";
 const OUTSIDE_SUMMARY: &str = "The coding agent installed on this computer. Not private: each task for it is shown to the owner first and sent only on their yes. Give it only a task that needs none of the owner's files.";
 /// How a question to the owner about a hand-over begins, so it is told apart from an expert's own question.
@@ -331,7 +331,10 @@ impl Service {
         };
         // a project kept more privately than the model in use is not read, and on a model elsewhere the signed log records
         // the reader before any file is sent, as for a question about a project asked on its own
-        if let Some((_, _, why)) = self.agent_check("question", &folder) {
+        if let Some((_, _, why)) = self
+            .agent_check("question", &folder)
+            .or_else(|| self.agent_leaves("reader"))
+        {
             fail(&why);
             return false;
         }

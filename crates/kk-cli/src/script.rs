@@ -1447,7 +1447,7 @@ pub fn notes(args: &[String]) -> u8 {
     })
 }
 
-/// `kaku stop ID [--json]`: stops a running review (job-N), coding task (code-N) or team run (team-...). Nothing a stopped
+/// `kaku stop ID [--json]`: stops a running review (job-N), coding task (code-N), project question (question-N) or team run (team-...). Nothing a stopped
 /// review or coding task found is offered afterwards.
 pub fn stop(args: &[String]) -> u8 {
     let json_mode = args.iter().any(|a| a == "--json");
@@ -1455,8 +1455,9 @@ pub fn stop(args: &[String]) -> u8 {
     let path = match id.map(String::as_str) {
         Some(i) if i.starts_with("job-") && i[4..].chars().all(|c| c.is_ascii_digit()) && i.len() > 4 => format!("/api/jobs/{i}/stop"),
         Some(i) if i.starts_with("code-") && i[5..].chars().all(|c| c.is_ascii_digit()) && i.len() > 5 => format!("/api/code/{i}/stop"),
+        Some(i) if i.starts_with("question-") && i[9..].chars().all(|c| c.is_ascii_digit()) && i.len() > 9 => format!("/api/questions/{i}/stop"),
         Some(i) if i.len() == 17 && i.starts_with("team-") && i[5..].chars().all(|c| c.is_ascii_hexdigit()) => format!("/api/team/{i}/stop"),
-        _ => return fail(json_mode, USAGE, "usage: kaku stop ID   (a review job-N, a coding task code-N or a team run team-...; kaku work lists what is running)"),
+        _ => return fail(json_mode, USAGE, "usage: kaku stop ID   (a review job-N, a coding task code-N, a question about a project question-N or a team run team-...; kaku work lists what is running)"),
     };
     crate::tui::with_service(&serve_args(args), |dir| {
         let http = match connect(dir, json_mode) {

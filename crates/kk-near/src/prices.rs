@@ -86,5 +86,6 @@ pub fn next_offset(page: &Value) -> Option<u64> {
     let offset = page.get("offset")?.as_u64()?;
     let total = page.get("total")?.as_u64()?;
     let got = page.get("models")?.as_array()?.len() as u64;
-    (got > 0 && offset + got < total).then_some(offset + got)
+    let next = offset.checked_add(got)?;
+    (got > 0 && next < total).then_some(next)
 }

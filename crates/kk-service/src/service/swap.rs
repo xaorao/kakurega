@@ -299,6 +299,11 @@ pub(super) async fn route_choose(axum::Extension(svc): Svc, Json(b): Json<RouteB
     let out = tokio::task::spawn_blocking(move || {
         // waits for the questions in progress, and keeps new ones waiting until the switch is done
         let _switching = ROUTE_GATE.write().unwrap_or_else(|e| e.into_inner());
+        // work that reads a project was allowed, and recorded, for the model it started with: the model is not changed
+        // under it (its start holds the same gate, so none can begin while this is decided)
+        if let Some(what) = svc2.work_with_model() {
+            return Err(format!("{what} is working with the model in use; wait for it to finish or stop it (Activity), then change the model"));
+        }
         svc2.runner.choose_route(&choice)
     })
     .await;

@@ -47,7 +47,7 @@ kk-review explore ex01 to ex08; kk-service sv275 to sv278 (mutations: the found 
 
 ## Limits
 - Whether the answer is right is not checked; only that the lines it cites exist. A script's output is evidence the owner reads, not a verdict.
-- Only a model on this computer. With the NEAR route the same agent could run; it waits for the key and a decision on whether project files may go to confidential hardware for a question, as they do for a review.
+- Changed since the lines above were written: a question, a coding task and the team's code reader now also run on NEAR AI Cloud's confidential hardware, by the review's rule (this computer or hardware whose proof is checked, never a hosted model without one, never a project kept on this computer, recorded in the signed log before a file is sent). Where this file says "only with a model on this computer" or "nothing leaves", read it with that change; see `near-route.md`.
 - Follow-up questions in the same thread are not built.
 - Text found at two places the same distance from the cited line is matched to the earlier one.
 - With NEAR chosen for chat and a local model present, a question is refused, although the reader would use the local model: the stricter of the two checks applies.

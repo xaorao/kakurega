@@ -58,10 +58,12 @@ pub(super) async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -
             "that folder is not available",
         );
     };
-    if let Some(refusal) = svc.agent_refusal("question", &folder) {
-        return refusal;
-    }
     let (id, forgotten) = {
+        // the model is not switched between this check and the question being listed as running
+        let _steady = svc.route_hold();
+        if let Some(refusal) = svc.agent_refusal("question", &folder) {
+            return refusal;
+        }
         let mut g = svc.questions.lock().expect("lock");
         if g.list.values().any(|x| x.state == State::Running) {
             return error(
@@ -69,6 +71,9 @@ pub(super) async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -
                 "BUSY",
                 "a question is already being answered; wait for it to finish",
             );
+        }
+        if let Some((status, code, why)) = svc.agent_leaves("question") {
+            return error(status, code, &why);
         }
         // the oldest answered questions make room, and the owner is told which; one the store would not let go of stays,
         // and nothing new is started
@@ -127,6 +132,7 @@ pub(super) async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -
             state: State::Running,
             outcome: None,
             progress: Vec::new(),
+            last: now(),
         };
         if !svc.keep_question(&item) {
             return error(
@@ -148,6 +154,7 @@ pub(super) async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -
             if let Some(item) = svc2.questions.lock().expect("lock").list.get_mut(&id2) {
                 if item.progress.len() < 200 {
                     item.progress.push(line.chars().take(200).collect());
+                    item.last = now();
                 }
             }
         };

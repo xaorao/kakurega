@@ -66,9 +66,9 @@ const evil = (name, build) => {
   const d = join(work, `evil-${name}`);
   const a = join(d, "Kakurega.app");
   mkdirSync(join(a, "Contents/MacOS"), { recursive: true });
-  writeFileSync(join(a, "Contents/Info.plist"), `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>Electron</string></dict></plist>`);
-  writeFileSync(join(a, "Contents/MacOS/Electron"), `#!/bin/sh\ntouch '${marker}'\n`);
-  chmodSync(join(a, "Contents/MacOS/Electron"), 0o755);
+  writeFileSync(join(a, "Contents/Info.plist"), `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>Kakurega</string></dict></plist>`);
+  writeFileSync(join(a, "Contents/MacOS/Kakurega"), `#!/bin/sh\ntouch '${marker}'\n`);
+  chmodSync(join(a, "Contents/MacOS/Kakurega"), 0o755);
   build?.(d, a);
   return zipOf(a, `evil-${name}.zip`);
 };
@@ -107,7 +107,7 @@ async function openInstalled() {
     mkdirSync(root, { recursive: true });
     const env = { ...process.env, KAKUREGA_DATA_DIR: data, KAKU_ARGS: `--root ${root} --scripted ${join(repo, "tests/e2e/script.json")}` };
     delete env.KAKU_BIN;
-    const p = spawn(join(installed, "Contents/MacOS/Electron"), [], { stdio: "ignore", env });
+    const p = spawn(join(installed, "Contents/MacOS/Kakurega"), [], { stdio: "ignore", env });
     let served = false;
     for (let i = 0; i < 30 && !served; i++) {
       await new Promise((r) => setTimeout(r, 500));

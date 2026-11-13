@@ -9,7 +9,7 @@
 ## Decisions
 | Capability | Decision | Where |
 |---|---|---|
-| Receipt signature check | ADAPT (approach only), rebuilt: `MODEL:REQ:RESP`, strict lowercase hex, model name without `:` or control characters, at most 16 per registration | `receipt_holds` |
+| Receipt signature check | ADAPT (approach only), rebuilt: `MODEL:REQ:RESP`, strict lowercase hex, model name without `:` or control characters, at most 128 per registration (16 before the change recorded at the end of this file) | `receipt_holds` |
 | `eth` (ecdsa) and `gateway` kinds | EXCLUDE: our route refuses anything but a provider-TEE Ed25519 signature | |
 | Verdict parsing, bounty escrow, allowlist of signers, admin | EXCLUDE: not part of a capsule registry; a signer allowlist would need an owner | |
 | Capsule-to-account binding | BUILD: Ed25519 over `kakurega-register-v1:<digest>:<account>` | `register` |

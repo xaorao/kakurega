@@ -240,8 +240,15 @@ fn published_prices_now(base: &str) -> Option<Value> {
     if !PRICES_READING.swap(true, std::sync::atomic::Ordering::SeqCst) {
         let base = base.to_string();
         std::thread::spawn(move || {
+            // put back however the reading ends, so one that fails badly does not stop every later one
+            struct Done;
+            impl Drop for Done {
+                fn drop(&mut self) {
+                    PRICES_READING.store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+            let _done = Done;
             published_prices_cached(&base);
-            PRICES_READING.store(false, std::sync::atomic::Ordering::SeqCst);
         });
     }
     let last = PRICES.lock().expect("lock").clone();
@@ -1123,10 +1130,9 @@ cut_short: false,
             Some(&scripts),
             &asked_to_stop,
         );
-        if asked_to_stop() {
-            return Err(kk_review::job::STOPPED_BY_OWNER.into());
-        }
-        if !report.citations.is_empty() {
+        // a stopped question still hands back what it used of the model, so the tokens are recorded; the service and a
+        // team run each drop its answer on seeing the stop
+        if !asked_to_stop() && !report.citations.is_empty() {
             progress("the places the answer rests on were checked against the files");
         }
         Ok(kk_service::questions::QuestionOutcome {

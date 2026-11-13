@@ -65,5 +65,7 @@ fn pr03_the_list_is_read_page_by_page_until_its_total() {
     assert_eq!(next_offset(&page(200, 50, 250)), None);
     assert_eq!(next_offset(&page(0, 0, 250)), None, "an empty page ends it");
     assert_eq!(next_offset(&json!({"models": []})), None);
+    // a list that lies about where it is ends the reading instead of overflowing
+    assert_eq!(next_offset(&page(u64::MAX, 3, u64::MAX)), None);
     assert_eq!(next_offset(&list()), None);
 }

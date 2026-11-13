@@ -152,7 +152,7 @@ await step("team with the project reviewer", async () => {
   if (nearModel) {
     // what went out went to the confidential model only: no release, no search, no page, no outside program
     const out = await page.evaluate(async () => (await (await fetch("/api/outbound")).json()));
-    check("team: after all of it, what left went only to the confidential model, and what was kept back is listed as held back", /held back/.test(leftCard) && (out.rows ?? []).length > 0 && (out.rows ?? []).every((r) => ["model", "review", "gap", "held"].includes(r.what) || r.what === "held_back"), JSON.stringify(out).slice(0, 500));
+    check("team: after all of it, what left went only to the confidential model, and what was kept back is listed as held back", /held back/.test(leftCard) && (out.rows ?? []).length > 0 && (out.rows ?? []).every((r) => ["model", "review", "review_used", "gap", "held"].includes(r.what) || r.what === "held_back"), JSON.stringify(out).slice(0, 500));
   } else {
     check("team: after all of it, the list holds only what was held back, nothing that was sent", /held back/.test(leftCard) && !/\b(sent to|released|searched|fetched|model elsewhere)\b/i.test(leftCard.split("the log holds no words.")[1] ?? ""), leftCard.slice(-500));
   }

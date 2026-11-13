@@ -3718,6 +3718,8 @@ impl App {
                     format!("/api/jobs/{id}/stop")
                 } else if id.starts_with("code-") {
                     format!("/api/code/{id}/stop")
+                } else if id.starts_with("question-") {
+                    format!("/api/questions/{id}/stop")
                 } else {
                     format!("/api/team/{id}/stop")
                 };

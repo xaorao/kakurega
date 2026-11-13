@@ -23990,7 +23990,7 @@ fn sv277_a_team_run_hands_a_task_to_the_code_reader_whose_checked_answer_goes_on
             .as_array()
             .unwrap()
             .iter()
-            .any(|r| r["what"] == "agent" && r["detail"]["door"] == "question"),
+            .any(|r| r["what"] == "agent" && r["detail"]["door"] == "reader"),
         "{out}"
     );
 }
@@ -25988,4 +25988,132 @@ fn sv299_a_near_model_is_costed_at_nears_published_price_unless_the_owner_entere
     );
     let (_, u) = w.get("/api/usage");
     assert!(u.to_string().contains("does not name this model"), "{u}");
+}
+
+#[test]
+fn sv300_work_that_reads_a_project_is_recorded_once_before_it_starts_and_the_model_is_not_switched_under_it(
+) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (root, _repo) = repo_copy("agent-steady");
+    let proj = root.join("proj");
+    std::fs::create_dir_all(proj.join("app")).unwrap();
+    std::fs::write(
+        proj.join("app/session.py"),
+        "def logout(token):\n    return True\n",
+    )
+    .unwrap();
+    let runner = Arc::new(QuestionRunner {
+        script: vec![
+            question_calls(&[("read_file", json!({"path": "app/session.py"}))]),
+            question_calls(&[(
+                "answer",
+                json!({"answer": "It returns True.", "places": [{"file": "app/session.py", "line": 2, "text": "return True"}]}),
+            )]),
+        ],
+        endpoint: "https://cloud-api.near.ai/v1".into(),
+        tee: true,
+        hold: Default::default(),
+    });
+    let svc = Service::new(&root.join("data"), vec![root.clone()], runner.clone(), true).unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let folder = proj.to_string_lossy().to_string();
+    let agents = |w: &Web| w.get("/api/outbound").1["totals"]["agent"].clone();
+
+    // a question that is held running: recorded once, before its answer
+    runner.hold.store(true, SeqCst);
+    let (s, r) = w.post(
+        "/api/questions",
+        json!({"folder": folder, "question": "What does logout return?", "depth": "quick"}),
+    );
+    assert_eq!(s, 202, "{r}");
+    let id = r["id"].as_str().unwrap().to_string();
+    assert_eq!(agents(&w), 1);
+    // a second one is refused as busy and leaves no entry saying files went anywhere
+    let (s, r2) = w.post(
+        "/api/questions",
+        json!({"folder": folder, "question": "And login?"}),
+    );
+    assert_eq!(
+        (s, r2["error"]["code"].as_str()),
+        (429, Some("BUSY")),
+        "{r2}"
+    );
+    assert_eq!(
+        agents(&w),
+        1,
+        "a refused question is not listed as having left"
+    );
+    // the model is not changed while the question works with it
+    let (s, sw) = w.post("/api/route/choose", json!({"route": "local"}));
+    assert_eq!(s, 422, "{sw}");
+    assert!(
+        sw["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("a question about a project is working with the model in use"),
+        "{sw}"
+    );
+    runner.hold.store(false, SeqCst);
+    assert_eq!(wait_question(&w, &id)["state"], "answered");
+    // once it has ended the switch is no longer held back by it (this test runner has no other route to offer)
+    let (_, sw) = w.post("/api/route/choose", json!({"route": "local"}));
+    assert!(
+        !sw.to_string().contains("is working with the model in use"),
+        "{sw}"
+    );
+}
+
+#[test]
+fn sv301_a_review_on_a_model_elsewhere_is_recorded_as_leaving_when_it_starts_not_only_when_it_ends()
+{
+    let (_c, w, runner) = switch_service("review-leaves");
+    runner.away.store(true, std::sync::atomic::Ordering::SeqCst);
+    let root = w.get("/api/fs").1["path"].as_str().unwrap().to_string();
+    let (s, r) = w.post(
+        "/api/jobs",
+        json!({"repo": format!("{root}/repo"), "recipient": "Acme audit"}),
+    );
+    assert!(s == 200 || s == 201 || s == 202, "{s} {r}");
+    let job = r["id"].as_str().unwrap().to_string();
+    // at once, whatever the review does next: the entry is written under the same lock that lists it as running
+    let out = w.get("/api/outbound").1;
+    let started: Vec<&Value> = out["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["what"] == "review")
+        .collect();
+    assert_eq!(started.len(), 1, "{out}");
+    assert_eq!(
+        (
+            started[0]["to"].as_str(),
+            started[0]["detail"]["started"].as_bool(),
+            started[0]["detail"]["job"].as_str()
+        ),
+        (Some("verified_tee"), Some(true), Some(job.as_str())),
+        "{out}"
+    );
+    // a review with the model on this computer writes no such entry
+    runner
+        .away
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let before = w.get("/api/outbound").1["totals"]["review"].clone();
+    for _ in 0..400 {
+        if w.get(&format!("/api/jobs/{job}")).1["state"] != "running" {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let (s, r) = w.post(
+        "/api/jobs",
+        json!({"repo": format!("{root}/repo"), "recipient": "Acme audit"}),
+    );
+    assert!(s == 200 || s == 201 || s == 202, "{s} {r}");
+    assert_eq!(w.get("/api/outbound").1["totals"]["review"], before);
 }

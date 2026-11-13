@@ -34,6 +34,18 @@ pub(super) fn row_of(e: &Value) -> Option<Value> {
         }
         // a question about a project, or a coding task, that worked with a model elsewhere: the files it read went there
         "outbound.agent" => ("agent", subject.to_string(), json!({"door": d["door"]})),
+        // a review that began with a model elsewhere, written before any file went; what it used follows when it ends
+        "outbound.review_started" => (
+            "review",
+            subject.to_string(),
+            json!({"started": true, "job": d["job"]}),
+        ),
+        "outbound.review_used" => (
+            "review_used",
+            subject.to_string(),
+            json!({"calls": n("calls"), "tokens": n("tokens")}),
+        ),
+        // logs written before reviews were recorded at their start hold one entry, made when the review ended
         "outbound.review" => (
             "review",
             subject.to_string(),

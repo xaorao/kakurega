@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, rmSync, writeFileSync, readFileSync, copyFileSync, chmodSync, existsSync, statSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, writeFileSync, readFileSync, copyFileSync, chmodSync, existsSync, statSync, renameSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
@@ -13,6 +13,71 @@ const asar = require("@electron/asar");
 const here = dirname(fileURLToPath(import.meta.url));
 const appDir = resolve(here, "..");
 const repoRoot = resolve(appDir, "../..");
+
+/** The app's name and macOS identity. The helpers' identities follow from it, as the Electron packager makes them. */
+export const APP_NAME = "Kakurega";
+export const APP_ID = "org.kakurega.desktop";
+/**
+ * What macOS shows when the calendar reader first asks. macOS asks on behalf of the app that started the reader, so the app
+ * and every one of its helper processes carry the texts (without them the request is refused, or the reader is stopped).
+ */
+export const USAGE = {
+  NSCalendarsFullAccessUsageDescription: "Kakurega reads your calendar on this computer only when you attach it to a question. Nothing is sent anywhere unless you send that question.",
+  NSCalendarsUsageDescription: "Kakurega reads your calendar on this computer only when you attach it to a question. Nothing is sent anywhere unless you send that question.",
+  NSRemindersFullAccessUsageDescription: "Kakurega reads your open reminders on this computer only when you attach them to a question. Nothing is sent anywhere unless you send that question.",
+  NSRemindersUsageDescription: "Kakurega reads your open reminders on this computer only when you attach them to a question. Nothing is sent anywhere unless you send that question.",
+};
+/** Electron's helper apps in Contents/Frameworks, and whether a helper's identity leaves its suffix out (as the packager does). */
+const HELPERS = [
+  [" Helper", null],
+  [" Helper (Renderer)", true],
+  [" Helper (Plugin)", true],
+  [" Helper (GPU)", true],
+  [" Helper EH", false],
+  [" Helper NP", false],
+];
+
+/**
+ * Gives the copied Electron runtime its own name and identity: the app, its program and each helper app are renamed and their
+ * Info.plist names, identities, version and usage texts set, the way @electron/packager (MIT) does it in src/mac.ts
+ * (updatePlistFiles, moveHelpers). Without this the app calls itself Electron to macOS, and a permission given to it is a
+ * permission given to "com.github.Electron".
+ */
+export function brand(appPath, version) {
+  const plistOf = (app) => join(app, "Contents/Info.plist");
+  // plutil takes the value as its own argument, so names and texts with spaces are written as they are
+  const set = (plist, key, type, value) => execFileSync("/usr/bin/plutil", ["-replace", key, `-${type}`, value, plist], { stdio: "pipe" });
+  const common = (plist, display, executable, id, name) => {
+    set(plist, "CFBundleDisplayName", "string", display);
+    set(plist, "CFBundleExecutable", "string", executable);
+    set(plist, "CFBundleIdentifier", "string", id);
+    set(plist, "CFBundleName", "string", name);
+    set(plist, "CFBundleShortVersionString", "string", version);
+    set(plist, "CFBundleVersion", "string", version);
+    for (const [key, text] of Object.entries(USAGE)) set(plist, key, "string", text);
+  };
+  const frameworks = join(appPath, "Contents/Frameworks");
+  for (const [suffix, ignoresSuffix] of HELPERS) {
+    const from = join(frameworks, `Electron${suffix}.app`);
+    if (!existsSync(from)) continue;
+    const newName = `${APP_NAME}${suffix}`;
+    const macos = join(from, "Contents/MacOS");
+    renameSync(join(macos, `Electron${suffix}`), join(macos, newName));
+    const to = join(frameworks, `${newName}.app`);
+    renameSync(from, to);
+    const tag = suffix.replace(/^ Helper ?/, "").replace(/[()]/g, "");
+    const id = ignoresSuffix === false && tag ? `${APP_ID}.helper.${tag}` : `${APP_ID}.helper`;
+    common(plistOf(to), newName, newName, id, ignoresSuffix === null ? APP_NAME : newName);
+  }
+  const macos = join(appPath, "Contents/MacOS");
+  renameSync(join(macos, "Electron"), join(macos, APP_NAME));
+  common(plistOf(appPath), APP_NAME, APP_NAME, APP_ID, APP_NAME);
+  // the web app's mark (made by scripts/icon.swift), in place of Electron's
+  copyFileSync(join(appDir, "assets/kakurega.icns"), join(appPath, "Contents/Resources/kakurega.icns"));
+  rmSync(join(appPath, "Contents/Resources/electron.icns"), { force: true });
+  set(plistOf(appPath), "CFBundleIconFile", "string", "kakurega.icns");
+  return join(macos, APP_NAME);
+}
 
 /** The test build of the Secure Enclave helper answers its own dialog; it must never be shipped. Its build leaves this name in it. */
 export const TEST_HELPER_MARK = "KAKU_TEST_DECISION";
@@ -32,6 +97,7 @@ export async function packageApp(outDir, { cookieEncryption = true, kaku, web, e
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
   cpSync(electronApp, out, { recursive: true, verbatimSymlinks: true });
+  const bin = brand(out, JSON.parse(readFileSync(join(appDir, "package.json"), "utf8")).version);
   const parts = bundledPaths(join(out, "Contents/Resources"));
   // The signature of a nested program is part of its bytes, and signing the whole bundle at the end signs it again. Signing each
   // one here first, under its final name, gives the bytes that last step leaves (ad hoc signing of the same file is repeatable),
@@ -77,7 +143,6 @@ export async function packageApp(outDir, { cookieEncryption = true, kaku, web, e
   pb("Add", ":ElectronAsarIntegrity:Resources/app.asar:algorithm", "string", "SHA256");
   pb("Add", ":ElectronAsarIntegrity:Resources/app.asar:hash", "string", hash);
   rmSync(join(out, "Contents/Resources/default_app.asar"), { force: true });
-  const bin = join(out, "Contents/MacOS/Electron");
   await flipFuses(bin, {
     version: FuseVersion.V1,
     resetAdHocDarwinSignature: true,

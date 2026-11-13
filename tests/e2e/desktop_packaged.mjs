@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, copyFileSync, openSync, readSync, writeSync, closeSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, copyFileSync, openSync, readSync, writeSync, closeSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { packageApp } from "../../apps/desktop/scripts/package.mjs";
@@ -24,6 +24,16 @@ const ocrHelper = join(repo, "target/debug/kaku-ocr");
 if (!existsSync(ocrHelper)) spawnSync("sh", [join(repo, "helpers/ocr/build.sh"), ocrHelper], { stdio: "ignore" });
 const pkg = await packageApp(join(work, "pkg"), { cookieEncryption: false, kaku: join(repo, "target/debug/kaku"), web: join(repo, "apps/web/dist"), enclave: existsSync(enclaveHelper) ? enclaveHelper : null , ocr: ocrHelper });
 check("the app is packaged as one asar with its integrity hash in Info.plist, and the load-only-from-asar and integrity fuses on", pkg.fuses["1"] === 48 && pkg.fuses["4"] === 49 && pkg.fuses["5"] === 49 && pkg.fuses["0"] === 48 && pkg.fuses["2"] === 48 && pkg.fuses["3"] === 48, JSON.stringify(pkg.fuses));
+// the app is Kakurega to macOS, not Electron: its name, its identity and those of its helper processes, and the texts macOS
+// shows when the calendar reader asks (macOS asks on behalf of the app, so the app and its helpers carry them)
+const plistValue = (plist, key) => spawnSync("/usr/bin/plutil", ["-extract", key, "raw", plist], { encoding: "utf8" }).stdout.trim();
+const appPlist = join(pkg.app, "Contents/Info.plist");
+check("the app calls itself Kakurega, with its own identity and program", ["CFBundleName", "CFBundleDisplayName", "CFBundleExecutable"].every((k) => plistValue(appPlist, k) === "Kakurega") && plistValue(appPlist, "CFBundleIdentifier") === "org.kakurega.desktop" && pkg.bin.endsWith("Contents/MacOS/Kakurega") && existsSync(pkg.bin) && !existsSync(join(pkg.app, "Contents/MacOS/Electron")), plistValue(appPlist, "CFBundleIdentifier"));
+const helperApps = readdirSync(join(pkg.app, "Contents/Frameworks")).filter((n) => n.endsWith(".app"));
+check("its helper apps are renamed, each with a Kakurega helper identity and its own renamed program", helperApps.length >= 4 && helperApps.every((n) => n.startsWith("Kakurega Helper")) && helperApps.every((n) => plistValue(join(pkg.app, "Contents/Frameworks", n, "Contents/Info.plist"), "CFBundleIdentifier").startsWith("org.kakurega.desktop.helper") && existsSync(join(pkg.app, "Contents/Frameworks", n, "Contents/MacOS", n.replace(/\.app$/, "")))), helperApps.join(", "));
+check("the app and every helper carry the calendar and reminders texts macOS shows", [appPlist, ...helperApps.map((n) => join(pkg.app, "Contents/Frameworks", n, "Contents/Info.plist"))].every((p) => /calendar on this computer only when you attach it/.test(plistValue(p, "NSCalendarsFullAccessUsageDescription")) && /reminders on this computer only/.test(plistValue(p, "NSRemindersFullAccessUsageDescription"))));
+check("its icon is Kakurega's mark, not Electron's", plistValue(appPlist, "CFBundleIconFile") === "kakurega.icns" && existsSync(join(pkg.app, "Contents/Resources/kakurega.icns")) && !existsSync(join(pkg.app, "Contents/Resources/electron.icns")));
+check("the whole renamed bundle still carries an intact signature", spawnSync("codesign", ["--verify", "--deep", "--strict", pkg.app]).status === 0);
 
 // `bundled` starts the app the way an installed copy starts: no KAKU_BIN and no --ui-dir, so it runs what it carries.
 async function launch(label, extraEnv = {}, { bundled = false } = {}) {
