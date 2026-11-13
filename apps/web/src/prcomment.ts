@@ -1,13 +1,15 @@
 export interface CommentFile { name: string; text: string | null }
 
-/** Prose from a finding, made safe to paste as a comment: no markup takes effect, nobody is notified, no issue is linked. */
-export function plain(text: string): string {
-  return text
-    .replace(/[\u0000-\u0008\u000b-\u001f\u007f​-‏‪-‮⁦-⁩﻿]/g, "")
-    .replace(/([\\`*_~\[\]<>|])/g, "\\$1")
-    .replace(/@(?=[A-Za-z0-9_-])/g, "`@`")
-    .replace(/#(?=\d)/g, "\\#")
-    .replace(/^(\s*)([#>+-]|\d+[.)])(?=\s)/gm, "$1\\$2");
+/**
+ * Text from a finding, inside a fenced block: GitHub renders nothing in one, so it cannot notify a person, link an issue
+ * or a page, or become markup. The fence is longer than any run of backticks in the text, and characters that cannot be
+ * seen (and could hide or reorder what is shown) are dropped.
+ */
+export function fenced(text: string): string {
+  const clean = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, "").replace(/\r/g, "");
+  const longest = Math.max(0, ...(clean.match(/`+/g) ?? []).map((r) => r.length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}text\n${clean}\n${fence}`;
 }
 
 function code(text: string): string {
@@ -36,7 +38,7 @@ export function prComment(files: CommentFile[], digest: string): string | null {
   const base = /^base commit: ([0-9a-f]{40,64})$/m.exec(change);
   if (head && base) out.push(`Reviewed commit ${code(head[1] ?? "")}, measured from ${code(base[1] ?? "")}. Only findings that touch this change are listed; code the change did not touch is not covered.`, "");
   findings.forEach((f, i) => {
-    out.push(`**${i + 1}. ${plain(f.title)}**`, "", `Where: ${code(f.where)}`, "", plain(f.why), "");
+    out.push(`**Finding ${i + 1}** at ${code(f.where)}`, "", fenced(`${f.title}\n\n${f.why}`), "");
   });
   out.push(
     "How this was checked: for each finding a script was run in a sealed sandbox. It first showed the normal behaviour working, then reproduced the defect twice with the same output, and stopped reproducing it when the cited file was emptied.",

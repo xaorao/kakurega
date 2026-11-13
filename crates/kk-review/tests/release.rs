@@ -1445,16 +1445,19 @@ fn rs40_a_release_about_a_change_carries_the_change_in_what_is_approved_and_sign
                 path: "payments/auth/session.py".into(),
                 kind: "modified".into(),
                 lines: vec![(3, 4)],
+                removed_after: vec![],
             },
             ChangedFile {
                 path: "payments/secret_plan.py".into(),
                 kind: "added".into(),
                 lines: vec![(1, 2)],
+                removed_after: vec![],
             },
         ],
         digest: "c".repeat(64),
+        left_out: vec![],
     };
-    let note = focus.note();
+    let note = focus.note(&[]);
     let args = (
         &[(finding(), confirmed())][..],
         "acme-audit",

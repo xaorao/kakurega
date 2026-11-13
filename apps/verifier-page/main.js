@@ -35,6 +35,12 @@ const REASONS = {
   capsule_too_large: "The file is too large to be a capsule.",
 };
 
+// Signed text is still someone else's text: shown without the marks that hide or reorder what is read (right-to-left
+// overrides, isolates, zero-width characters) and not without end.
+function seen(text) {
+  return String(text).replace(/[\u0000-\u0008\u000b-\u001f\u007f\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, "").slice(0, 600);
+}
+
 function el(tag, text, cls) {
   const e = document.createElement(tag);
   if (text !== undefined) e.textContent = text;
@@ -266,7 +272,7 @@ function show(r, bytes) {
     for (const c of cs) {
       const li = document.createElement("li");
       // shown as text only: nothing in a claim is ever treated as markup
-      li.append(el("strong", c.statement), el("p", `Rests on: ${c.evidence.join(", ")}`, "note"), el("p", `How to check: ${c.howToCheck}`, "note"));
+      li.append(el("strong", seen(c.statement)), el("p", `Rests on: ${seen(c.evidence.join(", "))}`, "note"), el("p", `How to check: ${seen(c.howToCheck)}`, "note"));
       ol.append(li);
     }
     out.append(ol);

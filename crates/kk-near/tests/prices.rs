@@ -91,11 +91,12 @@ fn pr10_the_list_says_which_models_chat_which_call_tools_and_which_have_a_proof_
             .map(|p| (p.model.clone(), p))
             .collect();
     let got = |m: &str| (by[m].chat, by[m].tools, by[m].verifiable);
-    assert_eq!(got("chat/tools"), (true, true, true));
-    assert_eq!(got("image/maker"), (false, false, true));
-    assert_eq!(got("speech/reader"), (false, false, true));
+    assert_eq!(got("chat/tools"), (true, Some(true), true));
+    assert_eq!(got("image/maker"), (false, None, true));
+    assert_eq!(got("speech/reader"), (false, None, true));
     // a proof that is promised but cannot be fetched is not a proof this product can check
-    assert_eq!(got("promised/not-fetchable"), (true, false, false));
+    assert_eq!(got("promised/not-fetchable"), (true, Some(false), false));
     // an entry that says nothing about what it takes is still offered
-    assert_eq!(got("old/list-entry"), (true, false, true));
+    // an entry that does not say what it supports is not called "chat only"
+    assert_eq!(got("old/list-entry"), (true, None, true));
 }

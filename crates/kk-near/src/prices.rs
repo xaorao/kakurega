@@ -23,8 +23,9 @@ pub struct PublishedPrice {
     /// Whether the list says the model takes text and answers in text. A list that does not say counts as yes, so an
     /// older or shorter list still offers its models; an image, speech or embedding model says otherwise.
     pub chat: bool,
-    /// Whether the list says the model can call tools, which a review and an agent need.
-    pub tools: bool,
+    /// Whether the list says the model can call tools, which a review and an agent need. `None` when the list says
+    /// nothing about what the model supports: unknown is not "cannot".
+    pub tools: Option<bool>,
 }
 
 /// One price field (`{"amount": 40, "scale": 9, "currency": "USD"}`) as an amount for a million tokens and its currency.
@@ -103,7 +104,7 @@ pub fn parse_list(page: &Value) -> Vec<PublishedPrice> {
                 tools: meta
                     .and_then(|x| x.get("supportedFeatures"))
                     .and_then(Value::as_array)
-                    .is_some_and(|l| l.iter().any(|f| f.as_str() == Some("tools"))),
+                    .map(|l| l.iter().any(|f| f.as_str() == Some("tools"))),
             })
         })
         .collect()

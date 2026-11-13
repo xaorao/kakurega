@@ -657,3 +657,8 @@ ul.plain.start-ways { display: grid; grid-template-columns: repeat(4, minmax(0, 
 .composer.stack > details[open] { order: 9; }
 .composer.stack > p.muted { order: 8; font-size: 12px; }
 .composer textarea { min-height: 48px; }
+
+/* a control that takes focus is scrolled clear of the message box fixed at the bottom, and the box shows focus plainly */
+@media (min-width: 861px) and (min-height: 640px) { html { scroll-padding-bottom: calc(var(--composer-h, 0px) + 32px); } }
+.composer:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
+.start-ask:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }

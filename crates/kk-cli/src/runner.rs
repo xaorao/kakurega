@@ -380,6 +380,63 @@ impl Route for SharedNear {
     }
 }
 
+/// Sets what is withheld in a review of a change. The list in the reviewed commit is the change author's word, so it is
+/// not the authority: the owner's own list in their folder (committed or not) and the list of the commit the change is
+/// measured from come first, and the reviewed commit's lines are only added after them. A list can only withhold more
+/// (a line cannot un-withhold), so nothing the owner or the base keeps private is opened by the change, and the first
+/// lines are never pushed out by a long list from the change. An owner's list that cannot be trusted (a link, a
+/// folder, too large, not text) withholds everything, as it does in a review of the folder.
+fn withhold_for_change(repo: &Path, base_commit: &str, out: &Path) -> Result<(), String> {
+    const MAX: u64 = 64 * 1024;
+    let name = kk_review::import::WITHHOLD_FILE;
+    let target = out.join(name);
+    let text = |bytes: Vec<u8>| -> Option<String> {
+        String::from_utf8(bytes).ok().filter(|t| !t.contains('\0'))
+    };
+    let mut lines: Vec<String> = Vec::new();
+    match std::fs::symlink_metadata(repo.join(name)) {
+        Err(_) => {}
+        Ok(m) if m.is_file() && m.len() <= MAX => {
+            match std::fs::read(repo.join(name)).ok().and_then(text) {
+                Some(t) => lines.extend(t.lines().map(str::to_string)),
+                None => return fail_closed(&target),
+            }
+        }
+        Ok(_) => return fail_closed(&target),
+    }
+    if let Some(t) = kk_git::file_at(repo, base_commit, name, MAX)
+        .map_err(|e| e.to_string())?
+        .and_then(text)
+    {
+        lines.extend(t.lines().map(str::to_string));
+    }
+    // what the reviewed commit itself lists, after the others
+    match std::fs::symlink_metadata(&target) {
+        Err(_) => {}
+        Ok(m) if m.is_file() && m.len() <= MAX => {
+            if let Some(t) = std::fs::read(&target).ok().and_then(text) {
+                lines.extend(t.lines().map(str::to_string));
+            }
+        }
+        Ok(_) => return fail_closed(&target),
+    }
+    if lines.is_empty() {
+        let _ = std::fs::remove_file(&target);
+        return Ok(());
+    }
+    std::fs::write(&target, lines.join("\n") + "\n").map_err(|e| {
+        format!("the list of what to withhold could not be written for the review: {e}")
+    })
+}
+
+/// Leaves, in place of the list, something the review reads as "cannot be trusted": everything is then withheld.
+fn fail_closed(target: &Path) -> Result<(), String> {
+    let _ = std::fs::remove_file(target);
+    let _ = std::fs::remove_dir_all(target);
+    std::fs::create_dir(target)
+        .map_err(|e| format!("the list of what to withhold could not be set for the review: {e}"))
+}
+
 /// What a review is told about a change read from git.
 fn change_focus(set: &kk_git::ChangeSet, base_name: &str) -> kk_review::job::ChangeFocus {
     kk_review::job::ChangeFocus {
@@ -398,9 +455,15 @@ fn change_focus(set: &kk_git::ChangeSet, base_name: &str) -> kk_review::job::Cha
                 }
                 .to_string(),
                 lines: kk_git::changed_lines(c),
+                removed_after: kk_git::removed_after(c),
             })
             .collect(),
         digest: kk_evidence::capsule::sha256_hex(kk_git::canonical(set).as_bytes()),
+        left_out: set
+            .left_out
+            .iter()
+            .map(|(p, why)| (p.clone(), (*why).to_string()))
+            .collect(),
     }
 }
 
@@ -619,7 +682,7 @@ impl JobRunner for ReviewRunner {
         let focus = change_focus(&set, base);
         Ok(json!({
             "base": focus.base, "head": focus.head, "base_name": focus.base_name, "digest": focus.digest,
-            "files": focus.files.iter().map(|f| json!({"path": f.path, "kind": f.kind, "lines": f.lines})).collect::<Vec<_>>(),
+            "files": focus.files.iter().map(|f| json!({"path": f.path, "kind": f.kind, "lines": f.lines, "removed_after": f.removed_after})).collect::<Vec<_>>(),
             "edited_since_commit": kk_git::edited_since_commit(repo, kk_review::import::MAX_FILES, 99),
             "left_out": set.left_out.iter().map(|(p, why)| json!({"path": p, "why": why})).collect::<Vec<_>>(),
         }))
@@ -660,9 +723,20 @@ impl JobRunner for ReviewRunner {
             ));
         }
         let out = holder.join(&name);
-        let report = match kk_git::export_head(repo, &out, kk_review::import::MAX_FILES) {
-            Err(e) => JobReport::not_started(&e.to_string()),
-            Ok(_) => self.review(
+        // removed however this ends, an early return and a panic included
+        struct Scratch(PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _scratch = Scratch(holder.clone());
+        let exported = kk_git::export_head(repo, &out, kk_review::import::MAX_FILES, &set.head)
+            .map_err(|e| e.to_string())
+            .and_then(|_| withhold_for_change(repo, &set.base, &out));
+        match exported {
+            Err(e) => JobReport::not_started(&e),
+            Ok(()) => self.review(
                 &out,
                 Some(change_focus(&set, base)),
                 recipient,
@@ -672,9 +746,7 @@ impl JobRunner for ReviewRunner {
                 progress,
                 stop,
             ),
-        };
-        let _ = std::fs::remove_dir_all(&holder);
-        report
+        }
     }
 
     fn chat(

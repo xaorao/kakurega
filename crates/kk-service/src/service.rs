@@ -1601,9 +1601,31 @@ struct ChangeQuery {
 }
 
 async fn change_preview(axum::Extension(svc): Svc, Query(q): Query<ChangeQuery>) -> Response {
-    match svc.change_preview(&q.repo, &q.base) {
-        Ok(v) => Json(v).into_response(),
-        Err(m) => error(StatusCode::BAD_REQUEST, "BAD_CHANGE", &m),
+    // reading a repository walks trees and compares files: on a thread of its own, not one that answers requests
+    match tokio::task::spawn_blocking(move || svc.change_preview(&q.repo, &q.base)).await {
+        Ok(Ok(v)) => Json(v).into_response(),
+        Ok(Err(m)) => error(StatusCode::BAD_REQUEST, "BAD_CHANGE", &m),
+        Err(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "CHANGE",
+            "the change could not be read",
+        ),
+    }
+}
+
+/// Starts a review on a thread of its own: with a base, the change is read from the repository first.
+async fn start_blocking(svc: Arc<Service>, b: StartBody) -> Response {
+    match tokio::task::spawn_blocking(move || {
+        svc.start_review(&b.repo, &b.recipient, b.base.as_deref())
+    })
+    .await
+    {
+        Ok(r) => start_response(r),
+        Err(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "START",
+            "the review could not be started",
+        ),
     }
 }
 
@@ -3824,6 +3846,10 @@ async fn log_export(axum::Extension(svc): Svc) -> Response {
 struct ChatTurn {
     role: String,
     content: String,
+    /// The model's signature that came with an answer, when a conversation on the screen is kept with it. Kept only
+    /// when it has the form of one; it plays no part in what a model is sent.
+    #[serde(default)]
+    receipt: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -4135,6 +4161,7 @@ fn chat_validate(svc: &Service, mut b: ChatBody) -> Result<ChatRun, Box<Response
         .map(|(role, content)| ChatTurn {
             role: role.clone(),
             content: content.clone(),
+            receipt: None,
         })
         .collect();
     Ok(ChatRun {
@@ -4205,7 +4232,11 @@ fn prepare_history(svc: &Service, run: &mut ChatRun) {
             run.body.history = plan
                 .kept
                 .into_iter()
-                .map(|(role, content)| ChatTurn { role, content })
+                .map(|(role, content)| ChatTurn {
+                    role,
+                    content,
+                    receipt: None,
+                })
                 .collect();
             run.summary = Some(text);
             run.summarized = plan.covered;
@@ -5689,6 +5720,13 @@ async fn session_new(axum::Extension(svc): Svc, Json(b): Json<SessionNew>) -> Re
                     "INSERT INTO session_turns(session, seq, role, content, at) VALUES (?1, ?2, 'user', ?3, ?4), (?1, ?5, 'assistant', ?6, ?4)",
                     kk_vault::rusqlite::params![id, seq, q.content, t, seq + 1, a.content],
                 );
+                // an answer keeps the signature it arrived with
+                if let Some(r) = a.receipt.as_ref().and_then(shown_receipt) {
+                    let _ = c.execute(
+                        "INSERT OR REPLACE INTO turn_receipts(session, seq, receipt) VALUES (?1, ?2, ?3)",
+                        kk_vault::rusqlite::params![id, seq + 1, r.to_string()],
+                    );
+                }
                 seq += 2;
                 i += 2;
             } else {
@@ -8734,7 +8772,7 @@ async fn fs_list(axum::Extension(svc): Svc, Query(q): Query<PathQuery>) -> Respo
 }
 
 async fn start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -> Response {
-    start_response(svc.start_review(&b.repo, &b.recipient, b.base.as_deref()))
+    start_blocking(svc, b).await
 }
 
 /// 202 with the review's id; 429 when the most allowed reviews are already running; 400 for anything else wrong with the request.
@@ -10827,7 +10865,7 @@ async fn admin_jobs_list(axum::Extension(svc): Svc) -> Json<Value> {
 }
 
 async fn admin_job_start(axum::Extension(svc): Svc, Json(b): Json<StartBody>) -> Response {
-    start_response(svc.start_review(&b.repo, &b.recipient, b.base.as_deref()))
+    start_blocking(svc, b).await
 }
 
 #[derive(Deserialize)]

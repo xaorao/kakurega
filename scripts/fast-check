@@ -34,6 +34,14 @@ done
 if printf '%s\n' "$files" | grep -q '^apps/web/'; then
   echo "== web"; (cd apps/web && npx tsc --noEmit && node --test test/*.test.mjs)
 fi
+if printf '%s\n' "$files" | grep -q '^packages/'; then
+  echo "== verifier (JavaScript)"; (cd packages/verifier-js && npm test >/dev/null 2>&1) || { echo "FAST CHECK FAILED: packages/verifier-js tests"; exit 1; }
+fi
+if printf '%s\n' "$files" | grep -qE '^(packages/|apps/verifier-page/|apps/site/)'; then
+  echo "== check page and site"
+  node tests/e2e/verifier_page.mjs > target/fast-check-verifier-page.log 2>&1 || { tail -5 target/fast-check-verifier-page.log; echo "FAST CHECK FAILED: tests/e2e/verifier_page.mjs"; exit 1; }
+  node tests/e2e/site.mjs > target/fast-check-site.log 2>&1 || { grep -E "^FAIL" target/fast-check-site.log | head -5; echo "FAST CHECK FAILED: tests/e2e/site.mjs"; exit 1; }
+fi
 echo "== guards"
 # each guard's last line is shown and its own exit code decides: a pipe into tail would hide a failure
 guard() {

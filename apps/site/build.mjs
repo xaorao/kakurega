@@ -76,7 +76,18 @@ writeFileSync(join(out, "index.html"), html);
 writeFileSync(join(out, "site.js"), script);
 writeFileSync(join(out, "replay.json"), JSON.stringify(facts));
 cpSync(join(here, "site.css"), join(out, "site.css"));
-cpSync(join(here, "vercel.json"), join(out, "vercel.json"));
+// the check page is one file with its script and its style inside it: the host is told the exact hashes of those two,
+// so nothing else can run there even if a capsule's text were ever put into the page as markup
+const verifyHtml = readFileSync(join(repo, "apps/verifier-page/dist/kakurega-verify.html"), "utf8");
+const inline = (tag) => [...verifyHtml.matchAll(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "g"))].map((m) => `'sha256-${createHash("sha256").update(m[1], "utf8").digest("base64")}'`);
+const scripts = inline("script");
+const styles = inline("style");
+if (scripts.length === 0 || styles.length === 0) throw new Error("the check page has no inline script or style to name in its policy");
+const config = JSON.parse(readFileSync(join(here, "vercel.json"), "utf8"));
+const rule = config.headers.find((h) => h.source === "/verify/(.*)")?.headers.find((h) => h.key === "Content-Security-Policy");
+if (!rule || !rule.value.includes("script-src 'unsafe-inline'") || !rule.value.includes("style-src 'unsafe-inline'")) throw new Error("vercel.json no longer has the check page's policy in the form this step rewrites");
+rule.value = rule.value.replace("script-src 'unsafe-inline'", `script-src ${scripts.join(" ")}`).replace("style-src 'unsafe-inline'", `style-src ${styles.join(" ")}`);
+writeFileSync(join(out, "vercel.json"), JSON.stringify(config, null, 2));
 cpSync(join(here, "img"), join(out, "img"), { recursive: true });
 cpSync(join(repo, "apps/verifier-page/dist/kakurega-verify.html"), join(out, "verify/index.html"));
 cpSync(capsulePath, join(out, "sample/review.kkg"));

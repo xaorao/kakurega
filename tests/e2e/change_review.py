@@ -129,6 +129,49 @@ try:
     check("a folder that is not a repository is refused in words", rc != 0 and "repository" in out + err, out + err)
     n = len(json.loads(k("jobs", "--json")[1])["jobs"])
     check("none of the refusals left a review behind", n == 2, str(n))
+
+    # what is withheld in a review of a change is the owner's word and the base's, never only the change author's
+    proj2 = work / "root/ledger-service"
+    shutil.copytree(repo / "fixtures/synthetic-repo", proj2)
+    os.remove(proj2 / "_env")
+
+    def git2(*args):
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com", GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null")
+        p = subprocess.run(["/usr/bin/git", "-C", str(proj2), *args], capture_output=True, text=True, env=env)
+        assert p.returncode == 0, p.stderr
+        return p.stdout.strip()
+
+    (proj2 / ".kakuignore").write_text("docs/\n")
+    git2("init", "-q", "-b", "main")
+    git2("add", "-A")
+    git2("commit", "-q", "-m", "ledger service")
+    git2("checkout", "-q", "-b", "sneaky")
+    # the change deletes the base's line (to open docs/ to the model) and lists a file of its own choosing
+    (proj2 / ".kakuignore").write_text("payments/auth/tokens.py\n")
+    (proj2 / "payments/auth/session.py").write_text((proj2 / "payments/auth/session.py").read_text() + "\n# changed\n")
+    git2("commit", "-q", "-am", "tidy")
+    # and the owner has a line of their own that was never committed
+    with open(proj2 / ".kakuignore", "a") as f:
+        f.write("payments/config.py\n")
+    rc, out, err = k("review", str(proj2), "--for", "acme-audit", "--change", "main", "--json")
+    ev = [json.loads(l) for l in out.strip().splitlines()] if out.strip() else []
+    job2 = ev[0]["job"] if ev else ""
+    listed = own(f"/api/jobs/{job2}/files") if job2 else {}
+    held = sorted(x["path"] for x in listed.get("files", []) if x.get("withheld"))
+    check("the base's line still withholds, though the change deleted it", "docs/vendor-notes.md" in held, str(held))
+    check("the owner's uncommitted line withholds", "payments/config.py" in held, str(held))
+    check("the change's own line withholds too, and cannot open anything", "payments/auth/tokens.py" in held, str(held))
+    check("nothing else is withheld by it", held == ["docs/vendor-notes.md", "payments/auth/tokens.py", "payments/config.py"], str(held))
+    check("the scratch copy of the committed version is gone after the review", not any(p.name.startswith("change-") for p in (data / "scratch").glob("*")) if (data / "scratch").exists() else True, str(list((data / "scratch").glob("*")))[:300] if (data / "scratch").exists() else "")
+    # an owner's list that cannot be trusted withholds everything rather than guessing
+    os.remove(proj2 / ".kakuignore")
+    os.symlink("/etc/hosts", proj2 / ".kakuignore")
+    rc, out, err = k("review", str(proj2), "--for", "acme-audit", "--change", "main", "--json")
+    ev = [json.loads(l) for l in out.strip().splitlines()] if out.strip() else []
+    job3 = ev[0]["job"] if ev else ""
+    listed = own(f"/api/jobs/{job3}/files") if job3 else {}
+    rows = listed.get("files", [])
+    check("a list that is a link withholds every file", len(rows) > 5 and all(x.get("withheld") for x in rows), str([(x["path"], x.get("withheld")) for x in rows])[:400])
 finally:
     srv.terminate()
     srv.wait(timeout=20)

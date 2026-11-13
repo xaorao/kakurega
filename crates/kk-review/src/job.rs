@@ -58,6 +58,8 @@ pub struct ChangedFile {
     /// "added", "modified" or "deleted".
     pub kind: String,
     pub lines: Vec<(u32, u32)>,
+    /// Lines of the new version after which the change removed something (0 is the top of the file).
+    pub removed_after: Vec<u32>,
 }
 
 /// The change a review is about. The project the agent reads is the version after the change; this says what the change is.
@@ -71,6 +73,9 @@ pub struct ChangeFocus {
     pub files: Vec<ChangedFile>,
     /// SHA-256, in hex, of the change's canonical list (the two commits and each changed file with its kind).
     pub digest: String,
+    /// Files the change touches that were not read at all (a link, a nested repository, too large, a name that cannot
+    /// be shown or written safely), each with why. The review does not cover them and says so.
+    pub left_out: Vec<(String, String)>,
 }
 
 /// What a finding outside the change is told: it is not confirmed for this review.
@@ -98,7 +103,26 @@ impl ChangeFocus {
                         .join(", ")
                 )
             };
-            t.push_str(&format!("- {} ({}{})\n", f.path, f.kind, lines));
+            let removed = if f.removed_after.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; lines were removed after line {}",
+                    f.removed_after
+                        .iter()
+                        .take(20)
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            t.push_str(&format!("- {} ({}{}{})\n", f.path, f.kind, lines, removed));
+        }
+        if !self.left_out.is_empty() {
+            t.push_str(&format!(
+                "{} more changed file(s) could not be read and are not part of this review.\n",
+                self.left_out.len()
+            ));
         }
         t.push_str("Read the changed files first, then whatever they call or are called by. Report only a defect that the change introduces or that runs through a changed file, cite the changed file and line where you can, and make the reproducer exercise a changed file. A defect in code the change did not touch and that no changed file reaches is not part of this review. Report only defects you have confirmed.");
         t
@@ -106,10 +130,22 @@ impl ChangeFocus {
 
     /// What the release says about the change, as `change.txt`: the two commits, how many files, and the digest. No
     /// file name of the private project is in it; the digest covers them.
-    pub fn note(&self) -> String {
+    pub fn note(&self, withheld: &[String]) -> String {
         let count = |k: &str| self.files.iter().filter(|f| f.kind == k).count();
+        // changed files the reviewer never saw: not read from the repository at all, or withheld from it as private
+        let hidden = self
+            .files
+            .iter()
+            .filter(|f| f.kind != "deleted" && withheld.contains(&f.path))
+            .count();
+        let unread = self.left_out.len() + hidden;
+        let unread_line = if unread == 0 {
+            String::new()
+        } else {
+            format!("changed files NOT read by the reviewer: {unread} ({} could not be read from the repository, {hidden} withheld as private). This release says nothing about them.\n", self.left_out.len())
+        };
         format!(
-            "This review is of a change: commit {} measured from commit {}.\nreviewed commit: {}\nbase commit: {}\nfiles changed: {} ({} added, {} modified, {} deleted)\nchange digest (SHA-256): {}\nThe digest is the SHA-256 of this text: \"base BASE_COMMIT\" and a line end, \"head REVIEWED_COMMIT\" and a line end, then for each changed file in path order its kind (added, modified or deleted), a space, its path and a line end.\nOnly findings that cite a changed file, or whose check runs one, are in this release. Code the change did not touch is not covered by this release.\n",
+            "This review is of a change: commit {} measured from commit {}.\nreviewed commit: {}\nbase commit: {}\nfiles changed: {} ({} added, {} modified, {} deleted)\n{unread_line}change digest (SHA-256): {}\nThe digest is the SHA-256 of this text: \"base BASE_COMMIT\" and a line end, \"head REVIEWED_COMMIT\" and a line end, then for each changed file in path order its kind (added, modified or deleted), a space, its path (with a backslash written as two, and a line break inside a name as backslash n) and a line end.\nA finding is in this release only when it cites a changed file or its check runs one. That is a filter, not a proof of cause: a finding in a file that merely uses a changed file can pass it.\n",
             &self.head[..self.head.len().min(12)],
             &self.base[..self.base.len().min(12)],
             self.head,
@@ -575,7 +611,18 @@ pub fn run_job(
         &cfg.policy_version,
         cfg.now,
         cfg.ttl_secs,
-        cfg.change.as_ref().map(ChangeFocus::note).as_deref(),
+        cfg.change
+            .as_ref()
+            .map(|c| {
+                c.note(
+                    &report
+                        .withheld
+                        .iter()
+                        .map(|(p, _)| p.clone())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .as_deref(),
     );
     // checks the sandbox could not start neither confirm nor refute anything: the review failed, it is not a clean result
     if let Err(Rejection::ChecksNotRun(why)) = &report.draft {

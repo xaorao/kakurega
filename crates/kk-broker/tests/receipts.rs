@@ -44,9 +44,14 @@ impl Route for Receipting {
     fn complete(&self, _r: &CompletionRequest) -> Result<Completion, RouteError> {
         let mut n = self.n.lock().unwrap();
         *n += 1;
+        // the route's "last receipt" is shared by everyone who uses the route: here another caller's answer has just
+        // overwritten it, as a chat does while a review runs. The answer's own receipt travels with the answer.
+        let own = self.with_receipts.then(
+            || json!({"completion_id": format!("chat-{n}"), "signature_kind": "provider_tee"}),
+        );
         if self.with_receipts {
             *self.last.lock().unwrap() = Some(
-                json!({"completion_id": format!("chat-{n}"), "signature_kind": "provider_tee"}),
+                json!({"completion_id": "someone-elses-answer", "signature_kind": "provider_tee"}),
             );
         }
         Ok(Completion {
@@ -54,7 +59,7 @@ impl Route for Receipting {
             prompt_tokens: 1,
             completion_tokens: 1,
             cut_short: false,
-            receipt: None,
+            receipt: own,
         })
     }
 }

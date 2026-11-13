@@ -86,7 +86,13 @@ pub fn run(args: &[String]) -> u8 {
             }
         }
         // signed text is still someone else's text: printed without anything that could steer a terminal
-        let shown = |t: &str| t.chars().filter(|c| !c.is_control()).collect::<String>();
+        // nor with the marks that reorder or hide text (right-to-left overrides, isolates, zero-width), nor without end
+        let shown = |t: &str| {
+            t.chars()
+                .filter(|c| !c.is_control() && !matches!(*c, '\u{061c}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2069}' | '\u{feff}'))
+                .take(600)
+                .collect::<String>()
+        };
         if let Some(id) = &report.capsule_id {
             println!("capsule {}", shown(id));
         }

@@ -536,7 +536,8 @@ impl Broker {
         }
         // a verified route leaves a receipt for each answer; a local one has none and is never asked for it
         if route.class() == kk_route::RouteClass::VerifiedTee && self.receipts.len() < 64 {
-            if let Some(r) = route.evidence().receipt {
+            // the receipt that came with this answer: the route's "last receipt" is shared with every other caller
+            if let Some(r) = completion.receipt.clone() {
                 self.receipts.push(r);
             }
         }

@@ -210,7 +210,9 @@ export function App() {
   let searchBox: HTMLInputElement | undefined;
   // on a narrow screen the menu is closed until asked for; choosing a page closes it again
   const [menuOpen, setMenuOpen] = createSignal(false);
-  const [moreOpen, setMoreOpen] = createSignal(false);
+  // null: open exactly when one of its screens is shown; true or false once the owner has opened or closed it by hand
+  const [moreOpen, setMoreOpen] = createSignal<boolean | null>(null);
+  const inMore = () => hash() === "#/meeting" || hash() === "#/explore" || hash() === "#/code" || hash() === "#/roundtable" || hash() === "#/handoff" || hash() === "#/instructions" || hash() === "#/skills" || hash() === "#/break" || hash() === "#/agent" || hash() === "#/activity";
   createEffect(() => { hash(); setMenuOpen(false); });
   // the desktop shell opens this address after the owner took a picture of the screen: the attachment is handed to the chat once
   createEffect(() => {
@@ -448,7 +450,7 @@ export function App() {
               <a href="#/team" class={hash().startsWith("#/team") ? "navlink active" : "navlink"}>{t("nav.team")}</a>
               <a href="#/memory" class={hash() === "#/memory" ? "navlink active" : "navlink"}>{t("nav.memory")}</a>
               {/* everything else stays one click away; the group opens by itself when one of its screens is shown */}
-              <details id="nav-more" class="nav-more" open={moreOpen() || (hash() === "#/meeting" || hash() === "#/explore" || hash() === "#/code" || hash() === "#/roundtable" || hash() === "#/handoff" || hash() === "#/instructions" || hash() === "#/skills" || hash() === "#/break" || hash() === "#/agent" || hash() === "#/activity")} onToggle={(e) => setMoreOpen(e.currentTarget.open)}>
+              <details id="nav-more" class="nav-more" open={moreOpen() ?? inMore()} onToggle={(e) => { if (e.currentTarget.open !== (moreOpen() ?? inMore())) setMoreOpen(e.currentTarget.open); }}>
                 <summary>{t("nav.more")}</summary>
                 <h2>{t("nav.group.work")}</h2>
                 <a href="#/meeting" class={hash() === "#/meeting" ? "navlink active" : "navlink"}>{t("nav.meeting")}</a>
