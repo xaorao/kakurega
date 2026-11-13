@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kakurega: private AI work you can prove</title>
+<meta name="description" content="A private AI workspace. A security layer outside the model decides what may leave your computer, and what does leave can be checked by whoever receives it.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230a0a0a'/%3E%3Crect x='8' y='14' width='16' height='4' rx='1' fill='%23ffffff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+<header class="nav">
+  <a class="brand" href="./">kakurega</a>
+  <nav aria-label="Sections">
+    <a href="#how">How it works</a>
+    <a href="#check">Check it yourself</a>
+    <a href="#near">NEAR</a>
+    <a href="#limits">Limits</a>
+  </nav>
+  <a class="button dark" href="verify/">Check a capsule <span aria-hidden="true">→</span></a>
+</header>
+
+<main id="main">
+<section class="hero">
+  <p class="kicker">Private AI workspace · working prototype</p>
+  <h1>Private AI work<br>you can <span class="redact" aria-label="prove">prove</span>.</h1>
+  <p class="lede">Give an AI your code, contracts and meeting notes without handing them over. A security layer outside the model decides what may leave your computer. What does leave is signed, and whoever receives it can check it.</p>
+  <div class="actions">
+    <a class="button dark" href="#check">Check a real result <span aria-hidden="true">↓</span></a>
+    <a class="button" href="#how">How it works</a>
+  </div>
+  <figure class="shot">
+    <img src="img/start.png" width="1280" height="860" alt="The Kakurega workspace: a greeting, one box to ask in, and four ways to begin: review a folder, review a change, ask your documents, meeting notes. A badge says the model runs on this computer.">
+  </figure>
+</section>
+
+<section class="band" aria-labelledby="h-problem">
+  <div class="meta"><span>01</span> The problem</div>
+  <div class="body">
+    <h2 id="h-problem">To get help from an AI you trust three things you cannot see.</h2>
+    <ul class="three">
+      <li><strong>That the model was not talked into leaking.</strong> One line planted in a file can tell an agent to send your secrets somewhere.</li>
+      <li><strong>That the provider runs what it says it runs.</strong> A privacy policy is a promise, not evidence.</li>
+      <li><strong>That the answer you forward is real.</strong> Your client cannot tell a model's finding from one somebody typed.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="band" id="how" aria-labelledby="h-how">
+  <div class="meta"><span>02</span> How it works</div>
+  <div class="body">
+    <h2 id="h-how">The model never decides what leaves.</h2>
+    <ol class="steps">
+      <li>
+        <h3>It works inside a sealed sandbox</h3>
+        <p>An agent reviews your project with no network. Keys, and passwords said as passwords, are withheld before any model sees a line. Instructions planted in your files are treated as data, never as orders.</p>
+      </li>
+      <li>
+        <h3>Only what it could prove is kept</h3>
+        <p>A finding is kept when the kernel re-ran its script on a small extract and saw it fail the right way, twice, with a control. A quote from a document is kept when it is really in the file.</p>
+      </li>
+      <li>
+        <h3>You approve exact files</h3>
+        <p>A release is a list of exact files with a digest. You read them and approve that digest. Nothing else goes, and the model cannot send anything by itself.</p>
+      </li>
+      <li>
+        <h3>The recipient checks it without us</h3>
+        <p>The result is a signed capsule. Whoever receives it verifies it offline, in a one-file web page or with one command, and is told what the check does <em>not</em> establish.</p>
+      </li>
+    </ol>
+    <div class="pair">
+      <figure class="shot small">
+        <img src="img/release.png" width="1280" height="860" alt="The Release tab of a review: the exact files with sizes and hashes, the digest to approve, and what the release does not establish.">
+        <figcaption>The exact files, and the digest you approve.</figcaption>
+      </figure>
+      <figure class="shot small">
+        <img src="img/receipt.png" width="1280" height="860" alt="A chat answer from confidential hardware with its receipt open: the model, the signing key, the fingerprints of the question and the answer, and the signature.">
+        <figcaption>Every answer from confidential hardware carries the model's own signature.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="check" aria-labelledby="h-check">
+  <div class="meta"><span>03</span> Check it yourself</div>
+  <div class="body">
+    <h2 id="h-check">Do not take our word. Check a real result.</h2>
+    <p class="lede">This capsule came out of a real review that ran on NEAR AI Cloud's confidential hardware. It carries twenty answers, each signed by the model that wrote it. The check runs in your browser and sends nothing anywhere.</p>
+    <div class="receipt" role="group" aria-label="A real capsule">
+      <dl>
+        <div><dt>Capsule</dt><dd>review.kkg <span class="pill">38 KB</span></dd></div>
+        <div><dt>Model</dt><dd>Qwen/Qwen3.8-27B <span class="pill live">in confidential hardware</span></dd></div>
+        <div><dt>Model key</dt><dd class="mono">89154a43a47684742c3d1753252bb6f49f61da9d8c84fc9b1def2df130cb2d93</dd></div>
+        <div><dt>Signed answers</dt><dd>20, each verified</dd></div>
+        <div><dt>Your files</dt><dd><span class="redact wide" aria-label="hidden">hidden</span></dd></div>
+      </dl>
+      <div class="actions">
+        <a class="button dark" href="sample/review.kkg" download>1. Download the capsule</a>
+        <a class="button" href="verify/">2. Drop it on the check page <span aria-hidden="true">→</span></a>
+      </div>
+      <p class="note">Change one byte of the file and check it again: it is refused. The page is a single file you can save and open from disk.</p>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="near" aria-labelledby="h-near">
+  <div class="meta"><span>04</span> Why NEAR</div>
+  <div class="body">
+    <h2 id="h-near">Confidential hardware, with evidence a stranger can check.</h2>
+    <div class="cards">
+      <article>
+        <h3>Checked before every question</h3>
+        <p>When the model is not on your computer, it runs on NEAR AI Cloud. Its Intel TDX and NVIDIA evidence is checked with a fresh challenge before a question may go there, and the question travels encrypted to the model's own key.</p>
+      </article>
+      <article>
+        <h3>Signed by the model itself</h3>
+        <p>Each answer comes back with the model's signature over that exact question and answer. Kakurega checks it before the answer is shown and keeps it with the conversation and in the capsule.</p>
+      </article>
+      <article>
+        <h3>Recorded where anyone can read it</h3>
+        <p>A registry contract on NEAR testnet records who registered a capsule and that its model signatures verified, and hands a model's hardware proof to NEAR's own verifier contract. A recipient reads it from a public RPC.</p>
+      </article>
+    </div>
+    <p class="note">Registry on NEAR testnet: <span class="mono">kakurega-registry-c68af3.testnet</span></p>
+  </div>
+</section>
+
+<section class="band" aria-labelledby="h-does">
+  <div class="meta"><span>05</span> What you can do</div>
+  <div class="body">
+    <h2 id="h-does">One private workspace, on the web, on the desktop and in the terminal.</h2>
+    <ul class="grid">
+      <li><strong>Review a project</strong><span>Real defects, each with a script that reproduces it.</span></li>
+      <li><strong>Review a change</strong><span>A branch against its base, as for a pull request, read without running git.</span></li>
+      <li><strong>Ask your documents</strong><span>Answers with quotes that are checked against the files.</span></li>
+      <li><strong>Meeting notes</strong><span>Decisions and actions, each tied to a line of the transcript.</span></li>
+      <li><strong>Chat with memory</strong><span>Notes you approve, kept in an encrypted store on your computer.</span></li>
+      <li><strong>A team of agents</strong><span>Experts that plan and work, with every hand-over shown to you.</span></li>
+    </ul>
+  </div>
+</section>
+
+<section class="band" id="limits" aria-labelledby="h-limits">
+  <div class="meta"><span>06</span> Limits</div>
+  <div class="body">
+    <h2 id="h-limits">What this is not, yet.</h2>
+    <ul class="plain">
+      <li>A working prototype on macOS and Linux, with NEAR on testnet. Not a finished product.</li>
+      <li>The secret detector is a heuristic. A password made of ordinary words is not recognised.</li>
+      <li>A capsule proves who signed it and that its files are as signed. It does not prove a claim is true, or that no other defect exists.</li>
+      <li>No one outside the builders has used it unaided yet.</li>
+    </ul>
+  </div>
+</section>
+</main>
+
+<footer class="foot">
+  <span class="brand">kakurega</span>
+  <span>隠れ家: a hideout.</span>
+  <a href="verify/">Check a capsule</a>
+</footer>
+</body>
+</html>

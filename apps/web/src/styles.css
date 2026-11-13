@@ -640,6 +640,7 @@ ul.plain.start-ways { display: grid; grid-template-columns: repeat(4, minmax(0, 
 @media (min-width: 861px) and (min-height: 640px) {
   .composer { position: sticky; bottom: 16px; z-index: 1; box-shadow: 0 -12px 24px -12px color-mix(in srgb, var(--ink) 14%, transparent), 0 0 0 1px var(--line); }
   .composer textarea { max-height: 40vh; }
+  .jump { bottom: calc(var(--composer-h, 240px) + 32px); }
 }
 .composer textarea { border: 0; background: transparent; box-shadow: none; outline: none; resize: none; font-size: 16px; padding: 4px 2px; }
 .composer:focus-within { border-color: var(--stone); }
@@ -647,13 +648,12 @@ ul.plain.start-ways { display: grid; grid-template-columns: repeat(4, minmax(0, 
 .composer .send-group > button:not(.primary) { border-color: transparent; background: transparent; color: var(--graphite); }
 .composer .send-group > button.primary { min-width: 84px; }
 /* what an answer cost and where it came from: there to read, never louder than the answer */
-.msg.assistant > p.muted { font-size: 13px; color: var(--fog); }
-.msg.assistant > p.muted:hover { color: var(--graphite); }
+.msg.assistant > p.muted { font-size: 13px; }
 /* the box stays small: the two folded extras share one line at its foot and take the full width only when opened */
 .composer.stack { display: flex; flex-flow: row wrap; align-items: center; gap: 8px 16px; padding: 12px 16px; }
 .composer.stack > * { flex: 1 1 100%; min-width: 0; margin: 0; }
 .composer.stack > details:not([open]) { flex: 0 0 auto; order: 9; }
 .composer.stack > details:not([open]) > summary { font-size: 13px; color: var(--graphite); font-weight: 400; }
 .composer.stack > details[open] { order: 9; }
-.composer.stack > p.muted { order: 8; font-size: 12px; color: var(--fog); }
+.composer.stack > p.muted { order: 8; font-size: 12px; }
 .composer textarea { min-height: 48px; }

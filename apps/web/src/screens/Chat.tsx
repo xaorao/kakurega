@@ -434,7 +434,9 @@ export function Chat() {
   const [unseen, setUnseen] = createSignal(false);
   // "The end" is the bottom of the message box, not of the page: the conversation's tools come after it.
   let formEl: HTMLFormElement | undefined;
-  const endY = () => (formEl ? formEl.getBoundingClientRect().bottom + window.scrollY + 24 : document.documentElement.scrollHeight);
+  // Where the page must be scrolled to for the newest line to sit just above the message box. The box stays at the bottom
+  // of the window while the conversation is read, so its own position says nothing: the end of the messages does.
+  const endY = () => (formEl && listEl ? listEl.getBoundingClientRect().bottom + window.scrollY + formEl.offsetHeight + 56 : document.documentElement.scrollHeight);
   const atBottom = () => endY() - window.innerHeight - window.scrollY <= 80;
   let lastY = window.scrollY;
   const onScroll = () => {
@@ -453,6 +455,14 @@ export function Chat() {
   // a file handed over by another screen or by the desktop shell (a picture of the screen) is shown where it will be sent from
   onMount(() => {
     if (files().length > 0) queueMicrotask(() => { box?.scrollIntoView({ block: "center" }); box?.focus(); });
+  });
+  // the height of the message box, for anything that has to sit just above it (the Jump to the latest button)
+  onMount(() => {
+    if (!formEl || typeof ResizeObserver === "undefined") return;
+    const root = document.documentElement;
+    const seen = new ResizeObserver(() => root.style.setProperty("--composer-h", `${formEl?.offsetHeight ?? 0}px`));
+    seen.observe(formEl);
+    onCleanup(() => { seen.disconnect(); root.style.removeProperty("--composer-h"); });
   });
   // a question typed on the start screen is sent as soon as the chat is on screen
   onMount(() => {
