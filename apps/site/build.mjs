@@ -112,6 +112,11 @@ if (!rule || !rule.value.includes("script-src 'unsafe-inline'") || !rule.value.i
 rule.value = rule.value.replace("script-src 'unsafe-inline'", `script-src ${scripts.join(" ")}`).replace("style-src 'unsafe-inline'", `style-src ${styles.join(" ")}`);
 writeFileSync(join(out, "vercel.json"), JSON.stringify(config, null, 2));
 cpSync(join(here, "img"), join(out, "img"), { recursive: true });
+// the brand's two typefaces (SIL Open Font License), served from this site: no request leaves it for a font
+mkdirSync(join(out, "fonts"), { recursive: true });
+for (const [pkg, file] of [["outfit", "outfit-latin-400-normal.woff2"], ["outfit", "outfit-latin-500-normal.woff2"], ["outfit", "outfit-latin-600-normal.woff2"], ["outfit", "outfit-latin-700-normal.woff2"], ["jetbrains-mono", "jetbrains-mono-latin-400-normal.woff2"]])
+  cpSync(join(repo, "apps/web/node_modules/@fontsource", pkg, "files", file), join(out, "fonts", file));
+cpSync(join(repo, "apps/web/public/licenses"), join(out, "fonts/licenses"), { recursive: true });
 cpSync(join(repo, "apps/verifier-page/dist/kakurega-verify.html"), join(out, "verify/index.html"));
 cpSync(capsulePath, join(out, "sample/review.kkg"));
 console.log(`site built in ${out}: ${facts.model}, ${facts.answers} signed answers, ${findings.length} findings, valid until ${facts.expires}`);

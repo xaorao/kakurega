@@ -115,6 +115,10 @@ for (const [name, viewport, scheme] of [["desktop-light", { width: 1440, height:
     check(true, "one changed byte and it is refused, as the page says");
     await page.screenshot({ path: join(work, "verify-refused.png") });
   }
+  // the brand typefaces come from this site and really load (a missing file would fall back silently)
+  await page.goto(origin + "/");
+  const loaded = await page.evaluate(async () => { await document.fonts.ready; return [...document.fonts].filter((f) => f.status === "loaded").map((f) => f.family.replace(/"/g, "")); });
+  check(loaded.includes("Outfit") && loaded.includes("JetBrains Mono"), `${name}: the page's own typefaces loaded from this site: ${[...new Set(loaded)].join(", ")}`);
   check(outside.length === 0, `${name}: nothing was asked of any other host: ${outside.slice(0, 3).join(", ")}`);
   check(problems.length === 0, `${name}: no console errors or failed requests: ${problems.join(" | ")}`);
   await ctx.close();
