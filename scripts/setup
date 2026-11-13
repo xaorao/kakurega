@@ -12,5 +12,7 @@ cargo build -p kk-cli
 # on Linux reviews run in a sandbox on this computer, with the worker beside kaku; on macOS scripts/provision-vm builds it
 # inside the sandbox machine
 if [ "$(uname -s)" = Linux ]; then cargo build -p kk-worker; fi
+# on macOS kaku's two helpers go beside it: text recognition for pictures and scans, and the calendar reader
+if [ "$(uname -s)" = Darwin ]; then sh helpers/ocr/build.sh >/dev/null; sh helpers/calendar/build.sh >/dev/null; fi
 install -m 755 scripts/pre-commit .git/hooks/pre-commit
 echo "setup complete"

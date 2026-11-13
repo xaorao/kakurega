@@ -470,6 +470,10 @@ export const api = {
   keepChat: (title: string, project?: string, turns?: ChatTurn[], held?: number) =>
     request<{ id: string }>("POST", "/api/sessions", { title, ...(project ? { project } : {}), ...(turns && turns.length > 0 ? { turns, held } : {}) }),
   attachFile: (file: File) => attachFile(file),
+  /** Whether the calendar can be attached here and what macOS allows; never shows a prompt. */
+  calendarStatus: () => request<{ available: boolean; calendar?: string; reminders?: string; why?: string }>("GET", "/api/attachments/calendar"),
+  /** The next `days` days of the calendar and the open reminders, attached like a file; macOS is asked if it never was. */
+  attachCalendar: (days: number) => request<AttachmentSummary>("POST", "/api/attachments/calendar", { days, reminders: true, ask: true }),
   attachment: (id: string) => request<AttachmentRead>("GET", `/api/attachments/${id}`),
   removeAttachment: (id: string) => request<{ removed: boolean }>("POST", `/api/attachments/${id}/remove`, {}),
   keptChat: (id: string) => request<{ id: string; project?: string | null; parent?: string | null; fork_at?: number | null; branches?: { id: string; title: string; fork_at: number | null; turns: number }[]; turns: ChatTurn[]; summary?: { covered: number; text: string } | null }>("GET", `/api/sessions/${id}`),

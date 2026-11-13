@@ -23,7 +23,7 @@ export const TEST_HELPER_MARK = "KAKU_TEST_DECISION";
 // SHA-256 values in bundle.json inside the asar, which the shell checks before it runs them.
 // cookieEncryption stays on for real builds; unattended tests turn it off because it makes macOS ask for the login
 // keychain password, which blocks the run.
-export async function packageApp(outDir, { cookieEncryption = true, kaku, web, enclave = null } = {}) {
+export async function packageApp(outDir, { cookieEncryption = true, kaku, web, enclave = null, ocr = null, calendar = null } = {}) {
   if (!kaku || !existsSync(kaku)) throw new Error(`the kaku binary to bundle was not found: ${kaku}`);
   if (!web || !existsSync(join(web, "index.html"))) throw new Error(`the web interface to bundle was not found (no index.html in ${web})`);
   if (enclave && readFileSync(enclave).includes(TEST_HELPER_MARK)) throw new Error(`${enclave} is the test build of the signing helper, which approves without asking; build the shipped one with spikes/enclave/build.sh`);
@@ -45,6 +45,15 @@ export async function packageApp(outDir, { cookieEncryption = true, kaku, web, e
     chmodSync(parts.enclave, 0o755);
     signOne(parts.enclave);
   }
+  // kaku's own macOS helpers go beside it, where it looks for them
+  const helpers = { ocr, calendar };
+  for (const [name, from] of Object.entries(helpers)) {
+    if (!from) continue;
+    if (!existsSync(from)) throw new Error(`the ${name} helper to bundle was not found: ${from}`);
+    copyFileSync(from, parts[name]);
+    chmodSync(parts[name], 0o755);
+    signOne(parts[name]);
+  }
   cpSync(web, parts.web, { recursive: true, verbatimSymlinks: true });
   const stage = join(outDir, "stage");
   mkdirSync(stage, { recursive: true });
@@ -54,7 +63,7 @@ export async function packageApp(outDir, { cookieEncryption = true, kaku, web, e
   delete pkg.devDependencies;
   writeFileSync(join(stage, "package.json"), JSON.stringify(pkg, null, 2));
   // the values are taken from the copies inside the bundle, so they describe exactly what ships
-  const manifest = makeManifest({ kaku: parts.kaku, web: parts.web, enclave: enclave ? parts.enclave : null });
+  const manifest = makeManifest({ kaku: parts.kaku, web: parts.web, enclave: enclave ? parts.enclave : null, ocr: ocr ? parts.ocr : null, calendar: calendar ? parts.calendar : null });
   writeFileSync(join(stage, MANIFEST), JSON.stringify(manifest, null, 2));
   const asarPath = join(out, "Contents/Resources/app.asar");
   await asar.createPackage(stage, asarPath);
@@ -83,7 +92,8 @@ export async function packageApp(outDir, { cookieEncryption = true, kaku, web, e
   // ad hoc: a signature without an identity. It seals the bundle's files against accidental change, not against someone who
   // can rewrite the app and sign it again; a Developer ID signature and notarization are not done (no identity exists yet)
   execFileSync("codesign", ["--force", "--deep", "--sign", "-", out], { stdio: "pipe" });
-  for (const [part, path] of [["kaku", parts.kaku], ["web", parts.web], ...(enclave ? [["enclave", parts.enclave]] : [])]) {
+  const shipped = [["kaku", parts.kaku], ["web", parts.web], ...(enclave ? [["enclave", parts.enclave]] : []), ...Object.entries(helpers).filter(([, f]) => f).map(([n]) => [n, parts[n]])];
+  for (const [part, path] of shipped) {
     if (checkPart(manifest, part, path)) throw new Error(`packaging left ${part} different from the value recorded in ${MANIFEST}; the bundle would refuse to start`);
   }
   return { app: out, bin, asarPath, hash, manifest, parts, fuses: await getCurrentFuseWire(bin) };
@@ -117,7 +127,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.error(`No kaku at ${kaku}. Build it with: cargo build --release -p kk-cli (or pass --kaku PATH).`);
     process.exit(1);
   }
-  const r = await packageApp(outDir, { kaku, web, enclave });
+  const ocr = option(args, "--ocr", null);
+  const calendar = option(args, "--calendar", null);
+  const r = await packageApp(outDir, { kaku, web, enclave, ocr, calendar });
   const { version } = JSON.parse(readFileSync(join(appDir, "package.json"), "utf8"));
   const z = zipApp(r.app, outDir, { version });
   console.log(JSON.stringify({ app: r.app, asar_hash: r.hash, bundle: r.manifest, fuses: r.fuses, zip: z.zip, sha256: z.sha256, sha256_file: z.shaFile }, null, 2));

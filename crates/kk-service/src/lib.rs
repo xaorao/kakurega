@@ -16,7 +16,9 @@ pub mod snapshot;
 pub mod team;
 pub mod tenants;
 
-pub use service::{ChatReply, JobRunner, Routes, Service, StreamedReply, LEASABLE_TOOLS};
+pub use service::{
+    ChatReply, JobRunner, Routes, Service, StreamedReply, CALENDAR_UNAVAILABLE, LEASABLE_TOOLS,
+};
 
 /// Entry points for the live test in `kk-cli`, which writes a real summary with a real model. They add no behaviour.
 #[doc(hidden)]

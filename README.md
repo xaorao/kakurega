@@ -89,7 +89,7 @@ The first row asks a public NEAR RPC and nothing of ours. The benchmark can be r
 | Roundtable of experts, team runs with a lead, a Project reviewer seat that runs the sandboxed review | Works with a local model |
 | Skills: your own, a bundled shelf, signed packs and a publisher's signed catalog; nothing is used until you approve it | Works |
 | Profiles with separate keys; encrypted backup with a recovery key | Works |
-| Desktop app (macOS, Linux): native approval with Touch ID, menu-bar item, notifications, a picture of the screen for the chat | Works; unsigned build, the capture preview was not clicked by a person in a test |
+| Desktop app (macOS, Linux): native approval with Touch ID, menu-bar item, notifications, a picture of the screen for the chat; on macOS, your calendar and open reminders attached on request | Works; unsigned build, the capture preview was not clicked by a person in a test, and reading a real calendar waits for one Allow from the owner |
 | Terminal workspace (`kaku`), MCP server (`kaku mcp`), browser extension, Telegram bridge | Works |
 | GitHub connector (read only) | Tested against a stand-in; not yet with a real GitHub App |
 | Hand a question to Claude Code, with your yes on the exact text | Works; said plainly to be not private |

@@ -9,4 +9,8 @@ cd "$repo"
 cargo build --release --locked -p kk-cli
 pnpm --dir "$repo" --filter @kakurega/web run build >/dev/null
 sh spikes/enclave/build.sh "$repo/target/release/kaku-enclave" >/dev/null
-node apps/desktop/scripts/package.mjs "$out" --kaku "$repo/target/release/kaku" --web "$repo/apps/web/dist" --enclave "$repo/target/release/kaku-enclave"
+# kaku's macOS helpers: text recognition for pictures and scans, and the calendar reader
+sh helpers/ocr/build.sh "$repo/target/release/kaku-ocr" >/dev/null
+sh helpers/calendar/build.sh "$repo/target/release/kaku-calendar" >/dev/null
+node apps/desktop/scripts/package.mjs "$out" --kaku "$repo/target/release/kaku" --web "$repo/apps/web/dist" --enclave "$repo/target/release/kaku-enclave" \
+  --ocr "$repo/target/release/kaku-ocr" --calendar "$repo/target/release/kaku-calendar"

@@ -53,6 +53,7 @@ node tests/e2e/tabs_web.mjs
 node tests/e2e/handoff_web.mjs
 node tests/e2e/sample_web.mjs
 node tests/e2e/projects_web.mjs
+node tests/e2e/calendar_web.mjs
 node tests/e2e/github_web.mjs
 node tests/e2e/states_web.mjs
 node tests/e2e/states2_web.mjs

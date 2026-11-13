@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>org.kakurega.calendar-helper</string>
+	<key>CFBundleName</key>
+	<string>Kakurega calendar reader</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Kakurega reads your calendar on this computer only when you attach it to a question. Nothing is sent anywhere unless you send that question.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Kakurega reads your open reminders on this computer only when you attach them to a question. Nothing is sent anywhere unless you send that question.</string>
+</dict>
+</plist>

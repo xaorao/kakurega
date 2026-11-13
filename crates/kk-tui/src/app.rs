@@ -83,6 +83,25 @@ pub fn mentioned_files(message: &str, cwd: &std::path::Path) -> Vec<(String, Str
 
 /// The `@words` of a message that read like a file's path (they hold a `/`, or start with `~` or `.`) and are not a file
 /// here: the owner meant to attach them, so they are told, instead of the words going to the model as text.
+/// What `@calendar` stands for in the list of things to attach (never a path: a path cannot start with a NUL).
+const CALENDAR_MARK: &str = "\0calendar:";
+
+/// `@calendar` or `@calendar:N` in a message: the owner's calendar for the next N days (7 when not given, at most 31) and the
+/// open reminders, read on this computer and attached like a file. `None` when the message does not ask for it.
+pub fn calendar_mention(message: &str) -> Option<u32> {
+    message.split_whitespace().find_map(|w| {
+        let w = w.trim_end_matches(['.', ',', ';', '!', '?', ')', ']', '}', '\'', '"']);
+        let rest = w.strip_prefix("@calendar")?;
+        if rest.is_empty() {
+            return Some(7);
+        }
+        rest.strip_prefix(':')?
+            .parse::<u32>()
+            .ok()
+            .filter(|d| (1..=31).contains(d))
+    })
+}
+
 pub fn mentions_not_found(message: &str, cwd: &std::path::Path) -> Vec<String> {
     let found: Vec<String> = mentioned_files(message, cwd)
         .into_iter()
@@ -2595,6 +2614,7 @@ impl App {
                     }
                 }
                 lines.push(String::new());
+                lines.push("In a message: @path attaches a file (@path#10-20 those lines); @calendar attaches the next 7 days of your calendar and open reminders (@calendar:14 for two weeks), read on this computer.".into());
                 lines.push("Keys: Tab completes, Up/Down recall, PageUp/PageDown scroll, Ctrl-G writes in your editor ($VISUAL or $EDITOR), Ctrl-O shows long results whole, Ctrl-S and Ctrl-R put the line aside and bring it back.".into());
                 self.push(Kind::Info, Some("Commands"), lines);
                 Vec::new()
@@ -3887,7 +3907,12 @@ impl App {
                 ),
             );
         }
-        let todo = mentioned_files(message, &cwd);
+        let mut todo = mentioned_files(message, &cwd);
+        // `@calendar` is the calendar even when a file of that name is here
+        if let Some(days) = calendar_mention(message) {
+            todo.retain(|(t, _)| t != "calendar" && !t.starts_with("calendar:"));
+            todo.push(("calendar".to_string(), format!("{CALENDAR_MARK}{days}")));
+        }
         if !todo.is_empty() {
             self.chat_waiting = true;
             self.attach_flow = Some(AttachFlow {
@@ -3910,6 +3935,17 @@ impl App {
             return self.send_chat(&flow.message, flow.ids);
         }
         let (token, path) = flow.todo.remove(0);
+        if let Some(days) = path.strip_prefix(CALENDAR_MARK) {
+            // typing it is the person's request, so macOS may be asked now if it never was
+            let days: u32 = days.parse().unwrap_or(7);
+            return vec![self.req(
+                Intent::AttachMention(token),
+                false,
+                Method::Post,
+                "/api/attachments/calendar",
+                Some(json!({"days": days, "reminders": true, "ask": true})),
+            )];
+        }
         let (base, lines) = split_lines_suffix(&path);
         let body = match lines {
             Some(l) => json!({"path": base, "lines": l}),

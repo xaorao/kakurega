@@ -8737,3 +8737,47 @@ fn tu_br02_a_branch_in_the_conversation_list_says_it_is_a_branch_and_of_what() {
     );
     assert!(details.iter().any(|d| !d.contains("branch")), "{details:?}");
 }
+
+#[test]
+fn tu_cal01_at_calendar_attaches_the_calendar_through_its_own_route_and_then_sends_the_question() {
+    use kk_tui::app::calendar_mention;
+    assert_eq!(calendar_mention("what is on @calendar"), Some(7));
+    assert_eq!(calendar_mention("plan with @calendar:14."), Some(14));
+    assert_eq!(calendar_mention("@calendar:0 or @calendar:40"), None);
+    assert_eq!(calendar_mention("mail me@calendar.example"), None);
+    let mut app = booted();
+    let r = enter(&mut app, "what do I have on @calendar:3?");
+    assert_eq!(r.len(), 1);
+    assert_eq!(
+        (r[0].path.as_str(), r[0].method),
+        ("/api/attachments/calendar", Method::Post)
+    );
+    assert_eq!(
+        r[0].body,
+        Some(json!({"days": 3, "reminders": true, "ask": true}))
+    );
+    let r2 = app.handle(ok(
+        &r[0],
+        201,
+        json!({"id": "att-9", "name": "calendar-next-3-days.md", "kind_label": "Markdown"}),
+    ));
+    assert_eq!(r2[0].path, "/api/chat/stream");
+    assert_eq!(
+        r2[0].body.as_ref().unwrap()["attachments"],
+        json!(["att-9"])
+    );
+    // macOS refused: the message comes back to the box and says why
+    let mut app = booted();
+    let r = enter(&mut app, "agenda @calendar");
+    let back = app.handle(ok(
+        &r[0],
+        409,
+        json!({"error": {"code": "CALENDAR_NOT_ALLOWED", "message": "macOS does not allow Kakurega to read the calendar: allow it in System Settings, Privacy & Security, Calendars"}}),
+    ));
+    assert!(back.is_empty());
+    let t = text(&app);
+    assert!(
+        t.contains("Could not attach @calendar") && t.contains("System Settings"),
+        "{t}"
+    );
+}

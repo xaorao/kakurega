@@ -9984,6 +9984,11 @@ struct FileRunner {
     window: u64,
     /// Text a test wants inside a readiness detail (for example the data folder), set after the service exists.
     note: Arc<std::sync::Mutex<String>>,
+    /// What macOS allows for the calendar and reminders ("" when there is no calendar here), what it answers when asked,
+    /// and how often it was asked.
+    calendar: Arc<std::sync::Mutex<(String, String)>>,
+    calendar_answer: Arc<std::sync::Mutex<(String, String)>>,
+    calendar_asked: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl FileRunner {
@@ -9993,6 +9998,9 @@ impl FileRunner {
             endpoint,
             window,
             note: Default::default(),
+            calendar: Default::default(),
+            calendar_answer: Default::default(),
+            calendar_asked: Default::default(),
         }
     }
 
@@ -10032,6 +10040,32 @@ impl JobRunner for FileRunner {
         v["context_tokens"] = json!(self.window);
         v["endpoint"] = json!(self.endpoint);
         v
+    }
+    fn calendar_status(&self) -> Result<Value, String> {
+        let (c, r) = self.calendar.lock().unwrap().clone();
+        if c.is_empty() {
+            return Err(kk_service::CALENDAR_UNAVAILABLE.into());
+        }
+        Ok(json!({"calendar": c, "reminders": r}))
+    }
+    fn calendar_ask(&self) -> Result<Value, String> {
+        self.calendar_asked
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        *self.calendar.lock().unwrap() = self.calendar_answer.lock().unwrap().clone();
+        self.calendar_status()
+    }
+    fn calendar_read(&self, days: u32, reminders: bool) -> Result<String, String> {
+        let key = format!(
+            "{}-{}",
+            "sk-ant", "api03-calendarnotes0123456789abcdefghijklmnop"
+        );
+        let mut t = format!(
+            "# Calendar: the next {days} days, read on this computer\n\n- 2026-11-14 09:00 to 09:30: Board call (Work)\n  Notes: the deploy key is {key}\n"
+        );
+        if reminders {
+            t.push_str("\n# Open reminders\n\n- Pay the invoice (due 2026-11-16 17:00)\n");
+        }
+        Ok(t)
     }
     fn chat(&self, m: Vec<kk_types::chat::ChatMessage>) -> Result<kk_service::ChatReply, String> {
         *self.seen.lock().unwrap() = m;
@@ -25365,5 +25399,102 @@ fn sv295_research_and_the_hand_over_wait_for_the_signed_log() {
             .iter()
             .any(|r| r["what"] == "gap" && r["detail"]["entries"] == 3),
         "{out}"
+    );
+}
+
+#[test]
+fn sv296_the_calendar_is_attached_only_on_request_macos_is_asked_only_then_and_it_is_checked_like_a_file(
+) {
+    let runner = FileRunner::new("http://127.0.0.1:11434", 16384);
+    let (cal, answer, asked) = (
+        runner.calendar.clone(),
+        runner.calendar_answer.clone(),
+        runner.calendar_asked.clone(),
+    );
+    let (_c, w, _root) = file_service("calendar", runner.clone());
+    let n_asked = || asked.load(std::sync::atomic::Ordering::SeqCst);
+
+    // no reader here (not a Mac, or no helper): said, nothing attached
+    let (s, v) = w.get("/api/attachments/calendar");
+    assert_eq!((s, v["available"].clone()), (200, json!(false)), "{v}");
+    let (s, v) = w.post("/api/attachments/calendar", json!({"ask": true}));
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (501, Some("CALENDAR_UNAVAILABLE")),
+        "{v}"
+    );
+
+    // macOS never asked: the status and a request without the person's press do not ask it
+    *cal.lock().unwrap() = ("not_asked".into(), "not_asked".into());
+    *answer.lock().unwrap() = ("allowed".into(), "denied".into());
+    let (_, v) = w.get("/api/attachments/calendar");
+    assert_eq!(
+        v,
+        json!({"available": true, "calendar": "not_asked", "reminders": "not_asked"})
+    );
+    let (s, v) = w.post("/api/attachments/calendar", json!({"days": 7}));
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("CALENDAR_NOT_ASKED")),
+        "{v}"
+    );
+    assert_eq!(
+        n_asked(),
+        0,
+        "macOS is asked only when the person asked for the calendar"
+    );
+
+    // the person asks: macOS is asked once, the calendar is attached like a file, and the key in an event's notes is held back
+    let (s, v) = w.post(
+        "/api/attachments/calendar",
+        json!({"days": 7, "reminders": true, "ask": true}),
+    );
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(n_asked(), 1);
+    assert_eq!(v["name"], "calendar-next-7-days.md");
+    assert_eq!(v["flagged"]["secret"], 1, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    let (_, read) = w.get(&format!("/api/attachments/{id}"));
+    let shown = read.to_string();
+    assert!(
+        shown.contains("Board call") && shown.contains("Reminders are not included"),
+        "reminders macOS did not allow are said to be missing: {shown}"
+    );
+    let (s, r) = w.post(
+        "/api/chat",
+        json!({"message": "What is on this week?", "attachments": [id]}),
+    );
+    assert_eq!(s, 200, "{r}");
+    let sent = runner.sent();
+    assert!(
+        sent.contains("Board call") && !sent.contains("sk-ant"),
+        "the event goes to the model, the key does not: {sent}"
+    );
+
+    // macOS refused: said, and not asked again
+    *cal.lock().unwrap() = ("denied".into(), "denied".into());
+    let (s, v) = w.post("/api/attachments/calendar", json!({"ask": true}));
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("CALENDAR_NOT_ALLOWED")),
+        "{v}"
+    );
+    assert!(v["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("System Settings"));
+    assert_eq!(n_asked(), 1, "a refusal is not asked again");
+
+    // the days asked for are bounded
+    *cal.lock().unwrap() = ("allowed".into(), "allowed".into());
+    for days in [0, 32] {
+        let (s, _) = w.post("/api/attachments/calendar", json!({"days": days}));
+        assert_eq!(s, 400);
+    }
+    let (s, v) = w.post("/api/attachments/calendar", json!({"days": 1}));
+    assert_eq!(
+        (s, v["name"].as_str()),
+        (201, Some("calendar-next-1-day.md")),
+        "{v}"
     );
 }

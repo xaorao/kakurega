@@ -273,6 +273,19 @@ export function Chat() {
     setReading("");
     setFileInfo(problems.join(" "));
   };
+  // the calendar button shows only where the calendar can be read (a Mac with the reader); checking never shows a prompt
+  const [calendar] = createResource(() => api.calendarStatus().catch(() => null));
+  const addCalendar = async () => {
+    setReading(t("cal.reading"));
+    try {
+      const a = await api.attachCalendar(7);
+      setFiles([...files().filter((f) => f.name !== a.name), a]);
+      setFileInfo("");
+    } catch (err) {
+      setFileInfo(err instanceof ApiError ? err.message : t("chat.error"));
+    }
+    setReading("");
+  };
   const dropFile = async (id: string) => {
     attachedKeys.delete(id);
     setFiles(files().filter((f) => f.id !== id));
@@ -1069,6 +1082,10 @@ export function Chat() {
             }} />
             <button type="button" title={t("files.attachHelp")} aria-describedby="attach-help" disabled={busy() || !!reading()} onClick={() => picker?.click()}>{t("files.attach")}</button>
             <span id="attach-help" class="sr">{t("files.attachHelp")}</span>
+            <Show when={calendar()?.available}>
+              <button type="button" id="attach-calendar" aria-describedby="calendar-help" disabled={busy() || !!reading()} onClick={() => void addCalendar()}>{t("cal.attach")}</button>
+              <span id="calendar-help" class="sr">{t(calendar()?.calendar === "not_asked" ? "cal.helpFirst" : "cal.help")}</span>
+            </Show>
             <span class="muted">{t("files.drop")}</span>
             <Show when={dragging()}><strong role="status">{t("files.dropNow")}</strong></Show>
             <Show when={reading()}><span role="status" class="muted">{reading()}</span></Show>

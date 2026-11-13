@@ -401,6 +401,18 @@ cut_short: false,
         crate::parse_child::run_isolated(name, bytes)
     }
 
+    fn calendar_status(&self) -> Result<serde_json::Value, String> {
+        calendar_helper()?.status()
+    }
+
+    fn calendar_ask(&self) -> Result<serde_json::Value, String> {
+        calendar_helper()?.ask()
+    }
+
+    fn calendar_read(&self, days: u32, reminders: bool) -> Result<String, String> {
+        calendar_helper()?.read(days, reminders)
+    }
+
     fn summarize(&self, messages: Vec<kk_types::chat::ChatMessage>) -> Result<String, String> {
         if self.scripted.is_some() {
             // a reading for notes gets a fixed list (one entry is an injected instruction, to show it is left out)
@@ -2440,4 +2452,13 @@ mod address_tests {
             assert!(!super::address_is_this_computer(no), "{no}");
         }
     }
+}
+
+/// The calendar reader beside this program (or named by `KAKU_CALENDAR`), confined unless `KAKU_CALENDAR_UNCONFINED` names a
+/// stand-in for the tests.
+fn calendar_helper() -> Result<crate::calendar::Helper, String> {
+    let exe =
+        crate::calendar::find().ok_or_else(|| kk_service::CALENDAR_UNAVAILABLE.to_string())?;
+    let confined = std::env::var("KAKU_CALENDAR_UNCONFINED").ok().as_deref() != Some("1");
+    Ok(crate::calendar::Helper { exe, confined })
 }

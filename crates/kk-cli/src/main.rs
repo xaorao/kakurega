@@ -8,6 +8,7 @@ mod approve;
 mod approver;
 mod backup;
 mod bench;
+mod calendar;
 mod chain;
 mod config;
 mod diagnostics;

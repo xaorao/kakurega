@@ -12,7 +12,7 @@ import { createRestartPolicy, rendererCrashed } from "./recovery.mjs";
 import { english, pickLanguage, translator } from "./strings.mjs";
 import { createNotifier, readInbox } from "./inbox.mjs";
 import { menuTemplate, trayIconPng, trayTitle, trayToolTip } from "./tray.mjs";
-import { bundledPaths, checkPart, readManifest } from "./bundle.mjs";
+import { KAKU_HELPERS, bundledPaths, checkPart, readManifest } from "./bundle.mjs";
 import { createCapture, pickSource, MAX_PICTURE_BYTES } from "./capture.mjs";
 import { chooseProfile, currentProfile, profileDir, profileNames, DEFAULT as DEFAULT_PROFILE } from "./profiles.mjs";
 
@@ -76,6 +76,16 @@ function changedPart() {
   if (kakuFromBundle) {
     const c = checkPart(manifest, "kaku", bundled.kaku);
     if (c) return c;
+    // kaku starts its helpers from beside itself: each must be the one packaging recorded, and one it did not record must
+    // not be there at all
+    for (const helper of KAKU_HELPERS) {
+      if (manifest[helper]) {
+        const h = checkPart(manifest, helper, bundled[helper]);
+        if (h) return h;
+      } else if (existsSync(bundled[helper])) {
+        return helper;
+      }
+    }
   }
   if (webFromBundle) return checkPart(manifest, "web", bundled.web);
   return null;

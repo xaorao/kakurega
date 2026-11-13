@@ -60,6 +60,21 @@ pub trait JobRunner: Send + Sync {
     fn summarize(&self, _messages: Vec<kk_types::chat::ChatMessage>) -> Result<String, String> {
         Err("summaries are not available in this configuration".into())
     }
+    /// What macOS allows for reading the owner's calendar and reminders, as `{"calendar": state, "reminders": state}` with the
+    /// states `allowed`, `not_asked`, `denied`, `restricted`, `write_only` or `unknown`. Never shows a prompt. `Err` says why
+    /// they cannot be read here at all.
+    fn calendar_status(&self) -> Result<Value, String> {
+        Err(CALENDAR_UNAVAILABLE.into())
+    }
+    /// Asks macOS for access, which shows its own prompt, and gives the state once the person answered. Only after a person
+    /// asked for the calendar.
+    fn calendar_ask(&self) -> Result<Value, String> {
+        Err(CALENDAR_UNAVAILABLE.into())
+    }
+    /// The calendar for the next `days` days, and the open reminders when `reminders`, as text to attach.
+    fn calendar_read(&self, _days: u32, _reminders: bool) -> Result<String, String> {
+        Err(CALENDAR_UNAVAILABLE.into())
+    }
     /// Reads a file the owner attached. The default reads it in this process; a runner that can should read it in a
     /// separate process with a time limit, because a stranger's file is where parser bugs get used.
     fn parse_attachment(
@@ -5988,6 +6003,98 @@ async fn attachment_from_path(
     }
 }
 
+/// Why the calendar cannot be read with this runner.
+pub const CALENDAR_UNAVAILABLE: &str =
+    "the calendar is read only on a Mac, by the kaku-calendar helper next to kaku";
+
+#[derive(Deserialize)]
+struct CalendarBody {
+    #[serde(default = "seven")]
+    days: u32,
+    #[serde(default)]
+    reminders: bool,
+    /// The person pressed the button or typed `@calendar`: macOS may be asked now if it never was.
+    #[serde(default)]
+    ask: bool,
+}
+
+fn seven() -> u32 {
+    7
+}
+
+/// Whether the calendar can be attached here, and what macOS allows. Never shows a prompt.
+async fn calendar_status(axum::Extension(svc): Svc) -> Response {
+    let svc2 = svc.clone();
+    match tokio::task::spawn_blocking(move || svc2.runner.calendar_status()).await {
+        Ok(Ok(s)) => {
+            Json(json!({"available": true, "calendar": s["calendar"], "reminders": s["reminders"]}))
+                .into_response()
+        }
+        Ok(Err(why)) => Json(json!({"available": false, "why": why})).into_response(),
+        Err(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "CALENDAR_FAILED",
+            "the calendar could not be checked",
+        ),
+    }
+}
+
+/// Attaches the next days of the owner's calendar, and the open reminders when asked, as a file read like any other: the
+/// same checks hold back secrets and orders before anything reaches a model.
+async fn calendar_attach(axum::Extension(svc): Svc, Json(b): Json<CalendarBody>) -> Response {
+    if !(1..=31).contains(&b.days) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "BAD_DAYS",
+            "a calendar is attached for 1 to 31 days",
+        );
+    }
+    let svc2 = svc.clone();
+    let (ask, days, want_reminders) = (b.ask, b.days, b.reminders);
+    let read = tokio::task::spawn_blocking(move || -> Result<(String, bool), (StatusCode, &'static str, String)> {
+        let unavailable = |why: String| (StatusCode::NOT_IMPLEMENTED, "CALENDAR_UNAVAILABLE", why);
+        let mut s = svc2.runner.calendar_status().map_err(unavailable)?;
+        let wanted_not_asked = s["calendar"] == "not_asked" || (want_reminders && s["reminders"] == "not_asked");
+        if wanted_not_asked && ask {
+            s = svc2.runner.calendar_ask().map_err(unavailable)?;
+        }
+        match s["calendar"].as_str() {
+            Some("allowed") => {}
+            Some("not_asked") => return Err((StatusCode::CONFLICT, "CALENDAR_NOT_ASKED", "macOS has not been asked yet: press Attach my calendar, and answer the question macOS shows".into())),
+            _ => return Err((StatusCode::CONFLICT, "CALENDAR_NOT_ALLOWED", "macOS does not allow Kakurega to read the calendar: allow it in System Settings, Privacy & Security, Calendars".into())),
+        }
+        let with_reminders = want_reminders && s["reminders"] == "allowed";
+        let text = svc2
+            .runner
+            .calendar_read(days, with_reminders)
+            .map_err(|why| (StatusCode::BAD_GATEWAY, "CALENDAR_FAILED", why))?;
+        Ok((text, want_reminders && !with_reminders))
+    })
+    .await;
+    match read {
+        Ok(Ok((mut text, reminders_left_out))) => {
+            if reminders_left_out {
+                text.push_str(
+                    "
+(Reminders are not included: macOS does not allow Kakurega to read them.)
+",
+                );
+            }
+            let name = format!(
+                "calendar-next-{days}-day{}.md",
+                if days == 1 { "" } else { "s" }
+            );
+            attach_bytes(svc, &name, axum::body::Bytes::from(text.into_bytes())).await
+        }
+        Ok(Err((status, code, why))) => error(status, code, &why),
+        Err(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "CALENDAR_FAILED",
+            "the calendar could not be read",
+        ),
+    }
+}
+
 async fn attach_bytes(svc: Arc<Service>, raw_name: &str, body: axum::body::Bytes) -> Response {
     attach_bytes_from(svc, raw_name, body, Vec::new()).await
 }
@@ -10562,6 +10669,10 @@ impl Extension for Routes {
             .route("/api/documents/index", get(doc_index_get))
             .route("/api/documents/index/forget", post(doc_index_forget))
             .route("/api/attachments/path", post(attachment_from_path))
+            .route(
+                "/api/attachments/calendar",
+                get(calendar_status).post(calendar_attach),
+            )
             .route("/api/attachments/{id}", get(attachment_get))
             .route("/api/attachments/{id}/remove", post(attachment_remove))
             .route(
