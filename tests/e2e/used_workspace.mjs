@@ -89,7 +89,7 @@ await step("documents", async () => {
 
 await step("meeting", async () => {
   await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
-  await page.getByRole("link", { name: "Meeting notes" }).click();
+  await page.getByRole("link", { name: "Meeting notes", exact: true }).click();
   await page.waitForSelector("#meet-text");
   await page.setInputFiles("#meet-file", transcript);
   await page.waitForFunction(() => document.querySelector("#meet-text").value.length > 40);

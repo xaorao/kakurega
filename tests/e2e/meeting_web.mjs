@@ -56,7 +56,7 @@ await page.waitForSelector("nav");
 const skip = page.getByRole("button", { name: "Skip the rest" });
 if (await skip.count()) await skip.click();
 await page.locator("#nav-more:not([open]) > summary").click({ timeout: 3000 }).catch(() => {}); // these links sit under More
-await page.getByRole("link", { name: "Meeting notes" }).click();
+await page.getByRole("link", { name: "Meeting notes", exact: true }).click();
 await page.waitForSelector("#meet-text");
 check(await page.getByRole("button", { name: "Write the notes" }).isDisabled(), "nothing can be written from an empty box");
 await page.setInputFiles("#meet-file", file);
