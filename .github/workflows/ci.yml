@@ -26,5 +26,11 @@ jobs:
           sudo apt-get update -q && sudo apt-get install -y -q nodejs
           sudo install -m 755 "$(command -v node)" /usr/local/bin/node
           /usr/bin/node --version && /usr/local/bin/node --version
+      # the Rust checks run a compiler inside the sandbox too, so the pinned toolchain is also placed under /usr
+      - name: Rust where the sandbox can see it
+        run: |
+          sudo cp -a "$(rustc --print sysroot)"/. /usr/local/
+          sudo ln -sf /usr/local/bin/rustc /usr/bin/rustc
+          /usr/bin/rustc --version && /usr/bin/gcc --version | head -1
       - name: Checks
         run: scripts/test
