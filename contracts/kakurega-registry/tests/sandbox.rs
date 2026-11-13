@@ -868,7 +868,7 @@ async fn a_fee_on_top_is_paid_to_the_fee_account_only_for_a_delivered_review_on_
     let contract = e.account("registry.sandbox", 20).await;
     let fees = e.account("fees.sandbox", 1).await;
     near_api::Contract::deploy(contract.clone())
-        .use_code(wasm)
+        .use_code(wasm.clone())
         .with_init_call(
             "new",
             json!({"verifier": "verifier.sandbox", "token": null, "min_token_order": null, "fee_bps": 200, "fee_account": "fees.sandbox"}),
@@ -1000,6 +1000,73 @@ async fn a_fee_on_top_is_paid_to_the_fee_account_only_for_a_delivered_review_on_
         "0",
         "a refund earns nothing"
     );
+
+    // A fee account that does not exist: the transfer fails and the fee stays owed, held by the registry.
+    let ghost = e.account("ghost-registry.sandbox", 20).await;
+    near_api::Contract::deploy(ghost.clone())
+        .use_code(wasm.clone())
+        .with_init_call(
+            "new",
+            json!({"verifier": "verifier.sandbox", "token": null, "min_token_order": null, "fee_bps": 200, "fee_account": "nobody-here.sandbox"}),
+        )?
+        .with_signer(e.key.clone())
+        .send_to(&e.net)
+        .await?
+        .assert_success();
+    let mut terms = order_terms("rita.sandbox", &cap, 600);
+    terms["amount"] = json!(NEAR.to_string());
+    e.call(
+        &ghost,
+        &carl,
+        "open_order",
+        json!({"terms": terms}),
+        2 * NEAR,
+    )
+    .await?;
+    e.call(
+        &ghost,
+        &rita,
+        "register_for_order",
+        delivery(&cap, &"ee".repeat(32), "rita.sandbox", 0),
+        NEAR / 10,
+    )
+    .await?;
+    e.call(
+        &ghost,
+        &carl,
+        "withdraw_fees",
+        json!({"in_token": false}),
+        0,
+    )
+    .await?;
+    assert_eq!(
+        e.view(&ghost, "fees_owed", json!({})).await["near"],
+        (NEAR / 50).to_string(),
+        "the failed transfer left the fee owed"
+    );
+
+    // Nobody but the contract's own account can create it: code deployed without its creation call cannot be claimed.
+    let bare = e.account("bare-registry.sandbox", 20).await;
+    near_api::Contract::deploy(bare.clone())
+        .use_code(wasm.clone())
+        .without_init_call()
+        .with_signer(e.key.clone())
+        .send_to(&e.net)
+        .await?
+        .assert_success();
+    let taken = e
+        .call(
+            &bare,
+            &carl,
+            "new",
+            json!({"verifier": "verifier.sandbox", "token": null, "min_token_order": null, "fee_bps": 1000, "fee_account": "carl.sandbox"}),
+            0,
+        )
+        .await;
+    assert!(
+        taken.unwrap_err().contains("private"),
+        "another account cannot name the fee"
+    );
     Ok(())
 }
 
@@ -1115,6 +1182,31 @@ async fn live_a_token_order_is_opened_by_a_transfer_paid_in_the_token_and_surviv
     assert_eq!(balance("registry.sandbox").await, 0);
     assert_eq!(e.view(&contract, "orders_total", json!({})).await, "0");
 
+    // A transfer with terms but no storage balance for its client opens nothing and comes back: the registry never pays
+    // for a token order's record itself.
+    e.call(
+        &token,
+        &carl,
+        "ft_transfer_call",
+        transfer(NEAR, order_terms("rita.sandbox", &cap, 600).to_string()),
+        1,
+    )
+    .await?;
+    assert_eq!(balance("carl.sandbox").await, 5 * NEAR, "refunded in full");
+    assert_eq!(e.view(&contract, "orders_total", json!({})).await, "0");
+    e.call(&contract, &carl, "storage_deposit", json!({}), NEAR / 10)
+        .await?;
+    let storage_before: u128 = e
+        .view(
+            &contract,
+            "storage_balance_of",
+            json!({"account_id": "carl.sandbox"}),
+        )
+        .await
+        .as_str()
+        .unwrap()
+        .parse()?;
+
     // A transfer with terms opens an order in the token.
     e.call(
         &token,
@@ -1134,6 +1226,20 @@ async fn live_a_token_order_is_opened_by_a_transfer_paid_in_the_token_and_surviv
         (Some("Open"), Some("token.sandbox"), Some("carl.sandbox"))
     );
     assert_eq!(o["amount"], NEAR.to_string());
+    let storage_after: u128 = e
+        .view(
+            &contract,
+            "storage_balance_of",
+            json!({"account_id": "carl.sandbox"}),
+        )
+        .await
+        .as_str()
+        .unwrap()
+        .parse()?;
+    assert!(
+        storage_after < storage_before && storage_before - storage_after < NEAR / 100,
+        "the order's record was paid from Carl's storage balance: {storage_before} -> {storage_after}"
+    );
     assert_eq!(
         (
             balance("carl.sandbox").await,
@@ -1208,6 +1314,14 @@ async fn live_a_token_order_is_opened_by_a_transfer_paid_in_the_token_and_surviv
         "storage_deposit",
         register("fee-registry.sandbox"),
         NEAR / 100,
+    )
+    .await?;
+    e.call(
+        &fees_registry,
+        &carl,
+        "storage_deposit",
+        json!({}),
+        NEAR / 10,
     )
     .await?;
     let carl_before = balance("carl.sandbox").await;

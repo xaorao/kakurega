@@ -170,7 +170,7 @@ const chainText = await cp.locator("#chain").innerText();
 const digest = createHash("sha256").update(bytes).digest("hex");
 const signerHex = Buffer.from(key, "base64url").toString("hex");
 const allowed = new Set(["capsule_sha256", "capsule_signer", "signer", "order_id"]);
-check(calls.length === 4 && calls.every((c) => c.account === "kakurega-registry-1904f0.testnet" && Object.keys(c.args).every((k) => allowed.has(k))) && calls[0].args.capsule_sha256 === digest && calls[0].args.capsule_signer === signerHex, "the RPC was asked four things, with the digest, the signer key, two model keys and the order number and nothing else: " + JSON.stringify(calls.map((c) => [c.method, Object.keys(c.args)])));
+check(calls.length === 4 && calls.every((c) => c.account === "kakurega-registry-35d13d.testnet" && Object.keys(c.args).every((k) => allowed.has(k))) && calls[0].args.capsule_sha256 === digest && calls[0].args.capsule_signer === signerHex, "the RPC was asked four things, with the digest, the signer key, two model keys and the order number and nothing else: " + JSON.stringify(calls.map((c) => [c.method, Object.keys(c.args)])));
 check(calls.every((c) => !("cookie" in c.headers) && !("referer" in c.headers)), "with no cookie and no referrer");
 check(/alice\.testnet\[2J/.test(chainText) && !chainText.includes("\u001b") && /2023-11-14 22:13:20 UTC/.test(chainText), "the registering account and the time are shown, with control characters from the chain removed");
 check(/2 of this capsule's model signatures were not registered/.test(chainText), "model signatures the chain does not hold for this capsule are counted");
@@ -256,7 +256,7 @@ if (process.env.KAKU_LIVE_CHAIN === "1") {
     await lp.locator("#lookup").click();
     await lp.locator("#chain-out .verdict").waitFor({ timeout: 30000 });
     const live = await lp.locator("#chain").innerText();
-    check(/Registered by\s+kakurega-[a-z0-9-]+\.testnet/.test(live) && /kakurega-registry-1904f0\.testnet on NEAR testnet/.test(live), "LIVE: the page reads a real registration from NEAR testnet by itself");
+    check(/Registered by\s+kakurega-[a-z0-9-]+\.testnet/.test(live) && /kakurega-registry-35d13d\.testnet on NEAR testnet/.test(live), "LIVE: the page reads a real registration from NEAR testnet by itself");
     await lp.screenshot({ path: join(work, "chain-live.png"), fullPage: true });
   }
 }

@@ -235,8 +235,24 @@ impl Chain {
             .fetch_from(&self.net)
             .await
             .map(|d| d.data)
-            .map_err(|_| {
-                ChainError::Unreachable(format!("the registry on {}", self.network.name()))
+            .map_err(|e| {
+                // the node answered, but the account runs no such method (an older registry, or not a registry at all)
+                let text = format!("{e:?}");
+                if text.contains("MethodNotFound") || text.contains("MethodResolveError") {
+                    ChainError::Answer(format!(
+                        "{} on {} has no `{method}`: it is not a registry this build knows, or an older one",
+                        self.registry,
+                        self.network.name()
+                    ))
+                } else if text.contains("CodeDoesNotExist") || text.contains("UnknownAccount") {
+                    ChainError::Answer(format!(
+                        "{} on {} holds no contract",
+                        self.registry,
+                        self.network.name()
+                    ))
+                } else {
+                    ChainError::Unreachable(format!("the registry on {}", self.network.name()))
+                }
             })
     }
 
@@ -421,6 +437,37 @@ impl Chain {
         Ok((num("amount")?, num("fee")?, num("total")?))
     }
 
+    /// NEAR an account set aside at the registry for its token orders' storage (or change it was owed back).
+    pub async fn storage_balance(&self, account: &str) -> Result<u128, ChainError> {
+        self.view("storage_balance_of", json!({"account_id": account}))
+            .await?
+            .as_str()
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| ChainError::Answer("the registry gave no storage balance".into()))
+    }
+
+    /// Sets `amount` of NEAR aside at the registry for the payer's token orders.
+    pub async fn storage_deposit(
+        &self,
+        payer: &Payer,
+        amount: NearToken,
+    ) -> Result<Sent, ChainError> {
+        self.send(payer, "storage_deposit", json!({}), CALL_GAS, amount)
+            .await
+    }
+
+    /// Takes the payer's whole storage balance back.
+    pub async fn storage_withdraw(&self, payer: &Payer) -> Result<Sent, ChainError> {
+        self.send(
+            payer,
+            "storage_withdraw",
+            json!({}),
+            CALL_GAS,
+            NearToken::from_yoctonear(0),
+        )
+        .await
+    }
+
     /// Fees earned and not yet sent to the fee account.
     pub async fn fees_owed(&self) -> Result<Value, ChainError> {
         self.view("fees_owed", json!({})).await
@@ -448,7 +495,16 @@ impl Chain {
         amount: NearToken,
     ) -> Result<(Sent, u64), ChainError> {
         self.writable()?;
-        let (_, _, total) = self.price(amount.as_yoctonear()).await?;
+        let (priced, fee, total) = self.price(amount.as_yoctonear()).await?;
+        // what an RPC reports is checked before anything is signed: the amount asked for, a fee no registry can exceed
+        let want = amount.as_yoctonear();
+        let most = crate::price_with(want, crate::MAX_FEE_BPS).map(|(_, f)| f);
+        if priced != want || most.is_none_or(|m| fee > m) || priced.checked_add(fee) != Some(total)
+        {
+            return Err(ChainError::Answer(format!(
+                "the registry's price does not add up (amount {priced}, fee {fee}, total {total} for {want}); nothing was sent"
+            )));
+        }
         let mut terms = terms;
         terms["amount"] = json!(amount.as_yoctonear().to_string());
         let attach =

@@ -15,10 +15,13 @@ const USAGE: &str = "usage:
                                           publish a delivered review's capsule digest and model receipts on NEAR (testnet);
                                           with --order, for that order, which the contract then pays out
   kaku chain order ID                     what an order holds
+  kaku chain storage ACCOUNT [--deposit NEAR | --withdraw] [--key-file FILE [--account NAME]]
+                                          NEAR an account set aside at the registry for its token orders' storage;
+                                          --deposit adds to the paying account's, --withdraw takes it all back (testnet)
   kaku chain fees [--withdraw --key-file FILE [--account NAME] [--token]]
                                           what the registry takes on each paid order and what it owes its fee account;
                                           with --withdraw, send what it owes there (anyone may; testnet)
-  kaku chain quote --pay-with SYMBOL@chain --usdc AMOUNT --refund-to ADDRESS --registry ACCOUNT
+  kaku chain quote --pay-with SYMBOL@chain --usdc AMOUNT --refund-to ADDRESS --registry ACCOUNT --client ACCOUNT
                    --reviewer ACCOUNT --reviewer-key KEY --scope DIGEST [--hours N] [--require-hardware]
                                           a price from NEAR Intents for paying an order from another chain; nothing is sent
 options: [--network testnet|mainnet] [--registry ACCOUNT] [--json]";
@@ -202,6 +205,8 @@ pub fn run(args: &[String]) -> u8 {
         "--reviewer-key",
         "--scope",
         "--hours",
+        "--client",
+        "--deposit",
     ];
     let mut words: Vec<&String> = Vec::new();
     let mut skip = false;
@@ -425,6 +430,7 @@ pub fn run(args: &[String]) -> u8 {
                 Some(reviewer),
                 Some(reviewer_key),
                 Some(scope),
+                Some(client),
             ) = (
                 need("--pay-with"),
                 need("--usdc"),
@@ -432,6 +438,7 @@ pub fn run(args: &[String]) -> u8 {
                 need("--reviewer"),
                 need("--reviewer-key"),
                 need("--scope"),
+                need("--client"),
             )
             else {
                 eprintln!("{USAGE}");
@@ -452,6 +459,10 @@ pub fn run(args: &[String]) -> u8 {
                     return 2;
                 }
             };
+            if !kk_evidence::registry::is_account_id(&client) {
+                eprintln!("--client is the NEAR account the order belongs to: a refund after the deadline goes there");
+                return 2;
+            }
             if !kk_evidence::registry::is_account_id(&reviewer)
                 || !hex64(&reviewer_key)
                 || !hex64(&scope)
@@ -474,6 +485,7 @@ pub fn run(args: &[String]) -> u8 {
                 "scope_sha256": scope,
                 "deadline": (u128::from(now + hours * 3600) * 1_000_000_000).to_string(),
                 "require_hardware": args.iter().any(|a| a == "--require-hardware"),
+                "client": client,
             });
             let quoted = rt.block_on(async {
                 let tokens = intents::tokens(chain.http()).await?;
@@ -482,20 +494,25 @@ pub fn run(args: &[String]) -> u8 {
                 let units = to_units(&usdc, arrive.decimals).ok_or_else(|| {
                     ChainError::Input("--usdc is a positive amount such as 25 or 25.50".into())
                 })?;
-                // the payer sends the registry's price for the reviewer's amount, read from the registry on mainnet; when it
-                // cannot be read the quote says its fee is not included
-                let fee = match Chain::new(Network::Mainnet, chain.registry()) {
+                // the payer sends the price of the reviewer's amount, which the terms name: the registry's own price on
+                // mainnet when it can be read, else at Kakurega's fee. A wrong guess cannot cost the payer: the contract
+                // keeps exactly the price or hands the whole transfer back.
+                let read = match Chain::new(Network::Mainnet, chain.registry()) {
                     Ok(main) => main.price(units).await.ok(),
                     Err(_) => None,
                 };
-                let mut sent_terms = terms.clone();
-                let arrive_units = match fee {
-                    Some((_, _, total)) => {
-                        sent_terms["amount"] = json!(units.to_string());
-                        total
-                    }
-                    None => units,
+                let (fee, read_from_registry) = match read {
+                    Some((a, f, _)) if a == units => (f, true),
+                    _ => (
+                        kk_chain::price_with(units, kk_chain::DEFAULT_FEE_BPS)
+                            .map(|(_, f)| f)
+                            .ok_or_else(|| ChainError::Input("--usdc is too large".into()))?,
+                        false,
+                    ),
                 };
+                let mut sent_terms = terms.clone();
+                sent_terms["amount"] = json!(units.to_string());
+                let arrive_units = units + fee;
                 let ask = Ask {
                     pay,
                     arrive,
@@ -507,7 +524,7 @@ pub fn run(args: &[String]) -> u8 {
                 };
                 intents::dry_quote(chain.http(), &ask)
                     .await
-                    .map(|q| (q, fee.map(|f| f.1), sent_terms))
+                    .map(|q| (q, (fee, read_from_registry), sent_terms))
             });
             match quoted {
                 Err(e) => fail(&e),
@@ -517,8 +534,8 @@ pub fn run(args: &[String]) -> u8 {
                             "{}",
                             json!({"dry": true, "pay": q.pay, "pay_symbol": q.pay_symbol, "pay_chain": q.pay_chain,
                                 "arrive": q.arrive, "arrive_units": q.arrive_units, "seconds": q.seconds,
-                                "registry": chain.registry(), "terms": terms, "fee_known": fee.is_some(),
-                                "fee_units": fee.map(|f| f.to_string())})
+                                "registry": chain.registry(), "terms": terms, "fee_units": fee.0.to_string(),
+                                "fee_read_from_registry": fee.1})
                         );
                     } else {
                         println!(
@@ -533,20 +550,102 @@ pub fn run(args: &[String]) -> u8 {
                             clean(&q.pay_symbol),
                             clean(&q.pay_chain)
                         );
-                        match fee {
-                            Some(f) => println!(
-                                "That is {} USDC for the reviewer and the registry's fee of {f} smallest units on top.",
-                                clean(&usdc)
-                            ),
-                            None => println!(
-                                "The registry could not be read on NEAR mainnet, so its fee is not included in this price."
-                            ),
+                        if fee.1 {
+                            println!(
+                                "That is {} USDC for the reviewer and the registry's fee of {} smallest units on top.",
+                                clean(&usdc),
+                                fee.0
+                            );
+                        } else {
+                            println!(
+                                "That is {} USDC for the reviewer and Kakurega's fee of {} smallest units on top: the registry could not be read on NEAR mainnet, so its own fee was not checked. The terms name the reviewer's amount, so the registry keeps exactly its price and hands back any surplus, or returns the whole transfer if this is too little.",
+                                clean(&usdc),
+                                fee.0
+                            );
                         }
+                        println!(
+                            "The order belongs to {}: a refund after the deadline goes there. Its record is paid from that account's storage balance at the registry, so set one first (kaku chain storage {} --deposit 0.01).",
+                            clean(&client),
+                            clean(&client)
+                        );
                         println!(
                             "It would arrive in about {} seconds, carrying the order's terms as the transfer's message; the order would wait {hours} hours for the reviewer's capsule.",
                             q.seconds
                         );
                         println!("A real payment needs the registry on NEAR mainnet and the owner's word. This build does not send one.");
+                    }
+                    0
+                }
+            }
+        }
+        (Some("storage"), Some(account)) => {
+            if !kk_evidence::registry::is_account_id(account) {
+                eprintln!("name the NEAR account whose storage balance to read");
+                return 2;
+            }
+            let deposit = crate::flag(args, "--deposit");
+            let withdraw = args.iter().any(|a| a == "--withdraw");
+            if deposit.is_some() || withdraw {
+                let Some(file) = crate::flag(args, "--key-file") else {
+                    eprintln!("{USAGE}");
+                    return 2;
+                };
+                let payer = match Payer::from_key_file(
+                    std::path::Path::new(&file),
+                    crate::flag(args, "--account").as_deref(),
+                ) {
+                    Ok(p) => p,
+                    Err(e) => return fail(&e),
+                };
+                if payer.account.as_str() != account.as_str() {
+                    eprintln!("the key file pays for {}, not {}: a storage balance is set and taken back by its own account", payer.account, clean(account));
+                    return 2;
+                }
+                let sent = match (deposit, withdraw) {
+                    (Some(_), true) => {
+                        eprintln!("--deposit or --withdraw, not both");
+                        return 2;
+                    }
+                    (Some(near), false) => match to_units(&near, 24) {
+                        Some(y) if y > 0 => rt.block_on(
+                            chain.storage_deposit(&payer, kk_chain::NearToken::from_yoctonear(y)),
+                        ),
+                        _ => {
+                            eprintln!("--deposit is an amount of NEAR such as 0.01");
+                            return 2;
+                        }
+                    },
+                    (None, _) => rt.block_on(chain.storage_withdraw(&payer)),
+                };
+                return match sent {
+                    Err(e) => fail(&e),
+                    Ok(s) => {
+                        if as_json {
+                            println!(
+                                "{}",
+                                json!({"transaction": s.transaction, "gas_tgas": s.gas_tgas})
+                            );
+                        } else {
+                            println!("Done at {place}, in transaction {}.", s.transaction);
+                        }
+                        0
+                    }
+                };
+            }
+            match rt.block_on(chain.storage_balance(account)) {
+                Err(e) => fail(&e),
+                Ok(y) => {
+                    if as_json {
+                        println!(
+                            "{}",
+                            json!({"account": account, "storage_balance": y.to_string()})
+                        );
+                    } else {
+                        println!(
+                            "{} holds {} at {place} for the storage of its token orders.",
+                            clean(account),
+                            units(&json!({"near": y.to_string()}), "near")
+                        );
                     }
                     0
                 }
@@ -944,6 +1043,12 @@ mod tests {
             "a withdrawal names the key file that pays for it"
         );
         assert_eq!(run(&["fees", "extra"]), 2);
+        assert_eq!(run(&["storage", "Not An Account"]), 2);
+        assert_eq!(
+            run(&["storage", "carl.testnet", "--deposit", "0.01"]),
+            2,
+            "a deposit names the key file that pays"
+        );
         assert_eq!(run(&["attest"]), 2);
         assert_eq!(run(&["attest", "--model", "m"]), 2);
         assert_eq!(run(&["hardware", &"ab".repeat(32), "--network", "moon"]), 2);

@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CONTRACT = ROOT / "contracts/kakurega-registry"
 WASM = CONTRACT / "target/near/kakurega_registry.wasm"
-DEFAULT = {"testnet": "kakurega-registry-1904f0.testnet"}
+DEFAULT = {"testnet": "kakurega-registry-35d13d.testnet"}
 RPC = {"testnet": "https://rpc.testnet.fastnear.com", "mainnet": "https://rpc.mainnet.fastnear.com"}
 ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 

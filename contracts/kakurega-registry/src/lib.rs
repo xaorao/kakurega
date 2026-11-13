@@ -90,6 +90,7 @@ enum Key {
     Entries,
     Attested,
     Orders,
+    Storage,
 }
 
 /// One model signature, as a caller presents it. All hex is lowercase.
@@ -168,9 +169,11 @@ pub struct Order {
     pub capsule_sha256: Option<String>,
 }
 
-/// The terms of an order, as a client gives them (and as the message of a token transfer, in JSON).
+/// The terms of an order, as a client gives them (and as the message of a token transfer, in JSON). A field this contract
+/// does not know is refused, so a misspelt `amount` cannot quietly turn into a different order.
 #[near(serializers = [json])]
 #[derive(Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct OrderTerms {
     pub reviewer: AccountId,
     pub reviewer_key: String,
@@ -181,6 +184,10 @@ pub struct OrderTerms {
     /// it, everything set aside is divided between the reviewer and the fee.
     #[serde(default)]
     pub amount: Option<U128>,
+    /// Whom the order belongs to: a refund after the deadline goes there. Without it, the account that pays; name it when a
+    /// payment arrives through another contract (such as NEAR Intents), so the money goes back to the person.
+    #[serde(default)]
+    pub client: Option<AccountId>,
 }
 
 /// The fee a registry takes and where it goes; both fixed at creation.
@@ -229,6 +236,8 @@ pub struct Registry {
     /// Fees earned and not yet sent: in yoctoNEAR, and in the token's smallest unit.
     fees_near: u128,
     fees_token: u128,
+    /// NEAR an account set aside for the storage its token orders take, and change that could not be sent back.
+    storage: LookupMap<AccountId, u128>,
 }
 
 /// The key an entry is stored under: the capsule's digest and the key that signed it. Two parties registering the same digest with
@@ -338,7 +347,9 @@ fn receipt_holds(r: &ReceiptArg) -> bool {
 
 #[near]
 impl Registry {
+    /// Only the contract's own account can create it (in the deploying transaction), so nobody can name the fee first.
     #[init]
+    #[private]
     pub fn new(
         verifier: AccountId,
         token: Option<AccountId>,
@@ -360,6 +371,12 @@ impl Registry {
             fee_bps > 0 || fee_account.is_none(),
             "a fee account is named only with a fee"
         );
+        require!(
+            fee_account
+                .as_ref()
+                .is_none_or(|a| *a != env::current_account_id() && Some(a) != token.as_ref()),
+            "the fee account is neither this registry nor the token"
+        );
         Self {
             entries: LookupMap::new(Key::Entries),
             total: 0,
@@ -373,7 +390,71 @@ impl Registry {
             fee_account,
             fees_near: 0,
             fees_token: 0,
+            storage: LookupMap::new(Key::Storage),
         }
+    }
+
+    /// Sets NEAR aside for the storage of `account_id`'s token orders (the caller's by default). A token transfer cannot carry
+    /// NEAR, so an order paid in the token takes its storage from here. The first deposit pays for the balance's own record.
+    #[payable]
+    pub fn storage_deposit(&mut self, account_id: Option<AccountId>) -> U128 {
+        let who = account_id.unwrap_or_else(env::predecessor_account_id);
+        let paid = env::attached_deposit().as_yoctonear();
+        let before = env::storage_usage();
+        let had = self.storage.get(&who).copied();
+        self.storage.insert(who.clone(), had.unwrap_or(0));
+        self.storage.flush();
+        let record = env::storage_byte_cost()
+            .saturating_mul(u128::from(env::storage_usage().saturating_sub(before)))
+            .as_yoctonear();
+        require!(
+            paid > record,
+            format!("attach more than {record} yoctoNEAR, the storage of the balance itself")
+        );
+        let balance = had.unwrap_or(0) + paid - record;
+        self.storage.insert(who, balance);
+        self.storage.flush();
+        U128(balance)
+    }
+
+    /// What `account_id` has set aside for storage, or was owed back as change.
+    pub fn storage_balance_of(&self, account_id: AccountId) -> U128 {
+        U128(self.storage.get(&account_id).copied().unwrap_or(0))
+    }
+
+    /// Sends the caller's storage balance back to it. Taken off before the transfer and put back if the transfer fails.
+    pub fn storage_withdraw(&mut self) -> U128 {
+        let who = env::predecessor_account_id();
+        let owed = self.storage.get(&who).copied().unwrap_or(0);
+        require!(owed > 0, "no storage balance is held for this account");
+        self.storage.insert(who.clone(), 0);
+        self.storage.flush();
+        Promise::new(who.clone())
+            .transfer(NearToken::from_yoctonear(owed))
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(PAYOUT_CALLBACK_GAS)
+                    .on_storage_returned(who, U128(owed)),
+            )
+            .detach();
+        U128(owed)
+    }
+
+    /// After a storage withdrawal or a change transfer: a failed transfer leaves the money here, owed to `who` again. Never panics.
+    #[private]
+    pub fn on_storage_returned(
+        &mut self,
+        who: AccountId,
+        amount: U128,
+        #[callback_result] result: Result<(), PromiseError>,
+    ) -> bool {
+        if result.is_ok() {
+            return true;
+        }
+        let had = self.storage.get(&who).copied().unwrap_or(0);
+        self.storage.insert(who, had.saturating_add(amount.0));
+        self.storage.flush();
+        false
     }
 
     /// The fee each paid order carries, and the only account it is sent to.
@@ -384,8 +465,8 @@ impl Registry {
         }
     }
 
-    /// What to set aside so the reviewer receives `amount`: the amount, the fee on it and their sum. For a NEAR order, attach
-    /// the order's storage on top (it is handed back if not used).
+    /// What to set aside so the reviewer receives `amount`: the amount, the fee on it and their sum. For a NEAR order with
+    /// `terms.amount` named, attach the order's storage on top; what is not used is handed back.
     pub fn price(&self, amount: U128) -> Price {
         let (amount, fee) = price_of(amount.0, self.fee_bps)
             .unwrap_or_else(|| env::panic_str("the amount is too large"));
@@ -436,18 +517,18 @@ impl Registry {
     /// of that amount is kept and the rest is handed back; without it, the rest is divided between the reviewer and the fee.
     #[payable]
     pub fn open_order(&mut self, terms: OrderTerms) -> U64 {
-        let client = env::predecessor_account_id();
+        let payer = env::predecessor_account_id();
         let paid = env::attached_deposit();
         let before = env::storage_usage();
         let id = self
-            .add_order(client.clone(), &terms, 0, None)
+            .add_order(payer.clone(), &terms, 0, 0, None)
             .unwrap_or_else(|e| env::panic_str(e));
         let used = env::storage_usage().saturating_sub(before);
         let cost = env::storage_byte_cost().saturating_mul(u128::from(used));
         let left = paid.saturating_sub(cost).as_yoctonear();
         require!(
             paid > cost,
-            "attach at least 0.01 NEAR beyond the storage the order takes"
+            "attach the order's storage, at least 0.01 NEAR for the reviewer and the fee on top"
         );
         let (amount, fee, change) = match terms.amount {
             Some(want) => {
@@ -473,9 +554,16 @@ impl Registry {
             o.fee = U128(fee);
         }
         self.orders.flush();
+        self.log_opened(id);
         if change > 0 {
-            Promise::new(client)
+            // if the change cannot be sent back it stays here as the payer's storage balance, which it can withdraw
+            Promise::new(payer.clone())
                 .transfer(NearToken::from_yoctonear(change))
+                .then(
+                    Self::ext(env::current_account_id())
+                        .with_static_gas(PAYOUT_CALLBACK_GAS)
+                        .on_storage_returned(payer, U128(change)),
+                )
                 .detach();
         }
         U64(id)
@@ -499,30 +587,52 @@ impl Registry {
         let Ok(terms) = near_sdk::serde_json::from_str::<OrderTerms>(&msg) else {
             return PromiseOrValue::Value(amount);
         };
-        // with an amount named, its price is kept and the rest goes back through the token's own refund
-        let (kept, change) = match terms.amount {
+        // with an amount named, exactly its price is kept and the rest goes back through the token's own refund
+        let (reviewer, fee, change) = match terms.amount {
             Some(want) => match price_of(want.0, self.fee_bps) {
-                Some((a, f)) if a + f <= amount.0 && a + f >= self.min_token_order => {
-                    (a + f, amount.0 - a - f)
-                }
+                Some((a, f)) if a + f <= amount.0 => (a, f, amount.0 - a - f),
                 _ => return PromiseOrValue::Value(amount),
             },
-            None => (amount.0, 0),
+            None => {
+                let (a, f) = split(amount.0, self.fee_bps);
+                (a, f, 0)
+            }
         };
-        match self.add_order(sender_id, &terms, kept, Some(from_token)) {
-            Ok(_) => PromiseOrValue::Value(U128(change)),
-            Err(_) => PromiseOrValue::Value(amount),
+        if reviewer < self.min_token_order {
+            return PromiseOrValue::Value(amount);
         }
+        // the order's storage is paid from its client's storage balance; without enough, nothing is kept
+        let client = terms.client.clone().unwrap_or_else(|| sender_id.clone());
+        let before = env::storage_usage();
+        let Ok(id) = self.add_order(sender_id, &terms, reviewer, fee, Some(from_token)) else {
+            return PromiseOrValue::Value(amount);
+        };
+        let cost = env::storage_byte_cost()
+            .saturating_mul(u128::from(env::storage_usage().saturating_sub(before)))
+            .as_yoctonear();
+        let balance = self.storage.get(&client).copied().unwrap_or(0);
+        if balance < cost {
+            self.orders.remove(&id);
+            self.orders.flush();
+            self.next_order -= 1;
+            return PromiseOrValue::Value(amount);
+        }
+        self.storage.insert(client, balance - cost);
+        self.storage.flush();
+        self.log_opened(id);
+        PromiseOrValue::Value(U128(change))
     }
 
     /// Checks the terms and stores the order. `Err` says what is wrong; nothing is stored then.
     fn add_order(
         &mut self,
-        client: AccountId,
+        payer: AccountId,
         terms: &OrderTerms,
         amount: u128,
+        fee: u128,
         token: Option<AccountId>,
     ) -> Result<u64, &'static str> {
+        let client = terms.client.clone().unwrap_or(payer);
         let now = env::block_timestamp();
         let Some(key) = hex_to::<32>(&terms.reviewer_key) else {
             return Err("the reviewer key is 64 lowercase hex digits");
@@ -543,7 +653,6 @@ impl Registry {
         }
         let id = self.next_order;
         self.next_order += 1;
-        let (amount, fee) = split(amount, self.fee_bps);
         self.orders.insert(
             id,
             Order {
@@ -562,11 +671,23 @@ impl Registry {
             },
         );
         self.orders.flush();
-        env::log_str(&format!(
-            "EVENT_JSON:{{\"standard\":\"kakurega\",\"version\":\"1.0.0\",\"event\":\"order_opened\",\"data\":[{{\"order\":{id},\"client\":\"{client}\",\"reviewer\":\"{}\"}}]}}",
-            terms.reviewer
-        ));
         Ok(id)
+    }
+
+    /// The event for an order once its amount and fee are final.
+    fn log_opened(&self, id: u64) {
+        if let Some(o) = self.orders.get(&id) {
+            env::log_str(&format!(
+                "EVENT_JSON:{{\"standard\":\"kakurega\",\"version\":\"1.0.0\",\"event\":\"order_opened\",\"data\":[{{\"order\":{id},\"client\":\"{}\",\"reviewer\":\"{}\",\"amount\":\"{}\",\"fee\":\"{}\",\"token\":{}}}]}}",
+                o.client,
+                o.reviewer,
+                o.amount.0,
+                o.fee.0,
+                o.token
+                    .as_ref()
+                    .map_or("null".to_string(), |t| format!("\"{t}\""))
+            ));
+        }
     }
 
     /// The reviewer registers the capsule an order pays for. The binding signature covers [`Self::order_binding_message`].
@@ -599,12 +720,21 @@ impl Registry {
             capsule_signer == order.reviewer_key,
             "the capsule is not signed by the key the order names"
         );
+        // the order records the capsule first, so the storage that adds is charged with the entry's (a failed check below
+        // undoes it with everything else)
+        let before = env::storage_usage();
+        if let Some(o) = self.orders.get_mut(&order_id.0) {
+            o.state = OrderState::Earned;
+            o.capsule_sha256 = Some(capsule_sha256.clone());
+        }
+        self.orders.flush();
         let entry = self.register_inner(
             capsule_sha256.clone(),
             capsule_signer,
             binding_signature,
             receipts,
             Some(order_id.0),
+            Some(before),
         );
         if order.require_hardware {
             require!(
@@ -621,11 +751,6 @@ impl Registry {
                 );
             }
         }
-        if let Some(o) = self.orders.get_mut(&order_id.0) {
-            o.state = OrderState::Earned;
-            o.capsule_sha256 = Some(capsule_sha256);
-        }
-        self.orders.flush();
         // the service was delivered, so the fee is earned now, whether or not the reviewer's transfer needs a retry
         if order.token.is_some() {
             self.fees_token += order.fee.0;
@@ -959,6 +1084,7 @@ impl Registry {
             binding_signature,
             receipts,
             None,
+            None,
         )
     }
 
@@ -969,6 +1095,7 @@ impl Registry {
         binding_signature: String,
         receipts: Vec<ReceiptArg>,
         order: Option<u64>,
+        storage_from: Option<u64>,
     ) -> Entry {
         require!(
             is_lower_hex(&capsule_sha256, 64),
@@ -1025,7 +1152,7 @@ impl Registry {
             receipts: verified,
             order: order.map(U64),
         };
-        let before = env::storage_usage();
+        let before = storage_from.unwrap_or_else(env::storage_usage);
         self.entries.insert(key_text, entry.clone());
         self.total += 1;
         self.entries.flush();
@@ -1763,6 +1890,7 @@ mod tests {
             deadline: U64(T0 + HOUR),
             require_hardware: hardware,
             amount: None,
+            client: None,
         }
     }
     /// A registry with one NEAR order from carl to rita, opened at T0.
@@ -2170,6 +2298,8 @@ mod tests {
         };
         let carl: AccountId = "carl.testnet".parse().unwrap();
         let good = msg(&terms(&cap, false));
+        at("carl.testnet", ONE_NEAR / 10, T0);
+        r.storage_deposit(None);
         at("other-token.testnet", 0, T0);
         assert_eq!(
             back(r.ft_on_transfer(carl.clone(), U128(5_000_000), good.clone())),
@@ -2455,6 +2585,8 @@ mod tests {
             PromiseOrValue::Value(u) => u.0,
             PromiseOrValue::Promise(_) => panic!("no promise expected"),
         };
+        at("carl.testnet", ONE_NEAR / 10, T0);
+        r.storage_deposit(None);
         at("usdc.testnet", 0, T0);
         assert_eq!(
             back(r.ft_on_transfer(carl.clone(), U128(5_000_000), msg.clone())),
@@ -2480,5 +2612,293 @@ mod tests {
                 && sent().contains("fees.testnet")
                 && sent().contains("100000")
         );
+    }
+
+    /// A token transfer's message for an order from carl to rita, with any extra fields.
+    fn token_msg(cap: &SigningKey, extra: near_sdk::serde_json::Value) -> String {
+        let mut m = near_sdk::serde_json::json!({"reviewer": "rita.testnet", "reviewer_key": signer_hex(cap), "scope_sha256": h('5'),
+            "deadline": U64(T0 + HOUR), "require_hardware": false});
+        for (k, v) in extra.as_object().unwrap() {
+            m[k] = v.clone();
+        }
+        m.to_string()
+    }
+    fn unused(v: PromiseOrValue<U128>) -> u128 {
+        match v {
+            PromiseOrValue::Value(u) => u.0,
+            PromiseOrValue::Promise(_) => panic!("no promise expected"),
+        }
+    }
+
+    #[test]
+    fn fe12_a_token_order_for_an_amount_that_does_not_divide_evenly_is_stored_exactly_as_priced() {
+        let cap = key(1);
+        let mut r = with_fee();
+        at("carl.testnet", ONE_NEAR / 10, T0);
+        r.storage_deposit(None);
+        let quoted = r.price(U128(1_234_567));
+        assert_eq!((quoted.fee.0, quoted.total.0), (24_692, 1_259_259));
+        at("usdc.testnet", 0, T0);
+        let back = unused(r.ft_on_transfer(
+            "carl.testnet".parse().unwrap(),
+            U128(2_000_000),
+            token_msg(&cap, near_sdk::serde_json::json!({"amount": "1234567"})),
+        ));
+        assert_eq!(back, 2_000_000 - 1_259_259);
+        let o = r.order(U64(0)).unwrap();
+        assert_eq!(
+            (o.amount.0, o.fee.0),
+            (1_234_567, 24_692),
+            "what price said, not one unit off"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "the reviewer's amount is at least 0.01 NEAR")]
+    fn fe13_a_named_amount_below_the_smallest_order_is_refused() {
+        let cap = key(1);
+        let mut r = with_fee();
+        at("carl.testnet", ONE_NEAR, T0);
+        let mut t = terms(&cap, false);
+        t.amount = Some(U128(1));
+        r.open_order(t);
+    }
+
+    #[test]
+    #[should_panic(expected = "takes no token")]
+    fn fe14_a_token_withdrawal_from_a_registry_without_a_token_is_refused() {
+        as_account("alice.testnet", DEPOSIT);
+        let mut r = Registry::new(
+            "verifier.testnet".parse().unwrap(),
+            None,
+            None,
+            Some(200),
+            Some("fees.testnet".parse().unwrap()),
+        );
+        at("anyone.testnet", 0, T0);
+        r.withdraw_fees(true);
+    }
+
+    #[test]
+    fn fe15_a_token_order_is_paid_for_from_its_clients_storage_balance_and_nothing_is_kept_without_one()
+     {
+        let cap = key(1);
+        let mut r = with_fee();
+        let msg = token_msg(&cap, near_sdk::serde_json::json!({}));
+        at("usdc.testnet", 0, T0);
+        assert_eq!(
+            unused(r.ft_on_transfer(
+                "carl.testnet".parse().unwrap(),
+                U128(5_000_000),
+                msg.clone()
+            )),
+            5_000_000,
+            "no storage balance: everything comes back"
+        );
+        assert_eq!(r.orders_total().0, 0, "and no order is left behind");
+        at("carl.testnet", ONE_NEAR / 10, T0);
+        let held = r.storage_deposit(None).0;
+        assert!(
+            held > 0 && held < ONE_NEAR / 10,
+            "the balance's own record is paid from the deposit"
+        );
+        at("usdc.testnet", 0, T0);
+        assert_eq!(
+            unused(r.ft_on_transfer("carl.testnet".parse().unwrap(), U128(5_000_000), msg)),
+            0
+        );
+        let left = r.storage_balance_of("carl.testnet".parse().unwrap()).0;
+        assert!(
+            left < held && held - left < ONE_NEAR / 100,
+            "the order's storage came out of it: {held} -> {left}"
+        );
+        at("carl.testnet", 0, T0 + 1);
+        assert_eq!(r.storage_withdraw().0, left);
+        assert_eq!(
+            r.storage_balance_of("carl.testnet".parse().unwrap()).0,
+            0,
+            "taken off before the transfer"
+        );
+        assert!(sent().contains(&format!("transfer {left} to carl.testnet")));
+        at("registry.testnet", 0, T0 + 2);
+        assert!(!r.on_storage_returned(
+            "carl.testnet".parse().unwrap(),
+            U128(left),
+            Err(PromiseError::Failed)
+        ));
+        assert_eq!(
+            r.storage_balance_of("carl.testnet".parse().unwrap()).0,
+            left,
+            "a failed transfer leaves it owed"
+        );
+    }
+
+    #[test]
+    fn fe16_a_paid_order_pays_for_the_storage_it_grows_by() {
+        let cap = key(1);
+        let (mut r, id) = with_order(&cap, false);
+        let amount = r.order(id).unwrap().amount.0;
+        // one context from the measurement to the call: the test runtime resets its storage count with each new context
+        at("rita.testnet", DEPOSIT, T0 + 10);
+        let before = env::storage_usage();
+        let sig = bind_order(&cap, DIGEST, &[], "rita.testnet", id.0);
+        r.register_for_order(id, DIGEST.into(), signer_hex(&cap), sig, vec![]);
+        let grew = u128::from(env::storage_usage() - before);
+        let cost = env::storage_byte_cost().as_yoctonear() * grew;
+        let refunded: u128 = sent()
+            .lines()
+            .filter(|l| l.ends_with("to rita.testnet"))
+            .filter_map(|l| l.split(' ').nth(1).and_then(|v| v.parse::<u128>().ok()))
+            .find(|v| *v != amount)
+            .unwrap_or(0);
+        assert_eq!(
+            DEPOSIT - refunded,
+            cost,
+            "the entry and the order's growth ({grew} bytes) were both charged"
+        );
+    }
+
+    #[test]
+    fn fe17_terms_with_a_field_this_contract_does_not_know_are_refused() {
+        let cap = key(1);
+        let mut r = with_fee();
+        assert!(
+            near_sdk::serde_json::from_str::<OrderTerms>(&token_msg(
+                &cap,
+                near_sdk::serde_json::json!({"amout": "5000000"})
+            ))
+            .is_err()
+        );
+        at("carl.testnet", ONE_NEAR / 10, T0);
+        r.storage_deposit(None);
+        at("usdc.testnet", 0, T0);
+        assert_eq!(
+            unused(r.ft_on_transfer(
+                "carl.testnet".parse().unwrap(),
+                U128(6_000_000),
+                token_msg(&cap, near_sdk::serde_json::json!({"amout": "5000000"}))
+            )),
+            6_000_000,
+            "a misspelt amount opens nothing and keeps nothing"
+        );
+        assert_eq!(r.orders_total().0, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "neither this registry nor the token")]
+    fn fe18_the_fee_account_cannot_be_the_registry_itself() {
+        at("registry.testnet", 0, T0);
+        Registry::new(
+            "verifier.testnet".parse().unwrap(),
+            Some("usdc.testnet".parse().unwrap()),
+            Some(U128(1)),
+            Some(200),
+            Some("registry.testnet".parse().unwrap()),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "neither this registry nor the token")]
+    fn fe18b_the_fee_account_cannot_be_the_token() {
+        at("registry.testnet", 0, T0);
+        Registry::new(
+            "verifier.testnet".parse().unwrap(),
+            Some("usdc.testnet".parse().unwrap()),
+            Some(U128(1)),
+            Some(200),
+            Some("usdc.testnet".parse().unwrap()),
+        );
+    }
+
+    #[test]
+    fn fe19_change_that_cannot_be_sent_back_is_kept_for_the_payer_to_withdraw() {
+        let cap = key(1);
+        let mut r = with_fee();
+        at("carl.testnet", 2 * ONE_NEAR, T0);
+        let mut t = terms(&cap, false);
+        t.amount = Some(U128(ONE_NEAR));
+        r.open_order(t);
+        let change: u128 = sent()
+            .lines()
+            .find(|l| l.ends_with("to carl.testnet"))
+            .and_then(|l| l.split(' ').nth(1))
+            .and_then(|v| v.parse().ok())
+            .unwrap();
+        at("registry.testnet", 0, T0 + 1);
+        assert!(!r.on_storage_returned(
+            "carl.testnet".parse().unwrap(),
+            U128(change),
+            Err(PromiseError::Failed)
+        ));
+        assert_eq!(
+            r.storage_balance_of("carl.testnet".parse().unwrap()).0,
+            change
+        );
+        at("registry.testnet", 0, T0 + 2);
+        assert!(r.on_storage_returned("carl.testnet".parse().unwrap(), U128(change), Ok(())));
+        assert_eq!(
+            r.storage_balance_of("carl.testnet".parse().unwrap()).0,
+            change,
+            "a sent change adds nothing"
+        );
+    }
+
+    #[test]
+    fn fe20_an_order_paid_through_another_contract_belongs_to_the_client_it_names() {
+        let cap = key(1);
+        let mut r = with_fee();
+        at("carl.testnet", ONE_NEAR / 10, T0);
+        r.storage_deposit(None);
+        at("usdc.testnet", 0, T0);
+        let msg = token_msg(
+            &cap,
+            near_sdk::serde_json::json!({"client": "carl.testnet", "amount": "5000000"}),
+        );
+        assert_eq!(
+            unused(r.ft_on_transfer("intents.testnet".parse().unwrap(), U128(5_100_000), msg)),
+            0
+        );
+        let o = r.order(U64(0)).unwrap();
+        assert_eq!(
+            o.client.as_str(),
+            "carl.testnet",
+            "not the contract that delivered the tokens"
+        );
+        at("anyone.testnet", 0, T0 + HOUR + 1);
+        r.refund_order(U64(0));
+        let out = sent();
+        assert!(
+            out.contains("ft_transfer")
+                && out.contains("carl.testnet")
+                && !out.contains("intents.testnet"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn fe21_the_smallest_token_order_is_what_the_reviewer_receives_not_what_was_sent() {
+        let cap = key(1);
+        let mut r = with_fee();
+        at("carl.testnet", ONE_NEAR / 10, T0);
+        r.storage_deposit(None);
+        at("usdc.testnet", 0, T0);
+        assert_eq!(
+            unused(r.ft_on_transfer(
+                "carl.testnet".parse().unwrap(),
+                U128(1_000_000),
+                token_msg(&cap, near_sdk::serde_json::json!({}))
+            )),
+            1_000_000,
+            "1,000,000 sent leaves the reviewer less than the smallest order of 1,000,000"
+        );
+        assert_eq!(
+            unused(r.ft_on_transfer(
+                "carl.testnet".parse().unwrap(),
+                U128(1_020_000),
+                token_msg(&cap, near_sdk::serde_json::json!({}))
+            )),
+            0
+        );
+        assert_eq!(r.order(U64(0)).unwrap().amount.0, 1_000_000);
     }
 }

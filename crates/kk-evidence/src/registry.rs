@@ -129,7 +129,7 @@ mod tests {
         for good in [
             "alice.testnet",
             "a1",
-            "kakurega-registry-1904f0.testnet",
+            "kakurega-registry-35d13d.testnet",
             "x_y.near",
             &"a".repeat(64),
         ] {
