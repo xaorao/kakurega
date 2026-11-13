@@ -2584,3 +2584,22 @@ fn uf02_a_finding_carries_the_unfenced_script_and_every_other_field_is_untouched
         f.reproducer.len()
     );
 }
+
+#[test]
+fn ck_el01_a_failed_script_is_described_by_its_error_and_its_exit_in_words() {
+    let traceback = b"Traceback (most recent call last):\n  File \"/repro/repro.py\", line 1, in <module>\n    from payments.config import API_KEY\n  File \"/sample/payments/config.py\", line 3, in <module>\n    API_KEY = os.environ[\"PAYMENTS_API_KEY\"]\nKeyError: 'PAYMENTS_API_KEY'\n\n";
+    assert_eq!(
+        kk_review::check::error_line(traceback),
+        "KeyError: 'PAYMENTS_API_KEY'"
+    );
+    assert_eq!(kk_review::check::error_line(b"  \n"), "it printed no error");
+    assert_eq!(
+        kk_review::check::error_line("x".repeat(500).as_bytes())
+            .chars()
+            .count(),
+        300
+    );
+    assert_eq!(kk_sandbox::Exit::Code(1).to_string(), "exit code 1");
+    assert_eq!(kk_sandbox::Exit::Signal(9).to_string(), "signal 9");
+    assert_eq!(kk_sandbox::Exit::TimedOut.to_string(), "the time limit");
+}

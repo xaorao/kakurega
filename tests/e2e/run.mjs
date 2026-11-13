@@ -409,12 +409,15 @@ try {
         { ...base, title: "Ts one", file: "a.ts", language: "typescript" },
         { ...base, title: "Js one", file: "a.js", language: "javascript" },
         { ...base, title: "Odd one", file: "a.x", language: "ru\u001b[31mby" },
+        { ...base, title: "Crashed one", file: "c.py", language: "python", status: "failed: the reproducer ended with exit code 1: KeyError: 'PAYMENTS_API_KEY'" },
       ] }) });
     });
     await page.reload();
     await page.getByRole("tab", { name: "Findings" }).click();
     await page.getByText("Reproducer the kernel ran (TypeScript)").waitFor();
     check("a TypeScript finding says it was checked with TypeScript", (await page.getByText("Reproducer the kernel ran (TypeScript)").count()) === 1);
+    const crashed = page.locator("article", { has: page.getByRole("heading", { name: "Crashed one" }) });
+    check("a check that crashed has a short label and its reason in a line of its own, the error itself, never the internal exit form", (await crashed.locator(".chip").innerText()).trim() === "Check failed" && /Why: the reproducer ended with exit code 1: KeyError: 'PAYMENTS_API_KEY'/.test(await crashed.locator(".status-why").innerText()) && !/Code\(/.test(await crashed.innerText()));
     check("and a JavaScript one with JavaScript, an unknown name is never repeated", (await page.getByText("Reproducer the kernel ran (JavaScript)").count()) === 1 && (await page.getByText("Reproducer the kernel ran (ru").count()) === 0);
     await page.unroute(/\/api\/jobs\/[^/]+\/findings/);
     await page.reload();
@@ -2391,7 +2394,7 @@ try {
   await page.getByRole("heading", { name: "Where your data goes", exact: true }).waitFor();
   check("a privacy setting opens the page that explains it", true);
   const nearLine = await page.locator("#pv-near-option").innerText();
-  check("where answers are made, the page names the confidential NEAR AI Cloud choice and where to pick it", /NEAR AI Cloud/.test(nearLine) && /Coding tasks and document search by meaning always stay/.test(nearLine) && (await page.locator("#pv-near-option a").getAttribute("href")) === "#/settings", nearLine);
+  check("where answers are made, the page names the confidential NEAR AI Cloud choice and where to pick it", /NEAR AI Cloud/.test(nearLine) && /Coding tasks and document search by meaning always stay/.test(nearLine) && (await page.locator("#pv-near-choose").getAttribute("href")) === "#/settings", nearLine);
   check("and says what a recipient can check, with the way to check a capsule", /signed on this computer/.test(await page.locator('section[aria-labelledby="pv-capsule"]').innerText().catch(() => "")) && (await page.locator("#pv-verify").getAttribute("href")) === "/verify?from=workspace");
   await page.goto(`${base}/verify`);
   await page.getByRole("heading", { name: "Check a capsule or share" }).waitFor();

@@ -119,6 +119,18 @@ pub enum Exit {
     Stopped,
 }
 
+/// How a program ended, in words for a person: "exit code 1", "signal 9", "the time limit", "a stop request".
+impl std::fmt::Display for Exit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Exit::Code(c) => write!(f, "exit code {c}"),
+            Exit::Signal(s) => write!(f, "signal {s}"),
+            Exit::TimedOut => write!(f, "the time limit"),
+            Exit::Stopped => write!(f, "a stop request"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Outcome {
     pub exit: Exit,

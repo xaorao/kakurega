@@ -946,7 +946,7 @@ pub fn parse_rust_tests(exit: &Exit, stdout: &str) -> TestRun {
         )));
     }
     if *exit != Exit::Code(0) {
-        return TestRun::Failed(format!("the test run ended with {exit:?}"));
+        return TestRun::Failed(format!("the test run ended with {exit}"));
     }
     if passed == 0 {
         return TestRun::NoTests;

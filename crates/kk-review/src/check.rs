@@ -31,6 +31,21 @@ pub mod msg {
     pub const DOES_NOT_COMPILE: &str = "the script did not compile";
 }
 
+/// The line of a script's error output that says what went wrong: the last one with text in it (a Python traceback ends
+/// with the exception, most tools end with their message), at most 300 characters. The lines before it are where it
+/// happened, inside the sandbox, which tells a reader little.
+pub fn error_line(stderr: &[u8]) -> String {
+    String::from_utf8_lossy(stderr)
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("it printed no error")
+        .chars()
+        .take(300)
+        .collect()
+}
+
 pub const MAX_TITLE: usize = 200;
 pub const MAX_EXPLANATION: usize = 4000;
 pub const MAX_REPRODUCER: usize = 16_000;
@@ -735,13 +750,10 @@ pub fn run_reproducer(
                     }
                     return CheckResult {
                         status: CheckStatus::Failed(format!(
-                            "{}{:?}: {}",
+                            "{}{}: {}",
                             msg::ENDED,
                             o.exit,
-                            String::from_utf8_lossy(&o.stderr)
-                                .chars()
-                                .take(300)
-                                .collect::<String>()
+                            error_line(&o.stderr)
                         )),
                         stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
                         sample_paths,
@@ -1617,7 +1629,7 @@ pub fn parse_node_test(exit: &Exit, stdout: &str) -> TestRun {
         return TestRun::Failed("a test failed that the summary does not count".into());
     }
     if *exit != Exit::Code(0) {
-        return TestRun::Failed(format!("the test run ended with {exit:?}{hint}"));
+        return TestRun::Failed(format!("the test run ended with {exit}{hint}"));
     }
     if tests == 0 || pass == 0 {
         return TestRun::NoTests;

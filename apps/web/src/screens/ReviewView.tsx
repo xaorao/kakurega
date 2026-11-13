@@ -28,12 +28,13 @@ function languageName(language?: string): string {
   return t("find.lang.unknown");
 }
 
-function statusText(s: string): [string, string] {
-  if (s === "reproduced") return [t("status.reproduced"), "ok"];
-  if (s === "not_reproduced") return [t("status.not_reproduced"), "bad"];
-  if (s === "nondeterministic") return [t("status.nondeterministic"), "bad"];
-  if (s.startsWith("unavailable")) return [t("status.unavailable", { why: s.slice(13) }), "warn"];
-  return [t("status.failed", { why: s.slice(8) }), "bad"];
+/** A finding's state as a short label for its chip, the chip's tone, and the reason, shown under the title, when there is one. */
+function statusText(s: string): [string, string, string] {
+  if (s === "reproduced") return [t("status.reproduced"), "ok", ""];
+  if (s === "not_reproduced") return [t("status.not_reproduced"), "bad", ""];
+  if (s === "nondeterministic") return [t("status.nondeterministic"), "bad", ""];
+  if (s.startsWith("unavailable")) return [t("status.unavailable.short"), "warn", s.replace(/^unavailable: ?/, "")];
+  return [t("status.failed.short"), "bad", s.replace(/^failed: ?/, "")];
 }
 
 function Progress(props: { job: Job }) {
@@ -377,10 +378,11 @@ function Findings(props: { job: Job }) {
             </Show>
             <For each={d().findings}>
               {(f) => {
-                const [statusLabel, cls] = statusText(f.status);
+                const [statusLabel, cls, why] = statusText(f.status);
                 return (
                   <article class="card stack">
                     <header class="between"><h2><InlineMarkdown text={f.title} /></h2><span class={`chip ${cls}`}>{statusLabel}</span></header>
+                    <Show when={why}><p class="muted wrap status-why">{t("status.why", { why: serverText(why) })}</p></Show>
                     <p><code>{f.file}:{f.line}</code></p>
                     <p><InlineMarkdown text={f.explanation} /></p>
                     <Show when={f.reproducer}>

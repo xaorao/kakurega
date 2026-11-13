@@ -132,8 +132,9 @@ export function Privacy() {
               <p>{t(modelKey(f().model), { name: f().model.name ?? f().model.id, host: f().model.host ?? "" })}</p>
               <p class="muted">{t("privacy.model.sent")}</p>
               {/* the confidential choice is named where the owner reads where answers are made, not only deep in Settings */}
-              <Show when={f().model.class === "verified_tee"} fallback={<p id="pv-near-option">{t("privacy.model.nearOption")} <a href="#/settings">{t("privacy.model.nearChoose")}</a></p>}>
-                <p id="pv-near-proof">{t("privacy.model.nearProof")} <a href="#/settings">{t("privacy.model.nearProofOpen")}</a></p>
+              <Show when={f().model.class === "verified_tee"} fallback={<><p id="pv-near-option">{t("privacy.model.nearOption")}</p><p><a class="button" id="pv-near-choose" href="#/settings">{t("privacy.model.nearChoose")}</a></p></>}>
+                <p id="pv-near-proof">{t("privacy.model.nearProof")}</p>
+                <p><a class="button" href="#/settings">{t("privacy.model.nearProofOpen")}</a></p>
               </Show>
             </Card>
             <Card id="capsule" title="privacy.capsule.title">
