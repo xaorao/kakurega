@@ -56,7 +56,7 @@ test("bu03 the manifest is read from the app folder; none means a development bu
   const m = makeManifest({ kaku: join(d, "kaku"), web: join(d, "web") });
   writeFileSync(join(d, MANIFEST), JSON.stringify(m));
   assert.deepEqual(readManifest(d), m);
-  for (const bad of ["{", "{}", JSON.stringify({ ...m, version: 2 }), JSON.stringify({ ...m, kaku: "abc" }), JSON.stringify({ ...m, enclave: "zz" })]) {
+  for (const bad of ["{", "{}", JSON.stringify({ ...m, version: 2 }), JSON.stringify({ ...m, kaku: "abc" }), JSON.stringify({ ...m, enclave: "zz" }), JSON.stringify({ ...m, ocr: "zz" }), JSON.stringify({ ...m, calendar: 7 })]) {
     writeFileSync(join(d, MANIFEST), bad);
     assert.throws(() => readManifest(d), undefined, bad);
   }
@@ -64,7 +64,29 @@ test("bu03 the manifest is read from the app folder; none means a development bu
 });
 
 test("bu04 the parts sit beside the app's program and in its resources", () => {
-  assert.deepEqual(bundledPaths("/A/Kakurega.app/Contents/Resources"), { kaku: "/A/Kakurega.app/Contents/MacOS/kaku", enclave: "/A/Kakurega.app/Contents/MacOS/kaku-enclave", web: "/A/Kakurega.app/Contents/Resources/web" });
+  assert.deepEqual(bundledPaths("/A/Kakurega.app/Contents/Resources"), {
+    kaku: "/A/Kakurega.app/Contents/MacOS/kaku",
+    enclave: "/A/Kakurega.app/Contents/MacOS/kaku-enclave",
+    ocr: "/A/Kakurega.app/Contents/MacOS/kaku-ocr",
+    calendar: "/A/Kakurega.app/Contents/MacOS/kaku-calendar",
+    web: "/A/Kakurega.app/Contents/Resources/web",
+  });
+});
+
+test("bu04b kaku's helpers are recorded when bundled and absent from the manifest otherwise", () => {
+  const d = fixture();
+  writeFileSync(join(d, "kaku-ocr"), "ocr helper");
+  writeFileSync(join(d, "kaku-calendar"), "calendar helper");
+  const m = makeManifest({ kaku: join(d, "kaku"), web: join(d, "web"), ocr: join(d, "kaku-ocr"), calendar: join(d, "kaku-calendar") });
+  assert.match(m.ocr, /^[0-9a-f]{64}$/);
+  assert.match(m.calendar, /^[0-9a-f]{64}$/);
+  assert.equal(checkPart(m, "calendar", join(d, "kaku-calendar")), null);
+  writeFileSync(join(d, "kaku-calendar"), "changed");
+  assert.equal(checkPart(m, "calendar", join(d, "kaku-calendar")), "calendar");
+  const bare = makeManifest({ kaku: join(d, "kaku"), web: join(d, "web") });
+  assert.equal(bare.ocr, undefined);
+  assert.equal(bare.calendar, undefined);
+  rmSync(d, { recursive: true });
 });
 
 test("bu05 packaging refuses the test build of the signing helper and a missing service or web interface, before building anything", async () => {
