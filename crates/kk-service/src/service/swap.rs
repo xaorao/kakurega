@@ -277,6 +277,48 @@ pub(super) struct RouteBody {
 }
 
 /// The routes the owner can choose between, and the one in use, with the route as it is shown everywhere else.
+/// NEAR AI Cloud's published models for the owner to choose from: each with its prices, its window and whether NEAR
+/// says its hardware proof can be checked. A model without one is listed and marked, because this product refuses to
+/// use it. The words of the failure when the list cannot be read.
+pub(super) async fn near_models(axum::Extension(svc): Svc) -> Response {
+    let svc2 = svc.clone();
+    let list = tokio::task::spawn_blocking(move || svc2.runner.published_prices())
+        .await
+        .ok()
+        .flatten();
+    let Some(list) = list else {
+        return error(
+            StatusCode::CONFLICT,
+            "NO_LIST",
+            "NEAR AI Cloud's model list is not read in this configuration",
+        );
+    };
+    if let Some(why) = list["error"].as_str() {
+        return error(StatusCode::BAD_GATEWAY, "LIST_UNREAD", &format!("NEAR AI Cloud's model list could not be read ({why}); type the model's name instead"));
+    }
+    // only models that answer text in text can be the model in use; image, speech and embedding models are left out
+    let mut models: Vec<Value> = list["prices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|m| m["chat"].as_bool().unwrap_or(true))
+        .cloned()
+        .collect();
+    // the ones that can be used first, then by name
+    models.sort_by(|a, b| {
+        (
+            !a["verifiable"].as_bool().unwrap_or(false),
+            a["model"].as_str().unwrap_or("").to_lowercase(),
+        )
+            .cmp(&(
+                !b["verifiable"].as_bool().unwrap_or(false),
+                b["model"].as_str().unwrap_or("").to_lowercase(),
+            ))
+    });
+    Json(json!({"source": list["source"], "read_at": list["read_at"], "models": models}))
+        .into_response()
+}
+
 pub(super) async fn route_options(axum::Extension(svc): Svc) -> Response {
     let mut v = svc.runner.route_options();
     v["route"] = svc.route_for_owner();

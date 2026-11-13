@@ -26118,3 +26118,60 @@ fn sv301_a_review_on_a_model_elsewhere_is_recorded_as_leaving_when_it_starts_not
     assert!(s == 200 || s == 201 || s == 202, "{s} {r}");
     assert_eq!(w.get("/api/outbound").1["totals"]["review"], before);
 }
+
+#[test]
+fn sv302_nears_models_are_listed_for_the_owner_usable_ones_first_and_an_unread_list_is_said_in_words(
+) {
+    let (root, _repo) = repo_copy("near-models");
+    let runner = Arc::new(NearPriceRunner {
+        prices: Mutex::new(Some(
+            json!({"source": "https://cloud-api.near.ai/v1/model/list", "read_at": 1_794_542_823u64, "prices": [
+                {"model": "zeta/no-proof", "currency": "USD", "input_per_million": 0.01, "output_per_million": 0.02, "context_tokens": 8192, "verifiable": false},
+                {"model": "Qwen/Qwen3.8-27B", "currency": "USD", "input_per_million": 0.04, "output_per_million": 1.35, "context_tokens": 262144, "verifiable": true},
+                {"model": "alpha/proven", "currency": "USD", "input_per_million": 0.3, "output_per_million": 1.2, "context_tokens": 1048576, "verifiable": true}
+            ]}),
+        )),
+        looked: Default::default(),
+        near: Default::default(),
+    });
+    let svc = Service::new(&root.join("data"), vec![root.clone()], runner.clone(), true).unwrap();
+    let c = start(Options {
+        extension: Arc::new(Routes(svc.clone())),
+        ..Options::default()
+    })
+    .unwrap();
+    // not for someone who is not the owner
+    let stranger = Web::new(c.addr);
+    assert_ne!(stranger.get("/api/route/near-models").0, 200);
+    let mut w = Web::new(c.addr);
+    w.pair(&c.security.issue_pairing_code());
+    let (s, v) = w.get("/api/route/near-models");
+    assert_eq!(s, 200, "{v}");
+    let names: Vec<&str> = v["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["model"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["alpha/proven", "Qwen/Qwen3.8-27B", "zeta/no-proof"]
+    );
+    assert_eq!(v["models"][2]["verifiable"], false);
+    assert_eq!(v["models"][1]["context_tokens"], 262144);
+    assert_eq!(v["source"], "https://cloud-api.near.ai/v1/model/list");
+    // a list that could not be read: said in words, with what to do
+    *runner.prices.lock().unwrap() = Some(json!({"error": "could not reach cloud-api.near.ai"}));
+    let (s, v) = w.get("/api/route/near-models");
+    assert_eq!(s, 502, "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("type the model's name instead"),
+        "{v}"
+    );
+    // a configuration with no way to read it
+    *runner.prices.lock().unwrap() = None;
+    assert_eq!(w.get("/api/route/near-models").0, 409);
+}

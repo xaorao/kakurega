@@ -316,7 +316,7 @@ fn read_published_prices(base: &str) -> Result<Value, String> {
     Ok(json!({
         "source": list,
         "read_at": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
-        "prices": prices.iter().map(|p| json!({"model": p.model, "currency": p.currency, "input_per_million": p.input_per_million, "output_per_million": p.output_per_million, "cached_input_per_million": p.cached_input_per_million, "context_tokens": p.context_tokens})).collect::<Vec<_>>(),
+        "prices": prices.iter().map(|p| json!({"model": p.model, "currency": p.currency, "input_per_million": p.input_per_million, "output_per_million": p.output_per_million, "cached_input_per_million": p.cached_input_per_million, "context_tokens": p.context_tokens, "verifiable": p.verifiable, "chat": p.chat, "tools": p.tools})).collect::<Vec<_>>(),
     }))
 }
 

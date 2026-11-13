@@ -220,6 +220,7 @@ export interface ChatSent { messages: { role: string; content: string }[]; cut: 
 export interface PrivacyFacts { github?: { connected: boolean }; coding_agent?: { installed: string | null }; model: { class: string; id: string; name?: string | null; simulated: boolean; host: string | null; stays_here: boolean }; search: { on: boolean; host: string | null }; extension: { on: boolean }; telegram: { on: boolean }; agents: { tools_open: string[]; calls_are_logged: boolean }; notes: { count: number; encrypted_at_rest: boolean }; approvals: { signing_key_enrolled: boolean }; updates: { checks_in_background: boolean } }
 export interface Lease { tool: string; remaining: number; expires_at: number; issued_at: number }
 export interface InboxItem { kind: "approval_waiting" | "ready_to_review" | "ready_to_deliver" | "failed" | "suggestions" | "team_planned" | "team_question" | "team_interrupted"; job?: string; recipient?: string; team?: string; title?: string; task?: number; since: number; what: string; count?: number }
+export interface NearModel { model: string; currency: string; input_per_million: number; output_per_million: number; context_tokens: number | null; verifiable: boolean; tools?: boolean }
 export interface ChangeView { base: string; head: string; base_name: string; digest: string; files: { path: string; kind: "added" | "modified" | "deleted"; lines: [number, number][] }[]; left_out?: { path: string; why: string }[]; edited_since_commit?: number }
 export interface Schedule { id: string; repo: string; recipient: string; every_hours: number; next_at: number }
 export interface ScheduleRun { schedule: string; at: number; outcome: string; job: string | null }
@@ -378,6 +379,7 @@ export const api = {
   githubRead: (b: { action: string; owner?: string; repo?: string; number?: number; path?: string; attach?: boolean }) => request<{ issue?: { number?: number; title?: string; body?: string }; comments?: { author?: string; body?: string }[]; file?: { path?: string; text?: string }; attachment?: AttachmentSummary }>("POST", "/api/connectors/github/read", b),
   outbound: () => request<{ rows: OutboundRow[]; totals: Record<string, number>; looked_at: number; note: string }>("GET", "/api/outbound"),
   routeOptions: () => request<RouteOptions>("GET", "/api/route/options"),
+  nearModels: () => request<{ source: string; read_at: number; models: NearModel[] }>("GET", "/api/route/near-models"),
   routeChoose: (b: { route?: "local" | "near"; model?: string; key?: string; forget_key?: boolean }) => request<RouteOptions>("POST", "/api/route/choose", b),
   hiddenNames: () => request<{ names: { name: string; added_at: number }[]; max: number; applies: boolean; note: string }>("GET", "/api/hidden-names"),
   hiddenNameAdd: (name: string) => request<{ changed: boolean; names: number }>("POST", "/api/hidden-names", { add: name }),

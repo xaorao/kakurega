@@ -10989,6 +10989,7 @@ impl Extension for Routes {
             .route("/api/prompts", get(prompts::list).post(prompts::change))
             .route("/api/route/options", get(swap::route_options))
             .route("/api/route/choose", post(swap::route_choose))
+            .route("/api/route/near-models", get(swap::near_models))
             .route("/api/meeting-notes", post(meeting::notes))
             .route("/api/break", get(breakit::stats).post(breakit::attempt))
             .route("/api/usage", get(usage_summary))

@@ -69,3 +69,33 @@ fn pr03_the_list_is_read_page_by_page_until_its_total() {
     assert_eq!(next_offset(&page(u64::MAX, 3, u64::MAX)), None);
     assert_eq!(next_offset(&list()), None);
 }
+
+#[test]
+fn pr10_the_list_says_which_models_chat_which_call_tools_and_which_have_a_proof_that_can_be_fetched(
+) {
+    let page = serde_json::json!({"models": [
+        {"modelId": "chat/tools", "inputCostPerToken": {"amount": 40, "scale": 9, "currency": "USD"}, "outputCostPerToken": {"amount": 1350, "scale": 9, "currency": "USD"},
+         "metadata": {"verifiable": true, "attestationSupported": true, "architecture": {"inputModalities": ["text", "image"], "outputModalities": ["text"]}, "supportedFeatures": ["tools", "reasoning"]}},
+        {"modelId": "image/maker", "inputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"}, "outputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"},
+         "metadata": {"verifiable": true, "attestationSupported": true, "architecture": {"inputModalities": ["text"], "outputModalities": ["image"]}}},
+        {"modelId": "speech/reader", "inputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"}, "outputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"},
+         "metadata": {"verifiable": true, "architecture": {"inputModalities": ["audio"], "outputModalities": ["text"]}}},
+        {"modelId": "promised/not-fetchable", "inputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"}, "outputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"},
+         "metadata": {"verifiable": true, "attestationSupported": false, "architecture": {"inputModalities": ["text"], "outputModalities": ["text"]}, "supportedFeatures": ["json_mode"]}},
+        {"modelId": "old/list-entry", "inputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"}, "outputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"},
+         "metadata": {"verifiable": true}}
+    ]});
+    let by: std::collections::BTreeMap<String, kk_near::prices::PublishedPrice> =
+        kk_near::prices::parse_list(&page)
+            .into_iter()
+            .map(|p| (p.model.clone(), p))
+            .collect();
+    let got = |m: &str| (by[m].chat, by[m].tools, by[m].verifiable);
+    assert_eq!(got("chat/tools"), (true, true, true));
+    assert_eq!(got("image/maker"), (false, false, true));
+    assert_eq!(got("speech/reader"), (false, false, true));
+    // a proof that is promised but cannot be fetched is not a proof this product can check
+    assert_eq!(got("promised/not-fetchable"), (true, false, false));
+    // an entry that says nothing about what it takes is still offered
+    assert_eq!(got("old/list-entry"), (true, false, true));
+}

@@ -1,5 +1,5 @@
 import { createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
-import { api, ApiError } from "../api";
+import { api, ApiError, type NearModel } from "../api";
 import { LOCALES, locale, setLocale, t, type Key, type Locale } from "../i18n";
 import { notifier, notifyState, turnNotifyOn } from "../notifier";
 import { SECTIONS, SETTINGS, searchSettings, type Setting } from "../settings-catalog";
@@ -110,6 +110,14 @@ function RouteChoice() {
   const [key, setKey] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
+  // NEAR's own list of models, read only when the owner opens it
+  const [listOpen, setListOpen] = createSignal(false);
+  const [list] = createResource(listOpen, (open) => (open ? api.nearModels().then((l) => ({ ok: true as const, ...l })).catch((e) => ({ ok: false as const, why: e instanceof ApiError ? e.message : t("set.models.error") })) : null));
+  const [find, setFind] = createSignal("");
+  const shownModels = (all: NearModel[]) => { const q = find().trim().toLowerCase(); return q ? all.filter((m) => m.model.toLowerCase().includes(q)) : all; };
+  // two decimals for ordinary prices, two significant digits for the very small ones
+  const price = (n: number) => (n >= 0.095 ? n.toFixed(2) : String(Number(n.toPrecision(2))));
+  const windowText = (n: number | null) => (!n ? "?" : n >= 1_000_000 ? `${Number((n / 1_000_000).toFixed(1))}M` : n >= 1000 ? `${Math.round(n / 1000)}K` : String(n));
   const [done, setDone] = createSignal("");
   const change = async (body: Parameters<typeof api.routeChoose>[0], said: string) => {
     setBusy(true);
@@ -142,6 +150,34 @@ function RouteChoice() {
               <form class="stack" onSubmit={(e) => { e.preventDefault(); void change({ route: "near", model: (model().trim() || o().near?.model) ?? "", ...(key().trim() ? { key: key().trim() } : {}) }, t("set.route.done.near")); }}>
                 <label for="route-model">{t("set.route.model")}</label>
                 <input id="route-model" value={model() || (o().near?.model ?? "")} maxlength="200" placeholder={t("set.route.modelHint")} autocomplete="off" spellcheck={false} onInput={(e) => setModel(e.currentTarget.value)} />
+                <details class="models-fold" onToggle={(e) => setListOpen(e.currentTarget.open)}>
+                  <summary>{t("set.models.open")}</summary>
+                  <Show when={list()} fallback={<p class="muted">{t("review.loading")}</p>}>
+                    {(l) => (
+                      <Show when={l().ok ? (l() as { models: NearModel[]; source: string }) : null} fallback={<p role="alert" class="bad">{(l() as { why: string }).why}</p>}>
+                        {(ok) => (
+                          <div class="stack">
+                            <label for="models-find" class="visually-hidden">{t("set.models.find")}</label>
+                            <input id="models-find" type="search" placeholder={t("set.models.find")} value={find()} onInput={(e) => setFind(e.currentTarget.value)} autocomplete="off" spellcheck={false} />
+                            <ul class="plain models-list" aria-label={t("set.models.open")}>
+                              <For each={shownModels(ok().models)} fallback={<li class="muted">{t("set.models.none")}</li>}>
+                                {(m) => (
+                                  <li>
+                                    <button type="button" class="row model-row" disabled={!m.verifiable} aria-pressed={(model() || (o().near?.model ?? "")) === m.model} onClick={() => setModel(m.model)}>
+                                      <span class="model-name"><code>{m.model}</code> <span class={`chip ${m.verifiable ? "ok" : ""}`}>{m.verifiable ? t("set.models.proof") : t("set.models.noProof")}</span><Show when={m.verifiable && m.tools === false}><span class="chip">{t("set.models.noTools")}</span></Show></span>
+                                      <span class="muted">{t("set.models.cost", { input: price(m.input_per_million), output: price(m.output_per_million), currency: m.currency, window: windowText(m.context_tokens) })}</span>
+                                    </button>
+                                  </li>
+                                )}
+                              </For>
+                            </ul>
+                            <p class="muted">{t("set.models.note", { source: ok().source })}</p>
+                          </div>
+                        )}
+                      </Show>
+                    )}
+                  </Show>
+                </details>
                 <label for="route-key">{t(o().near?.key_saved ? "set.route.keySaved" : "set.route.key")}</label>
                 <input id="route-key" type="password" value={key()} maxlength="500" autocomplete="off" placeholder={o().near?.key_saved ? t("set.route.keyKeep") : ""} onInput={(e) => setKey(e.currentTarget.value)} />
                 <div class="actions">

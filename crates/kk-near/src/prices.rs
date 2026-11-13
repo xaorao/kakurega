@@ -20,6 +20,11 @@ pub struct PublishedPrice {
     pub context_tokens: Option<u64>,
     /// Whether NEAR marks the model as running in hardware whose proof can be checked.
     pub verifiable: bool,
+    /// Whether the list says the model takes text and answers in text. A list that does not say counts as yes, so an
+    /// older or shorter list still offers its models; an image, speech or embedding model says otherwise.
+    pub chat: bool,
+    /// Whether the list says the model can call tools, which a review and an agent need.
+    pub tools: bool,
 }
 
 /// One price field (`{"amount": 40, "scale": 9, "currency": "USD"}`) as an amount for a million tokens and its currency.
@@ -72,10 +77,33 @@ pub fn parse_list(page: &Value) -> Vec<PublishedPrice> {
                 context_tokens: meta
                     .and_then(|x| x.get("contextLength"))
                     .and_then(Value::as_u64),
+                // usable here only when the proof can be fetched as well as promised
                 verifiable: meta
                     .and_then(|x| x.get("verifiable"))
                     .and_then(Value::as_bool)
-                    .unwrap_or(false),
+                    .unwrap_or(false)
+                    && meta
+                        .and_then(|x| x.get("attestationSupported"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(true),
+                chat: {
+                    let kinds = |key: &str| {
+                        meta.and_then(|x| x.get("architecture"))
+                            .and_then(|a| a.get(key))
+                            .and_then(Value::as_array)
+                            .map(|l| l.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+                    };
+                    match (kinds("inputModalities"), kinds("outputModalities")) {
+                        (Some(input), Some(output)) => {
+                            input.contains(&"text") && output == ["text"]
+                        }
+                        _ => true,
+                    }
+                },
+                tools: meta
+                    .and_then(|x| x.get("supportedFeatures"))
+                    .and_then(Value::as_array)
+                    .is_some_and(|l| l.iter().any(|f| f.as_str() == Some("tools"))),
             })
         })
         .collect()
