@@ -42,6 +42,8 @@ export const hi: Record<keyof typeof en, string> = {
   "nav.heading": "समीक्षाएँ",
   "nav.more": "और",
   "lead.more": "इसके बारे में और",
+  "code.placeholder": "उदाहरण: logout पर सर्वर से सत्र हटाएँ, और इसका एक टेस्ट जोड़ें",
+  "ins.placeholder": "उदाहरण: छोटे बिंदुओं में उत्तर दें; कभी सशुल्क सेवा न सुझाएँ",
   "chat.placeholder": "कुछ भी पूछें। कमांड के लिए / टाइप करें।",
   "nav.menu": "मेनू",
   "nav.search.label": "समीक्षाएँ खोजें",

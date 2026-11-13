@@ -114,7 +114,7 @@ export function CodeTask() {
       <form class="card stack" onSubmit={start}>
         <h2>{t("code.step2")}</h2>
         <label for="code-task">{t("code.task")}</label>
-        <textarea id="code-task" rows={3} value={task()} onInput={(e) => setTask(e.currentTarget.value)} maxLength={2000} />
+        <textarea id="code-task" rows={3} placeholder={t("code.placeholder")} value={task()} onInput={(e) => setTask(e.currentTarget.value)} maxLength={2000} />
         <div class="actions">
           <button class="primary" type="submit" disabled={running() || !chosen() || task().trim().length === 0}>{t("code.start")}</button>
           <Show when={running()}><span role="status" class="muted">{t("code.working")}</span></Show>

@@ -24,7 +24,7 @@ function Editor(props: { id: string; label: string; initial: string; project?: s
   return (
     <div class="stack">
       <label for={props.id}>{props.label}</label>
-      <textarea id={props.id} rows="5" maxlength={props.max} value={text()} onInput={(e) => { setText(e.currentTarget.value); setStatus(""); }} />
+      <textarea id={props.id} rows="5" maxlength={props.max} placeholder={t("ins.placeholder")} value={text()} onInput={(e) => { setText(e.currentTarget.value); setStatus(""); }} />
       <p class="muted">{t("ins.count", { n: text().length, max: props.max })}</p>
       <div class="actions">
         <button class="primary" type="button" disabled={text().trim() === props.initial.trim()} onClick={() => void save(text())}>{t("ins.save")}</button>
