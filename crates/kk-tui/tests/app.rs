@@ -8834,3 +8834,70 @@ fn tu108_a_running_project_question_can_be_stopped_by_its_id() {
     assert!(none.is_empty());
     assert!(text(&app).contains("question-N"), "{}", text(&app));
 }
+
+#[test]
+fn tu109_the_terminal_lists_adds_and_removes_names_to_hide_and_says_whether_they_are_in_use() {
+    let mut app = booted();
+    let r = enter(&mut app, "/hide");
+    assert_eq!(
+        (r[0].method, r[0].path.as_str()),
+        (Method::Get, "/api/hidden-names")
+    );
+    app.handle(ok(&r[0], 200, json!({"names": [{"name": "Asha Rao\u{1b}[2J", "added_at": 1}], "max": 50, "applies": true})));
+    let t = text(&app);
+    assert!(
+        t.contains("In use now") && t.contains("Asha Rao") && !t.contains('\u{1b}'),
+        "{t}"
+    );
+    assert!(
+        t.contains("the files a review, a project question or a coding task reads go as they are"),
+        "{t}"
+    );
+    let r = enter(&mut app, "/hide add Meridian Capital");
+    assert_eq!(r[0].path, "/api/hidden-names");
+    assert_eq!(r[0].body, Some(json!({"add": "Meridian Capital"})));
+    app.handle(ok(&r[0], 200, json!({"changed": true, "names": 2})));
+    assert!(
+        text(&app).contains("Done. 2 names are on the list."),
+        "{}",
+        text(&app)
+    );
+    let r = enter(&mut app, "/hide remove Meridian Capital");
+    assert_eq!(r[0].body, Some(json!({"remove": "Meridian Capital"})));
+    // a refusal from the service is shown in its own words
+    app.handle(ok(&r[0], 422, json!({"error": {"code": "NAME_REFUSED", "message": "that looks like a secret, not a name"}})));
+    assert!(text(&app).contains("that looks like a secret, not a name"));
+    assert!(
+        enter(&mut app, "/hide add").is_empty(),
+        "nothing is sent without a name"
+    );
+}
+
+#[test]
+fn tu110_the_terminal_shows_and_sets_how_far_a_projects_material_may_go() {
+    let mut app = booted();
+    let r = enter(&mut app, "/private");
+    assert_eq!(
+        (r[0].method, r[0].path.as_str()),
+        (Method::Get, "/api/projects")
+    );
+    app.handle(ok(&r[0], 200, json!({"projects": [{"name": "acme", "floor": "here"}, {"name": "side notes", "floor": "any"}]})));
+    let t = text(&app);
+    assert!(
+        t.contains("acme: only a model on this computer")
+            && t.contains("side notes: the model you choose"),
+        "{t}"
+    );
+    // the level is the last word, so a name with a space works
+    let r = enter(&mut app, "/private side notes confidential");
+    assert_eq!(r[0].path, "/api/projects");
+    assert_eq!(
+        r[0].body,
+        Some(json!({"name": "side notes", "floor": "confidential"}))
+    );
+    app.handle(ok(&r[0], 200, json!({"projects": []})));
+    assert!(text(&app).contains("Done. side notes goes to this computer or confidential hardware whose proof is checked."), "{}", text(&app));
+    // a word that is not a level is refused before any request
+    assert!(enter(&mut app, "/private acme nowhere").is_empty());
+    assert!(enter(&mut app, "/private acme").is_empty());
+}

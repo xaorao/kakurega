@@ -153,6 +153,10 @@ pub enum Command {
     Method(MethodAction),
     Mcp(McpAction),
     Pii(PiiAction),
+    /// `/hide`: the names replaced by placeholders before a question goes to a model elsewhere.
+    Hide(PiiAction),
+    /// `/private`: how far a project's material may go. None lists the projects; Some is (project, level).
+    Private(Option<(String, String)>),
     Find(String),
     Transcript(String),
     Copy(bool),
@@ -281,6 +285,8 @@ pub const NAMES: &[&str] = &[
     "method",
     "mcp",
     "pii",
+    "hide",
+    "private",
     "find",
     "transcript",
     "copy",
@@ -363,6 +369,8 @@ pub fn describe(name: &str) -> &'static str {
         "method" => "your saved methods: guidance that applies only after you approve its text",
         "mcp" => "outside tools: programs whose tools a coding task may call once you allow them",
         "pii" => "values you say are not personal data, left out of release notices",
+        "hide" => "names replaced by placeholders before a question goes to a model elsewhere",
+        "private" => "keep a project on this computer, or let it go to confidential hardware or any model",
         "find" => "search kept conversations by words",
         "transcript" => "search this conversation on the screen",
         "copy" => "copy the last reply (or all) to the clipboard, after asking",
@@ -477,6 +485,8 @@ pub fn usage(name: &str) -> &'static str {
         "method" => "/method [show|approve|revoke|remove|history NAME | restore NAME NUMBER | add NAME WORD,WORD|- TEXT | suggestions | keep|dismiss NUMBER | bundled | take NAME]",
         "mcp" => "/mcp [check NAME | allow|ask SERVER TOOL [knowingly] | off SERVER TOOL | pending | approve|deny ID | remove NAME | add NAME /full/path [ARGS]]",
         "pii" => "/pii [add ENTRY | remove ENTRY]",
+        "hide" => "/hide [add NAME | remove NAME]",
+        "private" => "/private [PROJECT here|confidential|any]",
         "find" => "/find WORDS",
         "transcript" => "/transcript WORDS",
         "copy" => "/copy [all]",
@@ -815,6 +825,35 @@ pub fn parse(line: &str) -> Result<Command, String> {
             }),
             _ => Err(format!("usage: {}", usage("ask"))),
         },
+        "hide" => match rest.split_once(char::is_whitespace) {
+            None if rest.is_empty() => Ok(Command::Hide(PiiAction::Show)),
+            Some(("add", e)) if !e.trim().is_empty() => {
+                Ok(Command::Hide(PiiAction::Add(e.trim().to_string())))
+            }
+            Some(("remove", e)) if !e.trim().is_empty() => {
+                Ok(Command::Hide(PiiAction::Remove(e.trim().to_string())))
+            }
+            _ => Err(format!("usage: {}", usage("hide"))),
+        },
+        "private" => {
+            if rest.is_empty() {
+                Ok(Command::Private(None))
+            } else {
+                // the level is the last word, so a project's name may hold spaces
+                match rest.rsplit_once(char::is_whitespace) {
+                    Some((name, level))
+                        if !name.trim().is_empty()
+                            && matches!(level, "here" | "confidential" | "any") =>
+                    {
+                        Ok(Command::Private(Some((
+                            name.trim().to_string(),
+                            level.to_string(),
+                        ))))
+                    }
+                    _ => Err(format!("usage: {}", usage("private"))),
+                }
+            }
+        }
         "pii" => match rest.split_once(char::is_whitespace) {
             None if rest.is_empty() => Ok(Command::Pii(PiiAction::Show)),
             Some(("add", e)) if !e.trim().is_empty() => {

@@ -26,6 +26,7 @@ python3 tests/e2e/tui_restart.py
 python3 tests/e2e/admin_restart.py
 python3 tests/e2e/full_disk.py
 python3 tests/e2e/tui_branch.py
+python3 tests/e2e/tui_privacy.py
 python3 tests/e2e/tui_mentions.py
 python3 tests/e2e/tui_mentions_lines.py
 python3 tests/e2e/tui_notes_only.py

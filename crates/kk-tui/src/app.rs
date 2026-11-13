@@ -245,6 +245,10 @@ enum Intent {
     TeamPoll,
     PiiShow,
     PiiEdit,
+    HideShow,
+    HideEdit,
+    KeepShow,
+    KeepSet(String),
     HistoryClear,
     Proof,
     GatewayProof,
@@ -3688,6 +3692,44 @@ impl App {
                 self.mode = Mode::Confirm(ConfirmView { prompt: format!("Forget {id} for good? The text is deleted and will not be saved again. [y/N]"), forget_id: id, review: None, choose: None, copy: None, apply: None, undo: false, web: None, code: None });
                 Vec::new()
             }
+            Command::Hide(a) => {
+                use crate::cmd::PiiAction;
+                match a {
+                    PiiAction::Show => {
+                        vec![self.req(
+                            Intent::HideShow,
+                            false,
+                            Method::Get,
+                            "/api/hidden-names",
+                            None,
+                        )]
+                    }
+                    PiiAction::Add(e) => vec![self.req(
+                        Intent::HideEdit,
+                        false,
+                        Method::Post,
+                        "/api/hidden-names",
+                        Some(json!({"add": e})),
+                    )],
+                    PiiAction::Remove(e) => vec![self.req(
+                        Intent::HideEdit,
+                        false,
+                        Method::Post,
+                        "/api/hidden-names",
+                        Some(json!({"remove": e})),
+                    )],
+                }
+            }
+            Command::Private(None) => {
+                vec![self.req(Intent::KeepShow, false, Method::Get, "/api/projects", None)]
+            }
+            Command::Private(Some((name, level))) => vec![self.req(
+                Intent::KeepSet(format!("{name}\u{0}{level}")),
+                false,
+                Method::Post,
+                "/api/projects",
+                Some(json!({"name": name, "floor": level})),
+            )],
             Command::Pii(a) => {
                 use crate::cmd::PiiAction;
                 match a {
@@ -6784,6 +6826,108 @@ impl App {
                         .into(),
                 );
                 self.push(Kind::Info, Some("Read"), lines);
+                Vec::new()
+            }
+            Intent::HideShow => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let names: Vec<String> = body["names"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|n| format!("  {}", clean(n["name"].as_str().unwrap_or(""))))
+                    .collect();
+                let mut lines = vec![if body["applies"] == true {
+                    "In use now: the model that answers is not on this computer.".to_string()
+                } else {
+                    "Not in use now: the model that answers is on this computer, so nothing is replaced.".to_string()
+                }];
+                if names.is_empty() {
+                    lines.push("No name is on your list. Email addresses, phone, card, account and identity numbers are replaced without a list.".into());
+                } else {
+                    lines.push(counted(&format!("{} name(s) replaced by placeholders before a question is sent, and put back in the answer you read:", names.len())));
+                    lines.extend(names);
+                }
+                lines.push("Add one with /hide add NAME; take one off with /hide remove NAME. A name that is not listed is sent as written. This covers chat, roundtable, team runs, document questions and meeting notes; the files a review, a project question or a coding task reads go as they are.".into());
+                self.push(Kind::Info, Some("Names to hide"), lines);
+                Vec::new()
+            }
+            Intent::HideEdit => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                } else if body["changed"] == true {
+                    self.say(
+                        Kind::Ok,
+                        counted(&format!(
+                            "Done. {} name(s) are on the list.",
+                            body["names"].as_i64().unwrap_or(0)
+                        )),
+                    );
+                } else {
+                    self.say(
+                        Kind::Info,
+                        "No change: that name was already there, or was not on the list.",
+                    );
+                }
+                Vec::new()
+            }
+            Intent::KeepShow => {
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                    return Vec::new();
+                }
+                let words = |level: &str| match level {
+                    "here" => "only a model on this computer",
+                    "confidential" => {
+                        "this computer or confidential hardware whose proof is checked"
+                    }
+                    _ => "the model you choose",
+                };
+                let mut lines: Vec<String> = body["projects"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|p| {
+                        format!(
+                            "  {}: {}",
+                            clean(p["name"].as_str().unwrap_or("?")),
+                            words(p["floor"].as_str().unwrap_or("any"))
+                        )
+                    })
+                    .collect();
+                if lines.is_empty() {
+                    lines.push("No project yet. A project is made in the web workspace under Projects, or by naming one with /project.".into());
+                } else {
+                    lines.insert(
+                        0,
+                        "How far each project's notes, files and conversations may go:".into(),
+                    );
+                }
+                lines.push("Set one with /private PROJECT here | confidential | any. With `here`, the project's chats, document questions, reviews, project questions and coding tasks are refused while the model is elsewhere.".into());
+                self.push(Kind::Info, Some("Projects kept private"), lines);
+                Vec::new()
+            }
+            Intent::KeepSet(what) => {
+                let (name, level) = what.split_once('\u{0}').unwrap_or((what.as_str(), ""));
+                if !ok {
+                    self.say(Kind::Error, err_text(status, &body));
+                } else {
+                    self.say(
+                        Kind::Ok,
+                        format!(
+                            "Done. {} goes to {}.",
+                            clean(name),
+                            match level {
+                                "here" => "a model on this computer only",
+                                "confidential" =>
+                                    "this computer or confidential hardware whose proof is checked",
+                                _ => "the model you choose",
+                            }
+                        ),
+                    );
+                }
                 Vec::new()
             }
             Intent::PiiShow => {
