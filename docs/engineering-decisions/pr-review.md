@@ -33,5 +33,14 @@ Not read: Hushmark's Python modules beyond the ADRs and README; PR-Agent beyond 
 - Evidence: the capsule's source statement gains the base and head commit ids and the SHA-256 of the canonical change list.
 - Output: "Copy as a pull-request comment": the confirmed findings as Markdown with file and line, the capsule's digest and how to check it.
 
+## Built, and how it differs from the design
+- Reading the change: `crates/kk-git` (`read_change`, `changed_lines` with the `similar` library, `canonical`, `export_head`, `safe_path`). The committed version is written out and reviewed, so edits and files that were never committed are not part of it. Tests gt01 to gt05; a hostile `.git/config` runs nothing.
+- The focus and the filter: `kk_review::job::ChangeFocus` (`task`, `touches`). A confirmed finding outside the change is marked not confirmed with the reason in words. Tests cf01 to cf03.
+- Evidence, changed from the design: the commits and the digest are not a new field of the release statement. They are a released file, `change.txt`, so the owner approves those exact bytes with the rest, plus a signed claim that rests on it and says what it does not prove. It names no file of the project; the digest covers the names. Test rs40.
+- Surfaces: `kaku review DIR --for WHO --change BASE`; `/review FOLDER for WHO against BASE`; the web's New review with a preview of the change (`GET /api/change`); "Copy as a pull-request comment" on a delivered review (`apps/web/src/prcomment.ts`, made from the released files only, with text from findings unable to notify people, link issues or become markup; tests pc01 to pc04).
+- Found while testing it as a reader: neither verifier showed what a capsule claims. `kaku verify`, the JavaScript verifier, the check page and the web's Verify screen now list each signed claim, what it rests on and how to check it, and print the capsule's name.
+- Measured: `tests/e2e/change_review.py` (17 checks: the same model script confirms two findings on the whole folder and one on the change; with the filter switched off the test fails) and `tests/e2e/change_web.mjs` (15 checks in a browser, ending with `kaku verify` and the check page on the downloaded capsule). Both use a scripted model: they prove the mechanism, not what a model finds.
+
 ## Owed after the first build
+Saying in the terminal and the command when the folder has uncommitted edits (the web preview does); recording a pull request's link or number as a label; a finding in a file that imports a changed file without its check running one.
 A GitHub check (Action or App) for teams; reading the pull request through the connector; inline comments; a second opinion by votes.

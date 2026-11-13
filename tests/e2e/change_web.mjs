@@ -35,6 +35,8 @@ git("checkout", "-q", "-b", "faster-logout");
 writeFileSync(session, broken);
 git("commit", "-q", "-am", "logout: skip the table");
 const headCommit = git("rev-parse", "HEAD");
+// an edit that was never committed: not part of the change, and the page must say so
+writeFileSync(join(proj, "README.md"), readFileSync(join(proj, "README.md"), "utf8") + "\nedited after the commit\n");
 
 const built = spawnSync("node", ["build.mjs"], { cwd: join(repo, "apps/verifier-page"), encoding: "utf8" });
 if (built.status !== 0) throw new Error(built.stderr);
@@ -89,6 +91,7 @@ await page.getByText("1 file changed").waitFor();
 const preview = await page.locator(".change-list").innerText();
 check(/payments\/auth\/session\.py/.test(preview) && /modified · lines 16-18/.test(preview), "the preview lists the changed file and the lines the change wrote: " + preview);
 check((await page.getByText(`Commit ${headCommit.slice(0, 12)} measured from commit ${baseCommit.slice(0, 12)}`).count()) === 1, "and the two commits, as git names them");
+check((await page.getByText("Files edited since the last commit: 1. Those edits are not reviewed").count()) === 1, "the preview says one committed file was edited since and is not reviewed");
 await page.screenshot({ path: join(work, "1-new-review.png"), fullPage: true });
 await page.getByLabel("Recipient").fill("acme-audit").catch(async () => { await page.locator("#recipient").fill("acme-audit"); });
 await page.getByRole("button", { name: /^Start/ }).click();

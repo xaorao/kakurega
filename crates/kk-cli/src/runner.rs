@@ -597,6 +597,7 @@ impl JobRunner for ReviewRunner {
         Ok(json!({
             "base": focus.base, "head": focus.head, "base_name": focus.base_name, "digest": focus.digest,
             "files": focus.files.iter().map(|f| json!({"path": f.path, "kind": f.kind, "lines": f.lines})).collect::<Vec<_>>(),
+            "edited_since_commit": kk_git::edited_since_commit(repo, kk_review::import::MAX_FILES, 99),
             "left_out": set.left_out.iter().map(|(p, why)| json!({"path": p, "why": why})).collect::<Vec<_>>(),
         }))
     }

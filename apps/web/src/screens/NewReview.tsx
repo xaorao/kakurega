@@ -168,6 +168,7 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
                     {(f) => <li><code>{f.path}</code> <span class="muted">{t(`new.base.kind.${f.kind}`)}{f.lines.length > 0 ? ` · ${t("new.base.lines", { l: ranges(f.lines) })}` : ""}</span></li>}
                   </For>
                 </ul>
+                <Show when={(c().edited_since_commit ?? 0) > 0}><p class="warn">{t("new.base.edited", { n: c().edited_since_commit ?? 0 })}</p></Show>
                 <Show when={(c().left_out ?? []).length > 0}><p class="muted">{t("new.base.leftOut", { n: (c().left_out ?? []).length })}</p></Show>
               </div>
             )}

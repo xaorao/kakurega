@@ -1468,6 +1468,7 @@ export const hi: Record<keyof typeof en, string> = {
   "new.base.kind.modified": "बदली गई",
   "new.base.kind.deleted": "हटाई गई",
   "new.base.leftOut": "नहीं पढ़ी गईं: {n}",
+  "new.base.edited": "पिछले कमिट के बाद बदली गई फ़ाइलें: {n}। इन बदलावों की समीक्षा नहीं होगी; अगर वे इस बदलाव का हिस्सा हैं तो पहले उन्हें कमिट करें।",
   "new.base.error": "बदलाव पढ़ा नहीं जा सका।",
   "new.step2": "3. नतीजा किसे मिलेगा?",
   "new.recipient.label": "प्राप्तकर्ता का नाम",

@@ -1466,6 +1466,7 @@ export const en = {
   "new.base.kind.modified": "modified",
   "new.base.kind.deleted": "deleted",
   "new.base.leftOut": "Not read: {n}",
+  "new.base.edited": "Files edited since the last commit: {n}. Those edits are not reviewed; commit them first if they belong to the change.",
   "new.base.error": "The change could not be read.",
   "new.step2": "3. Who will receive the result?",
   "new.recipient.label": "Recipient name",

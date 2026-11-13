@@ -295,3 +295,18 @@ fn gt05_the_committed_version_is_written_out_not_what_lies_on_disk_and_unsafe_na
         assert!(safe_path(good), "{good:?}");
     }
 }
+
+#[test]
+fn gt06_committed_files_edited_or_removed_since_are_counted_and_new_files_are_not() {
+    use kk_git::edited_since_commit;
+    let dir = repo("edited");
+    feature(&dir);
+    assert_eq!(edited_since_commit(&dir, 1000, 100), 0);
+    std::fs::write(dir.join("src/new.py"), "Y = 999\n").unwrap();
+    std::fs::write(dir.join("never_committed.py"), "Z = 1\n").unwrap();
+    assert_eq!(edited_since_commit(&dir, 1000, 100), 1);
+    std::fs::remove_file(dir.join("src/keep.py")).unwrap();
+    assert_eq!(edited_since_commit(&dir, 1000, 100), 2);
+    assert_eq!(edited_since_commit(&dir, 1000, 1), 1);
+    assert_eq!(edited_since_commit(&dir, 1, 100), 0);
+}

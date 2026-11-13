@@ -4734,6 +4734,12 @@ impl App {
                         format!("{}:{}", clean(f["file"].as_str().unwrap_or("?")), f["line"]),
                         label.to_string(),
                     ];
+                    // why it is not confirmed, when the kernel said: a check that failed, or a finding outside the change
+                    if let Some((_, why)) =
+                        status.split_once(": ").filter(|_| status != "reproduced")
+                    {
+                        lines.extend(text_lines(&format!("Why: {}", clean(why))));
+                    }
                     if !f["reproducer"].as_str().unwrap_or("").is_empty() {
                         // a service that does not say reads as python, as stored reviews from before the field did
                         let language = match f["language"].as_str() {

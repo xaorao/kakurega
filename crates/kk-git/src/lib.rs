@@ -307,3 +307,45 @@ pub fn export_head(
     }
     Ok(left_out)
 }
+
+/// How many committed files differ on disk from the checked-out commit (edited or removed since). Files nobody committed
+/// are not counted. Counting stops at `stop_at`; a repository of more than `max_files` files is not looked through
+/// and gives none.
+pub fn edited_since_commit(dir: &Path, max_files: usize, stop_at: usize) -> usize {
+    let Ok(repo) = gix::open_opts(dir, gix::open::Options::isolated()) else {
+        return 0;
+    };
+    let Some(all) = repo
+        .head_commit()
+        .ok()
+        .and_then(|c| c.tree().ok())
+        .and_then(|t| entries(&t).ok())
+    else {
+        return 0;
+    };
+    if all.len() > max_files {
+        return 0;
+    }
+    let mut n = 0;
+    for (path, (id, plain)) in &all {
+        if !plain || !safe_path(path) {
+            continue;
+        }
+        let Ok(blob) = repo.find_blob(*id) else {
+            continue;
+        };
+        let same = match std::fs::metadata(dir.join(path)) {
+            Ok(m) if m.is_file() && m.len() == blob.data.len() as u64 => {
+                std::fs::read(dir.join(path)).is_ok_and(|b| b == blob.data)
+            }
+            _ => false,
+        };
+        if !same {
+            n += 1;
+            if n >= stop_at {
+                break;
+            }
+        }
+    }
+    n
+}
