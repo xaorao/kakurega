@@ -74,7 +74,7 @@ if (await skip.count()) await skip.click();
 lap();
 
 await step("documents", async () => {
-  await page.getByRole("link", { name: "Documents" }).click();
+  await page.getByRole("link", { name: "Ask your documents", exact: true }).click();
   await page.getByRole("heading", { name: "Ask your documents", exact: true }).waitFor();
   await page.getByRole("button", { name: "contracts" }).click();
   await page.getByLabel("Your question").fill("How many days of written notice are needed to terminate?");

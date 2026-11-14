@@ -1468,6 +1468,25 @@ try {
   await page.locator(".file-chip").waitFor({ state: "detached" });
   await page.getByLabel("Project (optional)").fill("");
   await page.getByRole("button", { name: "Clear" }).click();
+  // a file that is still being read is never left out of a message: Send and Enter wait for it
+  {
+    await page.route(/\/api\/attachments\?/, async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue(); });
+    const sentBefore = await page.locator(".msg.user").count();
+    await page.locator('input[type="file"][aria-label="Attach files"]').setInputFiles({ name: "slow-note.txt", mimeType: "text/plain", buffer: Buffer.from("the slow file says heron\n") });
+    await page.getByLabel("Your message").fill("what does the file say");
+    await page.getByText("slow-note.txt").first().waitFor({ timeout: 5000 });
+    const sendButton = page.getByRole("button", { name: "Send", exact: true });
+    check("while an attached file is still being read, Send cannot be pressed", await sendButton.isDisabled());
+    await page.getByLabel("Your message").press("Enter");
+    await page.waitForTimeout(300);
+    check("and Enter does not send the message without the file", (await page.locator(".msg.user").count()) === sentBefore && (await page.getByLabel("Your message").inputValue()) === "what does the file say");
+    await page.locator(".file-chip", { hasText: "slow-note.txt" }).waitFor({ timeout: 10000 });
+    check("once the file is read, Send can be pressed", await sendButton.isEnabled());
+    await page.unroute(/\/api\/attachments\?/);
+    await page.locator(".file-chip").first().getByRole("button", { name: "Remove" }).click();
+    await page.locator(".file-chip").waitFor({ state: "detached" });
+    await page.getByLabel("Your message").fill("");
+  }
   // unsent text is kept per conversation while the page is open, and only in memory
   await page.getByLabel("Your message").fill("draftcanary unsent words");
   await page.getByRole("link", { name: "Memory" }).click();

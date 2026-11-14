@@ -132,7 +132,8 @@ try {
   await page.goto(base + "/#/chat");
   await page.getByLabel("Your message").waitFor();
   await page.locator('input[type="file"][aria-label="Attach files"]').setInputFiles(contract);
-  await page.getByText("agreement.md").first().waitFor({ timeout: 20000 });
+  // the chip, not the "reading" line: the file is attached only once it has been read
+  await page.locator(".file-chip", { hasText: "agreement.md" }).waitFor({ timeout: 20000 });
   await page.getByLabel("Your message").fill("How many days of notice does either party need to give to terminate? Answer in one sentence and say where it is written.");
   const asked = Date.now();
   await page.getByRole("button", { name: "Send", exact: true }).click();

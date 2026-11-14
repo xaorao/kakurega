@@ -283,6 +283,8 @@ export function Chat() {
     if (incoming.length === 0) return;
     const { take, over } = room(files().length, incoming);
     const problems: string[] = over > 0 ? [t("files.tooMany", { n: over })] : [];
+    // said at once, before the first file is even fingerprinted: from this moment Send waits for the files
+    if (take[0]) setReading(t("files.reading", { name: take[0].name }));
     for (const f of take) {
       if (f.size > MAX_BYTES) {
         problems.push(t("files.tooBig", { name: f.name, max: sizeText(MAX_BYTES) }));
@@ -785,7 +787,8 @@ export function Chat() {
   const send = async (e?: Event) => {
     e?.preventDefault();
     const message = text().trim();
-    if (!message || busy()) return;
+    // a file still being read is not attached yet: sending now would leave it out without a word, so the message waits
+    if (!message || busy() || reading()) return;
     const line = parseLine(message);
     if (line) {
       setText("");
@@ -1138,7 +1141,7 @@ export function Chat() {
             <Show when={dragging()}><strong role="status">{t("files.dropNow")}</strong></Show>
             <Show when={reading()}><span role="status" class="muted">{reading()}</span></Show>
             <span class="send-group">
-              <button class="primary" type="submit" disabled={busy() || text().trim().length === 0}>{t("chat.send")}</button>
+              <button class="primary" type="submit" disabled={busy() || !!reading() || text().trim().length === 0}>{t("chat.send")}</button>
               <Show when={busy()}><button type="button" onClick={() => abort?.abort()}>{t("chat.stop")}</button></Show>
               <button type="button" disabled={busy() || turns().length === 0} onClick={() => { setTurns([]); heldLevel = 0; setError(""); setSendFailed(false); forgetSent(draftKey(session())); hist = idleHistory(); }}>{t("chat.clear")}</button>
               <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
