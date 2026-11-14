@@ -139,6 +139,8 @@ export const en = {
   "set.model.help": "Which model installed on this computer answers your questions and runs reviews. Only models installed here are listed; nothing is downloaded, and nothing leaves this computer.",
   "set.model.fixed": "Using {name}. No other model that can answer is installed on this computer, or the model is not run here, so there is nothing to choose.",
   "set.model.done": "{name} will answer from now on. A review already running keeps the model it started with.",
+  "set.model.missingOption": "{name} (not installed)",
+  "set.model.missing": "{name} is the model in use, but it is not installed on this computer, so nothing can be answered here yet. Choose an installed one above, or run ollama pull {name} in a terminal.",
   "set.model.error": "The model could not be changed.",
   "set.hide.label": "Names to hide from a model elsewhere",
   "set.hide.help": "When the model that answers is not on this computer, these names and any email address, phone, card, account or identity number are replaced by numbered placeholders before your question is sent, and put back in the answer you read. A name that is not on this list is sent as written. This covers chat, roundtable, team runs, document questions and meeting notes; the files a review, a project question or a coding task reads go as they are.",

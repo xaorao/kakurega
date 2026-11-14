@@ -346,7 +346,8 @@ ul.plain.start-ways { grid-template-columns: repeat(3, minmax(0, 1fr)); width: 1
 .proof .tok-str { color: #e7b04a; }
 .proof .tok-fn { color: #f2efe8; }
 .proof .tok-com { color: #b3ad9f; }
-.proof .tok-num { color: #f08a74; }
+/* a number in the script is not an error: no red, and no dotted line that reads as a spelling mark */
+.proof .tok-num { color: #e7b04a; text-decoration: none; }
 .proof .tok-key { color: #a9ddb4; }
 
 /* forms that do not look like forms: fields are quiet until used, and a main action that is not ready stays ink, faint */

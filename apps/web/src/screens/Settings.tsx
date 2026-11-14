@@ -223,8 +223,11 @@ function ModelChoice(props: { id: string }) {
         {(m) => (
           <Show when={m().can_choose} fallback={<p class="muted">{t("set.model.fixed", { name: m().current })}</p>}>
             <select id={`set-${props.id}`} aria-labelledby={`lab-${props.id}`} value={m().current} onChange={(e) => void choose(e.currentTarget.value)}>
+              {/* the model in use may not be installed: it is still shown as the one chosen, and said so in words */}
+              <Show when={!m().installed.includes(m().current)}><option value={m().current} selected disabled>{t("set.model.missingOption", { name: m().current })}</option></Show>
               <For each={m().installed}>{(n) => <option value={n} selected={n === m().current}>{n}</option>}</For>
             </select>
+            <Show when={!m().installed.includes(m().current)}><p class="warn">{t("set.model.missing", { name: m().current })}</p></Show>
           </Show>
         )}
       </Show>

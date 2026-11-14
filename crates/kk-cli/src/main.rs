@@ -158,6 +158,12 @@ fn main() -> ExitCode {
         // set before any thread exists
         std::env::set_var("KAKU_PROFILE", name.trim());
     }
+    // An option that takes a value and was given none is a mistake to say, not to ignore: `follow job-1 --timeout --json`
+    // would otherwise wait for ever, and `log export --out` would print to the screen.
+    if let Some(name) = option_without_value(&args) {
+        eprintln!("{name} needs a value after it. Run kaku --help for the form of each command.");
+        return ExitCode::from(2);
+    }
     // a help flag after a command asks for help, never for the command to run (`kaku serve --help` must not start a service).
     // Commands that take free text or run another program keep their arguments as they are.
     // a free-text command given only a help flag asks for help: "--help" is not a question anyone means to send
@@ -263,6 +269,105 @@ fn main() -> ExitCode {
     ExitCode::from(code)
 }
 
+/// What a command printed as a hint needs after it to reach the same data as the command that prints it: the data folder
+/// when one was named, else the profile when one is in use, else nothing. Without it a copied hint would look in the
+/// default place and say that nothing is running.
+pub fn here(args: &[String]) -> String {
+    if let Some(dir) = flag(args, "--data-dir") {
+        // as a full path, so the hint works from any folder
+        let full = std::fs::canonicalize(&dir)
+            .map(|p| p.display().to_string())
+            .unwrap_or(dir);
+        return format!(" --data-dir {}", shell_word(&full));
+    }
+    match std::env::var("KAKU_PROFILE") {
+        Ok(name) if !name.trim().is_empty() => format!(" --profile {}", shell_word(name.trim())),
+        _ => String::new(),
+    }
+}
+
+/// Every option that is followed by a value.
+const VALUE_OPTIONS: &[&str] = &[
+    "--account",
+    "--allow",
+    "--anchor",
+    "--api-base",
+    "--approval",
+    "--catalog",
+    "--channel",
+    "--context",
+    "--current",
+    "--data-dir",
+    "--days",
+    "--deposit",
+    "--depth",
+    "--digest",
+    "--dir",
+    "--experts",
+    "--file",
+    "--folder",
+    "--for",
+    "--hours",
+    "--key",
+    "--key-file",
+    "--label",
+    "--launcher",
+    "--manifest",
+    "--model",
+    "--name",
+    "--near-key-file",
+    "--near-model",
+    "--near-url",
+    "--network",
+    "--ocr",
+    "--ollama",
+    "--order",
+    "--out",
+    "--outside-model",
+    "--outside-url",
+    "--pack",
+    "--pin",
+    "--platform",
+    "--profile",
+    "--project",
+    "--registry",
+    "--release-days",
+    "--root",
+    "--route",
+    "--scripted",
+    "--session",
+    "--skip",
+    "--source",
+    "--timeout",
+    "--title",
+    "--token-file",
+    "--transport",
+    "--trusted",
+    "--ui-dir",
+    "--vm",
+    "--worker-bin",
+];
+
+/// The first option that needs a value and has none: it is followed by another option, or by nothing. After a command
+/// whose words are the person's own text (a question, a message), only "followed by another option" counts, since the
+/// last word of a sentence may happen to be an option's name.
+fn option_without_value(args: &[String]) -> Option<&str> {
+    let own_text = matches!(
+        args.first().map(String::as_str),
+        Some("ask" | "chat" | "roundtable" | "team" | "code" | "notes" | "explore")
+    );
+    args.iter().enumerate().find_map(|(i, a)| {
+        if !VALUE_OPTIONS.contains(&a.as_str()) {
+            return None;
+        }
+        match args.get(i + 1) {
+            Some(next) if next.starts_with("--") => Some(a.as_str()),
+            None if !own_text => Some(a.as_str()),
+            _ => None,
+        }
+    })
+}
+
 /// A path or a name as one word of a command a person can copy: quoted when it holds a space or a shell character.
 pub fn shell_word(text: &str) -> String {
     if !text.is_empty()
@@ -360,5 +465,43 @@ mod usage_tests {
             "{explore}"
         );
         assert!(super::usage_of("nonsense").is_none());
+    }
+}
+
+#[cfg(test)]
+mod option_tests {
+    use super::option_without_value;
+
+    fn a(words: &[&str]) -> Vec<String> {
+        words.iter().map(|w| w.to_string()).collect()
+    }
+
+    #[test]
+    fn mn_use01_an_option_given_no_value_is_named_and_a_complete_command_is_not() {
+        assert_eq!(
+            option_without_value(&a(&["follow", "job-1", "--timeout", "--json"])),
+            Some("--timeout")
+        );
+        assert_eq!(
+            option_without_value(&a(&["log", "export", "--out"])),
+            Some("--out")
+        );
+        assert_eq!(
+            option_without_value(&a(&["chat", "--session", "--json", "hello"])),
+            Some("--session")
+        );
+        assert_eq!(
+            option_without_value(&a(&["explore", "dir", "--depth", "--json", "why"])),
+            Some("--depth")
+        );
+        for ok in [
+            &["follow", "job-1", "--timeout", "30", "--json"][..],
+            &["verify", "x.kkg", "--pin", "abc", "--out", "dir"],
+            &["chat", "what", "does", "--timeout"],
+            &["serve", "--data-dir", "/tmp/x", "--root", "/tmp/y"],
+            &["jobs", "--json"],
+        ] {
+            assert_eq!(option_without_value(&a(ok)), None, "{ok:?}");
+        }
     }
 }

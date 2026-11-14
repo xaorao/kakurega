@@ -240,7 +240,7 @@ pub fn run(args: &[String]) -> u8 {
         match admin.post(&format!("/admin/jobs/{id}/approval/owner"), json!({})) {
             Ok((202, v)) => v["approval"].as_str().unwrap_or("").to_string(),
             Ok((_, v)) if v["error"]["code"] == "ALREADY_REQUESTED" => {
-                eprintln!("An approval for {id} is already waiting. Run `kaku approve` to read and decide it.");
+                eprintln!("{id} already has an approval that is waiting, approved or refused. `kaku approve{}` alone shows what is waiting; a refused one is asked again with `kaku approve {id}{}` only after its refusal.", crate::here(args), crate::here(args));
                 return 1;
             }
             Ok((_, v)) => {
@@ -361,12 +361,12 @@ pub fn run(args: &[String]) -> u8 {
     }
     let ack = line.trim();
     if ack.is_empty() {
-        println!("Nothing was decided. The approval still waits; run `kaku approve` again when you are ready.");
+        println!("Nothing was decided. The approval still waits; run `kaku approve{}` again when you are ready.", crate::here(args));
         return 1;
     }
     if ack.eq_ignore_ascii_case("refuse") {
         let _ = admin.post(&format!("/admin/approvals/{id}/deny"), json!({}));
-        println!("Refused. Nothing was approved. The refusal is in the signed log; `kaku approve {}` asks again.", d["job"].as_str().unwrap_or("job-N"));
+        println!("Refused. Nothing was approved. The refusal is in the signed log; `kaku approve {}{}` asks again.", d["job"].as_str().unwrap_or("job-N"), crate::here(args));
         return 1;
     }
     let mut body = json!({"ack": ack});
@@ -401,7 +401,7 @@ pub fn run(args: &[String]) -> u8 {
     }
     match admin.post(&format!("/admin/approvals/{id}/approve"), body) {
         Ok((200, _)) => {
-            println!("Approved. Go back to the browser and press Deliver.");
+            println!("Approved. To send it: press \"Sign and deliver the capsule\" on the review in the web or desktop window, or type /deliver in the kaku workspace.");
             0
         }
         Ok((_, v)) => {
@@ -442,6 +442,10 @@ fn not_approved_words(reason: &str) -> String {
     match reason {
         "DigestMismatch" => "what you typed is not the start of this release's digest. Nothing was approved; run `kaku approve` again and copy the first 12 characters shown after Digest.".into(),
         "AcknowledgementTooShort" => "type at least the first 12 characters of the digest. Nothing was approved.".into(),
+        "Expired" => "the release ran out of time before it was approved. Run the review again to make a new one.".into(),
+        "WrongState(Approved)" => "it is already approved. To send it, press \"Sign and deliver the capsule\" on the review, or type /deliver in the kaku workspace.".into(),
+        "WrongState(Denied)" => "it was refused earlier. `kaku approve job-N` (with the review's number) asks again.".into(),
+        other if other.starts_with("WrongState(") => "it can no longer be approved: it was already decided or delivered.".into(),
         other => other.to_string(),
     }
 }

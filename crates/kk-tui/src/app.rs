@@ -454,6 +454,8 @@ pub struct App {
     /// computer, 2 confidential hardware elsewhere, 1 hosted). Sent with them, so the service refuses to hand them to a
     /// less private model.
     pub held_level: i64,
+    /// The service's data folder, as it says it: delivered capsules are kept in its `capsules` folder.
+    pub data_dir: Option<String>,
     pub session: Option<String>,
     /// The project this conversation is about: its notes are offered, and no other project's. Set from the repository the
     /// terminal was started in, by `/project`, or by a kept conversation.
@@ -620,6 +622,7 @@ impl App {
             approval_watch_inflight: false,
             chat_history: Vec::new(),
             held_level: 0,
+            data_dir: None,
             session: None,
             chat_project: None,
             shown_methods: std::collections::HashMap::new(),
@@ -4170,11 +4173,34 @@ impl App {
         }
     }
 
+    /// Where a delivered capsule of that name is kept: in the data folder's `capsules`, when the service said where its
+    /// data is; else the name alone.
+    fn capsule_path(&self, name: &str) -> String {
+        match &self.data_dir {
+            Some(d) if !name.contains('/') => format!("{d}/capsules/{name}"),
+            _ => name.to_string(),
+        }
+    }
+
     fn verify_file(&mut self, path: &str) {
+        // a capsule named as /deliver names it is looked for where delivered capsules are kept
+        let kept = self.capsule_path(path);
+        let path = if !std::path::Path::new(path).exists() && std::path::Path::new(&kept).is_file()
+        {
+            kept.as_str()
+        } else {
+            path
+        };
         let bytes = match std::fs::read(path) {
             Ok(b) => b,
             Err(e) => {
-                self.say(Kind::Error, format!("Cannot read {}: {e}", clean(path)));
+                let why = if e.kind() == std::io::ErrorKind::NotFound {
+                    "there is no such file. Give the path to a capsule (.kkg) or a share (.kks)"
+                        .to_string()
+                } else {
+                    e.to_string()
+                };
+                self.say(Kind::Error, format!("Cannot read {}: {why}.", clean(path)));
                 return;
             }
         };
@@ -4484,6 +4510,7 @@ impl App {
                         clean(model),
                         if simulated { " (test)" } else { "" }
                     );
+                    self.data_dir = body["data_dir"].as_str().map(str::to_string);
                     self.roots = body["roots"]
                         .as_array()
                         .map(|a| {
@@ -4972,9 +4999,16 @@ impl App {
                         Kind::Ok,
                         Some("Delivered"),
                         vec![
-                            format!("Capsule {}", clean(body["name"].as_str().unwrap_or("?"))),
+                            // where the file is, so it can be found, sent and checked
+                            format!(
+                                "Capsule {}",
+                                clean(&self.capsule_path(body["name"].as_str().unwrap_or("?")))
+                            ),
                             format!("Digest {}", clean(body["digest"].as_str().unwrap_or("?"))),
-                            "Check it anywhere with: kaku verify FILE, or /verify FILE".into(),
+                            format!(
+                                "Check it here with /verify {}, or anywhere with: kaku verify FILE",
+                                clean(body["name"].as_str().unwrap_or("FILE"))
+                            ),
                         ],
                     );
                 } else {

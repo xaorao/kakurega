@@ -31,6 +31,10 @@ function languageName(language?: string): string {
   return t("find.lang.unknown");
 }
 
+/** A path as one word of a command to paste: left bare when plain, else in single quotes (inside which a shell changes
+ *  nothing, so a `$` or a space in a folder's name stays what it is). */
+const shellWord = (text: string) => (/^[A-Za-z0-9_\/.:@%+=-]+$/.test(text) ? text : `'${text.replace(/'/g, `'\\''`)}'`);
+
 /** Why a finding is not in the release, in words: the checker's own state names (not_reproduced, failed: …) are never
  *  shown as they are. */
 function checkerWords(why: string): string {
@@ -643,7 +647,7 @@ function ReleaseTab(props: { job: Job; config: Config; onChange: () => void }) {
               </Show>
               <Show when={approval().state === "waiting" && !(expired() && !props.job.delivered)}>
                 <p>{rich("appr.waiting")}</p>
-                <pre class="cmd" tabindex="0"><code>{props.config.profile ? `kaku --profile ${props.config.profile} approve ${approval().approval}` : props.config.data_dir ? `kaku approve ${approval().approval} --data-dir "${props.config.data_dir}"` : `kaku approve ${approval().approval}`}</code></pre>
+                <pre class="cmd" tabindex="0"><code>{props.config.profile ? `kaku --profile ${props.config.profile} approve ${approval().approval}` : props.config.data_dir ? `kaku approve ${approval().approval} --data-dir ${shellWord(props.config.data_dir)}` : `kaku approve ${approval().approval}`}</code></pre>
                 <p class="muted">{t("appr.typeDigest")}</p>
               </Show>
               <Show when={approval().state === "approved" && !(expired() && !props.job.delivered)}>

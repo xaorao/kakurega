@@ -1320,12 +1320,27 @@ pub fn parse(line: &str) -> Result<Command, String> {
             }
         }
         other => {
-            let near: Vec<String> = NAMES
+            // a command that begins with what was typed, else the ones a slip of the fingers away (/hepl, /aprove)
+            let mut near: Vec<String> = NAMES
                 .iter()
                 .filter(|n| n.starts_with(other) && !other.is_empty())
                 .take(3)
                 .map(|n| format!("/{n}"))
                 .collect();
+            if near.is_empty() && other.chars().count() >= 3 {
+                let reach = if other.chars().count() <= 4 { 1 } else { 2 };
+                let mut close: Vec<(usize, &str)> = NAMES
+                    .iter()
+                    .map(|n| (slips(other, n), *n))
+                    .filter(|(d, _)| *d <= reach)
+                    .collect();
+                close.sort();
+                near = close
+                    .into_iter()
+                    .take(3)
+                    .map(|(_, n)| format!("/{n}"))
+                    .collect();
+            }
             if near.is_empty() {
                 Err(format!("unknown command /{other}; /help lists them"))
             } else {
@@ -1418,5 +1433,54 @@ mod typed_folder_tests {
         assert_eq!(super::typed_folder("payments-service"), "payments-service");
         assert_eq!(super::typed_folder("/abs/path"), "/abs/path");
         assert_eq!(super::typed_folder("~user/x"), "~user/x");
+    }
+}
+
+/// How many slips of the fingers lie between two words: a letter missing, added or wrong counts one, and so do two
+/// neighbouring letters swapped (/hepl for /help).
+fn slips(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut d = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for (i, row) in d.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, cell) in d[0].iter_mut().enumerate() {
+        *cell = j;
+    }
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            d[i][j] = (d[i - 1][j] + 1)
+                .min(d[i][j - 1] + 1)
+                .min(d[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                d[i][j] = d[i][j].min(d[i - 2][j - 2] + 1);
+            }
+        }
+    }
+    d[a.len()][b.len()]
+}
+
+#[cfg(test)]
+mod slip_tests {
+    use super::*;
+
+    #[test]
+    fn cm_use01_a_mistyped_command_is_answered_with_the_one_that_was_meant() {
+        for (typed, meant) in [
+            ("/hepl", "/help"),
+            ("/aprove", "/approve"),
+            ("/reveiw", "/review"),
+            ("/approvee", "/approve"),
+        ] {
+            let said = parse(typed).err().unwrap_or_default();
+            assert!(
+                said.contains("did you mean") && said.contains(meant),
+                "{typed}: {said}"
+            );
+        }
+        // nothing near: no guess is made
+        let said = parse("/zzzzqq").err().unwrap_or_default();
+        assert!(!said.contains("did you mean"), "{said}");
     }
 }
