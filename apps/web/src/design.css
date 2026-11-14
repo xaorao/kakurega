@@ -234,3 +234,13 @@ details summary { font-size: 13px; }
   .steps li { transition: color 0.5s; }
   .steps .mark { transition: background-color 0.4s, border-color 0.4s; }
 }
+
+/* the opening: the mark lands like a seal, the name is uncovered, the curtain lifts. Nothing here fades: every word is
+   at full contrast for as long as it is on the screen. */
+.opening { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center; justify-content: center; gap: 22px; background: var(--halo); pointer-events: none; animation: kk-curtain 1.15s cubic-bezier(0.7, 0, 0.2, 1) both; }
+.opening-mark { width: 104px; height: 104px; border-radius: 26px; background: var(--ink); color: var(--halo); display: grid; place-items: center; font-family: var(--font-mark); font-size: 52px; font-weight: 600; line-height: 1; animation: kk-seal-land 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+.opening-name { font-family: var(--font-display); font-size: 104px; line-height: 1; letter-spacing: -0.03em; color: var(--ink); padding-bottom: 0.08em; animation: kk-uncover 0.6s 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes kk-curtain { 0%, 78% { transform: none; } 100% { transform: translateY(-101%); } }
+@keyframes kk-seal-land { from { transform: scale(1.8) rotate(-12deg); } to { transform: none; } }
+@keyframes kk-uncover { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@media (max-width: 640px) { .opening-name { font-size: 52px; } .opening-mark { width: 60px; height: 60px; border-radius: 15px; font-size: 30px; } }

@@ -1,6 +1,6 @@
 import { createSignal, onMount, Show } from "solid-js";
 
-/** The opening: the black bar fills the window, draws back to the bar of the mark, and the workspace is there. Shown once
+/** The opening: the mark lands like a seal, the name is uncovered beside it, and the curtain lifts off the workspace. Shown once
  *  for a tab (not on every reload), never to someone who asked for less motion, and it never takes a click: it is a
  *  picture laid over a workspace that is already usable underneath. */
 export function Opening() {
@@ -19,8 +19,8 @@ export function Opening() {
   return (
     <Show when={on()}>
       <div class="opening" aria-hidden="true">
-        <div class="opening-mark"><span class="opening-bar" /></div>
-        <div class="opening-name">kakurega</div>
+        <div class="opening-mark">隠</div>
+        <div class="opening-name">Kakurega</div>
       </div>
     </Show>
   );
