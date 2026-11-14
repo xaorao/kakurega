@@ -1647,6 +1647,8 @@ export const en = {
   "find.lang.unknown": "unknown language",
   "find.repro": "Reproducer the kernel ran",
   "find.output": "Output",
+  "find.sampleLead": "Checked on a minimal sample of {count} files:",
+  "find.sampleLead.one": "Checked on a minimal sample of {count} file:",
   "find.sample": "Checked on a minimal sample of {count} files: {files}",
   "find.sample.one": "Checked on a minimal sample of {count} file: {files}",
   "find.malformed": "{count} reports from the agent were malformed and ignored.",

@@ -1649,6 +1649,8 @@ export const hi: Record<keyof typeof en, string> = {
   "find.lang.unknown": "अज्ञात भाषा",
   "find.repro": "कर्नेल ने जो रिप्रोड्यूसर चलाया",
   "find.output": "आउटपुट",
+  "find.sampleLead": "{count} फ़ाइलों के छोटे नमूने पर जाँचा गया:",
+  "find.sampleLead.one": "{count} फ़ाइल के छोटे नमूने पर जाँचा गया:",
   "find.sample": "{count} फ़ाइलों के न्यूनतम नमूने पर जाँचा गया: {files}",
   "find.sample.one": "{count} फ़ाइलों के न्यूनतम नमूने पर जाँचा गया: {files}",
   "find.malformed": "एजेंट की {count} रिपोर्ट गलत ढंग की थीं और छोड़ दी गईं।",

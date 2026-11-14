@@ -329,3 +329,22 @@ ul.plain.start-ways { grid-template-columns: repeat(3, minmax(0, 1fr)); width: 1
 .chat-page > .chat-given > summary { justify-content: center; font-weight: 400; margin: 0; }
 .chat-page > .lead-block .lead { max-width: none; }
 .composer .composer-hint { font-size: 11.5px; }
+
+/* the files a finding was checked on, as small labels */
+.sample-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12.5px; }
+.file-chip-mono { font-size: 11.5px; padding: 1px 7px; border-radius: 6px; }
+/* the delivered capsule: a seal large enough to be the picture of the moment */
+.sealed { flex-direction: column; align-items: center; text-align: center; gap: 12px; padding: 20px 14px; }
+.stamp { width: 96px; height: 96px; border-width: 2.5px; }
+.sealed .delivered-line code { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.appr-steps li.done:last-child { color: var(--cipher-text); }
+.appr-steps li.done:last-child .mark { background: var(--cipher); border-color: var(--cipher); }
+
+/* code on the dark pane keeps its colours readable there */
+.proof pre { font-size: 12.5px; }
+.proof .tok-kw { color: #a9ddb4; }
+.proof .tok-str { color: #e7b04a; }
+.proof .tok-fn { color: #f2efe8; }
+.proof .tok-com { color: #b3ad9f; }
+.proof .tok-num { color: #f08a74; }
+.proof .tok-key { color: #a9ddb4; }

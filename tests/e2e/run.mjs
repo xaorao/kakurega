@@ -424,7 +424,8 @@ try {
     await page.getByRole("tab", { name: "Findings" }).click();
     await page.getByText("Reproducer the kernel ran (Python)").waitFor();
   }
-  await page.getByText("Reproducer the kernel ran (Python)").click();
+  // the first confirmed finding shows its proof at once; any other is opened by its line
+  if ((await page.locator("article.finding details[open] pre code").count()) === 0) await page.getByText("Reproducer the kernel ran (Python)").click();
   const repro = page.locator("details[open] pre code").first();
   await repro.waitFor();
   const reproText = await repro.innerText();

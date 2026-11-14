@@ -432,7 +432,7 @@ function Findings(props: { job: Job }) {
               <div class="card"><p>{t("find.none")}</p><p class="muted">{t("find.noneNote")}</p></div>
             </Show>
             <For each={d().findings}>
-              {(f) => {
+              {(f, at) => {
                 const [statusLabel, cls, why] = statusText(f.status);
                 return (
                   <article class={`card stack finding ${cls ? "is-" + cls : ""}`}>
@@ -441,9 +441,9 @@ function Findings(props: { job: Job }) {
                     <Show when={why}><p class="muted wrap status-why">{t("status.why", { why: serverText(why) })}</p></Show>
                     <p><InlineMarkdown text={f.explanation} /></p>
                     <Show when={f.reproducer}>
-                      <details><summary>{t("find.reproIn", { language: languageName(f.language) })}</summary><div class={f.output ? "proof two" : "proof"}><div class="pane"><pre tabindex="0"><Code lang={f.language ?? "python"} text={f.reproducer} /></pre></div><Show when={f.output}><div class="pane out"><p class="pane-label">{t("find.output")}</p><pre tabindex="0"><code>{f.output}</code></pre></div></Show></div></details>
+                      <details open={at() === 0 && f.status === "reproduced"}><summary>{t("find.reproIn", { language: languageName(f.language) })}</summary><div class={f.output ? "proof two" : "proof"}><div class="pane"><pre tabindex="0"><Code lang={f.language ?? "python"} text={f.reproducer} /></pre></div><Show when={f.output}><div class="pane out"><p class="pane-label">{t("find.output")}</p><pre tabindex="0"><code>{f.output}</code></pre></div></Show></div></details>
                     </Show>
-                    <Show when={f.sample.length > 0}><p class="muted">{t("find.sample", { count: f.sample.length, files: f.sample.join(", ") })}</p></Show>
+                    <Show when={f.sample.length > 0}><p class="muted sample-line">{t(f.sample.length === 1 ? "find.sampleLead.one" : "find.sampleLead", { count: f.sample.length })} <For each={f.sample}>{(name) => <code class="file-chip-mono">{name}</code>}</For></p></Show>
                   </article>
                 );
               }}
