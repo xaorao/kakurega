@@ -102,7 +102,7 @@ for (const [vpName, width, height] of viewports) for (const scheme of schemes) f
     });
     // evaluate, not a script tag: the page forbids inline scripts, as it should
     await page.evaluate(axeSource).catch(() => {});
-    const axe = await page.evaluate(async () => { try { const r = await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"] } }); return r.violations.map((v) => `${v.id} x${v.nodes.length}`); } catch (e) { return ["axe failed: " + e]; } });
+    const axe = await page.evaluate(async () => { try { const r = await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"] } }); return r.violations.map((v) => `${v.id} x${v.nodes.length} [${v.nodes.slice(0, 2).map((n) => n.target.join(" ")).join("; ")}]`); } catch (e) { return ["axe failed: " + e]; } });
     const file = `${name}__${vpName}__${scheme}__${lang}.png`;
     await page.screenshot({ path: join(shots, file), fullPage: true }).catch(() => {});
     for (const c of cell.copy) problems.push("copy: " + c);

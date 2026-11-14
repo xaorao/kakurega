@@ -220,6 +220,9 @@ details summary { font-size: 13px; }
 @keyframes kk-palette-in { from { opacity: 0; transform: translateY(-14px) scale(0.98); } to { opacity: 1; transform: none; } }
 
 @media (max-width: 860px) {
+  /* on a phone the header scrolls away with the page, so it never lies over the Menu button or the first lines */
+  .top { position: static; }
+  .menu-toggle { min-height: 44px; min-width: 44px; margin-bottom: 10px; }
   .shell { padding-left: 0; }
   .shell > .body { display: grid; }
   .shell .side { position: static; width: auto; }
