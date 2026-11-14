@@ -53,12 +53,15 @@ test("ex05 captureSelection reports every outcome in plain words and sends only 
   assert.deepEqual(body, { text: "Acme pays on the 20th", page: "https://wiki.example.com/" });
   assert.deepEqual(Object.keys(body).sort(), ["page", "text"]);
   assert.equal((await captureSelection({ selectionText: "x", pageUrl: "https://a.example/" }, { fetch: ok, config: {} })).ok, false, "not paired");
-  assert.match((await captureSelection({ selectionText: "", pageUrl: "https://a.example/" }, { fetch: ok, config: cfg })).message, /cannot be sent/);
+  assert.match((await captureSelection({ selectionText: "", pageUrl: "https://a.example/" }, { fetch: ok, config: cfg })).message, /Nothing is selected/);
+  // each reason is named, since each is fixed in a different way
+  assert.match((await captureSelection({ selectionText: "x".repeat(2001), pageUrl: "https://a.example/" }, { fetch: ok, config: cfg })).message, /too long to send: it has 2001 characters and the most is 2000/);
+  assert.match((await captureSelection({ selectionText: "evil \u202etxt", pageUrl: "https://a.example/" }, { fetch: ok, config: cfg })).message, /hidden characters/);
   assert.match((await captureSelection({ selectionText: "x", pageUrl: "chrome://x" }, { fetch: ok, config: cfg })).message, /http or https/);
   const down = async () => { throw new TypeError("failed to fetch"); };
   assert.match((await captureSelection({ selectionText: "x", pageUrl: "https://a.example/" }, { fetch: down, config: cfg })).message, /Nothing answers at Kakurega.s saved address/);
   const refused = async () => ({ status: 422, json: async () => ({ error: { message: "looks like a secret" } }) });
-  assert.match((await captureSelection({ selectionText: "x", pageUrl: "https://a.example/" }, { fetch: refused, config: cfg })).message, /looks like a secret/);
+  assert.match((await captureSelection({ selectionText: "x", pageUrl: "https://a.example/" }, { fetch: refused, config: cfg })).message, /looks like a secret/i);
   const unpaired = async () => ({ status: 401, json: async () => ({}) });
   assert.match((await captureSelection({ selectionText: "x", pageUrl: "https://a.example/" }, { fetch: unpaired, config: cfg })).message, /pair again/);
   assert.match(describeFailure(429), /wait a minute/i);

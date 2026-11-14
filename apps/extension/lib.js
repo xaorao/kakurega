@@ -21,6 +21,16 @@ export function cleanSelection(text) {
   return t;
 }
 
+/** Why a selection cannot be sent, as a sentence, or null when it can. The same rules as `cleanSelection`. */
+export function selectionProblem(text) {
+  if (typeof text !== "string" || text.trim().length === 0) return "Nothing is selected. Select some text on the page first.";
+  const t = text.replace(/\r\n?/g, "\n").trim();
+  const n = [...t].length;
+  if (n > MAX_SELECTION) return `That selection is too long to send: it has ${n} characters and the most is ${MAX_SELECTION}. Select a shorter part.`;
+  if (cleanSelection(text) === null) return "That selection holds hidden characters (control characters or marks that change the direction of text), often from copying. It was not sent.";
+  return null;
+}
+
 export function pageOf(url) {
   try {
     const u = new URL(url);
@@ -32,9 +42,16 @@ export function pageOf(url) {
 
 export function describeFailure(status, body) {
   if (status === 401) return "Not paired. Open the Kakurega popup and pair again.";
-  if (status === 422) return body?.error?.message ?? "Not queued.";
+  if (status === 422) return sentence(body?.error?.message ?? "Not queued.");
   if (status === 429) return "Too many wrong codes. Wait a minute.";
-  return body?.error?.message ?? `The service answered ${status}.`;
+  return sentence(body?.error?.message ?? `The service answered ${status}.`);
+}
+
+/** What the service said, as a sentence: it writes its reasons to follow other words, without a capital or a full stop. */
+function sentence(text) {
+  const t = String(text).trim();
+  const first = /^[a-z]/.test(t) ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+  return /[.!?]$/.test(first) ? first : first + ".";
 }
 
 export async function call(fetchImpl, { port, token }, method, path, body) {

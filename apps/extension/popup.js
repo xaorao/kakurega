@@ -65,14 +65,17 @@ $("pair").addEventListener("submit", async (e) => {
 $("forget").addEventListener("click", async () => {
   // Kakurega is told too, so its side no longer says an extension is paired; if it is not running, the token is
   // forgotten here all the same
+  let told = true;
   try {
     const saved = await chrome.storage.local.get(["token", "port"]);
     if (saved.token && saved.port) await call(fetch, saved, "POST", "/ext/unpair", {});
   } catch {
-    /* not reachable: nothing more can be done from here */
+    // not reachable: this browser forgets its side, and the person is told that Kakurega's side is still there
+    told = false;
   }
   await chrome.storage.local.remove(["token", "port"]);
   await render();
+  if (!told) $("state").textContent = "Disconnected in this browser. Kakurega was not running, so it still lists this browser as paired. To remove it there too, run `kaku extension revoke` in a terminal, or pair again (a new pairing replaces the old one).";
 });
 
 render();
