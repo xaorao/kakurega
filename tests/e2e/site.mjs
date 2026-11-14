@@ -61,6 +61,8 @@ for (const [name, viewport, scheme] of [["desktop-light", { width: 1440, height:
   const broken = [];
   for (const h of new Set(links)) {
     if (h.startsWith("#")) { if (!(await page.locator(h).count())) broken.push(h); continue; }
+    // the only outside links the home page may carry: the public repository and its guide for judges
+    if (/^https:\/\/github\.com\/xaorao\/kakurega(\/blob\/main\/docs\/JUDGES\.md)?$/.test(h)) continue;
     if (/^https?:/.test(h)) { broken.push("outside link " + h); continue; }
     const r = await fetch(origin + "/" + h.replace(/^\.\//, ""));
     if (r.status !== 200) broken.push(h + " " + r.status);

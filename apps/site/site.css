@@ -409,3 +409,15 @@ main { max-width: 1200px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 40px); }
 }
 
 .mark .glyph { width: 64%; height: 64%; display: block; }
+
+/* phone: the reason a line was withheld is readable in full, the steps strip shows there is more to the right,
+   a long signer line breaks inside its card, and the way to the check page stays in the header */
+@media (max-width: 760px) {
+  .gate-line { flex-wrap: wrap; }
+  .gate-line .why { white-space: normal; flex-basis: 100%; }
+  .replay-tabs { -webkit-mask-image: linear-gradient(90deg, #000 82%, transparent); mask-image: linear-gradient(90deg, #000 82%, transparent); }
+  .replay li, .replay dd, .replay code { overflow-wrap: anywhere; }
+}
+@media (max-width: 520px) {
+  .nav .button.ghost { display: inline-flex; margin-left: auto; padding: 6px 10px; font-size: 12px; }
+}

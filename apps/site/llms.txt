@@ -1,5 +1,7 @@
 # Kakurega
 
+Repository: https://github.com/xaorao/kakurega (README.md, docs/JUDGES.md, docs/FEATURES.md, docs/LIMITS.md). Demo video: https://x.com/prateekhh/status/2121602960840888480
+
 A private AI workspace. A security layer outside the model decides what may leave the user's computer; a release is signed, and whoever receives it can check it offline. Working prototype on macOS and Linux; NEAR on testnet.
 
 ## Check it without installing anything (do X, see Y)

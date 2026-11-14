@@ -109,11 +109,22 @@ await page.fill("#pin", "A".repeat(43));
 await page.getByText("Not valid").waitFor();
 check((await verdict()) === "Not valid", "a capsule is refused when the expected key is a different key");
 await page.fill("#pin", "not a key");
-await page.getByText("not 43 base64url characters").waitFor();
+await page.getByText("That is not a signer key").waitFor();
 check(true, "a malformed expected key is reported, not ignored");
 await page.fill("#pin", key);
 await page.getByText("matches the key you pasted").waitFor();
 check((await verdict()).startsWith("Valid"), "the right expected key gives valid and says it is pinned");
+// the signer line the page itself shows can be pasted back as the expected signer; a different one is refused
+await page.fill("#pin", "");
+await page.locator(".verdict").waitFor();
+const shown = (await page.locator("dd.code").first().innerText()).trim();
+check(/^ed25519:[0-9a-f]{64}$/.test(shown), `the signer is shown as a line that can be copied: ${shown.slice(0, 24)}`);
+await page.fill("#pin", shown);
+await page.getByText("matches the key you pasted").waitFor();
+check((await verdict()).startsWith("Valid"), "the signer line the page shows is accepted as the expected signer");
+await page.fill("#pin", "ed25519:" + "0".repeat(64));
+await page.getByText("It was not signed by the key you pasted").waitFor();
+check((await verdict()) === "Not valid", "a different signer line refuses the capsule");
 
 await page.fill("#pin", "");
 const late = await ctx.newPage();

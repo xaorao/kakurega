@@ -279,6 +279,12 @@ impl Budget {
         self.approvals.pop_back();
     }
 
+    /// Gives back the room a `start_review` took when it was admitted, because no review was started (a mistyped folder
+    /// must not use up the hour's starts).
+    pub fn refund_start(&mut self) {
+        self.starts.pop_back();
+    }
+
     /// Takes one call from the budget, or says after how many seconds there is room again. Refused calls cost nothing.
     pub fn admit(&mut self, now: std::time::Instant, tool: &str) -> Result<(), u64> {
         let minute = std::time::Duration::from_secs(60);
@@ -692,13 +698,21 @@ fn call_inner(
                 v["total"] = json!(total);
                 v["truncated"] = json!(u64::try_from(total).unwrap_or(u64::MAX) > n);
             }
+            if let Some(jobs) = v["jobs"].as_array_mut() {
+                jobs.iter_mut().for_each(agent_note);
+            }
             (code, v)
         }),
         "start_review" => admin.post(
             "/admin/jobs",
             json!({"repo": s("repo"), "recipient": s("recipient")}),
         ),
-        "review_status" => admin.get(&format!("/admin/jobs/{}", s("id").unwrap_or_default())),
+        "review_status" => admin
+            .get(&format!("/admin/jobs/{}", s("id").unwrap_or_default()))
+            .map(|(code, mut v)| {
+                agent_note(&mut v);
+                (code, v)
+            }),
         "review_events" => {
             let path = format!(
                 "/admin/events?after={}&limit={}",
@@ -763,6 +777,21 @@ const FORWARDED_CODES: &[&str] = &[
     "BAD_KEY",
     "DENIED",
 ];
+
+/// A review's note is written for its owner and can hold a path or a program's own error line. An agent gets it only when
+/// it is a short plain sentence; otherwise it is told that the owner has the details.
+fn agent_note(job: &mut Value) {
+    let Some(note) = job.get("note").and_then(Value::as_str) else {
+        return;
+    };
+    let plain = note.chars().count() <= 120
+        && !note
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '/' | '\\' | '@' | '`' | '=' | '"'));
+    if !plain {
+        job["note"] = json!("details are shown to the owner, not to agents");
+    }
+}
 
 fn forwardable(v: &Value) -> String {
     let code = v["error"]["code"].as_str().unwrap_or("");
@@ -917,6 +946,9 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
             if name == "request_approval" && result["isError"] == true {
                 // nothing was created, so nothing is asked of the owner and the room goes back
                 ctx.budget.lock().expect("lock").refund_approval();
+            }
+            if name == "start_review" && result["isError"] == true {
+                ctx.budget.lock().expect("lock").refund_start();
             }
             report(admin, name, outcome_of(&result), traceparent(&p));
             ok(result)
@@ -1781,6 +1813,38 @@ mod budget_tests {
         );
         // a clock that goes backwards never panics
         assert!(Budget::new(1, 1).admit(t0, "overview").is_ok());
+    }
+
+    #[test]
+    fn a_start_that_started_nothing_gives_its_room_back_and_a_long_or_pathy_note_is_not_passed_to_an_agent(
+    ) {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let mut b = Budget::new(60, 2);
+        b.admit(t0, "start_review").unwrap();
+        b.admit(t0, "start_review").unwrap();
+        assert!(b
+            .admit(t0 + Duration::from_secs(1), "start_review")
+            .is_err());
+        b.refund_start();
+        b.admit(t0 + Duration::from_secs(1), "start_review")
+            .unwrap();
+
+        let mut plain = json!({"state": "failed", "note": "the review found nothing to release"});
+        agent_note(&mut plain);
+        assert_eq!(plain["note"], "the review found nothing to release");
+        for raw in [
+            "agent stopped before it asked the model anything (bwrap: Can't find source path /home/nobody/Acme-Merger/kk-worker)",
+            "time=2026 level=fatal msg=\"instance `acme-merger-vm` does not exist\"",
+            "C:\\Users\\me\\secret-project failed",
+        ] {
+            let mut v = json!({"state": "failed", "note": raw});
+            agent_note(&mut v);
+            assert_eq!(v["note"], "details are shown to the owner, not to agents", "{raw}");
+        }
+        let mut none = json!({"state": "running"});
+        agent_note(&mut none);
+        assert!(none.get("note").is_none());
     }
 
     #[test]

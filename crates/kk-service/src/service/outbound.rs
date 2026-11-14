@@ -20,7 +20,7 @@ pub(super) fn row_of(e: &Value) -> Option<Value> {
         ),
         "search.run" => ("search", String::new(), json!({"results": n("results")})),
         "research.fetched" => ("pages", String::new(), json!({"pages": n("addresses")})),
-        "mcp.call" => ("tool", subject.to_string(), json!({})),
+        // "mcp.call" is an agent calling IN to this computer: it is listed under Activity, never here
         // an outside program on this computer was given arguments; it may pass on what it was given
         "mcp.called" => ("program", subject.to_string(), json!({"bytes": n("bytes")})),
         // a read from GitHub: the request (which repository, issue, file or search words) went to GitHub
@@ -147,8 +147,12 @@ mod tests {
             .unwrap()["detail"],
             json!({"secrets": 2, "instructions": 1})
         );
+        // an agent calling in to this computer is not something that left it
+        assert!(row_of(&e("mcp.call", "list_reviews", json!({"outcome": "ok"}))).is_none());
+        assert!(row_of(&e("mcp.call", "unknown", json!({"outcome": "refused"}))).is_none());
+        // a call out to a program on this computer is
         assert_eq!(
-            row_of(&e("mcp.call", "search_issues", json!({}))).unwrap()["to"],
+            row_of(&e("mcp.called", "search_issues", json!({"bytes": 12}))).unwrap()["to"],
             json!("search_issues")
         );
         assert_eq!(

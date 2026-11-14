@@ -2,6 +2,9 @@
 // is typed, shows what would be sent with those lines withheld, and seals it: a SHA-256 of exactly what would leave.
 // Nothing typed here is sent anywhere. The second part switches between pictures of the app.
 import { withhold } from "./withhold.js";
+/** "an OpenAI API key", "a GitHub token": the right article for a rule's name. */
+const an = (name) => (/^[aeiou]/i.test(name) ? "an " : "a ") + name;
+
 
 const SAMPLE = [
   "# payments-service · settings.py",
@@ -82,7 +85,9 @@ async function gate(root) {
         row.classList.add("gone");
         const bar = el("span", undefined, "bar");
         bar.style.width = Math.max(6, Math.min(26, line.trim().length)) + "ch";
-        row.append(bar, el("span", `withheld · holds a ${held.get(i + 1)}`, "why"));
+        const why = el("span", `withheld · holds ${an(held.get(i + 1))}`, "why");
+        why.title = why.textContent;
+        row.append(bar, why);
       } else row.textContent = line === "" ? " " : line;
       return row;
     });

@@ -8156,6 +8156,15 @@ async fn agent_call(axum::Extension(svc): Svc, Json(b): Json<AgentCallBody>) -> 
     let action = {
         let mut w = svc.call_window.lock().expect("lock");
         if t - w.0 >= 60 {
+            // the minute that just closed: say how many calls it left unwritten, unless the last entry already said so
+            let left = w.2;
+            if left > 1 && left % 50 != 0 {
+                svc.log_event(
+                    "mcp.calls_limited",
+                    "mcp",
+                    &[("not_written", left.into()), ("at", "minute_closed".into())],
+                );
+            }
             *w = (t, 0, 0);
         }
         if w.1 < CALLS_LOGGED_PER_MINUTE {

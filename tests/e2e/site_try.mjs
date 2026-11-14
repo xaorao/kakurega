@@ -92,11 +92,19 @@ check(!(await page.content()).includes(key) && !everything.includes(key), "the s
 check(problems.length === 0, "no console errors: " + problems.join(" | "));
 await page.screenshot({ path: join(work, "2-after.png"), fullPage: true });
 // with no free tries left the page asks for the visitor's own key and sends nothing
-await page.evaluate(() => localStorage.setItem("kk-try-count", "3"));
+await page.evaluate(() => localStorage.setItem("kk-try-count", new Date().toISOString().slice(0, 10) + "|3"));
 await page.reload();
 const before = relayed.length;
 await page.getByRole("button", { name: "Withhold, check, ask" }).click();
 await page.waitForTimeout(800);
 check(/free tries are used/.test(await page.locator("[data-tries]").innerText()) && relayed.length === before && (await page.locator(".own-key").getAttribute("open")) !== null, "with the free tries used, nothing is sent and the page asks for your own key");
+// tries used on an earlier day do not count today, and an empty box says what to do
+await page.evaluate(() => localStorage.setItem("kk-try-count", "2000-01-01|3"));
+await page.reload();
+check(/3 free tries left/.test(await page.locator("[data-tries]").innerText()), "tries used on an earlier day do not count today");
+await page.locator("[data-code]").fill("   ");
+await page.getByRole("button", { name: "Withhold, check, ask" }).click();
+await page.getByText("There is nothing to check yet").waitFor({ timeout: 5000 });
+check(relayed.length === before, "an empty box sends nothing and says so");
 await browser.close();
 srv.close();

@@ -9,7 +9,7 @@ const REASONS = {
   capsule_not_canonical: "The file was changed after it was signed (its bytes are not in the one allowed form).",
   capsule_shape: "The file does not have the shape of a capsule.",
   unsupported_version: "This capsule is from a version this page does not know.",
-  bad_key: "A key in the capsule is not usable.",
+  bad_key: "A key is not usable: the one in the capsule, or the one you pasted.",
   key_list: "The capsule's key list is not exactly the one key that signed it: the file was altered after signing.",
   no_keys: "The capsule carries no key.",
   signature_count: "An envelope does not have exactly one signature.",
@@ -80,7 +80,7 @@ function showChain(box, place, found) {
   if (!entry) {
     const v = el("div", "Not registered on NEAR under this signing key", "verdict");
     v.setAttribute("role", "status");
-    box.append(v, el("p", `Looked up at ${place}. That says only that nobody registered this exact file there.`, "note"));
+    box.append(v, el("p", `Looked up at ${place}. That says only that nobody registered this exact file there. Registering is the owner's choice and most capsules are never registered; the check above does not depend on it.`, "note"));
   } else {
     const v = el("div", "Registered on NEAR", "verdict ok");
     v.setAttribute("role", "status");
@@ -216,7 +216,7 @@ function showShare(r, bytes) {
   out.append(v);
   if (!r.valid) {
     out.append(el("p", REASONS[r.reason] || `Refused (${r.reason}).`));
-    out.append(el("p", `Code: ${r.reason}`, "note"));
+    out.append(el("p", `For whoever made the file, the reason in short: ${r.reason}`, "note"));
     return;
   }
   const dl = el("dl");
@@ -250,7 +250,7 @@ function show(r, bytes) {
   out.append(v);
   if (!r.valid) {
     out.append(el("p", REASONS[r.reason] || `Refused (${r.reason}).`));
-    out.append(el("p", `Code: ${r.reason}`, "note"));
+    out.append(el("p", `For whoever made the file, the reason in short: ${r.reason}`, "note"));
     return;
   }
   const dl = el("dl");
@@ -307,14 +307,19 @@ async function check(file) {
   last = file;
   const pin = $("pin").value.trim();
   let pinned = null;
-  if (pin) {
+  // the signer line a check shows ("ed25519:" and 64 hex characters) names the same key as the 43-character form
+  const line = /^(?:ed25519:)?([0-9a-f]{64})$/i.exec(pin);
+  const wanted = line ? "ed25519:" + line[1].toLowerCase() : null;
+  if (pin && !wanted) {
     const raw = b64urlDecode(pin);
     if (!raw || raw.length !== 32) {
-      out.replaceChildren(el("div", "The key you pasted is not 43 base64url characters.", "verdict bad"));
+      out.replaceChildren(el("div", "That is not a signer key. Paste the signer line a check shows (ed25519: and 64 characters) or the 43-character key.", "verdict bad"));
       return;
     }
     pinned = [raw];
   }
+  // a result checked against the signer line: the wrong signer is refused, the right one counts as pinned
+  const held = (r) => (!wanted || !r.valid ? r : r.signer === wanted ? { ...r, signerPinned: true } : { valid: false, reason: "untrusted_signer" });
   const bytes = new Uint8Array(await file.arrayBuffer());
   try {
     // a share says what it is; the check that follows decides whether it is a valid one
@@ -324,8 +329,8 @@ async function check(file) {
     } catch {
       kind = null;
     }
-    if (kind === "kakurega-share") showShare(await verifyShare(bytes, { pinned }), bytes);
-    else show(await verifyCapsule(bytes, { pinned, now: Math.floor(Date.now() / 1000) }), bytes);
+    if (kind === "kakurega-share") showShare(held(await verifyShare(bytes, { pinned })), bytes);
+    else show(held(await verifyCapsule(bytes, { pinned, now: Math.floor(Date.now() / 1000) })), bytes);
   } catch (e) {
     // a browser that does not give pages Web Crypto cannot run the check at all; that is not the file's fault
     out.replaceChildren(el("div", globalThis.crypto?.subtle ? "The check could not run on this file." : "This browser does not give pages the Web Crypto functions the check needs. Open this page in a current browser, or run: kaku verify FILE", "verdict bad"));
