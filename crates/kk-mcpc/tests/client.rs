@@ -389,3 +389,40 @@ fn mc22_a_server_that_never_stops_offering_pages_is_read_for_a_fixed_number_of_p
     assert_eq!(tools.len(), 20, "reading stops at the page limit");
     assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
 }
+
+#[test]
+fn mc23_a_program_that_dies_at_once_is_reported_with_what_it_said_and_how_it_was_started() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("kk-mc23-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = dir.join("needs-more.sh");
+    // what a wrapper around an interpreter outside the fixed search path does: complain and leave
+    std::fs::write(
+        &program,
+        "#!/bin/sh\necho 'env: node: No such file or directory' >&2\nexit 127\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let config = ServerConfig {
+        name: "needs-more".into(),
+        program: program.clone(),
+        args: vec![],
+        env: vec![],
+        cwd: None,
+        expected_sha256: None,
+    };
+    let said = match Server::start(config, quick()) {
+        Ok(_) => panic!("a program that exits at once must not count as started"),
+        Err(e) => e.to_string(),
+    };
+    assert!(said.starts_with("the server did not start: "), "{said}");
+    assert!(
+        said.contains("the program said: env: node: No such file or directory"),
+        "{said}"
+    );
+    assert!(
+        said.contains("PATH=/usr/bin:/bin") && said.contains("has to set it itself"),
+        "{said}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -306,7 +306,28 @@ impl Server {
             };
             Ok((child, client))
         });
-        let (child, client) = started?;
+        let (child, client) = match started {
+            Ok(pair) => pair,
+            Err(McpError::Start(why)) => {
+                // The owner is told what the program itself said before it went away, and how it was started: a
+                // program that needs more than the fixed search path (an interpreter installed elsewhere) fails here.
+                rt.block_on(async {
+                    tokio::time::sleep(std::time::Duration::from_millis(150)).await
+                });
+                let said = clean(&String::from_utf8_lossy(&stderr_buf.lock().expect("lock")));
+                let said: String = {
+                    let all: Vec<char> = said.trim().chars().collect();
+                    all[all.len().saturating_sub(300)..].iter().collect()
+                };
+                let how = format!("It is started with PATH={FIXED_PATH} and only the settings listed for it; a program that needs anything else has to set it itself");
+                return Err(McpError::Start(if said.is_empty() {
+                    format!("{why}. {how}")
+                } else {
+                    format!("{why} (the program said: {said}). {how}")
+                }));
+            }
+            Err(other) => return Err(other),
+        };
         Ok(Server {
             rt,
             client: Some(client),
