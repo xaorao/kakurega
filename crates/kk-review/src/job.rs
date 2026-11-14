@@ -464,6 +464,16 @@ pub fn run_job(
             None => report.unparsed_findings += 1,
         }
     }
+    // said before the first reproducer is rerun, so whoever watches sees this step begin (and, with nothing to rerun,
+    // sees that it was reached and had nothing to do)
+    progress(
+        "check",
+        if identities.is_empty() {
+            "the agent reported nothing to rerun"
+        } else {
+            "the kernel is rerunning each reproducer in the sandbox"
+        },
+    );
     let mut checked_findings: Vec<crate::repair::CheckedFinding> = Vec::new();
     for identity in &identities {
         let attempts = &versions[identity];

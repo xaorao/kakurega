@@ -93,18 +93,23 @@ function Protected(props: { job: Job }) {
       <Show when={s()} fallback={<p class="muted">{t("review.when")}</p>}>
         {(sum) => (
           <>
-            <div class="card stack">
+            <dl class="tiles shield" aria-label={t("prot.glance")}>
+              <div class={sum().withheld.length > 0 ? "tile held" : "tile"}><dt>{t("prot.glance.withheld")}</dt><dd>{sum().withheld.length}</dd></div>
+              <div class={sum().injection_suspects.length > 0 ? "tile planted" : "tile"}><dt>{t("prot.glance.planted")}</dt><dd>{sum().injection_suspects.length}</dd></div>
+              <div class="tile"><dt>{t("prot.glance.files")}</dt><dd>{sum().files_in_manifest}</dd></div>
+            </dl>
+            <div class="card stack prot-hidden">
               <h2>{t("prot.cannotSee")}</h2>
               <Show when={sum().withheld.length > 0} fallback={<p class="muted">{t("prot.noSecrets")}</p>}>
                 <ul class="plain">
-                  <For each={sum().withheld}>{(w) => <li><code>{w.path}</code> <span class="chip bad">{t("prot.withheld")}</span> <span class="muted">{w.notes.join("; ")}</span></li>}</For>
+                  <For each={sum().withheld}>{(w) => <li class="held-row"><code>{w.path}</code> <span class="redacted" aria-hidden="true" /> <span class="chip bad">{t("prot.withheld")}</span> <span class="muted">{w.notes.join("; ")}</span></li>}</For>
                 </ul>
               </Show>
               <Show when={sum().skipped.length > 0}>
                 <p class="muted">{t("prot.skipped", { list: sum().skipped.map((x) => `${x.path} (${x.reason})`).join(", ") })}</p>
               </Show>
             </div>
-            <div class="card stack">
+            <div class="card stack prot-planted">
               <h2>{t("prot.aiTitle")}</h2>
               <Show when={sum().injection_suspects.length > 0} fallback={<p class="muted">{t("prot.none")}</p>}>
                 <p>{t("prot.aiBody")}</p>
@@ -400,8 +405,6 @@ function Findings(props: { job: Job }) {
   const [data] = createResource(() => props.job.id, (id) => api.findings(id));
   return (
     <div class="stack">
-      <Suggestions jobId={props.job.id} />
-      <Fixes jobId={props.job.id} />
       <Show when={data()} fallback={<p class="muted">{t("review.loading")}</p>}>
         {(d) => (
           <>
@@ -412,8 +415,8 @@ function Findings(props: { job: Job }) {
               {(f) => {
                 const [statusLabel, cls, why] = statusText(f.status);
                 return (
-                  <article class="card stack">
-                    <header class="between"><h2><InlineMarkdown text={f.title} /></h2><span class={`chip ${cls}`}>{statusLabel}</span></header>
+                  <article class={`card stack finding ${cls}`}>
+                    <header class="between"><h2><InlineMarkdown text={f.title} /></h2><span class={`chip verdict ${cls}`}>{statusLabel}</span></header>
                     <Show when={why}><p class="muted wrap status-why">{t("status.why", { why: serverText(why) })}</p></Show>
                     <p><code>{f.file}:{f.line}</code></p>
                     <p><InlineMarkdown text={f.explanation} /></p>
@@ -429,6 +432,8 @@ function Findings(props: { job: Job }) {
           </>
         )}
       </Show>
+      <Fixes jobId={props.job.id} />
+      <Suggestions jobId={props.job.id} />
     </div>
   );
 }
@@ -595,7 +600,7 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
               <Show when={props.job.delivered}>
                 {(d) => (
                   <div class="stack">
-                    <p class="ok">{rich("appr.delivered", { name: d().name, signer: d().signer.slice(0, 24) + "…" })}</p>
+                    <p class="ok delivered-line"><span class="seal" aria-hidden="true"><span /></span>{rich("appr.delivered", { name: d().name, signer: d().signer.slice(0, 24) + "…" })}</p>
                     <p><a class="button" href={`/api/jobs/${props.job.id}/capsule`} download="review.kkg">{t("appr.download")}</a></p>
                     <p class="muted">{rich("appr.giveRecipient")}</p>
                     <PrComment files={r().files ?? []} digest={r().digest ?? ""} />

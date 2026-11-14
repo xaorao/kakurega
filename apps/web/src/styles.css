@@ -781,3 +781,43 @@ textarea::placeholder, input::placeholder { color: var(--fog); }
   button.primary:not(:disabled):hover { box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18); }
   .tab { transition: color 0.15s, border-color 0.2s; }
 }
+
+/* PREMIUM PASS on the review screens: the thing that matters on each is the largest thing on it. */
+.steps { gap: 0; }
+.steps li { grid-template-columns: 40px auto 1fr; column-gap: 14px; align-items: center; padding: 14px 4px; border-bottom: 1px solid var(--line); font-size: 17px; }
+.steps li:last-child { border-bottom: 0; }
+.steps .mark { width: 32px; height: 32px; font-size: 15px; border-width: 2px; }
+.steps li.active { background: linear-gradient(90deg, var(--veil), transparent); border-radius: 10px; }
+.steps .sub { font-size: 14px; }
+.steps .spin { width: 16px; height: 16px; }
+.tiles.shield { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.tiles.shield .tile { padding: 16px 18px; background: var(--paper); }
+.tiles.shield .tile dd { font-size: 40px; line-height: 1; letter-spacing: -0.03em; }
+.tiles.shield .tile dt { font-size: 13.5px; margin-top: 6px; }
+.tiles.shield .tile.held { border-color: var(--ink); box-shadow: inset 0 -4px 0 var(--ink); }
+.tiles.shield .tile.planted { border-color: var(--amber); box-shadow: inset 0 -4px 0 var(--amber); }
+.prot-hidden { border-left: 4px solid var(--ink); }
+.prot-planted { border-left: 4px solid var(--amber); }
+.held-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 17px; }
+.held-row code { font-size: 17px; }
+/* what was in the file is not shown, here or to the agent: the bar of the mark stands in for it */
+.redacted { display: inline-block; width: 150px; height: 16px; border-radius: 3px; background: var(--ink); }
+.finding { border-left: 4px solid var(--line); }
+.finding.ok { border-left-color: var(--cipher); }
+.finding.bad { border-left-color: var(--redline); }
+.finding > header h2 { font-size: 19px; }
+.chip.verdict { font-size: 13.5px; padding: 3px 12px; font-weight: 500; }
+.chip.verdict.ok::before { content: "✓ "; }
+.delivered-line { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 17px; }
+.seal { flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--cipher); display: inline-flex; align-items: center; justify-content: center; box-shadow: inset 0 0 0 3px rgba(0, 0, 0, 0.12); }
+.seal > span { width: 16px; height: 5px; border-radius: 1.5px; background: var(--paper); }
+@keyframes kk-redact { from { width: 0; } to { width: 150px; } }
+@keyframes kk-seal { 0% { transform: scale(2.6); opacity: 0; } 55% { transform: scale(0.9); opacity: 1; } 100% { transform: scale(1); } }
+@media (prefers-reduced-motion: no-preference) {
+  .redacted { animation: kk-redact 0.5s cubic-bezier(0.7, 0, 0.2, 1) 0.25s both; }
+  .seal { animation: kk-seal 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+  .tiles.shield .tile { animation: kk-rise 0.4s ease both; }
+  .tiles.shield .tile:nth-child(2) { animation-delay: 0.07s; }
+  .tiles.shield .tile:nth-child(3) { animation-delay: 0.14s; }
+}
+@media (max-width: 640px) { .tiles.shield { grid-template-columns: 1fr; } .tiles.shield .tile dd { font-size: 30px; } .redacted { width: 90px; } }
