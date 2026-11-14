@@ -255,7 +255,7 @@ export function Suggestions(props: { jobId: string; heading?: Key; lead?: Key; o
             {(sg) => (
               <li class="stack">
                 <p class="mem-text">{sg.text}</p>
-                <p class="muted"><span class="chip warn">{t("mem.untrusted")}</span> {t("sug.why", { why: sg.why })}</p>
+                <p class="muted"><span class="chip warn">{t("mem.untrusted")}</span> {t(props.jobId === "browser" ? "sug.why.browser" : "sug.why", { why: sg.why })}</p>
                 <div class="actions">
                   <button class="primary" onClick={() => act(() => api.acceptSuggestion(props.jobId, sg.id), t("sug.accepted"))}>{t("sug.accept")}</button>
                   <button onClick={() => act(() => api.dismissSuggestion(props.jobId, sg.id))}>{t("sug.dismiss")}</button>

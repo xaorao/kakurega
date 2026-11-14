@@ -80,6 +80,10 @@ impl Scope<'_> {
     }
 }
 
+/// The name under which selections sent from the browser extension wait and are kept. They travel the same path as a
+/// review's suggestions, and are never called a review's.
+pub const BROWSER: &str = "browser";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     User,
@@ -2240,6 +2244,9 @@ impl Memories {
                 // a conversation's suggestions share this path; their source already says "it came from conversation …"
                 reason: if job_id.starts_with("chat-") {
                     format!("suggested in conversation {job_id}: {}", p.why)
+                } else if job_id == BROWSER {
+                    // a selection the owner sent from the browser extension is no review's suggestion
+                    format!("captured from your browser: {}", p.why)
                 } else {
                     format!("suggested by review {job_id}: {}", p.why)
                 },
@@ -2691,7 +2698,7 @@ pub struct Recalled {
 }
 
 /// Where a note came from, as a closed set an owner and a program can both rely on.
-pub const ORIGINS: [&str; 4] = ["owner", "imported", "conversation", "review"];
+pub const ORIGINS: [&str; 5] = ["owner", "imported", "conversation", "review", "browser"];
 
 impl Recalled {
     /// `owner`: written by the owner. `imported`: added from a file or another assistant (kept as untrusted text).
@@ -2701,6 +2708,7 @@ impl Recalled {
             Source::User if self.untrusted => "imported",
             Source::User => "owner",
             Source::Review(id) if id.starts_with("chat-") => "conversation",
+            Source::Review(id) if id == BROWSER => "browser",
             Source::Review(_) => "review",
         }
     }
@@ -2717,6 +2725,8 @@ fn explain(m: &Memory) -> String {
         Source::Review(id) => {
             let where_ = if id.starts_with("chat-") {
                 format!("suggested in conversation {id}")
+            } else if id == BROWSER {
+                "captured from your browser".to_string()
             } else {
                 format!("suggested by review {id}")
             };

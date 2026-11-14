@@ -2,7 +2,7 @@ import { LoadState } from "../components/LoadState";
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api, ApiError, type Method, type MethodVersion, type BundledMethod, type PackCatalog, type PackCatalogEntry } from "../api";
 import { t, type Key, locale } from "../i18n";
-import { hueOf, initials } from "../monogram";
+import { hueOf, initials, marks } from "../monogram";
 import { Lead } from "../components/Lead";
 import { when } from "../when";
 
@@ -280,6 +280,8 @@ function Proposals(props: { onChanged: (message: string) => void }) {
 /** The methods that ship with the program, by group. Adding one puts it in the list above, still waiting for approval. */
 function Bundled(props: { list: BundledMethod[]; onChanged: (message: string) => void }) {
   const [problem, setProblem] = createSignal("");
+  // two methods on the shelf never share a monogram ("code-review" and "contract-reading" are not both CR)
+  const markOf = () => { const m = marks(props.list.map((b) => b.name)); return new Map(props.list.map((b, i) => [b.name, m[i]])); };
   const groups = () => {
     const out: { group: string; items: BundledMethod[] }[] = [];
     for (const b of props.list) {
@@ -311,7 +313,7 @@ function Bundled(props: { list: BundledMethod[]; onChanged: (message: string) =>
               <For each={g.items}>
                 {(b) => (
                   <li class="skill-card" data-bundled={b.name}>
-                    <span class={`monogram hue-${hueOf(b.name)}`} aria-hidden="true">{initials(b.name)}</span>
+                    <span class={`monogram hue-${hueOf(b.name)}`} aria-hidden="true">{markOf().get(b.name) ?? initials(b.name)}</span>
                     <span class="skill-text"><strong>{b.name}</strong><span class="muted">{b.description}</span></span>
                     <span class="skill-action">
                       <Show when={!b.added} fallback={<span class="chip">{t("met.bundled.have")}</span>}>

@@ -36,6 +36,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     data = null;
   }
   if (!res.ok) throw new ApiError(res.status, data?.error?.code ?? "ERROR", data?.error?.message ?? `request failed (${res.status})`);
+  // every list of notes on screen hears that the notes changed (one added, merged, pinned, put away, forgotten), so no
+  // panel goes on showing what was true before
+  if (method !== "GET" && path.startsWith("/api/memories")) queueMicrotask(() => window.dispatchEvent(new Event("kk-memory-changed")));
   return data as T;
 }
 
@@ -400,8 +403,7 @@ export const api = {
   addMemory: (b: { text: string; level: string; reason?: string; project?: string }) => request<{ id: string; added: boolean }>("POST", "/api/memories", b),
   correctMemory: (id: string, b: { text: string; reason?: string; project?: string }) => request<{ id: string }>("POST", `/api/memories/${id}/correct`, b),
   exportTranscript: (name: string, text: string) => request<{ path: string }>("POST", "/api/exports/transcript", { name, text }),
-  // every list of notes on screen hears that a note is gone, so none of them goes on showing its text
-  forgetMemory: (id: string, reason?: string) => request<ForgetResult & { forgotten: boolean }>("POST", `/api/memories/${id}/forget`, { reason }).then((r) => { window.dispatchEvent(new Event("kk-memory-changed")); return r; }),
+  forgetMemory: (id: string, reason?: string) => request<ForgetResult & { forgotten: boolean }>("POST", `/api/memories/${id}/forget`, { reason }),
   clearTypedHistory: () => request<{ cleared?: boolean }>("POST", "/api/history/clear", {}),
   memoryHistory: (id: string) => request<{ versions: MemoryVersion[] }>("GET", `/api/memories/${id}/history`),
   fixes: (job: string) => request<{ fixes: Fix[] }>("GET", `/api/jobs/${job}/fixes`),
@@ -507,7 +509,7 @@ export const api = {
   researchFetch: (id: string, digest: string) => request<{ pages: ResearchPage[]; note: string }>("POST", `/api/research/${id}/fetch`, { approve: true, digest }),
   ask: (folder: string, question: string) => request<AskReply>("POST", "/api/ask", { folder, question }),
   codeStart: (folder: string, task: string) => request<{ id: string }>("POST", "/api/code", { folder, task }),
-  codeList: () => request<{ tasks: { id: string; task: string; state: string; created: number }[] }>("GET", "/api/code"),
+  codeList: () => request<{ tasks: { id: string; task: string; state: string; created: number; tests_fail?: boolean }[] }>("GET", "/api/code"),
   codeGet: (id: string) => request<CodeTask>("GET", `/api/code/${id}`),
   codeApply: (id: string, digest: string) => request<{ applied: boolean; files: number }>("POST", `/api/code/${id}/apply`, { digest }),
   /** Asks a running review or coding task to stop. `at_once` is false when it can only end at its own end. */

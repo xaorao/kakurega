@@ -1034,6 +1034,12 @@ fn sv03_folders_outside_the_allowed_roots_are_refused() {
         json!({"repo": repo.to_string_lossy(), "recipient": ""}),
     );
     assert_eq!(code, 400);
+    // a name of spaces only is no name either: it would print as nothing on the release
+    let (code, _) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "   "}),
+    );
+    assert_eq!(code, 400, "a recipient of only spaces is refused");
     // a name with a hidden mark from copying is refused in words, not taken for a full disk
     let (code, v) = w.post(
         "/api/jobs",

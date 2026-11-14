@@ -1,3 +1,4 @@
+import { asSentence } from "../serverText";
 import { Lead } from "../components/Lead";
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { ChosenFolder, shortPath } from "../components/ChosenFolder";
@@ -126,7 +127,7 @@ export function CodeTask() {
           <section class="card stack" aria-labelledby="h-code-result" aria-busy={running()}>
             <h2 id="h-code-result">{t("code.result")} <span class="muted">{c().id}</span></h2>
             <ul class="plain stack" aria-live="polite">
-              <For each={c().progress}>{(p) => <li class="muted">{p}</li>}</For>
+              <For each={c().progress}>{(p) => <li class="muted">{asSentence(p)}</li>}</For>
             </ul>
             <Show when={c().state === "running"}>
               <div class="actions">
@@ -134,7 +135,7 @@ export function CodeTask() {
                 <Show when={stopping()}><span role="status" class="muted">{t("work.stoppingCode")}</span></Show>
               </div>
             </Show>
-            <Show when={c().state === "failed"}><p role="alert" class="bad">{t("code.failed")} {c().error}</p></Show>
+            <Show when={c().state === "failed"}><p role="alert" class="bad">{t("code.failed")} {asSentence(c().error ?? "")}</p></Show>
             <Show when={c().state === "attention"}><p role="alert" class="bad">{t("code.attention", { list: c().attention.join(", ") })}</p></Show>
             <Show when={done(c().state) && c().state !== "failed"}>
               <Show when={c().ended}><p>{c().ended}</p></Show>
@@ -179,7 +180,11 @@ export function CodeTask() {
               <Show when={note()}><p role="status" class="ok">{note()}</p></Show>
               <div class="actions">
                 <Show when={c().state === "ready" && c().can_apply && !confirming()}>
-                  <button class="primary" type="button" onClick={() => setConfirming(true)}>{t("code.apply")}</button>
+                  {/* a patch the kernel saw fail the tests is never the main thing to press, and its button says so */}
+                  <Show when={c().tests?.ran !== false && c().tests?.passed === false} fallback={<button class="primary" type="button" onClick={() => setConfirming(true)}>{t("code.apply")}</button>}>
+                    <p class="bad">{t("code.failingAdvice")}</p>
+                    <button type="button" onClick={() => setConfirming(true)}>{t("code.applyFailing")}</button>
+                  </Show>
                 </Show>
                 <Show when={c().state === "ready" && !c().can_apply && c().changes.length > 0}><p class="bad">{t("code.cannot")}</p></Show>
                 <Show when={confirming()}>
@@ -208,7 +213,7 @@ export function CodeTask() {
               {(x) => (
                 <li>
                   <button type="button" class="link" onClick={() => { setNote(""); setConfirming(false); follow(x.id); }}>{t("code.open")}</button>{" "}
-                  <code>{x.id}</code> <span class="chip">{stateWord(x.state)}</span> {x.task}
+                  <code>{x.id}</code> <span class={x.tests_fail && x.state === "ready" ? "chip bad" : "chip"}>{x.tests_fail && x.state === "ready" ? t("code.state.readyFailing") : stateWord(x.state)}</span> {x.task}
                 </li>
               )}
             </For>

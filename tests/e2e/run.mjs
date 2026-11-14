@@ -1358,6 +1358,7 @@ try {
   await page.screenshot({ path: join(shots, "11d-memory-disagree.png"), fullPage: true });
   await conf.getByRole("button", { name: /^Keep the note that begins Vendor payments run every Thursd/ }).click();
   await conf.getByText("Vendor payments run every Tuesday evening").waitFor({ state: "detached" });
+  await page.locator(".mem", { hasText: "every Tuesday evening" }).first().waitFor({ state: "detached" });
   check("keeping one removes the other from the list of notes and the disagreement is gone", (await page.locator(".mem", { hasText: "every Tuesday evening" }).count()) === 0 && (await page.locator(".mem", { hasText: "every Thursday evening" }).count()) === 1);
   await page.locator(".mem", { hasText: "every Thursday evening" }).getByRole("button", { name: "History" }).click();
   await page.locator(".mem", { hasText: "every Thursday evening" }).getByText("every Tuesday evening").waitFor();
@@ -1554,7 +1555,7 @@ try {
   check("a file over 8 MB is refused by the page with its reason and nothing is listed", (await page.locator(".file-chip").count()) === 0);
   // a seventh file is not added
   await page.locator('input[type="file"]').setInputFiles(Array.from({ length: 6 }, (_, i) => ({ name: `f${i}.txt`, mimeType: "text/plain", buffer: Buffer.from(`file ${i}\n`) })));
-  await page.getByText("At most 5 files go with one message; 1 were not added.").waitFor();
+  await page.getByText("At most 5 files go with one message; 1 was not added.").waitFor();
   check("at most five files are added and the rest are counted", (await page.locator(".file-chip").count()) === 5);
   for (let i = 0; i < 5; i++) await page.locator(".file-chip").first().getByRole("button", { name: "Remove" }).click();
   await page.locator(".file-chip").waitFor({ state: "detached" });

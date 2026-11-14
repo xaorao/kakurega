@@ -84,6 +84,8 @@ let unsaved: Shown[] = [];
 let unsavedLevel = 0;
 // which of its answers is the latest one, so "What was sent to the model" is still offered under it
 let unsavedAnswered = -1;
+/** True when the screen was left while an answer was being written: said once when the screen is opened again. */
+let leftWhileAnswering = false;
 
 export function Chat() {
   const [turns, setTurns] = createSignal<Shown[]>(unsaved);
@@ -292,7 +294,7 @@ export function Chat() {
   const addFiles = async (incoming: File[]) => {
     if (incoming.length === 0) return;
     const { take, over } = room(files().length, incoming);
-    const problems: string[] = over > 0 ? [t("files.tooMany", { n: over })] : [];
+    const problems: string[] = over > 0 ? [over === 1 ? t("files.tooMany.one") : t("files.tooMany", { n: over })] : [];
     // said at once, before the first file is even fingerprinted: from this moment Send waits for the files
     if (take[0]) setReading(t("files.reading", { name: take[0].name }));
     for (const f of take) {
@@ -423,6 +425,9 @@ export function Chat() {
   onMount(() => {
     const stopKey = (e: KeyboardEvent) => {
       if (!busy() || e.target === box) return;
+      // Esc that closes something else (the command palette, the shortcut list, a menu that took the key) is not a
+      // request to stop the answer
+      if (e.key === "Escape" && (e.defaultPrevented || document.querySelector('[role="dialog"], dialog[open]'))) return;
       if (e.key === "Escape" || (e.ctrlKey && (e.key === "g" || e.key === "G"))) {
         e.preventDefault();
         abort?.abort();
@@ -436,7 +441,22 @@ export function Chat() {
   const chars = () => Array.from(text()).length;
   let heldLevel = unsaved.length > 0 ? unsavedLevel : 0;
   createEffect(() => { if (session() === null) unsaved = turns(); });
-  onCleanup(() => { if (session() === null) { unsavedLevel = heldLevel; unsavedAnswered = answeredAt(); } });
+  onCleanup(() => {
+    // Leaving the screen while an answer is being written stops it (nothing would be there to receive it). The question
+    // goes back to the box as a draft, and on return the screen says so, instead of a question left with no answer.
+    if (busy()) {
+      const asked = turns().at(-1);
+      abort?.abort();
+      if (session() === null && asked?.role === "user") {
+        unsaved = turns().slice(0, -1);
+        saveDraft(draftKey(null), asked.content);
+      }
+      leftWhileAnswering = true;
+    }
+    if (session() === null) { unsavedLevel = heldLevel; unsavedAnswered = answeredAt(); }
+  });
+  const [leftNote, setLeftNote] = createSignal(leftWhileAnswering);
+  leftWhileAnswering = false;
   const show = (next: string | null, nextTurns: Shown[], summary = "") => {
     if (busy()) abort?.abort();
     view++;
@@ -832,6 +852,9 @@ export function Chat() {
     const message = text().trim();
     // a file still being read is not attached yet: sending now would leave it out without a word, so the message waits
     if (!message || busy() || reading()) return;
+    // over the limit the Send button is off, and Enter must not get round it
+    if (Array.from(message).length > MAX_CHARS) return;
+    setLeftNote(false);
     const line = parseLine(message);
     if (line) {
       setText("");
@@ -1190,6 +1213,7 @@ export function Chat() {
               <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
               <Show when={sendFailed() && error() && !busy() && text().trim().length > 0}><button type="button" onClick={() => void send()}>{t("chat.retry")}</button></Show>
               <Show when={recovered()}><span role="status" class="muted">{t("chat.recovered")}</span></Show>
+              <Show when={leftNote()}><span role="status" class="muted">{t("chat.leftMidAnswer")}</span></Show>
 
             </span>
           </div>

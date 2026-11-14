@@ -81,6 +81,13 @@ export function Explore() {
     void read();
     timer = window.setInterval(read, 1000);
   };
+  // A question still being answered when this screen is opened (it was asked, then the screen was left) is picked up
+  // again: it is shown with its progress, and Ask waits for it, instead of a second question being refused for a
+  // reason the screen does not show.
+  createEffect(() => {
+    const going = (earlier()?.questions ?? []).find((q) => q.state === "running");
+    if (going && current() === null && timer === undefined) follow(going.id);
+  });
   const start = async (e: Event) => {
     e.preventDefault();
     setError("");

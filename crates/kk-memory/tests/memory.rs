@@ -546,6 +546,39 @@ fn me13_listing_is_newest_first_label_gated_and_the_owner_clearance_sees_every_c
 }
 
 #[test]
+fn me_use01_a_selection_from_the_browser_is_never_called_a_reviews_suggestion() {
+    let m = mem(&dir());
+    let lbl = Label::new(Level::Internal).untrusted();
+    let p = m
+        .propose(
+            5,
+            kk_memory::BROWSER,
+            "The staging cluster lives in eu-west-2",
+            "you selected it on https://wiki.example.com",
+            &lbl,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        m.accept_proposal(6, &p, kk_memory::BROWSER, None),
+        Ok(Remembered::Added(_))
+    ));
+    let got = m.recall("staging cluster", &internal(), 9, 5).unwrap();
+    assert_eq!(got.len(), 1);
+    assert!(got[0].untrusted, "text from a web page stays untrusted");
+    assert_eq!(got[0].origin(), "browser");
+    assert!(
+        got[0].why.contains("captured from your browser")
+            && got[0]
+                .why
+                .contains("you selected it on https://wiki.example.com")
+            && !got[0].why.contains("review"),
+        "{}",
+        got[0].why
+    );
+}
+
+#[test]
 fn me14_a_suggestion_never_becomes_a_memory_until_the_owner_accepts_and_keeps_its_untrusted_label()
 {
     let m = mem(&dir());

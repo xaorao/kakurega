@@ -64,7 +64,7 @@ function Item(props: { m: MemoryItem; pinned?: boolean; onChange: (msg?: string)
           <span class="chip">{t(`mem.level.${props.m.level}` as Key)}</span>{" "}
           <Show when={props.m.untrusted}><span class="chip warn">{t("mem.untrusted")}</span>{" "}</Show>
           <Show when={props.m.instruction_like}><span class="chip warn">{t("mem.instructionLike")}</span>{" "}</Show>
-          <Show when={props.m.origin === "imported" || props.m.origin === "conversation" || props.m.origin === "review"}><span class="chip">{t(`mem.origin.${props.m.origin}` as Key)}</span>{" "}</Show>
+          <Show when={props.m.origin === "imported" || props.m.origin === "conversation" || props.m.origin === "review" || props.m.origin === "browser"}><span class="chip">{t(`mem.origin.${props.m.origin}` as Key)}</span>{" "}</Show>
           <Show when={props.m.project}><span class="chip">{t("mem.project", { name: props.m.project ?? "" })}</span>{" "}</Show>
           <Show when={props.pinned}><span class="chip">{t("mem.pinned")}</span>{" "}</Show>
           <Show when={(props.m.uses ?? 0) > 0}><span class="chip">{props.m.uses === 1 ? t("mem.used.one") : t("mem.used.many", { n: String(props.m.uses ?? 0) })}</span>{" "}</Show>
@@ -702,7 +702,7 @@ function ReviewSources(props: { onChange: (msg?: string) => void }) {
           <For each={sources()} fallback={<li class="muted">{sources.loading ? t("review.loading") : t("mem.src.none")}</li>}>
             {(s) => (
               <li class="card stack">
-                <p><code>{s.job}</code> <span class="muted">{t("mem.src.counts", { notes: s.notes, sugg: s.suggestions })}</span></p>
+                <p><Show when={s.job === "browser"} fallback={<code>{s.job}</code>}><strong>{t("mem.src.browser")}</strong></Show> <span class="muted">{t("mem.src.counts", { notes: s.notes, sugg: s.suggestions })}</span></p>
                 <div class="actions">
                   <Show when={confirming() !== s.job} fallback={
                     <span class="confirm" role="group">
@@ -711,7 +711,7 @@ function ReviewSources(props: { onChange: (msg?: string) => void }) {
                       <button onClick={() => setConfirming("")}>{t("mem.cancel")}</button>
                     </span>
                   }>
-                    <button type="button" onClick={() => setConfirming(s.job)}>{t("mem.src.forget")}</button>
+                    <button type="button" onClick={() => setConfirming(s.job)}>{t(s.job === "browser" ? "mem.src.forget.browser" : "mem.src.forget")}</button>
                   </Show>
                 </div>
               </li>
@@ -801,7 +801,7 @@ export function Memory() {
           <label for="mem-f-origin">{t("mem.filter.origin")}</label>
           <select id="mem-f-origin" value={fOrigin()} onChange={(e) => setFOrigin(e.currentTarget.value)}>
             <option value="">{t("mem.filter.any")}</option>
-            <For each={["owner", "imported", "conversation", "review"]}>{(o) => <option value={o}>{t(`mem.origin.${o}` as Key)}</option>}</For>
+            <For each={["owner", "imported", "conversation", "review", "browser"]}>{(o) => <option value={o}>{t(`mem.origin.${o}` as Key)}</option>}</For>
           </select>
           <Show when={Object.keys(stats()?.by_project ?? {}).length > 0}>
             <label for="mem-f-project">{t("mem.filter.project")}</label>

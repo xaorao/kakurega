@@ -776,6 +776,10 @@ const FORWARDED_CODES: &[&str] = &[
     "NOT_DELIVERED",
     "BAD_KEY",
     "DENIED",
+    // fixed sentences an agent needs to know what to do next: wait, tell the owner, or stop asking
+    "ALREADY_REQUESTED",
+    "NOT_READY",
+    "NOTHING_TO_RELEASE",
 ];
 
 /// A review's note is written for its owner and can hold a path or a program's own error line. An agent gets it only when
@@ -1711,6 +1715,17 @@ mod forwarded_error_tests {
             forwardable(&e(json!("NO_JOB"), "no such review")),
             "no such review"
         );
+        // what an agent must know to act: the owner refused (stop asking), one is waiting (wait), nothing to send
+        for (code, said) in [
+            (
+                "ALREADY_REQUESTED",
+                "this release was refused by its owner; only the owner can ask again",
+            ),
+            ("ALREADY_REQUESTED", "an approval is already waiting"),
+            ("NOT_READY", "the review has not finished"),
+        ] {
+            assert_eq!(forwardable(&e(json!(code), said)), said);
+        }
         // the limit on reviews running at once: the agent is told to wait and try again, in the service's own words
         assert_eq!(
             forwardable(&e(

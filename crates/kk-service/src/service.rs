@@ -1399,6 +1399,8 @@ impl Service {
         if let Some((name, _)) = self.floor_above_route(named.as_deref(), Some(&dir)) {
             return Err(projects::floor_words(&name));
         }
+        // a name of spaces only is no name: it would print as nothing on the release ("for ·")
+        let recipient = recipient.trim();
         if recipient.is_empty()
             || recipient.chars().count() > 128
             || recipient.chars().any(|c| c.is_control())
@@ -6823,7 +6825,8 @@ async fn code_list(axum::Extension(svc): Svc) -> Json<Value> {
         .take(50)
         .map(|t| {
             let v = crate::coding::view(t);
-            json!({"id": v["id"], "task": v["task"], "state": v["state"], "created": v["created"]})
+            // whether the kernel's own run of the tests failed, so the list does not call such a patch simply ready
+            json!({"id": v["id"], "task": v["task"], "state": v["state"], "created": v["created"], "tests_fail": v["tests"]["ran"] == true && v["tests"]["passed"] == false})
         })
         .collect();
     Json(json!({"tasks": list}))
