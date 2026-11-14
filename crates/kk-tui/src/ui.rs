@@ -593,7 +593,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
             )));
         } else {
             prompt.push(Line::from(Span::styled(
-                "PgUp/PgDn scroll the release. Esc refuses and records the refusal.",
+                "PgUp/PgDn scroll the release. Esc or Ctrl-C refuses and records the refusal; /approve asks again.",
                 th.dim(),
             )));
         }

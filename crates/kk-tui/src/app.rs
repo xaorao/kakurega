@@ -2611,12 +2611,12 @@ impl App {
                     String::new(),
                 ];
                 for name in cmd::NAMES {
-                    let usage = cmd::usage(name);
+                    let usage = cmd::listed(name);
                     let what = cmd::describe(name);
                     if usage.chars().count() <= 30 {
                         lines.push(format!("{usage:<30}  {what}"));
                     } else {
-                        lines.push(usage.to_string());
+                        lines.push(usage.clone());
                         lines.push(format!("{:<30}  {what}", ""));
                     }
                 }
@@ -4956,7 +4956,7 @@ impl App {
                 self.say(
                     Kind::Warn,
                     if ok {
-                        "Refused. Nothing was approved and nothing was sent."
+                        "Refused. Nothing was approved and nothing was sent. The refusal is in the signed log; /approve asks again for the same files."
                     } else {
                         "The refusal could not be recorded; nothing was approved."
                     },
@@ -7266,7 +7266,7 @@ impl App {
                     } else if body["route"]["simulated"] == true {
                         "test model"
                     } else {
-                        "private, on this computer"
+                        where_answered(&body["route"])
                     },
                     body["notes_used"]
                 ))];
@@ -8121,4 +8121,15 @@ fn money(currency: &str, amount: f64) -> String {
         format!("{amount:.4}")
     };
     format!("{} {n}", clean(currency))
+}
+
+/// Where an answer came from, in the footer under it: said from the route the service reports, never assumed.
+fn where_answered(route: &Value) -> &'static str {
+    if route["stays_here"] == true {
+        "private, on this computer"
+    } else if route["class"] == "verified_tee" {
+        "confidential hardware elsewhere, proof checked first; not on this computer"
+    } else {
+        "a model elsewhere, not on this computer; nothing here proves who can read it"
+    }
 }

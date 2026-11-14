@@ -6893,9 +6893,34 @@ fn tu_ns02_a_reply_where_no_model_was_asked_says_so_and_shows_no_model_figures()
     app.handle(ok(
         &r[0],
         200,
-        json!({"reply": "ok", "route": {"id": "local", "simulated": false}, "notes_used": 1}),
+        json!({"reply": "ok", "route": {"id": "local", "simulated": false, "stays_here": true}, "notes_used": 1}),
     ));
     assert!(text(&app).contains("private, on this computer"));
+    // an answer from confidential hardware elsewhere, or from an ordinary service, is never called "on this computer"
+    let mut near = booted();
+    let r = enter(&mut near, "a question");
+    near.handle(ok(
+        &r[0],
+        200,
+        json!({"reply": "ok", "route": {"id": "near", "class": "verified_tee", "simulated": false, "stays_here": false}, "notes_used": 0}),
+    ));
+    let t = text(&near);
+    assert!(
+        t.contains("confidential hardware elsewhere") && !t.contains("private, on this computer"),
+        "{t}"
+    );
+    let mut outside = booted();
+    let r = enter(&mut outside, "a question");
+    outside.handle(ok(
+        &r[0],
+        200,
+        json!({"reply": "ok", "route": {"id": "outside", "class": "public", "simulated": false, "stays_here": false}, "notes_used": 0}),
+    ));
+    let t = text(&outside);
+    assert!(
+        t.contains("a model elsewhere") && !t.contains("private, on this computer"),
+        "{t}"
+    );
 }
 
 fn at_dir(tag: &str) -> std::path::PathBuf {

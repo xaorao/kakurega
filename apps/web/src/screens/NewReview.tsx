@@ -4,7 +4,7 @@ import { LoadState } from "../components/LoadState";
 import { ChosenFolder } from "../components/ChosenFolder";
 import { SampleCard } from "../components/SampleCard";
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
-import { api, ApiError, type ChangeView, type Config, type Readiness } from "../api";
+import { api, ApiError, type ChangeView, type Config, type Readiness, stateOf } from "../api";
 import { rich, t } from "../i18n";
 import { askFromStart } from "../composer";
 
@@ -64,6 +64,8 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
   };
   const ranges = (l: [number, number][]) => l.slice(0, 8).map(([a, b]) => (a === b ? `${a}` : `${a}-${b}`)).join(", ") + (l.length > 8 ? ", …" : "");
   const chosen = () => listing()?.path ?? "";
+  /** The folder shown is the owner's whole home folder: a review of it is not offered, a project inside it is. */
+  const wholeHome = () => !!props.config.home && chosen().replace(/\/+$/, "") === props.config.home.replace(/\/+$/, "");
   const [ready, { refetch }] = createResource<Readiness | null>(() => api.readiness().catch(() => null));
   const blocked = () => ready()?.ready === false;
   const [repairError, setRepairError] = createSignal("");
@@ -183,7 +185,7 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
           <li><a class="way" href="#/team"><WayIcon d="M6 7.500a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM2.500 13c0-2 1.600-3.500 3.500-3.500S9.500 11 9.500 13M11 4a1.800 1.800 0 0 1 0 3.500M11.500 9.700c1.200.400 2 1.600 2 3.300" /><span class="way-text"><strong>{t("nav.team")}</strong><span class="muted">{t("start.way.team.sub")}</span></span></a></li>
         </ul>
         <Show when={(recent() ?? []).length > 0}>
-          <p class="start-recent"><span class="muted">{t("start.recent")}</span><For each={recent()}>{(j) => <a href={`#/job/${j.id}`}><span class={`state ${j.state}`} aria-hidden="true" />{j.repo.split("/").pop()} <span class="muted">· {t(`state.${j.state}` as never)}</span></a>}</For></p>
+          <p class="start-recent"><span class="muted">{t("start.recent")}</span><For each={recent()}>{(j) => <a href={`#/job/${j.id}`}><span class={`state ${j.state}`} aria-hidden="true" />{j.repo.split("/").pop()} <span class="muted">· {t(`state.${stateOf(j)}` as never)}</span></a>}</For></p>
         </Show>
         <form class="start-ask" onSubmit={askNow}>
           <label class="visually-hidden" for="start-ask">{t("start.askLabel")}</label>
@@ -259,7 +261,8 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
         <p class="muted">{t("new.recipient.help")}</p>
       </div>
       <div class="actions">
-        <button class="primary" disabled={busy() || blocked() || !chosen() || recipient().trim().length === 0 || (what() === "change" && base().trim().length === 0)} onClick={start}>{t("new.start")}</button>
+        <button class="primary" disabled={busy() || blocked() || !chosen() || wholeHome() || recipient().trim().length === 0 || (what() === "change" && base().trim().length === 0)} onClick={start}>{t("new.start")}</button>
+        <Show when={wholeHome()}><span class="muted" role="status">{t("new.wholeHome")}</span></Show>
         <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
       </div>
       <Show when={ready()?.ready !== false}>{readiness()}</Show>

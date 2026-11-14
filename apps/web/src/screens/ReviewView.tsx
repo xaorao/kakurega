@@ -8,7 +8,7 @@ import { baseName, filterFiles, groupByDir, languageOf, lineCount, MAX_SHOWN } f
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { clockOffset, formatSpan, timeLeft } from "../expiry";
 import { DiffView } from "../components/DiffView";
-import { api, ApiError, type Config, type Fix, type Job } from "../api";
+import { api, ApiError, stateOf, type Config, type Fix, type Job } from "../api";
 import { locale, rich, t, type Key } from "../i18n";
 import { InlineMarkdown } from "../components/Markdown";
 
@@ -97,7 +97,7 @@ function Progress(props: { job: Job; go: (tab: "findings" | "release") => void }
       </Show>
       <Show when={props.job.state === "failed"}>
         <li class="fail"><span class="mark">!</span><span>{t("progress.stopped")}</span><span class="sub">{props.job.note}</span>
-          <span class="actions"><button type="button" onClick={async () => { setAgainError(""); try { const r = await api.startJob(props.job.repo, props.job.recipient); location.hash = `#/job/${r.id}`; } catch (e) { /* the old review stays as it was; the person is told why nothing started */ setAgainError(e instanceof ApiError && e.code === "BUSY" ? t("new.busy") : t("progress.againFailed", { why: e instanceof ApiError ? e.message : t("new.startError") })); } }}>{t("progress.again")}</button><Show when={againError()}><span class="sub" role="alert">{againError()}</span></Show></span>
+          <span class="actions"><button type="button" onClick={async () => { setAgainError(""); try { const r = await api.startJob(props.job.repo, props.job.recipient, props.job.change?.base_name || undefined); location.hash = `#/job/${r.id}`; } catch (e) { /* the old review stays as it was; the person is told why nothing started */ setAgainError(e instanceof ApiError && e.code === "BUSY" ? t("new.busy") : t("progress.againFailed", { why: e instanceof ApiError ? e.message : t("new.startError") })); } }}>{t("progress.again")}</button><Show when={againError()}><span class="sub" role="alert">{againError()}</span></Show></span>
         </li>
       </Show>
     </ol>
@@ -105,7 +105,7 @@ function Progress(props: { job: Job; go: (tab: "findings" | "release") => void }
 }
 
 function Protected(props: { job: Job }) {
-  const [audit] = createResource(() => props.job.id, (id) => api.audit(id).then((r) => r.audit));
+  const [audit] = createResource(() => (props.job.state === "running" ? false : props.job.id), (id) => api.audit(id).then((r) => r.audit).catch(() => null));
   const s = () => props.job.summary;
   return (
     <div class="stack">
@@ -138,7 +138,7 @@ function Protected(props: { job: Job }) {
             </div>
             <div class="card stack">
               <h2>{t("prot.dataWent")}</h2>
-              <For each={sum().route}>{(r) => <p>{rich("prot.route", { model: r.model, route: r.class.replace("_", " "), endpoint: r.endpoint })}{r.simulated ? <span class="chip warn">{t("prot.simulated")}</span> : <span class="chip ok">{t("prot.real")}</span>}</p>}</For>
+              <For each={sum().route}>{(r) => <p>{rich("prot.route", { model: r.model, route: t(r.class === "verified_tee" ? "out.to.tee" : r.class === "device_only" ? "out.to.here" : "out.to.public"), endpoint: r.endpoint })}{r.simulated ? <span class="chip warn">{t("prot.simulated")}</span> : <span class="chip ok">{t("prot.real")}</span>}</p>}</For>
               <Show when={sum().final_taint}>{(t_) => <p>{rich("prot.taint", { level: t_().level, untrusted: t_().integrity === "untrusted" ? t("prot.untrusted") : "" })}</p>}</Show>
               <p class="muted">{rich("prot.manifest", { digest: sum().manifest_digest.slice(0, 16), count: sum().files_in_manifest })}</p>
             </div>
@@ -147,7 +147,7 @@ function Protected(props: { job: Job }) {
       </Show>
       <div class="card stack">
         <h2>{t("prot.requests")}</h2>
-        <Show when={audit()} fallback={<p class="muted">{t("review.loading")}</p>}>
+        <Show when={audit()} fallback={<p class="muted">{t(props.job.state === "running" || !audit.loading ? "review.when" : "review.loading")}</p>}>
           {(a) => (
             <div class="table-scroll" tabindex="0" role="region" aria-label={t("prot.requests")}>
             <table>
@@ -468,7 +468,7 @@ function Findings(props: { job: Job }) {
 /** A sentence the service wrote, in the page's language when the page knows it. */
 const serverText = (x: string) => serverTextIn(x, locale() === "en", (k, p) => t(k as Key, p));
 
-function ReleaseTab(props: { job: Job; onChange: () => void }) {
+function ReleaseTab(props: { job: Job; config: Config; onChange: () => void }) {
   const [release, { refetch }] = createResource(() => props.job.id, (id) => api.release(id));
   const [approval, setApproval] = createSignal<{ state: string; digest?: string; approval?: string }>({ state: "none" });
   const [how, setHow] = createSignal("");
@@ -622,14 +622,14 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
               </Show>
               <Show when={approval().state === "waiting"}>
                 <p>{rich("appr.waiting")}</p>
-                <pre class="cmd" tabindex="0"><code>kaku approve {approval().approval}</code></pre>
-                <p class="muted">{t("appr.typeDigest", { how: how() })}</p>
+                <pre class="cmd" tabindex="0"><code>{props.config.profile ? `kaku --profile ${props.config.profile} approve ${approval().approval}` : props.config.data_dir ? `kaku approve ${approval().approval} --data-dir "${props.config.data_dir}"` : `kaku approve ${approval().approval}`}</code></pre>
+                <p class="muted">{t("appr.typeDigest")}</p>
               </Show>
               <Show when={approval().state === "approved"}>
                 <p class="ok">{t("appr.approved")}</p>
                 <button class="primary" disabled={busy() || expired()} onClick={deliver}>{t("appr.deliver")}</button>
               </Show>
-              <Show when={approval().state === "denied" || approval().state === "revoked"}><p class="bad">{t("appr.refused")}</p></Show>
+              <Show when={approval().state === "denied" || approval().state === "revoked"}><p class="bad">{t("appr.refused")}</p><p class="muted">{t("appr.againHelp")}</p><button disabled={busy() || expired() || r().disclosure?.verdict === "block"} onClick={ask}>{t("appr.again")}</button></Show>
               <Show when={approval().state === "uncertain"}><p class="warn">{t("appr.uncertain")}</p></Show>
               <Show when={props.job.delivered}>
                 {(d) => (
@@ -656,7 +656,11 @@ export function ReviewView(props: { id: string; config: Config; onUpdate?: () =>
   const [job, setJob] = createSignal<Job | null>(null);
   const [tab, setTab] = createSignal<Tab>("progress");
   const [auto, setAuto] = createSignal(true);
+  const [missing, setMissing] = createSignal(false);
+  // read by the loader outside any effect, so finding out that a review is missing does not start the loading again
+  let gone = false;
   const load = async () => {
+    if (gone) return;
     try {
       const j = await api.job(props.id);
       if (job()?.state !== j.state || job()?.delivered?.name !== j.delivered?.name) props.onUpdate?.();
@@ -665,12 +669,15 @@ export function ReviewView(props: { id: string; config: Config; onUpdate?: () =>
         setAuto(false);
         setTab(j.state === "ready" ? "release" : j.state === "nothing_to_release" ? "findings" : "progress");
       }
-    } catch {
-      /* ignore transient errors */
+    } catch (e) {
+      // a review that does not exist is said once and not asked for again; anything else is tried again
+      if (e instanceof ApiError && e.status === 404) { gone = true; setMissing(true); }
     }
   };
   createEffect(() => {
     props.id;
+    gone = false;
+    setMissing(false);
     setAuto(true);
     setTab("progress");
     setJob(null);
@@ -687,13 +694,13 @@ export function ReviewView(props: { id: string; config: Config; onUpdate?: () =>
   });
   const tabs: [Tab, Key][] = [["progress", "tab.progress"], ["protected", "tab.protected"], ["source", "tab.source"], ["findings", "tab.findings"], ["release", "tab.release"]];
   return (
-    <Show when={job()} fallback={<p class="muted">{t("review.loading")}</p>}>
+    <Show when={job()} fallback={<Show when={missing()} fallback={<p class="muted">{t("review.loading")}</p>}><section class="stack"><h1>{t("review.missing")}</h1><p class="muted">{t("review.missingBody", { id: props.id })}</p><p><a class="button" href="#/">{t("review.missingBack")}</a></p></section></Show>}>
       {(j) => (
         <section class="stack review" aria-labelledby="h-job">
           <header class="between review-head">
             <div>
               <h1 id="h-job">{j().repo.split("/").pop()}</h1>
-              <p class="muted crumb">{t("review.forRecipient", { recipient: j().recipient })}<span class={`state-text ${j().state}`}>{t(`state.${j().state}` as Key)}</span></p>
+              <p class="muted crumb">{t("review.forRecipient", { recipient: j().recipient })}<span class={`state-text ${j().state}`}>{t(`state.${stateOf(j())}` as Key)}</span></p>
             </div>
           </header>
           <div
@@ -723,7 +730,7 @@ export function ReviewView(props: { id: string; config: Config; onUpdate?: () =>
             <Show when={tab() === "protected"}><Protected job={j()} /></Show>
             <Show when={tab() === "source"}><Show when={j().summary} fallback={<p class="muted">{t("review.when")}</p>}><Source job={j()} /></Show></Show>
             <Show when={tab() === "findings"}><Show when={j().summary} fallback={<p class="muted">{t("review.when")}</p>}><Findings job={j()} /></Show></Show>
-            <Show when={tab() === "release"}><Show when={j().summary} fallback={<p class="muted">{t("review.when")}</p>}><ReleaseTab job={j()} onChange={load} /></Show></Show>
+            <Show when={tab() === "release"}><Show when={j().summary} fallback={<p class="muted">{t("review.when")}</p>}><ReleaseTab job={j()} config={props.config} onChange={load} /></Show></Show>
           </div>
         </section>
       )}

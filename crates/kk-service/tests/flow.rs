@@ -835,6 +835,132 @@ fn sv01_the_whole_journey_over_http_ends_in_a_capsule_that_verifies() {
     );
 }
 
+#[test]
+fn sv_use01_what_real_use_found_a_refusal_can_be_asked_again_by_the_owner_only_and_a_delivered_release_is_not_counted_against_itself(
+) {
+    let (c, w, repo, _root, _svc) = boot("use01", true);
+    let token = c.security.admin_token().to_string();
+    let base = format!("http://127.0.0.1:{}", c.addr.port());
+    // a recipient's length is counted in characters: 128 of a three-byte script are accepted, 129 are not
+    let deva = "\u{0915}".repeat(128);
+    let (code, v) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": deva}),
+    );
+    assert_eq!(code, 202, "{v}");
+    let first = v["id"].as_str().unwrap().to_string();
+    wait_for(&w, &first, &["ready"]);
+    let (code, v) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "\u{0915}".repeat(129)}),
+    );
+    assert_eq!(code, 400, "{v}");
+    // the owner's whole home folder is never reviewed, whatever the roots allow
+    if let Ok(home) = std::env::var("HOME") {
+        let (code, v) = w.post("/api/jobs", json!({"repo": home, "recipient": "x"}));
+        assert_eq!(code, 400, "{v}");
+    }
+
+    let (code, started) = w.post(
+        "/api/jobs",
+        json!({"repo": repo.to_string_lossy(), "recipient": "acme-audit"}),
+    );
+    assert_eq!(code, 202, "{started}");
+    let id = started["id"].as_str().unwrap().to_string();
+    wait_for(&w, &id, &["ready"]);
+    let (_, rel) = w.get(&format!("/api/jobs/{id}/release"));
+    let digest = rel["digest"].as_str().unwrap().to_string();
+    let before = rel["disclosure"]["releases_before"].as_u64().unwrap();
+    let (code, req) = w.post(&format!("/api/jobs/{id}/approval"), json!({}));
+    assert_eq!(code, 202, "{req}");
+    let refused = req["approval"].as_str().unwrap().to_string();
+    let (code, _) = admin(
+        &base,
+        &token,
+        "POST",
+        &format!("/admin/approvals/{refused}/deny"),
+        None,
+    );
+    assert_eq!(code, 200);
+    assert_eq!(
+        w.get(&format!("/api/jobs/{id}/approval")).1["state"],
+        "denied"
+    );
+    // an agent's request cannot replace what the owner refused
+    let (code, v) = admin(
+        &base,
+        &token,
+        "POST",
+        &format!("/admin/jobs/{id}/approval"),
+        Some(json!({})),
+    );
+    assert_eq!(code, 409, "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("refused by its owner"),
+        "{v}"
+    );
+    // the owner asks again, from the page or from `kaku approve job-N`, and gets a new approval for the same files
+    let (code, again) = w.post(&format!("/api/jobs/{id}/approval"), json!({}));
+    assert_eq!(code, 202, "{again}");
+    let second = again["approval"].as_str().unwrap().to_string();
+    assert_ne!(second, refused);
+    assert_eq!(
+        w.get(&format!("/api/jobs/{id}/approval")).1["state"],
+        "waiting"
+    );
+    // while one waits, nobody gets another
+    assert_eq!(
+        w.post(&format!("/api/jobs/{id}/approval"), json!({})).0,
+        409
+    );
+    assert_eq!(
+        admin(
+            &base,
+            &token,
+            "POST",
+            &format!("/admin/jobs/{id}/approval/owner"),
+            Some(json!({}))
+        )
+        .0,
+        409
+    );
+    // the refused approval stays refused
+    let (code, v) = admin(
+        &base,
+        &token,
+        "POST",
+        &format!("/admin/approvals/{refused}/approve"),
+        Some(json!({"ack": &digest[..12]})),
+    );
+    assert_ne!(code, 200, "{v}");
+    let (code, ok) = admin(
+        &base,
+        &token,
+        "POST",
+        &format!("/admin/approvals/{second}/approve"),
+        Some(json!({"ack": &digest[..12]})),
+    );
+    assert_eq!(code, 200, "{ok}");
+    let (code, delivered) = w.post(&format!("/api/jobs/{id}/deliver"), json!({}));
+    assert_eq!(code, 200, "{delivered}");
+    // delivered: the release is in the ledger now, and its own card does not count it as an earlier one
+    let (_, after) = w.get(&format!("/api/jobs/{id}/release"));
+    assert_eq!(
+        after["disclosure"]["releases_before"].as_u64().unwrap(),
+        before,
+        "{}",
+        after["disclosure"]
+    );
+    assert_eq!(after["disclosure"]["delivered"], true);
+    assert_eq!(after["disclosure"]["verdict"], "allow");
+    // both refusal and the second request are in the signed log
+    let log = log_text(&base, &token);
+    assert!(log.contains("approval.denied"), "{log}");
+}
+
 fn kk_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

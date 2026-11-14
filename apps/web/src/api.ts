@@ -132,6 +132,8 @@ export async function streamChat(body: unknown, onDelta: (t: string) => void, si
 export interface Config {
   /** The profile this service works in, when it is a named one. */
   profile?: string | null;
+  /** The data folder, when it is not the first one: commands typed in a terminal need it. */
+  data_dir?: string | null;
   version: string;
   route: { id: string; class: string; model?: string; simulated: boolean; transport?: string; host?: string | null; stays_here?: boolean };
   roots: string[];
@@ -252,6 +254,8 @@ export interface Job {
   id: string;
   repo: string;
   recipient: string;
+  /** When the review is of a change: the base as the owner named it. */
+  change?: { base_name?: string } | null;
   created: number;
   state: "running" | "ready" | "nothing_to_release" | "failed";
   note: string;
@@ -528,3 +532,8 @@ export const api = {
   approval: (id: string) => request<{ state: string; approval?: string; digest?: string }>("GET", `/api/jobs/${id}/approval`),
   deliver: (id: string) => request<{ name: string; digest: string; signer: string }>("POST", `/api/jobs/${id}/deliver`, {}),
 };
+
+/** The word for a review's state: one the owner stopped is "stopped", not "failed". */
+export function stateOf(j: Pick<Job, "state" | "note">): "running" | "ready" | "nothing_to_release" | "failed" | "stopped" {
+  return j.state === "failed" && j.note === "stopped by you" ? "stopped" : j.state;
+}

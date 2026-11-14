@@ -445,6 +445,14 @@ pub fn takes_arguments(name: &str) -> bool {
     usage(name).contains(' ')
 }
 
+/// How a command is written, for the list of commands: a command that takes nothing is its own name.
+pub fn listed(name: &str) -> String {
+    match usage(name) {
+        "/help" if name != "help" => format!("/{name}"),
+        u => u.to_string(),
+    }
+}
+
 pub fn usage(name: &str) -> &'static str {
     match name {
         "review" => "/review FOLDER for RECIPIENT [against BASE]",
@@ -1382,6 +1390,17 @@ pub fn typed_folder(text: &str) -> String {
 
 #[cfg(test)]
 mod typed_folder_tests {
+    #[test]
+    fn every_command_is_listed_under_its_own_name() {
+        for name in super::NAMES {
+            let shown = super::listed(name);
+            assert!(
+                shown == format!("/{name}") || shown.starts_with(&format!("/{name} ")),
+                "{name} is listed as {shown}"
+            );
+        }
+    }
+
     #[test]
     fn home_and_dot_paths_are_made_whole_and_bare_names_are_left() {
         let home = std::env::var("HOME").unwrap_or_default();

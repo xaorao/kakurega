@@ -115,6 +115,7 @@ let chatFailureRefusals = 0; // the one deliberate 422 when a chat send is made 
 let piiPricesBad = 0; // the one deliberate 422 when a negative price is typed
 let sessionRefusals = 0; // the one deliberate 422 when keeping a conversation is made to fail
 let piiAllowRefusals = 0; // the one deliberate 422 when a pattern that would match everything is added to the personal-data list
+let missingReview = 0; // the one 404 for a review that does not exist
 let busyRefusals = 0; // the one deliberate 429 when four reviews are already running
 let forgottenWordsRefusals = 0; // the one deliberate 422 when forgotten words are typed in again
 page.on("request", (r) => { try { requestOrigins.add(new URL(r.url()).origin); } catch { /* data: urls */ } });
@@ -161,6 +162,8 @@ page.on("console", (m) => {
   }
   // after the test ends the session on purpose, the service answers 401 until the browser is paired again
   if (sessionEnded && /status of 401/.test(m.text())) return;
+  // the one review this test asks for that does not exist: the service answers 404 once and the page says so
+  if (missingReview > 0 && /status of 404/.test(m.text())) { missingReview--; return; }
   if (m.location().url.endsWith("/api/agent-access/grant") && /status of 400/.test(m.text()) && leaseRefusals > 0) {
     leaseRefusals--;
     return;
@@ -169,7 +172,7 @@ page.on("console", (m) => {
     excusedConsole++;
     return;
   }
-  problems.push("console: " + m.text());
+  problems.push("console: " + m.text() + " " + (m.location()?.url ?? ""));
 });
 page.on("pageerror", (e) => problems.push("pageerror: " + e.message));
 // requests that have started and not yet ended, so a step can wait until the ones it cares about are over instead of a fixed time
@@ -274,7 +277,23 @@ try {
   await reuse.getByRole("heading", { name: "Pair this browser" }).waitFor({ timeout: 15000 });
   await reuse.getByRole("alert").waitFor({ timeout: 15000 });
   check("a used pairing link does not work a second time", /wrong, used or expired/.test(await reuse.getByRole("alert").innerText()));
+  // found in real use: the whole link pasted into the code box pairs, and so does a fresh link opened in the same tab
+  const fresh = () => /http:\/\/127\.0\.0\.1:\d+\/#pair=[\w-]+/.exec(spawnSync(kaku, ["pair", "--data-dir", data], { encoding: "utf8" }).stdout)?.[0];
+  const pasted = fresh();
+  await reuse.locator("#code").fill(pasted ?? "");
+  await reuse.getByRole("button", { name: "Pair", exact: true }).click();
+  await reuse.locator("nav").first().waitFor({ timeout: 15000 });
+  check("the whole pairing link pasted into the code box pairs the browser", !!pasted);
   await other.close();
+  const third = await browser.newContext();
+  const late = await third.newPage();
+  await late.goto(base);
+  await late.getByRole("heading", { name: "Pair this browser" }).waitFor({ timeout: 15000 });
+  const code = /#pair=([\w-]+)/.exec(fresh() ?? "")?.[1];
+  await late.evaluate((c) => { location.hash = "#pair=" + c; }, code);
+  await late.locator("nav").first().waitFor({ timeout: 15000 });
+  check("a fresh pairing link opened in a tab that already shows the pairing page pairs it", !!code);
+  await third.close();
 
   await page.getByRole("button", { name: "payments-service" }).click();
   await page.waitForFunction(() => document.querySelector(".path")?.textContent?.endsWith("payments-service"));
@@ -968,6 +987,18 @@ try {
   await page.locator("#schedules").getByRole("button", { name: "Remove" }).click();
   await page.getByText("No repeating reviews.").waitFor();
   check("removing the schedule empties the list", true);
+  // found in real use: the address of a review that does not exist says so, once, and offers the way back
+  missingReview = 1;
+  await page.goto(base + "/#/job/job-424242");
+  await page.getByRole("heading", { name: "There is no such review" }).waitFor({ timeout: 10000 });
+  let askedAgain = 0;
+  const countMissing = (r) => { if (/\/api\/jobs\/job-424242$/.test(r.url())) askedAgain++; };
+  page.on("request", countMissing);
+  await page.waitForTimeout(6000);
+  page.off("request", countMissing);
+  check("a review that does not exist says so and is not asked for again every few seconds", askedAgain === 0, `asked ${askedAgain} more times`);
+  await page.getByRole("link", { name: "Back to the start" }).click();
+  await page.getByRole("heading", { name: "Review a project" }).waitFor({ timeout: 10000 });
   // an interrupted review can be run again with the same folder and recipient
   const dead = { id: "job-77", repo: "/some/folder", recipient: "Acme", created: 1, state: "failed", note: "the service stopped while this review was running; start it again", events: [{ at: 1, stage: "interrupted", detail: "the service stopped" }], summary: null, approval: null, delivered: null };
   let startedAgain = null;
@@ -985,6 +1016,54 @@ try {
   await page.getByRole("button", { name: "Run this review again" }).click();
   await page.waitForURL(/#\/job\/job-78/);
   check("an interrupted review offers to run again and starts the same folder for the same recipient", startedAgain?.repo === "/some/folder" && startedAgain?.recipient === "Acme");
+  // found in real use: a stopped review of a change is called stopped, and running it again keeps the change
+  await page.goto(base + "/#/memory");
+  await page.getByRole("heading", { name: "Memory" }).first().waitFor();
+  await page.unroute("**/api/jobs**");
+  let jobShown = { ...dead, note: "stopped by you", change: { base_name: "main" } };
+  startedAgain = null;
+  await page.route("**/api/jobs**", async (route) => {
+    const req = route.request();
+    const url = new URL(req.url()).pathname;
+    if (req.method() === "POST") {
+      startedAgain = JSON.parse(req.postData() ?? "{}");
+      return route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ id: "job-78" }) });
+    }
+    if (url === "/api/jobs") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ jobs: [jobShown] }) });
+    // what a review that has not finished answers for its lists: not ready
+    if (/\/(audit|files|findings|release|fixes)$/.test(url)) return route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: { code: "NOT_READY", message: "the review has not finished" } }) });
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(jobShown) });
+  });
+  await page.goto(base + "/#/job/job-77");
+  await page.reload();
+  await page.getByRole("button", { name: "Run this review again" }).waitFor();
+  const stoppedHead = await page.locator(".review-head").innerText();
+  check("a review its owner stopped is called stopped, not failed", /stopped/.test(stoppedHead) && !/failed/.test(stoppedHead), stoppedHead);
+  await page.getByRole("button", { name: "Run this review again" }).click();
+  await page.waitForURL(/#\/job\/job-78/);
+  check("running a stopped review of a change again keeps the change", startedAgain?.base === "main" && startedAgain?.repo === "/some/folder", JSON.stringify(startedAgain));
+  // found in real use: the Protection tab of a review that is still running says so and does not break the screen
+  jobShown = { ...dead, id: "job-78", state: "running", note: "", events: [{ at: 1, stage: "queued", detail: "waiting to start" }] };
+  await page.goto(base + "/#/job/job-78");
+  await page.reload();
+  await page.getByRole("tab", { name: "Protection" }).click();
+  await page.getByText("Available when the review finishes.").first().waitFor({ timeout: 10000 });
+  await page.waitForTimeout(700);
+  const protRunning = await page.locator("main").innerText();
+  check("the Protection tab of a running review says when it will be there and the screen stays whole", !/hit an error/.test(protRunning) && (await page.getByRole("tab", { name: "Progress" }).count()) === 1, protRunning.slice(0, 200));
+  // leave the made-up review before its made-up answers go away, so nothing asks the real service for it
+  await page.goto(base + "/#/memory");
+  await page.getByRole("heading", { name: "Memory" }).first().waitFor();
+  await page.unroute("**/api/jobs**");
+  await page.route("**/api/jobs**", async (route) => {
+    const req = route.request();
+    if (req.method() === "POST") {
+      startedAgain = JSON.parse(req.postData() ?? "{}");
+      return route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ id: "job-78" }) });
+    }
+    if (req.url().endsWith("/api/jobs")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ jobs: [dead] }) });
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(dead) });
+  });
   // when the service is already running as many reviews as it allows, the button says so (it used to do nothing at all)
   await page.goto(base + "/#/");
   await page.getByRole("heading", { name: "Review a project" }).waitFor();

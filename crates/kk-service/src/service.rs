@@ -829,7 +829,24 @@ impl Service {
         let Some(plan) = self.disclosure_plan(job_id, s) else {
             return (Value::Null, kk_disclosure::Verdict::Allow);
         };
+        // once this release is delivered the ledger holds it too: it is not counted against itself, and there is nothing
+        // left to weigh, so the card stops asking for a look
+        let delivered = self
+            .inner
+            .lock()
+            .expect("lock")
+            .jobs
+            .get(job_id)
+            .is_some_and(|j| j.delivered.is_some());
         match self.disclosure.lock().expect("lock").assess(now(), &plan) {
+            Ok(a) if delivered => (
+                json!({
+                    "verdict": "allow", "delivered": true,
+                    "reasons": [], "checked": a.checked, "not_checked": a.not_checked,
+                    "files_after": a.files_after, "project_files": plan.project_files, "releases_before": a.releases_before.saturating_sub(1),
+                }),
+                kk_disclosure::Verdict::Allow,
+            ),
             Ok(a) => {
                 let v = a.verdict.clone();
                 (
@@ -1378,7 +1395,7 @@ impl Service {
             return Err(projects::floor_words(&name));
         }
         if recipient.is_empty()
-            || recipient.len() > 128
+            || recipient.chars().count() > 128
             || recipient.chars().any(|c| c.is_control())
         {
             return Err("name the recipient in 1 to 128 characters".into());
@@ -1390,6 +1407,16 @@ impl Service {
         // the recipient is written into the record and the log and printed on the release the recipient receives
         if kk_secrets::holds_secret(recipient) {
             return Err("the recipient looks like a secret; use a plain name".into());
+        }
+        // a review reads every file under its folder; a whole home folder is never what was meant
+        if std::env::var("HOME")
+            .ok()
+            .and_then(|h| std::fs::canonicalize(h).ok())
+            .is_some_and(|home| std::fs::canonicalize(&dir).is_ok_and(|d| d == home))
+        {
+            return Err(
+                "that is your whole home folder; choose one project folder inside it".into(),
+            );
         }
         // the model is not switched between the checks above and the review being listed as running
         let _steady = self.route_hold();
@@ -1675,6 +1702,8 @@ async fn config(axum::Extension(svc): Svc) -> Json<Value> {
         // the owner's own home folder, so the page writes it as ~ and writes every other folder as it is
         "home": std::env::var("HOME").ok().filter(|h| h.starts_with('/') && h.len() > 1),
         "test_mode": svc.test_mode,
+        // where this service keeps its data, when that is not the first folder: a command typed in a terminal needs it
+        "data_dir": std::env::var("HOME").ok().map(|h| std::path::Path::new(&h).join(".kakurega")).filter(|d| *d == svc.data_dir).is_none().then(|| svc.data_dir.to_string_lossy().to_string()),
         // the name of the profile this data folder is (written when the profile was made); none for the first folder
         "profile": std::fs::read_to_string(svc.data_dir.join("profile.json"))
             .ok()
@@ -5231,7 +5260,7 @@ async fn schedule_new(axum::Extension(svc): Svc, Json(b): Json<ScheduleNew>) -> 
         );
     };
     let rec = b.recipient.trim().to_string();
-    if rec.is_empty() || rec.len() > 128 || rec.chars().any(|c| c.is_control()) {
+    if rec.is_empty() || rec.chars().count() > 128 || rec.chars().any(|c| c.is_control()) {
         return error(
             StatusCode::BAD_REQUEST,
             "BAD_RECIPIENT",
@@ -9908,7 +9937,18 @@ async fn release(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Res
     }
 }
 
-async fn request_approval(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
+/// The owner's own request (the page, the terminal workspace, `kaku approve job-N`): after a refusal or an approval
+/// that ran out, the owner may ask again and gets a new approval; the earlier refusal stays in the signed log.
+async fn request_approval(svc: Svc, id: UrlPath<String>) -> Response {
+    request_approval_as(svc, id, true).await
+}
+
+/// `again` is true only on the owner's routes. An agent's request (MCP) never replaces an approval the owner refused.
+async fn request_approval_as(
+    axum::Extension(svc): Svc,
+    UrlPath(id): UrlPath<String>,
+    again: bool,
+) -> Response {
     let s = match snap_of(&svc, &id) {
         Err(r) => return r,
         Ok(s) => s,
@@ -9926,11 +9966,24 @@ async fn request_approval(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String
     }
     let (aid, rec, job) = {
         let mut g = svc.inner.lock().expect("lock");
-        if g.jobs.get(&id).and_then(|j| j.approval.as_ref()).is_some() {
+        let earlier = g.jobs.get(&id).and_then(|j| j.approval.clone()).map(|aid| {
+            g.approvals
+                .get(&aid)
+                .map(|a| (a.denied, a.expires <= now()))
+        });
+        let closed = matches!(
+            earlier,
+            Some(Some((true, _))) | Some(Some((_, true))) | Some(None)
+        );
+        if earlier.is_some() && !(again && closed) {
             return error(
                 StatusCode::CONFLICT,
                 "ALREADY_REQUESTED",
-                "an approval is already waiting",
+                if matches!(earlier, Some(Some((true, _)))) {
+                    "this release was refused by its owner; only the owner can ask again"
+                } else {
+                    "an approval is already waiting"
+                },
             );
         }
         let aid = format!("appr-{}", g.next);
@@ -9979,7 +10032,11 @@ async fn request_approval(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String
     if let Some(j) = job {
         svc.persist_job(&j, None);
     }
-    (StatusCode::ACCEPTED, Json(json!({"approval": aid, "digest": draft.digest, "how": format!("run `kaku approve {aid}` in a terminal on this computer")}))).into_response()
+    (
+        StatusCode::ACCEPTED,
+        Json(json!({"approval": aid, "digest": draft.digest, "how": "The owner decides: in the desktop window, in the terminal workspace, or with `kaku approve` in a terminal on this computer."})),
+    )
+        .into_response()
 }
 
 async fn approval_state(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> Response {
@@ -10931,7 +10988,12 @@ async fn admin_job_get(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) 
 }
 
 async fn admin_job_request_approval(svc: Svc, id: UrlPath<String>) -> Response {
-    request_approval(svc, id).await
+    request_approval_as(svc, id, false).await
+}
+
+/// `kaku approve job-N` typed by the owner at a terminal: the owner's request, which may follow a refusal.
+async fn admin_job_request_approval_owner(svc: Svc, id: UrlPath<String>) -> Response {
+    request_approval_as(svc, id, true).await
 }
 
 pub struct Routes(pub Arc<Service>);
@@ -11214,6 +11276,10 @@ impl Extension for Routes {
             .route(
                 "/admin/jobs/{id}/approval",
                 post(admin_job_request_approval),
+            )
+            .route(
+                "/admin/jobs/{id}/approval/owner",
+                post(admin_job_request_approval_owner),
             )
             .route("/admin/approvals", get(admin_list))
             .route("/admin/approvals/{id}", get(admin_show))

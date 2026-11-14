@@ -1,7 +1,7 @@
 import { Opening } from "./components/Opening";
 import { Glyph } from "./components/Glyph";
 import { createEffect, createMemo, createSignal, ErrorBoundary, For, lazy, onCleanup, onMount, Show, Suspense } from "solid-js";
-import { api, ApiError, setCsrf, type Config, type Job } from "./api";
+import { api, ApiError, setCsrf, type Config, type Job, stateOf } from "./api";
 void ApiError;
 import { NewReview } from "./screens/NewReview";
 import { ReviewView } from "./screens/ReviewView";
@@ -99,8 +99,13 @@ function Pair(props: { onDone: () => void }) {
       setBusy(false);
     }
   };
-  const fromLink = /#pair=([A-Za-z0-9_-]+)/.exec(location.hash)?.[1];
-  if (fromLink) queueMicrotask(() => submit(fromLink));
+  // a pairing link opened in this tab, now or later (a fresh link after the first one ran out), is used as it arrives
+  const fromLink = () => /#pair=([A-Za-z0-9_-]+)/.exec(location.hash)?.[1];
+  const first = fromLink();
+  if (first) queueMicrotask(() => submit(first));
+  const onHash = () => { const c = fromLink(); if (c) void submit(c); };
+  window.addEventListener("hashchange", onHash);
+  onCleanup(() => window.removeEventListener("hashchange", onHash));
   return (
     <main class="center pair">
       <span class="brand-mark big" aria-hidden="true"><Glyph /></span>
@@ -110,7 +115,8 @@ function Pair(props: { onDone: () => void }) {
         class="stack"
         onSubmit={(e) => {
           e.preventDefault();
-          submit(code());
+          // the whole link pasted into the box works as well as the code inside it
+          submit(/#pair=([A-Za-z0-9_-]+)/.exec(code())?.[1] ?? code().trim());
         }}
       >
         <label for="code">{t("pair.label")}</label>
@@ -421,7 +427,7 @@ export function App() {
       { id: "verify", label: t("nav.verify"), group: t("palette.screens"), run: () => { location.href = "/verify?from=workspace"; } },
       { id: "shortcuts", label: t("kb.title"), group: t("palette.screens"), run: () => setHelpOpen(true) },
     ];
-    const reviews: PaletteItem[] = jobs().map((j) => ({ id: `job-${j.id}`, label: t("nav.sub", { state: t(`state.${j.state}` as never), recipient: j.recipient }) + ` · ${j.id}`, group: t("palette.reviews"), run: go(`#/job/${j.id}`) }));
+    const reviews: PaletteItem[] = jobs().map((j) => ({ id: `job-${j.id}`, label: `${j.repo.split("/").pop()} · ` + t("nav.sub", { state: t(`state.${stateOf(j)}` as never), recipient: j.recipient }) + ` · ${j.id}`, group: t("palette.reviews"), run: go(`#/job/${j.id}`) }));
     const settings: PaletteItem[] = [
       { id: "theme-light", label: t("theme.light"), group: t("palette.theme"), run: () => chooseTheme("light") },
       { id: "theme-dark", label: t("theme.dark"), group: t("palette.theme"), run: () => chooseTheme("dark") },
@@ -498,7 +504,7 @@ export function App() {
                       <a href={`#/job/${j.id}`} class={jobId() === j.id ? "active" : ""}>
                         <span class={`state ${j.state}`} aria-hidden="true" />
                         <span class="name">{j.repo.split("/").pop()}</span>
-                        <span class="sub">{t("nav.sub", { state: t(`state.${j.state}` as never), recipient: j.recipient })}</span>
+                        <span class="sub">{t("nav.sub", { state: t(`state.${stateOf(j)}` as never), recipient: j.recipient })}</span>
                       </a>
                     </li>
                   )}

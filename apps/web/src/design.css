@@ -377,3 +377,6 @@ button.primary:disabled { background: var(--ink); color: var(--halo); border-col
 
 /* the roundtable's action bar floats over the list: a soft edge says so */
 .rt-actions { box-shadow: 0 -16px 18px -16px color-mix(in srgb, var(--ink) 18%, transparent); }
+
+/* a recipient or a folder name with no spaces breaks inside its row; it never runs out of the sidebar */
+.side .sub, .side .review-row, .side a, .crumb, .start-recent a { overflow-wrap: anywhere; min-width: 0; }

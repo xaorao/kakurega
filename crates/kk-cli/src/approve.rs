@@ -171,8 +171,30 @@ pub fn run(args: &[String]) -> u8 {
             Ok((200, v)) => match v["approvals"].as_array().map(|a| a.as_slice()) {
                 Some([one]) => one["id"].as_str().unwrap_or("").to_string(),
                 Some([]) | None => {
-                    println!("Nothing is waiting for approval.");
-                    return 0;
+                    // nothing was asked for yet: a review that is ready can be named, and this command asks for it
+                    let ready: Vec<String> = admin
+                        .get("/admin/jobs")
+                        .ok()
+                        .and_then(|(_, v)| v["jobs"].as_array().cloned())
+                        .unwrap_or_default()
+                        .iter()
+                        .filter(|j| j["state"] == "ready" && j["delivered"].is_null())
+                        .filter_map(|j| j["id"].as_str().map(str::to_string))
+                        .collect();
+                    match ready.as_slice() {
+                        [] => {
+                            println!("Nothing is waiting for approval, and no review is ready to release.");
+                            return 0;
+                        }
+                        [one] => one.clone(),
+                        many => {
+                            println!("Nothing is waiting for approval. These reviews are ready; name one to ask for its approval:");
+                            for j in many {
+                                println!("  kaku approve {j}");
+                            }
+                            return 2;
+                        }
+                    }
                 }
                 Some(many) => {
                     println!("Several approvals are waiting; name one:");
@@ -192,6 +214,41 @@ pub fn run(args: &[String]) -> u8 {
             }
         },
     };
+    // what was named must be an approval or a review; nothing else is ever put into a request
+    let numbered = |prefix: &str| {
+        id.strip_prefix(prefix).is_some_and(|n| {
+            !n.is_empty() && n.len() <= 12 && n.bytes().all(|b| b.is_ascii_digit())
+        })
+    };
+    if !numbered("appr-") && !numbered("job-") {
+        eprintln!("kaku approve: name an approval (appr-N) or a review that is ready (job-N)");
+        return 2;
+    }
+    // a review was named: the owner asks for its approval here, then reads and decides as usual
+    let id = if numbered("job-") {
+        match admin.post(&format!("/admin/jobs/{id}/approval/owner"), json!({})) {
+            Ok((202, v)) => v["approval"].as_str().unwrap_or("").to_string(),
+            Ok((_, v)) if v["error"]["code"] == "ALREADY_REQUESTED" => {
+                eprintln!("An approval for {id} is already waiting. Run `kaku approve` to read and decide it.");
+                return 1;
+            }
+            Ok((_, v)) => {
+                eprintln!(
+                    "No approval could be asked for {id}: {}",
+                    v["error"]["message"]
+                        .as_str()
+                        .unwrap_or("the service refused")
+                );
+                return 1;
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                return 1;
+            }
+        }
+    } else {
+        id
+    };
     let (code, d) = match admin.get(&format!("/admin/approvals/{id}")) {
         Ok(x) => x,
         Err(e) => {
@@ -200,12 +257,16 @@ pub fn run(args: &[String]) -> u8 {
         }
     };
     if code != 200 {
-        eprintln!("no such approval: {d}");
+        eprintln!("There is no approval called {id}. Run `kaku approve` with no name to see what is waiting.");
+        let _ = d;
         return 1;
     }
     println!("\nRELEASE FOR APPROVAL  {id}");
     println!("Recipient: {}", d["recipient"].as_str().unwrap_or("?"));
-    println!("Expires:   {}", d["expires"]);
+    println!(
+        "Expires:   {}",
+        expires_words(d["expires"].as_i64().unwrap_or(0))
+    );
     println!("Digest:    {}", d["digest"].as_str().unwrap_or("?"));
     println!("\nThese exact files will be signed and handed over (nothing else):\n");
     for f in d["files"].as_array().into_iter().flatten() {
@@ -281,7 +342,7 @@ pub fn run(args: &[String]) -> u8 {
         eprintln!("kaku approve: the digest must be typed by a person at a terminal; a digest from a pipe or a program is refused, and nothing was approved");
         return 1;
     }
-    print!("\nType the first 12 characters of the digest to approve, or press Enter to refuse: ");
+    print!("\nType the first 12 characters of the digest to approve, the word refuse to refuse, or press Enter to decide later: ");
     let _ = std::io::stdout().flush();
     let mut line = String::new();
     if std::io::stdin().lock().read_line(&mut line).is_err() {
@@ -289,8 +350,12 @@ pub fn run(args: &[String]) -> u8 {
     }
     let ack = line.trim();
     if ack.is_empty() {
+        println!("Nothing was decided. The approval still waits; run `kaku approve` again when you are ready.");
+        return 1;
+    }
+    if ack.eq_ignore_ascii_case("refuse") {
         let _ = admin.post(&format!("/admin/approvals/{id}/deny"), json!({}));
-        println!("Refused. Nothing was approved.");
+        println!("Refused. Nothing was approved. The refusal is in the signed log; `kaku approve {}` asks again.", d["job"].as_str().unwrap_or("job-N"));
         return 1;
     }
     let mut body = json!({"ack": ack});
@@ -331,7 +396,7 @@ pub fn run(args: &[String]) -> u8 {
         Ok((_, v)) => {
             eprintln!(
                 "Not approved: {}",
-                v["error"]["message"].as_str().unwrap_or("refused")
+                not_approved_words(v["error"]["message"].as_str().unwrap_or("refused"))
             );
             1
         }
@@ -339,6 +404,58 @@ pub fn run(args: &[String]) -> u8 {
             eprintln!("{e}");
             1
         }
+    }
+}
+
+/// When an approval runs out, as a time a person reads; the number of seconds stays out of sight.
+fn expires_words(at: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let left = at - now;
+    if at <= 0 {
+        "not stated".into()
+    } else if left <= 0 {
+        "already ran out".into()
+    } else if left < 3600 {
+        format!("in {} minutes", (left / 60).max(1))
+    } else if left < 172_800 {
+        format!("in {} hours", left / 3600)
+    } else {
+        format!("in {} days", left / 86_400)
+    }
+}
+
+/// The service's short reason for not approving, in words for the person at the terminal.
+fn not_approved_words(reason: &str) -> String {
+    match reason {
+        "DigestMismatch" => "what you typed is not the start of this release's digest. Nothing was approved; run `kaku approve` again and copy the first 12 characters shown after Digest.".into(),
+        "AcknowledgementTooShort" => "type at least the first 12 characters of the digest. Nothing was approved.".into(),
+        other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod words_tests {
+    #[test]
+    fn a_refusal_reason_and_an_expiry_are_said_in_words() {
+        assert!(super::not_approved_words("DigestMismatch")
+            .contains("not the start of this release's digest"));
+        assert!(
+            super::not_approved_words("AcknowledgementTooShort").contains("at least the first 12")
+        );
+        assert_eq!(
+            super::not_approved_words("the approval ran out"),
+            "the approval ran out"
+        );
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        assert_eq!(super::expires_words(now + 7200 + 5), "in 2 hours");
+        assert_eq!(super::expires_words(now + 90), "in 1 minutes");
+        assert_eq!(super::expires_words(now - 5), "already ran out");
+        assert_eq!(super::expires_words(0), "not stated");
     }
 }
 
