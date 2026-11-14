@@ -115,7 +115,10 @@ function changedPart() {
 
 function refuseChanged(what) {
   console.error(`kakurega: not started: ${what} does not match bundle.json`);
-  dialog.showErrorBox(t("error.changed.title"), t("error.changed.body", { what }));
+  // the part is named in words; its short name in the bundle list means nothing to the person reading
+  const key = `part.${what}`;
+  const named = t(key);
+  dialog.showErrorBox(t("error.changed.title"), t("error.changed.body", { what: named === key ? what : named }));
 }
 
 function enclaveHelper() {
@@ -273,11 +276,18 @@ function appMenu() {
   const view = [{ role: "reload" }, { type: "separator" }, { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" }, { type: "separator" }, { role: "togglefullscreen" }];
   if (!runsFromAsar) view.push({ type: "separator" }, { role: "toggleDevTools" });
   return [
-    ...(macOS ? [{ label: "Kakurega", submenu: [{ role: "about" }, { type: "separator" }, { label: t("menu.enrol"), click: () => void offerEnrol() }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" }, { role: "quit" }] }] : []),
+    ...(macOS ? [{ label: "Kakurega", submenu: [{ role: "about" }, { type: "separator" }, { label: t("menu.settings"), accelerator: "CmdOrCtrl+,", click: () => { if (current && window && !window.isDestroyed()) { showWindow(); void window.loadURL(`${current.admin.origin}/#/settings`); } } }, { label: t("menu.enrol"), click: () => void offerEnrol() }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" }, { role: "quit" }] }] : []),
     { label: t("menu.file"), submenu: [{ role: "close" }] },
     { role: "editMenu" },
     { label: "View", submenu: view },
     { role: "windowMenu" },
+    {
+      role: "help",
+      submenu: [
+        { label: t("menu.help.limits"), click: () => void shell.openExternal("https://github.com/xaorao/kakurega/blob/main/docs/LIMITS.md") },
+        { label: t("menu.help.source"), click: () => void shell.openExternal("https://github.com/xaorao/kakurega") },
+      ],
+    },
   ];
 }
 

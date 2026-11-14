@@ -28,7 +28,7 @@ The full list, one capability per line. The short version is in the [README](../
 - In the desktop app: take a picture of the screen for the chat from the menu-bar menu; you see the picture and say yes before it is attached, and the page itself can never capture the screen.
 - Suggest a skill from a conversation: a way of working you taught in a chat can be written up as a skill; it waits under Skills and nothing uses it until you keep and approve it.
 - Models: a local model through Ollama, or a model on NEAR AI Cloud's confidential hardware (`kaku serve --route near --near-model NAME`, the account key in `NEAR_AI_API_KEY`, `--near-key-file` or typed in Settings). The hardware proof of NEAR's gateway and model is checked before each request, every question is encrypted to the model, and every answer's signature is checked against the attested key before it is used (VERIFIED live with `Qwen/Qwen3.8-27B`). Reviews, project questions, coding tasks, teams, chat, documents and meeting notes all run on it; document search by meaning stays with the local model. Activity shows what each route cost, at NEAR's published price unless you entered one.
-- Releases can be made valid for longer than a day: `kaku serve --release-days N` (1 to 730). The public site's sample capsule (`fixtures/near-live/sample.kkg`) is a real review on NEAR AI Cloud made valid for a year.
+- Releases can be made valid for longer than a day: `kaku serve --release-days N` (1 to 730). The public site's sample capsule (`fixtures/near-live/sample.kkg`) is a real review on NEAR AI Cloud made valid for two years, and its digest is registered on NEAR testnet (the check page's NEAR lookup finds it).
 
 ## The state of each feature
 

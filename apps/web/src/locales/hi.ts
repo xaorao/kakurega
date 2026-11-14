@@ -1909,6 +1909,7 @@ export const hi: Record<keyof typeof en, string> = {
   "welcome.start": "मेरी पहली समीक्षा शुरू करें",
   "appr.runAgain": "समीक्षा फिर चलाएँ",
   "progress.stoppedByYou": "आपने इसे रोका।",
+  "progress.for": "{time} से चल रहा है",
   "appr.expired": "यह रिलीज़ समाप्त हो गई है। इससे कुछ भी स्वीकृत या भेजा नहीं जा सकता। नई बनाने के लिए समीक्षा फिर चलाएँ।",
   "appr.soon": "इस रिलीज़ को स्वीकृत करने के लिए केवल {time} बचा है।",
   "appr.validFor": "यह रिलीज़ अभी {time} और स्वीकृत की जा सकती है।",

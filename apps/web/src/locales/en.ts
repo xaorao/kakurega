@@ -1907,6 +1907,7 @@ export const en = {
   "welcome.start": "Start my first review",
   "appr.runAgain": "Run the review again",
   "progress.stoppedByYou": "You stopped it.",
+  "progress.for": "running for {time}",
   "appr.expired": "This release has expired. Nothing can be approved or sent from it. Run the review again to make a new one.",
   "appr.soon": "Only {time} left to approve this release.",
   "appr.validFor": "This release can be approved for another {time}.",

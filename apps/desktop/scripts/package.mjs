@@ -72,6 +72,15 @@ export function brand(appPath, version) {
   const macos = join(appPath, "Contents/MacOS");
   renameSync(join(macos, "Electron"), join(macos, APP_NAME));
   common(plistOf(appPath), APP_NAME, APP_NAME, APP_ID, APP_NAME);
+  // Electron's stock texts for devices this app never asks for ("This app needs access to the camera"). The app refuses
+  // those permissions outright, so it must not carry a sentence that says it needs them.
+  for (const key of ["NSCameraUsageDescription", "NSMicrophoneUsageDescription", "NSBluetoothAlwaysUsageDescription", "NSBluetoothPeripheralUsageDescription", "NSAudioCaptureUsageDescription"]) {
+    try {
+      execFileSync("/usr/bin/plutil", ["-remove", key, plistOf(appPath)], { stdio: "pipe" });
+    } catch {
+      /* the key was not there */
+    }
+  }
   // the web app's mark (made by scripts/icon.swift), in place of Electron's
   copyFileSync(join(appDir, "assets/kakurega.icns"), join(appPath, "Contents/Resources/kakurega.icns"));
   rmSync(join(appPath, "Contents/Resources/electron.icns"), { force: true });

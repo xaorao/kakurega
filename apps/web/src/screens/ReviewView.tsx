@@ -35,6 +35,10 @@ function languageName(language?: string): string {
  *  nothing, so a `$` or a space in a folder's name stays what it is). */
 const shellWord = (text: string) => (/^[A-Za-z0-9_\/.:@%+=-]+$/.test(text) ? text : `'${text.replace(/'/g, `'\\''`)}'`);
 
+/** The time now in seconds, renewed every five seconds while the page is open: for "running for 4 min". */
+const [tickNow, setTickNow] = createSignal(Math.floor(Date.now() / 1000));
+setInterval(() => setTickNow(Math.floor(Date.now() / 1000)), 5000);
+
 /** Why a finding is not in the release, in words: the checker's own state names (not_reproduced, failed: …) are never
  *  shown as they are. */
 function checkerWords(why: string): string {
@@ -88,7 +92,10 @@ function Progress(props: { job: Job; go: (tab: "findings" | "release") => void }
             <li class={done() ? "done" : failed() ? "fail" : active() ? "active" : ""}>
               <span class="mark" aria-hidden="true">{done() ? "✓" : failed() ? "✕" : active() ? <span class="spin" /> : ""}</span>
               <span>{t(label)}</span>
-              <span class="sub">{done() ? doneWords(key, props.job) : props.job.events.filter((e) => e.stage === key).map((e) => e.detail).join(" ")}</span>
+              <span class="sub">{done() ? doneWords(key, props.job) : props.job.events.filter((e) => e.stage === key).map((e) => e.detail).join(" ")}
+                {/* a long step shows that time is passing: a model on this computer can read for many minutes without a new line */}
+                <Show when={active() && !finished()}>{(() => { const began = props.job.events.find((e) => e.stage === key)?.at; const secs = began ? Math.max(0, tickNow() - began) : 0; return secs >= 20 ? <span class="muted"> · {t("progress.for", { time: formatSpan(secs, { h: t("unit.h"), min: t("unit.min"), s: t("unit.s") }) })}</span> : null; })()}</Show>
+              </span>
             </li>
           );
         }}
