@@ -1,0 +1,48 @@
+name: contract-reproducible
+# Builds the registry contract twice inside the pinned build image (contracts/kakurega-registry/Cargo.toml,
+# [package.metadata.near.reproducible_build]) and fails unless the two results are the same bytes. The result and its
+# SHA-256 are kept as an artifact: that file is what gets deployed, and anyone can rebuild it from the same commit.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "contracts/**"
+      - ".github/workflows/contract-reproducible.yml"
+
+jobs:
+  build-twice:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo-near
+        run: cargo install --locked cargo-near --version 0.23.0
+      - name: First build
+        working-directory: contracts/kakurega-registry
+        run: |
+          cargo near build reproducible-wasm
+          mkdir -p "$RUNNER_TEMP/out"
+          cp "$(find "$GITHUB_WORKSPACE/target/near" -name '*.wasm' | head -1)" "$RUNNER_TEMP/out/first.wasm"
+          rm -rf "$GITHUB_WORKSPACE/target/near"
+      - name: Second build
+        working-directory: contracts/kakurega-registry
+        run: |
+          cargo near build reproducible-wasm
+          cp "$(find "$GITHUB_WORKSPACE/target/near" -name '*.wasm' | head -1)" "$RUNNER_TEMP/out/kakurega_registry.wasm"
+      - name: Same bytes
+        run: |
+          cd "$RUNNER_TEMP/out"
+          sha256sum first.wasm kakurega_registry.wasm
+          cmp first.wasm kakurega_registry.wasm
+          sha256sum kakurega_registry.wasm | cut -d' ' -f1 > kakurega_registry.wasm.sha256
+          rm first.wasm
+          {
+            echo "### Registry contract, built twice, identical"
+            echo "- commit: \`$GITHUB_SHA\`"
+            echo "- sha256: \`$(cat kakurega_registry.wasm.sha256)\`"
+            echo "- bytes: $(stat -c %s kakurega_registry.wasm)"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kakurega-registry-wasm
+          path: ${{ runner.temp }}/out
