@@ -150,7 +150,11 @@ try:
     send("/quit\r")
     pump(3)
     if proc.poll() is None:
-        send("\x03")
+        # the workspace may be closing its terminal at this very moment; a write to a closed terminal is that, not a failure
+        try:
+            send("\x03")
+        except OSError:
+            pass
         pump(2)
     check("the workspace ends and the terminal is given back clean", proc.poll() is not None and b"\x1b[?1049l" in raw, f"exit={proc.poll()}")
 finally:

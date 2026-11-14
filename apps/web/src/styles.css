@@ -803,8 +803,8 @@ textarea::placeholder, input::placeholder { color: var(--fog); }
 /* what was in the file is not shown, here or to the agent: the bar of the mark stands in for it */
 .redacted { display: inline-block; width: 150px; height: 16px; border-radius: 3px; background: var(--ink); }
 .finding { border-left: 4px solid var(--line); }
-.finding.ok { border-left-color: var(--cipher); }
-.finding.bad { border-left-color: var(--redline); }
+.finding.is-ok { border-left-color: var(--cipher); }
+.finding.is-bad { border-left-color: var(--redline); }
 .finding > header h2 { font-size: 19px; }
 .chip.verdict { font-size: 13.5px; padding: 3px 12px; font-weight: 500; }
 .chip.verdict.ok::before { content: "✓ "; }

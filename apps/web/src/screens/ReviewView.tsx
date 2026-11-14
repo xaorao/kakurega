@@ -415,7 +415,7 @@ function Findings(props: { job: Job }) {
               {(f) => {
                 const [statusLabel, cls, why] = statusText(f.status);
                 return (
-                  <article class={`card stack finding ${cls}`}>
+                  <article class={`card stack finding ${cls ? "is-" + cls : ""}`}>
                     <header class="between"><h2><InlineMarkdown text={f.title} /></h2><span class={`chip verdict ${cls}`}>{statusLabel}</span></header>
                     <Show when={why}><p class="muted wrap status-why">{t("status.why", { why: serverText(why) })}</p></Show>
                     <p><code>{f.file}:{f.line}</code></p>
