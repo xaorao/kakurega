@@ -20,4 +20,4 @@ A private AI workspace. A security layer outside the model decides what may leav
 
 - Testnet only. A prototype, not a finished product. One sample capsule; small real counts.
 - A valid capsule shows who signed which bytes. It does not show that a finding is true or that no other defect exists.
-- The repository's README has "do X, see Y" steps from a terminal, the feature table with the test behind each row, and the full list of limits.
+- The repository's README has "do X, see Y" steps from a terminal; `scripts/judge` runs the no-key checks in one command; docs/FEATURES.md has the state of every feature and docs/LIMITS.md the full list of limits.

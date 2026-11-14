@@ -1,0 +1,37 @@
+# Kakurega
+
+A private AI workspace that proves what it did: chat, questions over documents, meeting notes, memory, a team of experts and a full code review on the user's own computer. Keys and passwords are withheld before a model sees them, review findings are reproduced in a sandbox, nothing leaves until the owner approves the exact bytes, and what leaves is a signed capsule the recipient checks offline. When the model is not on the user's computer it runs in confidential hardware on NEAR AI Cloud. Working prototype on macOS and Linux; NEAR on testnet. Entry in NEAR HACKATHON, tracks: Privacy & Private AI (primary), AI Security & Defense.
+
+## Fastest check (no key, no account, no funds)
+
+Run `scripts/judge` (needs Rust; the first build takes several minutes; two of its lines need the network). Expected: seven lines starting `PASS`, then `7 passed, 0 failed, 0 skipped.`, exit code 0.
+
+## Each claim, and what proves it
+
+| Claim | Do | See |
+| --- | --- | --- |
+| A real review's capsule from NEAR AI Cloud verifies offline | `target/debug/kaku verify fixtures/near-live/sample.kkg` | first line `VALID`, exit 0 |
+| An altered capsule is refused | change one byte of that file, run the same command | `INVALID: digest_mismatch`, exit 1 |
+| Known secret shapes do not reach a model | `target/debug/kaku bench verify benchmarks/leak/results.signed.json --pin "$(cat benchmarks/leak/signer.pub)"` | `known shapes: 126 cases ... leaked 0.` and `beyond the detector: 42 cases ... leaked 10.` with each leak named |
+| NEAR's verifier vouched for the model key | `target/debug/kaku chain hardware 89154a43a47684742c3d1753252bb6f49f61da9d8c84fc9b1def2df130cb2d93` | `Recorded at kakurega-registry-c68af3.testnet on NEAR testnet:` and `Intel patch level then: UpToDate` |
+| The registry holds a real review's capsule with 20 verified model signatures | the second `curl` command under "Ask NEAR yourself" in README.md | `"receipt_count":20`, `"order":"1"` |
+| That registered capsule re-checks offline | `cargo test -p kk-evidence --test near_live` | exit 0 |
+| The review agent has no network and sees no excluded file | `scripts/test-linux` (Linux, needs bubblewrap) | exit 0 |
+| What the public documents promise matches the code | `python3 scripts/docs_check.py` | `documentation claims checked, all true` |
+| Lints, unit and integration tests, layer rule, secret scan | `scripts/test` | exit 0 |
+
+## Where things are
+
+- README.md: what it is, the problem, how it works, why NEAR, what must still be trusted, how to run it.
+- docs/JUDGES.md: step-by-step checks with the exact output to expect.
+- docs/FEATURES.md: every capability and the state of each, with how it was checked.
+- docs/LIMITS.md: what is not verified, known weaknesses, what is deliberately not built.
+- benchmarks/*/METHOD.md: how each number was measured, and its limits.
+- NOTICE.md: every library and its licence. Most code was written with AI coding assistants; README.md says so.
+
+## Limits, stated by the project
+
+- Testnet only. Built and tested by one person; no outside user has been observed using it.
+- The secret detector is a heuristic: 10 of 42 cases outside the shapes it knows reach the model, each named in the signed results.
+- A valid capsule shows who signed which bytes. It does not show that a finding is true or that no other defect exists.
+- On macOS the sandbox is a Linux virtual machine, a development arrangement, not a hardened macOS sandbox.
