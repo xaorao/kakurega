@@ -169,6 +169,13 @@ function Source(props: { job: Job }) {
   const [selected, setSelected] = createSignal<string | null>(null);
   const [query, setQuery] = createSignal("");
   const [content] = createResource(selected, (p) => (p ? api.file(props.job.id, p) : Promise.resolve(null)));
+  // The tab opens on the file a confirmed finding points at, so the first thing seen is the code that matters; with
+  // no such finding nothing is chosen and the owner picks.
+  const [cited] = createResource(() => props.job.id, (id) => api.findings(id).then((r) => r.findings.find((f) => f.status === "reproduced")?.file ?? null).catch(() => null));
+  createEffect(() => {
+    const want = cited();
+    if (want && selected() === null && (files() ?? []).some((f) => f.path === want && !f.withheld)) setSelected(want);
+  });
   const matching = createMemo(() => filterFiles(files() ?? [], query()));
   const groups = createMemo(() => groupByDir(matching().slice(0, MAX_SHOWN)));
   return (
@@ -195,7 +202,7 @@ function Source(props: { job: Job }) {
                         <li>
                           <button class={selected() === f.path ? "row active" : "row"} title={f.path} onClick={() => setSelected(f.path)}>
                             <span class="fname">{baseName(f.path)}</span>
-                            <span class={`chip ${f.withheld ? "bad" : f.level === "internal" ? "" : "warn"}`}>{f.withheld ? t("prot.withheld") : f.level}</span>
+                            <Show when={f.withheld || f.level !== "internal"}><span class={`chip ${f.withheld ? "bad" : "warn"}`}>{f.withheld ? t("prot.withheld") : f.level}</span></Show>
                           </button>
                         </li>
                       )}

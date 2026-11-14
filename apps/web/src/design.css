@@ -361,3 +361,12 @@ button.primary:disabled { background: var(--ink); color: var(--halo); border-col
 /* the break-it score, as two numbers */
 .tiles.shield.score { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 520px; }
 .tiles.shield.score + #break-count { font-size: 12.5px; }
+
+/* the source tree: folders and files on one left edge; the sidebar's two choosers, small and whole */
+.tree summary.dir { justify-content: flex-start; gap: 8px; font-size: 12px; color: var(--graphite); }
+.tree summary.dir .fname { font-family: var(--font-mono); }
+.tree .row { padding: 6px 10px; border: 0; }
+.tree .row.active { background: color-mix(in srgb, var(--ink) 7%, transparent); box-shadow: none; }
+.side-prefs { flex-direction: column; gap: 0; padding: 4px 2px 0; }
+.side-prefs select { border: 0; background-color: transparent; font-size: 12px; color: var(--graphite); padding: 5px 22px 5px 8px; min-height: 30px; }
+.side-prefs select:hover { color: var(--ink); }
