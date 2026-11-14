@@ -151,6 +151,17 @@ pub fn pair(args: &[String]) -> u8 {
     }
 }
 
+/// What the service said, for a person: its own message when it gave one, never the shape of the answer.
+pub fn said(answer: &Result<(u16, Value), String>) -> String {
+    match answer {
+        Err(e) => e.clone(),
+        Ok((code, v)) => match v["error"]["message"].as_str().filter(|m| !m.is_empty()) {
+            Some(m) => m.to_string(),
+            None => format!("the service answered {code} with no reason"),
+        },
+    }
+}
+
 pub fn run(args: &[String]) -> u8 {
     let admin = match connect(args) {
         Ok(a) => a,

@@ -200,7 +200,8 @@ fn offer_of(args: &[String], remember: bool) -> Result<(kk_update::Offer, Vec<u8
         highest_seen: seen,
         now: now(),
     };
-    let verdict = kk_update::check(&bytes, &cx).map_err(|r| format!("refused: {r:?}"))?;
+    let verdict = kk_update::check(&bytes, &cx)
+        .map_err(|r| format!("refused: {}", refusal_words(&format!("{r:?}"))))?;
     if remember {
         if let Some(v) = kk_update::announced_version(&bytes) {
             if seen.is_none_or(|s| v > s) {
@@ -241,8 +242,12 @@ fn verify_file(args: &[String]) -> Result<(), String> {
     let file = crate::flag(args, "--file").ok_or("give --file F (the downloaded installer)")?;
     let (offer, _) = offer_of(args, false)?;
     let bytes = std::fs::read(&file).map_err(|e| format!("cannot read {file}: {e}"))?;
-    kk_update::verify_download(&offer, &bytes)
-        .map_err(|r| format!("do NOT install this file: {r:?}"))?;
+    kk_update::verify_download(&offer, &bytes).map_err(|r| {
+        format!(
+            "do NOT install this file: {}",
+            refusal_words(&format!("{r:?}"))
+        )
+    })?;
     println!(
         "ok: {file} is exactly the file the publisher signed for version {}",
         offer.version
@@ -369,8 +374,12 @@ fn download(args: &[String]) -> Result<(), String> {
         "downloading {} bytes for version {} (nothing is opened or run)",
         offer.artifact.size, offer.version
     );
-    let path = kk_update::download::download(&offer, &platform, &dir, &fetcher)
-        .map_err(|r| format!("the download was refused and nothing was kept: {r:?}"))?;
+    let path = kk_update::download::download(&offer, &platform, &dir, &fetcher).map_err(|r| {
+        format!(
+            "the download was refused and nothing was kept: {}",
+            refusal_words(&format!("{r:?}"))
+        )
+    })?;
     println!(
         "ok: {} is exactly the file the publisher signed for version {}",
         path.display(),
@@ -378,4 +387,22 @@ fn download(args: &[String]) -> Result<(), String> {
     );
     println!("Installing it is a separate step that needs a signed and notarised build.");
     Ok(())
+}
+
+/// A refusal of the update check, in words, with the check's own name for it after, for anyone who searches for it.
+fn refusal_words(reason: &str) -> String {
+    let known = [
+        ("NoArtifactForThisComputer", "the announcement lists no file for this kind of computer"),
+        ("NotSigned", "it is not signed by enough of the keys this program trusts, or it was altered"),
+        ("BadArtifact", "the file does not match what the signed announcement says it must be"),
+        ("RootExpired", "the list of keys this program trusts is past its date; a newer signed list has to be applied first"),
+        ("Expired", "the announcement is past its date"),
+        ("Rollback", "it is older than an announcement this program has already seen, so it may be a replay"),
+        ("WrongChannel", "it was made for another release channel"),
+        ("Malformed", "it is not a well-formed announcement"),
+    ];
+    match known.iter().find(|(k, _)| reason.contains(k)) {
+        Some((name, words)) => format!("{words} ({name})"),
+        None => reason.to_string(),
+    }
 }

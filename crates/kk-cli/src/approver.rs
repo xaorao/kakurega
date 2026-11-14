@@ -119,7 +119,7 @@ pub fn run(args: &[String]) -> u8 {
                     0
                 }
                 other => {
-                    eprintln!("could not enroll: {other:?}");
+                    eprintln!("could not enroll: {}", crate::approve::said(&other));
                     1
                 }
             }
@@ -152,7 +152,10 @@ pub fn run(args: &[String]) -> u8 {
             let d = match admin.get(&format!("/admin/approvals/{id}")) {
                 Ok((200, v)) => v,
                 other => {
-                    eprintln!("the kernel does not know this approval: {other:?}");
+                    eprintln!(
+                        "the kernel does not know this approval: {}",
+                        crate::approve::said(&other)
+                    );
                     return 1;
                 }
             };
@@ -202,7 +205,7 @@ pub fn run(args: &[String]) -> u8 {
                 0
             }
             other => {
-                eprintln!("could not list: {other:?}");
+                eprintln!("could not list: {}", crate::approve::said(&other));
                 1
             }
         },
@@ -238,7 +241,7 @@ pub fn run(args: &[String]) -> u8 {
                     0
                 }
                 other => {
-                    eprintln!("could not revoke: {other:?}");
+                    eprintln!("could not revoke: {}", crate::approve::said(&other));
                     1
                 }
             }

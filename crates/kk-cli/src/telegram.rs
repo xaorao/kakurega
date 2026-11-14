@@ -24,6 +24,9 @@ pub const MENU: &[(&str, &str)] = &[
 pub struct Bridge {
     pub bound_chat: Option<i64>,
     pairing_code: Option<(String, Instant, u8)>,
+    /// The last code that was used up, guessed at too often or ran out. The same code read again from its file is not
+    /// opened a second time, so five wrong tries stay five.
+    closed_code: Option<String>,
     seen_states: BTreeMap<String, String>,
     seen_approvals: BTreeMap<String, bool>,
     primed: bool,
@@ -121,6 +124,7 @@ impl Bridge {
         Bridge {
             bound_chat,
             pairing_code: None,
+            closed_code: None,
             seen_states: BTreeMap::new(),
             seen_approvals: BTreeMap::new(),
             primed: false,
@@ -150,6 +154,9 @@ impl Bridge {
             .as_ref()
             .is_some_and(|(c, _, _)| c == code)
         {
+            return;
+        }
+        if self.closed_code.as_deref() == Some(code) {
             return;
         }
         let issued = Instant::now().checked_sub(age).unwrap_or_else(Instant::now);
@@ -182,12 +189,14 @@ impl Bridge {
                     let fresh = issued.elapsed() < Duration::from_secs(300);
                     if fresh && !given.is_empty() && code == given {
                         self.pairing_code = None;
+                        self.closed_code = Some(code.clone());
                         self.bound_chat = Some(chat);
                         return (vec![Out { chat, text: "Paired. I will tell you when a review finishes or an approval is waiting. I never send file contents. Commands: /status /reviews /help.".into(), ..Default::default() }], Some(chat));
                     }
                     // While a pairing window is open the owner needs to know why it did not work. Five wrong tries close it.
                     if !fresh || attempts + 1 >= 5 {
                         self.pairing_code = None;
+                        self.closed_code = Some(code.clone());
                     } else {
                         self.pairing_code = Some((code, issued, attempts + 1));
                     }
@@ -783,6 +792,16 @@ fn save_bound(dir: &Path, chat: i64) {
     );
 }
 
+const TELEGRAM_USAGE: &str = "Usage:
+  kaku telegram                 run the bridge (notifications and counts on your phone, never contents)
+  kaku telegram set-token       keep the bot token in the encrypted store (piped in, never on the command line)
+  kaku telegram clear-token     forget the stored bot token
+  kaku telegram pair            print a one-time code to send to the bot as /pair CODE
+  kaku telegram unpair          forget the paired chat
+  kaku telegram status          what the bridge last did
+  kaku telegram doctor          check the token, the bot and the pairing
+Options: --clear-webhook (with no command) removes a webhook that blocks polling; --token-file FILE; --data-dir DIR";
+
 pub fn run(args: &[String]) -> u8 {
     let dir = crate::data_dir(args);
     let admin = match crate::approve::connect(args) {
@@ -799,6 +818,39 @@ pub fn run(args: &[String]) -> u8 {
         return token_command(args[0].as_str(), &admin);
     }
     let mut admin = HttpAdmin(admin);
+    // a word that is not a command of this bridge never starts it: a typo would otherwise run a bridge nobody asked for
+    let word = args.iter().find(|a| {
+        !a.starts_with("--")
+            && Some(a.as_str()) != crate::flag(args, "--data-dir").as_deref()
+            && Some(a.as_str()) != crate::flag(args, "--token-file").as_deref()
+            && Some(a.as_str()) != crate::flag(args, "--api-base").as_deref()
+    });
+    if let Some(w) = word.map(String::as_str).filter(|w| {
+        !matches!(
+            *w,
+            "pair" | "unpair" | "status" | "doctor" | "set-token" | "clear-token"
+        )
+    }) {
+        eprintln!("kaku telegram: `{w}` is not one of its commands.\n{TELEGRAM_USAGE}");
+        return 2;
+    }
+    if args.first().map(String::as_str) == Some("unpair") {
+        // the chat on file is forgotten, an open pairing code is closed, and a bridge that is running is told through a
+        // marker it reads within a second
+        let had = load_bound(&dir).is_some();
+        let _ = std::fs::remove_file(bound_path(&dir));
+        let _ = std::fs::remove_file(dir.join("telegram.pairing"));
+        let _ = kk_vault::durable::write_atomic(&dir.join("telegram.unpair"), b"1", 0o600);
+        println!(
+            "{}",
+            if had {
+                "Unpaired. That chat gets nothing more from this computer. `kaku telegram pair` pairs a chat again."
+            } else {
+                "No chat was paired. Nothing was changed."
+            }
+        );
+        return 0;
+    }
     if args.first().map(String::as_str) == Some("pair") {
         // a code is of no use without a bot to send it to: the first step is said instead, and nothing is changed
         let token = match token_or_stored(
@@ -895,7 +947,7 @@ pub fn run(args: &[String]) -> u8 {
         };
     }
     if args.first().map(String::as_str) == Some("doctor") {
-        return doctor(args, &dir);
+        return doctor(args, &dir, &admin.0);
     }
     let token = match token_or_stored(
         crate::flag(args, "--token-file")
@@ -919,6 +971,12 @@ pub fn run(args: &[String]) -> u8 {
     };
     let mut bridge = Bridge::new(load_bound(&dir));
     let reload_code = |bridge: &mut Bridge| {
+        // `kaku telegram unpair` leaves a marker: the running bridge forgets the chat it was paired with
+        let marker = dir.join("telegram.unpair");
+        if marker.exists() {
+            let _ = std::fs::remove_file(&marker);
+            bridge.bound_chat = None;
+        }
         let path = dir.join("telegram.pairing");
         if let Ok(code) = std::fs::read_to_string(&path) {
             let age = std::fs::metadata(&path)
@@ -1165,7 +1223,7 @@ fn write_status(dir: &Path, s: &Status) {
 }
 
 /// `kaku telegram doctor`: checks the setup without sending anything to any chat.
-fn doctor(args: &[String], dir: &Path) -> u8 {
+fn doctor(args: &[String], dir: &Path, admin: &crate::approve::Admin) -> u8 {
     let mut bad = 0u8;
     let mut say = |ok: bool, text: String| {
         println!("{} {text}", if ok { "ok   " } else { "FIX  " });
@@ -1181,9 +1239,11 @@ fn doctor(args: &[String], dir: &Path) -> u8 {
             let p = token_file_problems(f);
             say(p.is_empty(), if p.is_empty() { "token file is a regular file readable only by you".into() } else { p.join("; ") });
         }
-        None => say(std::env::var("TELEGRAM_BOT_TOKEN").is_ok_and(|t| !t.is_empty()), "token comes from TELEGRAM_BOT_TOKEN (a token file with mode 600 is safer: it does not appear in the process environment)".into()),
+        None if std::env::var("TELEGRAM_BOT_TOKEN").is_ok_and(|t| !t.is_empty()) => say(true, "token comes from TELEGRAM_BOT_TOKEN (a token file with mode 600, or `kaku telegram set-token`, is safer: it does not appear in the environment of other programs)".into()),
+        None if token_or_stored(None, admin).is_ok() => say(true, "token is kept in the encrypted store (set with `kaku telegram set-token`)".into()),
+        None => say(false, "token comes from TELEGRAM_BOT_TOKEN (a token file with mode 600 is safer: it does not appear in the process environment)".into()),
     }
-    let token = read_token(file.as_deref());
+    let token = token_or_stored(file.as_deref(), admin);
     say(
         token.is_ok(),
         token
@@ -2578,6 +2638,16 @@ mod tests {
                 .0
                 .is_empty(),
             "after five wrong tries even the right code is dead"
+        );
+        assert!(b.bound_chat.is_none());
+        // found in real use: the running bridge reads the code's file again every half second, and that must not
+        // open the same code a second time
+        b.set_pairing_code_aged("newcode22", Duration::from_secs(20));
+        assert!(
+            b.handle_update(&mut f, &msg(111, "/pair newcode22"))
+                .0
+                .is_empty(),
+            "the same code read again from its file stays closed"
         );
         assert!(b.bound_chat.is_none());
         b.set_pairing_code("first111");

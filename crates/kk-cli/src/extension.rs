@@ -23,7 +23,10 @@ pub fn run(args: &[String]) -> u8 {
                 0
             }
             other => {
-                eprintln!("could not create a pairing code: {other:?}");
+                eprintln!(
+                    "could not create a pairing code: {}",
+                    crate::approve::said(&other)
+                );
                 1
             }
         },
@@ -37,7 +40,10 @@ pub fn run(args: &[String]) -> u8 {
                 0
             }
             other => {
-                eprintln!("could not read the status: {other:?}");
+                eprintln!(
+                    "could not read the status: {}",
+                    crate::approve::said(&other)
+                );
                 1
             }
         },
@@ -54,7 +60,7 @@ pub fn run(args: &[String]) -> u8 {
                 0
             }
             other => {
-                eprintln!("could not revoke: {other:?}");
+                eprintln!("could not revoke: {}", crate::approve::said(&other));
                 1
             }
         },

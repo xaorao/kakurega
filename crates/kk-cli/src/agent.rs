@@ -134,7 +134,7 @@ pub fn run(args: &[String]) -> u8 {
                     0
                 }
                 other => {
-                    eprintln!("could not revoke: {other:?}");
+                    eprintln!("could not revoke: {}", crate::approve::said(&other));
                     1
                 }
             }
@@ -154,7 +154,10 @@ pub fn run(args: &[String]) -> u8 {
                 0
             }
             other => {
-                eprintln!("could not read the leases: {other:?}");
+                eprintln!(
+                    "could not read the leases: {}",
+                    crate::approve::said(&other)
+                );
                 1
             }
         },
