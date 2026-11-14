@@ -222,7 +222,7 @@ impl Service {
     }
 }
 
-fn all(svc: &Service) -> Vec<Value> {
+pub(super) fn all(svc: &Service) -> Vec<Value> {
     let store = svc.store.lock().expect("lock");
     let c = store.connection();
     // every name a project is known by: made here, or already used for a conversation or a setting
@@ -329,6 +329,8 @@ pub(super) async fn change(axum::Extension(svc): Svc, Json(b): Json<ProjectBody>
                     }
                 },
             };
+            // whether anything already used this name before the change: a level set for a name nothing uses is said
+            let known = all(&svc).iter().any(|p| p["name"] == name.as_str());
             if let Some(level) = floor {
                 let store = svc.store.lock().expect("lock");
                 let c = store.connection();
@@ -352,7 +354,8 @@ pub(super) async fn change(axum::Extension(svc): Svc, Json(b): Json<ProjectBody>
                 );
                 // only the floor was asked for: the project is not made or changed otherwise
                 if b.folder.is_none() {
-                    return Json(json!({"changed": true, "projects": all(&svc)})).into_response();
+                    return Json(json!({"changed": true, "known": known, "projects": all(&svc)}))
+                        .into_response();
                 }
             }
             {

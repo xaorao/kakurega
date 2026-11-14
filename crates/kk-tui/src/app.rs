@@ -5671,7 +5671,9 @@ impl App {
                 }];
                 if body["changeable"] == true {
                     lines.push(format!("/route local [MODEL] answers on this computer (now {local}); /model lists the models installed."));
-                    lines.push(if body["near"]["key_saved"] == true {
+                    lines.push(if current == "near" && body["near"]["key_saved"] != true {
+                        "NEAR AI Cloud is in use with the key this service was started with; /route near MODEL changes the model.".to_string()
+                    } else if body["near"]["key_saved"] == true {
                         format!("/route near MODEL answers on NEAR AI Cloud with the key kept here{}.", near.map(|m| format!(" (last chosen: {m})")).unwrap_or_default())
                     } else {
                         "NEAR AI Cloud needs an account key first: give it in the web workspace's Settings, or start the service with --near-key-file FILE. The terminal never asks you to type a key.".into()
@@ -6440,6 +6442,12 @@ impl App {
                             format!("Off for {}.", clean(&project))
                         },
                     );
+                    if body["known"] == false {
+                        self.say(
+                            Kind::Warn,
+                            format!("Nothing here is called {} yet: no note, conversation or project folder uses that name. The setting is kept for when one does; check the spelling if you meant an existing project.", clean(&project)),
+                        );
+                    }
                 } else {
                     self.say(Kind::Error, err_text(status, &body));
                 }
@@ -6963,6 +6971,12 @@ impl App {
                             }
                         ),
                     );
+                    if body["known"] == false {
+                        self.say(
+                            Kind::Warn,
+                            format!("Nothing here was called {} before now: no note, conversation or project folder used that name. If you meant an existing project, check the spelling: the other one is not protected by this.", clean(name)),
+                        );
+                    }
                 }
                 Vec::new()
             }

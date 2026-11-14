@@ -523,6 +523,18 @@ pub fn ask(args: &[String]) -> u8 {
                         println!("{line}");
                     }
                 }
+                // files that hold text written like orders to a model: said in plain text too, not only with --json
+                let suspects: Vec<String> = v["injection_suspects"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|x| x.as_str().map(clean)).collect())
+                    .unwrap_or_default();
+                if !json_mode && !suspects.is_empty() {
+                    println!(
+                        "Careful: {} text that reads like instructions to a model ({}). It was given to the model as data, not as orders; read the answer with that in mind.",
+                        if suspects.len() == 1 { "1 file holds".to_string() } else { format!("{} files hold", suspects.len()) },
+                        suspects.join(", ")
+                    );
+                }
                 if checkable && all_found {
                     OK
                 } else {

@@ -3590,7 +3590,12 @@ async fn project_settings_set(
                 &b.project,
                 &[("notes_only", i64::from(b.notes_only).into())],
             );
-            Json(json!({"project": b.project, "notes_only": b.notes_only})).into_response()
+            // a name nothing uses yet is accepted (a setting can come before the project's first note), and said
+            let known = projects::all(&svc)
+                .iter()
+                .any(|p| p["name"] == b.project.as_str());
+            Json(json!({"project": b.project, "notes_only": b.notes_only, "known": known}))
+                .into_response()
         }
         Err(e) => error(StatusCode::UNPROCESSABLE_ENTITY, "PROJECT_REFUSED", &e),
     }
@@ -7062,7 +7067,11 @@ async fn route_attest(axum::Extension(svc): Svc, Json(b): Json<AttestBody>) -> R
         "The key that signs the model's answers belongs to that verified software."
     ]);
     let does_not_mean = json!([
-        "It does not prove that a particular answer came from this software; that needs the signed-answer check, which needs a NEAR API key and is not done here.",
+        if svc.route_for_owner()["class"] == "verified_tee" {
+            "It does not by itself prove that a particular answer came from this software; that is the signed-answer check, which this workspace does on every answer while this model is in use, and shows under each chat answer."
+        } else {
+            "It does not prove that a particular answer came from this software; that needs the signed-answer check, which is done on every answer once this model is the one in use (it needs a NEAR AI API key)."
+        },
         "It does not protect anything you have not chosen to send to that model.",
         "It does not cover the Kakurega app on this computer; the signed event log and capsules do."
     ]);

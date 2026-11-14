@@ -125,6 +125,7 @@ try:
     ans = json.loads(out)
     check("ask against the real service: the checker marks the real quote verified and the invented one not found, so it exits 3; withheld files and the hostile README are reported", rc == 3 and ans["checkable"] is True and [c["verdict"] for c in ans["citations"]] == ["verified", "not_found"] and ans["files_withheld"] >= 1 and ans["injection_suspected"] is True, f"{rc} {out[:400]} {err}")
     rc, out, _ = k("ask", "When do sessions expire?", "--folder", str(work / "root/payments-service"))
+    check("found in real use: in plain text too, ask says that a file holds text written like orders to a model, and names it", "Careful:" in out and "README" in out and "as data" in out, out[-300:])
     check("in words the invented quote says not to rely on it and the real one is verified with its line", rc == 3 and "(verified, line 1)" in out and "NOT FOUND in that file: do not rely on it" in out, out[:300])
     rc, _, err = k("ask", "q", "--folder", "/no/such/folder")
     check("ask of a folder that does not exist is a usage error (2)", rc == 2, err)
