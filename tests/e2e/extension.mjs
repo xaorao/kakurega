@@ -132,8 +132,12 @@ try {
   await popup.getByText("Not connected.").waitFor();
   const afterForget = await popup.evaluate(async (selection) => (await import("./capture.js")).captureSelection(selection), { selectionText: "after disconnect", pageUrl: "https://a.example/" });
   check("after disconnecting, sending is refused locally", afterForget.ok === false && /Not paired/.test(afterForget.message));
+  // found in real use: Disconnect used to clear only the extension's own storage, and Kakurega went on saying an
+  // extension was paired
+  const side = await adminFetch("/admin/extension");
+  check("disconnecting ends the pairing on Kakurega's side too", side.paired === false || side.origin === null || side.origin === undefined, JSON.stringify(side));
   const lock = await adminFetch("/admin/extension/revoke", "POST", {});
-  check("the owner can still revoke on the service side", lock.revoked === true);
+  check("and the owner's own revoke then finds nothing left to revoke", lock.revoked === false);
   const unexpected = errors.filter((e) => !/status of (401|422)/.test(e)); // the wrong code and the secret selection are answered with these on purpose
   check("no unexpected console or page errors in the popup", unexpected.length === 0, unexpected.join(" | "));
 } finally {

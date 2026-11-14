@@ -23,7 +23,13 @@ test("ex07 the content security policy allows only the extension's own scripts",
   const csp = manifest.content_security_policy.extension_pages;
   assert.match(csp, /script-src 'self'/);
   assert.match(csp, /object-src 'none'/);
-  assert.ok(!/unsafe-inline|unsafe-eval|wasm-unsafe-eval|https?:/.test(csp), csp);
+  assert.ok(!/unsafe-inline|unsafe-eval|wasm-unsafe-eval/.test(csp), csp);
+  // the only address named anywhere in the policy is this computer's, and only for requests: no page of the extension
+  // can load code from, or talk to, any other place
+  const parts = Object.fromEntries(csp.split(";").map((d) => d.trim().split(/\s+/)).map(([k, ...v]) => [k, v.join(" ")]));
+  assert.equal(parts["connect-src"], "http://127.0.0.1:*");
+  assert.equal(parts["default-src"], "'none'");
+  for (const [k, v] of Object.entries(parts)) if (k !== "connect-src") assert.ok(!/https?:|\*/.test(v), `${k} ${v}`);
 });
 
 test("ex08 no source file loads remote code, evaluates strings or writes HTML from data", () => {

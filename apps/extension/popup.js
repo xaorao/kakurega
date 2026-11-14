@@ -49,7 +49,9 @@ $("pair").addEventListener("submit", async (e) => {
   try {
     const r = await call(fetch, { port }, "POST", "/ext/pair", { code });
     if (r.status !== 200 || typeof r.body?.token !== "string") {
-      $("error").textContent = r.body?.error?.message ?? `Pairing failed (${r.status}).`;
+      // the service's own sentence, as a sentence; an answer that is not Kakurega's is said as that
+      const said = r.body?.error?.message;
+      $("error").textContent = said ? said.charAt(0).toUpperCase() + said.slice(1) + (/[.!?]$/.test(said) ? "" : ".") : r.status === 200 ? "Something answered on that port, but it is not Kakurega. Check the port." : `Kakurega refused the pairing (${r.status}).`;
       return;
     }
     await chrome.storage.local.set({ port, token: r.body.token });
@@ -61,6 +63,14 @@ $("pair").addEventListener("submit", async (e) => {
 });
 
 $("forget").addEventListener("click", async () => {
+  // Kakurega is told too, so its side no longer says an extension is paired; if it is not running, the token is
+  // forgotten here all the same
+  try {
+    const saved = await chrome.storage.local.get(["token", "port"]);
+    if (saved.token && saved.port) await call(fetch, saved, "POST", "/ext/unpair", {});
+  } catch {
+    /* not reachable: nothing more can be done from here */
+  }
   await chrome.storage.local.remove(["token", "port"]);
   await render();
 });

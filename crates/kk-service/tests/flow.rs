@@ -2305,6 +2305,35 @@ fn sv18_the_browser_extension_channel_is_narrow_paired_origin_pinned_and_can_onl
             422,
             "a duplicate is not queued twice"
         );
+        // found in real use: each reason is said by itself, and invisible layout marks do not get a selection refused
+        let (st, v) = cap(json!("\u{0915}".repeat(1500)), "https://a.example/");
+        assert_eq!(st, 422, "{v}");
+        assert_eq!(v["error"]["code"], "TOO_LONG", "{v}");
+        assert!(
+            v["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("4500 bytes"),
+            "{v}"
+        );
+        let (st, v) = cap(json!("pay \u{202E}evil\u{202C} now"), "https://a.example/");
+        assert_eq!(
+            (st, v["error"]["code"].as_str()),
+            (422, Some("HIDDEN_CHARACTERS")),
+            "{v}"
+        );
+        let (st, v) = cap(
+            json!(format!(
+                "deploy with ghp_{}",
+                "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+            )),
+            "https://a.example/",
+        );
+        assert_eq!(
+            (st, v["error"]["code"].as_str()),
+            (422, Some("LOOKS_SECRET")),
+            "{v}"
+        );
         for (text, page, why) in [
             (json!(""), "https://a.example/", "empty"),
             (json!("x".repeat(2001)), "https://a.example/", "too long"),

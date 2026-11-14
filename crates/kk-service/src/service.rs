@@ -8279,6 +8279,25 @@ async fn admin_ext_revoke(axum::Extension(svc): Svc) -> Response {
     Json(json!({"revoked": n > 0})).into_response()
 }
 
+/// The paired extension gives its own access back ("Disconnect this browser"): the same as the owner revoking it, and it
+/// can only end the pairing it holds the token of.
+async fn ext_unpair(axum::Extension(svc): Svc, headers: axum::http::HeaderMap) -> Response {
+    if let Err(r) = svc.ext_authorized(&headers) {
+        return *r;
+    }
+    let n = svc
+        .store
+        .lock()
+        .expect("lock")
+        .connection()
+        .execute("DELETE FROM ext_token", [])
+        .unwrap_or(0);
+    if n > 0 {
+        svc.log_event("extension.revoked", "browser", &[]);
+    }
+    Json(json!({"revoked": n > 0})).into_response()
+}
+
 async fn admin_ext_status(axum::Extension(svc): Svc) -> Response {
     let row = svc.ext_token_row();
     Json(json!({"paired": row.is_some(), "origin": row.map(|r| r.1)})).into_response()
@@ -8371,6 +8390,34 @@ struct ExtCaptureBody {
     page: String,
 }
 
+/// A selection without the marks a web page uses for layout and that nobody sees: soft hyphen, zero-width space, the two
+/// direction marks and the byte-order mark. Joiners that scripts need to write a word are kept.
+pub(crate) fn visible_selection(text: &str) -> String {
+    text.chars()
+        .filter(|c| {
+            !matches!(
+                c,
+                '\u{00AD}' | '\u{200B}' | '\u{200E}' | '\u{200F}' | '\u{FEFF}'
+            )
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod selection_tests {
+    #[test]
+    fn layout_marks_nobody_sees_are_dropped_and_joiners_a_script_needs_are_kept() {
+        assert_eq!(
+            super::visible_selection("ed\u{00AD}ge-7 in the\u{200B} Oslo\u{200E} region\u{FEFF}"),
+            "edge-7 in the Oslo region"
+        );
+        let persian = "\u{0645}\u{06CC}\u{200C}\u{062E}\u{0648}\u{0627}\u{0647}\u{0645}";
+        assert_eq!(super::visible_selection(persian), persian);
+        // a direction override is not layout: it stays, and the capture is then refused for it
+        assert!(super::visible_selection("pay \u{202E}evil").contains('\u{202E}'));
+    }
+}
+
 async fn ext_capture(
     axum::Extension(svc): Svc,
     headers: axum::http::HeaderMap,
@@ -8379,12 +8426,41 @@ async fn ext_capture(
     if let Err(r) = svc.ext_authorized(&headers) {
         return *r;
     }
-    let text = b.text.trim();
+    // marks a web page uses for layout and that nobody sees (soft hyphen, zero-width space, direction marks) are dropped
+    // from the selection; they are not part of what the person chose and would otherwise get it refused
+    let plain = visible_selection(&b.text);
+    let text = plain.trim();
+    if kk_types::injection::hidden_chars(text) {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "HIDDEN_CHARACTERS",
+            "that selection holds hidden characters that change how text reads (a direction override or similar), so it was not kept; select plain text",
+        );
+    }
     if text.is_empty() || text.chars().count() > 2000 || !chat_clean(text) {
         return error(
             StatusCode::BAD_REQUEST,
             "BAD_TEXT",
             "the selection must be 1 to 2000 characters without control characters",
+        );
+    }
+    // each reason a selection is not kept is said by itself, so the person knows what to do about it
+    if text.len() > kk_memory::MAX_TEXT {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "TOO_LONG",
+            &format!(
+                "that selection is too long to keep as one note: it takes {} bytes and a note holds {}. That is about 2,000 English letters, or about 1,300 in scripts such as Hindi, Chinese or Japanese. Select a shorter part",
+                text.len(),
+                kk_memory::MAX_TEXT
+            ),
+        );
+    }
+    if kk_secrets::holds_secret(text) {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "LOOKS_SECRET",
+            "that selection was not kept: it looks like it holds a key or a password",
         );
     }
     let Some(origin) = page_origin(&b.page) else {
@@ -8400,7 +8476,7 @@ async fn ext_capture(
             svc.log_event("extension.capture", "browser", &[("origin", origin.into())]);
             (StatusCode::ACCEPTED, Json(json!({"queued": true, "id": id}))).into_response()
         }
-        Ok(None) => error(StatusCode::UNPROCESSABLE_ENTITY, "NOT_QUEUED", "that selection was not queued: it looks like a secret, it is already known or forgotten, or too many are waiting"),
+        Ok(None) => error(StatusCode::UNPROCESSABLE_ENTITY, "NOT_QUEUED", "that selection was not kept: you already have it (or chose to forget it), or 50 selections are already waiting for you in Memory"),
         Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "MEMORY_STORAGE", "the memory store failed"),
     }
 }
@@ -11279,6 +11355,7 @@ impl Extension for Routes {
             .route("/ext/pair", post(ext_pair))
             .route("/ext/status", get(ext_status))
             .route("/ext/capture", post(ext_capture))
+            .route("/ext/unpair", post(ext_unpair))
             // the same list the owner's page reads, for the desktop shell's menu-bar count and notifications; the admin
             // token can already read everything in it
             .route("/admin/inbox", get(inbox))
