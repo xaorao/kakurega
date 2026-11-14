@@ -33,6 +33,15 @@ const checked = (p: QuestionPlace) => p.found.state === "at_line" || p.found.sta
 
 /** Ask an agent a question about a project: it reads the files on this computer, may run a short check in the sandbox, and
  *  every line its answer rests on is checked against the file. */
+/** Says where the model that answered really is: only a model reached through Ollama is on this computer. */
+export function footer(route: string, turns: number, elapsedMs: number): string {
+  const at = route.indexOf(":");
+  const kind = at < 0 ? "" : route.slice(0, at);
+  const model = at < 0 ? route : route.slice(at + 1);
+  const key = kind === "ollama" ? "ex.footer" : kind === "near" ? "ex.footer.near" : "ex.footer.other";
+  return t(key, { turns, seconds: Math.max(1, Math.round(elapsedMs / 1000)), model });
+}
+
 export function Explore() {
   const [dir, setDir] = createSignal<string | undefined>(taken());
   const [listing, { refetch: refetchListing }] = createResource(() => dir() ?? "", (d) => api.fs(d || undefined).catch(() => null));
@@ -189,7 +198,7 @@ export function Explore() {
                       <ul class="plain"><For each={a().files_read}>{(f) => <li><code>{visible(f)}</code></li>}</For></ul>
                     </details>
                   </Show>
-                  <p class="muted">{t("ex.footer", { turns: a().turns, seconds: Math.max(1, Math.round(a().elapsed_ms / 1000)), route: a().route })}{a().withheld > 0 ? ` ${t(a().withheld === 1 ? "ex.withheld.one" : "ex.withheld", { n: a().withheld })}` : ""}</p>
+                  <p class="muted">{footer(a().route, a().turns, a().elapsed_ms)}{a().withheld > 0 ? ` ${t(a().withheld === 1 ? "ex.withheld.one" : "ex.withheld", { n: a().withheld })}` : ""}</p>
                   <Show when={(a().withheld_files ?? []).length > 0}>
                     <details>
                       <summary>{t("ex.withheldWhich")}</summary>
