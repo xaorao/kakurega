@@ -333,7 +333,7 @@ try {
   await page.reload();
   await page.getByRole("tab", { name: "Release" }).click();
   await page.getByText("This release has expired.").waitFor();
-  check("an expired release says so and Request approval is disabled", (await page.getByRole("button", { name: "Request approval" }).isDisabled()) === true);
+  check("an expired release says so, offers no approval, and offers to run the review again", (await page.getByRole("button", { name: "Request approval" }).count()) === 0 && (await page.getByRole("button", { name: "Run the review again" }).count()) === 1);
   await axeCheck(page, "expired release");
   await page.unroute("**/api/jobs/*/release");
   await page.route("**/api/jobs/*/release", (route) => patch(route, (j) => { j.expires = j.server_time + 120; }));
@@ -496,7 +496,7 @@ try {
   await page.reload();
   await page.getByRole("tab", { name: "Release" }).click();
   await page.getByText("This release has expired.").waitFor();
-  check("an approved release past its deadline cannot be delivered from the page", (await page.getByRole("button", { name: "Sign and deliver the capsule" }).isDisabled()) === true);
+  check("an approved release past its deadline cannot be delivered from the page", (await page.getByRole("button", { name: "Sign and deliver the capsule" }).count()) === 0 && (await page.getByRole("button", { name: "Run the review again" }).count()) === 1);
   await page.unroute("**/api/jobs/*/release");
   await page.reload();
   await page.getByRole("tab", { name: "Release" }).click();

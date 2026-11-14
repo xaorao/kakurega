@@ -1,5 +1,5 @@
 import { createMemo, createResource, createSignal, For, Show } from "solid-js";
-import { api, type Job } from "../api";
+import { api, stateOf, type Job } from "../api";
 import { t, type Key } from "../i18n";
 import { sizeText as size } from "../attach";
 
@@ -52,7 +52,7 @@ export function SealedRoom(props: { job: Job }) {
         <div class="room-gate" aria-hidden="true"><span>{t("room.gate")}</span></div>
         <div class="room-out">
           <div class="room-head"><h2>{t("room.leaving")}</h2><Show when={leaving().length > 0}><span>{t(leaving().length === 1 ? "room.made.one" : "room.made", { n: leaving().length })} · {size(total())}</span></Show></div>
-          <Show when={leaving().length > 0} fallback={<p class="room-none">{t(release() && !release()!.available ? "room.nothing" : "room.notYet")}</p>}>
+          <Show when={leaving().length > 0} fallback={<p class="room-none">{t(stateOf(props.job) === "stopped" ? "room.stopped" : release() && !release()!.available ? "room.nothing" : "room.notYet")}</p>}>
             <ul class="room-list"><For each={leaving()}>{(f) => <li><span>{f.name}</span><span>{size(f.bytes)}</span></li>}</For></ul>
             <p class="room-note">{t(props.job.delivered ? "room.delivered" : "room.held", { recipient: props.job.recipient })} {t(count("withheld") === 1 ? "room.rest.one" : "room.rest", { n: count("withheld") })}</p>
           </Show>

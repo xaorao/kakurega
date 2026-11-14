@@ -538,6 +538,8 @@ export const api = {
 };
 
 /** The word for a review's state: one the owner stopped is "stopped", not "failed". */
-export function stateOf(j: Pick<Job, "state" | "note">): "running" | "ready" | "nothing_to_release" | "failed" | "stopped" {
+export function stateOf(j: Pick<Job, "state" | "note"> & { delivered?: unknown }): "running" | "ready" | "delivered" | "nothing_to_release" | "failed" | "stopped" {
+  // a release that was signed and handed over is no longer waiting for anything
+  if (j.state === "ready" && j.delivered) return "delivered";
   return j.state === "failed" && j.note === "stopped by you" ? "stopped" : j.state;
 }

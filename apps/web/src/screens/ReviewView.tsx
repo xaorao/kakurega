@@ -2,7 +2,7 @@ import { prComment } from "../prcomment";
 import { Glyph } from "../components/Glyph";
 import { SealedRoom } from "../components/SealedRoom";
 import { Code } from "../components/Code";
-import { serverText as serverTextIn } from "../serverText";
+import { asSentence, serverText as serverTextIn } from "../serverText";
 import { sizeText } from "../attach";
 import { baseName, filterFiles, groupByDir, languageOf, lineCount, MAX_SHOWN } from "../filetree";
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
@@ -29,6 +29,16 @@ function languageName(language?: string): string {
   if (language === "typescript") return t("find.lang.typescript");
   if (language === "rust") return t("find.lang.rust");
   return t("find.lang.unknown");
+}
+
+/** Why a finding is not in the release, in words: the checker's own state names (not_reproduced, failed: …) are never
+ *  shown as they are. */
+function checkerWords(why: string): string {
+  if (/^(reproduced|not_reproduced|nondeterministic)$/.test(why) || /^(failed|unavailable)(:|$)/.test(why)) {
+    const [label, , reason] = statusText(why);
+    return reason ? `${label}. ${asSentence(reason)}` : `${label}.`;
+  }
+  return asSentence(why);
 }
 
 /** A finding's state as a short label for its chip, the chip's tone, and the reason, shown under the title, when there is one. */
@@ -96,7 +106,7 @@ function Progress(props: { job: Job; go: (tab: "findings" | "release") => void }
         </li>
       </Show>
       <Show when={props.job.state === "failed"}>
-        <li class="fail"><span class="mark">!</span><span>{t("progress.stopped")}</span><span class="sub">{props.job.note}</span>
+        <li class="fail"><span class="mark">!</span><span>{t("progress.stopped")}</span><span class="sub">{stateOf(props.job) === "stopped" ? t("progress.stoppedByYou") : asSentence(props.job.note)}</span>
           <span class="actions"><button type="button" onClick={async () => { setAgainError(""); try { const r = await api.startJob(props.job.repo, props.job.recipient, props.job.change?.base_name || undefined); location.hash = `#/job/${r.id}`; } catch (e) { /* the old review stays as it was; the person is told why nothing started */ setAgainError(e instanceof ApiError && e.code === "BUSY" ? t("new.busy") : t("progress.againFailed", { why: e instanceof ApiError ? e.message : t("new.startError") })); } }}>{t("progress.again")}</button><Show when={againError()}><span class="sub" role="alert">{againError()}</span></Show></span>
         </li>
       </Show>
@@ -436,7 +446,10 @@ function Findings(props: { job: Job }) {
         {(d) => (
           <>
             <Show when={d().findings.length === 0}>
-              <div class="card"><p>{t("find.none")}</p><p class="muted">{t("find.noneNote")}</p></div>
+              {/* a review that was stopped found nothing because it did not finish: that is not a clean result */}
+              <Show when={stateOf(props.job) === "stopped"} fallback={<div class="card"><p>{t("find.none")}</p><p class="muted">{t("find.noneNote")}</p></div>}>
+                <div class="card"><p>{t("find.stopped")}</p></div>
+              </Show>
             </Show>
             <For each={d().findings}>
               {(f, at) => {
@@ -540,9 +553,14 @@ function ReleaseTab(props: { job: Job; config: Config; onChange: () => void }) {
         {(r) => (
           <Show when={r().available} fallback={
             <div class="card stack">
-              <h2>{t(/^The gate kept the release back/.test(r().reason ?? "") ? "rel.held" : "rel.nothing")}</h2>
-              <p>{r().reason ? serverText(r().reason ?? "") : t("rel.nothingBody")}</p>
-              <For each={r().not_confirmed}>{(n) => <p class="muted">{n.title}: {t("review.whyChecker")} <span lang="en">{n.why}</span></p>}</For>
+              <Show when={stateOf(props.job) === "stopped"} fallback={<>
+                <h2>{t(/^The gate kept the release back/.test(r().reason ?? "") ? "rel.held" : "rel.nothing")}</h2>
+                <p>{r().reason ? serverText(r().reason ?? "") : t("rel.nothingBody")}</p>
+              </>}>
+                <h2>{t("rel.stopped")}</h2>
+                <p>{t("rel.stoppedBody")}</p>
+              </Show>
+              <For each={r().not_confirmed}>{(n) => <p class="muted">{n.title}: {checkerWords(n.why)}</p>}</For>
             </div>
           }>
             <div class="release-grid"><div class="release-main stack">
@@ -609,6 +627,8 @@ function ReleaseTab(props: { job: Job; config: Config; onChange: () => void }) {
               <Show when={!props.job.delivered && (approval().state === "none" || approval().state === "waiting" || approval().state === "approved")}>
                 <Show when={left().state === "expired"}>
                   <p role="alert" class="bad">{t("appr.expired")}</p>
+                  {/* the one thing left to do is offered here, where the person is reading */}
+                  <button class="primary" type="button" disabled={busy()} onClick={async () => { setBusy(true); try { const r = await api.startJob(props.job.repo, props.job.recipient, props.job.change?.base_name || undefined); location.hash = `#/job/${r.id}`; } catch (e) { setError(e instanceof ApiError && e.code === "BUSY" ? t("new.busy") : t("progress.againFailed", { why: e instanceof ApiError ? e.message : t("new.startError") })); } finally { setBusy(false); } }}>{t("appr.runAgain")}</button>
                 </Show>
                 <Show when={left().state === "soon"}>
                   <p class="warn" role="status">{t("appr.soon", { time: formatSpan((left() as { secs: number }).secs, { h: t("unit.h"), min: t("unit.min"), s: t("unit.s") }) })}</p>
@@ -617,20 +637,20 @@ function ReleaseTab(props: { job: Job; config: Config; onChange: () => void }) {
                   <p class="muted">{t("appr.validFor", { time: formatSpan((left() as { secs: number }).secs, { h: t("unit.h"), min: t("unit.min"), s: t("unit.s") }) })}</p>
                 </Show>
               </Show>
-              <Show when={approval().state === "none"}>
+              <Show when={approval().state === "none" && !(expired() && !props.job.delivered)}>
                 <p>{t("appr.intro")}</p>
                 <button class="primary" disabled={busy() || expired() || r().disclosure?.verdict === "block"} onClick={ask}>{t("appr.request")}</button>
               </Show>
-              <Show when={approval().state === "waiting"}>
+              <Show when={approval().state === "waiting" && !(expired() && !props.job.delivered)}>
                 <p>{rich("appr.waiting")}</p>
                 <pre class="cmd" tabindex="0"><code>{props.config.profile ? `kaku --profile ${props.config.profile} approve ${approval().approval}` : props.config.data_dir ? `kaku approve ${approval().approval} --data-dir "${props.config.data_dir}"` : `kaku approve ${approval().approval}`}</code></pre>
                 <p class="muted">{t("appr.typeDigest")}</p>
               </Show>
-              <Show when={approval().state === "approved"}>
+              <Show when={approval().state === "approved" && !(expired() && !props.job.delivered)}>
                 <p class="ok">{t("appr.approved")}</p>
                 <button class="primary" disabled={busy() || expired()} onClick={deliver}>{t("appr.deliver")}</button>
               </Show>
-              <Show when={approval().state === "denied" || approval().state === "revoked"}><p class="bad">{t("appr.refused")}</p><p class="muted">{t("appr.againHelp")}</p><button disabled={busy() || expired() || r().disclosure?.verdict === "block"} onClick={ask}>{t("appr.again")}</button></Show>
+              <Show when={(approval().state === "denied" || approval().state === "revoked") && !expired()}><p class="bad">{t("appr.refused")}</p><p class="muted">{t("appr.againHelp")}</p><button disabled={busy() || expired() || r().disclosure?.verdict === "block"} onClick={ask}>{t("appr.again")}</button></Show>
               <Show when={approval().state === "uncertain"}><p class="warn">{t("appr.uncertain")}</p></Show>
               <Show when={props.job.delivered}>
                 {(d) => (

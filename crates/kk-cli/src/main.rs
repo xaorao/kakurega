@@ -85,7 +85,7 @@ Usage:
   kaku share JOB FINDING [--out FILE]   one finding of a delivered review as a file with a proof; it shows nothing of the rest of the release
   kaku notes FILE [--title TEXT] [--out FILE]   notes from a meeting transcript; a point is kept only when its quote is in the transcript
   kaku bench sign|verify FILE          sign the leak benchmark's results, or check a signed results file against a pinned key
-  kaku verify FILE [--pin KEY] [--out DIR]   check a capsule or a share offline (KEY: base64url public key); --out writes a share's files into a new folder
+  kaku verify FILE [--pin KEY] [--out DIR]   check a capsule or a share offline (KEY: the signer's key, or the 'signed by' line a check prints); --out writes the released files into a new folder, to read them and re-run the checks
   kaku chain hardware KEY | capsule FILE | order ID   what NEAR holds: a model key's hardware record, who registered a capsule, an order (reads only; --network, --registry, --json)
   kaku chain order open ... | fees | storage ACCOUNT   set NEAR aside for a review, what the registry takes and owes, NEAR set aside for token orders (`kaku chain` alone lists every option)
   kaku chain attest --model NAME --key-file FILE   have NEAR's own verifier check that model's hardware proof and record its signing key (testnet; the account in the key file pays)

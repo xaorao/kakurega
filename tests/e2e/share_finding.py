@@ -126,6 +126,15 @@ try:
     for what, value in (("another key in hex", "ab" * 32), ("another signed-by line", "ed25519:" + "ab" * 32)):
         rc, out2, _ = k("verify", capsule, "--pin", value)
         check(f"pinned with {what} it is refused in words", rc == 1 and out2.startswith("INVALID: ") and len(out2.splitlines()) >= 2 and out2.splitlines()[1].endswith("."), out2[:200])
+    # a whole capsule can be unpacked too, so its recipient can read the files and re-run every check
+    whole = work / "whole capsule"
+    rc, out2, err = k("verify", capsule, "--out", str(whole))
+    listed = sorted(p.name for p in whole.iterdir()) if whole.exists() else []
+    check("--out on a capsule writes its released files into a new folder and says how to re-run them", rc == 0 and "run-check.py" in listed and "finding-1.txt" in listed and "released files are in" in out2 and "run-check.py" in out2, f"{rc} {listed} {out2[-200:]} {err}")
+    run = subprocess.run([sys.executable, str(whole / "run-check.py")], capture_output=True, text=True, timeout=120)
+    check("the recipient re-runs every finding from the unpacked capsule", run.returncode == 0 and run.stdout.startswith("OK   "), f"{run.returncode} {run.stdout[:200]} {run.stderr[:200]}")
+    rc, _, err = k("verify", capsule, "--out", str(whole))
+    check("and a capsule is never unpacked into a folder that exists", rc == 2 and "cannot make the folder" in err, f"{rc} {err}")
     rc, _, err = k("verify", capsule, "--pin", "ed25519:zz")
     check("a pin that is neither is refused before any check, saying the three forms", rc == 2 and "64 hex digits" in err, err[:200])
 finally:

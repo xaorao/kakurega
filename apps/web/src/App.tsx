@@ -248,7 +248,7 @@ export function App() {
   const shown = createMemo(() => {
     const q = query().trim().toLowerCase();
     if (!q) return jobs();
-    return jobs().filter((j) => `${j.repo} ${j.recipient} ${j.state.replace(/_/g, " ")}`.toLowerCase().includes(q));
+    return jobs().filter((j) => `${j.repo} ${j.recipient} ${j.state.replace(/_/g, " ")} ${t(`state.${stateOf(j)}` as never)}`.toLowerCase().includes(q));
   });
   const onKey = (e: KeyboardEvent) => {
     if (e.isComposing || e.defaultPrevented) return;

@@ -3,7 +3,7 @@ use kk_evidence::capsule::{verify, VerifyOptions};
 
 pub fn run(args: &[String]) -> u8 {
     let Some(path) = args.first() else {
-        eprintln!("usage: kaku verify CAPSULE [--pin KEY]");
+        eprintln!("usage: kaku verify CAPSULE [--pin KEY] [--out NEW_FOLDER]");
         return 2;
     };
     let bytes = match std::fs::read(path) {
@@ -137,6 +137,38 @@ pub fn run(args: &[String]) -> u8 {
         println!("\nNot established:");
         for n in &report.not_established {
             println!("  - {n}");
+        }
+        // with --out DIR the released files are written out, so the recipient can read them and re-run the checks
+        if let Some(dir) = crate::flag(args, "--out") {
+            let dir = std::path::Path::new(&dir);
+            let Some((_, files)) = kk_evidence::share::capsule_parts(&bytes, now) else {
+                eprintln!("the capsule's files could not be read");
+                return 2;
+            };
+            // a new folder only: nothing that exists is written over, and every name was checked to be a plain file name
+            if let Err(e) = std::fs::create_dir(dir) {
+                eprintln!("cannot make the folder {}: {e}", dir.display());
+                return 2;
+            }
+            for (name, content) in &files {
+                if let Err(e) = std::fs::write(dir.join(name), content) {
+                    eprintln!("cannot write {name}: {e}");
+                    return 2;
+                }
+            }
+            println!(
+                "\nThe {} released files are in {}.{}",
+                files.len(),
+                dir.display(),
+                if files.contains_key("run-check.py") {
+                    format!(
+                        " To re-run the findings: python3 {}",
+                        crate::shell_word(&dir.join("run-check.py").to_string_lossy())
+                    )
+                } else {
+                    String::new()
+                }
+            );
         }
         0
     } else {
