@@ -83,6 +83,12 @@ fn pr10_the_list_says_which_models_chat_which_call_tools_and_which_have_a_proof_
         {"modelId": "promised/not-fetchable", "inputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"}, "outputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"},
          "metadata": {"verifiable": true, "attestationSupported": false, "architecture": {"inputModalities": ["text"], "outputModalities": ["text"]}, "supportedFeatures": ["json_mode"]}},
         {"modelId": "old/list-entry", "inputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"}, "outputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"},
+         "metadata": {"verifiable": true}},
+        {"modelId": "Qwen/Qwen3-Reranker-0.6B", "inputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"}, "outputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"},
+         "metadata": {"verifiable": true, "architecture": {"inputModalities": ["text"], "outputModalities": ["text"]}}},
+        {"modelId": "openai/privacy-filter", "inputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"}, "outputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"},
+         "metadata": {"verifiable": true, "architecture": {"inputModalities": ["text"], "outputModalities": ["text"]}}},
+        {"modelId": "Qwen/Qwen3-Embedding-0.6B", "inputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"}, "outputCostPerToken": {"amount": 1, "scale": 9, "currency": "USD"},
          "metadata": {"verifiable": true}}
     ]});
     let by: std::collections::BTreeMap<String, kk_near::prices::PublishedPrice> =
@@ -99,4 +105,9 @@ fn pr10_the_list_says_which_models_chat_which_call_tools_and_which_have_a_proof_
     // an entry that says nothing about what it takes is still offered
     // an entry that does not say what it supports is not called "chat only"
     assert_eq!(got("old/list-entry"), (true, None, true));
+    // NEAR lists text in and text out for a reranker and for its PII filter (read from the live list): neither holds a
+    // conversation, and an embedding model with no modalities stated does not either
+    assert!(!by["Qwen/Qwen3-Reranker-0.6B"].chat);
+    assert!(!by["openai/privacy-filter"].chat);
+    assert!(!by["Qwen/Qwen3-Embedding-0.6B"].chat);
 }

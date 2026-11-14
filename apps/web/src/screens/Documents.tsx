@@ -170,6 +170,7 @@ export function Documents() {
                 </ul>
               </Show>
             </Show>
+            <Show when={!r().route.simulated && r().route.stays_here !== undefined}><p class="muted" id="docs-where">{r().route.stays_here ? t("docs.here") : t(r().route.class === "verified_tee" ? "docs.tee" : "docs.away", { host: r().route.host ?? "" })}</p></Show>
             <p class="muted">{t("docs.used", { list: list(r().files_used) })}</p>
             <Show when={r().files_withheld.length > 0}><p class="muted">{t("docs.withheld", { list: list(r().files_withheld) })}</p></Show>
             <Show when={r().narrowed_to}><p class="muted">{t("docs.narrowed", { n: r().narrowed_to ?? 0 })}</p></Show>

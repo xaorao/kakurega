@@ -167,7 +167,7 @@ Everything in the product, with its state today and how each row was checked, is
 | Review and release | Private review of a project or a change, findings reproduced by the kernel, approval of the exact bytes, a signed capsule checked offline | Works |
 | Workspace | Chat with your notes and files, questions over documents with checked quotes, meeting notes, memory, a team of experts, a roundtable, questions and changes on a codebase, skills | Works |
 | Protection | Keys and passwords withheld, planted instructions passed as data, a sandbox with no network, a signed activity log, "Where your data goes" | Works, within the limits stated above |
-| NEAR | Confidential inference with the proof checked first, a signed receipt under every answer, the hardware record and capsule registry on testnet, orders that pay on a registered capsule | Live on testnet |
+| NEAR | Confidential inference with the proof checked first, a signed receipt under every chat answer, the hardware record and capsule registry on testnet, orders that pay on a registered capsule | Live on testnet |
 | Where it runs | Browser, desktop app (macOS, Linux), full-screen terminal, browser extension, Telegram (read-only), MCP server | Works; the desktop app is an unsigned build |
 | Not built | Windows, mobile, hosted mode, encrypted sync between devices | Not built |
 

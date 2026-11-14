@@ -380,3 +380,14 @@ button.primary:disabled { background: var(--ink); color: var(--halo); border-col
 
 /* a recipient or a folder name with no spaces breaks inside its row; it never runs out of the sidebar */
 .side .sub, .side .review-row, .side a, .crumb, .start-recent a { overflow-wrap: anywhere; min-width: 0; }
+
+/* phone: a table inside its scroller keeps each column as wide as its words (it scrolls sideways; columns never
+   overlap), and a command to copy wraps so all of it can be read */
+@media (max-width: 640px) {
+  .table-scroll table { table-layout: auto; width: max-content; min-width: 100%; }
+  .table-scroll td, .table-scroll th { padding-right: 14px; }
+  pre.cmd, pre.cmd code, .copy-row code, .cmdline pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+}
+
+/* the message box never grows over the conversation: past this height its own contents scroll */
+@media (min-width: 761px) { .composer { max-height: min(62vh, 560px); overflow-y: auto; overscroll-behavior: contain; } }

@@ -1,5 +1,5 @@
 import { Lead } from "../components/Lead";
-import { createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createMemo, createResource, createSignal, For, Show, onCleanup } from "solid-js";
 import { copyNames, leftBehind, type LeftBehind } from "../forgotten";
 import { api, ApiError, type MemoryItem } from "../api";
 import { t, type Key } from "../i18n";
@@ -285,6 +285,9 @@ function ImportNotes(props: { onDone: () => void }) {
 function Similar(props: { onChange: (msg?: string) => void; onLeft?: (l: LeftBehind | null) => void }) {
   const [open, setOpen] = createSignal(false);
   const [found, { refetch }] = createResource(open, (on) => (on ? api.similarMemories() : Promise.resolve(null)));
+
+  // a note forgotten anywhere on this screen leaves this list too
+  { const again = () => { if (open()) void refetch(); }; window.addEventListener("kk-memory-changed", again); onCleanup(() => window.removeEventListener("kk-memory-changed", again)); }
   const [problem, setProblem] = createSignal("");
   const merge = async (keep: string, others: string[]) => {
     setProblem("");
@@ -504,6 +507,9 @@ function Quiet(props: { onChange: (msg?: string) => void }) {
 function Archived(props: { onChange: (msg?: string) => void; onLeft?: (l: LeftBehind | null) => void }) {
   const [open, setOpen] = createSignal(false);
   const [list, { refetch }] = createResource(open, (on) => (on ? api.archivedMemories().then((r) => r.archived) : Promise.resolve([])));
+
+  // a note forgotten anywhere on this screen leaves this list too
+  { const again = () => { if (open()) void refetch(); }; window.addEventListener("kk-memory-changed", again); onCleanup(() => window.removeEventListener("kk-memory-changed", again)); }
   const [problem, setProblem] = createSignal("");
   const [confirming, setConfirming] = createSignal("");
   const back = async (id: string) => {
@@ -572,6 +578,9 @@ function Archived(props: { onChange: (msg?: string) => void; onLeft?: (l: LeftBe
 function Merged(props: { onChange: (msg?: string) => void }) {
   const [open, setOpen] = createSignal(false);
   const [list, { refetch }] = createResource(open, (on) => (on ? api.mergedMemories().then((r) => r.merged) : Promise.resolve([])));
+
+  // a note forgotten anywhere on this screen leaves this list too
+  { const again = () => { if (open()) void refetch(); }; window.addEventListener("kk-memory-changed", again); onCleanup(() => window.removeEventListener("kk-memory-changed", again)); }
   const [problem, setProblem] = createSignal("");
   const back = async (id: string) => {
     setProblem("");
@@ -610,6 +619,9 @@ function Merged(props: { onChange: (msg?: string) => void }) {
 function Disagreements(props: { onChange: (msg?: string) => void }) {
   const [open, setOpen] = createSignal(false);
   const [found, { refetch }] = createResource(open, (on) => (on ? api.memoryConflicts() : Promise.resolve(null)));
+
+  // a note forgotten anywhere on this screen leaves this list too
+  { const again = () => { if (open()) void refetch(); }; window.addEventListener("kk-memory-changed", again); onCleanup(() => window.removeEventListener("kk-memory-changed", again)); }
   const [problem, setProblem] = createSignal("");
   const act = async (fn: () => Promise<unknown>, msg: string) => {
     setProblem("");

@@ -1,3 +1,4 @@
+import { modelDown, setModelDown } from "./modelState";
 import { Opening } from "./components/Opening";
 import { Glyph } from "./components/Glyph";
 import { createEffect, createMemo, createSignal, ErrorBoundary, For, lazy, onCleanup, onMount, Show, Suspense } from "solid-js";
@@ -188,7 +189,7 @@ function Badge(props: { config: Config; modelDown: boolean }) {
           </Show>
         }
       >
-        <span class="badge ok" title={t("badge.private.title")}>
+        <span class={down() ? "badge warn" : "badge ok"} title={down() ? t("badge.model.down.title") : t("badge.private.title")}>
           <span class="dot" /> {t("badge.private")}
         </span>
       </Show>
@@ -356,14 +357,13 @@ export function App() {
   window.addEventListener("online", onOnline);
   // whether the model on this computer answers, from the readiness checks: read at load, when the page comes back to the
   // front (at most once a minute) and after a reply fails
-  const [modelDown, setModelDown] = createSignal(false);
   let modelChecked = 0;
   const checkModel = async (force = false) => {
     if (!paired() || (!force && Date.now() - modelChecked < 60_000)) return;
     modelChecked = Date.now();
     try {
       const r = await api.readiness();
-      setModelDown(r.checks.some((c) => c.id === "ollama" && !c.ok));
+      setModelDown(r.checks.some((c) => (c.id === "ollama" || c.id === "model") && !c.ok));
     } catch {
       // the service did not answer: that is said elsewhere
     }

@@ -1220,6 +1220,17 @@ try {
   check("the footer says about how long the answer is and how long it took", /answer: about \d+ tokens in \d+(\.\d)? (ms|s)/.test(reply), reply.replace(/\n/g, " | ").slice(0, 400));
   await page.locator(".msg.assistant").getByText("Notes used for this answer (1)").click();
   check("the answer says which note was used and why", (await page.locator(".msg.assistant .notes-used").innerText()).includes("in-process dictionary") && (await page.locator(".msg.assistant .notes-used").innerText()).includes("matched"));
+  // found in real use: a conversation that was not kept is still there after a visit to another screen, and a reload forgets it
+  {
+    const before = await page.locator(".msg").count();
+    await page.goto(base + "/#/memory");
+    await page.getByRole("heading", { name: "Memory" }).first().waitFor();
+    await page.goto(base + "/#/chat");
+    await page.getByLabel("Your message").waitFor();
+    await page.waitForTimeout(400);
+    check("an unsaved conversation is still on screen after visiting another screen", before >= 2 && (await page.locator(".msg").count()) === before, `${before} then ${await page.locator(".msg").count()}`);
+    check("and nothing of it was written to the browser's storage", await page.evaluate(() => !JSON.stringify({ ...localStorage, ...sessionStorage }).includes("in-process dictionary")));
+  }
   {
     // what the model was actually given, next to what was typed
     const sentDetails = page.locator(".msg.assistant .sent-view");

@@ -85,7 +85,7 @@ export function SavedPrompts(props: { text: () => string; onUse: (text: string) 
           </form>
         )}
       </Show>
-      <form class="actions" onSubmit={(e) => { e.preventDefault(); void change({ name: name(), text: props.text() }, t("prompts.saved")); }}>
+      <form class="actions" onSubmit={(e) => { e.preventDefault(); void change({ name: name(), text: props.text() }, (list() ?? []).some((x) => x.name === name().trim()) ? t("prompts.replaced", { name: name().trim() }) : t("prompts.saved")); }}>
         <label class="sr" for="prompt-name">{t("prompts.name")}</label>
         <input id="prompt-name" value={name()} maxlength="60" placeholder={t("prompts.name")} onInput={(e) => setName(e.currentTarget.value)} />
         <button type="submit" disabled={name().trim().length === 0 || props.text().trim().length === 0}>{t("prompts.save")}</button>

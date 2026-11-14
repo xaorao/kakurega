@@ -8619,7 +8619,15 @@ async fn ask(axum::Extension(svc): Svc, Json(b): Json<AskBody>) -> Response {
             meaning.as_ref().map(|m| m as &dyn kk_review::ask::Semantic),
         );
         if ctx.used.is_empty() {
-            return Err("there are no readable text documents in that folder".to_string());
+            // say which of the two it is: nothing to read, or files that were all kept from the model
+            return Err(if ctx.withheld.is_empty() {
+                "there are no readable text documents in that folder".to_string()
+            } else {
+                format!(
+                    "every document in that folder was withheld, so there is nothing to ask the model about ({} held a key or a password, or is marked secret)",
+                    if ctx.withheld.len() == 1 { "1 file".to_string() } else { format!("{} files", ctx.withheld.len()) }
+                )
+            });
         }
         let suspects: Vec<String> = imported
             .files
@@ -8685,7 +8693,9 @@ async fn ask(axum::Extension(svc): Svc, Json(b): Json<AskBody>) -> Response {
             )
         }
     };
-    let route = json!({"id": reply.route_id, "class": reply.class, "simulated": reply.simulated});
+    // where the model that answered ran, as the owner's own route says it, so the page can say it in words
+    let owner_route = svc.route_for_owner();
+    let route = json!({"id": reply.route_id, "class": reply.class, "simulated": reply.simulated, "stays_here": owner_route["stays_here"], "host": owner_route["host"]});
     let base = json!({"files_used": ctx.used, "files_withheld": ctx.withheld, "files_skipped": ctx.skipped_too_large, "files_partial": ctx.partial, "searched": ctx.searched, "by_meaning": ctx.by_meaning, "narrowed_to": narrowed_to, "injection_suspects": suspects, "route": route});
     let mut body = base.as_object().cloned().unwrap_or_default();
     // lines that read like a password or code said in a sentence were not sent; the owner is told how many

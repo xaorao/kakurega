@@ -235,7 +235,7 @@ export interface SearchAnswer { results: SearchHit[]; note: string; engines_fail
 export interface SearchHit { title: string; snippet: string; url: string; host: string | null; withheld: boolean }
 export interface ResearchPage { page_id?: string; url: string; final_url?: string; title?: string; sha256?: string; truncated?: boolean; looks_like_instructions?: boolean; error?: string }
 export interface AskCitation { file: string; quote: string; verdict: "verified" | "not_found" | "unknown_file" | "bad_length"; line: number | null }
-export interface AskReply { checkable: boolean; answer?: string; citations?: AskCitation[]; verified?: number; unchecked_text?: string; files_used: string[]; files_withheld: string[]; files_skipped: string[]; files_partial?: string[]; searched?: boolean; by_meaning?: boolean; narrowed_to?: number | null; no_answer?: boolean; injection_suspects: string[]; route: { simulated: boolean } }
+export interface AskReply { checkable: boolean; answer?: string; citations?: AskCitation[]; verified?: number; unchecked_text?: string; files_used: string[]; files_withheld: string[]; files_skipped: string[]; files_partial?: string[]; searched?: boolean; by_meaning?: boolean; narrowed_to?: number | null; no_answer?: boolean; injection_suspects: string[]; route: { simulated: boolean; stays_here?: boolean; class?: string; host?: string | null } }
 export interface Withheld { path: string; notes: string[] }
 export interface Summary {
   imported: number;
@@ -399,7 +399,8 @@ export const api = {
   addMemory: (b: { text: string; level: string; reason?: string; project?: string }) => request<{ id: string; added: boolean }>("POST", "/api/memories", b),
   correctMemory: (id: string, b: { text: string; reason?: string; project?: string }) => request<{ id: string }>("POST", `/api/memories/${id}/correct`, b),
   exportTranscript: (name: string, text: string) => request<{ path: string }>("POST", "/api/exports/transcript", { name, text }),
-  forgetMemory: (id: string, reason?: string) => request<ForgetResult & { forgotten: boolean }>("POST", `/api/memories/${id}/forget`, { reason }),
+  // every list of notes on screen hears that a note is gone, so none of them goes on showing its text
+  forgetMemory: (id: string, reason?: string) => request<ForgetResult & { forgotten: boolean }>("POST", `/api/memories/${id}/forget`, { reason }).then((r) => { window.dispatchEvent(new Event("kk-memory-changed")); return r; }),
   clearTypedHistory: () => request<{ cleared?: boolean }>("POST", "/api/history/clear", {}),
   memoryHistory: (id: string) => request<{ versions: MemoryVersion[] }>("GET", `/api/memories/${id}/history`),
   fixes: (job: string) => request<{ fixes: Fix[] }>("GET", `/api/jobs/${job}/fixes`),

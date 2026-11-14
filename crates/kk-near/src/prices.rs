@@ -94,12 +94,21 @@ pub fn parse_list(page: &Value) -> Vec<PublishedPrice> {
                             .and_then(Value::as_array)
                             .map(|l| l.iter().filter_map(Value::as_str).collect::<Vec<_>>())
                     };
-                    match (kinds("inputModalities"), kinds("outputModalities")) {
-                        (Some(input), Some(output)) => {
-                            input.contains(&"text") && output == ["text"]
+                    // NEAR's list gives text in and text out for some models that do not hold a conversation (a
+                    // reranker, an embedding model, the PII filter), so those are also told apart by what they are named
+                    let by_name = {
+                        let n = model.to_ascii_lowercase();
+                        !["rerank", "embedding", "privacy-filter", "whisper"]
+                            .iter()
+                            .any(|k| n.contains(k))
+                    };
+                    by_name
+                        && match (kinds("inputModalities"), kinds("outputModalities")) {
+                            (Some(input), Some(output)) => {
+                                input.contains(&"text") && output == ["text"]
+                            }
+                            _ => true,
                         }
-                        _ => true,
-                    }
                 },
                 tools: meta
                     .and_then(|x| x.get("supportedFeatures"))

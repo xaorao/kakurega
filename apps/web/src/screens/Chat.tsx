@@ -1,3 +1,4 @@
+import { modelDown } from "../modelState";
 import { Lead } from "../components/Lead";
 import { Glyph } from "../components/Glyph";
 import { againPoint, editPoint, type BranchPoint } from "../branching";
@@ -67,7 +68,7 @@ function RouteLine() {
         const kind = () => (m().simulated ? "sim" : m().host === null ? "unknown" : m().stays_here ? "local" : m().class === "verified_tee" ? "tee" : "remote");
         return (
           <p class="route-line">
-            <span class={kind() === "local" ? "chip ok" : kind() === "tee" ? "chip warn" : kind() === "remote" ? "chip bad" : "chip"}>{t(`chat.route.${kind()}` as Key, { name: m().name ?? m().id, host: m().host ?? "" })}</span>{" "}
+            <span class={kind() === "local" ? (modelDown() ? "chip warn" : "chip ok") : kind() === "tee" ? "chip ok" : kind() === "remote" ? "chip bad" : "chip"}>{kind() === "local" && modelDown() ? t("chat.route.localDown", { name: m().name ?? m().id }) : t(`chat.route.${kind()}` as Key, { name: m().name ?? m().id, host: m().host ?? "" })}</span>{" "}
             <a class="line-link" href="#/privacy">{t("chat.route.more")}</a>
           </p>
         );
@@ -76,8 +77,16 @@ function RouteLine() {
   );
 }
 
+// The conversation that has not been kept, held in this page's memory only: visiting another screen and coming back
+// shows it again, and closing or reloading the page forgets it, as the screen says. Nothing of it is written anywhere.
+let unsaved: Shown[] = [];
+// the most private level that conversation has held, kept with it so a less private model is still refused its history
+let unsavedLevel = 0;
+// which of its answers is the latest one, so "What was sent to the model" is still offered under it
+let unsavedAnswered = -1;
+
 export function Chat() {
-  const [turns, setTurns] = createSignal<Shown[]>([]);
+  const [turns, setTurns] = createSignal<Shown[]>(unsaved);
   const [text, setTextRaw] = createSignal(loadDraft(draftKey(null)));
   const [busy, setBusy] = createSignal(false);
   const [picking, setPicking] = createSignal(false);
@@ -405,11 +414,27 @@ export function Chat() {
       setNotesInfo(err instanceof ApiError ? err.message : t("chat.notesError"));
     }
   };
-  const [answeredAt, setAnsweredAt] = createSignal(-1);
+  const [answeredAt, setAnsweredAt] = createSignal(unsaved.length > 0 ? unsavedAnswered : -1);
   // For a conversation this page holds itself: the most private level any of its answers was made at. The service is
   // told, so earlier messages answered on this computer are not sent to a model elsewhere. A kept conversation's level
   // is recorded by the service.
-  let heldLevel = 0;
+  onMount(() => {
+    const stopKey = (e: KeyboardEvent) => {
+      if (!busy() || e.target === box) return;
+      if (e.key === "Escape" || (e.ctrlKey && (e.key === "g" || e.key === "G"))) {
+        e.preventDefault();
+        abort?.abort();
+      }
+    };
+    window.addEventListener("keydown", stopKey);
+    onCleanup(() => window.removeEventListener("keydown", stopKey));
+  });
+  /** The most characters one message may have, the same figure as the service. */
+  const MAX_CHARS = 4000;
+  const chars = () => Array.from(text()).length;
+  let heldLevel = unsaved.length > 0 ? unsavedLevel : 0;
+  createEffect(() => { if (session() === null) unsaved = turns(); });
+  onCleanup(() => { if (session() === null) { unsavedLevel = heldLevel; unsavedAnswered = answeredAt(); } });
   const show = (next: string | null, nextTurns: Shown[], summary = "") => {
     if (busy()) abort?.abort();
     view++;
@@ -1157,7 +1182,7 @@ export function Chat() {
             <Show when={dragging()}><strong role="status">{t("files.dropNow")}</strong></Show>
             <Show when={reading()}><span role="status" class="muted">{reading()}</span></Show>
             <span class="send-group">
-              <button class="primary" type="submit" disabled={busy() || !!reading() || text().trim().length === 0}>{t("chat.send")}</button>
+              <button class="primary" type="submit" disabled={busy() || !!reading() || text().trim().length === 0 || chars() > MAX_CHARS}>{t("chat.send")}</button>
               <Show when={busy()}><button type="button" onClick={() => abort?.abort()}>{t("chat.stop")}</button></Show>
               <button type="button" disabled={busy() || turns().length === 0} onClick={() => { setTurns([]); heldLevel = 0; setError(""); setSendFailed(false); forgetSent(draftKey(session())); hist = idleHistory(); }}>{t("chat.clear")}</button>
               <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
@@ -1207,6 +1232,7 @@ export function Chat() {
             </ul>
           </Show>
         </div>
+        <Show when={chars() > MAX_CHARS - 400}><p class={chars() > MAX_CHARS ? "bad composer-hint" : "muted composer-hint"} role="status">{t(chars() > MAX_CHARS ? "chat.tooLong" : "chat.nearLimit", { n: chars(), max: MAX_CHARS })}</p></Show>
         <p class="muted composer-hint">{t("chat.pick.hint")}</p>
         <Show when={turns().length > 0}>
           <details class="stack">
