@@ -635,7 +635,7 @@ function ReleaseTab(props: { job: Job; config: Config; onChange: () => void }) {
                 {(d) => (
                   <div class="stack">
                     <div class="sealed"><span class="stamp" aria-hidden="true"><Glyph /></span><p class="delivered-line">{rich("appr.delivered", { name: d().name, signer: d().signer.slice(0, 24) + "…" })}</p></div>
-                    <p><a class="button" href={`/api/jobs/${props.job.id}/capsule`} download="review.kkg">{t("appr.download")}</a></p>
+                    <p><a class="button" href={`/api/jobs/${props.job.id}/capsule`} download={d().name}>{t("appr.download")}</a></p>
                     <p class="muted">{rich("appr.giveRecipient")}</p>
                     <PrComment files={r().files ?? []} digest={r().digest ?? ""} />
                     <ShareOne jobId={props.job.id} />

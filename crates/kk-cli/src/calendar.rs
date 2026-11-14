@@ -27,6 +27,16 @@ pub struct Helper {
     pub confined: bool,
 }
 
+/// Set when the service is leaving: a reader still waiting (on a macOS permission window, for up to two minutes) is
+/// stopped instead of being left behind with nobody to answer to.
+static STOPPING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Stops every calendar reader that is still running, and gives their waits a moment to do it.
+pub fn stop_all() {
+    STOPPING.store(true, std::sync::atomic::Ordering::SeqCst);
+    std::thread::sleep(Duration::from_millis(120));
+}
+
 /// Where the reader is: `KAKU_CALENDAR`, then next to this program. `None` when there is none.
 pub fn find() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("KAKU_CALENDAR") {
@@ -80,7 +90,10 @@ impl Helper {
         let status = loop {
             match child.try_wait() {
                 Ok(Some(s)) => break Some(s),
-                Ok(None) if started.elapsed() >= limit => {
+                Ok(None)
+                    if started.elapsed() >= limit
+                        || STOPPING.load(std::sync::atomic::Ordering::SeqCst) =>
+                {
                     let _ = child.kill();
                     let _ = child.wait();
                     break None;

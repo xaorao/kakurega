@@ -1739,7 +1739,7 @@ export const en = {
   "appr.step.delivered": "Delivered",
   "appr.step.done": "done",
   "appr.title": "Approval",
-  "appr.intro": "The browser cannot approve a release by itself. In the desktop app a native window asks you, with Touch ID. Otherwise approve in a terminal on this computer. Either way you see the exact bytes again.",
+  "appr.intro": "The browser cannot approve a release by itself. In the desktop app a native window asks you (with Touch ID where the Mac has it). Otherwise approve in a terminal on this computer. Either way you see the exact bytes again.",
   "appr.request": "Request approval",
   "appr.waiting": "<b>Waiting for you.</b> In the desktop app, answer the approval window. In a browser, run this in a terminal on this computer:",
   "appr.again": "Ask for approval again",

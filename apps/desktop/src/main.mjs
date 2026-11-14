@@ -149,6 +149,58 @@ function softwareSigner() {
     });
 }
 
+// A packaged app only takes approvals signed by a key enrolled on this computer. Nobody who downloaded an app has a
+// terminal command at hand, so the app offers to make that key itself: in the Secure Enclave where the Mac has Touch ID,
+// else a file private to this user. kaku makes and enrols it; this process never reads the key.
+let enrolling = false;
+// approvals already put to the owner, and those that could not be because no key existed yet
+const askedApprovals = new Set();
+const waitingForKey = new Set();
+function runKaku(args, timeout = 120000) {
+  return new Promise((resolve) => {
+    if (!kakuBin) return resolve({ ok: false, said: "kaku was not found" });
+    if (kakuFromBundle && checkPart(manifest, "kaku", kakuBin)) return resolve({ ok: false, said: "kaku does not match bundle.json" });
+    execFile(kakuBin, args, { timeout, maxBuffer: 65536 }, (err, out, errOut) => resolve({ ok: !err, said: String(err ? errOut || err.message : out).trim() }));
+  });
+}
+async function offerEnrol() {
+  if (enrolling) return false;
+  enrolling = true;
+  try {
+    const helper = enclaveHelper();
+    const hardware = hasTouchID() && helper !== null && existsSync(helper.path) && !(helper.checked && checkPart(manifest, "enclave", helper.path));
+    const options = {
+      type: "question",
+      message: t("enrol.message"),
+      detail: t(hardware ? "enrol.detail.enclave" : "enrol.detail.file"),
+      buttons: [t("enrol.later"), t("enrol.yes")],
+      defaultId: 1,
+      cancelId: 0,
+      noLink: true,
+    };
+    const onWindow = window && !window.isDestroyed();
+    if (onWindow) showWindow();
+    const r = onWindow ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
+    if (r.response !== 1) return false;
+    const base = ["approver", "enroll", "--data-dir", dataDir, "--label", t("enrol.label")];
+    let done = hardware ? await runKaku([...base, "--enclave"]) : { ok: false, said: "" };
+    // the Secure Enclave can refuse (no passcode set, a managed Mac): the file key still lets the owner approve
+    const fellBack = hardware && !done.ok;
+    if (!done.ok) done = await runKaku(base);
+    if (!done.ok) {
+      dialog.showErrorBox(t("enrol.failed.title"), t("enrol.failed.body", { why: done.said.slice(0, 300) }));
+      return false;
+    }
+    // what waited for a key is put to the owner at the next look
+    for (const id of waitingForKey) askedApprovals.delete(id);
+    waitingForKey.clear();
+    tell(t("enrol.done.title"), t(fellBack || !hardware ? "enrol.done.file" : "enrol.done.enclave"));
+    return true;
+  } finally {
+    enrolling = false;
+  }
+}
+
 async function waitForAdmin() {
   let other = null;
   for (let i = 0; i < 100; i++) {
@@ -200,7 +252,7 @@ async function confirm(text, a) {
     type: "question",
     title: t("approve.title"),
     message: t("approve.message"),
-    detail: text,
+    detail: touch || a?.requires_proof ? text : `${t("approve.noTouch")}\n\n${text}`,
     buttons: [t("approve.refuse"), t(touch ? "approve.yes" : "approve.yesPlain")],
     defaultId: 0,
     cancelId: 0,
@@ -221,7 +273,8 @@ function appMenu() {
   const view = [{ role: "reload" }, { type: "separator" }, { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" }, { type: "separator" }, { role: "togglefullscreen" }];
   if (!runsFromAsar) view.push({ type: "separator" }, { role: "toggleDevTools" });
   return [
-    ...(macOS ? [{ label: "Kakurega", submenu: [{ role: "about" }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" }, { role: "quit" }] }] : []),
+    ...(macOS ? [{ label: "Kakurega", submenu: [{ role: "about" }, { type: "separator" }, { label: t("menu.enrol"), click: () => void offerEnrol() }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" }, { role: "quit" }] }] : []),
+    { label: t("menu.file"), submenu: [{ role: "close" }] },
     { role: "editMenu" },
     { label: "View", submenu: view },
     { role: "windowMenu" },
@@ -619,13 +672,18 @@ async function start() {
     try {
       const u = new URL(details.url);
       if (details.statusCode === 401 && current && u.origin === current.admin.origin && u.pathname.startsWith("/api/") && u.pathname !== "/api/pair") void pairAgain();
+      // Sign out answers 200 and nothing after it answers 401 (the page only asks whether it is paired), so it is seen here
+      if (details.method === "POST" && details.statusCode < 300 && current && u.origin === current.admin.origin && u.pathname === "/api/logout") void pairAgain();
     } catch {
       /* not an address of ours */
     }
   });
   window = new BrowserWindow(windowOptions());
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (mayOpenExternally(url)) shell.openExternal(url);
+    // a page of the app itself that asks for a new tab (the capsule check) opens here: there is one window, and a
+    // loopback address is never handed to the browser
+    if (isAppUrl(url, appOrigin())) void window.loadURL(url);
+    else if (mayOpenExternally(url)) shell.openExternal(url);
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event, url) => {
@@ -678,12 +736,19 @@ async function start() {
     return f ? f(id) : Promise.reject(new Error("no approver key is enrolled on this computer"));
   };
   Object.defineProperty(signer, "ownsDialog", { get: () => enclaveSigner() !== null });
-  const pollOnce = createApprover({ client: { get: (p) => current.client.get(p), post: (p, b) => current.client.post(p, b) }, confirm, authenticate, sign: signer, t });
+  const pollOnce = createApprover({ client: { get: (p) => current.client.get(p), post: (p, b) => current.client.post(p, b) }, confirm, authenticate, sign: signer, seen: askedApprovals, t });
   setInterval(
     () =>
       pollOnce()
         .then((done) => {
-          if (done.some((d) => d.outcome === "needs_enrolled_key")) tell(t("notice.needsKey.title"), t("notice.needsKey.body"));
+          const waiting = done.filter((d) => d.outcome === "needs_enrolled_key");
+          if (waiting.length > 0) {
+            // with a key made, the same requests are asked again at the next look; without one the owner is told how
+            for (const w of waiting) waitingForKey.add(w.id);
+            void offerEnrol().then((made) => {
+              if (!made) tell(t("notice.needsKey.title"), t("notice.needsKey.body"));
+            });
+          }
           if (done.some((d) => d.outcome === "authentication_failed")) tell(t("notice.touchFailed.title"), t("notice.touchFailed.body"));
         })
         .catch(() => {}),
@@ -802,7 +867,16 @@ app.on("before-quit", () => {
   app.isQuitting = true;
   const c = child;
   child = null;
-  c?.kill();
+  // The companion is told by the closing of its pipe, so it can stop what it started (a helper waiting on a macOS
+  // permission window would otherwise outlive the app). One that does not leave within three seconds is stopped anyway.
+  if (c) {
+    try {
+      c.stdin.end();
+      if (Number.isInteger(c.pid)) spawn("/bin/sh", ["-c", `sleep 3; kill ${c.pid} 2>/dev/null`], { detached: true, stdio: "ignore" }).unref();
+    } catch {
+      c.kill();
+    }
+  }
   // the companion this shell started is going away with it, so its admin file (port and token) goes too; a file written by
   // some other companion (a different port) is left alone
   try {
