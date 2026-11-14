@@ -1,17 +1,18 @@
 import { createSignal, onMount, Show } from "solid-js";
 
-/** The opening: the mark lands like a seal, the name is uncovered beside it, and the curtain lifts off the workspace. Shown once
- *  for a tab (not on every reload), never to someone who asked for less motion, and it never takes a click: it is a
+/** The opening: the mark lands like a seal, the name is uncovered beside it, and the curtain lifts off the workspace. Shown when
+ *  the page is opened (not on a reload), never to someone who asked for less motion, and it never takes a click: it is a
  *  picture laid over a workspace that is already usable underneath. */
 export function Opening() {
   const [on, setOn] = createSignal(false);
   onMount(() => {
     try {
       if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-      if (sessionStorage.getItem("kk-opened")) return;
-      sessionStorage.setItem("kk-opened", "1");
+      // only when the page was opened, never on a reload or a step back: the browser says which, so nothing is kept
+      const how = (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type;
+      if (how !== "navigate") return;
     } catch {
-      return; // a browser that keeps nothing simply opens without it
+      return; // a browser that cannot say simply opens without it
     }
     setOn(true);
     setTimeout(() => setOn(false), 1150);
