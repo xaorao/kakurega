@@ -2315,6 +2315,22 @@ impl App {
         }
     }
 
+    /// A folder as the owner typed it, as the service needs it: one that is not a whole path is read from the first folder
+    /// the service works in, the same for every command that takes a folder.
+    fn in_root(&self, folder: String) -> String {
+        if folder.starts_with('/') {
+            return folder;
+        }
+        match self.roots.first() {
+            Some(r) => format!(
+                "{}/{}",
+                r.trim_end_matches('/'),
+                folder.trim_start_matches("./")
+            ),
+            None => folder,
+        }
+    }
+
     fn refuse(&mut self) -> Vec<Req> {
         let Mode::Approval(v) = std::mem::replace(&mut self.mode, Mode::Normal) else {
             return Vec::new();
@@ -2885,18 +2901,7 @@ impl App {
                 recipient,
                 base,
             } => {
-                let path = if folder.starts_with('/') {
-                    folder
-                } else {
-                    match self.roots.first() {
-                        Some(r) => format!(
-                            "{}/{}",
-                            r.trim_end_matches('/'),
-                            folder.trim_start_matches("./")
-                        ),
-                        None => folder,
-                    }
-                };
+                let path = self.in_root(folder);
                 vec![self.req(
                     Intent::StartReview,
                     false,
@@ -3196,7 +3201,7 @@ impl App {
                     false,
                     Method::Post,
                     "/api/code",
-                    Some(json!({"folder": folder, "task": task})),
+                    Some(json!({"folder": self.in_root(folder), "task": task})),
                 )]
             }
             Command::CodeAct(act, id) => {
@@ -3271,7 +3276,7 @@ impl App {
                     false,
                     Method::Post,
                     "/api/ask",
-                    Some(json!({"folder": folder, "question": question})),
+                    Some(json!({"folder": self.in_root(folder), "question": question})),
                 )]
             }
             Command::Remember { text, project } => {

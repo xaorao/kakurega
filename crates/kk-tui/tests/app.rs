@@ -9017,3 +9017,29 @@ fn tu112_at_start_a_machine_with_nothing_to_fix_gets_one_line_and_status_lists_e
     app.handle(ok(&reqs[1], 200, json!({"ready": true, "checks": []})));
     assert!(!text(&app).contains("checks passed"), "{}", text(&app));
 }
+
+#[test]
+fn tu_use01_every_command_that_takes_a_folder_reads_a_short_name_from_the_same_place() {
+    // found in real use: /review and /explore took "payments-service", /code and /ask answered "that folder is not available"
+    for (typed, path) in [
+        ("/code payments-service : rename the helper", "/api/code"),
+        ("/ask contracts : how many days of notice", "/api/ask"),
+    ] {
+        let mut app = booted();
+        let r = enter(&mut app, typed);
+        let sent = r
+            .iter()
+            .find(|q| q.path == path)
+            .unwrap_or_else(|| panic!("{typed} sent nothing to {path}"));
+        let folder = sent.body.as_ref().unwrap()["folder"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(folder.starts_with("/home/u/projects/"), "{typed}: {folder}");
+    }
+    // a whole path is left as it was typed
+    let mut app = booted();
+    let r = enter(&mut app, "/ask /srv/docs : what is the term");
+    let sent = r.iter().find(|q| q.path == "/api/ask").unwrap();
+    assert_eq!(sent.body.as_ref().unwrap()["folder"], "/srv/docs");
+}

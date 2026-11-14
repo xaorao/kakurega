@@ -116,7 +116,14 @@ fn ensure_service(
         }
         let _ = std::fs::remove_file(dir.join("admin.json"));
         match cmd.spawn() {
-            Ok(c) => guard.0 = Some(c),
+            Ok(c) => {
+                // if the terminal goes away without a signal, the service this workspace started goes with it
+                let pid = c.id().to_string();
+                kk_tui::run::on_terminal_gone(Box::new(move || {
+                    let _ = Command::new("kill").arg(&pid).status();
+                }));
+                guard.0 = Some(c);
+            }
             Err(e) => {
                 eprintln!("could not start the service: {e}");
                 return Err(1);

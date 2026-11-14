@@ -1329,7 +1329,7 @@ pub fn share(args: &[String]) -> u8 {
             println!("It hides: {}", clean(v["hides"].as_str().unwrap_or("")));
             println!(
                 "Anyone can check it with: kaku verify {} --pin {}",
-                path.display(),
+                crate::shell_word(&path.display().to_string()),
                 clean(v["signer_public"].as_str().unwrap_or("YOUR-PUBLIC-KEY"))
             );
         }

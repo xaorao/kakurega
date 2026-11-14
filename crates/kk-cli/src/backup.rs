@@ -41,7 +41,10 @@ pub fn make(args: &[String]) -> u8 {
     println!();
     println!("Keep it away from the backup file (a password manager or paper). Anyone with both can read everything;");
     println!("without the key the file cannot be opened by anyone, including us.");
-    println!("Restore into an empty folder with: kaku restore {out} --data-dir NEWDIR");
+    println!(
+        "Restore into an empty folder with: kaku restore {} --data-dir NEWDIR",
+        crate::shell_word(&out.to_string())
+    );
     0
 }
 
@@ -68,10 +71,32 @@ pub fn restore(args: &[String]) -> u8 {
             }
         }
     } else {
-        eprint!("Recovery key (KKRK-...): ");
+        // the key opens everything in the backup: it is not shown as it is typed, and not left in the terminal's scrollback
+        let hidden = std::io::IsTerminal::is_terminal(&std::io::stdin())
+            && std::process::Command::new("stty")
+                .arg("-echo")
+                .stdin(std::process::Stdio::inherit())
+                .status()
+                .is_ok_and(|s| s.success());
+        eprint!(
+            "Recovery key (KKRK-...){}: ",
+            if hidden {
+                ", not shown as you type"
+            } else {
+                ""
+            }
+        );
         let _ = std::io::stderr().flush();
         let mut line = String::new();
-        if std::io::stdin().lock().read_line(&mut line).is_err() {
+        let read = std::io::stdin().lock().read_line(&mut line);
+        if hidden {
+            let _ = std::process::Command::new("stty")
+                .arg("echo")
+                .stdin(std::process::Stdio::inherit())
+                .status();
+            eprintln!();
+        }
+        if read.is_err() {
             return 2;
         }
         line
@@ -80,17 +105,34 @@ pub fn restore(args: &[String]) -> u8 {
     match kk_service::backup::restore(&bytes, &key, &data) {
         Ok(r) => {
             println!(
-                "Restored {} databases into {} (backup made at unix time {}).",
+                "Restored {} databases into {} (the backup was made {}).",
                 r.databases,
                 data.display(),
-                r.created_at
+                ago_words(r.created_at as i64)
             );
-            println!("Start with: kaku serve --data-dir {}", data.display());
+            println!(
+                "Start with: kaku serve --data-dir {}",
+                crate::shell_word(&data.display().to_string())
+            );
             0
         }
         Err(e) => {
             eprintln!("restore failed: {e}");
             1
         }
+    }
+}
+
+/// How long ago a moment was, for a person.
+fn ago_words(at: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let secs = (now - at).max(0);
+    match secs {
+        0..=119 => "just now".into(),
+        120..=7199 => format!("{} minutes ago", secs / 60),
+        7200..=172_799 => format!("{} hours ago", secs / 3600),
+        _ => format!("{} days ago", secs / 86_400),
     }
 }

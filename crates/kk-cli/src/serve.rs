@@ -324,7 +324,10 @@ fn serve(args: &[String]) -> Result<(), String> {
     // the commands name this data folder when it is not the default one, so they reach this service
     let here =
         if crate::flag(args, "--data-dir").is_some() || crate::flag(args, "--profile").is_some() {
-            format!(" --data-dir {}", data.display())
+            format!(
+                " --data-dir {}",
+                crate::shell_word(&data.display().to_string())
+            )
         } else {
             String::new()
         };

@@ -3827,6 +3827,7 @@ dependencies = [
  "kk-evidence",
  "kk-types",
  "ratatui",
+ "rustix 0.38.44",
  "serde_json",
  "unicode-width 0.2.0",
  "ureq",

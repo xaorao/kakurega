@@ -53,6 +53,20 @@ pub fn run_with(
         EnableFocusChange
     )
     .map_err(|e| e.to_string())?;
+    // A terminal that went away without a hang-up signal (its window closed under a detached program) leaves an input
+    // that reads as ended for ever; the terminal library then waits on it in a loop that never returns and burns a whole
+    // processor. A watcher asks the input once a second whether its other end hung up, and ends the program as a
+    // hang-up signal would.
+    std::thread::spawn(|| loop {
+        std::thread::sleep(Duration::from_secs(1));
+        if terminal_gone() {
+            // whatever this workspace started for itself (the service) is stopped first, as it is on an ordinary exit
+            if let Some(stop) = ON_GONE.get() {
+                stop();
+            }
+            std::process::exit(0);
+        }
+    });
     let result = event_loop(http, data_dir, resume, settings);
     restore();
     result
@@ -241,5 +255,26 @@ fn event_loop(
                 let _ = req_tx.send(r);
             }
         }
+    }
+}
+
+static ON_GONE: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
+
+/// What to do, once, just before the program ends because its terminal went away without a signal: the caller stops
+/// what it started for this workspace.
+pub fn on_terminal_gone(stop: Box<dyn Fn() + Send + Sync>) {
+    let _ = ON_GONE.set(stop);
+}
+
+/// Whether the terminal this workspace reads from has gone away: its other end hung up, or it is no longer there at all.
+fn terminal_gone() -> bool {
+    use rustix::event::{poll, PollFd, PollFlags};
+    let stdin = std::io::stdin();
+    let mut fds = [PollFd::new(&stdin, PollFlags::IN)];
+    match poll(&mut fds, 0) {
+        Ok(_) => fds[0]
+            .revents()
+            .intersects(PollFlags::HUP | PollFlags::ERR | PollFlags::NVAL),
+        Err(_) => false,
     }
 }

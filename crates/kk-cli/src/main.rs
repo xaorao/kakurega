@@ -263,6 +263,19 @@ fn main() -> ExitCode {
     ExitCode::from(code)
 }
 
+/// A path or a name as one word of a command a person can copy: quoted when it holds a space or a shell character.
+pub fn shell_word(text: &str) -> String {
+    if !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-~+:@%".contains(c))
+    {
+        text.to_string()
+    } else {
+        format!("'{}'", text.replace('\'', "'\\''"))
+    }
+}
+
 /// The value given after `name`. Another option is never taken as the value (`--for --data-dir X` names no recipient):
 /// the commands that need a value then say it is missing instead of working with the wrong one.
 pub fn flag(args: &[String], name: &str) -> Option<String> {
