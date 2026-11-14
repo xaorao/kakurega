@@ -446,6 +446,8 @@ export function App() {
         <Palette open={paletteOpen()} items={paletteItems()} onClose={() => setPaletteOpen(false)} />
         <ShortcutHelp open={helpOpen()} onClose={() => setHelpOpen(false)} />
         <div class="shell" inert={paletteOpen() || helpOpen()}>
+          {/* the first stop of the Tab key: past the sidebar and its list of reviews, straight to the page */}
+          <a class="skip-link" href="#main-content" onClick={(e) => { e.preventDefault(); const m = document.getElementById("main-content"); m?.focus(); m?.scrollIntoView({ block: "start" }); }}>{t("app.skip")}</a>
           <header class="top">
             <a class="brand" href="#/" aria-label="Kakurega"><span class="brand-mark" aria-hidden="true"><Glyph /></span><span class="brand-word">Kakurega</span></a>
             <Show when={config()}>{(c) => <Badge config={c()} modelDown={modelDown()} />}</Show>
@@ -517,7 +519,7 @@ export function App() {
                 <div class="side-prefs"><LanguagePicker /><ThemePicker /></div>
               </div>
             </nav>
-            <main class="main">
+            <main class="main" id="main-content" tabindex="-1">
               <Show when={welcome()}>
                 <Welcome onDone={() => setWelcome(false)} />
               </Show>

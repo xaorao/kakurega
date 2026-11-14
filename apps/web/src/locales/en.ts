@@ -1,4 +1,5 @@
 export const en = {
+  "app.skip": "Skip to the page",
   "app.connecting": "Connecting…",
   "app.unreachable": "Kakurega could not reach its local service. It may have stopped or restarted.",
   "app.retry": "Try again",

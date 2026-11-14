@@ -115,6 +115,9 @@ pub fn run(args: &[String]) -> u8 {
         0
     } else {
         println!("INVALID: {}", report.reason.unwrap_or("unknown"));
+        if let Some(words) = report.reason.and_then(reason_words) {
+            println!("{words}");
+        }
         1
     }
 }
@@ -171,6 +174,9 @@ fn share(bytes: &[u8], pinned: Option<Vec<[u8; 32]>>, out: Option<&str>) -> u8 {
     );
     if !report.valid {
         println!("INVALID: {}", report.reason.unwrap_or("unknown"));
+        if let Some(words) = report.reason.and_then(reason_words) {
+            println!("{words}");
+        }
         return 1;
     }
     println!("VALID SHARE");
@@ -241,4 +247,26 @@ fn share(bytes: &[u8], pinned: Option<Vec<[u8; 32]>>, out: Option<&str>) -> u8 {
         }
     }
     0
+}
+
+/// A refusal's short name said in words, for the person who was handed the file. The short name stays on the first line
+/// for anyone who searches for it or reads it with a program.
+pub fn reason_words(reason: &str) -> Option<&'static str> {
+    Some(match reason {
+        "digest_mismatch" => "A file in it is not what was signed: the capsule was changed after it was signed, or damaged on the way.",
+        "bad_signature" => "A signature in it does not match its content: it was changed after it was signed, or was never signed by that key.",
+        "capsule_not_json" | "capsule_shape" | "share_not_json" | "share_shape" => "This is not a capsule or a share (or it is damaged beyond reading).",
+        "capsule_not_canonical" | "share_not_canonical" | "payload_not_canonical" => "The file was changed after it was signed: its bytes are not in the one form a capsule may have.",
+        "no_keys" => "It carries no key, and none was given to check it against (--pin needs the signer's key after it).",
+        "bad_key" => "A key is not usable: the one in the file, or the one given with --pin.",
+        "untrusted_signer" => "It was not signed by the key given with --pin.",
+        "key_list" => "Its key list is not exactly the one key that signed it: the file was altered after signing.",
+        "expired" => "It has expired: its owner made it valid for a limited time, and that time is over. Ask them for a fresh one.",
+        "wrong_recipient" => "It was made for someone else than the recipient named with --recipient.",
+        "receipt_signature" => "A model receipt's signature does not match: the receipt was altered or forged.",
+        "not_in_release" => "A file in this share is not part of the signed release: it was changed, or was never in it.",
+        "capsule_too_large" | "share_too_large" => "The file is too large to be a capsule or a share.",
+        "unsupported_version" => "It was made by a version this program does not know. Update, or ask the sender which version made it.",
+        _ => return None,
+    })
 }

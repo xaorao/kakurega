@@ -838,7 +838,7 @@ fn sv01_the_whole_journey_over_http_ends_in_a_capsule_that_verifies() {
 #[test]
 fn sv_use01_what_real_use_found_a_refusal_can_be_asked_again_by_the_owner_only_and_a_delivered_release_is_not_counted_against_itself(
 ) {
-    let (c, w, repo, _root, _svc) = boot("use01", true);
+    let (c, w, repo, root, _svc) = boot("use01", true);
     let token = c.security.admin_token().to_string();
     let base = format!("http://127.0.0.1:{}", c.addr.port());
     // a recipient's length is counted in characters: 128 of a three-byte script are accepted, 129 are not
@@ -855,6 +855,24 @@ fn sv_use01_what_real_use_found_a_refusal_can_be_asked_again_by_the_owner_only_a
         json!({"repo": repo.to_string_lossy(), "recipient": "\u{0915}".repeat(129)}),
     );
     assert_eq!(code, 400, "{v}");
+    // a folder with nothing to read is said at once: empty, or holding only a secrets file
+    std::fs::create_dir_all(root.join("empty-one")).unwrap();
+    std::fs::create_dir_all(root.join("only-env")).unwrap();
+    std::fs::write(root.join("only-env/.env"), "KEY=1\n").unwrap();
+    for name in ["empty-one", "only-env"] {
+        let (code, v) = w.post(
+            "/api/jobs",
+            json!({"repo": root.join(name).to_string_lossy(), "recipient": "x"}),
+        );
+        assert_eq!(code, 400, "{name}: {v}");
+        assert!(
+            v["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("nothing in that folder"),
+            "{v}"
+        );
+    }
     // the owner's whole home folder is never reviewed, whatever the roots allow
     if let Ok(home) = std::env::var("HOME") {
         let (code, v) = w.post("/api/jobs", json!({"repo": home, "recipient": "x"}));

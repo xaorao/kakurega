@@ -77,7 +77,8 @@ async function start(root) {
       verdict.append(ul);
     } else {
       verdict.append(el("div", changed ? "Refused: the file is not what was signed" : "Not valid", "bad"));
-      verdict.append(el("p", changed ? `One byte was changed, and the check failed (${r.reason}). A capsule cannot be edited after it is signed.` : `The check failed (${r.reason}).`));
+      const why = { digest_mismatch: "a file in it is no longer what was signed", bad_signature: "a signature no longer matches its content", capsule_not_canonical: "its bytes are not in the one form a capsule may have", expired: "it has expired" }[r.reason] ?? "it is not a valid capsule";
+      verdict.append(el("p", changed ? `One byte was changed, and the check failed: ${why}. A capsule cannot be edited after it is signed.` : `The check failed: ${why}.`));
     }
   };
   const run = async (changed) => {

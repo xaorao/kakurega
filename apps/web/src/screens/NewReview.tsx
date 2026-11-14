@@ -257,11 +257,11 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
       <div class="card stack">
         <h2>{t("new.step2")}</h2>
         <label for="recipient">{t("new.recipient.label")}</label>
-        <input id="recipient" placeholder={t("new.recipient.placeholder")} value={recipient()} onInput={(e) => setRecipient(e.currentTarget.value)} />
+        <input id="recipient" placeholder={t("new.recipient.placeholder")} value={recipient()} onKeyDown={(e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); const go = document.getElementById("start-review") as HTMLButtonElement | null; if (go && !go.disabled) go.click(); } }} onInput={(e) => setRecipient(e.currentTarget.value)} />
         <p class="muted">{t("new.recipient.help")}</p>
       </div>
       <div class="actions">
-        <button class="primary" disabled={busy() || blocked() || !chosen() || wholeHome() || recipient().trim().length === 0 || (what() === "change" && base().trim().length === 0)} onClick={start}>{t("new.start")}</button>
+        <button class="primary" id="start-review" disabled={busy() || blocked() || !chosen() || wholeHome() || recipient().trim().length === 0 || (what() === "change" && base().trim().length === 0)} onClick={start}>{t("new.start")}</button>
         <Show when={wholeHome()}><span class="muted" role="status">{t("new.wholeHome")}</span></Show>
         <Show when={error()}><span role="alert" class="bad">{error()}</span></Show>
       </div>

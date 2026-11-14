@@ -391,3 +391,8 @@ button.primary:disabled { background: var(--ink); color: var(--halo); border-col
 
 /* the message box never grows over the conversation: past this height its own contents scroll */
 @media (min-width: 761px) { .composer { max-height: min(62vh, 560px); overflow-y: auto; overscroll-behavior: contain; } }
+
+/* seen only when the Tab key lands on it: the way past the sidebar */
+.skip-link { position: absolute; left: 12px; top: -60px; z-index: 50; padding: 10px 16px; border-radius: 9px; background: var(--ink); color: var(--halo); font-size: 13.5px; font-weight: 500; text-decoration: none; }
+.skip-link:focus { top: 10px; }
+#main-content:focus { outline: none; }

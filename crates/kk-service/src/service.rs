@@ -1418,6 +1418,10 @@ impl Service {
                 "that is your whole home folder; choose one project folder inside it".into(),
             );
         }
+        // an empty folder, or one with nothing but a secrets file, is said at once instead of after a review of nothing
+        if !holds_something_to_review(&dir) {
+            return Err("there is nothing in that folder for a review to read: it is empty, or holds only files that are always withheld (such as .env)".into());
+        }
         // the model is not switched between the checks above and the review being listed as running
         let _steady = self.route_hold();
         if let Some((name, _)) = self.floor_above_route(named.as_deref(), Some(&dir)) {
@@ -8388,6 +8392,35 @@ async fn ext_status(axum::Extension(svc): Svc, headers: axum::http::HeaderMap) -
 struct ExtCaptureBody {
     text: String,
     page: String,
+}
+
+/// Whether a folder holds at least one file a review would read: any regular file that is not a dot-env file and not
+/// inside a version-control folder. Looks at a bounded number of entries and stops at the first one found.
+fn holds_something_to_review(dir: &Path) -> bool {
+    let mut left = 5000usize;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            if left == 0 {
+                // too many entries to look through here: the review itself decides
+                return true;
+            }
+            left -= 1;
+            let name = e.file_name().to_string_lossy().to_string();
+            let Ok(kind) = e.file_type() else { continue };
+            if kind.is_dir() {
+                if !matches!(name.as_str(), ".git" | ".hg" | ".svn") {
+                    stack.push(e.path());
+                }
+            } else if kind.is_file() && name != ".env" && !name.starts_with(".env.") {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// A selection without the marks a web page uses for layout and that nobody sees: soft hyphen, zero-width space, the two

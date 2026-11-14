@@ -1,6 +1,7 @@
 import type { en } from "./en";
 
 export const hi: Record<keyof typeof en, string> = {
+  "app.skip": "सीधे पेज पर जाएँ",
   "app.connecting": "जुड़ रहा है…",
   "app.unreachable": "Kakurega अपनी स्थानीय सेवा तक नहीं पहुँच सका। हो सकता है वह रुक गई हो या दोबारा शुरू हुई हो।",
   "app.retry": "फिर कोशिश करें",
