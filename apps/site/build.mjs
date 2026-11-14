@@ -135,7 +135,6 @@ cpSync(join(here, "motion.js"), join(out, "motion.js"));
 // the gate on the landing page: the same detector and the same withholding as the try-it page
 cpSync(join(here, "home.js"), join(out, "home.js"));
 cpSync(join(here, "withhold.js"), join(out, "withhold.js"));
-cpSync(join(here, "art"), join(out, "art"), { recursive: true });
 // the check page is one file with its script and its style inside it: the host is told the exact hashes of those two,
 // so nothing else can run there even if a capsule's text were ever put into the page as markup
 const verifyHtml = readFileSync(join(repo, "apps/verifier-page/dist/kakurega-verify.html"), "utf8");
