@@ -79,6 +79,7 @@ export const hi: Record<keyof typeof en, string> = {
   "nav.memory": "स्मृति",
   "nav.instructions": "स्थायी निर्देश",
   "nav.settings": "सेटिंग्स",
+  "set.sections": "सेटिंग्स के अनुभाग",
   "set.title": "सेटिंग्स",
   "set.lead": "जो कुछ आप बदल सकते हैं, एक जगह। खोज किसी सेटिंग को उसके नाम, उसके काम या लोगों के इस्तेमाल किए शब्द से ढूँढती है।",
   "set.search": "सेटिंग्स खोजें",

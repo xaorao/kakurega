@@ -77,6 +77,7 @@ export const en = {
   "nav.memory": "Memory",
   "nav.instructions": "Standing instructions",
   "nav.settings": "Settings",
+  "set.sections": "Sections of the settings",
   "set.title": "Settings",
   "set.lead": "Everything you can change, in one place. Search finds a setting by its name, what it does, or a word people use for it.",
   "set.search": "Search settings",

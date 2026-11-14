@@ -336,9 +336,18 @@ export function Settings() {
   const [q, setQ] = createSignal("");
   const found = createMemo(() => searchSettings(SETTINGS, q(), (k) => t(k as Key)));
   return (
-    <section class="stack wide" aria-labelledby="h-set">
+    <section class="stack wide settings-page" aria-labelledby="h-set">
       <h1 id="h-set">{t("set.title")}</h1>
       <Lead text={t("set.lead")} />
+      <nav class="set-sections" aria-label={t("set.sections")}>
+        <For each={SECTIONS}>
+          {(sec) => (
+            <Show when={found().some((s) => s.section === sec)}>
+              <button type="button" class="linklike" onClick={() => document.getElementById(`sec-${sec}`)?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" })}>{t(`set.section.${sec}` as Key)}</button>
+            </Show>
+          )}
+        </For>
+      </nav>
       <label class="sr" for="set-search">{t("set.search")}</label>
       <input id="set-search" type="search" maxlength="100" placeholder={t("set.search")} value={q()} onInput={(e) => setQ(e.currentTarget.value)} />
       <Show when={q().trim() !== ""}><p class="muted" role="status">{found().length === 0 ? t("set.none") : t("set.found", { n: found().length })}</p></Show>

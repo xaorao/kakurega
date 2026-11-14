@@ -285,3 +285,16 @@ ul.plain.start-ways { grid-template-columns: repeat(3, minmax(0, 1fr)); width: 1
 .msg.user.card { background: var(--veil); border-radius: 16px; padding: 14px 18px; margin-left: auto; max-width: 78%; }
 .msg > strong { font-size: 12px; font-weight: 500; color: var(--graphite); }
 .msg .msg-body { font-size: 15px; line-height: 1.6; }
+
+/* settings: the sections listed at the side, the settings themselves beside them */
+.settings-page { max-width: 1040px; }
+.set-sections { display: flex; flex-wrap: wrap; gap: 4px; }
+.set-sections button { min-height: 36px; padding: 6px 12px; border-radius: 8px; font-size: 13px; color: var(--stone); text-decoration: none; text-align: left; }
+.set-sections button:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.settings-page > section[aria-labelledby^="sec-"] { scroll-margin-top: 72px; }
+@media (min-width: 1100px) {
+  .settings-page { display: grid; grid-template-columns: 190px minmax(0, 1fr); column-gap: 36px; align-items: start; }
+  .settings-page > * { grid-column: 2; }
+  .settings-page > h1, .settings-page > .lead, .settings-page > details.lead-more, .settings-page > p.lead { grid-column: 1 / -1; }
+  .settings-page > .set-sections { grid-column: 1; grid-row: 3 / span 40; position: sticky; top: 76px; flex-direction: column; flex-wrap: nowrap; gap: 1px; }
+}
