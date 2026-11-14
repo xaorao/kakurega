@@ -101,7 +101,8 @@ function Pair(props: { onDone: () => void }) {
   const fromLink = /#pair=([A-Za-z0-9_-]+)/.exec(location.hash)?.[1];
   if (fromLink) queueMicrotask(() => submit(fromLink));
   return (
-    <main class="center">
+    <main class="center pair">
+      <span class="brand-mark big" aria-hidden="true">隠</span>
       <h1>{t("pair.title")}</h1>
       <p class="muted">{rich("pair.intro")}</p>
       <form

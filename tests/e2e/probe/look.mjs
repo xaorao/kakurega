@@ -26,9 +26,13 @@ const chrome = join(homedir(), "Library/Caches/ms-playwright/chromium-1223/chrom
 const browser = await chromium.launch({ executablePath: chrome, headless: true });
 const page = await (await browser.newContext({ viewport: { width: Number(width), height: 900 }, colorScheme: theme === "dark" ? "dark" : "light", reducedMotion: "reduce" })).newPage();
 page.on("pageerror", (e) => console.log("pageerror: " + e.message));
+// the two screens seen before the workspace: the pairing page (no link) and the welcome
+if (shots.includes("pair")) { const fresh = await (await browser.newContext({ viewport: { width: Number(width), height: 900 }, colorScheme: theme === "dark" ? "dark" : "light" })).newPage(); await fresh.goto(origin); await fresh.waitForTimeout(1500); await fresh.screenshot({ path: join(out, `${theme}-${width}-pair.png`) }); console.log("pair"); }
 await page.goto(link);
+if (shots.includes("welcome")) { await page.waitForTimeout(2500); await page.screenshot({ path: join(out, `${theme}-${width}-welcome.png`) }); console.log("welcome"); }
 await page.getByRole("button", { name: "Skip the rest" }).click({ timeout: 6000 }).catch(() => {});
-for (const shot of shots) {
+if (shots.includes("palette")) { await page.waitForTimeout(1200); await page.getByRole("button", { name: "Commands" }).click(); await page.waitForTimeout(600); await page.keyboard.type("re"); await page.waitForTimeout(400); await page.screenshot({ path: join(out, `${theme}-${width}-palette.png`) }); await page.keyboard.press("Escape"); console.log("palette"); }
+for (const shot of shots.filter((x) => !["pair", "welcome", "palette"].includes(x))) {
   const [route, tab] = shot.split("@");
   await page.goto(origin + (route === "job" ? "/#/job/job-1" : route === "start" ? "/#/" : "/#/" + route));
   await page.waitForTimeout(1500);

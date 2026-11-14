@@ -197,7 +197,27 @@ details summary { font-size: 13px; }
 }
 
 /* ---------- the palette and dialogs ---------- */
-.palette, dialog.palette { border-radius: 14px; }
+.palette-backdrop { background: color-mix(in srgb, var(--ink) 16%, transparent); padding-top: 14vh; }
+.palette.card { padding: 0; gap: 0; border-radius: 14px; border: 0; background: color-mix(in srgb, var(--halo) 94%, transparent); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--ink) 22%, transparent), 0 30px 80px -10px rgba(0, 0, 0, 0.4); }
+.palette input { border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; background: transparent; padding: 18px 20px; font-size: 16px; }
+.palette input:focus { border-color: var(--line-soft); }
+.palette input:focus-visible { outline-offset: -2px; border-radius: 14px 14px 0 0; }
+.palette ul { padding: 6px; }
+.pal-item { padding: 10px 14px; border-radius: 8px; font-size: 13.5px; }
+.pal-item.sel { background: var(--ink); color: var(--halo); outline: 0; }
+.pal-item.sel .muted { color: color-mix(in srgb, var(--halo) 70%, transparent); }
+.pal-head { padding: 12px 14px 4px; font-size: 11px; font-weight: 500; letter-spacing: 0.02em; color: var(--graphite); }
+
+/* before the workspace: the pairing page */
+.center.pair { margin-top: 16vh; gap: 14px; }
+.brand-mark.big { width: 56px; height: 56px; border-radius: 14px; font-size: 28px; margin-bottom: 10px; box-shadow: 0 18px 30px -16px color-mix(in srgb, var(--ink) 55%, transparent); }
+.center.pair h1 { font-size: 44px; }
+.center.pair button[type="submit"], .center.pair button.primary { align-self: flex-start; }
+@media (prefers-reduced-motion: no-preference) {
+  .palette.card { animation: kk-palette-in 0.25s cubic-bezier(0.2, 0.9, 0.3, 1); }
+  .brand-mark.big { animation: kk-stamp-in 0.6s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+}
+@keyframes kk-palette-in { from { opacity: 0; transform: translateY(-14px) scale(0.98); } to { opacity: 1; transform: none; } }
 
 @media (max-width: 860px) {
   .shell { padding-left: 0; }
