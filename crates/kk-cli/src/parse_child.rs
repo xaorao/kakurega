@@ -52,6 +52,8 @@ pub fn run_isolated(name: &str, bytes: &[u8]) -> Result<Parsed, ParseError> {
     let name = kk_parse::clean_name(name)?;
     let exe = std::env::current_exe()
         .map_err(|_| ParseError::Damaged("the reader could not be started".into()))?;
+    // the reader works on a file from outside: it inherits nothing this program was started with
+    kk_sandbox::no_stray_descriptors();
     let mut cmd = Command::new(exe);
     cmd.arg("parse-attachment").arg("--name").arg(&name);
     let mut limit = TIME_LIMIT;

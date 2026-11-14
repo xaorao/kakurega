@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Replays the recipient side of a Kakurega proof capsule with no account, no key and no network:
+# Replays the recipient side of a Kakurega proof capsule with no account and no key (the network is used once, on a fresh
+# clone, to install the JavaScript packages the check page is built with; the checks themselves use none):
 # builds the standalone check page, makes a good capsule and a forged one, and checks both with the command line.
 # Needs Rust, Node and pnpm (the script installs the JavaScript packages itself on a fresh clone). Usage: scripts/judge-replay
 set -euo pipefail

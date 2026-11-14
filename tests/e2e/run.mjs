@@ -1600,7 +1600,7 @@ try {
     // the same table as a file: the browser saves it (nothing is sent), cells quoted where a comma or quote needs it
     const [tableFile] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Download as CSV" }).click()]);
     const csvText = readFileSync(await tableFile.path(), "utf8");
-    check("Download as CSV saves the table as a file named table.csv with the same cells", tableFile.suggestedFilename() === "table.csv" && csvText === "Item,Cost,Note\r\ntea,3,<b>hot</b>\r\ncoffee,10,menu (example.com)\r\n", JSON.stringify(csvText));
+    check("Download as CSV saves the table as a file named table.csv with the same cells, each quoted", tableFile.suggestedFilename() === "table.csv" && csvText === '﻿"Item","Cost","Note"\r\n"tea","3","<b>hot</b>"\r\n"coffee","10","menu (example.com)"\r\n' , JSON.stringify(csvText));
     await page.unroute("**/api/chat/stream");
     await page.getByRole("button", { name: "Clear" }).click();
     await page.waitForTimeout(300);

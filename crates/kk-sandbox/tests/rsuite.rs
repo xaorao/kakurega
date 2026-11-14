@@ -606,6 +606,8 @@ fn r13_inner_lists_the_descriptors_the_sandboxed_program_sees() {
         "import os, json\nprint(json.dumps({'fds': sorted(int(n) for n in os.listdir('/proc/self/fd'))}))\n",
         &[],
     );
+    // the control: this process really does hold the stray descriptor the shell opened
+    println!("R13HELD {}", Path::new("/proc/self/fd/7").exists());
     println!("R13 {}", out_of(&spec));
 }
 
@@ -641,6 +643,10 @@ fn r13_a_descriptor_leaked_by_whatever_started_this_program_does_not_reach_the_s
         .and_then(|s| s.split(']').next())
         .map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect())
         .unwrap_or_default();
+    assert!(
+        out.contains("R13HELD true"),
+        "the inner run did not hold descriptor 7, so the test would show nothing: {out}"
+    );
     assert!(!fds.is_empty(), "no descriptor list: {line}");
     assert!(
         fds.iter().all(|fd| *fd <= 3),

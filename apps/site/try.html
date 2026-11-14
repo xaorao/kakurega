@@ -55,9 +55,9 @@
     <h2 id="h-what">What this page is, and is not</h2>
     <ul class="plain">
       <li>It runs two real parts of Kakurega in your browser: the secret detector and the checked, encrypted route to NEAR AI Cloud. The product itself reviews whole projects in a sandbox, proves each finding with a script and releases signed capsules; this page does none of that.</li>
-      <li>A free try goes through a relay of ours that adds our NEAR AI key. It handles the encrypted request and cannot read it. It allows one model, short answers and a few tries a day. With your own key the page talks to NEAR AI Cloud directly.</li>
+      <li>A free try goes through a relay of ours that adds our NEAR AI key. It passes on only a question sealed in your browser to the model's key, so it has no way to read one. It allows one model, short answers and a few tries a day from one address; the true ceiling is the small balance of that key. With your own key the page talks to NEAR AI Cloud directly.</li>
       <li>A browser cannot check the identity of the connection itself the way the desktop does. The question is still encrypted to the key the hardware proof vouches for.</li>
-      <li>The detector knows the shapes of real keys and passwords said as passwords. A password made of ordinary words is not recognised.</li>
+      <li>The detector knows the shapes of real keys, whole private-key blocks, and passwords said as passwords ("the password is ..."). A password made of ordinary words with nothing saying it is one is not recognised.</li>
     </ul>
   </section>
 </main>

@@ -90,9 +90,13 @@ async function run() {
       if (!modelKey) throw new Error("the capsule gave no model key to ask about");
       const [h, verifier] = [await view("hardware", { signer: modelKey }), await view("verifier")];
       if (!h) return { ok: false, lines: [["NEAR's record for this key:", "none"]] };
+      if (verifier !== facts.verifier) return { ok: false, lines: [["The registry's verifier is", verifier], ["This site says it is", facts.verifier]] };
+      // the verifier's own account: no key can replace it, and it still runs the code this site pinned
+      const [vKeys, vAccount] = [await rpc({ request_type: "view_access_key_list", account_id: verifier }), await rpc({ request_type: "view_account", account_id: verifier })];
+      const vHash = base58ToHex(vAccount.code_hash);
       return {
-        ok: h.signer === modelKey && h.tcb_status === "UpToDate" && verifier === facts.verifier,
-        lines: [["Checked by NEAR's verifier contract", verifier], ["Intel patch level", h.tcb_status + (h.advisory_ids.length ? " with advisories " + h.advisory_ids.join(", ") : ", no advisories")], ["Measurement of the machine (MRTD)", short(h.mr_td)], ["Recorded", new Date(Number(BigInt(h.attested_at) / 1000000n)).toISOString().replace("T", " ").slice(0, 19) + " UTC"]],
+        ok: h.signer === modelKey && h.tcb_status === "UpToDate" && h.advisory_ids.length === 0 && verifier === facts.verifier && vKeys.keys.length === 0 && vHash === facts.verifier_code_sha256,
+        lines: [["Checked by the verifier contract", verifier], ["Access keys on the verifier's account", String(vKeys.keys.length)], ["Verifier's code", vHash === facts.verifier_code_sha256 ? short(vHash) + " (as pinned)" : vHash + " (NOT the pinned " + short(facts.verifier_code_sha256) + ")"], ["Intel patch level", h.tcb_status + (h.advisory_ids.length ? " with advisories " + h.advisory_ids.join(", ") : ", no advisories")], ["Measurement of the machine (MRTD)", short(h.mr_td)], ["Recorded", new Date(Number(BigInt(h.attested_at) / 1000000n)).toISOString().replace("T", " ").slice(0, 19) + " UTC"]],
       };
     }),
   );
@@ -112,7 +116,7 @@ async function run() {
   results.push(
     await check("counts", async () => {
       const [total, orders, fee] = [await view("total"), await view("orders_total"), await view("fee_terms")];
-      return { ok: fee.bps === facts.fee_bps, lines: [["Capsules registered", String(total)], ["Orders opened", String(orders)], ["Fee, fixed in the code", `${fee.bps / 100}% to ${fee.account}`]] };
+      return { ok: fee.bps === facts.fee_bps && /^\d+$/.test(String(total)) && /^\d+$/.test(String(orders)), lines: [["Capsules registered", String(total)], ["Orders opened", String(orders)], ["Fee, fixed in the code", `${fee.bps / 100}% to ${fee.account}`]] };
     }),
   );
   const passed = results.filter((x) => x === true).length;

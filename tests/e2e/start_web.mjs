@@ -100,6 +100,9 @@ const before = await page.locator(".msg.user").count();
 await chip.click();
 check((await page.locator("#start-ask").inputValue()) === "List this week's three biggest risks in the payments service.", "choosing a saved prompt fills the box with its text");
 check(/#\/$|#$|\/$/.test(new URL(page.url()).hash || "#/") && (await page.locator(".msg.user").count()) === before, "and nothing is sent until the owner asks");
+await page.locator("#start-ask").fill("My own draft, half written");
+await chip.click();
+check((await page.locator("#start-ask").inputValue()) === "My own draft, half written\nList this week's three biggest risks in the payments service.", "a saved prompt is added under a draft already in the box, never written over it");
 
 // a phone
 const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark" });

@@ -127,7 +127,7 @@ fn entries(
 ) -> Result<
     (
         BTreeMap<String, (gix::ObjectId, bool)>,
-        Vec<(String, gix::ObjectId)>,
+        Vec<(Vec<u8>, String, gix::ObjectId)>,
     ),
     GitError,
 > {
@@ -142,7 +142,8 @@ fn entries(
             Ok(path) if safe_path(path) => {
                 out.insert(path.to_string(), (e.oid, e.mode.is_blob()));
             }
-            _ => odd.push((shown_name(raw), e.oid)),
+            // the bytes of the name are kept beside what may be shown: two names that look alike once shown are still two
+            _ => odd.push((raw.to_vec(), shown_name(raw), e.oid)),
         }
     }
     Ok((out, odd))
@@ -186,16 +187,16 @@ pub fn read_change(dir: &Path, base: &str) -> Result<ChangeSet, GitError> {
         .collect();
     // a file whose name cannot be kept as a path is never read; when the change touches one, the review says so
     let mut left_out: Vec<(String, &'static str)> = Vec::new();
-    for (name, id) in &odd_after {
-        if !odd_before.iter().any(|(n, i)| n == name && i == id) {
+    for (raw, name, id) in &odd_after {
+        if !odd_before.iter().any(|(r, _, i)| r == raw && i == id) {
             left_out.push((
                 name.clone(),
                 "a name that cannot be shown or written safely",
             ));
         }
     }
-    for (name, id) in &odd_before {
-        if !odd_after.iter().any(|(n, i)| n == name && i == id)
+    for (raw, name, id) in &odd_before {
+        if !odd_after.iter().any(|(r, _, i)| r == raw && i == id)
             && !left_out.iter().any(|(n, _)| n == name)
         {
             left_out.push((
@@ -374,7 +375,7 @@ pub fn export_head(
     std::fs::create_dir(dest).map_err(unreadable)?;
     let mut left_out: Vec<(String, &'static str)> = odd
         .into_iter()
-        .map(|(name, _)| (name, "a name that cannot be shown or written safely"))
+        .map(|(_, name, _)| (name, "a name that cannot be shown or written safely"))
         .collect();
     // on a file system that does not tell upper case from lower, two names that differ only in case are one file:
     // the second is not written over the first

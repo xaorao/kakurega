@@ -34,7 +34,7 @@ Kakurega is for people who must give an outside party a result from private mate
 
 ## What it does
 
-1. **Works on your files without handing them over.** An agent reviews a project inside a sealed sandbox with no network. Keys, and passwords said as passwords, are withheld before any model sees a line, on every path: reviews, chat, attached files, documents, meeting notes, team runs. What the detector misses is [counted below](#proof-of-protection).
+1. **Works on your files without handing them over.** An agent reviews a project inside a sealed sandbox with no network. Keys, and passwords said as passwords, are withheld from what Kakurega reads for you, on every path: reviews, attached files, documents, meeting notes, team runs. What you type yourself into a message to a model on this computer is sent as written; the benchmark counts those cases apart. What the detector misses is [counted below](#proof-of-protection).
 2. **Decides what leaves, outside the model.** The model cannot send anything. A release is exact files with a digest; you read them and approve that digest, and nothing else goes. Instructions planted in a file are labelled as untrusted text, and whatever a model makes of them it has no way to send anything.
 3. **Keeps only what it could prove.** Every finding comes with a script. The kernel runs it on a minimal extract, where it must first show the normal behaviour working and then the defect, print the same result twice, and stop showing the defect when the cited file is emptied. A quote from a document or a transcript is kept only when it is really in the file.
 4. **Gives the recipient something to check.** The result is a signed capsule. The recipient checks it offline, in a one-file web page or with one command, and is told what the check does not establish.
@@ -162,7 +162,7 @@ What this does not show: which software ran (the measurements are recorded, none
 | Secrets and spoken passwords withheld; names swapped for placeholders when the model is not on this computer | Works; measured by the leak benchmark |
 | Each project says where its work may go: only this computer, confidential hardware too, or any model. With a less private model in use, nothing of that project is sent | Built |
 | Model on NEAR AI Cloud | Works live with `Qwen/Qwen3.8-27B`; other models there untested |
-| The model's signature under every answer from confidential hardware: over that exact question and answer, checked before the answer is shown, kept with the conversation, copyable for someone else to check | Works live with `Qwen/Qwen3.8-27B` |
+| The model's signature under every answer from confidential hardware: over the exact bytes sent and received as they travelled (encrypted), checked before the answer is shown, kept with the conversation, copyable for someone else to check | Works live with `Qwen/Qwen3.8-27B` |
 | Choosing the NEAR model from NEAR's own list in Settings: whether its hardware proof can be checked (a model without one cannot be chosen), whether it can run reviews, its prices and its window | Built (`tests/e2e/near_models_web.mjs`); only `Qwen/Qwen3.8-27B` was run live |
 | Web research you approve first: you see the exact addresses, or the exact search words and the one site that would receive them | Built; search needs a provider you choose (an https SearXNG-style endpoint); none is bundled |
 | Roundtable of experts, team runs with a lead, a Project reviewer seat that runs the sandboxed review | Works with a local model |

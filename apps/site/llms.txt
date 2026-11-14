@@ -14,7 +14,7 @@ A private AI workspace. A security layer outside the model decides what may leav
 
 - NEAR AI Cloud: the model runs in confidential hardware; each answer is signed by a key the hardware proof vouches for; the product checks proof and signature before showing an answer.
 - A registry contract on NEAR testnet records who registered a capsule and that its model signatures verified, and hands a model's Intel TDX quote to NEAR's own verifier contract.
-- An order holds payment for a review and releases it only when the named capsule is registered with a hardware record.
+- An order holds payment for a review and releases it when a capsule signed by the reviewer key the order names is registered for it by the reviewer, before the order's deadline. An order can also require that every model key in the capsule has an up-to-date hardware record made after the order opened; the sample order did.
 
 ## Limits, stated by the project
 

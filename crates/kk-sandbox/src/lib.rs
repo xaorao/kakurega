@@ -461,8 +461,11 @@ fn scope_command_named(
 /// whatever the process was started with (a parent that leaks descriptors: a CI runner, an editor, a shell with
 /// redirections), and those would otherwise pass through `systemd-run`, `prlimit` and `bwrap` to the program. The filter
 /// descriptor (see [`FILTER_FD`]) is opened later, by the shell that the launch starts, so it is not affected.
-fn no_stray_descriptors() {
-    #[cfg(target_os = "linux")]
+///
+/// Public so that every launch of a program that reads material from outside (the sandbox here, and the helpers that
+/// read a file, a picture or the calendar) can call it first.
+pub fn no_stray_descriptors() {
+    #[cfg(unix)]
     close_fds::set_fds_cloexec_threadsafe(3, &[]);
 }
 

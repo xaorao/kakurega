@@ -15,5 +15,7 @@
   "transactions": {
     "hardware_attested": "EqCuP7TZmqsgotmj1go7oFg2mzN2qnzRKgmNeXzfhmY",
     "capsule_registered": "HvDR4pNUarYwdALySuJR5zNjzxNE7zmxh5KwfXTreSpT"
-  }
+  },
+  "verifier_code_sha256": "5083805590039ef8e06717c7c5f19f025bd912893acb945f04b29d3039e6ecef",
+  "verifier_source": "named as the live testnet verifier in near/mpc docs/design/certificate-derived-attestation-expiry.md; contract source near/mpc crates/tee-verifier"
 }

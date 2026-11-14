@@ -66,6 +66,8 @@ impl Recogniser for Helper {
         } else {
             Command::new(&self.exe)
         };
+        // the helper reads a picture from outside: it inherits nothing this program was started with
+        kk_sandbox::no_stray_descriptors();
         cmd.arg("--kind").arg(kind);
         if !pages.is_empty() {
             let list: Vec<String> = pages.iter().take(200).map(|n| n.to_string()).collect();

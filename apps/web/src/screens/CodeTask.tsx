@@ -94,7 +94,7 @@ export function CodeTask() {
     <section class="stack wide" aria-labelledby="h-code">
       <h1 id="h-code">{t("code.title")}</h1>
       <McpPending />
-      <Lead text={t("code.lead")} />
+      <Lead text={t("code.lead")} tail={1} />
       <div class="card stack">
         <h2>{t("code.step1")}</h2>
         <ChosenFolder path={chosen()} loading={listing.loading} />

@@ -57,6 +57,7 @@ node tests/e2e/start_web.mjs
 node tests/e2e/site.mjs
 node tests/e2e/site_relay.mjs
 node tests/e2e/site_proof.mjs
+node tests/e2e/site_withhold.mjs
 python3 tests/e2e/notes_cli.py
 python3 tests/e2e/github_cli.py
 python3 tests/e2e/bench_cli.py

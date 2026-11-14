@@ -66,7 +66,7 @@ for (const [name, viewport] of [["desktop-light", { width: 1440, height: 900 }],
   check(/^All 6 checks match/.test(v.summary), `${name}: the summary says so: ${v.summary}`);
   check(v.hosts.length === 1 && v.hosts[0] === RPC, `${name}: the only other host asked is NEAR's public RPC: ${v.hosts.join(", ")}`);
   const text = await v.page.locator("main").innerText();
-  check(/Access keys on the account:\s*0/.test(text) && /UpToDate, no advisories/.test(text) && /tee-verifier-/.test(text) && /Paid; required a hardware record: yes/.test(text), `${name}: the rows show NEAR's own answers (0 keys, the verifier, patch level, a paid order)`);
+  check(/Access keys on the account:\s*0/.test(text) && /UpToDate, no advisories/.test(text) && /tee-verifier-/.test(text) && /Access keys on the verifier's account\s*0/.test(text) && /\(as pinned\)/.test(text) && /Paid; required a hardware record: yes/.test(text), `${name}: the rows show NEAR's own answers (0 keys, the verifier, patch level, a paid order)`);
   check(await v.page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `${name}: no sideways scroll`);
   check(v.problems.length === 0, `${name}: no console errors: ${v.problems.join(" | ")}`);
   await v.page.screenshot({ path: join(work, `${name}.png`), fullPage: true });
@@ -102,11 +102,51 @@ if (!process.env.SITE_URL) {
   }));
   check(v.states.keys === "bad", `an account that has an access key is shown as a mismatch: ${v.states.keys}`);
   await v.ctx.close();
-  // 6. the machine-readable copies exist and agree with the page's facts
+  // 6. answers from NEAR that do not support a claim are shown as mismatches: each is one changed answer of the real RPC
+  const answerOf = async (route) => { const r = await route.fetch(); return { r, body: await r.json() }; };
+  const reply = (route, body) => route.fulfill({ contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(body) });
+  const rewriteView = (method, change) => (page) => page.route(RPC + "/**", async (route) => {
+    const asked = route.request().postDataJSON()?.params ?? {};
+    if (asked.request_type !== "call_function" || asked.method_name !== method) return route.continue();
+    const { body } = await answerOf(route);
+    const value = JSON.parse(Buffer.from(body.result.result).toString("utf8"));
+    body.result.result = [...Buffer.from(JSON.stringify(change(value)))];
+    await reply(route, body);
+  });
+  for (const [name, row, tamper] of [
+    ["a hardware record that is out of date", "hardware", rewriteView("hardware", (h) => ({ ...h, tcb_status: "OutOfDate" }))],
+    ["a hardware record with an open advisory", "hardware", rewriteView("hardware", (h) => ({ ...h, advisory_ids: ["INTEL-SA-00000"] }))],
+    ["a hardware record for another key", "hardware", rewriteView("hardware", (h) => ({ ...h, signer: "00".repeat(32) }))],
+    ["a registry that names another verifier", "hardware", rewriteView("verifier", () => "someone-else.testnet")],
+    ["an order that did not require a hardware record", "order", rewriteView("order", (o) => ({ ...o, require_hardware: false }))],
+    ["an order that is earned but not paid", "order", rewriteView("order", (o) => ({ ...o, state: "Earned" }))],
+    ["an order for another capsule", "order", rewriteView("order", (o) => ({ ...o, capsule_sha256: "ee".repeat(32) }))],
+    ["a registry with another fee", "counts", rewriteView("fee_terms", (f) => ({ ...f, bps: 900 }))],
+    ["a verifier account that has an access key", "hardware", (page) => page.route(RPC + "/**", async (route) => {
+      const asked = route.request().postDataJSON()?.params ?? {};
+      if (asked.request_type !== "view_access_key_list" || !String(asked.account_id).startsWith("tee-verifier")) return route.continue();
+      await reply(route, { jsonrpc: "2.0", id: 1, result: { block_height: 1, keys: [{ public_key: "ed25519:x", access_key: {} }] } });
+    })],
+    ["a verifier that no longer runs the pinned code", "hardware", (page) => page.route("**/proof.json", async (route) => {
+      const j = JSON.parse(readFileSync(join(dir, "proof.json"), "utf8"));
+      j.verifier_code_sha256 = "11".repeat(32);
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify(j) });
+    })],
+    ["a sample capsule with one byte changed", "capsule", (page) => page.route("**/sample/review.kkg", async (route) => {
+      const bytes = readFileSync(join(dir, "sample/review.kkg"));
+      bytes[Math.floor(bytes.length / 2)] ^= 0x01;
+      await route.fulfill({ contentType: "application/octet-stream", body: bytes });
+    })],
+  ]) {
+    v = await open("hostile", { width: 1280, height: 900 }, tamper);
+    check(v.states[row] === "bad" && !/^All 6 checks match/.test(v.summary), `${name}: shown as a mismatch (${row}: ${v.states[row]})`);
+    await v.ctx.close();
+  }
+  // 7. the machine-readable copies exist and agree with the page's facts
   const proof = JSON.parse(readFileSync(join(dir, "proof.json"), "utf8"));
   const sent = await fetch(RPC, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(proof.claims.find((c) => c.id === "keys").request) }).then((r) => r.json());
   check(Array.isArray(sent.result?.keys) && sent.result.keys.length === 0, "the request written in proof.json for the first claim, sent as it stands, gets the expected answer from NEAR");
-  check(proof.claims.length === 5 && proof.sample_capsule.model_key.length === 64 && /proof\.json/.test(readFileSync(join(dir, "llms.txt"), "utf8")), "proof.json lists its claims and llms.txt points at it");
+  check(proof.claims.length === 6 && proof.sample_capsule.model_key.length === 64 && /proof\.json/.test(readFileSync(join(dir, "llms.txt"), "utf8")), "proof.json lists its claims and llms.txt points at it");
 }
 await browser.close();
 srv.close();

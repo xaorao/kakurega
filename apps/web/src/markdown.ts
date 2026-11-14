@@ -155,20 +155,22 @@ export function plain(v: Inline[]): string {
 }
 
 /** A table as tab-separated lines, which a spreadsheet pastes into cells. Tabs and line breaks inside a cell become spaces. */
-export function tableToTsv(b: Extract<Block, { t: "table" }>): string {
-  const cell = (v: Inline[]) => plain(v).replace(/[\t\r\n]+/g, " ").trim();
-  return [b.head, ...b.rows].map((r) => r.map(cell).join("\t")).join("\n") + "\n";
+/** A cell as plain text that a spreadsheet will not run: one that starts like a formula (=, +, -, @, their full-width
+ *  forms, or a tab or carriage return) gets a leading apostrophe. Text a model wrote must not act when it is pasted or opened. */
+function inert(v: Inline[]): string {
+  const s = plain(v).replace(/[\t\r\n]+/g, " ").trim();
+  return /^[=+\-@\uFF1D\uFF0B\uFF0D\uFF20]/.test(s) ? "'" + s : s;
 }
 
-/** The table as a CSV file's text. A cell that a spreadsheet would run as a formula (it starts with =, +, - or @, or with
- *  a tab or carriage return) gets a leading apostrophe, so text a model wrote cannot act when the file is opened. */
+export function tableToTsv(b: Extract<Block, { t: "table" }>): string {
+  return [b.head, ...b.rows].map((r) => r.map(inert).join("\t")).join("\n") + "\n";
+}
+
+/** The table as a CSV file's text. Every cell is quoted, so no separator a spreadsheet is set to (comma or semicolon)
+ *  can split one cell into two; the file starts with a byte-order mark so other scripts open correctly. */
 export function tableToCsv(b: Extract<Block, { t: "table" }>): string {
-  const cell = (v: Inline[]) => {
-    let s = plain(v).replace(/[\r\n]+/g, " ").trim();
-    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-  };
-  return [b.head, ...b.rows].map((r) => r.map(cell).join(",")).join("\r\n") + "\r\n";
+  const cell = (v: Inline[]) => '"' + inert(v).replace(/"/g, '""') + '"';
+  return "\uFEFF" + [b.head, ...b.rows].map((r) => r.map(cell).join(",")).join("\r\n") + "\r\n";
 }
 
 export function parse(input: string): Block[] {

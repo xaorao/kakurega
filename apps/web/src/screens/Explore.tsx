@@ -95,7 +95,7 @@ export function Explore() {
   return (
     <section class="stack wide" aria-labelledby="h-ex">
       <h1 id="h-ex">{t("ex.title")}</h1>
-      <Lead text={t("ex.lead")} />
+      <Lead text={t("ex.lead")} tail={1} />
       <div class="card stack">
         <h2>{t("ex.step1")}</h2>
         <ChosenFolder path={chosen()} loading={listing.loading} />

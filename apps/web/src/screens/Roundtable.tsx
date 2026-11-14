@@ -110,7 +110,7 @@ export function Roundtable() {
   return (
     <section class="stack" aria-labelledby="rt-title">
       <h1 id="rt-title">{t("rt.title")}</h1>
-      <Lead text={t("rt.lead")} />
+      <Lead text={t("rt.lead")} tail={1} />
       <form class="card stack" onSubmit={ask}>
         <label for="rt-question">{t("rt.question")}</label>
         <textarea id="rt-question" rows="3" maxlength="4000" value={question()} disabled={busy()} onInput={(e) => setQuestion(e.currentTarget.value)} />

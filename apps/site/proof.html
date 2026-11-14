@@ -29,11 +29,11 @@
   <div class="actions"><button type="button" class="button dark" data-run>Ask NEAR</button> <strong data-summary aria-live="polite"></strong></div>
 
   <ol class="try-steps proof-steps">
-    <li data-check="keys"><h2>1. Nobody can change the contract</h2><p class="note">The account <span class="mono" data-registry></span> has no access keys, so no one, us included, can replace its code or its fee.</p><div data-out></div></li>
+    <li data-check="keys"><h2>1. The contract's account has no access keys</h2><p class="note">With no key on <span class="mono" data-registry></span>, no key holder, us included, can replace its code or its fee. Together with check 2 (the code is the repository's, and that code has no way to replace itself) this is what "nobody can change it" rests on.</p><div data-out></div></li>
     <li data-check="code"><h2>2. The code on NEAR is the code in the repository</h2><p class="note">The hash NEAR reports for the account, against the hash of the contract built from the repository (<span class="mono">scripts/check-deployed</span> rebuilds it and compares).</p><div data-out></div></li>
     <li data-check="capsule"><h2>3. The sample review is signed by the model that wrote it</h2><p class="note">The capsule on this site is verified in this tab; every answer in it carries the model's own signature.</p><div data-out></div></li>
-    <li data-check="hardware"><h2>4. NEAR's own verifier vouches for that model key</h2><p class="note">Our contract handed the key's Intel TDX quote to NEAR's verifier contract and recorded what it answered. This asks for that record.</p><div data-out></div></li>
-    <li data-check="order"><h2>5. A review was paid for only after its proof was on chain</h2><p class="note">An order that required a hardware record; the contract verified the capsule's model signatures before the money could move.</p><div data-out></div></li>
+    <li data-check="hardware"><h2>4. NEAR's verifier contract vouched for that model key</h2><p class="note">Our contract handed the key's Intel TDX quote to the verifier contract that near/mpc's design documents name as live on testnet, and recorded what it answered. This asks for that record, and checks that the verifier's own account has no access keys and still runs the code we pinned.</p><div data-out></div></li>
+    <li data-check="order"><h2>5. The contract paid for a review when its capsule was registered</h2><p class="note">This order required a hardware record. In the transaction that released the money, the contract verified the capsule's model signatures and that the model key had an up-to-date record made after the order opened.</p><div data-out></div></li>
     <li data-check="counts"><h2>6. What the registry holds right now</h2><p class="note">Counts read from the contract, and the fee written into its code.</p><div data-out></div></li>
   </ol>
 
@@ -41,6 +41,7 @@
     <h2 id="h-what">What this shows, and what it does not</h2>
     <ul class="plain">
       <li>Everything is NEAR <strong>testnet</strong>. The amounts are test tokens. The numbers are small because the product is a prototype: they are the real counts, not rounded up.</li>
+      <li>Check 4 shows what the verifier contract accepted and that its account is keyless; that the account is NEAR's rests on near/mpc's documents naming it, which this page cannot check for you.</li>
       <li>Check 2 compares with a hash this site states. To take nobody's word, run <span class="mono">scripts/check-deployed</span> in the repository: it builds the contract and compares it with NEAR itself.</li>
       <li>A hardware record shows the model ran on a machine Intel's collateral accepts at that patch level. It does not show that an answer is right.</li>
       <li>The same claims for a program to read: <a href="../proof.json">proof.json</a> (each claim with the exact RPC request and the expected answer) and <a href="../llms.txt">llms.txt</a>.</li>

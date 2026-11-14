@@ -38,7 +38,9 @@ const REASONS = {
 // Signed text is still someone else's text: shown without the marks that hide or reorder what is read (right-to-left
 // overrides, isolates, zero-width characters) and not without end.
 function seen(text) {
-  return String(text).replace(/[\u0000-\u0008\u000b-\u001f\u007f\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, "").slice(0, 600);
+  const clean = String(text).replace(/[\u0000-\u0008\u000b-\u001f\u007f\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, "");
+  // a cut is said, never silent: the reader must know there was more
+  return clean.length > 600 ? clean.slice(0, 600) + " … (cut here; " + (clean.length - 600) + " more characters are in the capsule)" : clean;
 }
 
 function el(tag, text, cls) {

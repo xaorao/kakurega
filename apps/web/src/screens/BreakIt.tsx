@@ -37,7 +37,7 @@ export function BreakIt() {
   return (
     <section class="stack wide" aria-labelledby="h-break">
       <h1 id="h-break">{t("break.title")}</h1>
-      <Lead text={t("break.lead")} />
+      <Lead text={t("break.lead")} full />
       <Show when={stats()}>
         {(s) => <p id="break-count" class={s().leaks > 0 ? "bad" : s().attempts > 0 ? "ok-text" : "muted"}>{s().leaks === 0 && s().attempts > 0 ? "✓ " : ""}{t("break.count", { attempts: s().attempts, leaks: s().leaks })}</p>}
       </Show>

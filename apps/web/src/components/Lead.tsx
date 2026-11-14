@@ -1,18 +1,11 @@
 import { Show } from "solid-js";
 import { t } from "../i18n";
+import { splitLead } from "../lead";
 
-/** Where a screen's opening text is cut: after its first sentence, in either language. */
-export function splitLead(text: string): [string, string] {
-  const m = /^(.*?[.!?।])\s+(\S[\s\S]*)$/.exec(text.trim());
-  // a first sentence that is most of the text is not worth folding the rest away for
-  const [first, rest] = [m?.[1] ?? "", m?.[2] ?? ""];
-  if (!first || rest.length < 60) return [text.trim(), ""];
-  return [first, rest];
-}
-
-/** A screen's opening text: one sentence to read at a glance, the rest one click away, so the screen's work comes first. */
-export function Lead(props: { text: string }) {
-  const parts = () => splitLead(props.text);
+/** A screen's opening text: what must be read at a glance, the rest one click away, so the screen's work comes first.
+ *  A sentence that says what leaves this computer is never folded: the screen passes `tail` or `full` for it. */
+export function Lead(props: { text: string; tail?: number; full?: boolean }) {
+  const parts = () => splitLead(props.text, props.tail ?? 0, props.full ?? false);
   return (
     <div class="lead-block">
       <p class="lead">{parts()[0]}</p>

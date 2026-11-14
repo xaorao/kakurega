@@ -51,6 +51,8 @@ impl Helper {
         } else {
             Command::new(&self.exe)
         };
+        // the helper inherits nothing this program was started with
+        kk_sandbox::no_stray_descriptors();
         cmd.args(args).env_clear();
         // EventKit finds its own store through the home folder; nothing else is passed on
         for key in ["HOME", "TMPDIR"] {

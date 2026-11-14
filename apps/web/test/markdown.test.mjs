@@ -143,16 +143,24 @@ test("md27 text that merely has pipes in a code block, a list or a quote is not 
   assert.ok(!parseMd("> | a | b |\n> |---|---|").some((b) => b.t === "table"));
 });
 
-test("a table saved as CSV quotes what needs it and never hands a spreadsheet a formula", () => {
-  const [b] = parseMd('| Item | Note |\n| --- | --- |\n| tea, green | said "hot" |\n| =HYPERLINK("http://evil.example","x") | +1 |\n| -2 | @SUM(A1) |');
+test("a table saved as CSV quotes every cell and never hands a spreadsheet a formula; copying is inert too", () => {
+  const [b] = parseMd('| Item | Note |\n| --- | --- |\n| tea, green | said "hot" |\n| =HYPERLINK("http://evil.example","x") | +1 |\n| -2 | @SUM(A1) |\n| x;=HYPERLINK(B3) | \uFF1DSUM(A1) |\n| \u0928\u092e\u0938\u094d\u0924\u0947 | ok |');
   assert.equal(b.t, "table");
   const csv = tableToCsv(b);
-  const lines = csv.split("\r\n");
-  assert.equal(lines[0], "Item,Note");
+  assert.ok(csv.startsWith("\uFEFF"), "starts with a byte-order mark");
+  const lines = csv.slice(1).split("\r\n");
+  assert.equal(lines[0], '"Item","Note"');
   assert.equal(lines[1], '"tea, green","said ""hot"""');
   // every cell a spreadsheet would run starts with an apostrophe instead
   assert.ok(lines[2].startsWith(`"'=HYPERLINK(`), lines[2]);
-  assert.ok(lines[2].endsWith(",'+1"), lines[2]);
-  assert.equal(lines[3], "'-2,'@SUM(A1)");
+  assert.ok(lines[2].endsWith(`,"'+1"`), lines[2]);
+  assert.equal(lines[3], `"'-2","'@SUM(A1)"`);
+  // a semicolon cannot split a cell into a live formula where that is the list separator: the cell is quoted whole
+  assert.equal(lines[4], `"x;=HYPERLINK(B3)","'\uFF1DSUM(A1)"`);
+  assert.equal(lines[5], '"\u0928\u092e\u0938\u094d\u0924\u0947","ok"');
   assert.ok(csv.endsWith("\r\n"));
+  // the copy path (tab-separated, pasted into a sheet) is made inert the same way
+  const tsv = tableToTsv(b).split("\n");
+  assert.ok(tsv[2].startsWith("'=HYPERLINK("), tsv[2]);
+  assert.equal(tsv[3], "'-2\t'@SUM(A1)");
 });

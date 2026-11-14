@@ -16,5 +16,5 @@ libc = "0.2"
 [lints]
 workspace = true
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(unix)'.dependencies]
 close_fds = "0.3.2"

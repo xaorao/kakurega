@@ -375,8 +375,13 @@ fn commit_tree_with(dir: &Path, names: &[&[u8]]) {
         Some(b"print('planted')\n"),
     );
     let base_tree = out(&["rev-parse", "HEAD^{tree}"], None);
-    let listing = out(&["ls-tree", "-z", &base_tree], None);
-    let mut input: Vec<u8> = listing.into_bytes();
+    // the listing is kept as bytes: a name already in the tree that is not UTF-8 must go back in unchanged
+    let mut input: Vec<u8> = Command::new("git")
+        .current_dir(dir)
+        .args(["ls-tree", "-z", &base_tree])
+        .output()
+        .unwrap()
+        .stdout;
     if !input.is_empty() && !input.ends_with(&[0]) {
         input.push(0);
     }
@@ -459,4 +464,29 @@ fn gt08_a_change_made_only_of_unreadable_files_is_refused_in_words_and_a_huge_fi
         set.left_out,
         vec![("huge.bin".to_string(), "larger than a file that is read")]
     );
+}
+
+#[test]
+fn gt09_two_unprintable_names_that_look_alike_once_shown_are_still_two_files() {
+    let dir = repo("odd-twins");
+    // the base already holds a file whose name is not UTF-8
+    commit_tree_with(&dir, &[b"bad-\xff.py"]);
+    git(&dir, &["branch", "twin-base"]);
+    // the change adds another, with the same content, whose name shows the same once made printable
+    commit_tree_with(&dir, &[b"bad-\xfe.py"]);
+    let got = read_change(&dir, "twin-base");
+    assert_ne!(
+        got.as_ref().err(),
+        Some(&GitError::NothingChanged),
+        "a file was added: the change is not nothing"
+    );
+    // it is either reviewed with the file named as left out, or refused in words as holding nothing readable
+    match got {
+        Ok(set) => assert_eq!(set.left_out.len(), 1, "{:?}", set.left_out),
+        Err(e) => assert!(
+            e.to_string().contains("cannot be shown or written safely")
+                || e.to_string().contains("read"),
+            "{e}"
+        ),
+    }
 }

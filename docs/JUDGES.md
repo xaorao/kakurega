@@ -81,7 +81,7 @@ Then, in the browser: choose a project folder, name a recipient, **Start review*
 - Answers from NEAR AI Cloud were run with the owner's test key; running them again needs a key of your own. Everything above that reads the chain or the fixture needs none.
 - NEAR Intents: dry quotes only.
 - Everything on chain is testnet. The registry account has no access keys left, so its code and fee cannot be replaced; `scripts/check-deployed` shows the code is this repository's.
-- The public site, https://kakurega-eight.vercel.app, is static files plus one small function: a replay of a real review read from its capsule, the check page at `/verify/` (both verify the capsule in your browser), and the try-it page at `/try/`. The function (`apps/site/api/near.js`) only passes the try-it page's already-encrypted question to NEAR AI Cloud for the free tries, with hard limits; it cannot read the question, and with your own key it is not used at all. There is no hosted workspace yet.
+- The public site, https://kakurega-eight.vercel.app, is static files plus one small function: a replay of a real review read from its capsule, the check page at `/verify/` (both verify the capsule in your browser), and the try-it page at `/try/`. The function (`apps/site/api/near.js`) adds our key to the try-it page's question for the free tries. It passes on only a question marked as encrypted to the model's key, with only the fields a plain question needs, to one model, and it counts tries by address. Those counts live in one instance's memory and slow abuse; the ceiling is the small fixed balance of the key behind it. With your own key the function is not used at all. There is no hosted workspace yet.
 
 ## Tracks
 

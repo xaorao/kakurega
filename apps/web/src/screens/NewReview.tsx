@@ -167,7 +167,7 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
         <Show when={(mine() ?? []).length > 0}>
           <div class="start-mine" role="group" aria-label={t("start.mine")}>
             <span class="muted">{t("start.mine")}</span>
-            <For each={mine()}>{(p) => <button type="button" class="chip-button" title={p.text.slice(0, 300)} onClick={() => { setAsk(p.text); document.getElementById("start-ask")?.focus(); }}>{p.name}</button>}</For>
+            <For each={mine()}>{(p) => <button type="button" class="chip-button" title={p.text.slice(0, 300)} onClick={() => { setAsk(ask().trim() && ask().trim() !== p.text ? `${ask().trimEnd()}\n${p.text}` : p.text); document.getElementById("start-ask")?.focus(); }}>{p.name}</button>}</For>
           </div>
         </Show>
       </div>

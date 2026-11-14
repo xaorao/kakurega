@@ -2,8 +2,10 @@ import { chromium } from "playwright-core";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-const U = "https://kakurega-eight.vercel.app";
-const key = /NEAR_AI_API_KEY=(\S+)/.exec(readFileSync(join(homedir(), "near/.secrets/near-ai.env"), "utf8"))[1];
+// run by hand: SITE_URL=https://... KAKU_TEST_NEAR_KEY_FILE=FILE node tests/e2e/site_try_live.mjs   (one short answer on NEAR)
+if (!process.env.SITE_URL || !process.env.KAKU_TEST_NEAR_KEY_FILE) throw new Error("usage: SITE_URL=https://... KAKU_TEST_NEAR_KEY_FILE=FILE node tests/e2e/site_try_live.mjs");
+const U = process.env.SITE_URL.replace(/\/$/, "");
+const key = /NEAR_AI_API_KEY=(\S+)/.exec(readFileSync(process.env.KAKU_TEST_NEAR_KEY_FILE, "utf8"))[1];
 const b = await chromium.launch({ executablePath: join(homedir(), "Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"), headless: true });
 const p = await (await b.newContext({ viewport: { width: 1280, height: 1000 } })).newPage();
 const problems = []; const sent = [];
