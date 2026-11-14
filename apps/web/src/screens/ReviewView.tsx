@@ -59,7 +59,7 @@ function Progress(props: { job: Job }) {
           const active = () => reached().has(key) && !done() && !failed();
           return (
             <li class={done() ? "done" : failed() ? "fail" : active() ? "active" : ""}>
-              <span class="mark" aria-hidden="true">{done() ? "✓" : failed() ? "✕" : active() ? "…" : ""}</span>
+              <span class="mark" aria-hidden="true">{done() ? "✓" : failed() ? "✕" : active() ? <span class="spin" /> : ""}</span>
               <span>{t(label)}</span>
               <span class="sub">{props.job.events.filter((e) => e.stage === key).map((e) => e.detail).join(" ")}</span>
             </li>

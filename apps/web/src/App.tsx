@@ -1,3 +1,4 @@
+import { Opening } from "./components/Opening";
 import { createEffect, createMemo, createSignal, ErrorBoundary, For, lazy, onCleanup, onMount, Show, Suspense } from "solid-js";
 import { api, ApiError, setCsrf, type Config, type Job } from "./api";
 void ApiError;
@@ -424,6 +425,7 @@ export function App() {
   return (
     <Show when={paired() !== null} fallback={<main class="center"><p class="muted">{t("app.connecting")}</p></main>}>
       <Show when={paired()} fallback={<Show when={unreachable()} fallback={<Pair onDone={() => { setPaired(null); }} />}><main class="center"><p role="alert" class="bad">{t("app.unreachable")}</p><button onClick={() => { setUnreachable(false); setPaired(null); }}>{t("app.retry")}</button></main></Show>}>
+        <Opening />
         <Palette open={paletteOpen()} items={paletteItems()} onClose={() => setPaletteOpen(false)} />
         <ShortcutHelp open={helpOpen()} onClose={() => setHelpOpen(false)} />
         <div class="shell" inert={paletteOpen() || helpOpen()}>

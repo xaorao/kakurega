@@ -737,3 +737,47 @@ textarea::placeholder, input::placeholder { color: var(--fog); }
 .start-mine .muted { font-size: 13px; }
 .chip-button { font-size: 14px; padding: 6px 12px; min-height: 36px; border-radius: 999px; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cmd-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; } .cmd-row code { font-size: 15px; padding: 6px 10px; }
+
+/* MOTION. Everything here explains something (what just arrived, what is working, what was proven) and all of it is off
+   for anyone who asks for less motion (the rule above switches animations off). Nothing here delays a click. */
+@keyframes kk-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes kk-pop { 0% { transform: scale(0.6); opacity: 0; } 60% { transform: scale(1.12); opacity: 1; } 100% { transform: scale(1); } }
+@keyframes kk-stamp { 0% { transform: scale(1.9) rotate(-6deg); opacity: 0; } 55% { transform: scale(0.94) rotate(0); opacity: 1; } 100% { transform: scale(1); } }
+@keyframes kk-spin { to { transform: rotate(360deg); } }
+@keyframes kk-open-bar { 0% { width: 100vmax; height: 100vmax; border-radius: 0; } 55% { width: 56px; height: 14px; border-radius: 3px; } 100% { width: 56px; height: 14px; border-radius: 3px; } }
+@keyframes kk-open-mark { 0%, 40% { background: var(--ink); box-shadow: 0 0 0 100vmax var(--ink); } 62% { background: var(--ink); box-shadow: 0 0 0 0 var(--ink); } 100% { background: var(--ink); box-shadow: 0 0 0 0 var(--ink); } }
+@keyframes kk-open-name { 0%, 55% { opacity: 0; transform: translateX(-12px); } 80%, 100% { opacity: 1; transform: none; } }
+@keyframes kk-open-out { 0%, 84% { opacity: 1; } 100% { opacity: 0; } }
+/* the working step is a ring with a gap; it turns only for those who have not asked for less motion */
+.steps .spin { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--ink); }
+.opening { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center; justify-content: center; gap: 22px; background: var(--halo); pointer-events: none; animation: kk-open-out 1.15s ease both; }
+.opening-mark { width: 112px; height: 112px; border-radius: 28px; display: flex; align-items: center; justify-content: center; animation: kk-open-mark 1.15s cubic-bezier(0.7, 0, 0.2, 1) both; }
+.opening-bar { display: block; background: var(--halo); animation: kk-open-bar 1.15s cubic-bezier(0.7, 0, 0.2, 1) both; }
+.opening-name { font-size: 92px; font-weight: 600; letter-spacing: -0.045em; color: var(--ink); animation: kk-open-name 1.15s ease both; }
+@media (max-width: 640px) { .opening-name { font-size: 48px; } .opening-mark { width: 64px; height: 64px; border-radius: 16px; } }
+@media (prefers-reduced-motion: no-preference) {
+  /* a screen arrives; its parts follow one after another */
+  main > section, .main > section { animation: kk-rise 0.28s ease both; }
+  main > section > .card, main > section > details.card, [role="tabpanel"] > .card, [role="tabpanel"] > * > .card { animation: kk-rise 0.34s ease both; }
+  main > section > .card:nth-of-type(2), [role="tabpanel"] .card:nth-of-type(2) { animation-delay: 0.05s; }
+  main > section > .card:nth-of-type(3), [role="tabpanel"] .card:nth-of-type(3) { animation-delay: 0.1s; }
+  main > section > .card:nth-of-type(n + 4), [role="tabpanel"] .card:nth-of-type(n + 4) { animation-delay: 0.14s; }
+  ul.plain.start-ways > li { animation: kk-rise 0.4s ease both; }
+  ul.plain.start-ways > li:nth-child(2) { animation-delay: 0.06s; }
+  ul.plain.start-ways > li:nth-child(3) { animation-delay: 0.12s; }
+  ul.plain.start-ways > li:nth-child(4) { animation-delay: 0.18s; }
+  .start-hello { animation: kk-rise 0.5s ease both; }
+  /* a step that is working turns; a step that is done lands with its tick */
+  .steps .spin { animation: kk-spin 0.8s linear infinite; }
+  .steps li.done .mark { animation: kk-pop 0.38s ease both; }
+  .steps li { transition: color 0.3s; }
+  /* a verdict is stamped, not just shown */
+  .chip.ok, .chip.bad, .chip.warn { animation: kk-stamp 0.42s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; transform-origin: 50% 50%; }
+  .ok-text { animation: kk-rise 0.4s ease both; }
+  /* things that can be pressed answer the hand */
+  button, .button, a.way, button.way { transition: border-color 0.12s, background-color 0.12s, transform 0.12s, box-shadow 0.18s; }
+  button:not(:disabled):active, .button:active { transform: scale(0.97); }
+  a.way:hover, button.way:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(0, 0, 0, 0.08); }
+  button.primary:not(:disabled):hover { box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18); }
+  .tab { transition: color 0.15s, border-color 0.2s; }
+}
