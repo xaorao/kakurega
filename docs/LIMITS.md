@@ -7,7 +7,7 @@ This file is the plain list. `docs/TESTING.md` says which test checks what and w
 - Quality of real models' reviews beyond one small project: the bake-off (`benchmarks/quality`) runs on one fixture with one planted defect, with a small local model and with Qwen3.8-27B on NEAR. It is not a measure of review quality in general.
 - A person other than the builder using the product unaided. No first-time-user test has been observed.
 - The screen picture from the desktop menu: tests drive it through the shell with the confirmation answered in code; a person has not clicked the preview dialog (it needs the Screen Recording permission from the owner).
-- Real Touch ID. The desktop approval flow is tested with the operating-system prompt stubbed.
+- Real Touch ID. The desktop approval flow is tested with the operating-system prompt stubbed. On a Mac with no Touch ID sensor the desktop app does not ask for a fingerprint: the owner's answer in its native approval window approves by itself, which is as strong as a digest typed at a terminal and no stronger. A fingerprint prompt that is shown and then cancelled or fails refuses the release; the owner can ask for approval again.
 - Telegram: the bridge was checked once on a real phone (pairing, a status reply and a review notification, observed by the owner) and against a fake Telegram server. Delivery retries, flood control and 4xx/5xx handling are unit-tested only; long-running reliability (days, reconnects, many chats) is not tested. Chat is a transport for counts and ids: approvals are never done through chat.
 
 ## Known weaknesses

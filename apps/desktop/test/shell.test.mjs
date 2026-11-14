@@ -158,3 +158,20 @@ test("ds21 the secret goes only to the companion's own origin and replaces anyth
   const sneaky = withShellSecret(origin + "/", { "X-KK-Shell": "page-supplied", Accept: "*/*" }, origin, secret);
   assert.deepEqual(sneaky, { Accept: "*/*", [SHELL_HEADER]: secret }, "a page-supplied value never survives");
 });
+
+test("on a computer with no Touch ID the owner's answer in the native window approves; a failed or cancelled fingerprint still refuses", async () => {
+  const none = [];
+  const without = createApprover({ client: fakeClient([sample], none), confirm: async () => true, authenticate: async () => "unavailable" });
+  assert.deepEqual((await without()).map((d) => d.outcome), ["approved"]);
+  assert.ok(none.some((c) => /\/approve$/.test(c.path ?? c[1] ?? "")) || JSON.stringify(none).includes("/approve"));
+  const failed = [];
+  const cancelled = createApprover({ client: fakeClient([{ ...sample, id: "ap9" }], failed), confirm: async () => true, authenticate: async () => false });
+  assert.deepEqual((await cancelled()).map((d) => d.outcome), ["authentication_failed"]);
+  assert.ok(JSON.stringify(failed).includes("/deny") && !JSON.stringify(failed).includes("/approve"));
+  // nothing but true or "unavailable" counts as proof
+  for (const odd of [undefined, null, "yes", 1, {}]) {
+    const calls = [];
+    const poll = createApprover({ client: fakeClient([{ ...sample, id: "ap10" }], calls), confirm: async () => true, authenticate: async () => odd });
+    assert.deepEqual((await poll()).map((d) => d.outcome), ["authentication_failed"], String(odd));
+  }
+});

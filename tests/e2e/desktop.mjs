@@ -74,7 +74,7 @@ try {
   // each stub records what it was shown so we can check the dialog carried the exact release.
   await app.evaluate(({ dialog, systemPreferences }) => {
     globalThis.__shown = [];
-    dialog.showMessageBox = async (opts) => { globalThis.__shown.push({ kind: "dialog", detail: opts.detail, buttons: opts.buttons }); return { response: 1 }; };
+    dialog.showMessageBox = async (...args) => { const opts = args[args.length - 1]; globalThis.__shown.push({ kind: "dialog", detail: opts.detail, buttons: opts.buttons }); return { response: 1 }; };
     systemPreferences.canPromptTouchID = () => true;
     systemPreferences.promptTouchID = async (reason) => { globalThis.__shown.push({ kind: "touchid", reason }); };
   });

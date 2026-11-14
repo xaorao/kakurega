@@ -134,7 +134,7 @@ try {
   check("the main process registers no IPC channels for a compromised page to call", surface.ipcChannels.length === 0, JSON.stringify(surface.ipcChannels));
   check("a page-side ipcRenderer, require, process, electron bridge and preload globals do not exist", await page.evaluate(() => [typeof require, typeof process, typeof window.electron, typeof window.ipcRenderer, typeof window.api, typeof window.kakurega].every((t) => t === "undefined")));
   const mainSrc = readFileSync(join(process.env.DESKTOP_APP_DIR ?? join(repo, "apps/desktop"), "src/main.mjs"), "utf8");
-  check("the shell source sets no debugging or inspect switches, and registers no URL scheme (the test harness itself adds an inspector, so the live switch is not asserted)", !/remote-debugging|--inspect|appendSwitch|setAsDefaultProtocolClient/.test(mainSrc) && !surface.isDefaultProtocol, JSON.stringify(surface));
+  check("the shell source sets no debugging or inspect switches, and registers no URL scheme (the test harness itself adds an inspector, so the live switch is not asserted)", !/remote-debugging|--inspect|setAsDefaultProtocolClient/.test(mainSrc) && (mainSrc.match(/appendSwitch\(/g) ?? []).length === 1 && mainSrc.includes('appendSwitch("use-mock-keychain")') && !surface.isDefaultProtocol, JSON.stringify(surface));
 
   // navigation and window attacks
   const nav = [];

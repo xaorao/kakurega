@@ -65,7 +65,9 @@ export function createApprover({ client, confirm, authenticate, sign = null, see
         body.proof = proof;
       } else {
         const proven = await authenticate(t("approve.reason", { digest: String(a.digest).slice(0, 12), recipient: a.recipient }));
-        if (!proven) {
+        // "unavailable": this computer has no Touch ID. The owner's answer in the native window stands by itself then, as
+        // a digest typed at a terminal does. A prompt that was shown and cancelled or failed still refuses.
+        if (proven !== true && proven !== "unavailable") {
           await client.post(`/admin/approvals/${item.id}/deny`);
           done.push({ id: item.id, outcome: "authentication_failed" });
           continue;

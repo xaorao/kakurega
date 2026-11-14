@@ -35,6 +35,12 @@ const dataDir = process.env.KAKUREGA_DATA_DIR ?? profileDir(profilesHome, profil
 // When the data folder is chosen explicitly (a second profile, a test), the window's own files (cache, cookies) live inside it
 // instead of in the one place every copy of the app shares, so copies cannot damage each other's caches.
 // a named profile keeps the shell's own state (window settings, the page's storage) inside its own folder too
+// the name people see in the menu bar, the Dock and "About": the package name is not one
+app.setName("Kakurega");
+// The only thing this window keeps is the cookie of its session with the service on this computer, which is useless
+// without the secret this process holds in memory. It is not worth a keychain item: an unsigned or re-signed build
+// would be asked for the login keychain password at every start, and could hang before its window shows.
+app.commandLine.appendSwitch("use-mock-keychain");
 if (process.env.KAKUREGA_DATA_DIR || profileName !== DEFAULT_PROFILE) app.setPath("userData", join(dataDir, "electron"));
 // `app.isPackaged` is false for a bundle whose program is still called Electron, which is how this one is built, so the test for "this is
 // the packaged app" is that its code is read from an archive
@@ -64,6 +70,10 @@ let trayMenu = null;
 let trayKey = "";
 // The companion listens on a new port every time it starts, so everything that talks to it reads the current one.
 let current = null;
+// the address of the service this window was last given: while the service restarts there is no connection, and the
+// window's own pages are still told apart from everything else by it
+let knownOrigin = "";
+const appOrigin = () => current?.admin.origin ?? knownOrigin;
 // Chosen anew for every companion this shell starts and given to it on stdin. Only this window's requests carry it, so no
 // other program on the computer can load the app or try its pairing door.
 let shellSecret = null;
@@ -169,8 +179,11 @@ function processAlive(pid) {
   }
 }
 
+/** Whether this computer can ask for a fingerprint at all. */
+const hasTouchID = () => macOS && systemPreferences.canPromptTouchID();
+
 async function authenticate(reason) {
-  if (!macOS || !systemPreferences.canPromptTouchID()) return false;
+  if (!hasTouchID()) return "unavailable";
   try {
     await systemPreferences.promptTouchID(reason);
     return true;
@@ -179,18 +192,60 @@ async function authenticate(reason) {
   }
 }
 
-async function confirm(text) {
-  const r = await dialog.showMessageBox({
+async function confirm(text, a) {
+  // the button promises a fingerprint only when one will be asked for: not on a computer without Touch ID, and not when
+  // an enrolled approver key signs instead
+  const touch = hasTouchID() && !a?.requires_proof;
+  const options = {
     type: "question",
     title: t("approve.title"),
     message: t("approve.message"),
     detail: text,
-    buttons: [t("approve.refuse"), t("approve.yes")],
+    buttons: [t("approve.refuse"), t(touch ? "approve.yes" : "approve.yesPlain")],
     defaultId: 0,
     cancelId: 0,
     noLink: true,
-  });
+  };
+  // attached to the window when there is one: the rest of the app (menu bar, quit) keeps working while it is open
+  const onWindow = window && !window.isDestroyed();
+  if (onWindow) {
+    if (window.isMinimized()) window.restore();
+    window.show();
+  }
+  const r = onWindow ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
   return r.response === 1;
+}
+
+/** The application menu: what a Mac app is expected to have, and developer tools only when run from source. */
+function appMenu() {
+  const view = [{ role: "reload" }, { type: "separator" }, { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" }, { type: "separator" }, { role: "togglefullscreen" }];
+  if (!runsFromAsar) view.push({ type: "separator" }, { role: "toggleDevTools" });
+  return [
+    ...(macOS ? [{ label: "Kakurega", submenu: [{ role: "about" }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" }, { role: "quit" }] }] : []),
+    { role: "editMenu" },
+    { label: "View", submenu: view },
+    { role: "windowMenu" },
+  ];
+}
+
+// The window's session ended while the service is the same one (Sign out was pressed in the window): the desktop app
+// pairs its own window again, since a person here has no pairing link to type.
+let repairing = false;
+async function pairAgain() {
+  if (repairing || !current || state.stopped || !window || window.isDestroyed()) return;
+  repairing = true;
+  try {
+    const pairing = await current.client.post("/admin/pairing");
+    if (pairing.status === 200 && current) {
+      current.code = pairing.json.code;
+      await window.loadURL(`${current.admin.origin}/#pair=${current.code}`);
+      window.webContents.reload();
+    }
+  } catch {
+    /* the service went away meanwhile: the restart path pairs the window */
+  } finally {
+    setTimeout(() => { repairing = false; }, 3000);
+  }
 }
 
 async function connect() {
@@ -199,6 +254,7 @@ async function connect() {
   const pairing = await client.post("/admin/pairing");
   if (pairing.status !== 200) throw new Error("could not get a pairing link");
   current = { admin, client, code: pairing.json.code };
+  knownOrigin = admin.origin;
 }
 
 function launchCompanion() {
@@ -543,6 +599,7 @@ async function start() {
   state.notify = readSettings().notify;
   state.keyAnywhere = readSettings().keyAnywhere;
   createTray();
+  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenu()));
   if (kakuBin) launchCompanion();
   await connect();
   const { admin, code } = current;
@@ -551,7 +608,18 @@ async function start() {
   session.defaultSession.setDevicePermissionHandler(() => false);
 
   session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ["http://127.0.0.1/*"] }, (details, callback) => {
+    // between a service that stopped and the one that replaces it there is nobody to send to: the request is ended at
+    // once (the page shows that the service is not answering) and no secret is put on anything
+    if (!current) return callback({ cancel: true });
     callback({ requestHeaders: withShellSecret(details.url, details.requestHeaders, current.admin.origin, shellSecret) });
+  });
+  session.defaultSession.webRequest.onCompleted({ urls: ["http://127.0.0.1/*"] }, (details) => {
+    try {
+      const u = new URL(details.url);
+      if (details.statusCode === 401 && current && u.origin === current.admin.origin && u.pathname.startsWith("/api/") && u.pathname !== "/api/pair") void pairAgain();
+    } catch {
+      /* not an address of ours */
+    }
   });
   window = new BrowserWindow(windowOptions());
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -559,20 +627,20 @@ async function start() {
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event, url) => {
-    if (isAppUrl(url, current.admin.origin)) return;
+    if (isAppUrl(url, appOrigin())) return;
     event.preventDefault();
     if (mayOpenExternally(url)) shell.openExternal(url);
   });
   window.webContents.on("will-redirect", (event, url) => {
-    if (!isAppUrl(url, current.admin.origin)) event.preventDefault();
+    if (!isAppUrl(url, appOrigin())) event.preventDefault();
   });
   window.webContents.on("will-frame-navigate", (event) => {
-    if (!isAppUrl(event.url, current.admin.origin)) event.preventDefault();
+    if (!isAppUrl(event.url, appOrigin())) event.preventDefault();
   });
   // will-navigate and will-frame-navigate do not fire for every target (about:blank slips through), so any
   // top-level page that is not the app is replaced at once.
   window.webContents.on("did-navigate", (_e, url) => {
-    if (!isAppUrl(url, current.admin.origin)) window.loadURL(`${current.admin.origin}/`).catch(() => {});
+    if (!isAppUrl(url, appOrigin()) && appOrigin()) window.loadURL(`${appOrigin()}/`).catch(() => {});
   });
   window.webContents.on("will-attach-webview", (event) => event.preventDefault());
   window.once("ready-to-show", () => window.show());
@@ -614,6 +682,7 @@ async function start() {
       pollOnce()
         .then((done) => {
           if (done.some((d) => d.outcome === "needs_enrolled_key")) tell(t("notice.needsKey.title"), t("notice.needsKey.body"));
+          if (done.some((d) => d.outcome === "authentication_failed")) tell(t("notice.touchFailed.title"), t("notice.touchFailed.body"));
         })
         .catch(() => {}),
     1000,

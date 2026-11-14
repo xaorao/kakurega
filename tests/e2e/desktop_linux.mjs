@@ -38,7 +38,7 @@ try {
   await app.evaluate(({ dialog }) => {
     globalThis.__shown = [];
     globalThis.__answer = 1;
-    dialog.showMessageBox = async (opts) => { globalThis.__shown.push({ detail: opts.detail, buttons: opts.buttons }); return { response: globalThis.__answer }; };
+    dialog.showMessageBox = async (...args) => { const opts = args[args.length - 1]; globalThis.__shown.push({ detail: opts.detail, buttons: opts.buttons }); return { response: globalThis.__answer }; };
   });
   const start = async (who) => {
     await page.goto(origin + "/");

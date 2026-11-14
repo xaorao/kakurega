@@ -73,6 +73,14 @@ try {
   shown.push(...boxes);
   check("a companion that keeps dying is eventually reported to the owner instead of being restarted forever", shown.some(([t]) => t === "Kakurega stopped"), JSON.stringify(shown).slice(0, 160));
   check("no companion is left running after the limit", companionPid() === "", companionPid());
+  // found in real use: with no service to send to, a request from the window ends at once instead of hanging, and the
+  // main process raises no error box of its own
+  const ended = await Promise.race([
+    app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('fetch("/api/session").then((r) => "answered " + r.status, () => "ended")')).catch((e) => "window gone: " + String(e).slice(0, 80)),
+    sleep(4000).then(() => "hung"),
+  ]);
+  const after = await app.evaluate(() => globalThis.__boxes);
+  check("a request made while no service is running ends at once and raises no error in the main process", ended === "ended" && !after.some(([t, c]) => /JavaScript error|TypeError|Cannot read/.test(`${t} ${c}`)), `${ended} ${JSON.stringify(after).slice(0, 200)}`);
 } finally {
   await app.close().catch(() => {});
   killCompanion();
