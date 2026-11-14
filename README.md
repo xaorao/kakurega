@@ -247,7 +247,7 @@ A recipient who gets a release with a JavaScript finding needs Python 3 and Node
 
 ## Libraries and AI-written code
 
-- **When it was written:** every commit in this repository dates from 3 November 2026 on; there is no earlier code and no other repository behind it.
+- **When it was written:** all code in this repository was written during the NEAR HACKATHON window. Every commit dates from 3 November 2026 on; there is no pre-hackathon baseline and no other repository behind it.
 - **Libraries and code taken from others:** every one is listed with its licence, and what was used from it, in [NOTICE.md](NOTICE.md). Nothing was copied from a project that is not permissively licensed.
 - **AI-written code:** most of the code, tests and documents in this repository were written with AI coding assistants (Claude Code), directed, reviewed and tested by the builder. The separate code audits recorded in `docs/engineering-decisions/audit-validation.md` were also run with AI reviewers that were given the code and no conclusions.
 
