@@ -4,6 +4,7 @@ members = ["crates/*"]
 exclude = ["contracts/kakurega-registry"]
 
 [workspace.package]
+license = "Apache-2.0"
 version = "0.0.1"
 edition = "2021"
 publish = false

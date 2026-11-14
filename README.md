@@ -14,6 +14,8 @@ Working prototype on macOS and Linux, with NEAR on testnet. Not a finished produ
 >
 > 4. Open [https://kakurega-eight.vercel.app/proof/](https://kakurega-eight.vercel.app/proof/). Your browser asks NEAR's public RPC six questions about the contract (no access keys, code hash, the model key NEAR's verifier vouched for, a paid order, live counts) and compares each answer. The same claims as data, for a program: [proof.json](https://kakurega-eight.vercel.app/proof.json), [llms.txt](https://kakurega-eight.vercel.app/llms.txt).
 >
+> 5. Open [https://kakurega-eight.vercel.app/try/](https://kakurega-eight.vercel.app/try/) and press **Withhold, check, ask**. Your browser withholds the two keys in the sample with Kakurega's own detector, checks NEAR AI Cloud's hardware proof, sends the rest sealed to the model's key, and checks the model's signature on the answer. A few free tries run on a small key of ours; when they are used up the page asks for your own NEAR AI key.
+>
 > With a terminal and nothing built: [ask NEAR yourself](#ask-near-yourself) which model key NEAR's own verifier contract vouched for. It is the key that signed every answer in that capsule.
 
 <img src="docs/img/flow.png" alt="How a result leaves Kakurega. Your files go into a sealed sandbox where the agent works with no network. A gate outside the model then withholds the keys and passwords its detector knows, holds the exact files until you approve their digest, and signs what leaves, so the recipient can check it offline." width="100%">
@@ -291,5 +293,5 @@ A recipient who gets a release with a JavaScript finding needs Python 3 and Node
 
 ## Licence
 
-The licence of Kakurega itself has not been decided, so the repository is private. Third-party credits are in [NOTICE.md](NOTICE.md).
+Kakurega is licensed under the [Apache License, Version 2.0](LICENSE). Copyright 2026 the Kakurega authors. Third-party code and libraries keep their own licences; each is credited in [NOTICE.md](NOTICE.md).
 

@@ -13,12 +13,8 @@ p.on("console", (m) => { if (m.type() === "error") problems.push(m.text().slice(
 p.on("pageerror", (e) => problems.push(e.message.slice(0, 160)));
 p.on("request", (r) => sent.push(new URL(r.url()).host + " " + (r.postData() ?? "").slice(0, 4000)));
 const check = (c, w) => { console.log(c ? "PASS" : "FAIL", w); if (!c) process.exitCode = 1; };
-// free tries are off: the page says so in words and asks for a key
+// (whether free tries are on is another test: site_free_live.mjs)
 await p.goto(U + "/try/");
-await p.getByRole("button", { name: "Withhold, check, ask" }).click();
-await p.waitForFunction(() => document.querySelector('[data-state="bad"]'), null, { timeout: 60000 });
-const off = await p.locator('[data-step="proof"]').innerText();
-check(/Free tries on our key are switched off/.test(off) && /own NEAR AI key/.test(off) && /2 lines were withheld/.test(await p.locator('[data-step="withhold"]').innerText()), "with free tries off: the detector still runs here, and the page asks for your own key: " + off.replace(/\s+/g, " ").slice(-170));
 // with a key typed in, the page talks to NEAR directly
 await p.locator(".own-key summary").click();
 await p.locator("[data-key]").fill(key);
