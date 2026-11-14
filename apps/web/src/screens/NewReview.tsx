@@ -7,6 +7,17 @@ import { api, ApiError, type ChangeView, type Config, type Readiness } from "../
 import { rich, t } from "../i18n";
 import { askFromStart } from "../composer";
 
+/** Where the reviewing model runs, said as it is: only a route that stays here is called "on this computer". */
+function modelLine(route: Config["route"]) {
+  const model = route.model ?? route.id;
+  if (route.simulated) return rich("new.model", { model, where: t("new.model.scripted") });
+  if (route.stays_here === false) {
+    const host = route.host ?? "";
+    return rich("new.model.remote", { model, where: t(route.class === "verified_tee" ? "new.model.tee" : "new.model.elsewhere", { host }) });
+  }
+  return rich("new.model", { model, where: t("new.model.local") });
+}
+
 export function NewReview(props: { config: Config; onStarted: (id: string) => void }) {
   const [dir, setDir] = createSignal<string | undefined>(undefined);
   const [listing, { refetch: refetchListing }] = createResource(() => dir() ?? "", (d) => api.fs(d || undefined).catch(() => null));
@@ -172,7 +183,7 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
         </Show>
       </div>
       <h2 id="h-review" class="section-title">{t("new.title")}</h2>
-      <p class="greeting">{t("new.greeting")}</p>
+      <p class="greeting">{props.config.route.stays_here === false && !props.config.route.simulated ? t(props.config.route.class === "verified_tee" ? "new.greeting.tee" : "new.greeting.elsewhere", { host: props.config.route.host ?? "" }) : t("new.greeting")}</p>
       <Lead text={t("new.lead")} />
       <Show when={ready()?.ready === false}>{readiness()}</Show>
       <div class="card stack">
@@ -263,7 +274,7 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
           </ul>
         </Show>
       </details>
-      <p class="muted">{rich("new.model", { model: props.config.route.model ?? props.config.route.id, where: props.config.route.simulated ? t("new.model.scripted") : t("new.model.local") })}</p>
+      <p class="muted">{modelLine(props.config.route)}</p>
     </section>
   );
 }

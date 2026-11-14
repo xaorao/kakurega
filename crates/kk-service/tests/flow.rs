@@ -24385,7 +24385,7 @@ fn sv281_a_project_kept_on_this_computer_sends_nothing_of_its_own_to_a_model_els
     assert!(r["error"]["message"]
         .as_str()
         .unwrap()
-        .contains("the project acme"));
+        .contains("The project acme"));
     let (s, r) = w.post("/api/chat", json!({"message": "And then?", "session": id}));
     assert_eq!(
         (s, r["error"]["code"].as_str()),
@@ -24403,7 +24403,7 @@ fn sv281_a_project_kept_on_this_computer_sends_nothing_of_its_own_to_a_model_els
     );
     let (s, r) = w.post("/api/jobs", json!({"repo": folder, "recipient": "auditor"}));
     assert_ne!(s, 202, "{r}");
-    assert!(r.to_string().contains("the project acme"), "{r}");
+    assert!(r.to_string().contains("The project acme"), "{r}");
     assert_eq!(
         runner.asked(),
         before,
@@ -24513,7 +24513,7 @@ fn sv282_a_team_run_of_a_project_kept_on_this_computer_does_not_start_with_a_mod
         v["final_note"]
             .as_str()
             .unwrap_or("")
-            .contains("the project kestrel"),
+            .contains("The project kestrel"),
         "{v}"
     );
     assert_eq!(
@@ -24589,7 +24589,7 @@ fn sv283_a_project_kept_privately_is_not_sent_by_a_side_door() {
     assert_ne!(s, 202, "{r}");
     assert!(
         r.to_string()
-            .contains("the project acme is kept more privately"),
+            .contains("The project acme is kept more privately"),
         "{r}"
     );
     // a plain server on another computer is not confidential hardware: a project kept there is not sent to it either
@@ -24725,7 +24725,7 @@ fn sv284_a_project_kept_privately_is_never_handed_to_the_outside_agent_and_a_rai
         v["final_note"]
             .as_str()
             .unwrap_or("")
-            .contains("the project kestrel"),
+            .contains("The project kestrel"),
         "{v}"
     );
     assert_eq!(
@@ -24782,7 +24782,7 @@ fn sv285_a_floor_raised_while_a_team_task_works_holds_from_the_next_task() {
         v["final_note"]
             .as_str()
             .unwrap_or("")
-            .contains("the project kestrel"),
+            .contains("The project kestrel"),
         "{v}"
     );
     assert_ne!(v["tasks"][1]["state"], json!("done"), "{v}");
@@ -25220,7 +25220,7 @@ fn sv291_a_team_run_never_hands_an_attached_file_of_a_kept_project_to_the_outsid
         v["final_note"]
             .as_str()
             .unwrap_or("")
-            .contains("the project vault"),
+            .contains("The project vault"),
         "{v}"
     );
     assert_eq!(runner.seen.lock().unwrap().len(), asked);

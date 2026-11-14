@@ -42,7 +42,7 @@ fn floor_level(word: &str) -> Option<i64> {
 
 /// What the owner is told when a project's material would go to a model less private than the project allows.
 pub(super) fn floor_words(project: &str) -> String {
-    format!("the project {project} is kept more privately than the model in use now allows, so none of its material is sent to it; choose a more private model in Settings, or change where the project's work may go under Projects")
+    format!("The project {project} is kept more privately than the model in use now allows, so none of its material is sent to it. Choose a more private model in Settings, or change where the project's work may go under Projects.")
 }
 
 impl Service {
