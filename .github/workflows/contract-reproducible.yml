@@ -27,13 +27,13 @@ jobs:
         run: |
           cargo near build reproducible-wasm
           mkdir -p "$RUNNER_TEMP/out"
-          cp "$(find "$GITHUB_WORKSPACE/target/near" -name '*.wasm' | head -1)" "$RUNNER_TEMP/out/first.wasm"
-          rm -rf "$GITHUB_WORKSPACE/target/near"
+          cp target/near/kakurega_registry.wasm "$RUNNER_TEMP/out/first.wasm"
+          rm -rf target
       - name: Second build
         working-directory: contracts/kakurega-registry
         run: |
           cargo near build reproducible-wasm
-          cp "$(find "$GITHUB_WORKSPACE/target/near" -name '*.wasm' | head -1)" "$RUNNER_TEMP/out/kakurega_registry.wasm"
+          cp target/near/kakurega_registry.wasm "$RUNNER_TEMP/out/kakurega_registry.wasm"
       - name: Same bytes
         run: |
           cd "$RUNNER_TEMP/out"
