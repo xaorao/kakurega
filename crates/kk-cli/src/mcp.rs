@@ -911,10 +911,20 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
                     json!({"contents": [{"uri": uri, "mimeType": "application/json", "text": result["structuredContent"].to_string()}]}),
                 )
             } else {
-                let why = result["content"][0]["text"]
+                let said = result["content"][0]["text"]
                     .as_str()
                     .unwrap_or("the service could not be asked");
-                err(-32603, why)
+                // a tool's refusal can arrive as a JSON object written out: its sentence is what is passed on
+                let why = serde_json::from_str::<Value>(said)
+                    .ok()
+                    .and_then(|v| v["error"].as_str().map(str::to_string))
+                    .unwrap_or_else(|| said.to_string());
+                // a review that does not exist is a resource that was not found, not a fault of this server
+                if why.contains("no such") || why.contains("NO_JOB") {
+                    err(-32002, "resource not found")
+                } else {
+                    err(-32603, &why)
+                }
             }
         }
         "prompts/list" => ok(json!({"prompts": prompts_listed(ctx)})),
@@ -940,7 +950,19 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
                 .admit(std::time::Instant::now(), name);
             if let Err(wait) = admitted {
                 report(admin, name, "refused", traceparent(&p));
-                return ok(fail(&format!("rate limit: this connection has used its calls for now; try again in {wait} seconds")));
+                // which limit it was is said: an agent that hit the hourly limit on reviews must not think every call is closed
+                let which = match name {
+                    "start_review" if wait > 61 => {
+                        "this connection has started as many reviews as it may in one hour"
+                    }
+                    "request_approval" if wait > 61 => {
+                        "this connection has asked for as many approvals as it may in one hour"
+                    }
+                    _ => "this connection has made as many calls as it may in one minute",
+                };
+                return ok(fail(&format!(
+                    "rate limit: {which}; try again in {wait} seconds"
+                )));
             }
             let args = p
                 .get("arguments")

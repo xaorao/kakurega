@@ -27,6 +27,10 @@ pub struct Bridge {
     /// The last code that was used up, guessed at too often or ran out. The same code read again from its file is not
     /// opened a second time, so five wrong tries stay five.
     closed_code: Option<String>,
+    /// When the last pairing window closed, and how many more times a late `/pair` is told so. An owner who tries a code
+    /// that was used up or ran out is answered a few times; after that, and to anyone when no window was ever open,
+    /// nothing is said.
+    closed_at: Option<(Instant, u8)>,
     seen_states: BTreeMap<String, String>,
     seen_approvals: BTreeMap<String, bool>,
     primed: bool,
@@ -125,6 +129,7 @@ impl Bridge {
             bound_chat,
             pairing_code: None,
             closed_code: None,
+            closed_at: None,
             seen_states: BTreeMap::new(),
             seen_approvals: BTreeMap::new(),
             primed: false,
@@ -184,12 +189,23 @@ impl Bridge {
                 if word == "/pair" {
                     let given = text.split_whitespace().nth(1).unwrap_or("").to_string();
                     let Some((code, issued, attempts)) = self.pairing_code.clone() else {
+                        // no window is open: for a short while after one closed, a late try is told why it cannot work
+                        if let Some((at, left)) = self.closed_at {
+                            // never to another chat while one is paired: a stranger gets nothing from a paired bridge
+                            let may_hear =
+                                self.bound_chat.is_none() || self.bound_chat == Some(chat);
+                            if may_hear && left > 0 && at.elapsed() < Duration::from_secs(600) {
+                                self.closed_at = Some((at, left - 1));
+                                return (vec![Out { chat, text: "That pairing code is wrong or has expired. Run `kaku telegram pair` again for a new one.".into(), ..Default::default() }], None);
+                            }
+                        }
                         return (vec![], None);
                     };
                     let fresh = issued.elapsed() < Duration::from_secs(300);
                     if fresh && !given.is_empty() && code == given {
                         self.pairing_code = None;
                         self.closed_code = Some(code.clone());
+                        self.closed_at = Some((Instant::now(), 3));
                         self.bound_chat = Some(chat);
                         return (vec![Out { chat, text: "Paired. I will tell you when a review finishes or an approval is waiting. I never send file contents. Commands: /status /reviews /help.".into(), ..Default::default() }], Some(chat));
                     }
@@ -197,6 +213,7 @@ impl Bridge {
                     if !fresh || attempts + 1 >= 5 {
                         self.pairing_code = None;
                         self.closed_code = Some(code.clone());
+                        self.closed_at = Some((Instant::now(), 3));
                     } else {
                         self.pairing_code = Some((code, issued, attempts + 1));
                     }
@@ -2426,11 +2443,12 @@ mod tests {
             "the code worked once"
         );
         b.bound_chat = None;
+        let late = b.handle_update(&mut f, &msg(222, "/pair abcd1234")).0;
         assert!(
-            b.handle_update(&mut f, &msg(222, "/pair abcd1234"))
-                .0
-                .is_empty(),
-            "even with the binding gone, a used code is dead"
+            late.len() == 1
+                && late[0].text.contains("wrong or has expired")
+                && b.bound_chat.is_none(),
+            "even with the binding gone, a used code is dead, and the late try is told so"
         );
         b.bound_chat = Some(111);
         assert!(
@@ -2618,11 +2636,20 @@ mod tests {
             r.len() == 1 && r[0].text.contains("expired") && b.bound_chat.is_none(),
             "an expired code never pairs, even when typed right"
         );
+        for _ in 0..3 {
+            let r = b.handle_update(&mut f, &msg(111, "/pair oldcode1")).0;
+            assert!(
+                r.len() == 1
+                    && r[0].text.contains("wrong or has expired")
+                    && b.bound_chat.is_none(),
+                "a late try at a closed window is told why it cannot work"
+            );
+        }
         assert!(
             b.handle_update(&mut f, &msg(111, "/pair oldcode1"))
                 .0
                 .is_empty(),
-            "and the dead window is silent again"
+            "and after three such answers the dead window is silent"
         );
         b.set_pairing_code("newcode22");
         for i in 0..4 {
@@ -2633,20 +2660,18 @@ mod tests {
         }
         let r = b.handle_update(&mut f, &msg(111, "/pair guess4")).0;
         assert_eq!(r.len(), 1);
+        let r = b.handle_update(&mut f, &msg(111, "/pair newcode22")).0;
         assert!(
-            b.handle_update(&mut f, &msg(111, "/pair newcode22"))
-                .0
-                .is_empty(),
-            "after five wrong tries even the right code is dead"
+            r.len() == 1 && r[0].text.contains("wrong or has expired"),
+            "after five wrong tries even the right code is dead, and says only that"
         );
         assert!(b.bound_chat.is_none());
         // found in real use: the running bridge reads the code's file again every half second, and that must not
         // open the same code a second time
         b.set_pairing_code_aged("newcode22", Duration::from_secs(20));
+        let r = b.handle_update(&mut f, &msg(111, "/pair newcode22")).0;
         assert!(
-            b.handle_update(&mut f, &msg(111, "/pair newcode22"))
-                .0
-                .is_empty(),
+            r.iter().all(|o| o.text.contains("wrong or has expired")),
             "the same code read again from its file stays closed"
         );
         assert!(b.bound_chat.is_none());

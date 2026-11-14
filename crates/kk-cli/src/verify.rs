@@ -209,7 +209,10 @@ pub fn check_bytes(bytes: &[u8]) -> Result<serde_json::Value, String> {
             "not_established": report.not_established,
         }))
     } else {
-        Ok(serde_json::json!({"valid": false, "reason": report.reason}))
+        // the code for a program, and the same sentence a person is shown
+        Ok(
+            serde_json::json!({"valid": false, "reason": report.reason, "why": report.reason.and_then(reason_words)}),
+        )
     }
 }
 
