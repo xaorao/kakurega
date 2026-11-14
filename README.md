@@ -14,7 +14,7 @@ Working prototype on macOS and Linux, with NEAR on testnet. Not a finished produ
 | --- | --- |
 | **Real, and you can check it** | Reviews, chat, documents, meeting notes, team runs and code questions on NEAR AI Cloud with the hardware proof checked and every answer signed; the withholding of keys and passwords; findings reproduced in a sandbox; approval of exact bytes; signed capsules; the registry, the hardware record and one paid order on NEAR testnet |
 | **Shown with made-up material** | The project reviewed in the replay and the sample capsule is a small made-up payments service. Both sides of the paid order were the builder's own testnet accounts. Touch ID was tested with the system prompt stubbed |
-| **Not done** | Mainnet. An outside user. An outside audit. Windows, mobile, hosted mode, sync between devices. A reproducible (Docker) build of the contract |
+| **Not done** | Mainnet. An outside user. An outside audit. Windows, mobile, hosted mode, sync between devices |
 
 **One command, no key, no account** (needs Rust; the first build takes several minutes):
 
@@ -117,6 +117,7 @@ No keys and no funds are needed for any of these. Step by step, with the exact o
 | 1 min | `target/debug/kaku bench verify benchmarks/leak/results.signed.json --pin "$(cat benchmarks/leak/signer.pub)"` | "Signature: checks against the pinned key." then the counts: known shapes 126 cases, leaked 0; beyond the detector 42 cases, leaked 10, each one named |
 | 5 min, mostly the first build | `scripts/judge` (needs Rust) | Seven lines, each `PASS`: build, a real capsule valid, an altered one refused, the leak benchmark, the registered capsule re-checked, and two answers from NEAR testnet. Exit 0 |
 | 3 min | `scripts/judge-replay` (needs Rust, Node and pnpm; it installs the JavaScript packages itself) | A good capsule accepted and a forged one refused, from the command line; then open `apps/verifier-page/dist/kakurega-verify.html` (the script builds it) from disk and drop the capsule on it |
+| 1 min | Open the latest [contract-reproducible](https://github.com/xaorao/kakurega/actions/workflows/contract-reproducible.yml) run, then `near contract call-function as-read-only kakurega-registry-1ba6b2.testnet contract_source_metadata json-args '{}' network-config testnet now` | CI builds the contract twice inside the pinned build image and fails unless the two results are the same bytes. The result of commit `1ba6b29` (SHA-256 `991ce451…30255`) is deployed at `kakurega-registry-1ba6b2.testnet`: NEAR reports that same code hash, and the contract itself names the commit and the build image (NEP-330). The registry that holds the recorded orders (`kakurega-registry-c68af3.testnet`) is an earlier build made on the developer's computer; see the next row |
 | 5 min | `scripts/check-deployed` (needs `cargo near`) | The contract is built here and its hash compared with the code NEAR reports for the testnet account: MATCH on the machine that deployed it. The build is not the reproducible (Docker) one, so another machine may produce different bytes; the script then prints both hashes and exits 1 |
 | 20 min | `scripts/test` | Lints, unit and integration tests, the layer rule and the secret scan, exit 0 |
 | An hour | `scripts/e2e-all` | Every end-to-end script: a real browser, the terminal, the desktop app, MCP, the extension |

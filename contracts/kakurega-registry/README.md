@@ -23,7 +23,18 @@ Keys that encode a point of small order are refused everywhere. On the real runt
 
 ```bash
 cargo near build non-reproducible-wasm   # needs cargo-near and Rust 1.95
+cargo near build reproducible-wasm       # the same, inside the pinned build image (needs Docker on an x86-64 machine)
 cargo test                               # 18 unit tests, plus one run on a local NEAR sandbox node
 ```
 
 The receipt check follows the approach of SealedBounty's `tee.rs` (MIT); see `NOTICE.md` at the repository root. The code is written for this contract.
+
+## Reproducible build
+
+`.github/workflows/contract-reproducible.yml` builds this contract twice inside the image named in `Cargo.toml`
+(`[package.metadata.near.reproducible_build]`) and fails unless the two results are the same bytes. The result for commit
+`1ba6b29c0ce6b355a85f05a1e8d751fbcf9b2d79` has SHA-256 `991ce451eb453e4745644e6e24d9b1847cc88bb9f3519d1566ac976737730255`
+and is deployed on NEAR testnet at `kakurega-registry-1ba6b2.testnet` (deploy transaction
+`537xgnKqFUv2YiJhMREMLG8KFj3AUMQ3jw8XzVGfHY8j`). To check it: ask NEAR for the account's code hash, and ask the contract
+for `contract_source_metadata`, which names that commit and the build image. On an Apple-silicon Mac the image runs under
+emulation and the build did not finish (it stopped making progress twice), so the build is run in CI on an x86-64 machine.
