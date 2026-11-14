@@ -16,7 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: cargo-near
-        run: cargo install --locked cargo-near --version 0.23.0
+        # cargo-near needs a newer compiler than the one this repository pins for its own code; the contract itself is
+        # compiled inside the build image, by the compiler that image holds
+        run: |
+          rustup toolchain install stable --profile minimal
+          cargo +stable install --locked cargo-near --version 0.23.0
       - name: First build
         working-directory: contracts/kakurega-registry
         run: |
