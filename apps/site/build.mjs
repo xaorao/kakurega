@@ -112,7 +112,7 @@ rmSync(out, { recursive: true, force: true });
 mkdirSync(join(out, "verify"), { recursive: true });
 mkdirSync(join(out, "sample"), { recursive: true });
 let html = readFileSync(join(here, "index.html"), "utf8");
-for (const [key, value] of Object.entries({ MODEL: facts.model, MODEL_KEY: facts.model_key, ANSWERS: String(facts.answers), SIZE: facts.size, EXPIRES: facts.expires })) html = html.replaceAll(`{{${key}}}`, value);
+for (const [key, value] of Object.entries({ MODEL: facts.model, MODEL_KEY: facts.model_key, MODEL_KEY_SHORT: facts.model_key.slice(0, 10) + "…" + facts.model_key.slice(-8), ANSWERS: String(facts.answers), SIZE: facts.size, EXPIRES: facts.expires, RECIPIENT: facts.recipient, FINDINGS: String(facts.findings.length) })) html = html.replaceAll(`{{${key}}}`, value);
 const left = html.match(/\{\{[A-Z_]+\}\}/g);
 if (left) throw new Error("the page has places nothing filled: " + left.join(", "));
 writeFileSync(join(out, "index.html"), html);
@@ -132,6 +132,10 @@ writeFileSync(join(out, "package.json"), JSON.stringify({ private: true, type: "
 writeFileSync(join(out, "replay.json"), JSON.stringify(facts));
 cpSync(join(here, "site.css"), join(out, "site.css"));
 cpSync(join(here, "motion.js"), join(out, "motion.js"));
+// the gate on the landing page: the same detector and the same withholding as the try-it page
+cpSync(join(here, "home.js"), join(out, "home.js"));
+cpSync(join(here, "withhold.js"), join(out, "withhold.js"));
+cpSync(join(here, "art"), join(out, "art"), { recursive: true });
 // the check page is one file with its script and its style inside it: the host is told the exact hashes of those two,
 // so nothing else can run there even if a capsule's text were ever put into the page as markup
 const verifyHtml = readFileSync(join(repo, "apps/verifier-page/dist/kakurega-verify.html"), "utf8");
@@ -145,10 +149,9 @@ if (!rule || !rule.value.includes("script-src 'unsafe-inline'") || !rule.value.i
 rule.value = rule.value.replace("script-src 'unsafe-inline'", `script-src ${scripts.join(" ")}`).replace("style-src 'unsafe-inline'", `style-src ${styles.join(" ")}`);
 writeFileSync(join(out, "vercel.json"), JSON.stringify(config, null, 2));
 cpSync(join(here, "img"), join(out, "img"), { recursive: true });
-// the brand's two typefaces (SIL Open Font License), served from this site: no request leaves it for a font
+// the typefaces (SIL Open Font License), served from this site: no request leaves it for a font
 mkdirSync(join(out, "fonts"), { recursive: true });
-for (const [pkg, file] of [["outfit", "outfit-latin-400-normal.woff2"], ["outfit", "outfit-latin-500-normal.woff2"], ["outfit", "outfit-latin-600-normal.woff2"], ["outfit", "outfit-latin-700-normal.woff2"], ["jetbrains-mono", "jetbrains-mono-latin-400-normal.woff2"]])
-  cpSync(join(repo, "apps/web/node_modules/@fontsource", pkg, "files", file), join(out, "fonts", file));
+cpSync(join(repo, "apps/web/src/fonts"), join(out, "fonts"), { recursive: true });
 cpSync(join(repo, "apps/web/public/licenses"), join(out, "fonts/licenses"), { recursive: true });
 cpSync(join(repo, "apps/verifier-page/dist/kakurega-verify.html"), join(out, "verify/index.html"));
 cpSync(capsulePath, join(out, "sample/review.kkg"));

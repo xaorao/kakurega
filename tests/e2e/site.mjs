@@ -93,6 +93,23 @@ for (const [name, viewport, scheme] of [["desktop-light", { width: 1440, height:
     await page.getByText("Refused: the file is not what was signed").waitFor({ timeout: 20000 });
     check(true, "and refuses it with one byte changed");
     await page.screenshot({ path: join(work, "replay-refused.png") });
+    // the gate: the product's own detector on what is typed, and a seal over exactly what would leave
+    const gate = page.locator("[data-gate]");
+    await gate.locator(".count.stop").waitFor();
+    const sent = async () => (await gate.locator("[data-gate-out]").innerText());
+    check((await gate.locator(".count.stop").innerText()) === "3 lines withheld" && !(await sent()).includes("sk_li") && !(await sent()).includes("AKIA") && !(await sent()).includes("maple-otter") && (await sent()).includes("def logout(token):"), "the gate withholds the three lines of the sample that hold a secret, and shows the rest");
+    await gate.getByRole("button", { name: "Seal what leaves" }).click();
+    await gate.getByText("Valid. Sealed on this page.").waitFor();
+    const box = gate.locator("[data-gate-in]");
+    await box.fill((await box.inputValue()).replace("maple-otter-4471", "birch-heron-9902"));
+    await page.waitForTimeout(400);
+    check(await gate.getByText("Valid. Sealed on this page.").isVisible(), "changing only a withheld secret leaves the seal valid: the secret never left");
+    await box.fill((await box.inputValue()).replace("def logout(token):", "def logout(tokem):"));
+    await gate.getByText("Refused. The bytes changed.").waitFor();
+    check(true, "changing one character of what leaves breaks the seal");
+    await gate.getByRole("button", { name: "Seal again" }).click();
+    await gate.getByText("Valid. Sealed on this page.").waitFor();
+    check(true, "and it can be sealed again");
     check(/Live on NEAR testnet/.test(hero) && /built on\s+NEAR AI Cloud/i.test(hero.replace(/\s+/g, " ")), "the top says where it is live and what it is built on");
 
     // do what the page says: download the capsule, drop it on the check page
@@ -118,7 +135,7 @@ for (const [name, viewport, scheme] of [["desktop-light", { width: 1440, height:
   // the brand typefaces come from this site and really load (a missing file would fall back silently)
   await page.goto(origin + "/");
   const loaded = await page.evaluate(async () => { await document.fonts.ready; return [...document.fonts].filter((f) => f.status === "loaded").map((f) => f.family.replace(/"/g, "")); });
-  check(loaded.includes("Outfit") && loaded.includes("JetBrains Mono"), `${name}: the page's own typefaces loaded from this site: ${[...new Set(loaded)].join(", ")}`);
+  check(loaded.includes("Geist") && loaded.includes("Instrument Serif"), `${name}: the page's own typefaces loaded from this site: ${[...new Set(loaded)].join(", ")}`);
   check(outside.length === 0, `${name}: nothing was asked of any other host: ${outside.slice(0, 3).join(", ")}`);
   check(problems.length === 0, `${name}: no console errors or failed requests: ${problems.join(" | ")}`);
   await ctx.close();
