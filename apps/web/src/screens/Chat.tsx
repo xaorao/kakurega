@@ -442,16 +442,21 @@ export function Chat() {
   const endY = () => (formEl && listEl ? listEl.getBoundingClientRect().bottom + window.scrollY + formEl.offsetHeight + 56 : document.documentElement.scrollHeight);
   const atBottom = () => endY() - window.innerHeight - window.scrollY <= 80;
   let lastY = window.scrollY;
+  const pageHeight = () => document.documentElement.scrollHeight;
+  let lastHeight = pageHeight();
   const onScroll = () => {
     const y = window.scrollY;
+    const height = pageHeight();
     if (atBottom()) {
       pinned = true;
       setUnseen(false);
-    } else if (y < lastY - 2) {
-      // only the owner moves the page up; text growing below never unpins
+    } else if (y < lastY - 2 && height >= lastHeight) {
+      // only the owner moves the page up. Text growing below never unpins, and neither does a page that became shorter
+      // (the opening of an empty conversation giving way to its first message): the browser moved the page then
       pinned = false;
     }
     lastY = y;
+    lastHeight = height;
   };
   window.addEventListener("scroll", onScroll, { passive: true });
   onCleanup(() => window.removeEventListener("scroll", onScroll));
@@ -518,6 +523,16 @@ export function Chat() {
     ),
   );
   onCleanup(() => cancelAnimationFrame(frame));
+  // The messages can change height after they were scrolled to (a typeface arriving, a long answer still being laid
+  // out). While the owner is following the newest line, the page follows those changes too.
+  onMount(() => {
+    if (!listEl || typeof ResizeObserver === "undefined") return;
+    const grown = new ResizeObserver(() => {
+      if (pinned) toEnd();
+    });
+    grown.observe(listEl);
+    onCleanup(() => grown.disconnect());
+  });
   const jump = () => {
     pinned = true;
     setUnseen(false);
@@ -1131,10 +1146,10 @@ export function Chat() {
               void addFiles(Array.from(e.currentTarget.files ?? []));
               e.currentTarget.value = "";
             }} />
-            <button type="button" title={t("files.attachHelp")} aria-describedby="attach-help" disabled={busy() || !!reading()} onClick={() => picker?.click()}>{t("files.attach")}</button>
+            <button type="button" class="icon-btn" title={t("files.attach")} aria-describedby="attach-help" disabled={busy() || !!reading()} onClick={() => picker?.click()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.500 12 19.500a5 5 0 0 1-7-7l8.500-8.500a3.300 3.300 0 0 1 4.700 4.700L9.800 17a1.700 1.700 0 0 1-2.400-2.400l7.600-7.600" /></svg><span class="visually-hidden">{t("files.attach")}</span></button>
             <span id="attach-help" class="sr">{t("files.attachHelp")}</span>
             <Show when={calendar()?.available}>
-              <button type="button" id="attach-calendar" aria-describedby="calendar-help" disabled={busy() || !!reading()} onClick={() => void addCalendar()}>{t("cal.attach")}</button>
+              <button type="button" id="attach-calendar" class="icon-btn" title={t("cal.attach")} aria-describedby="calendar-help" disabled={busy() || !!reading()} onClick={() => void addCalendar()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.500" y="5" width="17" height="15" rx="2.500" /><path d="M3.500 10h17M8 3v4M16 3v4" /></svg><span class="visually-hidden">{t("cal.attach")}</span></button>
               <span id="calendar-help" class="sr">{t(calendar()?.calendar === "not_asked" ? "cal.helpFirst" : "cal.help")}</span>
             </Show>
             <span class="muted">{t("files.drop")}</span>
