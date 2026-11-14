@@ -593,7 +593,9 @@ async function start() {
   if (changed) {
     refuseChanged(changed);
     app.isQuitting = true;
-    app.quit();
+    // nothing was started, so there is nothing to wind down: leaving at once avoids the framework's own shutdown
+    // steps, which have been seen to crash here and leave a "quit unexpectedly" report after the real message
+    app.exit(1);
     return;
   }
   state.notify = readSettings().notify;

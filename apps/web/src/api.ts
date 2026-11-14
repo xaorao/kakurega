@@ -1,9 +1,10 @@
+import { asSentence } from "./serverText";
 import type { ForgetResult } from "./forgotten";
 let csrf = "";
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
-    super(message);
+    super(asSentence(message));
   }
 }
 
@@ -223,7 +224,7 @@ export interface Passage { file: string; start: number; focus: number; lines: st
 export interface ChatSent { messages: { role: string; content: string }[]; cut: boolean; excluded_notes?: { id: string; text: string; reason: string }[]; at: number; route: { class: string; simulated: boolean; host: string | null; stays_here: boolean; id: string; name?: string | null } }
 export interface PrivacyFacts { github?: { connected: boolean }; coding_agent?: { installed: string | null }; model: { class: string; id: string; name?: string | null; simulated: boolean; host: string | null; stays_here: boolean }; search: { on: boolean; host: string | null }; extension: { on: boolean }; telegram: { on: boolean }; agents: { tools_open: string[]; calls_are_logged: boolean }; notes: { count: number; encrypted_at_rest: boolean }; approvals: { signing_key_enrolled: boolean }; updates: { checks_in_background: boolean } }
 export interface Lease { tool: string; remaining: number; expires_at: number; issued_at: number }
-export interface InboxItem { kind: "approval_waiting" | "ready_to_review" | "ready_to_deliver" | "failed" | "suggestions" | "team_planned" | "team_question" | "team_interrupted"; job?: string; recipient?: string; team?: string; title?: string; task?: number; since: number; what: string; count?: number }
+export interface InboxItem { kind: "approval_waiting" | "ready_to_review" | "ready_to_deliver" | "failed" | "suggestions" | "team_planned" | "team_question" | "team_interrupted"; job?: string; recipient?: string; project?: string; team?: string; title?: string; task?: number; since: number; what: string; count?: number }
 export interface NearModel { model: string; currency: string; input_per_million: number; output_per_million: number; context_tokens: number | null; verifiable: boolean; tools?: boolean }
 export interface ChangeView { base: string; head: string; base_name: string; digest: string; files: { path: string; kind: "added" | "modified" | "deleted"; lines: [number, number][] }[]; left_out?: { path: string; why: string }[]; edited_since_commit?: number }
 export interface Schedule { id: string; repo: string; recipient: string; every_hours: number; next_at: number }

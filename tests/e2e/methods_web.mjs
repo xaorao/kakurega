@@ -56,10 +56,11 @@ check(await page.getByText("Waiting for your approval: not in use").isVisible(),
 const ask = async (text) => {
   await page.goto(origin + "/#/chat");
   await page.getByLabel(/Message|Ask/i).first().fill(text);
+  // an unsaved conversation is still on screen after a visit to another screen, so the new answer is the one waited for
+  const before = await page.locator(".msg.assistant").count();
   await page.getByRole("button", { name: "Send" }).click();
-  await page.waitForFunction(() => /answered on this computer|tokens of context used|No model was asked/.test(document.querySelector("main")?.innerText ?? ""), null, { timeout: 240000 });
-  const all = await page.locator("main").innerText();
-  return all.split(text).pop();
+  await page.waitForFunction((n) => document.querySelectorAll(".msg.assistant").length > n && /answered on this computer|tokens of context used|No model was asked/.test(document.querySelectorAll(".msg.assistant")[n]?.textContent ?? ""), before, { timeout: 240000 });
+  return page.locator(".msg.assistant").nth(before).innerText();
 };
 let body = await ask("Tell me about a pineapple orchard in one sentence.");
 await shot("2-chat-before-approval");

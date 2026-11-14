@@ -31,7 +31,7 @@ export function Inbox() {
               <For each={r().items}>
                 {(i) => (
                   <li class="card stack">
-                    <Show when={i.team} fallback={<p><span class="chip">{t(`inbox.kind.${i.kind}` as Key)}</span> <strong>{i.recipient}</strong> · <code>{i.job}</code></p>}>
+                    <Show when={i.team} fallback={<p><span class="chip">{t(`inbox.kind.${i.kind}` as Key)}</span> <Show when={i.project}><strong>{i.project}</strong> · </Show><strong>{i.recipient}</strong> · <code>{i.job}</code></p>}>
                       <p><span class="chip">{t(`inbox.kind.${i.kind}` as Key)}</span> <strong>{i.title}</strong></p>
                     </Show>
                     {/* said by the page in its own language; an expert's question is the expert's words and is shown as it came */}

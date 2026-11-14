@@ -1,5 +1,5 @@
 import { Lead } from "../components/Lead";
-import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createResource, createSignal, For, onCleanup, Show, createEffect } from "solid-js";
 import { ChosenFolder, shortPath } from "../components/ChosenFolder";
 import { api, ApiError, type Question, type QuestionDepth, type QuestionPlace } from "../api";
 import { LoadState } from "../components/LoadState";
@@ -53,6 +53,9 @@ export function Explore() {
   const [stopping, setStopping] = createSignal(false);
   const [madeRoom, setMadeRoom] = createSignal(0);
   const chosen = () => listing()?.path ?? "";
+  // "a question is already being answered" is about the question that was running: once that one has its answer, the
+  // message has nothing left to say
+  createEffect(() => { if (current() && current()!.state !== "running") setError(""); });
   let timer: number | undefined;
   const halt = () => {
     if (timer !== undefined) window.clearInterval(timer);

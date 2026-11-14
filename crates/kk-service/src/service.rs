@@ -9059,6 +9059,7 @@ type InboxJob = (
     String,
     String,
     i64,
+    String,
     &'static str,
     Option<(String, bool)>,
     bool,
@@ -9189,6 +9190,10 @@ async fn inbox(axum::Extension(svc): Svc) -> Json<Value> {
                     j.id.clone(),
                     j.recipient.clone(),
                     j.created,
+                    j.repo
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default(),
                     state,
                     j.approval
                         .as_ref()
@@ -9200,8 +9205,9 @@ async fn inbox(axum::Extension(svc): Svc) -> Json<Value> {
             .collect()
     };
     let mut items: Vec<Value> = Vec::new();
-    for (id, recipient, created, state, approval, delivered) in jobs {
-        let to = |kind: &str, what: &str| json!({"kind": kind, "job": id, "recipient": recipient, "since": created, "what": what});
+    for (id, recipient, created, project, state, approval, delivered) in jobs {
+        // the project's folder name goes with the item, so two reviews for the same recipient can be told apart
+        let to = |kind: &str, what: &str| json!({"kind": kind, "job": id, "recipient": recipient, "project": project, "since": created, "what": what});
         if state == "ready" && !delivered {
             match approval {
                 Some((st, false)) if st == "waiting" => items.push(to("approval_waiting", "An approval is waiting for your decision. Look at the exact files, then approve or refuse.")),

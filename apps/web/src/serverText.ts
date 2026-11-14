@@ -37,3 +37,13 @@ export function serverText(s: string, english: boolean, t: Tr): string {
   }
   return s;
 }
+
+/** A reason the service gave, as a sentence for a person: it begins with a capital and ends with a full stop. The
+ *  service writes its reasons to be put after other words ("Not approved: …"), so they arrive without either. */
+export function asSentence(text: string): string {
+  const s = text.trim();
+  if (s === "") return s;
+  const first = /^[a-z]/.test(s) && !/^(kaku|https?:)\b/.test(s) ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+  return /[.!?:…]$/.test(first) || /[.!?]["'”)]$/.test(first) ? first : first + ".";
+}
+

@@ -333,6 +333,8 @@ export function Chat() {
   const dropFile = async (id: string) => {
     attachedKeys.delete(id);
     setFiles(files().filter((f) => f.id !== id));
+    // what was said about the files as they were added is about a list that no longer exists
+    setFileInfo("");
     setShown((m) => {
       const { [id]: _gone, ...rest } = m;
       return rest;

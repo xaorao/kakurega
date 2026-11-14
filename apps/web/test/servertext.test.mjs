@@ -13,3 +13,14 @@ test("st01 the service's fixed release sentences are shown in Hindi, and anythin
   assert.equal(serverText("A sentence the page has never seen.", false, t), "A sentence the page has never seen.");
   assert.equal(serverText("1 withheld file", true, t), "1 withheld file", "in English the service's words are shown as they are");
 });
+
+test("a reason from the service is shown as a sentence", async () => {
+  const { asSentence } = await import("../src/serverText.ts");
+  assert.equal(asSentence("a memory cannot be empty"), "A memory cannot be empty.");
+  assert.equal(asSentence("that code is wrong, used or expired"), "That code is wrong, used or expired.");
+  assert.equal(asSentence("Already a sentence."), "Already a sentence.");
+  assert.equal(asSentence("run kaku doctor (it says what is missing)"), "Run kaku doctor (it says what is missing).");
+  assert.equal(asSentence("kaku approve appr-2 was not run"), "kaku approve appr-2 was not run.");
+  assert.equal(asSentence("the limit is 4,096 bytes: shorten it"), "The limit is 4,096 bytes: shorten it.");
+  assert.equal(asSentence("  "), "");
+});
