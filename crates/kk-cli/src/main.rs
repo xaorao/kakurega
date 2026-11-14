@@ -77,6 +77,7 @@ Usage:
   kaku restore FILE [--data-dir DIR] restore a backup into an empty folder (asks for the recovery key)
   kaku memory import DIR [--source NAME]   add notes from another assistant's markdown files as untrusted notes
   kaku update check|verify-file|keygen|sign   signed update announcements (nothing is downloaded or installed)
+  kaku pack keygen|sign|check|catalog|check-catalog   make and check signed method packs and their catalog (for a publisher; `kaku pack` alone shows each form)
   kaku config [show|path|check|init] [--json]   your display settings in config.toml (notify, color, quiet, linear): what is in force and where it came from, check the file, or write a commented template
   kaku doctor [--json] [--fix] [--skip ID,ID]   why Kakurega does not start or work, with nothing running: data folder, service, sandbox, model; --fix repairs only local permissions and stale files
   kaku diagnostics [--out FILE]     a readable report of versions, checks and counts to attach to a bug report (no names, paths or text)

@@ -247,7 +247,7 @@ impl Bridge {
                     },
                     "/reviews" => match admin.get("/admin/jobs") {
                         Ok(v) => {
-                            let lines: Vec<String> = v["jobs"].as_array().map(|a| a.iter().take(15).map(|j| format!("{} {}", plain(j["id"].as_str().unwrap_or("?")), plain(j["state"].as_str().unwrap_or("?")).replace('_', " "))).collect()).unwrap_or_default();
+                            let lines: Vec<String> = v["jobs"].as_array().map(|a| a.iter().take(15).map(|j| format!("{} {}", plain(j["id"].as_str().unwrap_or("?")), if j["delivered"].is_null() { plain(j["state"].as_str().unwrap_or("?")).replace('_', " ") } else { "delivered".to_string() })).collect()).unwrap_or_default();
                             if lines.is_empty() { "No reviews yet.".to_string() } else { lines.join("\n") }
                         }
                         Err(_) => "Kakurega is not reachable on your computer right now.".to_string(),
@@ -1258,7 +1258,7 @@ fn doctor(args: &[String], dir: &Path, admin: &crate::approve::Admin) -> u8 {
         }
         None if std::env::var("TELEGRAM_BOT_TOKEN").is_ok_and(|t| !t.is_empty()) => say(true, "token comes from TELEGRAM_BOT_TOKEN (a token file with mode 600, or `kaku telegram set-token`, is safer: it does not appear in the environment of other programs)".into()),
         None if token_or_stored(None, admin).is_ok() => say(true, "token is kept in the encrypted store (set with `kaku telegram set-token`)".into()),
-        None => say(false, "token comes from TELEGRAM_BOT_TOKEN (a token file with mode 600 is safer: it does not appear in the process environment)".into()),
+        None => say(false, "no bot token is set: run `kaku telegram set-token` and paste the token BotFather gave you (or put it in a file only you can read and name it with --token-file)".into()),
     }
     let token = token_or_stored(file.as_deref(), admin);
     say(

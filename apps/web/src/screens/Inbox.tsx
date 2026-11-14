@@ -36,7 +36,7 @@ export function Inbox() {
                     </Show>
                     {/* said by the page in its own language; an expert's question is the expert's words and is shown as it came */}
                     <p>{i.kind === "team_question" ? i.what : t(`inbox.what.${i.kind}` as Key, { n: i.count ?? 0 })}</p>
-                    <div class="actions"><a class="primary" href={i.team ? `#/team/${i.team}` : `#/job/${i.job}`}>{t("inbox.open")}</a></div>
+                    <div class="actions"><a class="primary" href={i.team ? `#/team/${i.team}` : `#/job/${i.job}`} onClick={() => { /* suggested notes are on Findings: the review opens there, not on its release */ if (i.kind === "suggestions") try { sessionStorage.setItem("kk-open-tab", "findings"); } catch { /* opens on its usual tab */ } }}>{t("inbox.open")}</a></div>
                   </li>
                 )}
               </For>

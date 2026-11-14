@@ -927,8 +927,10 @@ pub fn handle(admin: &dyn Fn() -> Result<Admin, String>, ctx: &Ctx, line: &str) 
                 }
             }
         }
-        "prompts/list" => ok(json!({"prompts": prompts_listed(ctx)})),
-        "prompts/get" => prompt_get(ctx, &msg["params"]).map_or_else(|m| err(-32602, &m), ok),
+        "prompts/list" => ok(json!({"prompts": prompts_listed(ctx, admin)})),
+        "prompts/get" => {
+            prompt_get(ctx, &msg["params"], admin).map_or_else(|m| err(-32602, &m), ok)
+        }
         "tools/call" => {
             let p = msg.get("params").cloned().unwrap_or(Value::Null);
             let Some(name) = p.get("name").and_then(Value::as_str) else {
@@ -1052,12 +1054,25 @@ fn resource_target(ctx: &Ctx, uri: &str) -> Option<(&'static str, Value)> {
     (valid && ctx.sees("review_status")).then(|| ("review_status", json!({"id": id})))
 }
 
-fn prompts_available(ctx: &Ctx) -> bool {
-    PROMPT_TOOLS.iter().all(|t| ctx.sees(t))
+/// The prompt is offered only while every tool it uses is one this connection is shown right now: in leased mode that
+/// means while the owner's leases for the tools that act are open.
+fn prompts_available(ctx: &Ctx, admin: &dyn Fn() -> Result<Admin, String>) -> bool {
+    if !PROMPT_TOOLS.iter().all(|t| ctx.sees(t)) {
+        return false;
+    }
+    if !ctx.leased {
+        return true;
+    }
+    let shown = ctx.listed(admin);
+    let names: Vec<&str> = shown
+        .as_array()
+        .map(|a| a.iter().filter_map(|t| t["name"].as_str()).collect())
+        .unwrap_or_default();
+    PROMPT_TOOLS.iter().all(|t| names.contains(t))
 }
 
-fn prompts_listed(ctx: &Ctx) -> Value {
-    if !prompts_available(ctx) {
+fn prompts_listed(ctx: &Ctx, admin: &dyn Fn() -> Result<Admin, String>) -> Value {
+    if !prompts_available(ctx, admin) {
         return json!([]);
     }
     json!([{
@@ -1071,8 +1086,14 @@ fn prompts_listed(ctx: &Ctx) -> Value {
     }])
 }
 
-fn prompt_get(ctx: &Ctx, params: &Value) -> Result<Value, String> {
-    if params.get("name").and_then(Value::as_str) != Some(PROMPT_NAME) || !prompts_available(ctx) {
+fn prompt_get(
+    ctx: &Ctx,
+    params: &Value,
+    admin: &dyn Fn() -> Result<Admin, String>,
+) -> Result<Value, String> {
+    if params.get("name").and_then(Value::as_str) != Some(PROMPT_NAME)
+        || !prompts_available(ctx, admin)
+    {
         return Err("unknown prompt".into());
     }
     let args = params

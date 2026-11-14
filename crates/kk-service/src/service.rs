@@ -8474,6 +8474,35 @@ struct ExtCaptureBody {
 
 /// Whether a folder holds at least one file a review would read: any regular file that is not a dot-env file and not
 /// inside a version-control folder. Looks at a bounded number of entries and stops at the first one found.
+/// Whether a file is one a review could read: not a file that is withheld for its name (a key, an environment file), and
+/// text, not a picture or another binary file (its first bytes hold no zero byte).
+fn reviewable(name: &str, path: &Path) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if lower == ".env"
+        || lower.starts_with(".env.")
+        || [".pem", ".key", ".p12", ".pfx", ".keystore", ".jks"]
+            .iter()
+            .any(|s| lower.ends_with(s))
+        || [
+            "id_rsa",
+            "id_ed25519",
+            "id_dsa",
+            ".npmrc",
+            ".pypirc",
+            ".netrc",
+        ]
+        .contains(&lower.as_str())
+    {
+        return false;
+    }
+    use std::io::Read;
+    let mut head = [0u8; 512];
+    match std::fs::File::open(path).and_then(|mut f| f.read(&mut head)) {
+        Ok(n) => n > 0 && !head[..n].contains(&0),
+        Err(_) => false,
+    }
+}
+
 fn holds_something_to_review(dir: &Path) -> bool {
     let mut left = 5000usize;
     let mut stack = vec![dir.to_path_buf()];
@@ -8490,10 +8519,14 @@ fn holds_something_to_review(dir: &Path) -> bool {
             let name = e.file_name().to_string_lossy().to_string();
             let Ok(kind) = e.file_type() else { continue };
             if kind.is_dir() {
-                if !matches!(name.as_str(), ".git" | ".hg" | ".svn") {
+                // folders of other people's installed code are not what a review reads
+                if !matches!(
+                    name.as_str(),
+                    ".git" | ".hg" | ".svn" | "node_modules" | ".venv" | "venv" | "__pycache__"
+                ) {
                     stack.push(e.path());
                 }
-            } else if kind.is_file() && name != ".env" && !name.starts_with(".env.") {
+            } else if kind.is_file() && reviewable(&name, &e.path()) {
                 return true;
             }
         }
@@ -9316,7 +9349,7 @@ async fn inbox(axum::Extension(svc): Svc) -> Json<Value> {
             .map(|p| p.len())
             .unwrap_or(0);
         if pending > 0 {
-            items.push(json!({"kind": "suggestions", "job": id, "recipient": recipient, "since": created, "count": pending, "what": format!("{pending} suggested {} to keep or dismiss.", if pending == 1 { "note" } else { "notes" })}));
+            items.push(json!({"kind": "suggestions", "job": id, "recipient": recipient, "project": project, "since": created, "count": pending, "what": format!("{pending} suggested {} to keep or dismiss.", if pending == 1 { "note" } else { "notes" })}));
         }
     }
     items.extend(svc.team_inbox());
@@ -11843,6 +11876,45 @@ fn set_aside(text: &str, public: &std::collections::HashSet<String>) -> String {
     }
     flush(&mut run, &mut out);
     out
+}
+
+#[cfg(test)]
+mod nothing_to_review_tests {
+    use super::holds_something_to_review;
+
+    /// A folder with nothing a review could read is refused before a model is asked to read it: a picture, another
+    /// project's installed packages, or a key file are not something to review.
+    #[test]
+    fn sv_use12_a_folder_of_pictures_packages_or_keys_holds_nothing_to_review() {
+        let root = std::env::temp_dir().join(format!("kk-nothing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let make = |rel: &str, bytes: &[u8]| {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, bytes).unwrap();
+        };
+        make("pics/logo.png", &[0x89, b'P', b'N', b'G', 0, 0, 0, 13]);
+        make(
+            "mods/node_modules/left-pad/index.js",
+            b"module.exports = 1;\n",
+        );
+        make(
+            "keys/server.pem",
+            b"a key file: withheld for its name alone\n",
+        );
+        make("env/.env", b"A=1\n");
+        make("empty/blank.txt", b"");
+        make("code/app.py", b"print('hello')\n");
+        for nothing in ["pics", "mods", "keys", "env", "empty"] {
+            assert!(!holds_something_to_review(&root.join(nothing)), "{nothing}");
+        }
+        assert!(holds_something_to_review(&root.join("code")));
+        assert!(
+            holds_something_to_review(&root),
+            "one readable file anywhere is enough"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
 
 #[cfg(test)]

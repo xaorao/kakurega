@@ -699,7 +699,10 @@ export function ReviewView(props: { id: string; config: Config; onUpdate?: () =>
       setJob(j);
       if (auto() && j.state !== "running") {
         setAuto(false);
-        setTab(j.state === "ready" ? "release" : j.state === "nothing_to_release" ? "findings" : "progress");
+        // a link that names the tab it wants (the Inbox's suggested notes) is followed once
+        let asked: string | null = null;
+        try { asked = sessionStorage.getItem("kk-open-tab"); sessionStorage.removeItem("kk-open-tab"); } catch { asked = null; }
+        setTab(asked === "findings" && j.summary ? "findings" : j.state === "ready" ? "release" : j.state === "nothing_to_release" ? "findings" : "progress");
       }
     } catch (e) {
       // a review that does not exist is said once and not asked for again; anything else is tried again
