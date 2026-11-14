@@ -18,6 +18,15 @@ function modelLine(route: Config["route"]) {
   return rich("new.model", { model, where: t("new.model.local") });
 }
 
+/** The small drawing in front of a way to begin; decoration only. */
+function WayIcon(props: { d: string }) {
+  return (
+    <span class="way-icon" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><path d={props.d} /></svg>
+    </span>
+  );
+}
+
 export function NewReview(props: { config: Config; onStarted: (id: string) => void }) {
   const [dir, setDir] = createSignal<string | undefined>(undefined);
   const [listing, { refetch: refetchListing }] = createResource(() => dir() ?? "", (d) => api.fs(d || undefined).catch(() => null));
@@ -156,11 +165,25 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
     </>
   );
 
+  const [recent] = createResource(() => api.jobs().then((r) => [...r.jobs].sort((a, b) => b.created - a.created).slice(0, 3)).catch(() => []));
+
   return (
     <section class="stack wide" aria-labelledby="h-new">
       <div class="start">
+        <span class="brand-mark hero" aria-hidden="true">隠</span>
         <h1 id="h-new" class="start-hello">{greeting()}</h1>
         <p class="start-sub">{t("start.sub")}</p>
+        <ul class="plain start-ways" aria-label={t("start.ways")}>
+          <li><button type="button" class="way" onClick={() => toReview("whole")}><WayIcon d="M2 4.5a1 1 0 0 1 1-1h3.5l1.5 1.5h5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1zM6 9l1.5 1.5L10.5 7.5" /><span class="way-text"><strong>{t("start.way.review")}</strong><span class="muted">{t("start.way.review.sub")}</span></span></button></li>
+          <li><button type="button" class="way" onClick={() => toReview("change")}><WayIcon d="M4.5 3v7M4.5 10a1.800 1.800 0 1 0 0 3.600 1.800 1.800 0 0 0 0-3.600zM11.500 2.400a1.800 1.800 0 1 0 0 3.600 1.800 1.800 0 0 0 0-3.600zM11.500 6v1.500a2 2 0 0 1-2 2h-3" /><span class="way-text"><strong>{t("start.way.change")}</strong><span class="muted">{t("start.way.change.sub")}</span></span></button></li>
+          <li><a class="way" href="#/docs"><WayIcon d="M4 2h5.5L12 4.5V14H4zM9.5 2v2.500H12M6 8h4M6 10.500h4" /><span class="way-text"><strong>{t("start.way.docs")}</strong><span class="muted">{t("start.way.docs.sub")}</span></span></a></li>
+          <li><a class="way" href="#/meeting"><WayIcon d="M3 3.500h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.500v-2.500H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1zM5 7h6M5 9h4" /><span class="way-text"><strong>{t("start.way.meeting")}</strong><span class="muted">{t("start.way.meeting.sub")}</span></span></a></li>
+          <li><a class="way" href="#/explore"><WayIcon d="M7 12A5 5 0 1 0 7 2a5 5 0 0 0 0 10zM10.600 10.600 14 14" /><span class="way-text"><strong>{t("nav.explore")}</strong><span class="muted">{t("start.way.explore.sub")}</span></span></a></li>
+          <li><a class="way" href="#/team"><WayIcon d="M6 7.500a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM2.500 13c0-2 1.600-3.500 3.500-3.500S9.500 11 9.500 13M11 4a1.800 1.800 0 0 1 0 3.500M11.500 9.700c1.200.400 2 1.600 2 3.300" /><span class="way-text"><strong>{t("nav.team")}</strong><span class="muted">{t("start.way.team.sub")}</span></span></a></li>
+        </ul>
+        <Show when={(recent() ?? []).length > 0}>
+          <p class="start-recent"><span class="muted">{t("start.recent")}</span><For each={recent()}>{(j) => <a href={`#/job/${j.id}`}><span class={`state ${j.state}`} aria-hidden="true" />{j.repo.split("/").pop()} <span class="muted">· {t(`state.${j.state}` as never)}</span></a>}</For></p>
+        </Show>
         <form class="start-ask" onSubmit={askNow}>
           <label class="visually-hidden" for="start-ask">{t("start.askLabel")}</label>
           <textarea id="start-ask" rows={2} placeholder={t("start.placeholder")} value={ask()} onInput={(e) => setAsk(e.currentTarget.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) askNow(e); }} />
@@ -169,12 +192,6 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
             <button class="primary" type="submit" disabled={!ask().trim()}>{t("start.ask")}</button>
           </div>
         </form>
-        <ul class="plain start-ways" aria-label={t("start.ways")}>
-          <li><button type="button" class="way" onClick={() => toReview("whole")}><strong>{t("start.way.review")}</strong><span class="muted">{t("start.way.review.sub")}</span></button></li>
-          <li><button type="button" class="way" onClick={() => toReview("change")}><strong>{t("start.way.change")}</strong><span class="muted">{t("start.way.change.sub")}</span></button></li>
-          <li><a class="way" href="#/docs"><strong>{t("start.way.docs")}</strong><span class="muted">{t("start.way.docs.sub")}</span></a></li>
-          <li><a class="way" href="#/meeting"><strong>{t("start.way.meeting")}</strong><span class="muted">{t("start.way.meeting.sub")}</span></a></li>
-        </ul>
         <Show when={(mine() ?? []).length > 0}>
           <div class="start-mine" role="group" aria-label={t("start.mine")}>
             <span class="muted">{t("start.mine")}</span>

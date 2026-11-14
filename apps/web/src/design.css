@@ -244,3 +244,33 @@ details summary { font-size: 13px; }
 @keyframes kk-seal-land { from { transform: scale(1.8) rotate(-12deg); } to { transform: none; } }
 @keyframes kk-uncover { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 @media (max-width: 640px) { .opening-name { font-size: 52px; } .opening-mark { width: 60px; height: 60px; border-radius: 15px; font-size: 30px; } }
+
+/* the start: the mark, a greeting, six ways to begin, and one box to ask in at the foot of the first screen */
+.start { min-height: calc(100vh - 52px - 104px); align-items: center; justify-content: center; text-align: center; gap: 16px; padding: 16px 0 0; }
+.brand-mark.hero { width: 44px; height: 44px; border-radius: 12px; font-size: 22px; margin-top: auto; }
+.start-hello { font-size: clamp(40px, 4.6vw, 60px); }
+.start-sub { max-width: 54ch; font-size: 15px; }
+ul.plain.start-ways { grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; max-width: 920px; gap: 10px; margin-top: 10px; text-align: left; }
+.way { flex-direction: row; align-items: flex-start; gap: 12px; padding: 16px; border-radius: 14px; border-color: var(--line); }
+.way:hover { border-color: var(--fog); background: var(--paper); }
+.way-icon { width: 30px; height: 30px; flex: none; border-radius: 8px; background: var(--veil); color: var(--stone); display: grid; place-items: center; }
+.way-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.way-text strong { font-size: 14px; font-weight: 500; }
+.way .muted { font-size: 12.5px; line-height: 1.45; }
+.start-recent { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; font-size: 12.5px; }
+.start-recent a { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 4px 12px; border: 1px solid var(--line); border-radius: 999px; text-decoration: none; background: var(--paper); }
+.start-recent a:hover { border-color: var(--fog); }
+.start-recent .state { margin: 0; }
+.start-ask { width: 100%; max-width: 920px; margin-top: auto; border-radius: 18px; padding: 14px 16px 12px; text-align: left; box-shadow: 0 24px 48px -32px color-mix(in srgb, var(--ink) 45%, transparent); }
+.start-ask textarea { font-size: 16px; }
+.start-mine { justify-content: center; }
+.section-title { margin-top: 56px; }
+@media (prefers-reduced-motion: no-preference) {
+  .way { transition: transform 0.18s ease, border-color 0.14s, box-shadow 0.18s ease; }
+  .way:hover { transform: translateY(-2px); box-shadow: 0 14px 28px -20px color-mix(in srgb, var(--ink) 40%, transparent); }
+}
+@media (max-width: 860px) {
+  .start { min-height: 0; }
+  ul.plain.start-ways { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) { ul.plain.start-ways { grid-template-columns: minmax(0, 1fr); } }
