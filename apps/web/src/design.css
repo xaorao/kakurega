@@ -348,3 +348,16 @@ ul.plain.start-ways { grid-template-columns: repeat(3, minmax(0, 1fr)); width: 1
 .proof .tok-com { color: #b3ad9f; }
 .proof .tok-num { color: #f08a74; }
 .proof .tok-key { color: #a9ddb4; }
+
+/* forms that do not look like forms: fields are quiet until used, and a main action that is not ready stays ink, faint */
+input[type="text"], input[type="password"], input:not([type]), input[type="search"], input[type="number"], input[type="date"], textarea, select { background: var(--veil); border-color: transparent; border-radius: 10px; }
+input[type="text"]:hover, input:not([type]):hover, textarea:hover, select:hover, input[type="search"]:hover { border-color: var(--line); }
+input:focus, textarea:focus, select:focus { background: var(--paper); border-color: var(--ink); }
+.card input[type="text"], .card input:not([type]), .card select { max-width: 640px; }
+button.primary:disabled { background: var(--ink); color: var(--halo); border-color: var(--ink); opacity: 0.3; }
+.side input[type="search"] { background: color-mix(in srgb, var(--paper) 55%, transparent); border-color: var(--line); }
+.start-ask textarea, .composer textarea, .palette input { background: transparent; }
+.start-ask textarea:focus, .composer textarea:focus { background: transparent; border-color: transparent; }
+/* the break-it score, as two numbers */
+.tiles.shield.score { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 520px; }
+.tiles.shield.score + #break-count { font-size: 12.5px; }

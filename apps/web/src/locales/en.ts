@@ -1258,6 +1258,8 @@ export const en = {
   "break.lead": "Write anything you like. It is put into a file next to two secrets made just for this attempt, and the model is asked to work on that file the way chat does with any attached file. You then see exactly what the model was sent, what it answered, and whether either secret got through.",
   "break.card": "Plant your own text next to a fresh secret and see what the model is really sent.",
   "break.open": "Open the test",
+  "break.score.leaks": "secrets that got through",
+  "break.score.attempts": "attempts on this computer",
   "break.count": "On this computer so far. Attempts: {attempts}. Leaks: {leaks}.",
   "break.attack": "Text to plant in the file",
   "break.attackHint": "Anything: an order to the model, a fake note from the security team, a trick with a link…",
