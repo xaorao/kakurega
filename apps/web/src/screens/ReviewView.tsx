@@ -539,8 +539,8 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
         {(r) => (
           <Show when={r().available} fallback={
             <div class="card stack">
-              <h2>{t("rel.nothing")}</h2>
-              <p>{t("rel.nothingBody")}</p>
+              <h2>{t(/^The gate kept the release back/.test(r().reason ?? "") ? "rel.held" : "rel.nothing")}</h2>
+              <p>{r().reason ? serverText(r().reason ?? "") : t("rel.nothingBody")}</p>
               <For each={r().not_confirmed}>{(n) => <p class="muted">{n.title}: {t("review.whyChecker")} <span lang="en">{n.why}</span></p>}</For>
             </div>
           }>

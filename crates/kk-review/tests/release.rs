@@ -1530,3 +1530,65 @@ fn rs40_a_release_about_a_change_carries_the_change_in_what_is_approved_and_sign
     };
     assert!(!capsule::verify(&tampered, &opts).valid);
 }
+
+#[test]
+fn rs20_a_finding_whose_script_holds_a_secret_is_kept_back_alone_and_the_rest_still_leaves() {
+    let f = files();
+    let idx = index(&f);
+    let clean = finding();
+    let mut leaky = finding();
+    leaky.title = "Hardcoded fallback secret".into();
+    let secret_line = ["PAYMENTS_API_KEY=sk_live", "_51NfakeFAKEfakeFAKE0000000000"].concat();
+    leaky.reproducer = ["# ", secret_line.as_str(), "\n", REPRO].concat();
+    // one clean, one carrying a secret in its script: the clean one leaves, the other is named with the reason
+    let d = assemble(
+        &[(clean.clone(), confirmed()), (leaky.clone(), confirmed())],
+        &idx,
+        "acme",
+        "p",
+        0,
+        60,
+    )
+    .expect("the finding that carries nothing still leaves");
+    assert!(d.files.contains_key("finding-1.txt") && !d.files.contains_key("finding-2.txt"));
+    for (name, bytes) in &d.files {
+        assert!(
+            !String::from_utf8_lossy(bytes).contains("sk_live"),
+            "{name} carries the secret"
+        );
+    }
+    let (title, why) = d
+        .not_confirmed
+        .iter()
+        .find(|(t, _)| t == "Hardcoded fallback secret")
+        .expect("the finding that was kept back is named");
+    assert!(
+        why.contains("its script holds something that reads like a key or a password")
+            && why.contains("the gate keeps this finding back"),
+        "{title}: {why}"
+    );
+    // the order does not matter: the clean one is numbered 1 whichever came first
+    let d2 = assemble(
+        &[(leaky.clone(), confirmed()), (clean, confirmed())],
+        &idx,
+        "acme",
+        "p",
+        0,
+        60,
+    )
+    .unwrap();
+    assert!(d2.files.contains_key("repro-1.py") && !d2.files.contains_key("repro-2.py"));
+    // when every confirmed finding is kept back, the release is refused for that reason, in words
+    let all = assemble(&[(leaky, confirmed())], &idx, "acme", "p", 0, 60);
+    match all {
+        Err(e @ Rejection::ContainsSecret { .. }) => {
+            let said = e.to_string();
+            assert!(
+                said.starts_with("The gate kept the release back: the file repro-1.py")
+                    && said.ends_with("Nothing was sent."),
+                "{said}"
+            );
+        }
+        other => panic!("expected a refusal for the secret, got {other:?}"),
+    }
+}

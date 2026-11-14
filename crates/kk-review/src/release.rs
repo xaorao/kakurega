@@ -94,6 +94,18 @@ pub enum Rejection {
     ChecksNotRun(String),
 }
 
+impl std::fmt::Display for Rejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Rejection::ContainsSecret { file } => write!(f, "The gate kept the release back: the file {file} that would have been sent holds something that reads like a key or a password. Nothing was sent."),
+            Rejection::ContainsWithheldText { file, withheld } => write!(f, "The gate kept the release back: the file {file} that would have been sent repeats a line of {withheld}, which was withheld. Nothing was sent."),
+            Rejection::TooLarge => f.write_str("The release would be larger than the limit, so it was not prepared. Nothing was sent."),
+            Rejection::NothingConfirmed => f.write_str("No finding was confirmed by the kernel, so nothing can be sent. This is the safe result."),
+            Rejection::ChecksNotRun(why) => write!(f, "The checks could not be run, so no finding could be confirmed: {why}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Removal {
     pub what: String,
@@ -228,6 +240,14 @@ pub fn assemble_with(
     let mut not_confirmed = Vec::new();
     let mut index_entries: Vec<Value> = Vec::new();
     let mut n = 0;
+    let withheld: Vec<&ImportedFile> = project_files
+        .values()
+        .filter(|f| f.label.level >= Level::Restricted)
+        .copied()
+        .collect();
+    let lines = withheld_needles(&withheld);
+    // the first confirmed finding the gate kept back, for the case where it keeps back every one of them
+    let mut first_held: Option<Rejection> = None;
     for (finding, check) in results {
         if check.status != CheckStatus::Reproduced {
             not_confirmed.push((
@@ -317,12 +337,6 @@ pub fn assemble_with(
             clean_text(&finding.explanation, 4000),
             bound
         );
-        files.insert(format!("finding-{n}.txt"), text.into_bytes());
-        files.insert(script_name.clone(), finding.reproducer.clone().into_bytes());
-        files.insert(
-            format!("expected-{n}.txt"),
-            check.stdout.clone().into_bytes(),
-        );
         let sample = Value::Object(
             check
                 .sample_paths
@@ -335,10 +349,43 @@ pub fn assemble_with(
                 })
                 .collect(),
         );
+        let sample_text = canon::serialize(&sample);
+        // The gate looks at this finding's own files before they join the release. A finding whose words, script,
+        // output or sample would carry a secret or a line of a withheld file is kept back by itself, with the reason,
+        // and the findings that carry nothing of the kind still leave. (The whole release is looked at once more below.)
+        let parts: [(&str, String, &str); 4] = [
+            ("explanation", format!("finding-{n}.txt"), text.as_str()),
+            ("script", script_name.clone(), finding.reproducer.as_str()),
+            ("output", format!("expected-{n}.txt"), check.stdout.as_str()),
+            ("sample", format!("sample-{n}.json"), sample_text.as_str()),
+        ];
+        let held = parts.iter().find_map(|(what, file, body)| {
+            if contains_secret_marker(body) {
+                return Some((
+                    format!("it reproduced, but its {what} holds something that reads like a key or a password, so the gate keeps this finding back"),
+                    Rejection::ContainsSecret { file: file.clone() },
+                ));
+            }
+            lines.iter().find(|(_, line)| body.contains(line.as_str())).map(|(src, _)| {
+                (
+                    format!("it reproduced, but its {what} repeats a line of a file that was withheld ({}), so the gate keeps this finding back", clean_text(src, 120)),
+                    Rejection::ContainsWithheldText { file: file.clone(), withheld: src.clone() },
+                )
+            })
+        });
+        if let Some((why, as_rejection)) = held {
+            not_confirmed.push((finding.title.clone(), why));
+            first_held.get_or_insert(as_rejection);
+            n -= 1;
+            continue;
+        }
+        files.insert(format!("finding-{n}.txt"), text.into_bytes());
+        files.insert(script_name.clone(), finding.reproducer.clone().into_bytes());
         files.insert(
-            format!("sample-{n}.json"),
-            canon::serialize(&sample).into_bytes(),
+            format!("expected-{n}.txt"),
+            check.stdout.clone().into_bytes(),
         );
+        files.insert(format!("sample-{n}.json"), sample_text.into_bytes());
         let mut entry = vec![
             ("title".into(), Value::Str(clean_text(&finding.title, 200))),
             ("sample".into(), Value::Str(format!("sample-{n}.json"))),
@@ -370,6 +417,10 @@ pub fn assemble_with(
         index_entries.push(Value::Object(entry));
     }
     if n == 0 {
+        // every confirmed finding was kept back by the gate: the release is refused for that reason, not for "nothing found"
+        if let Some(held) = first_held {
+            return Err(held);
+        }
         if let Some(why) = results.iter().find_map(|(_, r)| match &r.status {
             CheckStatus::NotRun(m) => Some(m.clone()),
             _ => None,
@@ -385,12 +436,6 @@ pub fn assemble_with(
         files.insert(CHANGE_FILE.into(), note.as_bytes().to_vec());
     }
 
-    let withheld: Vec<&ImportedFile> = project_files
-        .values()
-        .filter(|f| f.label.level >= Level::Restricted)
-        .copied()
-        .collect();
-    let lines = withheld_needles(&withheld);
     let mut total = 0usize;
     let mut removed = Vec::new();
     for (name, bytes) in &files {

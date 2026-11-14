@@ -280,7 +280,7 @@ impl Snapshot {
                 })
                 .collect(),
             draft,
-            rejection: r.draft.as_ref().err().map(|e| format!("{e:?}")),
+            rejection: r.draft.as_ref().err().map(|e| e.to_string()),
             commitment: r.commitment.clone(),
             manifest_files: r.manifest.file_count as i64,
             route_class: r

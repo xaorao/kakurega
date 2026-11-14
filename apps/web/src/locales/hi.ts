@@ -1665,6 +1665,7 @@ export const hi: Record<keyof typeof en, string> = {
   "status.why": "कारण: {why}",
   "status.unavailable": "जाँचा नहीं जा सका: {why}",
   "status.failed": "जाँच विफल: {why}",
+  "rel.held": "द्वार ने रोक लिया",
   "rel.nothing": "भेजने को कुछ नहीं",
   "rel.nothingBody": "कर्नेल ने किसी निष्कर्ष की पुष्टि नहीं की, इसलिए कुछ भेजा नहीं जा सकता। यह सुरक्षित नतीजा है।",
   "rel.exact": "सटीक रिलीज़",

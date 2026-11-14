@@ -9883,7 +9883,7 @@ fn draft_json(s: &Snapshot, allow: &kk_secrets::pii::Allow) -> Value {
             })
         }
         None => {
-            json!({"available": false, "reason": s.rejection.clone().unwrap_or_default(), "not_confirmed": s.findings.iter().map(|f| json!({"title": f.title, "why": f.status})).collect::<Vec<_>>()})
+            json!({"available": false, "reason": s.rejection.clone().unwrap_or_default(), "not_confirmed": s.findings.iter().map(|f| json!({"title": f.title, "why": if f.status == "reproduced" { "it reproduced, and was kept back with the rest of the release".to_string() } else { f.status.clone() }})).collect::<Vec<_>>()})
         }
     }
 }

@@ -1663,6 +1663,7 @@ export const en = {
   "status.why": "Why: {why}",
   "status.unavailable": "Could not be checked: {why}",
   "status.failed": "Check failed: {why}",
+  "rel.held": "Held back by the gate",
   "rel.nothing": "Nothing to release",
   "rel.nothingBody": "No finding was confirmed by the kernel, so nothing can be sent. This is the safe result.",
   "rel.exact": "The exact release",
