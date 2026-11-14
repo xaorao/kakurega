@@ -8225,6 +8225,31 @@ fn sv76_a_flood_of_calls_cannot_fill_the_log_one_summary_stands_for_the_rest() {
         text.contains("mcp.calls_limited"),
         "the calls that were not written one by one are counted"
     );
+    // 150 calls, 120 written: the true count of the rest (30) is in the log once the service leaves, with no further
+    // call needed to bring it out
+    assert_eq!(
+        text.matches("mcp.calls_limited").count(),
+        1,
+        "so far only the first of them was announced"
+    );
+    assert!(!text.contains("minute_closed"));
+    _svc.close_calls_now();
+    let text = admin(&base, &tok, "GET", "/admin/log", None).1.to_string();
+    assert!(
+        text.matches("mcp.calls_limited").count() == 2
+            && text.contains("minute_closed")
+            && text.contains("not_written")
+            && text.contains(":30"),
+        "the count of the calls left unwritten (30) is put in the log when the service leaves"
+    );
+    let before = text.matches("mcp.calls_limited").count();
+    _svc.close_calls_now();
+    let again = admin(&base, &tok, "GET", "/admin/log", None).1.to_string();
+    assert_eq!(
+        again.matches("mcp.calls_limited").count(),
+        before,
+        "and it is said once"
+    );
 }
 
 struct RouteRunner {

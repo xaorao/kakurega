@@ -358,11 +358,13 @@ fn serve(args: &[String]) -> Result<(), String> {
         if shell_gone.load(std::sync::atomic::Ordering::SeqCst) {
             let _ = std::fs::remove_file(data.join("admin.json"));
             crate::calendar::stop_all();
+            service.close_calls_now();
             return Ok(());
         }
         if owner_gone(owner, std::os::unix::process::parent_id()) {
             let _ = std::fs::remove_file(data.join("admin.json"));
             crate::calendar::stop_all();
+            service.close_calls_now();
             return Ok(());
         }
         std::thread::sleep(std::time::Duration::from_secs(1));

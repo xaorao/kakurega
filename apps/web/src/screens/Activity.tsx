@@ -11,6 +11,18 @@ function label(kind: string): string {
   return text === key ? kind : text;
 }
 
+/** What an agent's entry adds to its label: how a tool call ended, or how many calls a summary stands for. */
+function said(e: { kind: string; data?: Record<string, string | number> }): string {
+  const d = e.data ?? {};
+  if (e.kind === "mcp.call" && typeof d.outcome === "string") {
+    const key = `log.mcp.outcome.${d.outcome}` as Key;
+    const word = t(key);
+    return word === key ? "" : ` (${word})`;
+  }
+  if (e.kind === "mcp.calls_limited" && d.not_written !== undefined) return ` (${t("log.mcp.notListed", { n: Number(d.not_written) })})`;
+  return "";
+}
+
 const DAY = 86_400;
 const day = (secs: number) => new Date(secs * 1000).toISOString().slice(0, 10);
 
@@ -226,7 +238,7 @@ export function Activity() {
                 <thead><tr><th scope="col">{t("act.col.when")}</th><th scope="col">{t("act.col.event")}</th><th scope="col">{t("act.col.subject")}</th></tr></thead>
                 <tbody>
                   <For each={l().recent} fallback={<tr><td colSpan={3} class="muted">{t("act.none")}</td></tr>}>
-                    {(e) => <tr><td><time datetime={new Date(e.at * 1000).toISOString()}>{when(e.at, locale())}</time></td><td>{label(e.kind)}</td><td><code>{e.subject}</code></td></tr>}
+                    {(e) => <tr><td><time datetime={new Date(e.at * 1000).toISOString()}>{when(e.at, locale())}</time></td><td>{label(e.kind)}{said(e)}</td><td><code>{e.subject}</code></td></tr>}
                   </For>
                 </tbody>
               </table>

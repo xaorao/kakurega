@@ -1176,8 +1176,43 @@ impl Service {
             std::thread::sleep(std::time::Duration::from_secs(30));
             let Some(svc) = weak.upgrade() else { return };
             svc.run_due(now());
+            // the count of agent calls left unwritten is put in the log when its minute is over, not only when the next
+            // call happens to arrive: an agent that goes quiet, or a service that is stopped, loses no count
+            svc.close_call_minute();
         });
         Ok(svc)
+    }
+
+    /// Writes how many agent calls the last full minute left unwritten, once, and starts a fresh window. Called by the
+    /// next call that arrives after the minute, by the scheduler's tick and when the service leaves.
+    pub fn close_call_minute(&self) {
+        self.close_call_window(false);
+    }
+
+    /// The same, without waiting for the minute to be over: for a service that is stopping.
+    pub fn close_calls_now(&self) {
+        self.close_call_window(true);
+    }
+
+    fn close_call_window(&self, now_too: bool) {
+        let t = self.lease_now();
+        let left = {
+            let mut w = self.call_window.lock().expect("lock");
+            if w.0 == 0 || (!now_too && t - w.0 < 60) {
+                return;
+            }
+            let left = w.2;
+            *w = (if now_too { 0 } else { t }, 0, 0);
+            left
+        };
+        // unless the last entry already said exactly this number
+        if left > 1 && left % 50 != 0 {
+            self.log_event(
+                "mcp.calls_limited",
+                "mcp",
+                &[("not_written", left.into()), ("at", "minute_closed".into())],
+            );
+        }
     }
 
     /// Starts every schedule that is due, at most one review per schedule, and never while the last one is still running.
@@ -8234,19 +8269,16 @@ async fn agent_call(axum::Extension(svc): Svc, Json(b): Json<AgentCallBody>) -> 
         );
     }
     let t = svc.lease_now();
+    let mut closed: Option<usize> = None;
     let action = {
         let mut w = svc.call_window.lock().expect("lock");
         if t - w.0 >= 60 {
             // the minute that just closed: say how many calls it left unwritten, unless the last entry already said so
             let left = w.2;
-            if left > 1 && left % 50 != 0 {
-                svc.log_event(
-                    "mcp.calls_limited",
-                    "mcp",
-                    &[("not_written", left.into()), ("at", "minute_closed".into())],
-                );
-            }
             *w = (t, 0, 0);
+            if left > 1 && left % 50 != 0 {
+                closed = Some(left);
+            }
         }
         if w.1 < CALLS_LOGGED_PER_MINUTE {
             w.1 += 1;
@@ -8256,6 +8288,13 @@ async fn agent_call(axum::Extension(svc): Svc, Json(b): Json<AgentCallBody>) -> 
             (w.2 == 1 || w.2 % 50 == 0).then_some(Some(w.2))
         }
     };
+    if let Some(left) = closed {
+        svc.log_event(
+            "mcp.calls_limited",
+            "mcp",
+            &[("not_written", left.into()), ("at", "minute_closed".into())],
+        );
+    }
     match action {
         Some(None) => {
             let mut data: Vec<(&str, kk_eventlog::Datum)> =
