@@ -10,6 +10,12 @@ Built at NEAR HACKATHON · Tracks: Privacy & Private AI (primary), AI Security &
 
 Working prototype on macOS and Linux, with NEAR on testnet. Not a finished product: read [the limits](docs/LIMITS.md) before relying on it.
 
+| | |
+| --- | --- |
+| **Real, and you can check it** | Reviews, chat, documents, meeting notes, team runs and code questions on NEAR AI Cloud with the hardware proof checked and every answer signed; the withholding of keys and passwords; findings reproduced in a sandbox; approval of exact bytes; signed capsules; the registry, the hardware record and one paid order on NEAR testnet |
+| **Shown with made-up material** | The project reviewed in the replay and the sample capsule is a small made-up payments service. Both sides of the paid order were the builder's own testnet accounts. Touch ID was tested with the system prompt stubbed |
+| **Not done** | Mainnet. An outside user. An outside audit. Windows, mobile, hosted mode, sync between devices. A reproducible (Docker) build of the contract |
+
 **One command, no key, no account** (needs Rust; the first build takes several minutes):
 
 ```
