@@ -1,4 +1,5 @@
 import { Lead } from "../components/Lead";
+import { marks } from "../monogram";
 import { createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError, streamRoundtable, type ExpertInfo, type RoundtableResolution } from "../api";
 import { LoadState } from "../components/LoadState";
@@ -36,6 +37,7 @@ export function Roundtable() {
   let stop: AbortController | null = null;
   onCleanup(() => stop?.abort());
 
+  const markOf = createMemo(() => { const all = everyone(); const m = marks(all.map((e) => e.name)); return new Map(all.map((e, i) => [e.id, m[i]])); });
   const groups = createMemo(() => {
     const out: { group: string; experts: ExpertInfo[] }[] = [];
     for (const e of everyone()) {
@@ -126,7 +128,7 @@ export function Roundtable() {
                 <div class="rt-cards">
                   <For each={g.experts}>
                     {(x) => (
-                      <ExpertCard id={x.id} name={x.name} summary={x.summary} checked={chosen().includes(x.id)} disabled={busy() || (!chosen().includes(x.id) && chosen().length >= max())} onChange={() => toggle(x.id)} />
+                      <ExpertCard id={x.id} name={x.name} mark={markOf().get(x.id)} summary={x.summary} checked={chosen().includes(x.id)} disabled={busy() || (!chosen().includes(x.id) && chosen().length >= max())} onChange={() => toggle(x.id)} />
                     )}
                   </For>
                 </div>

@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, Show, untrack } from "solid-js";
+import { marks } from "../monogram";
 import { api, ApiError, type AttachmentSummary, type ExpertInfo, type TeamRun, type TeamTask } from "../api";
 import { MAX_BYTES, MAX_FILES, sizeText } from "../attach";
 import { LoadState } from "../components/LoadState";
@@ -21,6 +22,7 @@ export function Team(props: { id?: string }) {
   const [confirmDelete, setConfirmDelete] = createSignal(false);
   const [acting, setActing] = createSignal(false);
 
+  const markOf = createMemo(() => { const all = everyone(); const m = marks(all.map((e) => e.name)); return new Map(all.map((e, i) => [e.id, m[i]])); });
   const groups = createMemo(() => {
     const out: { group: string; experts: ExpertInfo[] }[] = [];
     for (const e of everyone()) {
@@ -192,7 +194,7 @@ export function Team(props: { id?: string }) {
                   <div class="rt-cards">
                     <For each={g.experts}>
                       {(x) => (
-                        <ExpertCard id={x.id} name={x.name} summary={x.summary} checked={allowed().includes(x.id)} disabled={planning()} onChange={() => setAllowed((a) => (a.includes(x.id) ? a.filter((y) => y !== x.id) : [...a, x.id]))} />
+                        <ExpertCard id={x.id} name={x.name} mark={markOf().get(x.id)} summary={x.summary} checked={allowed().includes(x.id)} disabled={planning()} onChange={() => setAllowed((a) => (a.includes(x.id) ? a.filter((y) => y !== x.id) : [...a, x.id]))} />
                       )}
                     </For>
                   </div>

@@ -563,7 +563,7 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
               <div class="release-files" tabindex="0" role="region" aria-label={t("rel.exact")}>
                 <table>
                   <thead><tr><th scope="col">{t("rel.col.file")}</th><th scope="col">{t("rel.col.size")}</th><th scope="col">SHA-256</th></tr></thead>
-                  <tbody><For each={r().files}>{(f) => <tr><td><code>{f.name}</code></td><td>{t("rel.bytes", { n: f.bytes })}</td><td><code title={f.sha256}>{f.sha256.slice(0, 12)}</code></td></tr>}</For></tbody>
+                  <tbody><For each={r().files}>{(f) => <tr><td><code>{f.name}</code></td><td title={t("rel.bytes", { n: f.bytes })}>{sizeText(f.bytes)}</td><td><code title={f.sha256}>{f.sha256.slice(0, 12)}</code></td></tr>}</For></tbody>
                 </table>
               </div>
               <For each={r().files!.filter((f) => f.name.startsWith("finding-"))}>{(f) => <details open><summary>{f.name}</summary><pre class="finding-text" tabindex="0"><code>{f.text}</code></pre></details>}</For>

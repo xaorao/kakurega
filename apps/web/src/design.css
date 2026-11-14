@@ -374,3 +374,6 @@ button.primary:disabled { background: var(--ink); color: var(--halo); border-col
 /* the sidebar's first action, compact, with its key */
 .side a.primary.new-review::after { content: "+"; font-size: 15px; line-height: 1; opacity: 0.6; }
 .side-foot .navlink { min-height: 30px; }
+
+/* the roundtable's action bar floats over the list: a soft edge says so */
+.rt-actions { box-shadow: 0 -16px 18px -16px color-mix(in srgb, var(--ink) 18%, transparent); }
