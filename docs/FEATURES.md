@@ -29,3 +29,70 @@ The full list, one capability per line. The short version is in the [README](../
 - Suggest a skill from a conversation: a way of working you taught in a chat can be written up as a skill; it waits under Skills and nothing uses it until you keep and approve it.
 - Models: a local model through Ollama, or a model on NEAR AI Cloud's confidential hardware (`kaku serve --route near --near-model NAME`, the account key in `NEAR_AI_API_KEY`, `--near-key-file` or typed in Settings). The hardware proof of NEAR's gateway and model is checked before each request, every question is encrypted to the model, and every answer's signature is checked against the attested key before it is used (VERIFIED live with `Qwen/Qwen3.8-27B`). Reviews, project questions, coding tasks, teams, chat, documents and meeting notes all run on it; document search by meaning stays with the local model. Activity shows what each route cost, at NEAR's published price unless you entered one.
 - Releases can be made valid for longer than a day: `kaku serve --release-days N` (1 to 730). The public site's sample capsule (`fixtures/near-live/sample.kkg`) is a real review on NEAR AI Cloud made valid for a year.
+
+## The state of each feature
+
+**Works** is the builder's record that the feature works, with how it was checked where the row says. **Built** means it is in the product, with its test named where one exists; this page claims nothing more. The full list is in [docs/FEATURES.md](FEATURES.md).
+
+**Review and release**
+
+| Feature | State |
+| --- | --- |
+| Private review in a sandbox, findings re-run by the kernel, release by digest, signed capsule | Works; walked in a browser with a real local model |
+| Review a change, as for a pull request: `kaku review DIR --for WHO --change main`, **New review** on the web, or `/review FOLDER for WHO against main` in the terminal. The release states the two commits and a digest of the change; a delivered review has **Copy as a pull-request comment**. Nothing is sent to GitHub | Built (`tests/e2e/change_web.mjs`, `tests/e2e/change_review.py`). A change of more than 300 files or 2 MB is refused, not cut. Uncommitted edits are not reviewed |
+| A second look: when the model finds nothing, each source file is taken on its own, and only what the sandbox confirms is kept | Built; one file at a time and 12 files at most, so a defect that needs two files to see is not found by it |
+| `.kakuignore`: files and folders you name are withheld from the model and from the release, like secrets | Built; a list that cannot be read withholds everything |
+| Releases valid for longer than a day: `kaku serve --release-days N` (1 to 730) | Built; the public site's sample capsule is a real review on NEAR AI Cloud made valid for a year |
+| Recipient check: one-file page, `kaku verify`, a second verifier in JavaScript, optional lookup on NEAR | Works |
+| Share one finding of a delivered review with a proof that shows nothing else of the release (`kaku share`) | Built (`tests/e2e/share_finding.py`) |
+
+**Models, documents and memory**
+
+| Feature | State |
+| --- | --- |
+| Chat, documents with checked quotes, meeting notes with checked quotes (`kaku notes FILE`), memory with labels | Works with a local model |
+| Ask about a project's code: every line the answer rests on is checked against the file and marked found or not found, and a short script the agent writes can run in the sealed sandbox. In the browser (Ask a project), the terminal (`/explore`) and `kaku explore` | Built (`tests/e2e/explore_web.mjs`). A line found shows the answer rests on real code, not that the answer is right |
+| Secrets and spoken passwords withheld; names swapped for placeholders when the model is not on this computer | Works; measured by the leak benchmark |
+| Each project says where its work may go: only this computer, confidential hardware too, or any model. With a less private model in use, nothing of that project is sent | Built |
+| Model on NEAR AI Cloud | Works live with `Qwen/Qwen3.8-27B`; other models there untested |
+| The model's signature under every answer from confidential hardware: over the exact bytes sent and received as they travelled (encrypted), checked before the answer is shown, kept with the conversation, copyable for someone else to check | Works live with `Qwen/Qwen3.8-27B` |
+| Choosing the NEAR model from NEAR's own list in Settings: whether its hardware proof can be checked (a model without one cannot be chosen), whether it can run reviews, its prices and its window | Built (`tests/e2e/near_models_web.mjs`); only `Qwen/Qwen3.8-27B` was run live |
+| Web research you approve first: you see the exact addresses, or the exact search words and the one site that would receive them | Built; search needs a provider you choose (an https SearXNG-style endpoint); none is bundled |
+| Roundtable of experts, team runs with a lead, a Project reviewer seat that runs the sandboxed review | Works with a local model |
+| Skills: your own, a bundled shelf, signed packs and a publisher's signed catalog; nothing is used until you approve it | Works |
+| Profiles with separate keys; encrypted backup with a recovery key (`kaku backup`, `kaku restore`) | Works |
+| Hand a question to Claude Code, with your yes on the exact text | Works; said plainly to be not private |
+| GitHub connector (read only) | Tested against a stand-in; not yet with a real GitHub App |
+
+**Surfaces and platforms**
+
+| Feature | State |
+| --- | --- |
+| Full-screen terminal workspace (`kaku`), MCP server (`kaku mcp`), browser extension, Telegram bridge | Works |
+| Desktop app (macOS, Linux): native approval with Touch ID, menu-bar item, notifications, a picture of the screen for the chat; on macOS, your calendar and open reminders attached on request | Works; unsigned build, the capture preview was not clicked by a person in a test, and reading a real calendar waits for one Allow from the owner |
+| A page that says where your data goes (what stays on this computer, what can leave, and when), read from the running service | Built |
+| Signed update announcements checked offline (`kaku update check`, `kaku update verify-file`) | Built. `kaku update download` fetches an announced file and checks it against the signed announcement; nothing is opened, run or installed, and nothing checks for updates by itself |
+| Hindi | Written by the builder, not reviewed by a native reader |
+| Windows, mobile, hosted mode, encrypted sync between devices | Not built |
+
+<details>
+<summary><b>Claims, code and tests</b></summary>
+
+| Claim | Code | Tests |
+| --- | --- | --- |
+| A key or password is withheld before any model sees it, in every encoding the detector reads | `crates/kk-secrets/src/lib.rs`, `crates/kk-secrets/src/spoken.rs` | `crates/kk-secrets/tests/secret_grid.rs`, `scripts/bench-leak.py` |
+| Nothing is released without your approval of that exact digest | `crates/kk-service/src/service.rs`, `crates/kk-evidence/src/approval.rs` | `crates/kk-service/tests/flow.rs`, `tests/e2e/run.mjs` |
+| A finding is kept only when its script shows the normal behaviour first, prints the same twice, and no longer reproduces with the cited file emptied | `crates/kk-review/src/check.rs`, `crates/kk-review/src/job.rs` | `crates/kk-review/tests/check.rs`, `crates/kk-review/tests/job.rs`, `scripts/eval-quality.py` |
+| A review of a change covers the change it names: one over 300 files or 2 MB is refused, never cut; a single file over 512 KB, a link or an unsafe name is left out and named in the release | `crates/kk-git/src/lib.rs` | `crates/kk-git/tests/change.rs`, `tests/e2e/change_review.py` |
+| A capsule that was changed, or signed by someone else, is refused by both verifiers | `crates/kk-evidence/src/capsule.rs`, `packages/verifier-js` | `tests/e2e/verifier_page.mjs`, `scripts/judge-replay` |
+| The review agent has no network and sees no file you excluded | `crates/kk-sandbox`, `crates/kk-broker` | `scripts/test-lima`, `scripts/test-linux` |
+| The desktop page cannot be given the camera, the screen, or any other permission, and cannot navigate away | `apps/desktop/src/policy.mjs`, `apps/desktop/src/main.mjs` | `tests/e2e/desktop_attack.mjs` |
+| Text reaches the coding agent on your computer only after your yes on that exact text, once, even across a restart | `crates/kk-service/src/service/team.rs`, `crates/kk-cli/src/handoff.rs` | `crates/kk-service/tests/flow.rs` (sv261) |
+| A review's findings are handed to other experts only while their model is on this computer or in confidential hardware whose proof is checked, never to a hosted model without that proof or to the outside coding agent, and a run or conversation is never continued with a less private model than the one it worked with | `crates/kk-service/src/service/team.rs` | `crates/kk-service/tests/flow.rs` (sv266 to sv270, sv297) |
+| A skill pack is taken only from a publisher you pinned, and through a catalog only when it is the exact file listed | `crates/kk-packs/src/lib.rs`, `crates/kk-packs/src/catalog.rs` | `crates/kk-service/tests/flow.rs` (sv216, sv265), `tests/e2e/packs_web.mjs` |
+| NEAR's verifier, not ours, vouches for a model key on chain | `contracts/kakurega-registry` | `contracts/kakurega-registry/tests/sandbox.rs` on a local node, and the testnet transaction above |
+| The signed log shows what left this computer, and it can be verified anywhere | `crates/kk-eventlog`, `crates/kk-service/src/service/outbound.rs` | `crates/kk-service/tests/flow.rs`, `kaku log verify` |
+
+Each component has a record of what was read, decided and tested, and what is not covered, in `docs/engineering-decisions/`.
+
+</details>
