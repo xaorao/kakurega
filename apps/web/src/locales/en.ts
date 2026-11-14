@@ -915,6 +915,7 @@ export const en = {
   "chat.you": "You",
   "chat.assistant": "Assistant",
   "chat.thinking": "Thinking…",
+  "chat.hero": "What are we working on?",
   "chat.empty": "Nothing yet. Ask something.",
   "chat.notesUsed": "{n} notes used",
   "chat.notesUsed.one": "{n} note used",

@@ -930,7 +930,7 @@ export function Chat() {
   };
 
   return (
-    <section class="stack wide" aria-labelledby="h-chat">
+    <section class="stack wide chat-page" aria-labelledby="h-chat">
       <h1 id="h-chat">{t("chat.title")}</h1>
       <Show when={tabs().length > 0}>
         {/* a row of buttons, not a tab list: each has a close button beside it, which a tab list may not hold */}
@@ -986,7 +986,7 @@ export function Chat() {
         </div>
       </Show>
       <ul ref={listEl} class="plain stack chat" aria-live="polite">
-        <For each={turns()} fallback={<li class="muted">{t("chat.empty")}</li>}>
+        <For each={turns()} fallback={<li class="chat-hero"><span class="brand-mark hero" aria-hidden="true">隠</span><p class="chat-hero-title">{t("chat.hero")}</p><p class="muted">{t("chat.empty")}</p></li>}>
           {(m, i) => (
             <li class={`card stack msg ${m.role}`}>
               <strong>{m.role === "user" ? t("chat.you") : t("chat.assistant")}</strong>

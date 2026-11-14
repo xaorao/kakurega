@@ -274,3 +274,14 @@ ul.plain.start-ways { grid-template-columns: repeat(3, minmax(0, 1fr)); width: 1
   ul.plain.start-ways { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 520px) { ul.plain.start-ways { grid-template-columns: minmax(0, 1fr); } }
+
+/* chat: one centred column, an opening when nothing has been said, the message box docked at the foot */
+.chat-page { max-width: 900px; margin-inline: auto; }
+.chat-hero { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 34vh; text-align: center; }
+.chat-hero .brand-mark.hero { margin: 0; }
+.chat-hero-title { font-family: var(--font-display); font-size: clamp(34px, 3.6vw, 48px); line-height: 1.02; letter-spacing: -0.02em; }
+.composer.card { border-radius: 18px; padding: 14px 16px 12px; box-shadow: 0 24px 48px -32px color-mix(in srgb, var(--ink) 45%, transparent); }
+.msg.card { border: 0; background: none; box-shadow: none; padding: 6px 0; }
+.msg.user.card { background: var(--veil); border-radius: 16px; padding: 14px 18px; margin-left: auto; max-width: 78%; }
+.msg > strong { font-size: 12px; font-weight: 500; color: var(--graphite); }
+.msg .msg-body { font-size: 15px; line-height: 1.6; }

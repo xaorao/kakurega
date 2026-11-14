@@ -917,6 +917,7 @@ export const hi: Record<keyof typeof en, string> = {
   "chat.you": "आप",
   "chat.assistant": "सहायक",
   "chat.thinking": "सोच रहा है…",
+  "chat.hero": "आज किस पर काम करें?",
   "chat.empty": "अभी कुछ नहीं। कुछ पूछें।",
   "chat.notesUsed": "{n} नोट इस्तेमाल हुए",
   "chat.notesUsed.one": "{n} नोट इस्तेमाल हुए",
