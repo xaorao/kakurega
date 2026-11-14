@@ -504,6 +504,15 @@ try {
   check("an approval given in the terminal shows in the page within about a second, by the change notice", Date.now() - decidedAt < 4500, `${Date.now() - decidedAt} ms including the terminal step`);
   await page.getByRole("button", { name: "Sign and deliver the capsule" }).click();
   await page.getByText("Delivered.").waitFor();
+  // found by using it: a delivered review is called delivered, and the file is saved under the name the page shows
+  await page.locator(".review-head", { hasText: "delivered" }).waitFor({ timeout: 10000 });
+  const deliveredHead = await page.locator(".review-head").innerText();
+  check("a delivered review is called delivered, not ready, in its heading", /delivered/.test(deliveredHead) && !/\bready\b/.test(deliveredHead), deliveredHead.replace(/\n/g, " | ").slice(0, 120));
+  const listedState = await page.locator(".list li a.active .sub").innerText();
+  check("and in the list of reviews", /delivered/.test(listedState), listedState);
+  const saveAs = await page.getByRole("link", { name: /Download/ }).first().getAttribute("download");
+  const shownName = (await page.locator(".delivered-line").innerText()).match(/[0-9a-f]{8,}\.kkg/)?.[0] ?? "";
+  check("the capsule is saved under the name the page shows", !!saveAs && saveAs === shownName, `${saveAs} vs ${shownName}`);
 
   // history search, Cmd+K, theme choice
   await page.keyboard.press("Meta+k");
@@ -896,7 +905,7 @@ try {
   await page.getByRole("heading", { name: "Agent access", exact: true }).waitFor();
   await page.getByText("No lease is active.").first().waitFor({ timeout: 10000 }).catch(() => {});
   check("with no lease the screen says an agent cannot start reviews or ask for approvals", (await page.getByText("No lease is active.").count()) === 1);
-  check("the screen names the command that makes an agent subject to leases", (await page.getByText("kaku mcp --leased").count()) === 1);
+  check("the screen names the command that sets up a client with leases in force", (await page.getByText("kaku mcp install --client claude-code --print --leased").count()) === 1);
   await page.getByLabel("Number of uses").fill("abc");
   await page.getByRole("button", { name: "Give lease" }).click();
   check("uses that are not a number are refused in words, before anything is sent", (await page.getByRole("alert").innerText()).includes("whole numbers"));
@@ -1039,6 +1048,7 @@ try {
   await page.getByRole("button", { name: "Run this review again" }).waitFor();
   const stoppedHead = await page.locator(".review-head").innerText();
   check("a review its owner stopped is called stopped, not failed", /stopped/.test(stoppedHead) && !/failed/.test(stoppedHead), stoppedHead);
+  check("and its last step says who stopped it, as a sentence", (await page.locator(".steps li.fail .sub, li.fail .sub").first().innerText()).includes("You stopped it."));
   await page.getByRole("button", { name: "Run this review again" }).click();
   await page.waitForURL(/#\/job\/job-78/);
   check("running a stopped review of a change again keeps the change", startedAgain?.base === "main" && startedAgain?.repo === "/some/folder", JSON.stringify(startedAgain));

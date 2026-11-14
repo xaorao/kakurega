@@ -17443,6 +17443,15 @@ fn sv200_mcp_servers_are_added_checked_listed_without_their_secrets_and_removed_
             "hidden text in an argument",
             json!({"name": "a", "program": fake_mcp_path(), "args": ["x\u{202e}y"]}),
         ),
+        // shown on the screen and kept as typed: a key belongs in a setting, which is kept hidden
+        (
+            "a key in an argument",
+            json!({"name": "a", "program": fake_mcp_path(), "args": [format!("--key={}", ["sk-ant", "api03-abcdefghijklmnopqrstuvwxyz0123456789"].join("-"))]}),
+        ),
+        (
+            "a password in an argument",
+            json!({"name": "a", "program": fake_mcp_path(), "args": ["--db-password=Harbor77!x"]}),
+        ),
     ];
     for (label, b) in bad {
         let (s, v) = w.post("/api/mcp/servers", b);

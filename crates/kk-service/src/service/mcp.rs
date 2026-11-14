@@ -493,6 +493,13 @@ pub(super) async fn mcp_add(axum::Extension(svc): Svc, Json(b): Json<AddBody>) -
     if !chat_clean(&args_text) || kk_types::injection::hidden_chars(&args_text) {
         return refuse("the arguments contain control or direction-changing characters");
     }
+    // arguments are shown on the screen and kept as they are; a key belongs in a setting, which is kept hidden
+    if b.args
+        .iter()
+        .any(|a| !kk_secrets::scan(a).is_empty() || kk_secrets::spoken::holds(a))
+    {
+        return refuse("an argument looks like a key or a password; put it in a setting (NAME=value) instead, where it is kept hidden and never shown again");
+    }
     let program_sha256 = std::fs::read(&b.program)
         .map(|bytes| kk_evidence::capsule::sha256_hex(&bytes))
         .unwrap_or_default();

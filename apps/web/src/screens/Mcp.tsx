@@ -29,7 +29,7 @@ function Server(props: { s: McpServer; onChanged: (message: string) => void }) {
   return (
     <li class="card stack">
       <h3>{props.s.name}</h3>
-      <p class="muted"><code>{props.s.program}</code> {props.s.args.join(" ")}</p>
+      <p class="muted wrap"><code>{props.s.program}</code> {props.s.args.join(" ")}</p>
       <Show when={props.s.env_names?.length}><p class="muted">{t("mcp.envNames", { list: (props.s.env_names ?? []).join(", ") })}</p></Show>
       <Show when={props.s.tools.length === 0}><p class="muted">{t("mcp.noTools")}</p></Show>
       <ul class="plain stack">
@@ -128,6 +128,12 @@ export function Mcp() {
   const [adding, setAdding] = createSignal(false);
   const add = async () => {
     setProblem("");
+    // a settings line without NAME= would be dropped without a word: it is named instead, and nothing is saved
+    const loose = lines(env()).find((l) => l.indexOf("=") <= 0);
+    if (loose !== undefined) {
+      setProblem(t("mcp.settingNoName", { line: loose.length > 40 ? loose.slice(0, 40) + "…" : loose }));
+      return;
+    }
     try {
       await api.mcpAdd({ name: name().trim(), program: program().trim(), args: lines(args()), env: envFrom(env()) });
       setName(""); setProgram(""); setArgs(""); setEnv("");

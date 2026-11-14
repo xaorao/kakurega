@@ -10,6 +10,9 @@ const toolLabel = (tool: string) => {
   return text === key ? tool : text;
 };
 
+/** What sets an agent up: it prints the exact line for the client, with kaku's full path and checksum, and leases in force. */
+const SETUP = "kaku mcp install --client claude-code --print --leased";
+
 export function AgentAccess() {
   const [access, { refetch }] = createResource(() => api.agentAccess().catch(() => null));
   const [tool, setTool] = createSignal("start_review");
@@ -56,7 +59,7 @@ export function AgentAccess() {
       <Lead text={t("agent.lead")} />
       <div class="card stack">
         <p>{t("agent.how")}</p>
-        <p class="cmd-row"><code>kaku mcp --leased</code> <button type="button" class="link" onClick={async () => { try { await navigator.clipboard.writeText("kaku mcp --leased"); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* the command is still selectable */ } }}>{copied() ? t("md.copied") : t("md.copy")}</button></p>
+        <p class="cmd-row"><code>{SETUP}</code> <button type="button" class="link" onClick={async () => { try { await navigator.clipboard.writeText(SETUP); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* the command is still selectable */ } }}>{copied() ? t("md.copied") : t("md.copy")}</button></p>
         <p class="muted">{t("agent.limits")}</p>
       </div>
       <div class="card stack" role="region" aria-label={t("agent.active")}>

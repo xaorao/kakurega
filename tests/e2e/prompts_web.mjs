@@ -65,6 +65,13 @@ await page.locator("#saved-prompts summary").click();
 await page.getByRole("button", { name: "Weekly summary", exact: true }).click();
 check((await page.inputValue("#chat-input")) === "Summarise this week in five plain bullets.", "after a reload, one click puts the saved prompt into the box");
 check(await page.evaluate(() => document.activeElement?.id === "chat-input"), "and the box has the keyboard");
+// found by using it: a name that differs only in capitals replaces the old prompt, and the page says so
+await page.fill("#chat-input", "Summarise this week in three bullets.");
+await page.fill("#prompt-name", "weekly SUMMARY");
+await page.getByRole("button", { name: "Save as a prompt" }).click();
+await page.locator("#saved-prompts").getByText(/It replaced the prompt that was already called/).waitFor({ timeout: 10000 });
+check(true, "saving under a name that differs only in capitals says it replaced the earlier prompt");
+await page.fill("#chat-input", "");
 await page.screenshot({ path: join(work, "1-prompts.png"), fullPage: true });
 // a prompt with fields: each is asked for, the box is filled only when all are, and the date fills itself
 await page.fill("#chat-input", "Write to {{client}} in a {{tone:formal|casual}} tone about the {{client}} renewal. Date it {{current_date}}.");

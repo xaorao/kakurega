@@ -55,7 +55,8 @@ await stop.waitFor({ timeout: 15000 });
 await shot("1-running");
 await stop.click();
 await page.getByText("Stopping now. Nothing it found will be offered.").waitFor({ timeout: 5000 }).catch(() => undefined);
-await page.getByText(/stopped by you/).first().waitFor({ timeout: 30000 });
+// the page says it as a sentence; the service keeps its own short note
+await page.getByText("You stopped it.").first().waitFor({ timeout: 30000 });
 check(true, "a running review shows a Stop, and pressing it ends the review as stopped by you");
 check((await page.getByRole("button", { name: "Stop", exact: true }).count()) === 0, "a review that has ended offers no Stop");
 check(!/Approve|Ask for approval/.test(await page.locator("main").innerText()), "and nothing is offered for approval");
