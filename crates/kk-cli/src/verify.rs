@@ -13,19 +13,30 @@ pub fn run(args: &[String]) -> u8 {
             return 2;
         }
     };
-    let pinned = crate::flags(args, "--pin")
+    // a pin is the key itself (43 base64url characters, or the 64 hex digits this command prints as "signing key"), or
+    // the "signed by" line a check shows (ed25519: and 64 hex digits, which names the key without being it)
+    let given = crate::flags(args, "--pin");
+    let lines: Vec<String> = given
         .iter()
-        .map(|k| {
-            b64::decode(k)
-                .ok()
-                .and_then(|raw| <[u8; 32]>::try_from(raw).ok())
-        })
-        .collect::<Option<Vec<_>>>();
+        .filter(|k| k.starts_with("ed25519:"))
+        .map(|k| k.to_ascii_lowercase())
+        .collect();
+    let pinned = given
+        .iter()
+        .filter(|k| !k.starts_with("ed25519:"))
+        .map(|k| key_of(k))
+        .collect::<Option<Vec<_>>>()
+        .filter(|keys| !keys.is_empty() || !lines.is_empty());
+    let line_ok = lines
+        .iter()
+        .all(|l| l.len() == 72 && l[8..].bytes().all(|b| b.is_ascii_hexdigit()));
     let has_pin = args.iter().any(|a| a == "--pin");
-    if has_pin && pinned.is_none() {
-        eprintln!("--pin needs a base64url Ed25519 public key (32 bytes)");
+    if has_pin && (pinned.is_none() || !line_ok) {
+        eprintln!("--pin needs the signer's key after it: the 43-character key, the 64 hex digits shown as \"signing key\", or the \"signed by\" line (ed25519: and 64 hex digits)");
         return 2;
     }
+    // with only a "signed by" line there is no key to check against: the file's own key is used and its name compared
+    let has_pin = has_pin && pinned.as_ref().is_some_and(|k| !k.is_empty());
     // a share (some files of a release, with a proof) is checked by its own rules
     if is_share(&bytes) {
         return share(
@@ -46,6 +57,21 @@ pub fn run(args: &[String]) -> u8 {
             expected_recipient: None,
         },
     );
+    let mut report = report;
+    if report.valid && !lines.is_empty() {
+        let signer = report
+            .signer
+            .as_ref()
+            .map(|k| k.as_str().to_string())
+            .unwrap_or_default();
+        if lines.iter().all(|l| *l == signer) {
+            report.signer_pinned = true;
+        } else {
+            println!("INVALID: untrusted_signer");
+            println!("{}", reason_words("untrusted_signer").unwrap_or_default());
+            return 1;
+        }
+    }
     if report.valid {
         println!("VALID");
         println!(
@@ -161,6 +187,20 @@ fn is_share(bytes: &[u8]) -> bool {
         && bytes
             .windows(25)
             .any(|w| w == b"\"format\":\"kakurega-share\"")
+}
+
+/// The 32 bytes of a key written as 43 base64url characters or as 64 hex digits.
+fn key_of(text: &str) -> Option<[u8; 32]> {
+    if text.len() == 64 && text.bytes().all(|b| b.is_ascii_hexdigit()) {
+        let mut out = [0u8; 32];
+        for (i, pair) in text.as_bytes().chunks(2).enumerate() {
+            out[i] = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+        }
+        return Some(out);
+    }
+    b64::decode(text)
+        .ok()
+        .and_then(|raw| <[u8; 32]>::try_from(raw).ok())
 }
 
 /// Checks a share and prints what it shows. With `--out DIR` the shared files are also written into a new folder.

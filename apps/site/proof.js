@@ -109,7 +109,7 @@ async function run() {
       const ok = entry.receipt_count === c.receipt_count && entry.order === c.order && order?.state === "Paid" && order.require_hardware === true && order.capsule_sha256 === c.capsule_sha256;
       return {
         ok,
-        lines: [["Capsule", short(c.capsule_sha256)], ["Model signatures the contract verified", String(entry.receipt_count)], ["Registered by", entry.registered_by], ["Order " + entry.order, order ? `${order.state}; required a hardware record: ${order.require_hardware ? "yes" : "no"}; ${Number(BigInt(order.amount) / 10n ** 21n) / 1000} NEAR (testnet)` : "none"]],
+        lines: [["Capsule", short(c.capsule_sha256)], ["Model signatures the contract verified", `${entry.receipt_count} (this is the paid review's own capsule, a different one from check 3)`], ["Registered by", entry.registered_by], ["Order " + entry.order, order ? `${order.state}; required a hardware record: ${order.require_hardware ? "yes" : "no"}; ${Number(BigInt(order.amount) / 10n ** 21n) / 1000} NEAR (testnet)` : "none"]],
       };
     }),
   );

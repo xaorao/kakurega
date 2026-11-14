@@ -84,7 +84,8 @@ async function gate(root) {
       if (held.has(i + 1)) {
         row.classList.add("gone");
         const bar = el("span", undefined, "bar");
-        bar.style.width = Math.max(6, Math.min(26, line.trim().length)) + "ch";
+        // the bar never takes the room the reason needs: the reason is the part a reader must be able to read
+        bar.style.width = Math.max(4, Math.min(14, line.trim().length)) + "ch";
         const why = el("span", `withheld · holds ${an(held.get(i + 1))}`, "why");
         why.title = why.textContent;
         row.append(bar, why);
@@ -94,7 +95,7 @@ async function gate(root) {
     out.replaceChildren(...rows);
     bytes.textContent = `${new TextEncoder().encode(prepared.sent).length} bytes`;
     const n = prepared.held.length;
-    const kept = text.split("\n").length - n;
+    const kept = text === "" ? 0 : text.split("\n").length - n;
     counts.replaceChildren(el("span", `${n} ${n === 1 ? "line" : "lines"} withheld`, "count stop"), el("span", `${kept} ${kept === 1 ? "line" : "lines"} would be sent`, "count go"));
     void showVerdict();
   };

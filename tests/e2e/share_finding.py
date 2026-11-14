@@ -116,6 +116,18 @@ try:
     check("a share whose finding was rewritten is refused", rc == 1 and out.startswith("INVALID"), out[:120])
     rc, out, _ = k("verify", str(work / "review.kkg") if (work / "review.kkg").exists() else str(sorted((data / "capsules").glob("*.kkg"))[0]))
     check("a capsule is still checked as a capsule", rc == 0 and out.startswith("VALID") and "SHARE" not in out.splitlines()[0], out[:60])
+    # the two forms a check itself prints are accepted as a pin: the key in hex and the "signed by" line
+    capsule = str(work / "review.kkg") if (work / "review.kkg").exists() else str(sorted((data / "capsules").glob("*.kkg"))[0])
+    hex_key = re.search(r"^signing key ([0-9a-f]{64})", out, re.M).group(1)
+    line = re.search(r"^signed by (ed25519:[0-9a-f]{64})", out, re.M).group(1)
+    for what, value in (("the key in hex", hex_key), ("the signed-by line", line)):
+        rc, out2, _ = k("verify", capsule, "--pin", value)
+        check(f"a capsule pinned with {what} is valid and says the key was pinned", rc == 0 and "the key you pinned" in out2, out2[:200])
+    for what, value in (("another key in hex", "ab" * 32), ("another signed-by line", "ed25519:" + "ab" * 32)):
+        rc, out2, _ = k("verify", capsule, "--pin", value)
+        check(f"pinned with {what} it is refused in words", rc == 1 and out2.startswith("INVALID: ") and len(out2.splitlines()) >= 2 and out2.splitlines()[1].endswith("."), out2[:200])
+    rc, _, err = k("verify", capsule, "--pin", "ed25519:zz")
+    check("a pin that is neither is refused before any check, saying the three forms", rc == 2 and "64 hex digits" in err, err[:200])
 finally:
     srv.kill()
 bad = results.count(False)

@@ -32,7 +32,7 @@ The full list, one capability per line. The short version is in the [README](../
 
 ## The state of each feature
 
-**Works** is the builder's record that the feature works, with how it was checked where the row says. **Built** means it is in the product, with its test named where one exists; this page claims nothing more. The full list is in [docs/FEATURES.md](FEATURES.md).
+**Works** is the builder's record that the feature works, with how it was checked where the row says. **Built** means it is in the product, with its test named where one exists; this page claims nothing more. What is not verified or not built is in [LIMITS.md](LIMITS.md).
 
 **Review and release**
 

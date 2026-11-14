@@ -98,6 +98,8 @@ await page.screenshot({ path: join(work, "forged.png"), fullPage: true });
 await page.setInputFiles("#file", join(work, "flipped.kkg"));
 await page.locator(".verdict").waitFor();
 check((await verdict()) === "Not valid", "a capsule with one changed byte is refused");
+const flippedText = await page.locator("#out").innerText();
+check(!/^Refused \([a-z_]+\)\.$/m.test(flippedText) && /[A-Z][^.]+\./.test(flippedText), "and the reason is given in words, never as a bare code: " + flippedText.split("\n")[1]?.slice(0, 70));
 
 await page.setInputFiles("#file", join(work, "notes.txt"));
 await page.getByText("The file is not a capsule").waitFor();
@@ -125,6 +127,15 @@ check((await verdict()).startsWith("Valid"), "the signer line the page shows is 
 await page.fill("#pin", "ed25519:" + "0".repeat(64));
 await page.getByText("It was not signed by the key you pasted").waitFor();
 check((await verdict()) === "Not valid", "a different signer line refuses the capsule");
+// the key itself written in hex (what `kaku verify` prints as "signing key", and what NEAR stores) names the same signer
+const hexKey = Buffer.from(key.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("hex");
+for (const form of [hexKey, "ed25519:" + hexKey, hexKey.toUpperCase()]) {
+  await page.fill("#pin", "");
+  await page.locator(".verdict").waitFor();
+  await page.fill("#pin", form);
+  await page.getByText("matches the key you pasted").waitFor();
+  check((await verdict()).startsWith("Valid"), `the key in hex is accepted as the expected signer (${form.slice(0, 12)}…)`);
+}
 
 await page.fill("#pin", "");
 const late = await ctx.newPage();
@@ -231,7 +242,8 @@ await cp.getByRole("alert").filter({ hasText: "not a NEAR account name" }).waitF
 await cp.selectOption("#net", "mainnet");
 check((await cp.inputValue("#registry")) === "", "no registry is assumed on mainnet");
 await cp.locator("#lookup").click();
-await cp.getByRole("alert").filter({ hasText: "not a NEAR account name" }).waitFor();
+await cp.getByRole("alert").filter({ hasText: "has no registry on this network yet" }).waitFor();
+check(true, "mainnet with no registry typed says there is none there yet, and that it is on testnet");
 check(calls.length === before, "a name that is not an account is refused before anything is sent");
 check(elsewhere.length === 0, "nothing was sent anywhere but the NEAR RPC: " + elsewhere.join(", "));
 check(cproblems.length === 0, "no console errors in the lookup: " + cproblems.join("; "));

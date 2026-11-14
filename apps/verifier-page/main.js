@@ -33,6 +33,24 @@ const REASONS = {
   untrusted_signer: "It was not signed by the key you pasted.",
   unknown_signer: "It was signed by a key other than the one it carries.",
   capsule_too_large: "The file is too large to be a capsule.",
+  digest_mismatch: "A file in it is not what was signed: the capsule was changed after it was signed, or damaged on the way.",
+  payload_not_canonical: "The file was changed after it was signed (a signed part is not in the one allowed form).",
+  wrong_recipient: "It was made for someone other than the recipient it was checked for.",
+  mixed_signers: "Its parts were signed by different keys: a capsule is signed by one key only.",
+  bad_envelope: "A signed part of it is malformed.",
+  envelope_count: "It does not carry the signed parts a capsule must have, or carries too many.",
+  unknown_payload_type: "It carries a signed part of a kind this page does not know.",
+  release_missing: "It carries no signed release.",
+  duplicate_release: "It carries more than one signed release.",
+  release_shape: "Its signed release does not have the shape it must have.",
+  too_many_files: "Its release lists more files than a capsule may carry.",
+  duplicate_file_name: "Two files in it have the same name.",
+  bad_attachment: "A file carried in it cannot be read.",
+  attachment_missing: "A file its release names is not in the capsule.",
+  attachment_extra: "It carries a file its signed release does not name.",
+  claim_shape: "A claim in it does not have the shape it must have.",
+  claim_not_bound: "A claim in it is about a different release than the one it carries.",
+  claim_evidence_missing: "A claim in it points to evidence the capsule does not carry.",
 };
 
 // Signed text is still someone else's text: shown without the marks that hide or reorder what is read (right-to-left
@@ -172,6 +190,7 @@ function chainSection(bytes, report) {
       a.setAttribute("role", "alert");
       box.replaceChildren(a);
     };
+    if (registry === "" && NETWORKS[net.value].registry === "") return fail("Kakurega has no registry on this network yet: its registry is on testnet. If someone runs their own, type its account name above.");
     if (!isAccount(registry)) return fail("That is not a NEAR account name.");
     let signer = null;
     try {
@@ -216,7 +235,7 @@ function showShare(r, bytes) {
   out.append(v);
   if (!r.valid) {
     out.append(el("p", REASONS[r.reason] || `Refused (${r.reason}).`));
-    out.append(el("p", `For whoever made the file, the reason in short: ${r.reason}`, "note"));
+    out.append(el("p", `If you report this to whoever made the file, give them this code: ${r.reason}`, "note"));
     return;
   }
   const dl = el("dl");
@@ -250,7 +269,7 @@ function show(r, bytes) {
   out.append(v);
   if (!r.valid) {
     out.append(el("p", REASONS[r.reason] || `Refused (${r.reason}).`));
-    out.append(el("p", `For whoever made the file, the reason in short: ${r.reason}`, "note"));
+    out.append(el("p", `If you report this to whoever made the file, give them this code: ${r.reason}`, "note"));
     return;
   }
   const dl = el("dl");
@@ -309,7 +328,9 @@ async function check(file) {
   let pinned = null;
   // the signer line a check shows ("ed25519:" and 64 hex characters) names the same key as the 43-character form
   const line = /^(?:ed25519:)?([0-9a-f]{64})$/i.exec(pin);
-  const wanted = line ? "ed25519:" + line[1].toLowerCase() : null;
+  // 64 hex characters are either that signer line or the key itself written in hex (the form `kaku verify` prints and
+  // the registry on NEAR stores): both name the same signer, so both are accepted
+  const wanted = line ? ["ed25519:" + line[1].toLowerCase(), "ed25519:" + (await sha256Hex(Uint8Array.from(line[1].match(/../g), (h) => parseInt(h, 16))))] : null;
   if (pin && !wanted) {
     const raw = b64urlDecode(pin);
     if (!raw || raw.length !== 32) {
@@ -319,7 +340,7 @@ async function check(file) {
     pinned = [raw];
   }
   // a result checked against the signer line: the wrong signer is refused, the right one counts as pinned
-  const held = (r) => (!wanted || !r.valid ? r : r.signer === wanted ? { ...r, signerPinned: true } : { valid: false, reason: "untrusted_signer" });
+  const held = (r) => (!wanted || !r.valid ? r : wanted.includes(r.signer) ? { ...r, signerPinned: true } : { valid: false, reason: "untrusted_signer" });
   const bytes = new Uint8Array(await file.arrayBuffer());
   try {
     // a share says what it is; the check that follows decides whether it is a valid one

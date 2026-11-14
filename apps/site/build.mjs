@@ -123,6 +123,8 @@ mkdirSync(join(out, "api"), { recursive: true });
 cpSync(join(here, "try.html"), join(out, "try/index.html"));
 mkdirSync(join(out, "proof"), { recursive: true });
 cpSync(join(here, "proof.html"), join(out, "proof/index.html"));
+// what a mistyped address shows, instead of the host's bare text
+cpSync(join(here, "404.html"), join(out, "404.html"));
 writeFileSync(join(out, "proof.js"), proofScript);
 writeFileSync(join(out, "proof.json"), JSON.stringify(proof, null, 2));
 writeFileSync(join(out, "llms.txt"), readFileSync(join(here, "llms.txt"), "utf8").replaceAll("{{MODEL}}", facts.model).replaceAll("{{ANSWERS}}", String(facts.answers)).replaceAll("{{REGISTRY}}", proofFacts.registry));

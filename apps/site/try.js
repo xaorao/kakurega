@@ -146,6 +146,8 @@ async function run(e) {
     const what = el("details");
     what.append(el("summary", "What will be sent, exactly"), el("p", "Our instruction to the model:", "note"), el("pre", SYSTEM), el("p", "Your text, after withholding:", "note"), el("pre", prepared.sent));
     w.append(what);
+    // a free try has a size limit, and encrypting about doubles the text: said now, before the hardware proof is fetched
+    if (!ownKey && new TextEncoder().encode(SYSTEM + prepared.sent).length * 2 + 2048 > 24 * 1024) return fail("withhold", new Error("TOO_LARGE"));
     state("withhold", "ok");
 
     // 2. the proof, checked in this tab
@@ -189,7 +191,7 @@ async function run(e) {
     }
     if (!ownKey) usedOne();
     showTries();
-    out("ask").append(el("p", completion.choices?.[0]?.message?.content ?? "(no text came back)", "answer"));
+    out("ask").append(...answered(completion.choices?.[0]?.message?.content ?? "(no text came back)", prepared.sent));
     state("ask", "ok");
 
     // 4. the signature, checked in this tab
@@ -216,10 +218,43 @@ async function run(e) {
   }
 }
 
+/** The answer with what it quotes set as code, and a line saying whether each quoted piece really is in the text that
+ *  was sent: a model can misquote, and the reader should not have to compare by eye. */
+function answered(text, sent) {
+  const p = el("p", undefined, "answer");
+  const flat = (t) => t.replace(/\s+/g, " ").trim();
+  const there = flat(sent);
+  let quoted = 0;
+  let found = 0;
+  text.split(/`+/).forEach((part, i) => {
+    if (i % 2 === 0) return void p.append(part);
+    const code = el("code", part);
+    if (flat(part).length >= 4) {
+      quoted += 1;
+      if (there.includes(flat(part))) found += 1;
+      else code.className = "unfound";
+    }
+    p.append(code);
+  });
+  if (quoted === 0) return [p, el("p", "The answer quotes nothing from your text, so nothing in it could be checked against what was sent.", "note")];
+  const note = found === quoted ? `Every piece it quotes (${quoted}) is in the text that was sent, word for word.` : `${quoted - found} of the ${quoted} pieces it quotes ${quoted - found === 1 ? "is" : "are"} not in the text that was sent (underlined). Read that part with care.`;
+  return [p, el("p", note, found === quoted ? "note good" : "note")];
+}
+
 const box = $("[data-code]");
 box.value = SAMPLE;
-const count = () => ($("[data-count]").textContent = `${box.value.length} of 6000 characters. The two keys in the sample are made up.`);
-box.addEventListener("input", count);
+// the note under the box says only what is true of what is in it now: the sample's keys are made up, a full box was cut
+let cut = false;
+const count = () => {
+  const n = box.value.length;
+  const about = box.value === SAMPLE ? " The two keys in the sample are made up." : cut && n >= 6000 ? " What you pasted was longer: it was cut at 6000 characters." : "";
+  $("[data-count]").textContent = `${n} of 6000 characters.${about}`;
+};
+box.addEventListener("paste", (e) => {
+  const pasted = e.clipboardData?.getData("text") ?? "";
+  cut = box.value.length - (box.selectionEnd - box.selectionStart) + pasted.length > 6000;
+});
+box.addEventListener("input", () => { if (box.value.length < 6000) cut = false; count(); });
 $("[data-key]").addEventListener("input", showTries);
 $("[data-form]").addEventListener("submit", (e) => void run(e));
 count();

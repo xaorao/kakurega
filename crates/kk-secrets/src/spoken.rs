@@ -293,12 +293,24 @@ pub fn find(text: &str) -> Vec<(usize, usize)> {
                         .chars()
                         .next()
                         .is_none_or(|c| !c.is_alphanumeric() && c != '_');
-                    if !before_ok || !after_ok {
+                    // a setting's name that ends in the word and is given its value at once (`DB_PASSWORD=`,
+                    // `"admin_passwd": `, `export MYSQL_ROOT_PASSWORD=`) names a password as surely as the word alone
+                    let assigned = after
+                        .trim_start_matches(['"', '\''])
+                        .trim_start()
+                        .starts_with(['=', ':'])
+                        // a comparison (`pass == expected`) and a scope (`pass::new`) give no value
+                        && !after.trim_start().starts_with("==")
+                        && !after.trim_start().starts_with("::");
+                    let prefixed = lower[..s].ends_with('_')
+                        && assigned
+                        && (DIRECT.contains(name) || *name == "pass");
+                    if (!before_ok && !prefixed) || !after_ok {
                         continue;
                     }
                     // a sign right after the name, or a linking word on the way, says a value follows
                     let mut linked = after.starts_with(['=', ':']);
-                    let direct = DIRECT.contains(name);
+                    let direct = DIRECT.contains(name) || prefixed;
                     // other words came between the name and here ("the password for the router is ..."): from then on
                     // only a linking word makes what follows a value
                     let mut strayed = false;
@@ -659,6 +671,33 @@ mod tests {
                 values(&format!("see {name} in the code")).is_empty(),
                 "{name}"
             );
+        }
+    }
+
+    #[test]
+    fn sp_use01_a_setting_named_for_a_password_and_given_a_value_is_one_and_look_alikes_are_not() {
+        for (line, value) in [
+            ("DB_PASSWORD=hunter2", "hunter2"),
+            ("export MYSQL_ROOT_PASSWORD=abc123", "abc123"),
+            ("DB_PASS=hunter2", "hunter2"),
+            ("db_password: hunter2", "hunter2"),
+            ("\"admin_passwd\": \"hunter2\"", "hunter2"),
+        ] {
+            let found = find(line);
+            assert_eq!(found.len(), 1, "{line}");
+            assert!(line[found[0].0..found[0].1].contains(value), "{line}");
+        }
+        for line in [
+            "if (pass == expected1) {",
+            "PASSWORD_HASH=bcrypt2",
+            "PASSWORD_MIN_LENGTH=8",
+            "bypass: step2go",
+            "compass=north12",
+            "DB_PASSWORD=true",
+            "DB_PASSWORD=${DB_PASS}",
+            "password_field: input1",
+        ] {
+            assert!(find(line).is_empty(), "{line}");
         }
     }
 }

@@ -35,6 +35,10 @@ This file is the plain list. `docs/TESTING.md` says which test checks what and w
 ## Deliberately not built
 - Approving a release through a chat service: the chat service would receive the exact bytes. Phone approval needs a native passkey app.
 - An MCP tool that returns source, findings, memory or chat text: an MCP client is treated as an untrusted sink.
+- Mainnet: the registry contract and every transaction named in this repository are on NEAR testnet. Nothing was deployed or signed on mainnet.
+- Paying across chains: NEAR Intents is used for dry price quotes only (`kaku chain quote`); no swap or payment is sent.
+- A phone app, and sync between devices: everything lives on the one computer that runs `kaku`.
+- A byte-for-byte reproducible (Docker) build of the registry contract checked against the deployed code.
 - Hosted mode, Windows, an SDK package, collaboration, a plugin store, voice, computer use. (A Linux `.deb` and a registry contract on NEAR testnet are built; see the README.)
 
 ## Process limits

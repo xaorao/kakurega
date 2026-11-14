@@ -204,6 +204,8 @@ target/debug/kaku                    # full-screen workspace; starts the service
 target/debug/kaku serve              # or the browser workspace: prints a one-time pairing link
 ```
 
+On Linux (Ubuntu) the steps are the same without `scripts/provision-vm`: reviews run in a sandbox on the computer itself, and `scripts/setup` builds the worker for it (the Linux test suites run this way in an Ubuntu machine; `scripts/setup` itself has not been run on a fresh Linux install). The desktop app is macOS only; use the terminal or the browser workspace.
+
 To answer on NEAR AI Cloud's confidential hardware instead: `kaku serve --route near --near-model Qwen/Qwen3.8-27B --near-key-file FILE`, where FILE holds a line `NEAR_AI_API_KEY=...` and is readable by you only, or type the key in Settings.
 
 <details>
