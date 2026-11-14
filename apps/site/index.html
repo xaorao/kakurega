@@ -121,21 +121,18 @@
   <div><strong>1 byte</strong><span>changed, and the receiver's check refuses the capsule</span></div>
 </section>
 
-<section class="band" aria-labelledby="h-problem">
-  <div class="band-head">
-    <div><p class="eyebrow">01 / The problem</p><h2 id="h-problem">Three things you trust<br>and cannot see.</h2></div>
-    <p>To get help from an AI you hand it your code, your contracts and your meeting notes. A promise in a privacy policy covers none of these.</p>
-  </div>
-  <ul class="cards three">
-    <li><strong>That the model was not talked into leaking.</strong><span>One line planted in a file can tell an agent to send your secrets somewhere.</span></li>
-    <li><strong>That the provider runs what it says it runs.</strong><span>A privacy policy is a promise, not evidence.</span></li>
-    <li><strong>That the answer you forward is real.</strong><span>Your client cannot tell a model's finding from one somebody typed.</span></li>
-  </ul>
+<section class="quote" aria-labelledby="h-problem">
+  <h2 id="h-problem">To get help from an AI, you trust three things <em>you cannot see.</em></h2>
+  <ol>
+    <li><strong>That the model was not talked into leaking.</strong> One line planted in a file can tell an agent to send your secrets somewhere.</li>
+    <li><strong>That the provider runs what it says it runs.</strong> A privacy policy is a promise, not evidence.</li>
+    <li><strong>That the answer you forward is real.</strong> Your client cannot tell a model's finding from one somebody typed.</li>
+  </ol>
 </section>
 
 <section class="band" id="how" aria-labelledby="h-how">
   <div class="band-head">
-    <div><p class="eyebrow">02 / How it works</p><h2 id="h-how">One private review,<br>start to finish.</h2></div>
+    <div><p class="eyebrow">01 / How it works</p><h2 id="h-how">One private review,<br>start to finish.</h2></div>
     <p>Choose a folder and who receives the result. The agent works in a sealed sandbox on your computer, and no result is released until you approve the exact bytes.</p>
   </div>
   <ol class="cards five steps">
@@ -149,7 +146,7 @@
 
 <section class="band" id="see" aria-labelledby="h-see">
   <div class="band-head">
-    <div><p class="eyebrow">03 / See it work</p><h2 id="h-see">A real review,<br>step by step.</h2></div>
+    <div><p class="eyebrow">02 / See it work</p><h2 id="h-see">A real review,<br>step by step.</h2></div>
     <p>A replay of a real run on a small made-up payments service. Nothing is acted out: the findings, the files and the signatures come from the capsule that run produced, and the last step checks it live in your browser.</p>
   </div>
   <div class="replay" data-replay>
@@ -181,11 +178,32 @@
     </div>
   </div>
   <p class="note" data-replay-note>The model, the signatures, the findings and the files are read from the capsule on this site (the description of the project in step 1 is ours: a capsule does not record what was held back) (<a href="sample/review.kkg" download>review.kkg</a>). The check is the same code as the <a href="verify/">check page</a>, and sends nothing anywhere.</p>
+  <div class="take" id="check">
+    <div>
+      <h3>Do not take our word. Check a real result.</h3>
+      <p class="lede">This capsule came out of a real review that ran on NEAR AI Cloud's confidential hardware. It carries {{ANSWERS}} answers, each signed by the model that wrote it. The check runs in your browser and sends nothing anywhere.</p>
+    </div>
+    <div class="receipt" role="group" aria-label="A real capsule">
+      <dl>
+        <div><dt>Capsule</dt><dd>review.kkg <span class="pill">{{SIZE}}</span></dd></div>
+        <div><dt>Model</dt><dd>{{MODEL}} <span class="pill live">in confidential hardware</span></dd></div>
+        <div><dt>Model key</dt><dd class="mono">{{MODEL_KEY}}</dd></div>
+        <div><dt>Signed answers</dt><dd>{{ANSWERS}}, each verified</dd></div>
+        <div><dt>Valid until</dt><dd>{{EXPIRES}}</dd></div>
+        <div><dt>Your files</dt><dd><span class="redact" role="img" aria-label="hidden"></span></dd></div>
+      </dl>
+      <div class="actions">
+        <a class="button dark" href="sample/review.kkg" download>1. Download the capsule</a>
+        <a class="button" href="verify/">2. Drop it on the check page <span aria-hidden="true">→</span></a>
+      </div>
+      <p class="note">Change one byte of the file and check it again: it is refused. The page is a single file you can save and open from disk.</p>
+    </div>
+  </div>
 </section>
 
 <section class="band" id="guarantees" aria-labelledby="h-guar">
   <div class="band-head">
-    <div><p class="eyebrow">04 / Guarantees</p><h2 id="h-guar">A room, a gate<br>and a receipt.</h2></div>
+    <div><p class="eyebrow">03 / Guarantees</p><h2 id="h-guar">A room, a gate<br>and a receipt.</h2></div>
     <p>The model never decides what leaves. Rules and you do. Whatever leaves is signed, so the person who gets it can check where it came from.</p>
   </div>
   <div class="cards two">
@@ -220,9 +238,9 @@ verdict  <i>valid</i></pre>
   </div>
 </section>
 
-<section class="band" id="app" aria-labelledby="h-app">
+<section class="band night" id="app" aria-labelledby="h-app">
   <div class="band-head">
-    <div><p class="eyebrow">05 / The app</p><h2 id="h-app">One workspace,<br>on your computer.</h2></div>
+    <div><p class="eyebrow">04 / The app</p><h2 id="h-app">One workspace,<br>on your computer.</h2></div>
     <p>In the browser, as a desktop app for macOS and Linux, and full-screen in the terminal. The desktop app adds what a browser cannot do: approval with Touch ID, a menu-bar item and notifications.</p>
   </div>
   <div class="window app" data-shots>
@@ -233,10 +251,10 @@ verdict  <i>valid</i></pre>
         <button role="tab" id="st-3" aria-controls="sp-3" aria-selected="false" tabindex="-1">The release</button>
         <button role="tab" id="st-4" aria-controls="sp-4" aria-selected="false" tabindex="-1">Start</button>
       </div><span></span></div>
-    <div role="tabpanel" id="sp-1" aria-labelledby="st-1"><img src="img/app-room.webp" width="1440" height="900" alt="The Protection tab of a real review. A dark panel shows every file of the project as a dot inside the sealed room: one red square for the withheld secrets file, two amber dots for files with planted instructions. A red line marked The gate separates them from the seven exact files that leave."></div>
-    <div role="tabpanel" id="sp-2" aria-labelledby="st-2" hidden><img src="img/app-findings.webp" width="1440" height="900" alt="The Findings tab: the finding “logout does not invalidate the session token” at payments/auth/session.py line 14, with a green mark saying it was confirmed by the kernel, and the proposed fix below it."></div>
-    <div role="tabpanel" id="sp-3" aria-labelledby="st-3" hidden><img src="img/app-release.webp" width="1440" height="900" alt="The Release tab: the exact seven files with their sizes and SHA-256, the digest, and beside them the approval card with its four steps ticked and the red seal of a delivered capsule."></div>
-    <div role="tabpanel" id="sp-4" aria-labelledby="st-4" hidden><img src="img/app-start.webp" width="1440" height="900" alt="The start screen: a greeting, one box to ask anything, and four ways to begin: review a folder, review a change, ask your documents, meeting notes. A badge in the header says the model runs on this computer."></div>
+    <div role="tabpanel" id="sp-1" aria-labelledby="st-1"><img src="img/app-room.webp" width="1440" height="900" alt="The Protection tab of a real review: three numbers (files never shown to the agent, files with planted instructions, files labelled), then a dark panel with every file of the project as a dot inside the sealed room, a red square for the withheld secrets file and amber dots for files with planted instructions, named underneath. A red line marked The gate separates them from the exact files the review made, which are the only ones that leave."></div>
+    <div role="tabpanel" id="sp-2" aria-labelledby="st-2" hidden><img src="img/app-findings.webp" width="1440" height="900" alt="The Findings tab: the finding “logout does not invalidate the session token” at payments/auth/session.py, marked as confirmed by the kernel, with the script the kernel ran and what it printed side by side on a dark pane, and the files it was checked on."></div>
+    <div role="tabpanel" id="sp-3" aria-labelledby="st-3" hidden><img src="img/app-release.webp" width="1440" height="900" alt="The Release tab: the exact files with their sizes and SHA-256, the digest, and beside them the approval card with its four steps ticked and the large red seal of a delivered capsule."></div>
+    <div role="tabpanel" id="sp-4" aria-labelledby="st-4" hidden><img src="img/app-start.webp" width="1440" height="900" alt="The start screen: the mark, a greeting, six ways to begin (review a folder, review a change, ask your documents, meeting notes, ask a project, team), the latest review to pick up, and one box to ask anything."></div>
   </div>
   <ul class="feats">
     <li><strong>Review a project or a change</strong><span>Real defects, each with a script that reproduces it.</span></li>
@@ -246,43 +264,13 @@ verdict  <i>valid</i></pre>
   </ul>
 </section>
 
-<section class="band" id="models" aria-labelledby="h-models">
-  <div class="band-head">
-    <div><p class="eyebrow">06 / Where the model runs</p><h2 id="h-models">It always says<br>where the model runs.</h2></div>
-    <p>The header names the route and the model. Each project sets a limit, and work is refused in words when the model in use is less private than the project allows.</p>
-  </div>
-  <ul class="cards three routes">
-    <li><span class="tag go"><i></i>Private</span><strong>On this computer</strong><span>Through Ollama. Nothing leaves.</span></li>
-    <li><span class="tag go"><i></i>Private</span><strong>NEAR AI confidential hardware</strong><span>Intel TDX and NVIDIA evidence is checked before each question, and every answer carries the model's own signature.</span></li>
-    <li><span class="tag warn"><i></i>Not private</span><strong>Anything else</strong><span>Said in words where it happens, shown to you first, and a project can refuse it.</span></li>
-  </ul>
-</section>
 
-<section class="band" id="check" aria-labelledby="h-check">
-  <div class="band-head">
-    <div><p class="eyebrow">07 / Check it yourself</p><h2 id="h-check">Do not take our word.<br>Check a real result.</h2></div>
-    <p class="lede">This capsule came out of a real review that ran on NEAR AI Cloud's confidential hardware. It carries {{ANSWERS}} answers, each signed by the model that wrote it. The check runs in your browser and sends nothing anywhere.</p>
-  </div>
-  <div class="receipt" role="group" aria-label="A real capsule">
-    <dl>
-      <div><dt>Capsule</dt><dd>review.kkg <span class="pill">{{SIZE}}</span></dd></div>
-      <div><dt>Model</dt><dd>{{MODEL}} <span class="pill live">in confidential hardware</span></dd></div>
-      <div><dt>Model key</dt><dd class="mono">{{MODEL_KEY}}</dd></div>
-      <div><dt>Signed answers</dt><dd>{{ANSWERS}}, each verified</dd></div>
-      <div><dt>Valid until</dt><dd>{{EXPIRES}}</dd></div>
-      <div><dt>Your files</dt><dd><span class="redact" role="img" aria-label="hidden"></span></dd></div>
-    </dl>
-    <div class="actions">
-      <a class="button dark" href="sample/review.kkg" download>1. Download the capsule</a>
-      <a class="button" href="verify/">2. Drop it on the check page <span aria-hidden="true">→</span></a>
-    </div>
-    <p class="note">Change one byte of the file and check it again: it is refused. The page is a single file you can save and open from disk.</p>
-  </div>
-</section>
+
+
 
 <section class="band" id="near" aria-labelledby="h-near">
   <div class="band-head">
-    <div><p class="eyebrow">08 / Why NEAR</p><h2 id="h-near">Confidential hardware,<br>with evidence a stranger can check.</h2></div>
+    <div><p class="eyebrow">05 / Why NEAR</p><h2 id="h-near">Confidential hardware,<br>with evidence a stranger can check.</h2></div>
     <p>Registry on NEAR testnet: <span class="mono">kakurega-registry-c68af3.testnet</span>. The <a href="proof/">proof page</a> asks NEAR's public RPC six questions from your browser and ticks each one.</p>
   </div>
   <div class="cards three">
@@ -299,24 +287,19 @@ verdict  <i>valid</i></pre>
       <p>A registry contract on NEAR testnet records who registered a capsule and that its model signatures verified, and hands a model's hardware proof to NEAR's own verifier contract. A recipient reads it from a public RPC.</p>
     </article>
   </div>
-</section>
-
-<section class="band" aria-labelledby="h-who">
-  <div class="band-head">
-    <div><p class="eyebrow">09 / Who it is for</p><h2 id="h-who">For anyone who must hand<br>a result to someone else.</h2></div>
-    <p>People who must give an outside party a result from private material.</p>
-  </div>
-  <ul class="cards four who">
-    <li><strong>Security reviewers</strong><span>Findings to a client</span></li>
-    <li><strong>Lawyers</strong><span>Answers from contracts</span></li>
-    <li><strong>Founders</strong><span>Diligence for an investor</span></li>
-    <li><strong>Any team</strong><span>Material it cannot upload</span></li>
+  <h3 class="sub-h" id="models">It always says where the model runs.</h3>
+  <ul class="cards three routes">
+    <li><span class="tag go"><i></i>Private</span><strong>On this computer</strong><span>Through Ollama. Nothing leaves.</span></li>
+    <li><span class="tag go"><i></i>Private</span><strong>NEAR AI confidential hardware</strong><span>Intel TDX and NVIDIA evidence is checked before each question, and every answer carries the model's own signature.</span></li>
+    <li><span class="tag warn"><i></i>Not private</span><strong>Anything else</strong><span>Said in words where it happens, shown to you first, and a project can refuse it.</span></li>
   </ul>
 </section>
 
+
+
 <section class="band" id="limits" aria-labelledby="h-limits">
   <div class="band-head">
-    <div><p class="eyebrow">10 / Limits</p><h2 id="h-limits">Every verdict says<br>where it stops.</h2></div>
+    <div><p class="eyebrow">06 / Limits</p><h2 id="h-limits">Every verdict says<br>where it stops.</h2></div>
     <p>Proof is called proof. Everything else is labelled, and what a check does not establish is said just as plainly.</p>
   </div>
   <ul class="limits">
@@ -331,6 +314,7 @@ verdict  <i>valid</i></pre>
   <span class="mark xl" aria-hidden="true"><svg class="glyph" viewBox="5.5 3.5 21 22" fill="currentColor" aria-hidden="true"><path d="M22.47 6.88 24.20 8.66Q23.86 8.93 23.10 8.59Q21.89 8.76 20.34 8.88Q18.79 9.01 17.13 9.07Q15.46 9.14 13.89 9.12L13.83 8.80Q14.93 8.66 16.14 8.45Q17.34 8.23 18.52 7.96Q19.70 7.69 20.72 7.41Q21.73 7.12 22.47 6.88ZM14.53 9.29Q15.56 9.69 16.04 10.16Q16.53 10.64 16.61 11.10Q16.70 11.55 16.51 11.86Q16.32 12.16 15.96 12.21Q15.60 12.25 15.24 11.93Q15.20 11.29 14.90 10.58Q14.61 9.88 14.30 9.40ZM17.46 9.06Q18.48 9.52 18.94 10.05Q19.40 10.58 19.44 11.05Q19.49 11.51 19.28 11.82Q19.07 12.12 18.70 12.16Q18.33 12.20 17.97 11.84Q17.99 11.17 17.75 10.42Q17.52 9.67 17.25 9.16ZM17.08 18.18Q18.22 18.16 18.96 18.37Q19.70 18.58 20.09 18.91Q20.48 19.25 20.58 19.61Q20.69 19.97 20.56 20.25Q20.44 20.54 20.13 20.65Q19.81 20.77 19.40 20.60Q19.19 20.18 18.76 19.76Q18.33 19.34 17.86 18.97Q17.38 18.60 16.93 18.37ZM21.87 19.27Q23.03 19.66 23.68 20.18Q24.34 20.69 24.63 21.21Q24.93 21.74 24.93 22.18Q24.93 22.63 24.70 22.91Q24.47 23.20 24.13 23.24Q23.79 23.27 23.41 22.95Q23.35 22.34 23.08 21.70Q22.82 21.05 22.45 20.45Q22.08 19.86 21.68 19.40ZM13.83 12.52H22.47V13.07H14.00ZM14.15 14.72H22.42V15.26H14.32ZM13.89 17.02H22.21V17.58H14.06ZM15.86 19.11 18.01 19.32Q17.99 19.49 17.86 19.62Q17.72 19.74 17.46 19.78V22.34Q17.46 22.50 17.55 22.55Q17.65 22.61 17.99 22.61H19.32Q19.74 22.61 20.06 22.61Q20.38 22.61 20.52 22.59Q20.78 22.59 20.88 22.42Q20.99 22.27 21.14 21.84Q21.30 21.41 21.47 20.86H21.68L21.75 22.46Q22.09 22.59 22.20 22.74Q22.30 22.9 22.30 23.12Q22.30 23.45 22.05 23.67Q21.79 23.90 21.11 24.01Q20.42 24.11 19.19 24.11H17.59Q16.85 24.11 16.48 23.99Q16.11 23.86 15.99 23.55Q15.86 23.24 15.86 22.70ZM21.41 8.97 23.69 9.67Q23.58 10.03 22.97 10.01Q22.49 10.64 21.73 11.40Q20.97 12.16 20.21 12.77H19.87Q20.16 12.24 20.45 11.57Q20.75 10.91 20.99 10.22Q21.24 9.54 21.41 8.97ZM11.62 8.13H11.40L12.39 7.18L14.23 8.93Q14.04 9.16 13.37 9.16Q13.07 9.73 12.60 10.53Q12.14 11.32 11.63 12.12Q11.13 12.92 10.69 13.51Q11.64 14.15 12.23 14.94Q12.82 15.73 13.10 16.52Q13.37 17.31 13.37 18.05Q13.37 19.40 12.79 20.12Q12.21 20.84 10.75 20.90Q10.75 20.63 10.72 20.37Q10.69 20.10 10.64 19.86Q10.58 19.63 10.50 19.51Q10.39 19.38 10.16 19.28Q9.93 19.17 9.63 19.13V18.87Q9.90 18.87 10.26 18.87Q10.62 18.87 10.81 18.87Q11.07 18.87 11.23 18.75Q11.68 18.51 11.68 17.59Q11.68 16.63 11.36 15.58Q11.04 14.54 10.20 13.55Q10.37 13.03 10.57 12.34Q10.77 11.65 10.97 10.88Q11.17 10.11 11.34 9.39Q11.51 8.66 11.62 8.13ZM8.00 8.13V7.37L9.92 8.13H9.67V23.96Q9.67 24.02 9.50 24.16Q9.33 24.30 9.02 24.41Q8.72 24.53 8.30 24.53H8.00ZM8.79 8.13H12.46V8.68H8.79ZM14.27 19.40H14.57Q14.86 20.39 14.77 21.18Q14.68 21.98 14.38 22.52Q14.08 23.05 13.70 23.31Q13.32 23.56 12.86 23.52Q12.40 23.48 12.23 23.10Q12.08 22.74 12.26 22.43Q12.44 22.12 12.78 21.91Q13.30 21.62 13.76 20.92Q14.23 20.22 14.27 19.40ZM21.89 12.52H21.98L22.76 11.67L24.26 13.02Q24.16 13.11 23.98 13.21Q23.80 13.32 23.58 13.36V18.15Q23.56 18.18 23.35 18.27Q23.14 18.35 22.84 18.43Q22.53 18.51 22.21 18.51H21.89Z"/></svg></span>
   <h2 id="h-cta">Start with one private question.</h2>
   <p>Paste code with a secret in it. Your browser withholds the secret, checks NEAR's hardware proof, sends the rest encrypted and checks the model's signature on the answer.</p>
+  <p class="for">For security reviewers, lawyers, founders, and any team with material it cannot upload.</p>
   <div class="actions">
     <a class="button cream" href="try/">Try it in your browser</a>
     <a class="button line" href="proof/">See the proof on NEAR</a>

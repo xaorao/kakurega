@@ -2,7 +2,7 @@
 // tied to the class it sets. A reader who asks for less motion is left alone.
 (() => {
   if (!("IntersectionObserver" in window) || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  const parts = document.querySelectorAll(".band, .try-notes, .proof-steps > li, .try-steps > li");
+  const parts = document.querySelectorAll(".band, .quote, .try-notes, .proof-steps > li, .try-steps > li");
   if (parts.length === 0) return;
   document.documentElement.classList.add("motion");
   const seen = new IntersectionObserver((entries) => {

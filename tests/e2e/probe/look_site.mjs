@@ -29,7 +29,7 @@ mkdirSync(join(repo, "target/look"), { recursive: true });
 const name = `site-${theme}-${width}${path.replace(/\//g, "_")}`;
 await page.screenshot({ path: join(repo, `target/look/${name}fold.png`) });
 // every part is revealed before the long picture is taken
-await page.evaluate(() => document.querySelectorAll(".band").forEach((b) => b.classList.add("in")));
+await page.evaluate(() => document.querySelectorAll(".band, .quote, .proof-steps > li, .try-steps > li, .try-notes").forEach((b) => b.classList.add("in")));
 await page.waitForTimeout(900);
 await page.screenshot({ path: join(repo, `target/look/${name}full.png`), fullPage: true });
 console.log(name, await page.evaluate(() => document.documentElement.scrollWidth > innerWidth ? "SCROLLS SIDEWAYS" : "ok"));
