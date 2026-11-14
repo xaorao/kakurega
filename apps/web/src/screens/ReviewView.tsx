@@ -1,4 +1,5 @@
 import { prComment } from "../prcomment";
+import { SealedRoom } from "../components/SealedRoom";
 import { Code } from "../components/Code";
 import { serverText as serverTextIn } from "../serverText";
 import { sizeText } from "../attach";
@@ -93,6 +94,7 @@ function Protected(props: { job: Job }) {
       <Show when={s()} fallback={<p class="muted">{t("review.when")}</p>}>
         {(sum) => (
           <>
+            <SealedRoom job={props.job} />
             <dl class="tiles shield" aria-label={t("prot.glance")}>
               <div class={sum().withheld.length > 0 ? "tile held" : "tile"}><dt>{t("prot.glance.withheld")}</dt><dd>{sum().withheld.length}</dd></div>
               <div class={sum().injection_suspects.length > 0 ? "tile planted" : "tile"}><dt>{t("prot.glance.planted")}</dt><dd>{sum().injection_suspects.length}</dd></div>
@@ -416,12 +418,12 @@ function Findings(props: { job: Job }) {
                 const [statusLabel, cls, why] = statusText(f.status);
                 return (
                   <article class={`card stack finding ${cls ? "is-" + cls : ""}`}>
+                    <p class="find-id"><code>{f.file}:{f.line}</code></p>
                     <header class="between"><h2><InlineMarkdown text={f.title} /></h2><span class={`chip verdict ${cls}`}>{statusLabel}</span></header>
                     <Show when={why}><p class="muted wrap status-why">{t("status.why", { why: serverText(why) })}</p></Show>
-                    <p><code>{f.file}:{f.line}</code></p>
                     <p><InlineMarkdown text={f.explanation} /></p>
                     <Show when={f.reproducer}>
-                      <details><summary>{t("find.reproIn", { language: languageName(f.language) })}</summary><pre tabindex="0"><Code lang={f.language ?? "python"} text={f.reproducer} /></pre><Show when={f.output}><p class="muted">{t("find.output")}</p><pre tabindex="0"><code>{f.output}</code></pre></Show></details>
+                      <details><summary>{t("find.reproIn", { language: languageName(f.language) })}</summary><div class={f.output ? "proof two" : "proof"}><div class="pane"><pre tabindex="0"><Code lang={f.language ?? "python"} text={f.reproducer} /></pre></div><Show when={f.output}><div class="pane out"><p class="pane-label">{t("find.output")}</p><pre tabindex="0"><code>{f.output}</code></pre></div></Show></div></details>
                     </Show>
                     <Show when={f.sample.length > 0}><p class="muted">{t("find.sample", { count: f.sample.length, files: f.sample.join(", ") })}</p></Show>
                   </article>
