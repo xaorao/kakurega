@@ -2,7 +2,7 @@
 
 **A private AI workspace that proves what it did.** Chat, questions over your documents, meeting notes, memory, a team of experts and a full code review, on your own computer. Keys and passwords are withheld before a model sees them, every finding is reproduced in a sandbox, nothing leaves until you approve the exact bytes, and what leaves is a signed capsule the recipient checks offline. When the model is not on your computer it runs in confidential hardware on NEAR AI Cloud, and its proof is checked before every question.
 
-Built at NEAR HACKATHON · Tracks: Privacy & Private AI (primary), AI Security & Defense · [Live site](https://kakurega-eight.vercel.app) · [For judges](docs/JUDGES.md) · [Every feature](docs/FEATURES.md) · [Limits](docs/LIMITS.md)
+Built at NEAR HACKATHON · Tracks: Privacy & Private AI (primary), AI Security & Defense · [Demo video (2 min)](https://x.com/prateekhh/status/2121602960840888480) · [Live site](https://kakurega-eight.vercel.app) · [For judges](docs/JUDGES.md) · [Every feature](docs/FEATURES.md) · [Limits](docs/LIMITS.md)
 
 <img src="docs/img/hero.png" alt="A review run on NEAR AI Cloud's confidential hardware: a finding the kernel confirmed, with the script it ran and what the script printed." width="100%">
 

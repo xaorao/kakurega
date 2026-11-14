@@ -2,6 +2,8 @@
 
 A private AI workspace that proves what it did: chat, questions over documents, meeting notes, memory, a team of experts and a full code review on the user's own computer. Keys and passwords are withheld before a model sees them, review findings are reproduced in a sandbox, nothing leaves until the owner approves the exact bytes, and what leaves is a signed capsule the recipient checks offline. When the model is not on the user's computer it runs in confidential hardware on NEAR AI Cloud. Working prototype on macOS and Linux; NEAR on testnet. Entry in NEAR HACKATHON, tracks: Privacy & Private AI (primary), AI Security & Defense.
 
+Demo video and post: https://x.com/prateekhh/status/2121602960840888480 . Live site: https://kakurega-eight.vercel.app .
+
 ## Fastest check (no key, no account, no funds)
 
 Run `scripts/judge` (needs Rust; the first build takes several minutes; two of its lines need the network). Expected: seven lines starting `PASS`, then `7 passed, 0 failed, 0 skipped.`, exit code 0.
