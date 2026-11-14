@@ -30,7 +30,7 @@ It prints one line per check and exits 0 only if all pass: the program builds, a
 >
 > With a terminal and nothing built: [ask NEAR yourself](#ask-near-yourself) which model key NEAR's own verifier contract vouched for. It is the key that signed every answer in that capsule.
 
-<img src="docs/img/flow.png" alt="How a result leaves Kakurega. Your files go into a sealed sandbox where the agent works with no network. A gate outside the model then withholds the keys and passwords its detector knows, holds the exact files until you approve their digest, and signs what leaves, so the recipient can check it offline." width="100%">
+<img src="docs/img/flow.png" alt="How a result leaves Kakurega. Your files go into a sealed sandbox where the agent works with no network. A gate outside the model then withholds the keys and passwords its detector knows, holds the exact files until you approve their digest, and signs what leaves, so the recipient can check it offline. Below: the model runs on your computer or in confidential hardware on NEAR AI Cloud, with its proof checked before every question and every answer signed; and on NEAR testnet a record anyone can read holds the model key NEAR's verifier vouched for and, if the owner chooses, a capsule's digest and model signatures." width="100%">
 
 **Contents:** [The problem](#the-problem) · [What it does](#what-it-does) · [How it works](#how-it-works) · [Why NEAR](#why-near) · [What you still have to trust](#what-you-still-have-to-trust) · [Check it yourself](#check-it-yourself) · [Proof of protection](#proof-of-protection) · [Features and state](#features-and-state) · [What it costs](#what-it-costs) · [Run it](#run-it)
 
@@ -180,7 +180,7 @@ A paid plan for teams waits for hosted mode, which is not built.
 
 The client sets aside the agreed amount and names the reviewer, the key that will sign the capsule, the scope and a deadline. The contract pays the reviewer the whole amount only when that reviewer registers a capsule for that order, signed by that key, before the deadline. The 2% fee is paid by the client on top and earned only then; if the deadline passes, anyone can send the amount and the fee back to the client. The rate and the one account fees can go to are fixed when the contract is created: there is no admin and no upgrade, so the fee cannot be raised later. A client paying in USDC first sets a little NEAR aside at the registry (about 0.01, taken back with `kaku chain storage ACCOUNT --withdraw --key-file FILE`) for the order's record, so the registry never pays for anyone's storage.
 
-Why this price: local AI workspaces are free to run (LM Studio is free for work, AnythingLLM's desktop app is free), so the workspace is free too. The fee sits where Kakurega adds what others cannot: a payment released by checked evidence. It is lower than marketplaces that also triage and settle disputes (Immunefi and Sherlock charge 10% on bounty payouts, Upwork about 5% to clients plus a fee to freelancers) and close to escrow services (Escrow.com, about 0.9% to 3.25%), because nobody here judges quality or settles disputes.
+Why this price (our reasoning, not a market study): running a workspace on your own computer costs us nothing, so the workspace is free. The fee sits where Kakurega adds something: a payment released by checked evidence. It is kept low because nobody here judges quality or settles disputes, which is the work marketplaces charge more for.
 
 </details>
 
