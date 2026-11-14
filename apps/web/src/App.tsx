@@ -147,6 +147,15 @@ function Safeguards(props: { config: Config }) {
   );
 }
 
+/** A sidebar link's small line drawing; decoration only, the link's words are its name. */
+function NavIcon(props: { d: string }) {
+  return (
+    <svg class="nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d={props.d} />
+    </svg>
+  );
+}
+
 function Badge(props: { config: Config; modelDown: boolean }) {
   const r = () => props.config.route;
   // the local model's check speaks only for the badge's model when that model is the one on this computer
@@ -430,9 +439,9 @@ export function App() {
         <ShortcutHelp open={helpOpen()} onClose={() => setHelpOpen(false)} />
         <div class="shell" inert={paletteOpen() || helpOpen()}>
           <header class="top">
-            <a class="brand" href="#/">kakurega</a>
+            <a class="brand" href="#/" aria-label="Kakurega"><span class="brand-mark" aria-hidden="true">隠</span><span class="brand-word">Kakurega</span></a>
             <Show when={config()}>{(c) => <Badge config={c()} modelDown={modelDown()} />}</Show>
-            <button class="link" onClick={() => setPaletteOpen(true)} aria-keyshortcuts="Control+Shift+P Meta+Shift+P">{t("palette.open")}</button>
+            <button class="link commands" data-keys={/Mac|iPhone|iPad/.test(navigator.platform) ? "⇧⌘P" : "Ctrl ⇧ P"} onClick={() => setPaletteOpen(true)} aria-keyshortcuts="Control+Shift+P Meta+Shift+P">{t("palette.open")}</button>
             <button class="link" onClick={async () => { await api.logout(); setPaired(false); }}>{t("top.signout")}</button>
           </header>
           <Show when={failures() >= 3}>
@@ -444,13 +453,13 @@ export function App() {
           <button type="button" class="menu-toggle" aria-expanded={menuOpen()} aria-controls="side-nav" onClick={() => setMenuOpen(!menuOpen())}>{t("nav.menu")}</button>
           <div class="body">
             <nav id="side-nav" class={menuOpen() ? "side open" : "side"} aria-label={t("nav.label")}>
-              <a class="primary" href="#/">{t("nav.new")}</a>
-              <a href="#/inbox" class={hash() === "#/inbox" ? "navlink active" : "navlink"}>{t("nav.inbox")}{waiting() > 0 ? <span class="count" aria-label={t("nav.inboxCount", { n: waiting() })}> ({waiting()})</span> : null}</a>
-              <a href="#/chat" class={hash() === "#/chat" ? "navlink active" : "navlink"}>{t("nav.chat")}</a>
-              <a href="#/docs" class={hash() === "#/docs" ? "navlink active" : "navlink"}>{t("nav.docs")}</a>
-              <a href="#/projects" class={hash() === "#/projects" ? "navlink active" : "navlink"}>{t("nav.projects")}</a>
-              <a href="#/team" class={hash().startsWith("#/team") ? "navlink active" : "navlink"}>{t("nav.team")}</a>
-              <a href="#/memory" class={hash() === "#/memory" ? "navlink active" : "navlink"}>{t("nav.memory")}</a>
+              <a class="primary new-review" href="#/"><span>{t("nav.new")}</span></a>
+              <a href="#/inbox" class={hash() === "#/inbox" ? "navlink active" : "navlink"}><NavIcon d="M2.5 9.5h3l1 2h3l1-2h3M2.5 9.5l1.6-5.2a1 1 0 0 1 1-.8h5.8a1 1 0 0 1 1 .8l1.6 5.2v3a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1z" />{t("nav.inbox")}{waiting() > 0 ? <span class="count" aria-label={t("nav.inboxCount", { n: waiting() })}>{waiting()}</span> : null}</a>
+              <a href="#/chat" class={hash() === "#/chat" ? "navlink active" : "navlink"}><NavIcon d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5v-2.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z" />{t("nav.chat")}</a>
+              <a href="#/docs" class={hash() === "#/docs" ? "navlink active" : "navlink"}><NavIcon d="M4 2h5.5L12 4.5V14H4zM9.5 2v2.5H12M6 8h4M6 10.5h4" />{t("nav.docs")}</a>
+              <a href="#/projects" class={hash() === "#/projects" ? "navlink active" : "navlink"}><NavIcon d="M2 4.5a1 1 0 0 1 1-1h3.5l1.5 1.5h5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z" />{t("nav.projects")}</a>
+              <a href="#/team" class={hash().startsWith("#/team") ? "navlink active" : "navlink"}><NavIcon d="M6 7.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM2.5 13c0-2 1.6-3.5 3.5-3.5S9.5 11 9.5 13M11 4a1.8 1.8 0 0 1 0 3.5M11.5 9.7c1.2.4 2 1.6 2 3.3" />{t("nav.team")}</a>
+              <a href="#/memory" class={hash() === "#/memory" ? "navlink active" : "navlink"}><NavIcon d="M8 2.5v11M3 5.5a5 5 0 0 1 10 0v5a5 5 0 0 1-10 0z" />{t("nav.memory")}</a>
               {/* everything else stays one click away; the group opens by itself when one of its screens is shown */}
               <details id="nav-more" class="nav-more" open={moreOpen() ?? inMore()} onToggle={(e) => { if (e.currentTarget.open !== (moreOpen() ?? inMore())) setMoreOpen(e.currentTarget.open); }}>
                 <summary>{t("nav.more")}</summary>

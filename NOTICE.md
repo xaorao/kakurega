@@ -82,7 +82,7 @@ Fields in saved prompts (`apps/web/src/promptVars.ts`, `crates/kk-tui/src/prompt
 
 The switch for the screen-picture key in the desktop menu (`apps/desktop/src/main.mjs`, `apps/desktop/src/tray.mjs`): turning a global key off so other apps keep it, and saying when another app already holds it, follow the Shortcut setting of Aftercall (Don-Vicks/aftercall at a367ec7, `apps/desktop/src/ShortcutSettings.tsx`, MIT, Copyright (c) 2026 Victor Shallangwa). Idea only; no code was taken.
 
-Typefaces in the web app (`apps/web`): Outfit (Copyright 2021 The Outfit Project Authors) and JetBrains Mono (Copyright 2020 The JetBrains Mono Project Authors), both under the SIL Open Font License 1.1, taken unchanged from the `@fontsource/outfit` and `@fontsource/jetbrains-mono` packages (version 5.3.0). The licence texts ship with the app in `apps/web/public/licenses/`.
+Typefaces in the web app (`apps/web/src/fonts`): Geist and Geist Mono (Copyright 2024 The Geist Project Authors), Instrument Serif (Copyright 2022 The Instrument Serif Project Authors) and, for the three characters of the mark only, Noto Serif JP (Copyright 2012 Google Inc.), all under the SIL Open Font License 1.1, taken unchanged as Latin subsets from Google Fonts. The licence texts ship with the app in `apps/web/public/licenses/`.
 
 Signature checking fallback in the recipient's checker (`packages/verifier-js`): `@noble/ed25519` 3.2.0 by Paul Miller (MIT, https://github.com/paulmillr/noble-ed25519), used unchanged as a dependency when a browser's Web Crypto has no Ed25519.
 

@@ -1,65 +1,88 @@
 :root {
-  --ink: #0a0a0a;
-  --stone: #1d1d1f;
-  --graphite: #6b7280;
-  --fog: #9ca3af;
-  --line: #e5e7eb;
-  --veil: #f8fafc;
-  --halo: #fafaf7;
+  --ink: #16150f;
+  --stone: #2e2c25;
+  --graphite: #5e5a52;
+  --fog: #8a8577;
+  --line: #e3ded2;
+  --line-soft: #efebe2;
+  --veil: #f4f1ea;
+  --halo: #fbfaf7;
   --paper: #ffffff;
-  --cipher: #059669;
-  --cipher-text: #047857;
-  --cipher-bg: #ecfdf5;
-  --redline: #c2410c;
-  --redline-bg: #fff7ed;
+  --side: #efece4;
+  --cipher: #3f7d4e;
+  --cipher-text: #2f5e3b;
+  --cipher-bg: #eaf1e6;
+  --redline: #c23b26;
+  --vermilion: #c23b26;
+  --redline-bg: #faedea;
   --on-redline: #ffffff;
-  --amber: #a16207;
-  --amber-bg: #fefce8;
+  --amber: #86590f;
+  --amber-bg: #fbf3e1;
+  --term: #16150f;
+  --term-2: #1e1d19;
+  --term-ink: #d9d4c7;
+  --term-bad: #e2654e;
   --radius-s: 8px;
   --radius-m: 12px;
-  --radius-l: 20px;
-  --font-sans: "Outfit", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --radius-l: 16px;
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-display: "Instrument Serif", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --font-mark: "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", serif;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --ink: #f4f4f5;
-    --stone: #e4e4e7;
-    --graphite: #a1a1aa;
-    --fog: #71717a;
-    --line: #27272a;
-    --veil: #111113;
-    --halo: #0b0b0c;
-    --paper: #09090b;
-    --cipher: #34d399;
-    --cipher-text: #34d399;
-    --cipher-bg: #052e22;
-    --redline: #fb923c;
-    --redline-bg: #2a1305;
-    --on-redline: #09090b;
-    --amber: #facc15;
-    --amber-bg: #231a02;
+    --ink: #f2efe8;
+    --stone: #e4e0d6;
+    --graphite: #a49f93;
+    --fog: #6f6a5f;
+    --line: #2f2d29;
+    --line-soft: #262421;
+    --veil: #23211e;
+    --halo: #1b1a18;
+    --paper: #141311;
+    --side: #211f1c;
+    --cipher: #8fd19e;
+    --cipher-text: #a9ddb4;
+    --cipher-bg: #1c2a20;
+    --redline: #f08a74;
+    --vermilion: #e5482f;
+    --redline-bg: #2b1512;
+    --on-redline: #0c0b0a;
+    --amber: #e7b04a;
+    --amber-bg: #2a2110;
+    --term: #0f0e0d;
+    --term-2: #171614;
+    --term-ink: #d9d4c7;
+    --term-bad: #f08a74;
   }
 }
 :root[data-theme="dark"] {
-    --ink: #f4f4f5;
-    --stone: #e4e4e7;
-    --graphite: #a1a1aa;
-    --fog: #71717a;
-    --line: #27272a;
-    --veil: #111113;
-    --halo: #0b0b0c;
-    --paper: #09090b;
-    --cipher: #34d399;
-    --cipher-text: #34d399;
-    --cipher-bg: #052e22;
-    --redline: #fb923c;
-    --redline-bg: #2a1305;
-    --on-redline: #09090b;
-    --amber: #facc15;
-    --amber-bg: #231a02;
-}
+    --ink: #f2efe8;
+    --stone: #e4e0d6;
+    --graphite: #a49f93;
+    --fog: #6f6a5f;
+    --line: #2f2d29;
+    --line-soft: #262421;
+    --veil: #23211e;
+    --halo: #1b1a18;
+    --paper: #141311;
+    --side: #211f1c;
+    --cipher: #8fd19e;
+    --cipher-text: #a9ddb4;
+    --cipher-bg: #1c2a20;
+    --redline: #f08a74;
+    --vermilion: #e5482f;
+    --redline-bg: #2b1512;
+    --on-redline: #0c0b0a;
+    --amber: #e7b04a;
+    --amber-bg: #2a2110;
+    --term: #0f0e0d;
+    --term-2: #171614;
+    --term-ink: #d9d4c7;
+    --term-bad: #f08a74;
+  }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--halo); color: var(--ink); font-family: var(--font-sans); font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
@@ -540,11 +563,6 @@ button.danger:not(.linklike) { border-color: var(--redline); }
 .side h2 { margin: 16px 0 4px; }
 .side > :not(.navlink):not(h2) { margin-block: 6px; }
 .navlink { padding: 6px 12px; }
-@media (min-width: 861px) {
-  .side { position: sticky; top: 57px; align-self: start; max-height: calc(100vh - 57px); overflow-y: auto; }
-  /* the menu's column keeps its colour and edge all the way down, below the menu itself */
-  .body { background: linear-gradient(to right, var(--paper) 279px, var(--line) 279px, var(--line) 280px, transparent 280px); }
-}
 /* the message box's one toolbar: attach on the left, clear and send on the right */
 .attach .actions { align-items: center; }
 .send-group { margin-left: auto; display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -618,7 +636,6 @@ pre.pr-comment { font-size: 13px; }
 .side-prefs select { width: 100%; }
 .safeguards { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 4px 0; }
 .safeguards .badge { font-size: 12px; }
-@media (min-width: 861px) { .side { position: sticky; top: 53px; height: calc(100vh - 53px); overflow: auto; } }
 
 /* the start: a greeting, one box to ask in, and four ways to begin */
 .start { display: flex; flex-direction: column; gap: 14px; padding: clamp(8px, 4vh, 40px) 0 8px; }
@@ -782,42 +799,13 @@ textarea::placeholder, input::placeholder { color: var(--fog); }
   .tab { transition: color 0.15s, border-color 0.2s; }
 }
 
-/* PREMIUM PASS on the review screens: the thing that matters on each is the largest thing on it. */
-.steps { gap: 0; }
-.steps li { grid-template-columns: 40px auto 1fr; column-gap: 14px; align-items: center; padding: 14px 4px; border-bottom: 1px solid var(--line); font-size: 17px; }
-.steps li:last-child { border-bottom: 0; }
-.steps .mark { width: 32px; height: 32px; font-size: 15px; border-width: 2px; }
-.steps li.active { background: linear-gradient(90deg, var(--veil), transparent); border-radius: 10px; }
-.steps .sub { font-size: 14px; }
-.steps .spin { width: 16px; height: 16px; }
-.tiles.shield { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.tiles.shield .tile { padding: 16px 18px; background: var(--paper); }
-.tiles.shield .tile dd { font-size: 40px; line-height: 1; letter-spacing: -0.03em; }
-.tiles.shield .tile dt { font-size: 13.5px; margin-top: 6px; }
-.tiles.shield .tile.held { border-color: var(--ink); box-shadow: inset 0 -4px 0 var(--ink); }
-.tiles.shield .tile.planted { border-color: var(--amber); box-shadow: inset 0 -4px 0 var(--amber); }
-.prot-hidden { border-left: 4px solid var(--ink); }
-.prot-planted { border-left: 4px solid var(--amber); }
-.held-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 17px; }
-.held-row code { font-size: 17px; }
-/* what was in the file is not shown, here or to the agent: the bar of the mark stands in for it */
-.redacted { display: inline-block; width: 150px; height: 16px; border-radius: 3px; background: var(--ink); }
-.finding { border-left: 4px solid var(--line); }
-.finding.is-ok { border-left-color: var(--cipher); }
-.finding.is-bad { border-left-color: var(--redline); }
-.finding > header h2 { font-size: 19px; }
-.chip.verdict { font-size: 13.5px; padding: 3px 12px; font-weight: 500; }
+/* what was in a withheld file is not shown, here or to the agent: a bar stands in for it */
+.redacted { display: inline-block; width: 150px; height: 14px; }
+.held-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.tiles.shield { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .chip.verdict.ok::before { content: "✓ "; }
-.delivered-line { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 17px; }
-.seal { flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--cipher); display: inline-flex; align-items: center; justify-content: center; box-shadow: inset 0 0 0 3px rgba(0, 0, 0, 0.12); }
-.seal > span { width: 16px; height: 5px; border-radius: 1.5px; background: var(--paper); }
 @keyframes kk-redact { from { width: 0; } to { width: 150px; } }
-@keyframes kk-seal { 0% { transform: scale(2.6); opacity: 0; } 55% { transform: scale(0.9); opacity: 1; } 100% { transform: scale(1); } }
 @media (prefers-reduced-motion: no-preference) {
   .redacted { animation: kk-redact 0.5s cubic-bezier(0.7, 0, 0.2, 1) 0.25s both; }
-  .seal { animation: kk-seal 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
-  .tiles.shield .tile { animation: kk-rise 0.4s ease both; }
-  .tiles.shield .tile:nth-child(2) { animation-delay: 0.07s; }
-  .tiles.shield .tile:nth-child(3) { animation-delay: 0.14s; }
 }
-@media (max-width: 640px) { .tiles.shield { grid-template-columns: 1fr; } .tiles.shield .tile dd { font-size: 30px; } .redacted { width: 90px; } }
+@media (max-width: 640px) { .tiles.shield { grid-template-columns: 1fr; } .redacted { width: 90px; } }

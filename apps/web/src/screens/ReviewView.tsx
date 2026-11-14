@@ -517,6 +517,7 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
               <For each={r().not_confirmed}>{(n) => <p class="muted">{n.title}: {t("review.whyChecker")} <span lang="en">{n.why}</span></p>}</For>
             </div>
           }>
+            <div class="release-grid"><div class="release-main stack">
             <div class="card release-summary" role="region" aria-label={t("rel.summary.label")}>
               <p>
                 <strong>{t((r().files ?? []).length === 1 ? "rel.summary.files.one" : "rel.summary.files", { n: (r().files ?? []).length, size: sizeText((r().files ?? []).reduce((a, f) => a + f.bytes, 0)), recipient: r().recipient ?? "" })}</strong>
@@ -569,8 +570,14 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
                 </div>
               )}
             </Show>
+            </div><div class="approval-rail">
             <div class="card stack" id="approval-card" aria-live="polite">
               <h2>{t("appr.title")}</h2>
+              <ol class="appr-steps" aria-label={t("appr.steps")}>
+                <For each={[["appr.step.request", approval().state !== "none" || !!props.job.delivered], ["appr.step.approve", approval().state === "approved" || !!props.job.delivered], ["appr.step.sign", !!props.job.delivered], ["appr.step.delivered", !!props.job.delivered]] as [Key, boolean][]}>
+                  {([label, done]) => <li class={done ? "done" : ""}><span class="mark" aria-hidden="true">{done ? "✓" : ""}</span>{t(label)}<Show when={done}><span class="sr"> ({t("appr.step.done")})</span></Show></li>}
+                </For>
+              </ol>
               <Show when={!props.job.delivered && (approval().state === "none" || approval().state === "waiting" || approval().state === "approved")}>
                 <Show when={left().state === "expired"}>
                   <p role="alert" class="bad">{t("appr.expired")}</p>
@@ -600,7 +607,7 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
               <Show when={props.job.delivered}>
                 {(d) => (
                   <div class="stack">
-                    <p class="ok delivered-line"><span class="seal" aria-hidden="true"><span /></span>{rich("appr.delivered", { name: d().name, signer: d().signer.slice(0, 24) + "…" })}</p>
+                    <div class="sealed"><span class="stamp" aria-hidden="true">隠</span><p class="delivered-line">{rich("appr.delivered", { name: d().name, signer: d().signer.slice(0, 24) + "…" })}</p></div>
                     <p><a class="button" href={`/api/jobs/${props.job.id}/capsule`} download="review.kkg">{t("appr.download")}</a></p>
                     <p class="muted">{rich("appr.giveRecipient")}</p>
                     <PrComment files={r().files ?? []} digest={r().digest ?? ""} />
@@ -610,6 +617,7 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
               </Show>
               <Show when={error()}><p role="alert" class="bad">{error()}</p></Show>
             </div>
+            </div></div>
           </Show>
         )}
       </Show>
@@ -654,11 +662,11 @@ export function ReviewView(props: { id: string; config: Config; onUpdate?: () =>
   return (
     <Show when={job()} fallback={<p class="muted">{t("review.loading")}</p>}>
       {(j) => (
-        <section class="stack wide" aria-labelledby="h-job">
-          <header class="between">
+        <section class="stack review" aria-labelledby="h-job">
+          <header class="between review-head">
             <div>
               <h1 id="h-job">{j().repo.split("/").pop()}</h1>
-              <p class="muted">{t("review.forRecipient", { recipient: j().recipient })}<span class={`state-text ${j().state}`}>{t(`state.${j().state}` as Key)}</span></p>
+              <p class="muted crumb">{t("review.forRecipient", { recipient: j().recipient })}<span class={`state-text ${j().state}`}>{t(`state.${j().state}` as Key)}</span></p>
             </div>
           </header>
           <div

@@ -1,0 +1,7 @@
+/* The typefaces, bundled with the page (SIL Open Font License 1.1; texts in public/licenses): nothing is fetched from elsewhere. */
+@font-face { font-family: "Geist"; font-style: normal; font-weight: 300 600; font-display: swap; src: url("./fonts/geist-normal-300-600.woff2") format("woff2"); }
+@font-face { font-family: "Geist Mono"; font-style: normal; font-weight: 400 500; font-display: swap; src: url("./fonts/geist-mono-normal-400-500.woff2") format("woff2"); }
+@font-face { font-family: "Instrument Serif"; font-style: normal; font-weight: 400; font-display: swap; src: url("./fonts/instrument-serif-normal-400.woff2") format("woff2"); }
+@font-face { font-family: "Instrument Serif"; font-style: italic; font-weight: 400; font-display: swap; src: url("./fonts/instrument-serif-italic-400.woff2") format("woff2"); }
+/* only the three characters of the mark */
+@font-face { font-family: "Noto Serif JP"; font-style: normal; font-weight: 600; font-display: swap; src: url("./fonts/noto-serif-jp-mark-600.woff2") format("woff2"); unicode-range: U+96A0, U+308C, U+5BB6; }
