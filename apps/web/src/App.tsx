@@ -466,19 +466,19 @@ export function App() {
               <details id="nav-more" class="nav-more" open={moreOpen() ?? inMore()} onToggle={(e) => { if (e.currentTarget.open !== (moreOpen() ?? inMore())) setMoreOpen(e.currentTarget.open); }}>
                 <summary>{t("nav.more")}</summary>
                 <h2>{t("nav.group.work")}</h2>
-                <a href="#/meeting" class={hash() === "#/meeting" ? "navlink active" : "navlink"}>{t("nav.meeting")}</a>
-                <a href="#/explore" class={hash() === "#/explore" ? "navlink active" : "navlink"}>{t("nav.explore")}</a>
-                <a href="#/code" class={hash() === "#/code" ? "navlink active" : "navlink"}>{t("nav.code")}</a>
-                <a href="#/roundtable" class={hash() === "#/roundtable" ? "navlink active" : "navlink"}>{t("nav.roundtable")}</a>
-                <a href="#/handoff" class={hash() === "#/handoff" ? "navlink active" : "navlink"}>{t("nav.handoff")}</a>
+                <a href="#/meeting" class={hash() === "#/meeting" ? "navlink active" : "navlink"}><NavIcon d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5v-2.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1zM5 7h6M5 9h4" />{t("nav.meeting")}</a>
+                <a href="#/explore" class={hash() === "#/explore" ? "navlink active" : "navlink"}><NavIcon d="M7 12A5 5 0 1 0 7 2a5 5 0 0 0 0 10zM10.6 10.6 14 14" />{t("nav.explore")}</a>
+                <a href="#/code" class={hash() === "#/code" ? "navlink active" : "navlink"}><NavIcon d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5M9 3 7 13" />{t("nav.code")}</a>
+                <a href="#/roundtable" class={hash() === "#/roundtable" ? "navlink active" : "navlink"}><NavIcon d="M8 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM3.5 9.5a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6zM12.5 9.5a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z" />{t("nav.roundtable")}</a>
+                <a href="#/handoff" class={hash() === "#/handoff" ? "navlink active" : "navlink"}><NavIcon d="M9 3h4v4M13 3 7.5 8.5M11 9.5V13H3V5h3.5" />{t("nav.handoff")}</a>
                 <h2>{t("nav.group.knows")}</h2>
-                <a href="#/instructions" class={hash() === "#/instructions" ? "navlink active" : "navlink"}>{t("nav.instructions")}</a>
-                <a href="#/skills" class={hash() === "#/skills" ? "navlink active" : "navlink"}>{t("nav.skills")}</a>
+                <a href="#/instructions" class={hash() === "#/instructions" ? "navlink active" : "navlink"}><NavIcon d="M3 4h10M3 8h10M3 12h6" />{t("nav.instructions")}</a>
+                <a href="#/skills" class={hash() === "#/skills" ? "navlink active" : "navlink"}><NavIcon d="M8 2l1.6 4.4L14 8l-4.4 1.6L8 14l-1.6-4.4L2 8l4.4-1.6z" />{t("nav.skills")}</a>
                 <h2>{t("nav.group.trust")}</h2>
-                <a href="#/break" class={hash() === "#/break" ? "navlink active" : "navlink"}>{t("break.title")}</a>
-                <a href="#/agent" class={hash() === "#/agent" ? "navlink active" : "navlink"}>{t("nav.agent")}</a>
-                <a href="#/activity" class={hash() === "#/activity" ? "navlink active" : "navlink"}>{t("nav.activity")}</a>
-                <a href="/verify?from=workspace" class="navlink">{t("nav.verify")}</a>
+                <a href="#/break" class={hash() === "#/break" ? "navlink active" : "navlink"}><NavIcon d="M8 2l5 2v4c0 3-2.2 5-5 6-2.8-1-5-3-5-6V4z" />{t("break.title")}</a>
+                <a href="#/agent" class={hash() === "#/agent" ? "navlink active" : "navlink"}><NavIcon d="M6 2v3M10 2v3M4 5h8v3a4 4 0 0 1-8 0zM8 12v2" />{t("nav.agent")}</a>
+                <a href="#/activity" class={hash() === "#/activity" ? "navlink active" : "navlink"}><NavIcon d="M2 8h3l2-4 3 8 2-4h2" />{t("nav.activity")}</a>
+                <a href="/verify?from=workspace" class="navlink"><NavIcon d="M8 14A6 6 0 1 0 8 2a6 6 0 0 0 0 12zM5.5 8l2 2 3.5-4" />{t("nav.verify")}</a>
               </details>
               <label class="sr" for="search">{t("nav.search.label")}</label>
               <input
@@ -505,8 +505,8 @@ export function App() {
                 </For>
               </ul>
               <div class="side-foot">
-                <a href="#/privacy" class={hash() === "#/privacy" ? "navlink active" : "navlink"}>{t("nav.privacy")}</a>
-                <a href="#/settings" class={hash() === "#/settings" ? "navlink active" : "navlink"}>{t("nav.settings")}</a>
+                <a href="#/privacy" class={hash() === "#/privacy" ? "navlink active" : "navlink"}><NavIcon d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8zM8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />{t("nav.privacy")}</a>
+                <a href="#/settings" class={hash() === "#/settings" ? "navlink active" : "navlink"}><NavIcon d="M3 5h6M12 5h1M3 11h1M7 11h6M10.5 3.5v3M5.5 9.5v3" />{t("nav.settings")}</a>
                 <Show when={config()}>{(c) => <Safeguards config={c()} />}</Show>
                 <div class="side-prefs"><LanguagePicker /><ThemePicker /></div>
               </div>

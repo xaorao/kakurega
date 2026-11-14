@@ -43,16 +43,6 @@ export function Projects() {
     <section class="stack wide" aria-labelledby="h-proj">
       <h1 id="h-proj">{t("proj.title")}</h1>
       <Lead text={t("proj.lead")} />
-      <form class="card stack" onSubmit={(e) => { e.preventDefault(); void change({ name: name().trim(), ...(folder().trim() ? { folder: folder().trim() } : {}) }, t("proj.saved")); }}>
-        <h2>{t("proj.new")}</h2>
-        <label for="proj-name">{t("proj.name")}</label>
-        <input id="proj-name" value={name()} maxlength="80" placeholder={t("proj.nameHint")} onInput={(e) => setName(e.currentTarget.value)} />
-        <label for="proj-folder">{t("proj.folder")}</label>
-        <input id="proj-folder" value={folder()} placeholder={t("proj.folderHint")} spellcheck={false} autocomplete="off" onInput={(e) => setFolder(e.currentTarget.value)} />
-        <div class="actions"><button class="primary" type="submit" disabled={name().trim().length === 0}>{t("proj.save")}</button></div>
-        <Show when={said()}><p role="status" class="ok">{said()}</p></Show>
-        <Show when={bad()}><p role="alert" class="bad">{bad()}</p></Show>
-      </form>
       <Show when={list()} fallback={<p class="muted" role={list.error ? "alert" : "status"}>{list.error ? t("proj.error") : t("review.loading")}</p>}>
         {(rows) => (
           <ul class="plain stack" id="proj-list" aria-label={t("proj.title")}>
@@ -87,6 +77,16 @@ export function Projects() {
           </ul>
         )}
       </Show>
+      <form class="card stack" onSubmit={(e) => { e.preventDefault(); void change({ name: name().trim(), ...(folder().trim() ? { folder: folder().trim() } : {}) }, t("proj.saved")); }}>
+        <h2>{t("proj.new")}</h2>
+        <label for="proj-name">{t("proj.name")}</label>
+        <input id="proj-name" value={name()} maxlength="80" placeholder={t("proj.nameHint")} onInput={(e) => setName(e.currentTarget.value)} />
+        <label for="proj-folder">{t("proj.folder")}</label>
+        <input id="proj-folder" value={folder()} placeholder={t("proj.folderHint")} spellcheck={false} autocomplete="off" onInput={(e) => setFolder(e.currentTarget.value)} />
+        <div class="actions"><button class="primary" type="submit" disabled={name().trim().length === 0}>{t("proj.save")}</button></div>
+        <Show when={said()}><p role="status" class="ok">{said()}</p></Show>
+        <Show when={bad()}><p role="alert" class="bad">{bad()}</p></Show>
+      </form>
     </section>
   );
 }
