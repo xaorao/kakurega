@@ -388,7 +388,8 @@ os.close(s3)
 screen3 = Screen(32, 110)
 dec3 = codecs.getincrementaldecoder("utf8")(errors="replace")
 t_end = time.time() + 40
-while time.time() < t_end and "resumecanary words" not in screen3.text():
+# the whole conversation is kept now, so the last line of the opened view is waited for, not its first words
+while time.time() < t_end and not ("resumecanary words" in screen3.text() and "Opened the kept conversation" in screen3.text()):
     r, _, _ = select.select([m3], [], [], 0.2)
     if r:
         try:
@@ -396,7 +397,7 @@ while time.time() < t_end and "resumecanary words" not in screen3.text():
         except OSError:
             break
 check("launching with --resume shows the newest kept conversation, with the message kept earlier", "resumecanary words" in screen3.text())
-check("and says it was opened from the store", "Opened the kept conversation" in screen3.text())
+check("and says it was opened from the store", "Opened the kept conversation" in screen3.text(), screen3.text()[-1500:])
 os.write(m3, b"/quit\r")
 t_end = time.time() + 20
 while p3.poll() is None and time.time() < t_end:
@@ -561,7 +562,7 @@ if kept:
     os.write(m, b"\x1b")
     pump_rw(15, "Go back to before one of your messages")
     listed = scr.text()
-    check("Esc twice lists the owner's messages, numbered", "Go back to before one of your messages" in listed and "resumecanary words" in listed and "message 1" in listed, listed[-600:])
+    check("Esc twice lists the owner's messages, numbered", "Go back to before one of your messages" in listed and "resumecanary words" in listed and re.search(r"message \d+", listed) is not None, listed[-900:])
     os.write(m, b"\r")
     pump_rw(30, "Opened the kept conversation")
     pump_rw(1.0)
