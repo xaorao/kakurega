@@ -301,3 +301,28 @@ ul.plain.start-ways { grid-template-columns: repeat(3, minmax(0, 1fr)); width: 1
 .composer .icon-btn, .composer .attach .actions > button.icon-btn:not(.primary) { width: 40px; height: 40px; min-height: 40px; padding: 0; display: inline-grid; place-items: center; border: 0; border-radius: 10px; background: transparent; color: var(--graphite); }
 .composer .icon-btn:hover:not(:disabled) { background: var(--veil); color: var(--ink); }
 .composer .route-line { margin: 0; }
+
+/* the mark is a drawing, sized by the box it sits in */
+.glyph { width: 66%; height: 66%; display: block; }
+.stamp .glyph { width: 58%; height: 58%; }
+
+/* a finished step says what it did; then where to go */
+.steps li.next-row { border-bottom: 0; padding-top: 26px; }
+.steps li.next-row .mark { visibility: hidden; }
+.steps li.next-row .actions { grid-column: 2 / -1; flex-direction: row; margin: 0; gap: 10px; }
+/* the names behind the red and amber dots */
+.room-names { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-width: 300px; }
+.room-names li { display: flex; justify-content: space-between; gap: 14px; font-family: var(--font-mono); font-size: 11.5px; color: #e4e0d6; }
+.room-names li span:first-child { overflow-wrap: anywhere; }
+.room-names li.withheld span:last-child { color: #f08a74; }
+.room-names li.planted span:last-child { color: #e7b04a; }
+.room-hover { margin-top: 12px; }
+.review-head .crumb { gap: 8px; }
+
+/* chat without a page header: the screen is the conversation. The title stays for screen readers and the tab bar. */
+.chat-page > h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.chat-page > .lead-block .lead, .chat-page > .chat-note, .chat-page > .chat-given > summary { font-size: 12.5px; color: var(--graphite); }
+.chat-page > .lead-block, .chat-page > .chat-note, .chat-page > .chat-given { text-align: center; margin-inline: auto; max-width: 70ch; }
+.chat-page > .chat-given > summary { justify-content: center; font-weight: 400; margin: 0; }
+.chat-page > .lead-block .lead { max-width: none; }
+.composer .composer-hint { font-size: 11.5px; }

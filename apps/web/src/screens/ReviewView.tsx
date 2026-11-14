@@ -1,4 +1,5 @@
 import { prComment } from "../prcomment";
+import { Glyph } from "../components/Glyph";
 import { SealedRoom } from "../components/SealedRoom";
 import { Code } from "../components/Code";
 import { serverText as serverTextIn } from "../serverText";
@@ -39,7 +40,18 @@ function statusText(s: string): [string, string, string] {
   return [t("status.failed.short"), "bad", s.replace(/^failed: ?/, "")];
 }
 
-function Progress(props: { job: Job }) {
+/** What a finished step did, said as a result. The words the service sent while the step ran are kept for a running one. */
+function doneWords(stage: string, job: Job): string {
+  const said = job.events.filter((e) => e.stage === stage).map((e) => e.detail).join(" ");
+  if (stage === "import") return job.summary ? t(job.summary.imported === 1 ? "stage.import.done.one" : "stage.import.done", { n: job.summary.imported }) : said;
+  if (stage === "protect") return said;
+  if (stage === "review") return t("stage.review.done");
+  if (stage === "check") return /nothing to rerun/.test(said) ? t("stage.check.none") : t("stage.check.done");
+  if (stage === "release") return t("stage.release.done");
+  return said;
+}
+
+function Progress(props: { job: Job; go: (tab: "findings" | "release") => void }) {
   const [againError, setAgainError] = createSignal("");
   // "" until the owner asks; then whether it ends at once or only at the end of the step in progress
   const [stopping, setStopping] = createSignal<"" | "now" | "late">("");
@@ -62,11 +74,17 @@ function Progress(props: { job: Job }) {
             <li class={done() ? "done" : failed() ? "fail" : active() ? "active" : ""}>
               <span class="mark" aria-hidden="true">{done() ? "✓" : failed() ? "✕" : active() ? <span class="spin" /> : ""}</span>
               <span>{t(label)}</span>
-              <span class="sub">{props.job.events.filter((e) => e.stage === key).map((e) => e.detail).join(" ")}</span>
+              <span class="sub">{done() ? doneWords(key, props.job) : props.job.events.filter((e) => e.stage === key).map((e) => e.detail).join(" ")}</span>
             </li>
           );
         }}
       </For>
+      <Show when={finished() && props.job.state !== "failed" && props.job.summary}>
+        <li class="next-row">
+          <span class="mark" aria-hidden="true"></span>
+          <span class="actions"><button type="button" class="primary" onClick={() => props.go("findings")}>{t("progress.toFindings")}</button><button type="button" onClick={() => props.go("release")}>{t("progress.toRelease")}</button></span>
+        </li>
+      </Show>
       <Show when={props.job.state === "running"}>
         <li class="stop-row">
           <span class="mark" aria-hidden="true"></span>
@@ -94,12 +112,12 @@ function Protected(props: { job: Job }) {
       <Show when={s()} fallback={<p class="muted">{t("review.when")}</p>}>
         {(sum) => (
           <>
-            <SealedRoom job={props.job} />
             <dl class="tiles shield" aria-label={t("prot.glance")}>
               <div class={sum().withheld.length > 0 ? "tile held" : "tile"}><dt>{t("prot.glance.withheld")}</dt><dd>{sum().withheld.length}</dd></div>
               <div class={sum().injection_suspects.length > 0 ? "tile planted" : "tile"}><dt>{t("prot.glance.planted")}</dt><dd>{sum().injection_suspects.length}</dd></div>
               <div class="tile"><dt>{t("prot.glance.files")}</dt><dd>{sum().files_in_manifest}</dd></div>
             </dl>
+            <SealedRoom job={props.job} />
             <div class="card stack prot-hidden">
               <h2>{t("prot.cannotSee")}</h2>
               <Show when={sum().withheld.length > 0} fallback={<p class="muted">{t("prot.noSecrets")}</p>}>
@@ -609,7 +627,7 @@ function ReleaseTab(props: { job: Job; onChange: () => void }) {
               <Show when={props.job.delivered}>
                 {(d) => (
                   <div class="stack">
-                    <div class="sealed"><span class="stamp" aria-hidden="true">隠</span><p class="delivered-line">{rich("appr.delivered", { name: d().name, signer: d().signer.slice(0, 24) + "…" })}</p></div>
+                    <div class="sealed"><span class="stamp" aria-hidden="true"><Glyph /></span><p class="delivered-line">{rich("appr.delivered", { name: d().name, signer: d().signer.slice(0, 24) + "…" })}</p></div>
                     <p><a class="button" href={`/api/jobs/${props.job.id}/capsule`} download="review.kkg">{t("appr.download")}</a></p>
                     <p class="muted">{rich("appr.giveRecipient")}</p>
                     <PrComment files={r().files ?? []} digest={r().digest ?? ""} />
@@ -694,7 +712,7 @@ export function ReviewView(props: { id: string; config: Config; onUpdate?: () =>
             <For each={tabs}>{([k, label]) => <button role="tab" tabindex={tab() === k ? 0 : -1} aria-selected={tab() === k} class={tab() === k ? "tab active" : "tab"} onClick={() => setTab(k)}>{t(label)}</button>}</For>
           </div>
           <div role="tabpanel">
-            <Show when={tab() === "progress"}><Progress job={j()} /></Show>
+            <Show when={tab() === "progress"}><Progress job={j()} go={(to) => setTab(to)} /></Show>
             <Show when={tab() === "protected"}><Protected job={j()} /></Show>
             <Show when={tab() === "source"}><Show when={j().summary} fallback={<p class="muted">{t("review.when")}</p>}><Source job={j()} /></Show></Show>
             <Show when={tab() === "findings"}><Show when={j().summary} fallback={<p class="muted">{t("review.when")}</p>}><Findings job={j()} /></Show></Show>

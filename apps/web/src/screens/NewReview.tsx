@@ -1,4 +1,5 @@
 import { Lead } from "../components/Lead";
+import { Glyph } from "../components/Glyph";
 import { LoadState } from "../components/LoadState";
 import { ChosenFolder } from "../components/ChosenFolder";
 import { SampleCard } from "../components/SampleCard";
@@ -170,7 +171,7 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
   return (
     <section class="stack wide" aria-labelledby="h-new">
       <div class="start">
-        <span class="brand-mark hero" aria-hidden="true">隠</span>
+        <span class="brand-mark hero" aria-hidden="true"><Glyph /></span>
         <h1 id="h-new" class="start-hello">{greeting()}</h1>
         <p class="start-sub">{t("start.sub")}</p>
         <ul class="plain start-ways" aria-label={t("start.ways")}>

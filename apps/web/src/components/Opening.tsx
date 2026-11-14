@@ -1,3 +1,4 @@
+import { Glyph } from "./Glyph";
 import { createSignal, onMount, Show } from "solid-js";
 
 /** The opening: the mark lands like a seal, the name is uncovered beside it, and the curtain lifts off the workspace. Shown when
@@ -20,7 +21,7 @@ export function Opening() {
   return (
     <Show when={on()}>
       <div class="opening" aria-hidden="true">
-        <div class="opening-mark">隠</div>
+        <div class="opening-mark"><Glyph /></div>
         <div class="opening-name">Kakurega</div>
       </div>
     </Show>

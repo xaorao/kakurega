@@ -1,4 +1,5 @@
 import { Lead } from "../components/Lead";
+import { Glyph } from "../components/Glyph";
 import { againPoint, editPoint, type BranchPoint } from "../branching";
 import { carriesFiles, fileNotes, fingerprint, pastedFiles, room, sizeText, MAX_BYTES } from "../attach";
 import { findMatches, stepTo, type Match } from "../find";
@@ -968,7 +969,7 @@ export function Chat() {
         <summary>{t("chat.givenTitle")}</summary>
         <p class="muted">{t("chat.lead")}</p>
       </details>
-      <p class="muted">{session() ? t("chat.noteKept") : t("chat.note")}</p>
+      <p class="muted chat-note">{session() ? t("chat.noteKept") : t("chat.note")}</p>
       <Show when={summaryText()}>
         <details class="card stack summary-shown"><summary>{t("chat.summaryShow")}</summary><p class="muted">{t("chat.summaryExplain")}</p><p class="mem-text">{summaryText()}</p></details>
       </Show>
@@ -1001,7 +1002,7 @@ export function Chat() {
         </div>
       </Show>
       <ul ref={listEl} class="plain stack chat" aria-live="polite">
-        <For each={turns()} fallback={<li class="chat-hero"><span class="brand-mark hero" aria-hidden="true">隠</span><p class="chat-hero-title">{t("chat.hero")}</p><p class="muted">{t("chat.empty")}</p></li>}>
+        <For each={turns()} fallback={<li class="chat-hero"><span class="brand-mark hero" aria-hidden="true"><Glyph /></span><p class="chat-hero-title">{t("chat.hero")}</p><p class="muted">{t("chat.empty")}</p></li>}>
           {(m, i) => (
             <li class={`card stack msg ${m.role}`}>
               <strong>{m.role === "user" ? t("chat.you") : t("chat.assistant")}</strong>
@@ -1206,7 +1207,7 @@ export function Chat() {
             </ul>
           </Show>
         </div>
-        <p class="muted">{t("chat.pick.hint")}</p>
+        <p class="muted composer-hint">{t("chat.pick.hint")}</p>
         <Show when={turns().length > 0}>
           <details class="stack">
             <summary>{t("chat.export")}</summary>

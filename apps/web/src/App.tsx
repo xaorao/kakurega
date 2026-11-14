@@ -1,4 +1,5 @@
 import { Opening } from "./components/Opening";
+import { Glyph } from "./components/Glyph";
 import { createEffect, createMemo, createSignal, ErrorBoundary, For, lazy, onCleanup, onMount, Show, Suspense } from "solid-js";
 import { api, ApiError, setCsrf, type Config, type Job } from "./api";
 void ApiError;
@@ -102,7 +103,7 @@ function Pair(props: { onDone: () => void }) {
   if (fromLink) queueMicrotask(() => submit(fromLink));
   return (
     <main class="center pair">
-      <span class="brand-mark big" aria-hidden="true">隠</span>
+      <span class="brand-mark big" aria-hidden="true"><Glyph /></span>
       <h1>{t("pair.title")}</h1>
       <p class="muted">{rich("pair.intro")}</p>
       <form
@@ -440,7 +441,7 @@ export function App() {
         <ShortcutHelp open={helpOpen()} onClose={() => setHelpOpen(false)} />
         <div class="shell" inert={paletteOpen() || helpOpen()}>
           <header class="top">
-            <a class="brand" href="#/" aria-label="Kakurega"><span class="brand-mark" aria-hidden="true">隠</span><span class="brand-word">Kakurega</span></a>
+            <a class="brand" href="#/" aria-label="Kakurega"><span class="brand-mark" aria-hidden="true"><Glyph /></span><span class="brand-word">Kakurega</span></a>
             <Show when={config()}>{(c) => <Badge config={c()} modelDown={modelDown()} />}</Show>
             <button class="link commands" data-keys={/Mac|iPhone|iPad/.test(navigator.platform) ? "⇧⌘P" : "Ctrl ⇧ P"} onClick={() => setPaletteOpen(true)} aria-keyshortcuts="Control+Shift+P Meta+Shift+P">{t("palette.open")}</button>
             <button class="link" onClick={async () => { await api.logout(); setPaired(false); }}>{t("top.signout")}</button>
