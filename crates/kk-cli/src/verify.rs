@@ -293,6 +293,7 @@ fn share(bytes: &[u8], pinned: Option<Vec<[u8; 32]>>, out: Option<&str>) -> u8 {
 /// for anyone who searches for it or reads it with a program.
 pub fn reason_words(reason: &str) -> Option<&'static str> {
     Some(match reason {
+        "claims_changed" => "The claims in it are not the ones its signed release names: one was removed, added or replaced after signing.",
         "digest_mismatch" => "A file in it is not what was signed: the capsule was changed after it was signed, or damaged on the way.",
         "bad_signature" => "A signature in it does not match its content: it was changed after it was signed, or was never signed by that key.",
         "capsule_not_json" | "capsule_shape" | "share_not_json" | "share_shape" => "This is not a capsule or a share (or it is damaged beyond reading).",
@@ -307,6 +308,61 @@ pub fn reason_words(reason: &str) -> Option<&'static str> {
         "not_in_release" => "A file in this share is not part of the signed release: it was changed, or was never in it.",
         "capsule_too_large" | "share_too_large" => "The file is too large to be a capsule or a share.",
         "unsupported_version" => "It was made by a version this program does not know. Update, or ask the sender which version made it.",
+        "attachment_extra" => "It carries a file its signed release does not name.",
+        "attachment_missing" => "A file its release names is not in the capsule.",
+        "bad_attachment" => "A file carried in it cannot be read.",
+        "bad_envelope" => "A signed part of it is malformed.",
+        "bad_file_name" => "A file in this share has a name that is not a plain file name.",
+        "claim_evidence_missing" => "A claim in it points to evidence the capsule does not carry.",
+        "claim_not_bound" => "A claim in it is about a different release than the one it carries.",
+        "claim_shape" => "A claim in it does not have the shape it must have.",
+        "disclosure_shape" => "The signed statement in this share does not have the shape it must have.",
+        "duplicate_file_name" => "Two files in it have the same name.",
+        "duplicate_release" => "It carries more than one signed release.",
+        "envelope_count" => "It does not carry the signed parts a capsule must have, or carries too many.",
+        "leaf_count" => "This share carries no file, or too many.",
+        "leaf_order" => "The file entries of this share are not in their one allowed order, or one is repeated.",
+        "leaf_place" => "A file entry in this share claims a place it cannot have.",
+        "leaf_shape" => "A file entry in this share is malformed.",
+        "mixed_signers" => "Its parts were signed by different keys: a capsule is signed by one key only.",
+        "receipt_shape" => "A model receipt is malformed, repeated, or there are too many.",
+        "release_missing" => "It carries no signed release.",
+        "release_shape" => "Its signed release does not have the shape it must have.",
+        "signature_count" => "An envelope does not have exactly one signature.",
+        "too_many_files" => "Its release lists more files than a capsule may carry.",
+        "unknown_payload_type" => "It carries a signed part of a kind this program does not know.",
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod reason_tests {
+    /// Every reason the checkers can give is a code; a person is shown the sentence for it. One added to the checker
+    /// without a sentence here would be printed bare.
+    #[test]
+    fn vf_use01_every_reason_a_check_can_give_has_words() {
+        let sources = [
+            include_str!("../../kk-evidence/src/capsule.rs"),
+            include_str!("../../kk-evidence/src/share.rs"),
+        ];
+        let mut seen = 0;
+        for src in sources {
+            for part in src.split("fail(\"").skip(1) {
+                let code = part.split('"').next().unwrap_or_default();
+                if code.is_empty() || !code.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+                    continue;
+                }
+                seen += 1;
+                let words = super::reason_words(code);
+                assert!(
+                    words.is_some_and(|w| w.ends_with('.') && w.len() > 20),
+                    "{code} has no sentence"
+                );
+            }
+        }
+        assert!(
+            seen > 40,
+            "only {seen} reasons were found in the checker's source"
+        );
+    }
 }

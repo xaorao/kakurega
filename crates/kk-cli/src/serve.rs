@@ -214,7 +214,13 @@ fn serve(args: &[String]) -> Result<(), String> {
         scripted: crate::flag(args, "--scripted").map(PathBuf::from),
         // a flag decides; without one, what the owner chose last in the app
         remote: match crate::flag(args, "--route") {
-            Some(_) => crate::near::remote_from_flags(args)?,
+            Some(_) => {
+                let route = crate::near::remote_from_flags(args)?;
+                if route.is_some() {
+                    crate::near::remember_start_key(args);
+                }
+                route
+            }
             None => crate::near::remote_from_saved(&data),
         }
         .into(),

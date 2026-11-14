@@ -103,6 +103,30 @@ pub fn remote_from_flags(args: &[String]) -> Result<Option<Arc<NearRoute>>, Stri
     .map_err(|e| e.to_string())
 }
 
+/// The account key this run was started with (`--near-key-file` or the environment). Never written anywhere.
+static START_KEY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Called once by `kaku serve` when it starts on NEAR: keeps the key it was given, in memory, so the owner can go to the
+/// model on this computer and come back without typing it again.
+pub fn remember_start_key(args: &[String]) {
+    let key = match (
+        crate::flag(args, "--near-key-file"),
+        std::env::var(KEY_VAR).ok(),
+    ) {
+        (Some(path), _) => key_from_file(Path::new(&path)).ok(),
+        (None, Some(k)) if plain_key(&k) => Some(k),
+        _ => None,
+    };
+    if let Some(k) = key {
+        let _ = START_KEY.set(k);
+    }
+}
+
+/// The key this run was started with, when it was started on NEAR.
+pub fn start_key() -> Option<String> {
+    START_KEY.get().cloned()
+}
+
 /// The owner's choice of route as kept between runs: a small file in the data folder, and the account key in a file of
 /// its own that only the owner can read. Neither is ever written anywhere else, and the key is never put in a message.
 pub const CHOICE_FILE: &str = "route.json";

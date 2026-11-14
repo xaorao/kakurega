@@ -440,7 +440,8 @@ function Findings(props: { job: Job }) {
             </Show>
             <For each={d().findings}>
               {(f, at) => {
-                const [statusLabel, cls, why] = statusText(f.status);
+                // confirmed by the kernel and still not in the release: said on the finding itself, not only on the Release tab
+                const [statusLabel, cls, why] = f.held_back ? [t("status.heldBack"), "warn", f.held_back] : statusText(f.status);
                 return (
                   <article class={`card stack finding ${cls ? "is-" + cls : ""}`}>
                     <p class="find-id"><code>{f.file}:{f.line}</code></p>

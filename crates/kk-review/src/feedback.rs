@@ -71,6 +71,10 @@ pub fn finding(status: &CheckStatus) -> Value {
         CheckStatus::Failed(m) => {
             if starts(m, msg::NO_CONTROL) {
                 verdict("failed", "The script printed REPRODUCED without first printing CONTROL_OK. First exercise and assert the normal behaviour and print CONTROL_OK on its own line, then print REPRODUCED or NOT REPRODUCED on its own line.")
+            } else if starts(m, msg::CONTROL_UNTESTED) {
+                verdict("failed", "The script prints CONTROL_OK without testing anything: the line is not under a condition and nothing before it can fail. Call the code the normal way, compare the result with the value it should give, and print CONTROL_OK only if they match (an if, or an assert before it). Then report the finding again with the same title.")
+            } else if starts(m, msg::CONTROL_INDEPENDENT) {
+                verdict("failed", "The script still printed CONTROL_OK when the cited file was emptied, so its control does not use the code you named. Make CONTROL_OK depend on calling that code the normal way and getting the right result, then report the finding again with the same title.")
             } else if starts(m, msg::INDEPENDENT) {
                 verdict("failed", "The script still printed REPRODUCED when the cited file was emptied, so its result does not depend on the code you named. Make the verdict come from calling that code.")
             } else if starts(m, msg::DOES_NOT_COMPILE) {

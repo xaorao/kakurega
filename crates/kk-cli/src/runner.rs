@@ -1511,7 +1511,10 @@ cut_short: false,
                 let key = match typed {
                     Some(k) => k.to_string(),
                     None => {
-                        crate::near::saved_key(dir).ok_or("give your NEAR AI Cloud account key")?
+                        // the key kept in the data folder, else the one this run was started with
+                        crate::near::saved_key(dir)
+                            .or_else(crate::near::start_key)
+                            .ok_or("give your NEAR AI Cloud account key")?
                     }
                 };
                 // built first: a route that cannot be made leaves everything as it was

@@ -165,7 +165,12 @@ async function run(bytes, pinned, now, expectedRecipient) {
   if (claimed.length !== 1 || (await keyIdOf(claimed[0])) !== signer) stop("key_list");
   const rel = release.value;
 
-  if (!exactKeys(rel, ["type", "version", "capsule_id", "created", "expires", "recipient", "policy_version", "files", "assurance", "source_commitment"]) || rel.get("type") !== "release") stop("release_shape");
+  // A release names a digest of each of its claims, in order, so that a claim taken out, added or swapped is seen. One made
+  // before that has no such list: it still verifies, and the result says what that leaves open.
+  const named = rel.has("claims") ? rel.get("claims") : null;
+  if (named !== null && (!Array.isArray(named) || !named.every((d) => isStr(d) && isHex64(d)))) stop("release_shape");
+  const releaseKeys = ["type", "version", "capsule_id", "created", "expires", "recipient", "policy_version", "files", "assurance", "source_commitment"];
+  if (!exactKeys(rel, named === null ? releaseKeys : ["claims", ...releaseKeys]) || rel.get("type") !== "release") stop("release_shape");
   if (rel.get("version") !== 1n) stop("unsupported_version");
   const created = rel.get("created");
   const expires = rel.get("expires");
@@ -231,6 +236,7 @@ async function run(bytes, pinned, now, expectedRecipient) {
   for (const k of files.keys()) if (!names.has(k)) stop("attachment_extra");
 
   const releaseDigest = await sha256Hex(release.env.payload);
+  let placed = 0;
   for (const c of claims) {
     if (!exactKeys(c, ["type", "version", "release_payload_sha256", "statement", "evidence", "how_to_check"]) || c.get("type") !== "claim" || c.get("version") !== 1n) stop("claim_shape");
     if (c.get("release_payload_sha256") !== releaseDigest) stop("claim_not_bound");
@@ -241,7 +247,16 @@ async function run(bytes, pinned, now, expectedRecipient) {
       if (!names.has(item)) stop("claim_evidence_missing");
     }
     if (!isStr(c.get("statement")) || !isStr(c.get("how_to_check"))) stop("claim_shape");
+    if (named !== null) {
+      // the claim at this place must be the one the release names at this place
+      const said = serialize(new Map([["evidence", ev], ["how_to_check", c.get("how_to_check")], ["statement", c.get("statement")]]));
+      if (named[placed] !== (await sha256Hex(enc.encode(said)))) stop("claims_changed");
+    }
+    placed += 1;
   }
+  // none missing either: a claim taken out leaves the list longer than what is carried
+  if (named !== null && named.length !== claims.length) stop("claims_changed");
+  if (named === null) notEstablished.push("That no claim was removed from it: this capsule was made before releases named their claims, so a missing claim cannot be seen.");
   return {
     valid: true,
     reason: null,
@@ -253,6 +268,7 @@ async function run(bytes, pinned, now, expectedRecipient) {
     signerPinned: isPinned,
     fileCount: names.size,
     claimCount: claims.length,
+    claimsNamed: named !== null,
     claims: claims.map((c) => ({ statement: c.get("statement"), evidence: [...c.get("evidence")], howToCheck: c.get("how_to_check") })),
     receipts,
     created: Number(created),

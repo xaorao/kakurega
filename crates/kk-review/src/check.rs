@@ -18,6 +18,8 @@ pub mod msg {
     pub const NEEDS_PACKAGE: &str = "the script needs the package '";
     pub const ENDED: &str = "the reproducer ended with ";
     pub const NO_CONTROL: &str = "the script printed REPRODUCED without a CONTROL_OK line: it must first show, and assert, that the normal behaviour works";
+    pub const CONTROL_UNTESTED: &str = "the script prints CONTROL_OK without testing anything first: the line is not under a condition and nothing before it can fail";
+    pub const CONTROL_INDEPENDENT: &str = "the script still prints CONTROL_OK when the cited file is emptied, so its control does not exercise the code it claims to test";
     pub const INDEPENDENT: &str = "the script still prints REPRODUCED when the cited file is emptied, so its result does not depend on the code it claims to test";
     pub const FINDING_NOT_REPRODUCED: &str = "the finding it belongs to was not reproduced";
     pub const FIX_FILE_MISSING: &str = "a file the fix names is not in the project";
@@ -851,8 +853,12 @@ pub fn run_reproducer(
         CheckStatus::NotReproduced
     } else if !marker(&stdout, "CONTROL_OK") {
         CheckStatus::Failed(msg::NO_CONTROL.into())
+    } else if control_untested(&finding.reproducer) {
+        CheckStatus::Failed(msg::CONTROL_UNTESTED.into())
     } else if marker(&control_stdout, "REPRODUCED") {
         CheckStatus::Failed(msg::INDEPENDENT.into())
+    } else if marker(&control_stdout, "CONTROL_OK") {
+        CheckStatus::Failed(msg::CONTROL_INDEPENDENT.into())
     } else {
         CheckStatus::Reproduced
     };
@@ -861,6 +867,43 @@ pub fn run_reproducer(
         stdout,
         sample_paths,
     }
+}
+
+/// Whether the script says CONTROL_OK without having tested anything: the line that prints it stands at the start of a
+/// line (so it is under no `if`), carries no condition of its own, and nothing before it can stop the script (an assert,
+/// a raise or throw, an exit). Such a line is printed whatever the project does, so it shows nothing about normal
+/// behaviour. A script in a language whose statements are always inside a function (Rust) is judged by its runs alone.
+fn control_untested(script: &str) -> bool {
+    let stops = |l: &str| {
+        let t = l.trim_start();
+        t.starts_with("assert")
+            || t.contains("assert(")
+            || t.contains("assert.")
+            || t.contains("raise ")
+            || t.contains("throw ")
+            || t.contains("exit(")
+    };
+    let mut can_fail_before = false;
+    let mut printed = false;
+    for line in script.lines() {
+        if line.contains("CONTROL_OK") {
+            printed = true;
+            let at_start = !line.starts_with([' ', '\t']);
+            let conditional = line.contains(" if ")
+                || line.trim_start().starts_with("if ")
+                || line.trim_start().starts_with("if(")
+                || line.contains('?')
+                || line.contains("&&")
+                || line.contains(" and ");
+            if !at_start || conditional || can_fail_before {
+                return false;
+            }
+        }
+        if stops(line) {
+            can_fail_before = true;
+        }
+    }
+    printed
 }
 
 pub const MAX_FIX_TEXT: usize = 8_000;
@@ -1938,4 +1981,34 @@ pub(crate) fn diff_text(file: &str, before: &str, after: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod control_tests {
+    use super::control_untested;
+
+    #[test]
+    fn ck_use01_a_control_line_that_tests_nothing_is_told_apart_from_one_that_does() {
+        // printed whatever the project does
+        for script in [
+            "from shop import shipping_cost\ncost = shipping_cost(15)\nprint('CONTROL_OK')\nprint('REPRODUCED' if cost == 0 else 'NOT REPRODUCED')",
+            "const { f } = require('./f.js');\nconsole.log('CONTROL_OK');\nconsole.log(f(1) ? 'REPRODUCED' : 'NOT REPRODUCED');",
+            "print(\"CONTROL_OK\")\nprint(\"REPRODUCED\")",
+        ] {
+            assert!(control_untested(script), "{script}");
+        }
+        // under a condition, or after something that can fail
+        for script in [
+            "from shop.cart import Cart\ncart = Cart()\ncart.add('apple', 2)\nif cart.total() == 2:\n    print('CONTROL_OK')\nprint('REPRODUCED')",
+            "cart.add('apple', 2)\nassert cart.total() == 2\nprint('CONTROL_OK')\nprint('REPRODUCED')",
+            "print('CONTROL_OK' if total == 2 else 'CONTROL_FAILED')\nprint('REPRODUCED')",
+            "if (cart.total() === 2) console.log('CONTROL_OK');\nconsole.log('REPRODUCED');",
+            "const ok = cart.total() === 2;\nok && console.log('CONTROL_OK');",
+            "if (cart.total() !== 2) throw new Error('control');\nconsole.log('CONTROL_OK');",
+            "fn main() {\n    let mut cart = Cart::new();\n    println!(\"CONTROL_OK\");\n}",
+            "print('REPRODUCED')",
+        ] {
+            assert!(!control_untested(script), "{script}");
+        }
+    }
 }

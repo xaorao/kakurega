@@ -2636,7 +2636,8 @@ fn sv19_document_questions_return_answers_whose_quotes_are_checked_and_hide_rest
             json!({"folder": empty.to_string_lossy(), "question": "q"})
         )
         .0,
-        502
+        422,
+        "a folder with nothing to read is the owner's to change, not a failed answer"
     );
     let log = log_text(
         &format!("http://127.0.0.1:{}", c.addr.port()),

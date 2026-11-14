@@ -2812,12 +2812,7 @@ impl App {
                         let turns: Vec<Value> = self
                             .chat_history
                             .iter()
-                            .flat_map(|(q, a)| {
-                                [
-                                    json!({"role": "user", "content": q}),
-                                    json!({"role": "assistant", "content": a}),
-                                ]
-                            })
+                            .map(|(role, content)| json!({"role": role, "content": content}))
                             .collect();
                         let mut body = json!({"title": ""});
                         if let Some(p) = &self.chat_project {
@@ -4441,7 +4436,10 @@ impl App {
                     return Vec::new();
                 }
                 // a chat that could not be sent is over: the message box is free again and nothing waits behind it
-                if matches!(intent, Intent::Chat | Intent::AttachMention(_)) {
+                if matches!(
+                    intent,
+                    Intent::Chat | Intent::AttachMention(_) | Intent::Ask
+                ) {
                     self.chat_waiting = false;
                     self.live = None;
                     let dropped = std::mem::take(&mut self.queued).len();
@@ -5451,7 +5449,7 @@ impl App {
                     return Vec::new();
                 }
                 let id = clean(body["id"].as_str().unwrap_or(""));
-                self.say(Kind::Info, format!("{id}: the agent reads the project on this computer. Nothing is changed and nothing leaves."));
+                self.say(Kind::Info, format!("{id}: {}", explore_place(&self.route)));
                 // 100 questions are kept: the owner is told which older ones made room
                 let forgotten: Vec<String> = body["forgotten"]
                     .as_array()
@@ -8150,5 +8148,38 @@ fn where_answered(route: &Value) -> &'static str {
         "confidential hardware elsewhere, proof checked first; not on this computer"
     } else {
         "a model elsewhere, not on this computer; nothing here proves who can read it"
+    }
+}
+
+/// What a project question says about where the files it reads go. `route` is the header's route line, whose first word
+/// says where the model is: only a model on this computer may be said to keep everything here.
+fn explore_place(route: &str) -> &'static str {
+    if route.starts_with("private") {
+        "the agent reads the project on this computer. Nothing is changed and nothing leaves."
+    } else if route.starts_with("confidential hardware") {
+        "the agent reads the project with a model in confidential hardware elsewhere, which is given the files it reads. Nothing in the project is changed."
+    } else {
+        "the agent reads the project with a model elsewhere, which is given the files it reads; nothing here proves who can read them. Nothing in the project is changed."
+    }
+}
+
+#[cfg(test)]
+mod explore_place_tests {
+    #[test]
+    fn tu_use02_a_project_question_never_says_nothing_leaves_when_the_model_is_elsewhere() {
+        assert!(super::explore_place("private · qwen2.5-coder:7b").contains("nothing leaves"));
+        for route in [
+            "confidential hardware · Qwen/Qwen3.8-27B",
+            "NOT private · gpt",
+            "",
+        ] {
+            let said = super::explore_place(route);
+            assert!(
+                !said.contains("nothing leaves")
+                    && said.contains("elsewhere")
+                    && said.contains("given the files it reads"),
+                "{route}: {said}"
+            );
+        }
     }
 }

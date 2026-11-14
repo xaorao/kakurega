@@ -954,6 +954,47 @@ fn tu20_keep_sends_the_session_with_every_message_and_new_chat_leaves_it() {
     );
 }
 
+/// A question over documents that could not be answered (the service went away, or the wait ran out) is over: the next
+/// one is asked, not turned away as "still waiting".
+#[test]
+fn tu_use04_a_document_question_that_failed_does_not_block_the_next_one() {
+    let mut a = booted();
+    let r = enter(&mut a, "/ask /x : what is the notice period");
+    assert_eq!(r[0].path, "/api/ask");
+    a.handle(Event::Resp(Resp {
+        id: r[0].id,
+        result: Err("timeout: global".into()),
+    }));
+    let again = enter(&mut a, "/ask /x : what is the notice period");
+    assert_eq!(again.len(), 1, "the question is asked again");
+    assert_eq!(again[0].path, "/api/ask");
+}
+
+/// A conversation kept after it began is stored as it was spoken: the owner's words as the owner's, the answer as the
+/// assistant's, one turn each.
+#[test]
+fn tu_use03_keeping_a_conversation_sends_each_turn_once_with_its_own_speaker() {
+    let mut a = booted();
+    let r = enter(&mut a, "what is a nonce");
+    a.handle(ok(
+        &r[0],
+        200,
+        json!({"reply": "A number used once.", "route": {"simulated": false}, "notes_used": 0}),
+    ));
+    let r = enter(&mut a, "/keep");
+    let turns = r[0].body.as_ref().unwrap()["turns"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        turns,
+        vec![
+            json!({"role": "user", "content": "what is a nonce"}),
+            json!({"role": "assistant", "content": "A number used once."}),
+        ]
+    );
+}
+
 #[test]
 fn tu21_the_picker_lists_chats_and_reviews_filters_opens_and_forgets_with_a_second_press() {
     let mut a = booted();

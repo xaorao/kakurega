@@ -1674,6 +1674,7 @@ export const hi: Record<keyof typeof en, string> = {
   "find.malformed": "एजेंट की {count} रिपोर्ट गलत ढंग की थीं और छोड़ दी गईं।",
   "find.malformed.one": "एजेंट की {count} रिपोर्ट गलत ढंग की थीं और छोड़ दी गईं।",
   "status.reproduced": "कर्नेल ने पुष्टि की",
+  "status.heldBack": "पुष्टि हुई, पर रोकी गई",
   "status.not_reproduced": "दोहराया नहीं जा सका",
   "status.nondeterministic": "दो बार चलाने पर नतीजा बदल गया",
   "status.failed.short": "जाँच विफल",

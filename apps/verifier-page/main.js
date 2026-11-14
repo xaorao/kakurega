@@ -50,6 +50,7 @@ const REASONS = {
   attachment_extra: "It carries a file its signed release does not name.",
   claim_shape: "A claim in it does not have the shape it must have.",
   claim_not_bound: "A claim in it is about a different release than the one it carries.",
+  claims_changed: "The claims in it are not the ones its signed release names: one was removed, added or replaced after signing.",
   claim_evidence_missing: "A claim in it points to evidence the capsule does not carry.",
 };
 

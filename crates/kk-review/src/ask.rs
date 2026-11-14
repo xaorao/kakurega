@@ -514,7 +514,15 @@ pub fn verify(answer: &Answer, files: &[ImportedFile], used: &[String]) -> Vec<C
                 let Ok(body) = std::str::from_utf8(&f.bytes) else {
                     return Verdict::UnknownFile;
                 };
-                let hay = squash(body);
+                // a line that was withheld from the document is not part of what can be quoted: a quote that runs across
+                // its place is still a quote of the lines around it
+                let marker = crate::import::LINE_WITHHELD;
+                let readable: String = body
+                    .lines()
+                    .filter(|l| *l != marker)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let hay = squash(&readable);
                 match hay.find(&q) {
                     None => Verdict::NotFound,
                     Some(at) => {
@@ -523,7 +531,12 @@ pub fn verify(answer: &Answer, files: &[ImportedFile], used: &[String]) -> Vec<C
                         let mut seen = 0usize;
                         let mut line = 1usize;
                         for l in body.lines() {
-                            let n = l.split_whitespace().count();
+                            // a withheld line keeps its number and adds no words
+                            let n = if l == marker {
+                                0
+                            } else {
+                                l.split_whitespace().count()
+                            };
                             if seen + n > words_before {
                                 break;
                             }

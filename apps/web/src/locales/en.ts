@@ -1672,6 +1672,7 @@ export const en = {
   "find.malformed": "{count} reports from the agent were malformed and ignored.",
   "find.malformed.one": "{count} report from the agent was malformed and ignored.",
   "status.reproduced": "Confirmed by the kernel",
+  "status.heldBack": "Confirmed, but kept back",
   "status.not_reproduced": "Not reproduced",
   "status.nondeterministic": "Result changed between runs",
   "status.failed.short": "Check failed",

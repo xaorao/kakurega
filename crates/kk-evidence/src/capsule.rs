@@ -84,6 +84,21 @@ pub fn valid_file_name(name: &str) -> bool {
         && !name.contains("..")
 }
 
+/// The digest by which a release names one of its claims: SHA-256 over the canonical form of what the claim says, the
+/// files it rests on and how to check it. The claim's own tie to the release is left out, since the release cannot name
+/// a digest of itself.
+pub fn claim_digest(statement: &str, evidence: &[String], how_to_check: &str) -> String {
+    let value = obj(vec![
+        (
+            "evidence",
+            Value::Array(evidence.iter().map(|x| s(x)).collect()),
+        ),
+        ("how_to_check", s(how_to_check)),
+        ("statement", s(statement)),
+    ]);
+    sha256_hex(canon::serialize(&value).as_bytes())
+}
+
 pub fn build(
     release: &ReleaseSpec,
     claims: &[ClaimSpec],
@@ -101,6 +116,17 @@ pub fn build(
         })
         .collect();
     let release_value = obj(vec![
+        // what each claim says, as a digest, in order: a claim taken out of the capsule, added or swapped is then seen,
+        // since the claims themselves are separate signed statements
+        (
+            "claims",
+            Value::Array(
+                claims
+                    .iter()
+                    .map(|c| s(&claim_digest(&c.statement, &c.evidence, &c.how_to_check)))
+                    .collect(),
+            ),
+        ),
         ("type", s("release")),
         ("version", Value::Int(1)),
         ("capsule_id", s(&release.capsule_id)),
@@ -466,22 +492,53 @@ pub fn verify(bytes: &[u8], opts: &VerifyOptions) -> Report {
         return fail("key_list");
     }
 
-    if !exact_keys(
-        &rel,
-        &[
-            "type",
-            "version",
-            "capsule_id",
-            "created",
-            "expires",
-            "recipient",
-            "policy_version",
-            "files",
-            "assurance",
-            "source_commitment",
-        ],
-    ) || str_of(member(&rel, "type")) != Some("release")
-    {
+    const RELEASE_KEYS: [&str; 10] = [
+        "type",
+        "version",
+        "capsule_id",
+        "created",
+        "expires",
+        "recipient",
+        "policy_version",
+        "files",
+        "assurance",
+        "source_commitment",
+    ];
+    const RELEASE_KEYS_LISTING: [&str; 11] = [
+        "claims",
+        "type",
+        "version",
+        "capsule_id",
+        "created",
+        "expires",
+        "recipient",
+        "policy_version",
+        "files",
+        "assurance",
+        "source_commitment",
+    ];
+    // A release made before releases listed their claims has no such list. It still verifies, and the report says what
+    // that leaves open.
+    let named: Option<Vec<&str>> = match member(&rel, "claims") {
+        None => None,
+        Some(Value::Array(items)) => {
+            let mut out = Vec::new();
+            for item in items {
+                match item {
+                    Value::Str(d) if is_hex64(d) => out.push(d.as_str()),
+                    _ => return fail("release_shape"),
+                }
+            }
+            Some(out)
+        }
+        Some(_) => return fail("release_shape"),
+    };
+    let shape_ok = if named.is_some() {
+        exact_keys(&rel, &RELEASE_KEYS_LISTING)
+    } else {
+        exact_keys(&rel, &RELEASE_KEYS)
+    };
+    if !shape_ok || str_of(member(&rel, "type")) != Some("release") {
         return fail("release_shape");
     }
     if int_of(member(&rel, "version")) != Some(1) {
@@ -667,6 +724,21 @@ pub fn verify(bytes: &[u8], opts: &VerifyOptions) -> Report {
         ) else {
             return fail("claim_shape");
         };
+        if let Some(named) = &named {
+            let evidence: Vec<String> = ev
+                .iter()
+                .filter_map(|v| match v {
+                    Value::Str(n) => Some(n.clone()),
+                    _ => None,
+                })
+                .collect();
+            // the claim at this place must be the one the release names at this place
+            if named.get(claim_reports.len()).copied()
+                != Some(claim_digest(statement, &evidence, how).as_str())
+            {
+                return fail("claims_changed");
+            }
+        }
         claim_reports.push(ClaimReport {
             statement: statement.to_string(),
             evidence: ev
@@ -680,12 +752,22 @@ pub fn verify(bytes: &[u8], opts: &VerifyOptions) -> Report {
         });
     }
 
+    // none missing either: a claim taken out leaves the list longer than what is carried
+    if named.as_ref().is_some_and(|l| l.len() != claims.len()) {
+        return fail("claims_changed");
+    }
     let signer = signer.expect("at least one envelope verified");
     let mut established = vec![
         format!("The release statement and {} claim statement(s) carry a valid Ed25519 signature from {}.", claims.len(), signer),
         format!("All {} released file(s) match the signed digests and sizes exactly; nothing is missing or extra.", names.len()),
         "Every claim is bound to this exact release statement.".to_string(),
     ];
+    if named.is_some() {
+        established.push(format!(
+            "The release names its {} claim(s), and exactly those are here: none was removed, added or replaced.",
+            claims.len()
+        ));
+    }
     if pinned {
         established.push("The signing key is one you pinned.".to_string());
     }
@@ -704,6 +786,9 @@ pub fn verify(bytes: &[u8], opts: &VerifyOptions) -> Report {
         not_established_all.push("That a signed answer is the text behind any claim: a receipt names hashes, not the claims.".to_string());
     }
     not_established_all.push("That any claim is true; only that it was signed and that its evidence files are as signed.".to_string());
+    if named.is_none() {
+        not_established_all.push("That no claim was removed from it: this capsule was made before releases named their claims, so a missing claim cannot be seen.".to_string());
+    }
     if !pinned {
         not_established_all.push("Who holds the signing key: no key was pinned, so the key shown comes from the capsule itself.".to_string());
     }

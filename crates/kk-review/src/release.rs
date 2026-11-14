@@ -330,7 +330,7 @@ pub fn assemble_with(
             .map(|p| format!("  {}  sha256 {}\n", p, project_files[p].sha256))
             .collect();
         let text = format!(
-            "Finding {n}: {}\nLocation: {}:{}\n\n{}\n\nHow to check: {how}\n\nWhat this establishes: the script printed CONTROL_OK (normal behaviour works), then REPRODUCED, twice with identical output, and did not print REPRODUCED when the cited file was emptied. It was checked on exactly these files and nothing else:\n{}It does not establish that the defect exists in any other version of the code.\n",
+            "Finding {n}: {}\nLocation: {}:{}\n\n{}\n\nHow to check: {how}\n\nWhat this establishes: the script printed CONTROL_OK (its own check of the normal case passed), then REPRODUCED, twice with identical output, and printed neither when the cited file was emptied. It was checked on exactly these files and nothing else:\n{}It does not establish that what the script shows is a defect and not intended behaviour (that is the reviewer's claim: read the script), or that it exists in any other version of the code.\n",
             clean_text(&finding.title, 200),
             finding.file,
             finding.line,

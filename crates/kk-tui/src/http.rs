@@ -12,6 +12,10 @@ pub struct Http {
     data_dir: std::path::PathBuf,
 }
 
+/// How long a request that makes a model read documents and answer may take. A model on this computer can need
+/// minutes; the ordinary limit would call a working answer a failure.
+const MODEL_ANSWER_SECONDS: u64 = 900;
+
 fn build_agent() -> ureq::Agent {
     let cfg = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -108,6 +112,13 @@ impl Http {
             Method::Post => {
                 let mut r = if admin {
                     self.admin_agent.post(&url)
+                } else if path == "/api/ask" {
+                    // the same connection and session, with a limit a model that reads documents can meet
+                    self.agent
+                        .post(&url)
+                        .config()
+                        .timeout_global(Some(std::time::Duration::from_secs(MODEL_ANSWER_SECONDS)))
+                        .build()
                 } else {
                     self.agent.post(&url)
                 };

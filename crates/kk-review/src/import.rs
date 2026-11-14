@@ -245,6 +245,82 @@ fn walk(root: &Path, dir: &Path, out: &mut Imported, default_level: Level, list:
     }
 }
 
+/// What stands in place of a line that was withheld from a document.
+pub const LINE_WITHHELD: &str = "[line withheld by Kakurega: it holds a key or a password]";
+
+/// For questions over documents: a document that is withheld only because some of its lines hold a key or a password is
+/// given back without those lines, so the rest of it can still be read and quoted. Each such line is replaced by a fixed
+/// marker, so line numbers stay what they are in the file. A file withheld for its name or by the owner's list stays
+/// withheld whole, and so does one where a secret is still found afterwards (a value spread over several lines).
+/// Returns how many lines were withheld in all.
+pub fn withhold_lines(imported: &mut Imported, default_level: Level) -> usize {
+    const BY_CONTENT: [&str; 2] = [
+        "content looks like a secret",
+        "content holds a password or code written out in words",
+    ];
+    let mut total = 0;
+    for f in &mut imported.files {
+        let by_content_only = f.label.effective_level() >= Level::Restricted
+            && f.notes.iter().any(|n| BY_CONTENT.contains(&n.as_str()))
+            && !f.notes.iter().any(|n| {
+                n.starts_with("file name marks")
+                    || n.starts_with("withheld by your")
+                    || n.starts_with("your withhold list")
+            });
+        if !by_content_only {
+            continue;
+        }
+        let Ok(text) = std::str::from_utf8(&f.bytes) else {
+            continue;
+        };
+        // every place the detectors point at, as the lines they touch
+        let mut spans: Vec<(usize, usize)> = kk_secrets::scan(text)
+            .iter()
+            .map(|h| (h.start, h.end))
+            .collect();
+        spans.extend(kk_secrets::spoken::find(text));
+        let mut drop = vec![false; text.split('\n').count()];
+        let mut inside_key = false;
+        let mut at = 0usize;
+        for (i, line) in text.split('\n').enumerate() {
+            let (start, end) = (at, at + line.len());
+            at = end + 1;
+            let t = line.trim();
+            if !inside_key && t.starts_with("-----BEGIN ") && t.contains("PRIVATE KEY") {
+                inside_key = true;
+            }
+            if inside_key
+                || spans
+                    .iter()
+                    .any(|(s, e)| *s <= end && *e >= start && s != e)
+            {
+                drop[i] = true;
+            }
+            if inside_key && t.starts_with("-----END ") {
+                inside_key = false;
+            }
+        }
+        let kept: String = text
+            .split('\n')
+            .zip(&drop)
+            .map(|(line, d)| if *d { LINE_WITHHELD } else { line })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let n = drop.iter().filter(|d| **d).count();
+        if n == 0 || kk_secrets::looks_secret(&kept).is_some() || kk_secrets::spoken::holds(&kept) {
+            continue;
+        }
+        f.bytes = kept.into_bytes();
+        f.label = Label::new(default_level).untrusted();
+        f.notes.retain(|note| !BY_CONTENT.contains(&note.as_str()));
+        f.notes.push(format!(
+            "{n} line(s) that hold a key or a password were withheld"
+        ));
+        total += n;
+    }
+    total
+}
+
 pub fn scan_tree(root: &Path, default_level: Level) -> Imported {
     let mut out = Imported {
         files: Vec::new(),
@@ -294,4 +370,85 @@ pub fn keyed_commitment(key: &[u8; 32], manifest: &Manifest) -> String {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+#[cfg(test)]
+mod withhold_lines_tests {
+    use super::*;
+
+    fn doc(path: &str, text: &str) -> ImportedFile {
+        let (label, notes) = classify(path, Some(text), Level::Internal, &ListState::Absent);
+        ImportedFile {
+            path: path.into(),
+            bytes: text.as_bytes().to_vec(),
+            label,
+            sha256: String::new(),
+            notes,
+        }
+    }
+
+    #[test]
+    fn im_use01_a_document_with_one_password_line_is_read_without_that_line() {
+        let runbook = "SEV1: tell the CISO within 1 hour.\nBreak-glass password: Harbor77!x\nTell the DPO within 4 hours.\n";
+        let mut imported = Imported {
+            files: vec![
+                doc("runbook.txt", runbook),
+                doc(".env", "API=1\n"),
+                doc("plain.txt", "nothing here\n"),
+            ],
+            skipped: vec![],
+        };
+        assert!(
+            imported.files[0].label.effective_level() >= Level::Restricted,
+            "withheld whole before"
+        );
+        let n = withhold_lines(&mut imported, Level::Internal);
+        assert_eq!(n, 1);
+        let text = String::from_utf8(imported.files[0].bytes.clone()).unwrap();
+        assert!(imported.files[0].label.effective_level() < Level::Restricted);
+        assert!(
+            !text.contains("Harbor77")
+                && text.contains("CISO within 1 hour")
+                && text.contains("DPO within 4 hours"),
+            "{text}"
+        );
+        assert_eq!(
+            text.split('\n').nth(1),
+            Some(LINE_WITHHELD),
+            "the line keeps its place"
+        );
+        // a file withheld for its name stays withheld whole, and an ordinary file is untouched
+        assert!(imported.files[1].label.effective_level() >= Level::Restricted);
+        assert_eq!(imported.files[2].bytes, b"nothing here\n");
+    }
+
+    #[test]
+    fn im_use02_a_private_key_block_goes_whole_and_the_owners_list_is_not_overridden() {
+        let key = "notes\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\nQyNTUxOQAAACDx\n-----END OPENSSH PRIVATE KEY-----\nafter\n";
+        let mut owner = doc("mine.txt", "the admin password is Harbor77!x\n");
+        owner.notes.push("withheld by your .kakuignore".into());
+        let mut imported = Imported {
+            files: vec![doc("key-notes.txt", key), owner],
+            skipped: vec![],
+        };
+        withhold_lines(&mut imported, Level::Internal);
+        let text = String::from_utf8(imported.files[0].bytes.clone()).unwrap();
+        if imported.files[0].label.effective_level() < Level::Restricted {
+            assert!(
+                !text.contains("b3BlbnNzaC1rZXk")
+                    && !text.contains("QyNTUxOQ")
+                    && text.contains("notes")
+                    && text.contains("after"),
+                "{text}"
+            );
+        }
+        assert!(
+            imported.files[1].label.effective_level() >= Level::Restricted,
+            "the owner's list stands"
+        );
+        assert!(
+            String::from_utf8_lossy(&imported.files[1].bytes).contains("Harbor77"),
+            "and its bytes are left alone (it is never sent)"
+        );
+    }
 }
