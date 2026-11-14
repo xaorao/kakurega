@@ -131,6 +131,7 @@ cpSync(join(here, "api/near.js"), join(out, "api/near.js"));
 writeFileSync(join(out, "package.json"), JSON.stringify({ private: true, type: "module" }));
 writeFileSync(join(out, "replay.json"), JSON.stringify(facts));
 cpSync(join(here, "site.css"), join(out, "site.css"));
+cpSync(join(here, "motion.js"), join(out, "motion.js"));
 // the check page is one file with its script and its style inside it: the host is told the exact hashes of those two,
 // so nothing else can run there even if a capsule's text were ever put into the page as markup
 const verifyHtml = readFileSync(join(repo, "apps/verifier-page/dist/kakurega-verify.html"), "utf8");
