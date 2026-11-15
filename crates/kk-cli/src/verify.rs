@@ -313,9 +313,9 @@ fn share(bytes: &[u8], pinned: Option<Vec<[u8; 32]>>, out: Option<&str>) -> u8 {
                 return 2;
             }
             println!(
-                "\nThe shared files are in {}. To re-run the finding: python3 {}/run-check.py",
+                "\nThe shared files are in {}. To re-run the finding: python3 {}",
                 dir.display(),
-                dir.display()
+                crate::shell_word(&dir.join("run-check.py").to_string_lossy())
             );
         } else {
             println!("\nThe shared files are in {}", dir.display());

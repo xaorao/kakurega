@@ -2318,6 +2318,10 @@ impl App {
                             Kind::Info,
                             if apply.is_some() {
                                 "Cancelled. Your file was not changed."
+                            } else if copy.is_some() {
+                                "Cancelled. Nothing was copied."
+                            } else if choose.is_some() {
+                                "Cancelled. Both notes are kept as they were."
                             } else {
                                 "Cancelled. Nothing was forgotten."
                             },

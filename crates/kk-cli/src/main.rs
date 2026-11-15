@@ -51,7 +51,7 @@ Usage:
              [--route near --near-model NAME [--near-key-file FILE] [--near-url URL]]   answer on NEAR AI Cloud's confidential hardware (the key: NEAR_AI_API_KEY or the file)
              [--route outside --outside-model anthropic:MODEL]   for testing only: answer chat, roundtable and team questions with a hosted model that is NOT private (the key: ANTHROPIC_API_KEY); reviews stay on the local model
              [--transport lima|local] [--vm NAME] [--worker-bin PATH] [--launcher PATH]
-  kaku review DIR --for RECIPIENT [--json] [--timeout SECONDS]   start a review and follow it; ends at awaiting_approval (exit 0), 3 nothing to release, 4 failed
+  kaku review DIR --for RECIPIENT [--change BASE] [--json] [--timeout SECONDS]   start a review (of the whole folder, or with --change of what changed since BASE) and follow it; ends at awaiting_approval (exit 0), 3 nothing to release, 4 failed
   kaku code DIR TASK... [--json]                          the model changes the project in memory, its tests run in the sandbox; shows the patch, applies only when you say
   kaku code show|apply|undo ID, kaku code list              read, apply (--digest from the patch) or undo a coding task
   kaku jobs [--json] | kaku findings JOB [--json] | kaku follow JOB [--timeout S]   list reviews, read what one found, watch one until it ends
@@ -61,7 +61,7 @@ Usage:
   kaku chat MESSAGE|- [--json] [--keep | --session ID]   one message to the private assistant; nothing is kept unless --keep starts a kept conversation or --session continues one
   kaku team plan GOAL [--experts ID,ID] | list | show ID | start ID [--wait] | stop ID | answer ID TASK TEXT | delete ID   a lead splits a goal into tasks for experts; nothing runs until you start the plan
   kaku stop ID                      stop a running review (job-N), coding task (code-N), project question (question-N) or team run (team-...)
-  kaku work [--json]                what is working now (reviews, coding tasks, project questions, team runs) and what has gone quiet
+  kaku work [--json]                what is working now (reviews, coding tasks, project questions, team runs) and what has gone quiet (exit 3 when something has)
   kaku roundtable QUESTION --experts ID,ID[,ID...] [--json]   one question to 2 to 5 experts, each alone, then a lead's resolution in four parts (kaku roundtable --list names the experts)
   kaku sessions [--json]            list the kept conversations; `kaku sessions export ID [--out FILE]` writes one as Markdown; these commands cannot approve anything
   kaku pair                         print a new one-time pairing link for the browser
@@ -80,7 +80,7 @@ Usage:
   kaku pack keygen|sign|check|catalog|check-catalog   make and check signed method packs and their catalog (for a publisher; `kaku pack` alone shows each form)
   kaku config [show|path|check|init] [--json]   your display settings in config.toml (notify, color, quiet, linear): what is in force and where it came from, check the file, or write a commented template
   kaku doctor [--json] [--fix] [--skip ID,ID]   why Kakurega does not start or work, with nothing running: data folder, service, sandbox, model; --fix repairs only local permissions and stale files
-  kaku diagnostics [--out FILE]     a readable report of versions, checks and counts to attach to a bug report (no names, paths or text)
+  kaku diagnostics [--out FILE]     a readable report of versions, checks and counts to attach to a bug report (no names, paths or text; read from the running service)
   kaku log export [--out FILE]      save the signed event log
   kaku log verify FILE [--pin KEY] [--anchor COUNT:HEAD]   check a saved log offline
   kaku share JOB FINDING [--out FILE]   one finding of a delivered review as a file with a proof; it shows nothing of the rest of the release

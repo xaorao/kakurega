@@ -8,7 +8,8 @@ pub fn run(args: &[String]) -> u8 {
     let admin = match crate::approve::connect(args) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("{e}");
+            // the report is read from the service, so it has to be running
+            eprintln!("{e}. The report is read from the running service: start it with `kaku serve` (or open `kaku`), then run this again.");
             return 1;
         }
     };
