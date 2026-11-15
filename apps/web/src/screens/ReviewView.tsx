@@ -11,6 +11,7 @@ import { DiffView } from "../components/DiffView";
 import { api, ApiError, stateOf, type Config, type Fix, type Job } from "../api";
 import { locale, rich, t, type Key } from "../i18n";
 import { InlineMarkdown } from "../components/Markdown";
+import { Ident } from "../components/Ident";
 
 type Tab = "progress" | "protected" | "source" | "findings" | "release";
 
@@ -507,6 +508,13 @@ function ReleaseTab(props: { job: Job; config: Config; onChange: () => void }) {
   const offset = createMemo(() => clockOffset(release()?.server_time, Math.floor(Date.now() / 1000)));
   const left = createMemo(() => timeLeft(release()?.expires, pageNow() + offset()));
   const expired = () => left().state === "expired";
+  const span = (secs: number) => formatSpan(secs, { h: t("unit.h"), min: t("unit.min"), s: t("unit.s") });
+  /** Until when this release can be approved, in the strip at the top; once it is delivered the deadline no longer matters. */
+  const expiryText = () => {
+    if (props.job.delivered) return t("rel.strip.delivered");
+    const l = left();
+    return l.state === "expired" ? t("rel.strip.expired") : l.state === "unknown" ? t("rel.strip.unknown") : t("rel.strip.in", { time: span(l.secs) });
+  };
 
   // Only a different review restarts the watching; a refreshed copy of the same review must not.
   const jobId = createMemo(() => props.job.id);
@@ -576,9 +584,15 @@ function ReleaseTab(props: { job: Job; config: Config; onChange: () => void }) {
           }>
             <div class="release-grid"><div class="release-main stack">
             <div class="card release-summary" role="region" aria-label={t("rel.summary.label")}>
-              <p>
-                <strong>{t((r().files ?? []).length === 1 ? "rel.summary.files.one" : "rel.summary.files", { n: (r().files ?? []).length, size: sizeText((r().files ?? []).reduce((a, f) => a + f.bytes, 0)), recipient: r().recipient ?? "" })}</strong>
-                {" · "}<span class="ok-text">✓ {t((r().files ?? []).filter((f) => f.name.startsWith("finding-")).length === 1 ? "rel.summary.findings.one" : "rel.summary.findings", { n: (r().files ?? []).filter((f) => f.name.startsWith("finding-")).length })}</span>
+              {/* the four facts a person checks before anything else: what leaves, how much, to whom, and until when */}
+              <dl class="release-strip">
+                <div><dt>{t("rel.strip.files")}</dt><dd>{t("room.files", { n: (r().files ?? []).length })}</dd></div>
+                <div><dt>{t("rel.strip.size")}</dt><dd>{sizeText((r().files ?? []).reduce((a, f) => a + f.bytes, 0))}</dd></div>
+                <div><dt>{t("rel.strip.recipient")}</dt><dd class="wrap">{r().recipient ?? ""}</dd></div>
+                <div><dt>{t("rel.strip.expiry")}</dt><dd class={props.job.delivered ? "" : left().state === "expired" ? "bad" : left().state === "soon" ? "warn" : left().state === "unknown" ? "muted" : ""}>{expiryText()}</dd></div>
+              </dl>
+              <p class="release-facts">
+                <span class="ok-text">✓ {t((r().files ?? []).filter((f) => f.name.startsWith("finding-")).length === 1 ? "rel.summary.findings.one" : "rel.summary.findings", { n: (r().files ?? []).filter((f) => f.name.startsWith("finding-")).length })}</span>
                 {" · "}{t(heldFiles(r()) === 1 ? "rel.summary.held.one" : "rel.summary.held", { n: heldFiles(r()) })}
                 <Show when={r().disclosure}>{(d) => <>{" · "}<span class={d().verdict === "allow" ? "chip ok" : d().verdict === "block" ? "chip bad" : "chip warn"}>{t(`rel.summary.disc.${d().verdict}` as Key)}</span></>}</Show>
               </p>
@@ -589,11 +603,11 @@ function ReleaseTab(props: { job: Job; config: Config; onChange: () => void }) {
             </div>
             <div class="card stack">
               <h2>{t("rel.exact")}</h2>
-              <p>{rich("rel.for", { recipient: r().recipient ?? "", digest: r().digest ?? "" })}</p>
+              <p class="digest-line"><span>{t("rel.digest")}</span><Ident value={r().digest ?? ""} what={t("rel.digest.what")} /></p>
               <div class="release-files" tabindex="0" role="region" aria-label={t("rel.exact")}>
                 <table>
-                  <thead><tr><th scope="col">{t("rel.col.file")}</th><th scope="col">{t("rel.col.size")}</th><th scope="col">SHA-256</th></tr></thead>
-                  <tbody><For each={r().files}>{(f) => <tr><td><code>{f.name}</code></td><td title={t("rel.bytes", { n: f.bytes })}>{sizeText(f.bytes)}</td><td><code title={f.sha256}>{f.sha256.slice(0, 12)}</code></td></tr>}</For></tbody>
+                  <thead><tr><th scope="col">{t("rel.col.file")}</th><th scope="col" class="num">{t("rel.col.size")}</th><th scope="col">SHA-256</th></tr></thead>
+                  <tbody><For each={r().files}>{(f) => <tr><td><code>{f.name}</code></td><td class="num" title={t("rel.bytes", { n: f.bytes.toLocaleString(locale() === "hi" ? "hi-IN" : "en-US") })}>{sizeText(f.bytes)}</td><td><Ident value={f.sha256} what={t("rel.sha.what", { name: f.name })} /></td></tr>}</For></tbody>
                 </table>
               </div>
               <For each={r().files!.filter((f) => f.name.startsWith("finding-"))}>{(f) => <details open><summary>{f.name}</summary><pre class="finding-text" tabindex="0"><code>{f.text}</code></pre></details>}</For>
@@ -666,7 +680,7 @@ function ReleaseTab(props: { job: Job; config: Config; onChange: () => void }) {
               <Show when={props.job.delivered}>
                 {(d) => (
                   <div class="stack">
-                    <div class="sealed"><span class="stamp" aria-hidden="true"><Glyph /></span><p class="delivered-line">{rich("appr.delivered", { name: d().name, signer: d().signer.slice(0, 24) + "…" })}</p></div>
+                    <div class="sealed"><span class="stamp" aria-hidden="true"><Glyph /></span><p class="delivered-line">{rich("appr.delivered", { name: d().name })}</p><p class="signer-line"><span>{t("appr.signedBy")}</span><Ident value={d().signer} what={t("appr.signer.what")} /></p></div>
                     <p><a class="button" href={`/api/jobs/${props.job.id}/capsule`} download={d().name}>{t("appr.download")}</a></p>
                     <p class="muted">{rich("appr.giveRecipient")}</p>
                     <PrComment files={r().files ?? []} digest={r().digest ?? ""} />

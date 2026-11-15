@@ -80,7 +80,7 @@ export function Instructions() {
   };
   const [newProject, setNewProject] = createSignal("");
   return (
-    <section class="stack wide" aria-labelledby="h-ins">
+    <section class="stack" aria-labelledby="h-ins">
       <h1 id="h-ins">{t("ins.title")}</h1>
       <Lead text={t("ins.lead")} />
       <p class="muted">{t("ins.limits")}</p>

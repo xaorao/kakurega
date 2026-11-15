@@ -32,7 +32,7 @@ export function ShortcutHelp(props: { open: boolean; onClose: () => void }) {
   return (
     <Show when={props.open}>
       <div class="palette-backdrop" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
-        <div ref={box} class="palette card" role="dialog" aria-modal="true" aria-labelledby="kb-title" tabindex="-1">
+        <div ref={box} class="palette card kb-help" role="dialog" aria-modal="true" aria-labelledby="kb-title" tabindex="-1">
           <h2 id="kb-title">{t("kb.title")}</h2>
           <For each={["app", "chat"] as Scope[]}>
             {(scope) => (

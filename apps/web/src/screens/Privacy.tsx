@@ -1,8 +1,8 @@
 import { Lead } from "../components/Lead";
 import { For, Show, createResource, onCleanup } from "solid-js";
-import { api, type OutboundRow, type PrivacyFacts } from "../api";
+import { api, type Job, type OutboundRow, type PrivacyFacts } from "../api";
 import { t, type Key, locale, rich } from "../i18n";
-import { modelKey } from "../privacy";
+import { countText, modelKey, plainName, plainProgram, routeWords } from "../privacy";
 import { whenToday } from "../when";
 
 function Card(props: { id: string; title: Key; children: unknown }) {
@@ -17,27 +17,40 @@ function Card(props: { id: string; title: Key; children: unknown }) {
 /** What left this computer and what was held back, newest first, refreshed while the page is open. */
 function Outbound() {
   const [list, { refetch }] = createResource(() => api.outbound().catch(() => null));
+  // a delivered release is named in the log by its review's id; the page names the review instead
+  const [jobs, { refetch: refetchJobs }] = createResource(() => api.jobs().then((r) => r.jobs).catch(() => [] as Job[]));
   const timer = setInterval(() => void refetch(), 4000);
-  const changed = () => void refetch();
+  const changed = () => { void refetch(); void refetchJobs(); };
   window.addEventListener("kk-changed", changed);
   onCleanup(() => { clearInterval(timer); window.removeEventListener("kk-changed", changed); });
   /** A review's row names the kind of route, not a host: say it in words. */
-  const where = (to: string) => (to === "verified_tee" ? t("out.to.tee") : to === "public" ? t("out.to.public") : to === "device_only" ? t("out.to.here") : to);
+  const where = (to: string) => t(routeWords(to));
+  const num = (v: unknown) => countText(Number(v ?? 0), locale());
+  const review = (id: string) => {
+    const j = (jobs() ?? []).find((x) => x.id === id);
+    return j ? t("out.release.review", { name: j.repo.split("/").pop() ?? j.repo, recipient: j.recipient }) : t("out.release.gone");
+  };
+  const program = (to: string) => {
+    const p = plainProgram(to);
+    return p.server ? t("out.program.tool", { tool: p.tool, server: p.server }) : p.tool;
+  };
   const line = (r: OutboundRow) => {
     const d = r.detail;
     switch (r.what) {
-      case "model": return t("out.model", { to: r.to, chars: Number(d.chars ?? 0), n: Number(d.placeholders ?? 0) });
+      case "model": return t("out.model", { to: r.to, chars: num(d.chars), n: Number(d.placeholders ?? 0) });
       case "search": return t("out.search", { n: Number(d.results ?? 0) });
       case "pages": return t(Number(d.pages ?? 0) === 1 ? "out.pages.one" : "out.pages", { n: Number(d.pages ?? 0) });
-      case "tool": return t("out.tool", { to: r.to });
+      case "tool": return t("out.tool", { to: program(r.to) });
       case "connector": return t("out.connector", { to: r.to, n: Number(d.items ?? 0) });
-      case "release": return t("out.release", { to: r.to });
-      case "review": return d.started ? t("out.review.started", { to: where(r.to) }) : t("out.review", { to: where(r.to), calls: Number(d.calls ?? 0), tokens: Number(d.tokens ?? 0) });
-      case "review_used": return t("out.review", { to: where(r.to), calls: Number(d.calls ?? 0), tokens: Number(d.tokens ?? 0) });
-      case "program": return t("out.program", { to: r.to });
+      case "release": return t("out.release", { to: review(r.to) });
+      case "review": return d.started ? t("out.review.started", { to: where(r.to) }) : t("out.review", { to: where(r.to), calls: num(d.calls), tokens: num(d.tokens) });
+      case "review_used": return t("out.review", { to: where(r.to), calls: num(d.calls), tokens: num(d.tokens) });
+      case "program": return t("out.program", { to: program(r.to) });
       case "agent": return t(d.door === "coding" ? "out.agent.coding" : d.door === "reader" ? "out.agent.reader" : "out.agent.question", { to: r.to });
       case "gap": return t(Number(d.entries ?? 0) === 1 ? "out.gap.one" : "out.gap", { n: Number(d.entries ?? 0) });
-      default: return t("out.held", { where: doorName(r.to), secrets: Number(d.secrets ?? 0), orders: Number(d.instructions ?? 0) });
+      case "held": return t("out.held", { where: doorName(r.to), secrets: Number(d.secrets ?? 0), orders: Number(d.instructions ?? 0) });
+      // a kind of row this page was not written for is named in words, never by its code
+      default: return t("out.other", { what: plainName(String(r.what)) });
     }
   };
   return (
@@ -48,7 +61,7 @@ function Outbound() {
           <>
             <ul class="plain stack" aria-live="polite">
               <For each={o().rows} fallback={<li class="ok-text">✓ {t("out.none")}</li>}>
-                {(r) => <li class={r.what === "held" ? "out-row held" : "out-row"}><time class="muted">{whenToday(r.at, locale())}</time> <span class={r.what === "held" ? "chip ok" : "chip"}>{t(`out.kind.${r.what}`)}</span> {line(r)}</li>}
+                {(r) => <li class={r.what === "held" ? "out-row held" : "out-row"}><time class="muted">{whenToday(r.at, locale())}</time> <span class={r.what === "held" ? "chip ok" : "chip"}>{kindWord(r.what)}</span> {line(r)}</li>}
               </For>
             </ul>
             <p class="muted">{t("out.note")}</p>
@@ -111,16 +124,30 @@ function KeptProjects() {
   );
 }
 
-/** The screen a held-back entry came from, in the reader's language; a name this page does not know is shown as written. */
+/** The screen a held-back entry came from, in the reader's language; a name this page does not know is put in words. */
 const DOORS: Record<string, Key> = { chat: "nav.chat", "try to break it": "break.title", documents: "nav.docs", "meeting notes": "nav.meeting" };
 function doorName(door: string): string {
-  return DOORS[door] ? t(DOORS[door]) : door;
+  return DOORS[door] ? t(DOORS[door]) : plainName(door);
+}
+
+/** The one word on a row's chip; a kind this page does not know is put in words rather than shown as its code. */
+function kindWord(what: string): string {
+  const key = `out.kind.${what}` as Key;
+  const text = t(key);
+  return text === key ? plainName(what) : text;
+}
+
+/** A tool an agent may use, by the name the Agent access screen gives it; one this page does not know is put in words. */
+function toolWords(tool: string): string {
+  const key = `agent.tool.${tool}` as Key;
+  const text = t(key);
+  return text === key ? plainName(tool) : text.toLowerCase();
 }
 
 export function Privacy() {
   const [facts] = createResource(() => api.privacy().catch(() => null));
   return (
-    <section class="stack wide" aria-labelledby="h-privacy">
+    <section class="stack" aria-labelledby="h-privacy">
       <h1 id="h-privacy">{t("privacy.title")}</h1>
       <Lead text={t("privacy.lead")} />
       <Show when={facts()} fallback={<p class="muted" role="status">{facts.loading ? t("inbox.loading") : t("privacy.unavailable")}</p>}>
@@ -170,7 +197,7 @@ export function Privacy() {
             </Card>
             <Card id="agents" title="privacy.agents.title">
               <p>{t("privacy.agents.body")}</p>
-              <p>{f().agents.tools_open.length > 0 ? t("privacy.agents.open", { tools: f().agents.tools_open.join(", ") }) : t("privacy.agents.none")}</p>
+              <p>{f().agents.tools_open.length > 0 ? t("privacy.agents.open", { tools: f().agents.tools_open.map(toolWords).join(", ") }) : t("privacy.agents.none")}</p>
             </Card>
             <Card id="updates" title="privacy.updates.title">
               <p>{t("privacy.updates.body")}</p>

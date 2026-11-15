@@ -366,9 +366,28 @@ try {
   }
   await page.screenshot({ path: join(shots, "02-release.png"), fullPage: true });
   await axeCheck(page, "release");
-  const digestText = await page.locator("p", { hasText: "Digest" }).first().innerText();
-  const digest = /[0-9a-f]{64}/.exec(digestText)?.[0];
-  check("release shows a full digest", !!digest);
+  const digestCode = page.locator(".digest-line code");
+  const digest = /^[0-9a-f]{64}$/.exec((await digestCode.getAttribute("title")) ?? "")?.[0];
+  check("release shows its digest by its two ends, the whole digest in its title", !!digest && (await digestCode.innerText()) === `${digest.slice(0, 8)}…${digest.slice(-6)}`, await digestCode.innerText());
+  {
+    // the copy button beside it puts the whole digest on the clipboard, not the two ends that are shown
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
+    await page.getByRole("button", { name: "Copy the whole digest of this release" }).click();
+    await page.locator(".digest-line [role=status]", { hasText: "Copied" }).waitFor();
+    check("its copy button copies the whole digest", (await page.evaluate(() => navigator.clipboard.readText())) === digest);
+    // a grant for one address replaces every other permission there (notices are granted later in this run): put them back as they were
+    await page.context().clearPermissions();
+    const shaCells = page.locator(".release-files tbody td:nth-child(3) code");
+    const shaOk = await shaCells.evaluateAll((els) => els.length > 0 && els.every((el) => /^[0-9a-f]{64}$/.test(el.title) && el.textContent === `${el.title.slice(0, 8)}…${el.title.slice(-6)}`));
+    check("each file's SHA-256 is shown by its two ends, with the whole value in its title and a copy button of its own", shaOk && (await page.getByRole("button", { name: /^Copy the whole SHA-256 of / }).count()) === (await shaCells.count()));
+    const sizes = await page.locator(".release-files tbody td:nth-child(2)").allInnerTexts();
+    check("file sizes read as B, KB or MB with one decimal, never a raw count of bytes", sizes.length > 0 && sizes.every((x) => /^(\d{1,4} B|\d+\.\d (KB|MB|GB))$/.test(x.trim())), sizes.join(", "));
+    const strip = await page.locator(".release-strip").innerText();
+    check("a strip at the top says in one line what leaves, its size, to whom and until when", /Files leaving\s+\d+ files?/.test(strip) && /Size\s+(\d+ B|\d+\.\d (KB|MB))/.test(strip) && /Recipient\s+acme/.test(strip) && /Expires\s+in \d+ (h|min|s)/.test(strip), strip.replace(/\n/g, " | "));
+    const stripBox = await page.locator(".release-strip").boundingBox();
+    const tableBox = await page.locator(".release-files").boundingBox();
+    check("and it sits above the file table, on one row at this width", !!stripBox && !!tableBox && stripBox.y + stripBox.height <= tableBox.y && stripBox.height < 90, JSON.stringify({ stripBox, tableBox }));
+  }
   const releaseText = await page.locator('[role="tabpanel"]').innerText();
   check("release lists the fixed files and the held-back file count", releaseText.includes("finding-1.txt") && releaseText.includes("run-check.py") && /1 withheld file/.test(releaseText));
   const summaryLine = await page.locator(".release-summary").innerText();
@@ -514,11 +533,22 @@ try {
   const shownName = (await page.locator(".delivered-line").innerText()).match(/[0-9a-f]{8,}\.kkg/)?.[0] ?? "";
   check("the capsule is saved under the name the page shows", !!saveAs && saveAs === shownName, `${saveAs} vs ${shownName}`);
 
-  // history search, Cmd+K, theme choice
+  // Cmd+K opens the one palette, which finds this review by its recipient; the side list's own filter still works
   await page.keyboard.press("Meta+k");
-  check("Cmd+K focuses the review search", await page.evaluate(() => document.activeElement?.id === "search"));
-  await page.keyboard.type("acme");
-  check("searching by recipient keeps the matching review", (await page.locator(".list li a").count()) === 1);
+  {
+    const finder = page.getByRole("dialog", { name: "Search and commands" });
+    await finder.waitFor();
+    check("Cmd+K opens the one palette with the cursor in its box", await finder.getByRole("combobox").evaluate((el) => el === document.activeElement));
+    await page.keyboard.type("acme");
+    const row = finder.getByRole("option").first();
+    const rowText = (await row.innerText()).replace(/\s+/g, " ").trim();
+    const rowHeight = await row.evaluate((el) => el.getBoundingClientRect().height);
+    check("it finds the review by its recipient, on one line: the name, its state and recipient muted, and the word Review", rowText.startsWith("payments-service") && /for acme/i.test(rowText) && rowText.endsWith("Review") && !/job-\d/.test(rowText) && rowHeight < 48, `${rowText} (${rowHeight}px)`);
+    await page.keyboard.press("Escape");
+    await finder.waitFor({ state: "detached" });
+  }
+  await page.locator("#search").fill("acme");
+  check("the side list's filter keeps the matching review", (await page.locator(".list li a").count()) === 1);
   await page.fill("#search", "nothing-like-this");
   check("a search with no match says so", await page.getByText("No review matches.").isVisible());
   await page.keyboard.press("Escape");
@@ -937,6 +967,13 @@ try {
   const live = await page.evaluate(async () => (await fetch("/api/privacy")).json());
   check("every card agrees with what the service reports right now", privacyText.includes(live.search.on ? "Search is on" : "Search is off") && privacyText.includes(live.telegram.on ? "A chat is paired" : "No chat is paired") && privacyText.includes(live.extension.on ? "An extension is paired" : "No extension is paired") && privacyText.includes(live.approvals.signing_key_enrolled ? "signed with a key" : "No signing key is enrolled") && privacyText.includes(live.agents.tools_open.length ? "open to agents right now: " : "No tool that acts is open") && (!live.search.on || privacyText.includes(live.search.host)), JSON.stringify(live));
   check("it says plainly what it does not protect against", privacyText.includes("What this does not protect against") && privacyText.includes("read the service's key"));
+  {
+    // read by people: no snake_case name, no review id, no code for a kind of route, and counts with their separators
+    await page.locator("#outbound").getByText("A release you approved was delivered", { exact: false }).first().waitFor({ timeout: 10000 }).catch(() => {});
+    const whole = await page.locator("main").innerText();
+    const machine = whole.match(/\b[a-z0-9]+_[a-z0-9_]+\b|\bjob-\d+\b|verified_tee|device_only/g) ?? [];
+    check("the page shows no raw machine word: a delivered release names its review, not its id", machine.length === 0 && /A release you approved was delivered: payments-service, for acme-audit\./.test(whole), machine.join(", ") + " | " + (await page.locator("#outbound").innerText()).slice(0, 400).replace(/\n/g, " / "));
+  }
   await axeCheck(page, "where your data goes");
   await page.screenshot({ path: join(shots, "15-privacy.png"), fullPage: true });
   // the sentence follows the address, a mislabelled route is not called local, and the address is shown as text only
@@ -956,7 +993,26 @@ try {
   const tee = await showFacts(factsFor({ class: "verified_tee", host: "cloud.example", stays_here: false }));
   check("a hardware-protected remote model is described as sent encrypted to an enclave", tee.includes("hardware-protected enclave") && tee.includes("cloud.example"));
   const doors = await showFacts(factsFor({}, { search: { on: true, host: "search.example.org" }, telegram: { on: true }, extension: { on: true }, agents: { tools_open: ["start_review"], calls_are_logged: true }, approvals: { signing_key_enrolled: true } }));
-  check("open doors are named: search host, Telegram, extension, the acting tool, a signed approval", doors.includes("search.example.org") && doors.includes("A chat is paired") && doors.includes("An extension is paired") && doors.includes("start_review") && doors.includes("signed with a key"));
+  check("open doors are named: search host, Telegram, extension, the acting tool, a signed approval", doors.includes("search.example.org") && doors.includes("A chat is paired") && doors.includes("An extension is paired") && doors.includes("start a review") && !doors.includes("start_review") && doors.includes("signed with a key"));
+  {
+    // rows of kinds the log can hold, each with a name a program gave it: every one is said in words
+    const rows = [
+      { at: 1700000000, seq: 1, what: "program", to: "github/search_issues", detail: { bytes: 12 } },
+      { at: 1700000001, seq: 2, what: "review_used", to: "local_unverified", detail: { calls: 15, tokens: 29117 } },
+      { at: 1700000002, seq: 3, what: "held", to: "meeting_notes_v2", detail: { secrets: 1, instructions: 0 } },
+      { at: 1700000003, seq: 4, what: "release", to: "job-999", detail: { state: "delivered" } },
+      { at: 1700000004, seq: 5, what: "model", to: "cloud-api.near.ai", detail: { chars: 1142, placeholders: 0 } },
+      { at: 1700000005, seq: 6, what: "new_kind_of_row", to: "x_y", detail: {} },
+    ];
+    await page.route("**/api/outbound", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ rows, totals: {}, looked_at: rows.length, note: "" }) }));
+    await page.reload();
+    const list = page.locator("#outbound");
+    await list.getByText("search issues, from github", { exact: false }).waitFor();
+    const outbound = await list.innerText();
+    await page.unroute("**/api/outbound");
+    const machine = outbound.match(/\b[a-z0-9]+_[a-z0-9_]+\b|\bjob-\d+\b/g) ?? [];
+    check("every row of what left this computer is in words: a tool and its server, an unknown route, a screen, a review no longer listed, counts with separators", machine.length === 0 && outbound.includes("search issues, from github") && outbound.includes("(a model that is not on this computer)") && outbound.includes("about 29,117 tokens") && outbound.includes("Kept from the model in meeting notes v2") && outbound.includes("a review that is no longer listed") && outbound.includes("1,142 characters") && outbound.includes("“new kind of row”") && !/this computer \(confidential|\(this computer\)/.test(outbound), machine.join(", ") + " | " + outbound.slice(0, 900).replace(/\n/g, " / "));
+  }
   const hostile = await showFacts(factsFor({ host: "<img src=x onerror=window.__pwned=1>", stays_here: false }));
   check("an address with markup is shown as plain text and runs nothing", hostile.includes("<img src=x") && (await page.evaluate(() => window.__pwned === undefined)) && (await page.locator("main img").count()) === 0);
   // the badge in the header follows the same fact: it never says "on this computer" for a model that is elsewhere
@@ -1097,23 +1153,45 @@ try {
   await page.getByRole("heading", { name: "Review a project" }).waitFor();
   await page.unroute("**/api/jobs**");
   await page.reload();
-  // command palette: keyboard-driven, focus returns where it was, and it can change settings
-  await page.getByRole("button", { name: "Commands" }).focus();
-  await page.keyboard.press("Control+Shift+P");
-  const palette = page.getByRole("dialog", { name: "Commands" });
+  // the one palette: keyboard-driven, focus returns where it was, and it can change settings
+  const searchButton = page.getByRole("button", { name: "Search", exact: true });
+  check("the header's way into the palette says what it does and shows its key", ["⌘K", "Ctrl K"].includes(await searchButton.getAttribute("data-keys")) && /Control\+K/.test((await searchButton.getAttribute("aria-keyshortcuts")) ?? ""));
+  await searchButton.focus();
+  await page.keyboard.press("Control+k");
+  const palette = page.getByRole("dialog", { name: "Search and commands" });
   await palette.waitFor();
-  check("the command palette opens with the keyboard and puts focus in its search box", await palette.getByRole("combobox").evaluate((el) => el === document.activeElement));
+  check("Ctrl+K opens the palette and puts focus in its search box", await palette.getByRole("combobox").evaluate((el) => el === document.activeElement));
+  const browsingRows = await palette.getByRole("option").count();
   await page.keyboard.type("memory");
-  check("typing narrows the commands to matching ones", (await palette.getByRole("option").count()) === 1);
+  check("typing narrows the list to matching rows, the best first", (await palette.getByRole("option").count()) < browsingRows && (await palette.getByRole("option").first().getAttribute("id")) === "pal-memory" && (await palette.locator('[aria-selected="true"]').getAttribute("id")) === "pal-memory");
   await axeCheck(page, "command palette");
   await page.keyboard.press("Enter");
   await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
-  check("choosing a command goes there, closes the palette and returns focus", (await palette.count()) === 0 && (await page.evaluate(() => document.activeElement?.textContent)) === "Commands");
+  check("choosing a command goes there, closes the palette and returns focus", (await palette.count()) === 0 && (await page.evaluate(() => document.activeElement?.textContent)) === "Search");
+  // the editor's key for a command palette is a second way into the same one
   await page.keyboard.press("Control+Shift+P");
+  await palette.waitFor();
+  check("Ctrl+Shift+P opens the same palette", (await palette.getByRole("combobox").evaluate((el) => el === document.activeElement)) && (await page.getByRole("dialog").count()) === 1);
   await page.keyboard.type("dark");
-  await page.keyboard.press("ArrowDown");
+  check("a setting is found by its name and says it is a setting", /^Dark\s*Setting$/.test((await palette.locator('[aria-selected="true"]').innerText()).trim()));
   await page.keyboard.press("Enter");
   check("a setting can be changed from the palette", (await page.evaluate(() => document.documentElement.getAttribute("data-theme"))) === "dark");
+  {
+    // a review is found by its name and opened from the palette; the row under the keyboard stands out in the dark theme too
+    await page.keyboard.press("Control+k");
+    await palette.waitFor();
+    await page.keyboard.type("payments");
+    await palette.locator('[aria-selected="true"]', { hasText: "payments-service" }).waitFor();
+    // read in one step from the page as it is: a row handle could be redrawn between finding it and reading it
+    const look = await page.evaluate(() => { const el = document.querySelector('.palette [aria-selected="true"]'); return el ? { bg: getComputedStyle(el).backgroundColor, card: getComputedStyle(el.closest(".palette")).backgroundColor, text: el.innerText } : { bg: "", card: "", text: "no selected row" }; });
+    check("in the dark theme the row under the keyboard has its own background", look.bg !== "rgba(0, 0, 0, 0)" && look.bg !== look.card && look.text.startsWith("payments-service"), JSON.stringify(look));
+    await axeCheck(page, "command palette, dark theme, a review selected");
+    await page.keyboard.press("Enter");
+    await page.locator(".review-head").waitFor();
+    check("choosing a review in the palette opens it", /#\/job\/job-\d+$/.test(page.url()), page.url());
+    await page.getByRole("link", { name: "Memory" }).click();
+    await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
+  }
   await page.keyboard.press("Control+Shift+P");
   await page.keyboard.type("zzzznothing");
   check("a search with no match says so", (await palette.getByText("Nothing matches.").count()) === 1);
@@ -1561,7 +1639,7 @@ try {
   await page.getByLabel("Format").selectOption("lines");
   // a file over the size limit is refused by the page, with its reason, before anything is sent
   await page.locator('input[type="file"]').setInputFiles([{ name: "huge.txt", mimeType: "text/plain", buffer: Buffer.alloc(8 * 1024 * 1024 + 1, 97) }]);
-  await page.getByText("huge.txt is larger than 8 MB and was not sent.").waitFor();
+  await page.getByText("huge.txt is larger than 8.0 MB and was not sent.").waitFor();
   check("a file over 8 MB is refused by the page with its reason and nothing is listed", (await page.locator(".file-chip").count()) === 0);
   // a seventh file is not added
   await page.locator('input[type="file"]').setInputFiles(Array.from({ length: 6 }, (_, i) => ({ name: `f${i}.txt`, mimeType: "text/plain", buffer: Buffer.from(`file ${i}\n`) })));
@@ -1802,6 +1880,36 @@ try {
   await page.getByLabel("Search kept conversations").fill("canary conversation");
   await hitsList.getByText("Canary conversation").waitFor();
   await page.getByLabel("Search kept conversations").fill("");
+  {
+    // the one palette finds a kept conversation by its name and by a word said in it, and opens it from another screen
+    await page.getByRole("link", { name: "Memory" }).click();
+    await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
+    await page.keyboard.press("Control+k");
+    const finder = page.getByRole("dialog", { name: "Search and commands" });
+    await finder.waitFor();
+    await page.keyboard.type("canary conv");
+    const byName = (await finder.getByRole("option").first().innerText()).replace(/\s+/g, " ").trim();
+    check("the palette finds a kept conversation by its name, as a chat row with its length", /^Canary conversation \d+ messages? Chat$/.test(byName), byName);
+    await finder.getByRole("combobox").fill("keptcanary");
+    const bySaid = finder.getByRole("option", { name: /Canary conversation/ });
+    await bySaid.waitFor();
+    check("and by a word said in it that is not in its name, with the words around it", /keptcanary/i.test(await bySaid.innerText()) && (await finder.getByRole("option").count()) === 1, await bySaid.innerText());
+    await axeCheck(page, "palette with a conversation found by what was said");
+    await page.keyboard.press("Enter");
+    await page.getByRole("heading", { name: "Chat", exact: true }).waitFor();
+    await page.locator(".msg").nth(1).waitFor();
+    check("choosing it opens the chat on that conversation", (await page.locator(".msg").count()) === 2 && (await page.locator(".chat-tab.active").innerText()).includes("Canary conversation"));
+    // the same, while the chat is already the open screen
+    await page.getByRole("navigation", { name: "Open conversations" }).getByRole("button", { name: "Start a new conversation" }).click();
+    await page.locator(".msg").first().waitFor({ state: "detached" });
+    await page.keyboard.press("Control+k");
+    await page.keyboard.type("canary conv");
+    await page.keyboard.press("Enter");
+    await page.locator(".msg").nth(1).waitFor();
+    check("and it opens there too when the chat is already on the screen", (await page.locator(".msg").count()) === 2);
+    await page.getByRole("navigation", { name: "Open conversations" }).getByRole("button", { name: "Start a new conversation" }).click();
+    await page.locator(".msg").first().waitFor({ state: "detached" });
+  }
   await page.route(/\/api\/sessions\/[^/]+$/, async (route) => {
     if (route.request().method() !== "GET") return route.continue();
     const real = await route.fetch();
@@ -2386,7 +2494,7 @@ try {
   await page.keyboard.press("?");
   const kb = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await kb.waitFor();
-  check("? opens the list of keyboard shortcuts, one row for each shortcut that works", (await kb.locator("dt").count()) === 9 && (await kb.innerText()).includes("Open the command palette") && /Esc, (Ctrl\+G|⌃G)/.test(await kb.innerText()), (await kb.locator("dt").count()) + " rows");
+  check("? opens the list of keyboard shortcuts, one row for each shortcut that works", (await kb.locator("dt").count()) === 8 && (await kb.innerText()).includes("Find a screen, review or chat, or run a command") && /Ctrl\+K, Ctrl\+Shift\+P|⌘K, ⇧⌘P/.test(await kb.innerText()) && !/Search the reviews in the side list/.test(await kb.innerText()) && /Esc, (Ctrl\+G|⌃G)/.test(await kb.innerText()), (await kb.locator("dt").count()) + " rows");
   await axeCheck(page, "keyboard shortcuts dialog");
   await page.screenshot({ path: join(shots, "14c-shortcuts.png") });
   await page.keyboard.press("Escape");
@@ -2486,7 +2594,7 @@ try {
   await page.locator("#setting-shortcuts").getByRole("button", { name: "Show the list" }).click();
   const kb2 = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await kb2.waitFor();
-  check("the keyboard setting opens the same list of shortcuts", (await kb2.locator("dt").count()) === 9);
+  check("the keyboard setting opens the same list of shortcuts", (await kb2.locator("dt").count()) === 8);
   await page.keyboard.press("Escape");
   await kb2.waitFor({ state: "detached" });
   {

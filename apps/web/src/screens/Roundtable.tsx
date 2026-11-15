@@ -113,7 +113,7 @@ export function Roundtable() {
     <section class="stack" aria-labelledby="rt-title">
       <h1 id="rt-title">{t("rt.title")}</h1>
       <Lead text={t("rt.lead")} tail={1} />
-      <form class="card stack" onSubmit={ask}>
+      <form class="card stack" id="rt-form" onSubmit={ask}>
         <label for="rt-question">{t("rt.question")}</label>
         <textarea id="rt-question" rows="3" maxlength="4000" value={question()} disabled={busy()} onInput={(e) => setQuestion(e.currentTarget.value)} />
         <fieldset class="rt-experts">
@@ -137,14 +137,16 @@ export function Roundtable() {
           </For>
           <p class="muted" aria-live="polite">{t("rt.count", { n: chosen().length, min: min(), max: max() })}</p>
         </fieldset>
-        <div class="rt-actions">
-          <button class="primary" type="submit" disabled={!ready()}>{t("rt.ask")}</button>
-          <Show when={busy()}><button type="button" onClick={() => stop?.abort()}>{t("chat.stop")}</button></Show>
-          <span class="muted">{t("rt.notKept")}</span>
-        </div>
         <Show when={error()}><p role="alert" class="bad">{error()}</p></Show>
         <Show when={stopped()}><p role="status" class="muted">{t("rt.stopped")}</p></Show>
       </form>
+      {/* The bar is the screen's, not the form's: it follows the reader down through the answers as they arrive, so Stop is
+          always in reach. It comes right after the form for the keyboard and is drawn at the foot of the screen. */}
+      <div class="rt-actions">
+        <button class="primary" type="submit" form="rt-form" disabled={!ready()}>{t("rt.ask")}</button>
+        <Show when={busy()}><button type="button" onClick={() => stop?.abort()}>{t("chat.stop")}</button></Show>
+        <span class="muted">{busy() ? t("rt.answering", { n: seats().filter((s) => s.state === "answered" || s.state === "failed").length, total: seats().length }) : t("rt.notKept")}</span>
+      </div>
 
       <Show when={resolution() || noResolution()}>
         <section class="card stack rt-resolution" aria-labelledby="rt-res">

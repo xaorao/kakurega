@@ -48,7 +48,7 @@ export function Handoff() {
   };
 
   return (
-    <section class="stack wide" aria-labelledby="h-hand">
+    <section class="stack" aria-labelledby="h-hand">
       <h1 id="h-hand">{t("hand.title")}</h1>
       <Lead text={t("hand.lead")} />
       <Show when={status()} fallback={<p class="muted" role="status">{status.loading ? t("review.loading") : t("hand.error")}</p>}>

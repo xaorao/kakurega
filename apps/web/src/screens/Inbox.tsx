@@ -21,7 +21,7 @@ export function Inbox() {
     setNotify(notifyState());
   };
   return (
-    <section class="stack wide" aria-labelledby="h-inbox">
+    <section class="stack" aria-labelledby="h-inbox">
       <h1 id="h-inbox">{t("inbox.title")}</h1>
       <Lead text={t("inbox.lead")} />
       <Show when={inbox()} fallback={<LoadState loading={inbox.loading} retry={() => void refetch()} />}>

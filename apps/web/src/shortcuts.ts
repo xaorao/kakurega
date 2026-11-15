@@ -35,24 +35,20 @@ const letter = (e: KeyEventLike, k: string) => e.key.toLowerCase() === k;
 
 export const SHORTCUTS: readonly Shortcut[] = [
   {
+    // one palette finds a screen, a review or a conversation and runs a command; the editor's key for a command palette
+    // opens the same one
     id: "palette",
     scope: "app",
-    mac: "⌘⇧P",
-    other: "Ctrl+Shift+P",
+    mac: "⌘K, ⇧⌘P",
+    other: "Ctrl+K, Ctrl+Shift+P",
     label: "kb.palette",
     editable: true,
-    matches: (e) => mod(e) && e.shiftKey && !e.altKey && letter(e, "p"),
-    samples: [{ key: "P", ctrlKey: true, metaKey: false, altKey: false, shiftKey: true }],
-  },
-  {
-    id: "search",
-    scope: "app",
-    mac: "⌘K",
-    other: "Ctrl+K",
-    label: "kb.search",
-    editable: true,
-    matches: (e) => mod(e) && !e.shiftKey && !e.altKey && letter(e, "k"),
-    samples: [{ key: "k", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }],
+    matches: (e) => mod(e) && !e.altKey && ((!e.shiftKey && letter(e, "k")) || (e.shiftKey && letter(e, "p"))),
+    samples: [
+      { key: "k", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false },
+      { key: "k", ctrlKey: false, metaKey: true, altKey: false, shiftKey: false },
+      { key: "P", ctrlKey: true, metaKey: false, altKey: false, shiftKey: true },
+    ],
   },
   {
     id: "help",

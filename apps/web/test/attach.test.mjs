@@ -45,13 +45,22 @@ test("at04 no more than five files go with one message, and the rest are counted
   assert.deepEqual(room(9, f(1)), { take: [], over: 1 });
 });
 
-test("at05 sizes read the way people read them", () => {
+test("at05 sizes read the way people read them: whole bytes, then KB, MB or GB with one decimal", () => {
   assert.equal(sizeText(0), "0 B");
   assert.equal(sizeText(1023), "1023 B");
-  assert.equal(sizeText(1024), "1 KB");
+  assert.equal(sizeText(1024), "1.0 KB");
   assert.equal(sizeText(1536), "1.5 KB");
-  assert.equal(sizeText(1024 * 1024), "1 MB");
-  assert.equal(sizeText(8 * 1024 * 1024), "8 MB");
+  assert.equal(sizeText(4213), "4.1 KB");
+  assert.equal(sizeText(1024 * 1024), "1.0 MB");
+  assert.equal(sizeText(8 * 1024 * 1024), "8.0 MB");
+  assert.equal(sizeText(3 * 1024 ** 3), "3.0 GB");
+  // the unit is chosen after rounding: just under a megabyte is 1.0 MB, never 1024.0 KB
+  assert.equal(sizeText(1024 * 1024 - 1), "1.0 MB");
+  assert.equal(sizeText(1024 * 1023.9), "1023.9 KB");
+  // never a raw count, a negative size or a fraction of a byte
+  for (const odd of [-5, Number.NaN, Number.POSITIVE_INFINITY]) assert.equal(sizeText(odd), "0 B");
+  assert.equal(sizeText(511.6), "512 B");
+  for (const n of [1, 999, 1024, 52_000, 7_340_032, 9e9]) assert.match(sizeText(n), /^(\d+ B|\d+\.\d (KB|MB|GB))$/, String(n));
 });
 
 test("at06 the size limit is the service's, and a file at the limit is allowed while one byte over is not", () => {

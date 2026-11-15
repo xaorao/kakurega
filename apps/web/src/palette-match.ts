@@ -1,6 +1,10 @@
 export interface Matchable {
   label: string;
   group: string;
+  /** The muted words after the name (a review's state and recipient); they match like the group does. */
+  detail?: string;
+  /** Words that find the row without being shown on it (a review's id). */
+  keywords?: string;
 }
 
 /** How well one typed word fits a text: whole-word start 100, any word start 80, anywhere inside 60, letters in order 30 minus gaps, else -1. */
@@ -24,7 +28,14 @@ export function wordScore(text: string, word: string): number {
   return Math.max(1, 30 - gaps);
 }
 
-/** Items that fit every typed word, best first (a match in the label counts double against one in the group). Ties keep the given order; no query keeps it as is. */
+/** A typed word found as written in a longer text (no letters-in-order guess: a long detail would fit almost anything). */
+function whole(text: string | undefined, word: string): number {
+  if (!text) return -1;
+  const s = wordScore(text, word);
+  return s >= 60 ? s : -1;
+}
+
+/** Items that fit every typed word, best first (a match in the label counts double against one in the group, the detail or the keywords). Ties keep the given order; no query keeps it as is. */
 export function matchItems<T extends Matchable>(items: T[], query: string): T[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length === 0) return items;
@@ -32,7 +43,7 @@ export function matchItems<T extends Matchable>(items: T[], query: string): T[] 
   items.forEach((item, index) => {
     let score = 0;
     for (const w of words) {
-      const s = Math.max(2 * wordScore(item.label, w), wordScore(item.group, w));
+      const s = Math.max(2 * wordScore(item.label, w), wordScore(item.group, w), whole(item.detail, w), whole(item.keywords, w));
       if (s < 0) return;
       score += s;
     }

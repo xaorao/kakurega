@@ -215,7 +215,7 @@ function WorkingNow() {
 export function Activity() {
   const [log, { refetch }] = createResource(() => api.log().catch(() => null));
   return (
-    <section class="stack wide" aria-labelledby="h-act">
+    <section class="stack" aria-labelledby="h-act">
       <h1 id="h-act">{t("act.title")}</h1>
       <Lead text={t("act.lead")} />
       <WorkingNow />

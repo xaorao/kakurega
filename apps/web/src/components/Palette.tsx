@@ -4,19 +4,57 @@ import { matchItems, moveSection, moveSelection, sectionHeads } from "../palette
 
 export interface PaletteItem {
   id: string;
+  /** The name, in ink. */
   label: string;
+  /** The heading the row sits under while browsing. */
   group: string;
+  /** One word for what the row is (a screen, a review, a chat), muted at the end of the row. */
+  kind: string;
+  /** Muted words after the name: a review's state and recipient, a chat's length. */
+  detail?: string;
+  /** Words that find the row without being shown (a review's id). */
+  keywords?: string;
   run: () => void;
 }
 
-export function Palette(props: { open: boolean; items: PaletteItem[]; onClose: () => void }) {
+/** The one place to find a screen, a review or a conversation and to run a command. Rows the service finds by what was said
+ *  in a conversation (`search`) come after the rows found by name, so what is under the cursor does not move as they arrive. */
+export function Palette(props: { open: boolean; items: PaletteItem[]; onClose: () => void; search?: (q: string) => Promise<PaletteItem[]> }) {
   const [q, setQ] = createSignal("");
   const [sel, setSel] = createSignal(0);
-  const shown = createMemo(() => matchItems(props.items, q()));
+  const [found, setFound] = createSignal<{ q: string; items: PaletteItem[] }>({ q: "", items: [] });
+  const named = createMemo(() => matchItems(props.items, q()));
+  const shown = createMemo(() => {
+    const first = named();
+    const extra = found().q === q().trim() ? found().items : [];
+    if (extra.length === 0) return first;
+    const have = new Set(first.map((i) => i.id));
+    return [...first, ...extra.filter((i) => !have.has(i.id))];
+  });
   const heads = createMemo(() => new Set(sectionHeads(shown(), q())));
-  const browsing = () => q().trim() === "";
   let input: HTMLInputElement | undefined;
   let opener: Element | null = null;
+  // the newest question wins: an answer to an older one is dropped, and nothing is asked once the palette is closed
+  let seq = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const ask = (value: string) => {
+    clearTimeout(timer);
+    const mine = ++seq;
+    const query = value.trim();
+    if (!props.search || query.length < 2) {
+      setFound({ q: query, items: [] });
+      return;
+    }
+    timer = setTimeout(async () => {
+      try {
+        const items = await props.search!(query);
+        if (mine === seq && props.open) setFound({ q: query, items });
+      } catch {
+        if (mine === seq) setFound({ q: query, items: [] });
+      }
+    }, 160);
+  };
+  onCleanup(() => clearTimeout(timer));
   createEffect(() => {
     // keep the highlighted row in view when arrow keys move past the visible part of the list
     const row = props.open ? shown()[sel()] : undefined;
@@ -27,10 +65,15 @@ export function Palette(props: { open: boolean; items: PaletteItem[]; onClose: (
       opener = document.activeElement;
       setQ("");
       setSel(0);
+      setFound({ q: "", items: [] });
       queueMicrotask(() => input?.focus());
-    } else if (opener instanceof HTMLElement) {
-      opener.focus();
-      opener = null;
+    } else {
+      clearTimeout(timer);
+      seq++;
+      if (opener instanceof HTMLElement) {
+        opener.focus();
+        opener = null;
+      }
     }
   });
   const choose = (i: PaletteItem | undefined) => {
@@ -69,6 +112,7 @@ export function Palette(props: { open: boolean; items: PaletteItem[]; onClose: (
             role="combobox"
             aria-expanded="true"
             aria-controls="palette-list"
+            aria-autocomplete="list"
             aria-activedescendant={shown()[sel()] ? `pal-${shown()[sel()]?.id}` : undefined}
             aria-label={t("palette.title")}
             placeholder={t("palette.placeholder")}
@@ -76,18 +120,20 @@ export function Palette(props: { open: boolean; items: PaletteItem[]; onClose: (
             onInput={(e) => {
               setQ(e.currentTarget.value);
               setSel(0);
+              ask(e.currentTarget.value);
             }}
           />
-          <ul id="palette-list" role="listbox" class="plain">
-            <For each={shown()} fallback={<li class="muted" role="status">{t("palette.none")}</li>}>
+          <ul id="palette-list" role="listbox" class="plain" aria-label={t("palette.title")}>
+            <For each={shown()} fallback={<li class="muted pal-none" role="status">{t("palette.none")}</li>}>
               {(i, idx) => (
                 <>
                   <Show when={heads().has(idx())}>
                     <li class="pal-head" role="presentation" aria-hidden="true">{i.group}</li>
                   </Show>
                   <li id={`pal-${i.id}`} role="option" aria-selected={idx() === sel()} class={idx() === sel() ? "pal-item sel" : "pal-item"} onMouseMove={() => setSel(idx())} onClick={() => choose(i)}>
-                    <span>{i.label}</span>
-                    <span class={browsing() ? "visually-hidden" : "muted"}>{i.group}</span>
+                    <span class="pal-name">{i.label}</span>
+                    <Show when={i.detail}><span class="pal-detail">{i.detail}</span></Show>
+                    <span class="pal-kind">{i.kind}</span>
                   </li>
                 </>
               )}

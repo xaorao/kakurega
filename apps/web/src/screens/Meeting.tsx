@@ -73,7 +73,7 @@ export function Meeting() {
   const of = (n: MeetingNotes, kind: string): MeetingPoint[] => n.checked.filter((p) => p.kind === kind);
 
   return (
-    <section class="stack wide" aria-labelledby="h-meet">
+    <section class="stack" aria-labelledby="h-meet">
       <h1 id="h-meet">{t("meet.title")}</h1>
       <Lead text={t("meet.lead")} />
       <form class="card stack" onSubmit={(e) => void write(e)}>
