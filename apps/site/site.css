@@ -313,6 +313,8 @@ main { max-width: 1200px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 40px); }
   .cards.two, .cards.three, .cards.five, .cards article.wide, .gate-grid, .quote ol, .take { grid-template-columns: minmax(0, 1fr); }
   .gate-side.in { border-right: 0; border-bottom: 1px solid rgba(229, 72, 47, 0.45); }
   .gate textarea, .gate-out { min-height: 200px; font-size: 12.5px; padding: 16px; }
+  /* at phone width long lines wrap instead of scrolling sideways out of view; each is still one line of the text */
+  .gate textarea, .gate-out, .gate-out * { white-space: pre-wrap; overflow-wrap: anywhere; }
   .window-bar > span:nth-child(2) { font-size: 10.5px; }
   .receipt dl > div { grid-template-columns: 1fr; gap: 2px; }
   .receipt-art { flex-direction: column; align-items: flex-start; }

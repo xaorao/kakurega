@@ -26529,3 +26529,78 @@ fn sv303_an_answer_from_verified_hardware_carries_the_models_signature_which_is_
     );
     assert_eq!(w.get(&format!("/api/sessions/{id}")).0, 404);
 }
+
+struct LongPageWeb;
+
+impl kk_service::service::WebFetch for LongPageWeb {
+    fn search(&self, _url: &str) -> Result<Vec<u8>, kk_fetch::FetchError> {
+        Ok(json!({"results": []}).to_string().into_bytes())
+    }
+
+    fn fetch(&self, url: &str) -> Result<kk_fetch::Page, kk_fetch::FetchError> {
+        let filler =
+            "Shipping times in the west region stayed level through the quarter. ".repeat(220);
+        Ok(kk_fetch::Page {
+            requested: url.into(),
+            final_url: url.into(),
+            title: "Operations report".into(),
+            text: format!("{filler}The rollout starts on the fourth of March. {filler}"),
+            truncated: false,
+        })
+    }
+}
+
+/// Found by reading a real page in chat: each page was cut to 8000 characters before the window was even looked at, and
+/// the reply said nothing had been trimmed. With a known window a page now goes whole when it fits; with no known window
+/// it is cut and the reply says so.
+#[test]
+fn sv_use13_a_long_page_goes_whole_when_the_window_has_room_and_a_cut_page_is_always_counted() {
+    for (window, whole) in [(65_536u64, true), (0, false)] {
+        let runner = FileRunner::new("http://127.0.0.1:11434", window);
+        let (root, _repo) = repo_copy(&format!("long-page-{window}"));
+        let svc = Service::new(
+            &root.join("data"),
+            vec![root.clone()],
+            Arc::new(runner.clone()),
+            true,
+        )
+        .unwrap();
+        svc.set_web(Arc::new(LongPageWeb));
+        let c = start(Options {
+            extension: Arc::new(Routes(svc.clone())),
+            ..Options::default()
+        })
+        .unwrap();
+        let mut w = Web::new(c.addr);
+        w.pair(&c.security.issue_pairing_code());
+        let (st, p) = w.post(
+            "/api/research/propose",
+            json!({ "urls": ["https://a.example/ops"] }),
+        );
+        assert_eq!(st, 200, "{p}");
+        let (st, f) = w.post(
+            &format!("/api/research/{}/fetch", p["id"].as_str().unwrap()),
+            json!({"approve": true, "digest": p["digest"]}),
+        );
+        assert_eq!(st, 200, "{f}");
+        let id = f["pages"][0]["page_id"].as_str().unwrap().to_string();
+        let (st, r) = w.post(
+            "/api/chat",
+            json!({"message": "When does the rollout start?", "sources": [id]}),
+        );
+        assert_eq!(st, 200, "{r}");
+        assert_eq!(
+            runner.sent().contains("fourth of March"),
+            whole,
+            "window {window}"
+        );
+        assert_eq!(
+            (
+                r["web_sources_used"].clone(),
+                r["web_sources_trimmed"].clone()
+            ),
+            (json!(1), json!(usize::from(!whole))),
+            "window {window}: {r}"
+        );
+    }
+}

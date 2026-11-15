@@ -4525,6 +4525,12 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
             excluded,
         )
     };
+    // With a known window the pages are fitted to the room left (below), so a page is passed whole; with no known window
+    // each is cut to a fixed length, and a cut page is counted as trimmed like one the window cut.
+    let window_known = svc.runner.route_info()["context_tokens"]
+        .as_u64()
+        .is_some_and(|w| w > 0);
+    let mut precut = 0usize;
     let pages: Vec<(String, String)> = {
         let r = svc.research.lock().expect("lock");
         b.sources
@@ -4532,9 +4538,16 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
             .take(5)
             .filter_map(|id| r.pages.get(id))
             .filter_map(|p| {
-                let body: String = p.text.chars().take(8000).collect();
-                (!kk_memory::instruction_like(&body))
-                    .then(|| (format!("[source: {} | {}]", p.url, p.title), body))
+                let body: String = if window_known {
+                    p.text.clone()
+                } else {
+                    p.text.chars().take(UNKNOWN_WINDOW_PAGE_CHARS).collect()
+                };
+                let cut = body.len() < p.text.len();
+                (!kk_memory::instruction_like(&body)).then(|| {
+                    precut += usize::from(cut);
+                    (format!("[source: {} | {}]", p.url, p.title), body)
+                })
             })
             .collect()
     };
@@ -4652,10 +4665,13 @@ fn chat_context(svc: &Service, b: &ChatBody, summary: Option<&str>) -> ChatConte
         files_withheld_instructions,
         files_withheld_secrets,
         files_withheld_whole,
-        web_trimmed: fitted.trimmed,
+        web_trimmed: fitted.trimmed + precut,
         web_left_out: fitted.left_out,
     }
 }
+
+/// How much of each web page goes to a model whose window is not known.
+const UNKNOWN_WINDOW_PAGE_CHARS: usize = 8000;
 
 /// Records a finished reply and builds the response body shared by both chat endpoints.
 /// The parts of a route's receipt a reader can check without us: the model's signature over `MODEL:SHA256(request):
