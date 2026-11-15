@@ -815,6 +815,7 @@ export function Chat() {
   const windows = { day: "web.recency.day", week: "web.recency.week", month: "web.recency.month", year: "web.recency.year" } as const;
   const windowText = (w: string | null) => (w && w in windows ? t(windows[w as keyof typeof windows]) : "");
   const [searchProposal, setSearchProposal] = createSignal<SearchProposal | null>(null);
+  const [partial, setPartial] = createSignal<string[]>([]);
   const [hits, setHits] = createSignal<SearchHit[]>([]);
   const [searchNote, setSearchNote] = createSignal<{ why: string; engines: string[] } | null>(null);
   const showSearch = async () => {
@@ -840,6 +841,7 @@ export function Chat() {
       const answer = await api.searchRun(p.id, p.digest);
       setHits(answer.results);
       setSearchNote(answer.results.length === 0 ? { why: answer.empty_because ?? "", engines: answer.engines_failed } : null);
+      setPartial(answer.results.length > 0 ? answer.engines_failed : []);
       setSearchProposal(null);
     } catch (err) {
       setWebError(err instanceof ApiError ? err.message : t("web.error"));
@@ -1439,6 +1441,9 @@ export function Chat() {
       <details class="card stack" id="web-research">
         <summary>{t("web.title")}</summary>
         <p class="muted">{t("web.lead")}</p>
+        <Show when={searchOn() && !searchOn()!.available}>
+          <p class="muted">{t("web.searchOff")}</p>
+        </Show>
         <Show when={searchOn()?.available}>
           <label for="web-search">{t("web.searchWords")}</label>
           <input id="web-search" type="text" maxlength="200" value={words()} onInput={(e) => setWords(e.currentTarget.value)} />
@@ -1453,7 +1458,7 @@ export function Chat() {
           <Show when={searchProposal()}>
             {(p) => (
               <div class="stack" role="region" aria-label={t("web.searchReview")}>
-                <p><strong>{t("web.searchSends", { site: p().will_send_to })}</strong></p>
+                <p><strong>{p().local ? t("web.searchSendsLocal") : t("web.searchSends", { site: p().will_send_to })}</strong></p>
                 <p><code>{p().query}</code></p>
                 <Show when={p().recency}><p>{t("web.recencyShown", { window: windowText(p().recency) })}</p></Show>
                 <p class="muted">{p().stays_here}</p>
@@ -1474,17 +1479,21 @@ export function Chat() {
           </Show>
           <Show when={hits().length > 0}>
             <p><strong>{t("web.searchResults")}</strong></p>
-            <ul class="plain">
+            <ul class="plain hits">
               <For each={hits()}>
                 {(h) => (
                   <li>
-                    <code>{h.url}</code>{h.withheld ? ` — ${t("web.withheld")}` : ` · ${h.title}`}
-                    <Show when={h.snippet}><span class="muted"> — {h.snippet}</span></Show>
-                    <button type="button" onClick={() => setUrls((urls() ? urls() + "\n" : "") + h.url)}>{t("web.searchUse")}</button>
+                    <div class="hit-text">
+                      <Show when={!h.withheld} fallback={<span class="muted">{t("web.withheld")}</span>}><strong>{h.title}</strong></Show>
+                      <code>{h.url}</code>
+                      <Show when={h.snippet}><span class="muted">{h.snippet}</span></Show>
+                    </div>
+                    <button type="button" disabled={urls().split("\n").includes(h.url)} onClick={() => setUrls((urls() ? urls() + "\n" : "") + h.url)}>{urls().split("\n").includes(h.url) ? t("web.searchAdded") : t("web.searchUse")}</button>
                   </li>
                 )}
               </For>
             </ul>
+            <Show when={partial().length > 0}><p class="muted">{t("web.searchPartial", { engines: partial().join(" · ") })}</p></Show>
           </Show>
         </Show>
         <label for="web-urls">{t("web.urls")}</label>

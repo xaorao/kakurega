@@ -154,7 +154,7 @@ export function Privacy() {
               <p class="muted">{t(f().approvals.signing_key_enrolled ? "privacy.reviews.signed" : "privacy.reviews.unsigned")}</p>
             </Card>
             <Card id="web" title="privacy.web.title">
-              <p>{f().search.on ? t("privacy.web.on", { host: f().search.host ?? "" }) : t("privacy.web.off")}</p>
+              <p>{f().search.on ? (f().search.local ? t("privacy.web.onLocal") : t("privacy.web.on", { host: f().search.host ?? "" })) : t("privacy.web.off")}</p>
             </Card>
             <Card id="telegram" title="privacy.tg.title">
               <p>{t(f().telegram.on ? "privacy.tg.on" : "privacy.tg.off")}</p>

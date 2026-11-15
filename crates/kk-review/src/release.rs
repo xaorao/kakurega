@@ -568,6 +568,36 @@ pub enum LeaseError {
     AcknowledgementTooShort,
 }
 
+impl std::fmt::Display for LeaseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LeaseError::WrongState(LeaseState::Previewed) => {
+                f.write_str("it has not been approved yet")
+            }
+            LeaseError::WrongState(LeaseState::Approved) => f.write_str("it is already approved"),
+            LeaseError::WrongState(LeaseState::Delivering) => {
+                f.write_str("it is being delivered right now")
+            }
+            LeaseError::WrongState(LeaseState::Delivered) => {
+                f.write_str("it was already delivered")
+            }
+            LeaseError::WrongState(LeaseState::Uncertain) => f.write_str(
+                "an earlier delivery may or may not have arrived; check before sending again",
+            ),
+            LeaseError::WrongState(LeaseState::Revoked) => {
+                f.write_str("the approval was taken back")
+            }
+            LeaseError::DigestMismatch => {
+                f.write_str("what would be sent is not exactly what was approved")
+            }
+            LeaseError::Expired => f.write_str("the approval has expired; approve it again"),
+            LeaseError::AcknowledgementTooShort => {
+                f.write_str("the approval did not name enough of the digest")
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Lease {
     pub digest: String,

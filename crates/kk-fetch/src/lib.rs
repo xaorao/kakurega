@@ -26,6 +26,26 @@ pub enum FetchError {
     Transport(String),
 }
 
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FetchError::BadUrl(why) => f.write_str(why),
+            FetchError::BlockedAddress => f.write_str("the site's address is on this computer or a private network, which is never fetched"),
+            FetchError::NoAddress => f.write_str("the site's name could not be found"),
+            FetchError::TooManyRedirects => f.write_str("the site sent the request on too many times"),
+            FetchError::Status(404) => f.write_str("the site says the page does not exist (404)"),
+            FetchError::Status(c @ (401 | 403)) => write!(f, "the site refused to show the page ({c})"),
+            FetchError::Status(429) => f.write_str("the site says too many requests were made; try again later (429)"),
+            FetchError::Status(c) if *c >= 500 => write!(f, "the site had a problem of its own ({c})"),
+            FetchError::Status(c) => write!(f, "the site answered with status {c}"),
+            FetchError::NotText => f.write_str("the address is not a page of text (it may be a picture, a video or a download)"),
+            FetchError::Transport(_) => f.write_str("the site could not be reached (no answer, or the connection failed)"),
+        }
+    }
+}
+
+impl std::error::Error for FetchError {}
+
 // ---- addresses ----
 
 fn v4_public(a: Ipv4Addr) -> bool {
@@ -378,6 +398,38 @@ impl Fetcher<'_> {
         })
     }
 
+    /// The JSON answer of the owner's own search server on this computer (see `loopback_provider`). One request, to the
+    /// loopback address only; a redirect is refused rather than followed, so the request can never be steered elsewhere.
+    pub fn fetch_local_json(&self, raw: &str) -> Result<Vec<u8>, FetchError> {
+        let u = loopback_provider(raw)
+            .ok_or(FetchError::BadUrl("not a search server on this computer"))?;
+        let port = u.port_or_known_default().unwrap_or(80);
+        let pinned: Vec<SocketAddr> = match u.host() {
+            Some(url::Host::Ipv4(ip)) => vec![SocketAddr::new(ip.into(), port)],
+            Some(url::Host::Ipv6(ip)) => vec![SocketAddr::new(ip.into(), port)],
+            _ => vec![
+                SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), port),
+                SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), port),
+            ],
+        };
+        let r = self.transport.get(&u, &pinned, MAX_BODY)?;
+        if (300..400).contains(&r.status) {
+            return Err(FetchError::BadUrl(
+                "the search server on this computer tried to send the request elsewhere, which is never followed",
+            ));
+        }
+        if !(200..300).contains(&r.status) {
+            return Err(FetchError::Status(r.status));
+        }
+        if !r.content_type.to_ascii_lowercase().contains("json") {
+            return Err(FetchError::NotText);
+        }
+        if r.body.len() >= MAX_BODY {
+            return Err(FetchError::BadUrl("the search answer was too large"));
+        }
+        Ok(r.body)
+    }
+
     /// The raw body of a JSON answer from a search provider, under the same rules as any page.
     pub fn fetch_json(&self, raw: &str) -> Result<Vec<u8>, FetchError> {
         let (_, r) = self.get_checked(raw)?;
@@ -406,6 +458,34 @@ pub struct Hit {
 /// The freshness windows a SearXNG-style provider understands.
 pub const RECENCY_WINDOWS: [&str; 4] = ["day", "week", "month", "year"];
 
+/// The owner's own search server on this computer, such as a SearXNG run on localhost: http or https, any port, and a host
+/// that is exactly `localhost`, `127.0.0.1` or `[::1]`, with no user name or password. Only the search provider the owner
+/// set may be such an address; a page address never is (`validate_url` refuses every local address).
+pub fn loopback_provider(raw: &str) -> Option<Url> {
+    if raw.len() > MAX_URL || raw.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return None;
+    }
+    let u = Url::parse(raw).ok()?;
+    if !matches!(u.scheme(), "http" | "https")
+        || !u.username().is_empty()
+        || u.password().is_some()
+        || u.fragment().is_some()
+    {
+        return None;
+    }
+    let loopback = match u.host()? {
+        url::Host::Domain(d) => d.eq_ignore_ascii_case("localhost"),
+        url::Host::Ipv4(ip) => ip == std::net::Ipv4Addr::LOCALHOST,
+        url::Host::Ipv6(ip) => ip == std::net::Ipv6Addr::LOCALHOST,
+    };
+    loopback.then_some(u)
+}
+
+/// A search provider address: a public https site under the page rules, or the owner's own server on this computer.
+pub fn validate_provider(raw: &str) -> Result<Url, FetchError> {
+    validate_url(raw).or_else(|e| loopback_provider(raw).ok_or(e))
+}
+
 /// The exact address that would be requested for a query at a SearXNG-style provider.
 pub fn search_url(provider: &str, query: &str) -> Result<Url, FetchError> {
     search_url_with(provider, query, None)
@@ -424,7 +504,7 @@ pub fn search_url_with(
             ));
         }
     }
-    let mut u = validate_url(provider)?;
+    let mut u = validate_provider(provider)?;
     if u.query().is_some() {
         return Err(FetchError::BadUrl(
             "the search provider address must not have a query",
@@ -615,6 +695,53 @@ fn decode_entities(s: &str) -> String {
 /// Title and readable text of an HTML page. Scripts, styles and templates are dropped with their contents; nothing is
 /// executed or followed. This is a reader, not a parser: unusual markup yields less text, never a different page.
 pub fn extract_html(html: &str) -> (String, String) {
+    let (title, all) = extract_all(html);
+    // a page's own text usually sits in <article> or <main>; menus, sidebars and footers around it crowd out what the
+    // model should read. The region is used when it holds a fair share of the page's text, otherwise the whole page.
+    let region = main_region(html).map(|r| extract_all(r).1);
+    match region {
+        Some(text)
+            if text.chars().count() >= 400 || text.chars().count() * 2 >= all.chars().count() =>
+        {
+            (title, text)
+        }
+        _ => (title, all),
+    }
+}
+
+/// The page's main content: from the first `<article>` to the last `</article>`, else the first `<main>`. Byte offsets come from the ASCII-lowered copy,
+/// which has the same length as the page, so slicing the page with them is exact.
+fn main_region(html: &str) -> Option<&str> {
+    let lower = html.to_ascii_lowercase();
+    let spans = |tag: &str| -> Vec<(usize, usize)> {
+        let (open, close) = (format!("<{tag}"), format!("</{tag}"));
+        let mut out = Vec::new();
+        let mut from = 0;
+        while let Some(o) = lower[from..].find(&open).map(|o| from + o) {
+            let after = lower[o + open.len()..].chars().next();
+            if !matches!(after, Some('>' | ' ' | '\n' | '\t' | '\r' | '/')) {
+                from = o + open.len();
+                continue;
+            }
+            let Some(start) = lower[o..].find('>').map(|g| o + g + 1) else {
+                break;
+            };
+            let Some(end) = lower[start..].rfind(&close).map(|c| start + c) else {
+                break;
+            };
+            out.push((start, end));
+            from = end;
+        }
+        out
+    };
+    let pick = spans("article")
+        .into_iter()
+        .next()
+        .or_else(|| spans("main").into_iter().next())?;
+    html.get(pick.0..pick.1)
+}
+
+fn extract_all(html: &str) -> (String, String) {
     let lower = html.to_ascii_lowercase();
     let mut out = String::with_capacity(html.len() / 2);
     let mut title = String::new();
@@ -637,7 +764,15 @@ pub fn extract_html(html: &str) -> (String, String) {
             if !closing
                 && matches!(
                     name.as_str(),
-                    "script" | "style" | "noscript" | "template" | "svg" | "iframe"
+                    "script"
+                        | "style"
+                        | "noscript"
+                        | "template"
+                        | "svg"
+                        | "iframe"
+                        | "nav"
+                        | "footer"
+                        | "aside"
                 )
             {
                 let close = format!("</{name}");
@@ -648,9 +783,15 @@ pub fn extract_html(html: &str) -> (String, String) {
                     .unwrap_or(rest.len());
                 continue;
             }
+            // the document's title is the first one; later <title> elements belong to icons and pictures
+            // its text is the title, not part of the page's text
             if name == "title" && !closing {
                 if let Some(e) = rest[tag_end..].find("</title") {
-                    title = clean_text(&decode_entities(&html[i + tag_end..i + tag_end + e]));
+                    if title.is_empty() {
+                        title = clean_text(&decode_entities(&html[i + tag_end..i + tag_end + e]));
+                    }
+                    i += tag_end + e;
+                    continue;
                 }
             }
             if matches!(
@@ -879,6 +1020,145 @@ mod tests {
             content_type: String::new(),
             body: vec![],
         }
+    }
+
+    #[test]
+    fn fe_use01_every_fetch_error_reads_as_a_sentence_not_a_code() {
+        for e in [
+            FetchError::BadUrl("only https addresses are fetched"),
+            FetchError::BlockedAddress,
+            FetchError::NoAddress,
+            FetchError::TooManyRedirects,
+            FetchError::Status(404),
+            FetchError::Status(403),
+            FetchError::Status(429),
+            FetchError::Status(503),
+            FetchError::Status(418),
+            FetchError::NotText,
+            FetchError::Transport("io: Connection refused (os error 61)".into()),
+        ] {
+            let words = e.to_string();
+            assert!(
+                words.contains(' ')
+                    && !words.contains("BadUrl")
+                    && !words.contains("Status(")
+                    && !words.contains("os error"),
+                "{words}"
+            );
+        }
+    }
+
+    #[test]
+    fn ex_use01_the_pages_own_text_is_read_and_menus_sidebars_footers_and_icon_titles_are_not() {
+        let body =
+            "The deployed contract must be built in a pinned container so anyone can rebuild it. "
+                .repeat(8);
+        let html = format!(
+            "<html><head><title>Reproducible builds</title></head><body><svg><title>Menu</title></svg>\
+             <nav><a>Products</a><a>Pricing</a><a>Sign in</a></nav><header><h1>Docs</h1></header>\
+             <main><article><h1>Reproducible builds</h1><p>{body}</p></article><aside>Related: staking</aside></main>\
+             <footer>Copyright and cookie settings</footer></body></html>"
+        );
+        let (title, text) = extract_html(&html);
+        assert_eq!(title, "Reproducible builds");
+        assert!(
+            text.starts_with("Reproducible builds") && text.contains("pinned container"),
+            "{text}"
+        );
+        assert!(
+            !text.lines().any(|l| l.trim() == "Docs"),
+            "the header outside the article is left out: {text}"
+        );
+        assert_eq!(
+            text.matches("Reproducible builds").count(),
+            1,
+            "the title is not repeated in the text: {text}"
+        );
+        for noise in ["Products", "Sign in", "Related: staking", "cookie", "Menu"] {
+            assert!(!text.contains(noise), "{noise} in {text}");
+        }
+        // a page whose <main> holds only a little of its text is read whole
+        let thin = format!(
+            "<html><body><main><p>Loading</p></main><div><p>{body}</p></div></body></html>"
+        );
+        assert!(extract_html(&thin).1.contains("pinned container"));
+        // and a page with neither is read as before
+        let plain = format!("<html><body><div><p>{body}</p></div></body></html>");
+        assert!(extract_html(&plain).1.contains("pinned container"));
+    }
+
+    #[test]
+    fn lp_use02_the_owners_search_server_gets_one_request_to_loopback_and_a_redirect_is_never_followed(
+    ) {
+        let ok = "http://127.0.0.1:8888/search?q=rust&format=json&safesearch=1";
+        let away = "http://localhost:8888/search?q=rust&format=json&safesearch=1";
+        let net = FakeNet {
+            pages: BTreeMap::from([
+                (ok, page(200, "application/json", r#"{"results": []}"#)),
+                (away, redirect("http://169.254.169.254/latest/meta-data/")),
+            ]),
+            calls: RefCell::new(vec![]),
+        };
+        let dns = FakeDns(BTreeMap::new());
+        let f = Fetcher {
+            dns: &dns,
+            transport: &net,
+        };
+        assert!(f.fetch_local_json(ok).is_ok());
+        assert!(matches!(
+            f.fetch_local_json(away),
+            Err(FetchError::BadUrl(_))
+        ));
+        let calls = net.calls.borrow();
+        assert_eq!(
+            calls.len(),
+            2,
+            "one request each, the redirect was not followed: {calls:?}"
+        );
+        assert!(
+            calls.iter().all(|(_, pins)| !pins.is_empty()
+                && pins
+                    .iter()
+                    .all(|a| a.ip().is_loopback() && a.port() == 8888)),
+            "{calls:?}"
+        );
+        drop(calls);
+        // and the strict path still refuses the same address outright
+        assert!(f.fetch_json(ok).is_err());
+        assert!(f
+            .fetch_local_json("https://search.example/search?q=x")
+            .is_err());
+    }
+
+    #[test]
+    fn lp_use01_only_a_loopback_address_is_the_owners_own_search_server() {
+        for ok in [
+            "http://127.0.0.1:8888/search",
+            "http://localhost:8080/search",
+            "https://[::1]:9000/search",
+            "http://LOCALHOST/search",
+        ] {
+            assert!(loopback_provider(ok).is_some(), "{ok}");
+            assert!(search_url(ok, "rust").is_ok(), "{ok}");
+        }
+        for no in [
+            "http://127.0.0.2:8888/search",
+            "http://localhost.evil.example/search",
+            "http://user:pw@127.0.0.1:8888/search",
+            "http://10.0.0.5/search",
+            "http://192.168.1.1/search",
+            "file:///etc/passwd",
+            "http://127.0.0.1:8888/search#x",
+            "http://evil.example/search",
+            "http://[::ffff:127.0.0.1]/search",
+        ] {
+            assert!(loopback_provider(no).is_none(), "{no}");
+        }
+        // a page address is never a loopback one, whatever the search provider is
+        assert!(
+            validate_url("http://127.0.0.1:8888/search").is_err()
+                && validate_url("https://localhost/x").is_err()
+        );
     }
 
     #[test]
@@ -1201,7 +1481,7 @@ mod tests {
         );
         for bad in [
             "http://search.example/search",
-            "https://localhost/search",
+            "https://localhost.example.internal/search",
             "https://user:pw@search.example/search",
             "https://search.example:8443/search",
             "https://search.example/search?token=abc",
@@ -1209,6 +1489,8 @@ mod tests {
         ] {
             assert!(search_url(bad, "q").is_err(), "{bad}");
         }
+        // the owner's own server on this computer is the one local address a provider may have (lp_use01)
+        assert!(search_url("https://localhost/search", "q").is_ok());
         assert!(search_url("https://search.example/s", "   ").is_err());
         assert!(search_url("https://search.example/s", &"a".repeat(201)).is_err());
         assert!(search_url("https://search.example/s", "a\nb").is_err());

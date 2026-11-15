@@ -124,6 +124,20 @@ pub enum Reject {
     DifferentStatement,
 }
 
+impl std::fmt::Display for Reject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Reject::NotAnEnvelope => "it is not a signed approval",
+            Reject::WrongType => "it is signed, but it is not an approval",
+            Reject::WrongSignatureCount => "it must carry exactly one signature",
+            Reject::UnknownKey => "it was signed by a key that is not enrolled to approve here",
+            Reject::BadSignature => "the signature does not match what was signed",
+            Reject::NotCanonical => "the signed text is not in the exact form Kakurega signs",
+            Reject::DifferentStatement => "it approves something other than this release (a different digest, recipient or expiry)",
+        })
+    }
+}
+
 pub fn canonical(s: &Statement) -> String {
     canon::serialize(&Value::Object(vec![
         ("approval".into(), Value::Str(s.approval.clone())),

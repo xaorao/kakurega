@@ -81,7 +81,7 @@ let t = english;
 let language = "en";
 const companionPolicy = createRestartPolicy();
 const rendererPolicy = createRestartPolicy({ baseDelayMs: 0 });
-const state = { count: 0, stopped: false, notify: true, keyAnywhere: true, keysText: process.platform === "darwin" ? "⇧⌥⌘K" : "Ctrl+Alt+Shift+K", complete: true };
+const state = { count: 0, stopped: false, notify: true, keyAnywhere: true, keysText: process.platform === "darwin" ? "⌥⇧⌘K" : "Ctrl+Alt+Shift+K", complete: true };
 // The notifications this run has shown, newest last, so a click can still be handled; only generic text is ever in them.
 const notices = [];
 

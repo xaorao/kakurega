@@ -464,11 +464,16 @@ impl WebFetch for RealWeb {
         let t = kk_fetch::UreqTransport {
             timeout: std::time::Duration::from_secs(20),
         };
-        kk_fetch::Fetcher {
+        let f = kk_fetch::Fetcher {
             dns: &kk_fetch::SystemDns,
             transport: &t,
+        };
+        // the search address is built only from the provider the owner set, so a loopback one is the owner's own server
+        if kk_fetch::loopback_provider(url).is_some() {
+            f.fetch_local_json(url)
+        } else {
+            f.fetch_json(url)
         }
-        .fetch_json(url)
     }
 }
 
@@ -7275,7 +7280,7 @@ async fn research_propose(axum::Extension(svc): Svc, Json(b): Json<ResearchPropo
     for raw in &b.urls {
         let raw = raw.trim().to_string();
         let verdict = match kk_fetch::validate_url(&raw) {
-            Err(e) => Err(format!("{e:?}")),
+            Err(e) => Err(e.to_string()),
             Ok(u) => {
                 if !kk_secrets::scan(&raw).is_empty() {
                     Err("the address contains something that looks like a secret".to_string())
@@ -7433,7 +7438,7 @@ async fn research_fetch(
                 }
                 out.push(json!({"page_id": pid, "url": url, "final_url": page.final_url, "title": page.title, "text": page.text, "sha256": sha, "retrieved_at": t, "truncated": page.truncated, "untrusted": true, "looks_like_instructions": flagged}));
             }
-            Err(e) => out.push(json!({"url": url, "error": format!("{e:?}")})),
+            Err(e) => out.push(json!({"url": url, "error": e.to_string()})),
         }
     }
     hosts.sort();
@@ -7466,14 +7471,18 @@ struct SearchPropose {
 
 fn provider_host(svc: &Service) -> Option<(String, String)> {
     let p = svc.search_provider.lock().expect("lock").clone()?;
-    let u = kk_fetch::validate_url(&p).ok()?;
-    Some((p, u.host_str()?.to_string()))
+    let u = kk_fetch::validate_provider(&p).ok()?;
+    let host = match kk_fetch::loopback_provider(&p) {
+        Some(_) => "this computer".to_string(),
+        None => u.host_str()?.to_string(),
+    };
+    Some((p, host))
 }
 
 async fn search_status(axum::Extension(svc): Svc) -> Response {
     match provider_host(&svc) {
-        Some((_, host)) => Json(json!({"available": true, "provider": host})).into_response(),
-        None => Json(json!({"available": false, "how_to_enable": "Set KAKUREGA_SEARCH_URL to the https address of a SearXNG-style search endpoint that answers format=json, then restart. Searching sends your search words to that site."})).into_response(),
+        Some((p, host)) => Json(json!({"available": true, "provider": host, "local": kk_fetch::loopback_provider(&p).is_some()})).into_response(),
+        None => Json(json!({"available": false, "how_to_enable": "Set KAKUREGA_SEARCH_URL to the address of a SearXNG-style search endpoint that answers format=json (an https site, or your own on this computer such as http://127.0.0.1:8888/search), then restart. Searching sends your search words to that site."})).into_response(),
     }
 }
 
@@ -7533,7 +7542,7 @@ async fn search_propose(axum::Extension(svc): Svc, Json(b): Json<SearchPropose>)
     drop(r);
     svc.log_event("search.proposed", &id, &[("provider", host.clone().into())]);
     Json(json!({
-        "id": id, "digest": digest, "query": query, "recency": b.recency, "will_send_to": host,
+        "id": id, "digest": digest, "query": query, "recency": b.recency, "will_send_to": host, "local": kk_fetch::loopback_provider(&provider).is_some(),
         "stays_here": "Only these search words go to this one site. Your notes, files and the conversation are not sent. Nothing has been sent yet.",
         "expires_in_seconds": RESEARCH_TTL
     }))
@@ -8177,12 +8186,11 @@ async fn privacy_facts(axum::Extension(svc): Svc) -> Response {
     let route = svc.runner.route_info();
     let host = route["endpoint"].as_str().and_then(host_only);
     let local = host.as_deref().is_some_and(host_is_this_computer);
-    let search_host = svc
-        .search_provider
-        .lock()
-        .expect("lock")
-        .clone()
-        .and_then(|u| host_only(&u));
+    let provider = svc.search_provider.lock().expect("lock").clone();
+    let search_local = provider
+        .as_deref()
+        .is_some_and(|u| kk_fetch::loopback_provider(u).is_some());
+    let search_host = provider.and_then(|u| host_only(&u));
     let telegram_on = std::fs::read_to_string(svc.data_dir.join("telegram.json"))
         .ok()
         .and_then(|t| serde_json::from_str::<Value>(&t).ok())
@@ -8208,7 +8216,7 @@ async fn privacy_facts(axum::Extension(svc): Svc) -> Response {
             "host": host,
             "stays_here": local,
         },
-        "search": {"on": search_host.is_some(), "host": search_host},
+        "search": {"on": search_host.is_some(), "host": search_host, "local": search_local},
         "extension": {"on": svc.ext_token_row().is_some()},
         "telegram": {"on": telegram_on},
         // outside help the owner can ask for: read from what is set up now, nothing is contacted to answer this
@@ -10368,7 +10376,7 @@ async fn do_deliver(axum::Extension(svc): Svc, UrlPath(id): UrlPath<String>) -> 
             return error(
                 StatusCode::CONFLICT,
                 "NOT_APPROVED",
-                &format!("the release cannot be delivered: {e:?}"),
+                &format!("the release cannot be delivered: {e}"),
             );
         }
         a.set(&lease);
@@ -10795,7 +10803,7 @@ async fn admin_approver_enroll(axum::Extension(svc): Svc, Json(b): Json<EnrollBo
             return error(
                 StatusCode::FORBIDDEN,
                 "BAD_PROOF",
-                &format!("the signature was refused: {r:?}"),
+                &format!("the signature was refused: {r}"),
             );
         }
     }
@@ -10862,7 +10870,7 @@ async fn admin_approver_revoke(
             return error(
                 StatusCode::FORBIDDEN,
                 "BAD_PROOF",
-                &format!("the signature was refused: {r:?}"),
+                &format!("the signature was refused: {r}"),
             );
         }
     }
@@ -11047,7 +11055,7 @@ async fn admin_approve(
                 return error(
                     StatusCode::FORBIDDEN,
                     "BAD_PROOF",
-                    &format!("the approval signature was refused: {r:?}"),
+                    &format!("the approval signature was refused: {r}"),
                 );
             }
         }
@@ -11063,7 +11071,13 @@ async fn admin_approve(
                 }
                 (Json(json!({"state": "approved"})).into_response(), rec)
             }
-            Err(e) => return error(StatusCode::CONFLICT, "NOT_APPROVED", &format!("{e:?}")),
+            Err(e) => {
+                return error(
+                    StatusCode::CONFLICT,
+                    "NOT_APPROVED",
+                    &format!("the release cannot be approved: {e}"),
+                )
+            }
         }
     };
     svc.persist_approval(&aid, &rec);

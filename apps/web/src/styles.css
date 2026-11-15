@@ -800,3 +800,10 @@ textarea::placeholder, input::placeholder { color: var(--fog); }
   .redacted { animation: kk-redact 0.5s cubic-bezier(0.7, 0, 0.2, 1) 0.25s both; }
 }
 @media (max-width: 640px) { .tiles.shield { grid-template-columns: 1fr; } .redacted { width: 90px; } }
+
+/* web search suggestions: title, address and snippet on the left, the add button on the right */
+.hits li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 10px 0; border-top: 1px solid var(--line); }
+.hits li:first-child { border-top: 0; }
+.hits .hit-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.hits .hit-text code { overflow-wrap: anywhere; font-size: 12px; }
+@media (max-width: 560px) { .hits li { grid-template-columns: 1fr; } }

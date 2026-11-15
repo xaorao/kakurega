@@ -85,15 +85,15 @@ test("tr05 the capture entry shows its shortcut when the app holds it, and the m
 test("tr06 the picture key from any app can be turned off, and the menu says when another app holds it", () => {
   const t = (k, v = {}) => `${k}:${v.keys ?? ""}`;
   const actions = { open() {}, inbox() {}, capture() {}, setNotify() {}, setKeyAnywhere() {}, quit() {} };
-  const item = (state) => menuTemplate({ count: 0, stopped: false, notify: true, keysText: "⇧⌥⌘K", ...state }, t, actions).find((i) => i.id === "key-anywhere");
+  const item = (state) => menuTemplate({ count: 0, stopped: false, notify: true, keysText: "⌥⇧⌘K", ...state }, t, actions).find((i) => i.id === "key-anywhere");
   const held = item({ keyAnywhere: true, shortcut: "CommandOrControl+Alt+Shift+K" });
   assert.equal(held.type, "checkbox");
   assert.equal(held.checked, true);
-  assert.equal(held.label, "tray.keyAnywhere:⇧⌥⌘K");
-  assert.equal(item({ keyAnywhere: true, shortcut: null }).label, "tray.keyTaken:⇧⌥⌘K", "wanted but not held: the entry says another app holds it");
+  assert.equal(held.label, "tray.keyAnywhere:⌥⇧⌘K");
+  assert.equal(item({ keyAnywhere: true, shortcut: null }).label, "tray.keyTaken:⌥⇧⌘K", "wanted but not held: the entry says another app holds it");
   const off = item({ keyAnywhere: false, shortcut: null });
   assert.equal(off.checked, false);
-  assert.equal(off.label, "tray.keyAnywhere:⇧⌥⌘K");
+  assert.equal(off.label, "tray.keyAnywhere:⌥⇧⌘K");
   assert.equal(menuTemplate({ count: 0, stopped: true, notify: true }, t, actions).find((i) => i.id === "key-anywhere"), undefined, "not offered while the service is stopped");
 });
 

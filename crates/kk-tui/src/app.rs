@@ -6786,10 +6786,14 @@ impl App {
                 };
                 let mut lines = Vec::new();
                 if search {
-                    lines.push(format!(
-                        "These words would be sent to {}:",
-                        clean(body["will_send_to"].as_str().unwrap_or("?"))
-                    ));
+                    lines.push(if body["local"].as_bool() == Some(true) {
+                        "These words would be sent to your search server on this computer, which passes them to the search engines it uses:".to_string()
+                    } else {
+                        format!(
+                            "These words would be sent to {}:",
+                            clean(body["will_send_to"].as_str().unwrap_or("?"))
+                        )
+                    });
                     lines.push(format!("  {}", clean(body["query"].as_str().unwrap_or(""))));
                     if let Some(w) = body["recency"].as_str() {
                         lines.push(format!("Only results from the last {}.", clean(w)));
