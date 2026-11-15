@@ -4,8 +4,9 @@
 // say something the file does not. Nothing needs a server: every file is static.
 //   node apps/site/build.mjs
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey, verify } from "node:crypto";
 import { createRequire } from "node:module";
+import { isDeepStrictEqual } from "node:util";
 import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -102,6 +103,56 @@ const proof = {
   ],
 };
 
+// the break-it page's script: the same detector and the same withholding as the gate, bundled into one file
+const breakResult = await build({
+  root: here,
+  logLevel: "warn",
+  configFile: false,
+  build: { write: false, minify: true, target: "es2022", lib: { entry: resolve(here, "break.js"), formats: ["iife"], name: "KakuregaBreak", fileName: "break" } },
+});
+const breakScript = (Array.isArray(breakResult) ? breakResult[0] : breakResult).output.find((o) => o.type === "chunk").code;
+
+// The break-it page's numbers, from the signed leak benchmark. The signature is checked against benchmarks/leak/signer.pub
+// and the signed results must be results.json exactly, so the page cannot state a number the signed file does not hold.
+const benchDir = join(repo, "benchmarks/leak");
+const envelope = JSON.parse(readFileSync(join(benchDir, "results.signed.json"), "utf8"));
+const benchPayload = Buffer.from(envelope.payload, "base64url");
+const benchPae = Buffer.concat([Buffer.from(`DSSEv1 ${Buffer.byteLength(envelope.payloadType)} ${envelope.payloadType} ${benchPayload.length} `), benchPayload]);
+const benchPub = readFileSync(join(benchDir, "signer.pub"), "utf8").trim();
+const benchKey = createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: benchPub }, format: "jwk" });
+const benchSig = envelope.signatures?.length === 1 ? envelope.signatures[0] : null;
+if (!benchSig || benchSig.keyid !== "ed25519:" + createHash("sha256").update(Buffer.from(benchPub, "base64url")).digest("hex") || !verify(null, benchPae, benchKey, Buffer.from(benchSig.sig, "base64url"))) throw new Error("the leak benchmark's signature does not check out against benchmarks/leak/signer.pub");
+const bench = JSON.parse(benchPayload.toString("utf8"));
+if (!isDeepStrictEqual(bench, JSON.parse(readFileSync(join(benchDir, "results.json"), "utf8")))) throw new Error("benchmarks/leak/results.json is not what results.signed.json signs");
+if (bench.type !== "kakurega-leak-benchmark" || bench.complete !== true || bench.cases.length !== bench.expected_cases) throw new Error("the signed leak benchmark is not a complete run");
+const inGroup = (g) => bench.cases.filter((c) => c.group === g);
+const known = inGroup("known shapes");
+const beyond = inGroup("beyond the detector");
+if (known.length + beyond.length !== bench.cases.length) throw new Error("the leak benchmark has a group the break-it page does not describe");
+const leaked = (cases) => cases.filter((c) => c.verdict === "LEAK");
+// the words for what got through, by what the secret was and how it was said; a kind the page has no words for stops the build
+const SHAPE = { "human-password": "a password a person made up", pin: "a 6-digit code", "bare-token": "a random 32-character token" };
+const SAID = { unnamed: "said with no word for what it is", named: "said with the word for what it is" };
+const named = new Map();
+for (const c of leaked(beyond)) {
+  if (!SHAPE[c.shape] || !SAID[c.form]) throw new Error(`the break-it page has no words for the leak ${c.case}`);
+  const k = `${SHAPE[c.shape]}, ${SAID[c.form]}`;
+  named.set(k, (named.get(k) ?? 0) + 1);
+}
+const escape = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const benchFacts = {
+  KNOWN: String(known.length),
+  KNOWN_LEAKED: String(leaked(known).length),
+  KNOWN_CLASS: leaked(known).length > 0 ? "leak" : "none",
+  BEYOND: String(beyond.length),
+  BEYOND_LEAKED: String(leaked(beyond).length),
+  BEYOND_CLASS: leaked(beyond).length > 0 ? "leak" : "none",
+  BEYOND_NAMED: [...named].map(([what, n]) => `<li>${n} ${n === 1 ? "case" : "cases"}: ${escape(what)}</li>`).join("") || "<li>none</li>",
+  TOTAL: String(bench.cases.length),
+  DOORS: String(new Set(bench.cases.map((c) => c.door)).size),
+  COMMIT: escape(String(bench.commit).slice(0, 12)),
+};
+
 // Kakurega's own secret detector for the browser: the same crate the product uses, with nothing it can import
 const wasmBuilt = spawnSync("cargo", ["build", "--quiet", "--release", "--target", "wasm32-unknown-unknown", "--manifest-path", join(here, "wasm/Cargo.toml")], { encoding: "utf8", cwd: repo });
 if (wasmBuilt.status !== 0) throw new Error("the detector did not build for the browser (rustup target add wasm32-unknown-unknown): " + wasmBuilt.stderr.slice(-400));
@@ -123,11 +174,20 @@ mkdirSync(join(out, "api"), { recursive: true });
 cpSync(join(here, "try.html"), join(out, "try/index.html"));
 mkdirSync(join(out, "proof"), { recursive: true });
 cpSync(join(here, "proof.html"), join(out, "proof/index.html"));
+mkdirSync(join(out, "break"), { recursive: true });
+let breakHtml = readFileSync(join(here, "break.html"), "utf8");
+for (const [key, value] of Object.entries(benchFacts)) breakHtml = breakHtml.replaceAll(`{{${key}}}`, value);
+const breakLeft = breakHtml.match(/\{\{[A-Z_]+\}\}/g);
+if (breakLeft) throw new Error("the break-it page has places nothing filled: " + breakLeft.join(", "));
+writeFileSync(join(out, "break/index.html"), breakHtml);
+writeFileSync(join(out, "break.js"), breakScript);
 // what a mistyped address shows, instead of the host's bare text
 cpSync(join(here, "404.html"), join(out, "404.html"));
 writeFileSync(join(out, "proof.js"), proofScript);
 writeFileSync(join(out, "proof.json"), JSON.stringify(proof, null, 2));
-writeFileSync(join(out, "llms.txt"), readFileSync(join(here, "llms.txt"), "utf8").replaceAll("{{MODEL}}", facts.model).replaceAll("{{ANSWERS}}", String(facts.answers)).replaceAll("{{REGISTRY}}", proofFacts.registry));
+const llms = readFileSync(join(here, "llms.txt"), "utf8").replaceAll("{{MODEL}}", facts.model).replaceAll("{{ANSWERS}}", String(facts.answers)).replaceAll("{{REGISTRY}}", proofFacts.registry).replaceAll("{{BENCH_KNOWN_LEAKED}}", benchFacts.KNOWN_LEAKED).replaceAll("{{BENCH_KNOWN}}", benchFacts.KNOWN).replaceAll("{{BENCH_BEYOND_LEAKED}}", benchFacts.BEYOND_LEAKED).replaceAll("{{BENCH_BEYOND}}", benchFacts.BEYOND);
+if (/\{\{[A-Z_]+\}\}/.test(llms)) throw new Error("llms.txt has places nothing filled: " + llms.match(/\{\{[A-Z_]+\}\}/g).join(", "));
+writeFileSync(join(out, "llms.txt"), llms);
 cpSync(wasmPath, join(out, "kk_secrets.wasm"));
 cpSync(join(here, "api/near.js"), join(out, "api/near.js"));
 writeFileSync(join(out, "package.json"), JSON.stringify({ private: true, type: "module" }));

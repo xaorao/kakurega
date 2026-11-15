@@ -424,3 +424,54 @@ main { max-width: 1200px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 40px); }
 .answer code{font:inherit;font-family:var(--mono,ui-monospace,Menlo,monospace);font-size:.92em;padding:.05em .3em;border-radius:5px;background:rgba(255,255,255,.07)}
 .answer code.unfound{text-decoration:underline wavy;text-underline-offset:.2em}
 .note.good { color: var(--n-green, #8fd19e); }
+
+/* the break-it page: the gate's window with a box for the secret, its verdict, and the two counts beside each other */
+.break-warn { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 22px; max-width: 90ch; padding: 13px 16px; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--vermilion) 34%, transparent); background: color-mix(in srgb, var(--vermilion) 7%, transparent); color: var(--stone); font-size: 15px; line-height: 1.5; }
+.break-warn strong { color: var(--red); font-weight: 600; }
+.nav nav a[aria-current="page"] { color: var(--ink); }
+/* the landing page's header holds nine links: just above the width where they are hidden, they sit closer, never on two lines */
+.nav nav a { white-space: nowrap; }
+@media (max-width: 1160px) { .nav nav { gap: 16px; } }
+.break .try-title { margin-bottom: 18px; }
+.break .kicker .nowrap { white-space: nowrap; }
+.break-ideas { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 28px 0 14px; }
+.break-ideas > span { font-family: var(--font-mono); font-size: 12px; color: var(--graphite); margin-right: 4px; }
+.break-ideas .button { min-height: 38px; padding: 6px 14px; font-size: 13.5px; border-radius: 999px; background: var(--paper); }
+.break .gate { margin-top: 0; }
+.break .gate textarea, .break .gate-out { min-height: 220px; }
+.break .gate-head > span:last-child { white-space: nowrap; }
+.break-secret { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 240px); gap: 14px 18px; padding: 16px 22px 18px; border-top: 1px solid var(--night-line); background: #121110; }
+.break-secret label { display: flex; flex-direction: column; gap: 8px; min-width: 0; font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; color: #a49f93; }
+.break-secret input, .break-secret select { width: 100%; min-height: 44px; padding: 9px 12px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.14); background: #0e0d0c; color: #e4e0d6; font-family: var(--font-mono); font-size: 14px; letter-spacing: 0; text-transform: none; }
+.break-secret input::placeholder { color: #6f6a5f; }
+.break-secret input:focus-visible, .break-secret select:focus-visible { outline: 2px solid var(--cream); outline-offset: 1px; }
+.break .gate-foot { border-top: 1px solid var(--night-line); }
+.break .detector { font-family: var(--font-mono); font-size: 11.5px; color: #8c877b; }
+.gate-line mark { background: rgba(229, 72, 47, 0.3); color: #fff; border-radius: 3px; box-shadow: 0 0 0 1px var(--n-red); }
+.gate-verdict.through { color: var(--n-red); }
+.gate-verdict.wait { grid-template-columns: minmax(0, 1fr); color: #cfcac0; }
+.gate-verdict.wait .stamp { display: none; }
+.gate-verdict.wait .verdict-line { font-size: clamp(24px, 2.4vw, 32px); }
+.verdict-act { margin-top: 18px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.verdict-act[hidden] { display: none; }
+.verdict-act .button { margin-bottom: 8px; }
+.verdict-note { font-size: 13px; line-height: 1.5; color: #a49f93; max-width: 70ch; }
+.break-count { margin-top: clamp(56px, 7vw, 88px); }
+.break-count .sub-h { margin-top: 0; }
+.break-count .cards > article { gap: 14px; }
+.break-count .cards article .note { margin-top: 4px; font-size: 13px; }
+.tally { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 22px; }
+.tally[hidden] { display: none; }
+.tally > div { display: flex; flex-direction: column; gap: 6px; padding-top: 14px; border-top: 1px solid var(--line); min-width: 0; }
+.tally strong { font-family: var(--font-display); font-weight: 400; font-size: clamp(40px, 4vw, 52px); line-height: 1; letter-spacing: -0.02em; }
+.tally span { font-size: 13.5px; line-height: 1.4; color: var(--graphite); }
+.tally .leak strong { color: var(--red); }
+.reports-line { font-size: 15px; color: var(--stone); }
+.break .try-notes { margin-top: clamp(48px, 6vw, 72px); }
+.break .try-notes h2 { margin-bottom: 14px; }
+/* the window is the page's tool: it arrives at once, not after the words */
+@media (prefers-reduced-motion: no-preference) { .break .gate .window { animation-duration: 0.6s; animation-delay: 0s; } }
+@media (max-width: 760px) {
+  .break-secret { grid-template-columns: minmax(0, 1fr); padding: 14px 16px 16px; }
+  .break .gate-foot { padding: 14px 16px; }
+}
