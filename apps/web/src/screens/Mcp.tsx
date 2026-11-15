@@ -29,7 +29,7 @@ function Server(props: { s: McpServer; onChanged: (message: string) => void }) {
   return (
     <li class="card stack">
       <h3>{props.s.name}</h3>
-      <p class="muted wrap"><code>{props.s.program}</code> {props.s.args.join(" ")}</p>
+      <p class="muted wrap"><code class="wrap">{props.s.program}</code> {props.s.args.join(" ")}</p>
       <Show when={props.s.env_names?.length}><p class="muted">{t("mcp.envNames", { list: (props.s.env_names ?? []).join(", ") })}</p></Show>
       <Show when={props.s.tools.length === 0}><p class="muted">{t("mcp.noTools")}</p></Show>
       <ul class="plain stack">
@@ -97,7 +97,7 @@ export function McpPending() {
           <For each={calls()}>
             {(c) => (
               <li class="stack">
-                <p><code>{t("mcp.pending.call", { server: c.server, tool: c.tool, args: c.args })}</code></p>
+                <p><code class="wrap">{t("mcp.pending.call", { server: c.server, tool: c.tool, args: c.args })}</code></p>
                 <div class="actions">
                   <button class="primary" type="button" onClick={() => void decide(c.id, true)}>{t("mcp.pending.approve")}</button>
                   <button type="button" onClick={() => void decide(c.id, false)}>{t("mcp.pending.deny")}</button>

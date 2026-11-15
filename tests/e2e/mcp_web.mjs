@@ -79,6 +79,10 @@ check(await write.isDisabled(), "a tool that may change things cannot be allowed
 await page.locator("#mcp-k-docs-write").check();
 check(await write.isEnabled(), "after the confirmation it can be allowed");
 await shot("3-allowed");
+await page.setViewportSize({ width: 390, height: 844 });
+check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "at phone width the outside tools screen does not scroll sideways");
+await shot("3b-phone");
+await page.setViewportSize({ width: 1280, height: 900 });
 
 await page.getByRole("button", { name: "Remove" }).last().click();
 await page.getByText("No outside programs yet.").waitFor();

@@ -8,6 +8,25 @@ use kk_mcpc::{Limits, Server, ServerConfig, ToolInfo};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+/// What the list shows in place of an argument that looks like a key.
+pub const ARG_WITHHELD: &str = "[withheld: this argument looks like a key; move it to a setting]";
+
+/// A saved server's arguments as the list shows them. One saved before keys in arguments were refused may still hold a
+/// key: it is never shown back.
+fn shown_args(saved: &str) -> Vec<Value> {
+    serde_json::from_str::<Vec<String>>(saved)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|a| {
+            if kk_secrets::scan(&a).is_empty() {
+                json!(a)
+            } else {
+                json!(ARG_WITHHELD)
+            }
+        })
+        .collect()
+}
+
 const MAX_SERVERS: i64 = 20;
 const MAX_WAITING: usize = 10;
 /// The most characters of a call's arguments the owner is asked to read. A longer call is refused without asking, because an
@@ -416,7 +435,7 @@ pub(super) async fn mcp_get(axum::Extension(svc): Svc) -> Response {
                         .unwrap_or_default()
                 })
                 .unwrap_or_default();
-            json!({"name": name, "program": program, "args": serde_json::from_str::<Value>(args).unwrap_or(json!([])), "env_names": env_names.get(name), "tools": tools})
+            json!({"name": name, "program": program, "args": shown_args(args), "env_names": env_names.get(name), "tools": tools})
         })
         .collect();
     // what packs the owner imported suggest, minus what is already added under that name and what the owner dismissed
@@ -679,5 +698,29 @@ pub(super) async fn mcp_pending_decide(
             "MCP_NOTHING_WAITING",
             "no call is waiting with that id",
         ),
+    }
+}
+
+#[cfg(test)]
+mod shown_args_tests {
+    use super::*;
+
+    #[test]
+    fn mc_use01_a_saved_argument_that_looks_like_a_key_is_never_shown_back() {
+        let key = format!(
+            "--token={}-{}",
+            "ghp", "abcdefghijklmnopqrstuvwxyz0123456789"
+        );
+        let shown = shown_args(
+            &serde_json::to_string(&vec!["--port".to_string(), "8080".into(), key.clone()])
+                .unwrap(),
+        );
+        assert_eq!(
+            shown,
+            vec![json!("--port"), json!("8080"), json!(ARG_WITHHELD)]
+        );
+        assert!(!serde_json::to_string(&shown)
+            .unwrap()
+            .contains("abcdefghij"));
     }
 }
