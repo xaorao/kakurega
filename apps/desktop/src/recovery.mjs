@@ -10,6 +10,10 @@ export function createRestartPolicy({ max = 3, windowMs = 300000, baseDelayMs = 
       times.push(now);
       return { restart: true, delayMs, attempts: times.length };
     },
+    /** Forgets the restarts so far: the owner asked for a fresh start. */
+    reset() {
+      times = [];
+    },
   };
 }
 

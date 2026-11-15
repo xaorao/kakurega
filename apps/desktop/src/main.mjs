@@ -338,36 +338,53 @@ function launchCompanion() {
     const d = companionPolicy.next();
     if (!d.restart) {
       state.stopped = true;
+      // nothing can be waiting for a service that is gone, and its address file now names a dead process
+      state.count = 0;
+      try {
+        if (JSON.parse(readFileSync(join(dataDir, "admin.json"), "utf8")).pid === mine.pid) rmSync(join(dataDir, "admin.json"));
+      } catch {}
       refreshTray();
-      dialog.showErrorBox(t("error.stopped.title"), t("error.stopped.loop"));
+      // the one thing that can help is offered here: a fresh start, with the restart count cleared
+      const options = { type: "warning", message: t("error.stopped.title"), detail: t("error.stopped.loop"), buttons: [t("error.stopped.quit"), t("error.stopped.again")], defaultId: 1, cancelId: 0, noLink: true };
+      void (window && !window.isDestroyed() ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options)).then((r) => {
+        if (r.response === 1) {
+          companionPolicy.reset();
+          void restartCompanion();
+        } else {
+          app.quit();
+        }
+      });
       return;
     }
-    setTimeout(async () => {
-      try {
-        // a restart runs the file that is there now, so it is checked again
-        const changed = changedPart();
-        if (changed) {
-          state.stopped = true;
-          refreshTray();
-          refuseChanged(changed);
-          return;
-        }
-        launchCompanion();
-        await connect();
-        state.stopped = false;
-        syncShortcut();
-        refreshTray();
-        // the new service usually has the address the old one had, and a link that differs only after the # does not
-        // load the page again: the page is loaded anew so it pairs with the new service
-        const before = window?.webContents.getURL() ?? "";
-        await window?.loadURL(`${current.admin.origin}/#pair=${current.code}`);
-        if (before.startsWith(`${current.admin.origin}/`)) window?.webContents.reload();
-        tell(t("notice.restarted.title"), t("notice.restarted.body"));
-      } catch (e) {
-        dialog.showErrorBox(t("error.stopped.title"), t("error.stopped.restart", { why: e.message ?? e }));
-      }
-    }, d.delayMs);
+    setTimeout(() => void restartCompanion(), d.delayMs);
   });
+}
+
+/** Starts the companion again (after a stop, or when the owner asks for a fresh start) and pairs the window with it. */
+async function restartCompanion() {
+  try {
+    // a restart runs the file that is there now, so it is checked again
+    const changed = changedPart();
+    if (changed) {
+      state.stopped = true;
+      refreshTray();
+      refuseChanged(changed);
+      return;
+    }
+    launchCompanion();
+    await connect();
+    state.stopped = false;
+    syncShortcut();
+    refreshTray();
+    // the new service usually has the address the old one had, and a link that differs only after the # does not
+    // load the page again: the page is loaded anew so it pairs with the new service
+    const before = window?.webContents.getURL() ?? "";
+    await window?.loadURL(`${current.admin.origin}/#pair=${current.code}`);
+    if (before.startsWith(`${current.admin.origin}/`)) window?.webContents.reload();
+    tell(t("notice.restarted.title"), t("notice.restarted.body"));
+  } catch (e) {
+    dialog.showErrorBox(t("error.stopped.title"), t("error.stopped.restart", { why: e.message ?? e }));
+  }
 }
 
 function readSettings() {

@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { _electron as electron } from "playwright-core";
-import { mkdirSync, rmSync, cpSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, cpSync, renameSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -63,16 +63,22 @@ try {
   const shown = [];
   await app.evaluate(({ dialog }) => {
     globalThis.__boxes = [];
+    globalThis.__asked = [];
     dialog.showErrorBox = (t, c) => globalThis.__boxes.push([t, c]);
+    // the stopped-for-good window: answered "Quit" would end the test, so it is held until the test answers
+    dialog.showMessageBox = async (...args) => { const o = args[args.length - 1]; globalThis.__asked.push([o.message, o.detail, o.buttons]); return new Promise((r) => { globalThis.__answer = r; }); };
   });
   for (let i = 0; i < 5; i++) {
     killCompanion();
     await sleep(i === 0 ? 4000 : 6000);
   }
-  const boxes = await app.evaluate(() => globalThis.__boxes);
-  shown.push(...boxes);
-  check("a companion that keeps dying is eventually reported to the owner instead of being restarted forever", shown.some(([t]) => t === "Kakurega stopped"), JSON.stringify(shown).slice(0, 160));
+  const asked = await app.evaluate(() => globalThis.__asked);
+  shown.push(...asked);
+  const stopWindow = asked.find(([m]) => m === "Kakurega stopped");
+  check("a companion that keeps dying is eventually reported to the owner instead of being restarted forever", !!stopWindow, JSON.stringify(shown).slice(0, 160));
+  check("the window offers to start it again or quit, and names kaku doctor, not a log it cannot open", !!stopWindow && JSON.stringify(stopWindow[2]) === JSON.stringify(["Quit", "Start Again"]) && /kaku doctor/.test(stopWindow[1]) && !/activity log/.test(stopWindow[1]), JSON.stringify(stopWindow).slice(0, 240));
   check("no companion is left running after the limit", companionPid() === "", companionPid());
+  check("and its address file, which named a dead process, is gone", !existsSync(join(data, "admin.json")));
   // found in real use: with no service to send to, a request from the window ends at once instead of hanging, and the
   // main process raises no error box of its own
   const ended = await Promise.race([
@@ -81,6 +87,19 @@ try {
   ]);
   const after = await app.evaluate(() => globalThis.__boxes);
   check("a request made while no service is running ends at once and raises no error in the main process", ended === "ended" && !after.some(([t, c]) => /JavaScript error|TypeError|Cannot read/.test(`${t} ${c}`)), `${ended} ${JSON.stringify(after).slice(0, 200)}`);
+  // Start Again: a fresh companion, and the window works again
+  await app.evaluate(() => globalThis.__answer({ response: 1 }));
+  let back = "";
+  for (let i = 0; i < 40 && !back; i++) {
+    await sleep(500);
+    back = companionPid();
+  }
+  check("Start Again starts a new companion after the limit", !!back, back);
+  const working = await app.evaluate(async ({ BrowserWindow }) => {
+    const wc = BrowserWindow.getAllWindows()[0].webContents;
+    return wc.executeJavaScript(`new Promise(async (res) => { for (let i = 0; i < 60; i++) { if (document.body.innerText.includes("Review a project")) return res(true); await new Promise(r => setTimeout(r, 500)); } res(false); })`);
+  });
+  check("and the window is paired with it again", working === true);
 } finally {
   await app.close().catch(() => {});
   killCompanion();
