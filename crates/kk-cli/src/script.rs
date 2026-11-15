@@ -932,6 +932,15 @@ pub fn code(args: &[String]) -> u8 {
         match first.as_str() {
             "list" => match answer(call(&http, Method::Get, "/api/code", None), 200) {
                 Ok(v) => {
+                    // an empty list is said, in words or as JSON, never left as no output at all
+                    if v["tasks"].as_array().is_none_or(|a| a.is_empty()) {
+                        if json_mode {
+                            println!("{}", json!({"tasks": []}));
+                        } else {
+                            println!("no coding tasks yet");
+                        }
+                        return OK;
+                    }
                     for t in v["tasks"].as_array().into_iter().flatten() {
                         say(json_mode, t, || {
                             format!(

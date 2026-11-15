@@ -567,11 +567,24 @@ fn text_lines(s: &str) -> Vec<String> {
 }
 
 fn err_text(status: u16, body: &Value) -> String {
-    let m = body["error"]["message"]
+    // the service's reason, as a sentence; its status number means nothing to a person and is kept only when no reason came
+    match body["error"]["message"]
         .as_str()
         .or_else(|| body["message"].as_str())
-        .unwrap_or("the service refused the request");
-    format!("{} ({status})", clean(m))
+    {
+        Some(m) if !m.trim().is_empty() => sentence(&clean(m)),
+        _ => format!("The service refused the request (status {status})."),
+    }
+}
+
+/// A reason the service wrote, ended as a sentence. It is shown after the mark of its card, in the service's own words.
+fn sentence(text: &str) -> String {
+    let t = text.trim();
+    let mut out = t.to_string();
+    if !out.ends_with(['.', '!', '?', ':']) {
+        out.push('.');
+    }
+    out
 }
 
 /// What `kaku --resume` asked for: a chosen conversation (else the newest of this project), and whether to open a branch of it.

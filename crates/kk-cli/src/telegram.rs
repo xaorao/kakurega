@@ -950,7 +950,18 @@ pub fn run(args: &[String]) -> u8 {
             .ok()
             .and_then(|t| serde_json::from_str::<Value>(&t).ok())
         {
-            Some(v) => {
+            Some(mut v) => {
+                // a bridge that has stopped is said to be stopped at once, not only after its last sign of life is old
+                if let Some(pid) = v["pid"].as_u64() {
+                    let alive = std::process::Command::new("kill")
+                        .args(["-0", &pid.to_string()])
+                        .stderr(std::process::Stdio::null())
+                        .status()
+                        .is_ok_and(|s| s.success());
+                    if !alive {
+                        v["updated"] = json!(0);
+                    }
+                }
                 let text = describe_status(&v, unix_now());
                 println!("{text}");
                 u8::from(text.starts_with("The bridge is not running"))
@@ -1187,14 +1198,19 @@ pub struct Status {
 }
 
 pub fn status_json(s: &Status) -> Value {
-    json!({"updated": s.updated, "paired": s.paired, "last_poll_ok": s.last_poll_ok, "last_send_ok": s.last_send_ok, "queued": s.queued, "last_error": s.last_error})
+    // the bridge's process number, so a status read right after it stopped is not taken for a living bridge
+    json!({"updated": s.updated, "paired": s.paired, "last_poll_ok": s.last_poll_ok, "last_send_ok": s.last_send_ok, "queued": s.queued, "last_error": s.last_error, "pid": std::process::id()})
 }
 
 /// Plain words for the status command: alive, stale, or not running.
 pub fn describe_status(v: &Value, now: u64) -> String {
     let updated = v["updated"].as_u64().unwrap_or(0);
     let age = now.saturating_sub(updated);
-    if updated == 0 || age > 90 {
+    if updated == 0 {
+        return "The bridge is not running (it has stopped). Start it with: kaku telegram"
+            .to_string();
+    }
+    if age > 90 {
         return format!("The bridge is not running (its last sign of life was {age} seconds ago). Start it with: kaku telegram");
     }
     let ago = |k: &str| {
@@ -2909,6 +2925,7 @@ mod tests {
                 "last_poll_ok",
                 "last_send_ok",
                 "paired",
+                "pid",
                 "queued",
                 "updated"
             ],

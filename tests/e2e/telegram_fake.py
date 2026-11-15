@@ -226,7 +226,7 @@ try:
     for _ in range(100):
         if st.exists(): break
         time.sleep(0.2)
-    check("the bridge writes a status file readable only by the owner, without chat text or the token", st.exists() and (st.stat().st_mode & 0o077) == 0 and TOKEN not in st.read_text() and set(json.loads(st.read_text()).keys()) == {"updated", "paired", "last_poll_ok", "last_send_ok", "queued", "last_error"})
+    check("the bridge writes a status file readable only by the owner, without chat text or the token", st.exists() and (st.stat().st_mode & 0o077) == 0 and TOKEN not in st.read_text() and set(json.loads(st.read_text()).keys()) == {"updated", "paired", "last_poll_ok", "last_send_ok", "queued", "last_error", "pid"})
     r = subprocess.run([kaku, "telegram", "status", "--data-dir", str(data)], capture_output=True, text=True)
     check("`kaku telegram status` says the bridge is running", r.returncode == 0 and "The bridge is running" in r.stdout, r.stdout[:120])
     check("an unpaired chat and a group get no reply at all", not sent)
@@ -478,9 +478,12 @@ try:
     # found in real use: a word that is not a command never starts a bridge, and there is a way to unpair
     r = subprocess.run([kaku, "telegram", "stop", "--data-dir", str(data), "--api-base", api], capture_output=True, text=True, env=env_plain, timeout=30)
     check("an unknown word is refused with the usage and starts nothing", r.returncode == 2 and "not one of its commands" in r.stderr and "kaku telegram unpair" in r.stderr and "running" not in r.stdout, f"{r.returncode} {r.stdout[:80]} {r.stderr[:120]}")
+    # the marker is for a running bridge, which reads it and removes it: when one is still running it may already be gone
+    def bridge_running():
+        return subprocess.run(["pgrep", "-f", f"kaku telegram --data-dir {data}"], capture_output=True).returncode == 0
     (data / "telegram.json").write_text('{"chat": 4242}')
     r = subprocess.run([kaku, "telegram", "unpair", "--data-dir", str(data)], capture_output=True, text=True, env=env_plain, timeout=30)
-    check("unpair forgets the paired chat and leaves the marker a running bridge reads", r.returncode == 0 and "Unpaired" in r.stdout and not (data / "telegram.json").exists() and (data / "telegram.unpair").exists(), f"{r.stdout} {r.stderr}")
+    check("unpair forgets the paired chat and leaves the marker a running bridge reads", r.returncode == 0 and "Unpaired" in r.stdout and not (data / "telegram.json").exists() and ((data / "telegram.unpair").exists() or bridge_running()), f"{r.stdout} {r.stderr}")
     r = subprocess.run([kaku, "telegram", "unpair", "--data-dir", str(data)], capture_output=True, text=True, env=env_plain, timeout=30)
     check("unpair with no chat paired says so", r.returncode == 0 and "No chat was paired" in r.stdout, r.stdout)
     closing[0] = True

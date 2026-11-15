@@ -493,7 +493,10 @@ fn tu10_a_blocked_disclosure_and_service_errors_are_shown_plainly() {
         409,
         json!({"error": {"code": "NOT_APPROVED", "message": "approve the release first"}}),
     ));
-    assert!(text(&app).contains("approve the release first (409)"));
+    assert!(
+        text(&app).contains("approve the release first.") && !text(&app).contains("(409)"),
+        "the reason as a sentence, with no status number"
+    );
     let r = enter(&mut app, "/reviews");
     app.handle(Event::Resp(Resp {
         id: r[0].id,
@@ -6521,7 +6524,7 @@ fn tu104_a_review_whose_status_cannot_be_read_stops_being_polled_and_the_other_k
         }
     }
     assert!(
-        text(&app).contains("job-1: no such review (404)"),
+        text(&app).contains("job-1: no such review.") && !text(&app).contains("(404)"),
         "the failure is shown and names the review: {}",
         text(&app)
     );
@@ -6553,7 +6556,10 @@ fn tu105_a_busy_answer_when_starting_a_review_is_shown_as_the_service_said_it_an
         json!({"error": {"code": "BUSY", "message": msg}}),
     ));
     let all = text(&app);
-    assert!(all.contains(&format!("{msg} (429)")), "{all}");
+    assert!(
+        all.contains(&format!("{msg}.")) && !all.contains("(429)"),
+        "{all}"
+    );
     assert!(
         !all.contains("Review job-") && !app.status_line().contains("running"),
         "{all}"

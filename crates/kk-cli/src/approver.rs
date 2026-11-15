@@ -195,6 +195,10 @@ pub fn run(args: &[String]) -> u8 {
         }
         Some("list") => match admin.get("/admin/approvers") {
             Ok((200, v)) => {
+                if v["approvers"].as_array().is_none_or(|a| a.is_empty()) {
+                    println!("No approval key is enrolled: a release is approved by typing its digest. `kaku approver enroll` makes a key.");
+                    return 0;
+                }
                 for a in v["approvers"].as_array().into_iter().flatten() {
                     println!(
                         "{}  {}",
@@ -230,15 +234,13 @@ pub fn run(args: &[String]) -> u8 {
             }
             match admin.post("/admin/approvers/revoke", body) {
                 Ok((200, v)) => {
-                    println!(
-                        "{}",
-                        if v["revoked"] == true {
-                            "Revoked."
-                        } else {
-                            "No such approver."
-                        }
-                    );
-                    0
+                    if v["revoked"] == true {
+                        println!("Revoked.");
+                        0
+                    } else {
+                        eprintln!("No approval key is enrolled under that id. `kaku approver list` shows the enrolled ones.");
+                        1
+                    }
                 }
                 other => {
                     eprintln!("could not revoke: {}", crate::approve::said(&other));
