@@ -117,8 +117,26 @@ fn c02_the_minimal_sample_follows_imports_and_never_includes_withheld_files() {
         }
     }
     let idx2 = index(&with_secret);
+    // a withheld module that the cited file imports is stood in for, never copied: its place in the sample holds the fixed
+    // stand-in, so the files around it load and any use of it stops the check
+    let closure2 = python_closure("payments/auth/session.py", &idx2).unwrap();
+    assert!(closure2.contains(&"payments/auth/tokens.py".to_string()));
+    let tokens = with_secret
+        .iter()
+        .find(|f| f.path == "payments/auth/tokens.py")
+        .unwrap();
     assert_eq!(
-        python_closure("payments/auth/session.py", &idx2),
+        kk_review::check::sample_bytes(tokens),
+        kk_review::check::STAND_IN.as_bytes()
+    );
+    assert!(
+        !kk_review::check::STAND_IN.contains("hunter2")
+            && !String::from_utf8_lossy(kk_review::check::STAND_IN.as_bytes())
+                .contains(&*String::from_utf8_lossy(&tokens.bytes))
+    );
+    // the cited file itself cannot be stood in for
+    assert_eq!(
+        python_closure("payments/auth/tokens.py", &idx2),
         Err(ClosureError::NeedsRestrictedFile(
             "payments/auth/tokens.py".into()
         ))
@@ -2708,4 +2726,80 @@ fn c62_the_reproducer_through_the_handler_confirms_the_planted_defect_in_the_san
     assert!(r
         .sample_paths
         .contains(&"payments/api/handlers.py".to_string()));
+}
+
+/// Found on a real project (a rate limiter whose package imports every storage backend, one of them withheld): a check
+/// may run when a withheld module is only imported along the way. An empty stand-in takes its place; a check whose code
+/// uses it is never confirmed, even when the script catches the error the stand-in raises.
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn c_use03_a_withheld_module_imported_along_the_way_is_stood_in_for_and_never_used_for_a_confirmation(
+) {
+    let mk = |path: &str, text: &str, withheld: bool| ImportedFile {
+        path: path.into(),
+        sha256: kk_evidence::capsule::sha256_hex(text.as_bytes()),
+        bytes: text.as_bytes().to_vec(),
+        label: if withheld {
+            kk_types::label::Label::new(Level::Restricted).with_compartment("secrets")
+        } else {
+            kk_types::label::Label::new(Level::Internal)
+        },
+        notes: vec![],
+    };
+    let files = vec![
+        mk("pkg/__init__.py", "from .secret import KEY\nfrom .core import double, signed\n", false),
+        mk("pkg/secret.py", "KEY = 'not-for-the-model'\n", true),
+        mk(
+            "pkg/core.py",
+            "from . import secret\n\ndef double(x):\n    return 2 * x + (1 if x == 3 else 0)\n\ndef signed(x):\n    return str(x) + secret.KEY\n\ndef mode():\n    return 'safe' if secret.KEY is None else 'open'\n",
+            false,
+        ),
+    ];
+    let idx = index(&files);
+    let t = transport();
+    let env = CheckEnv {
+        transport: &t,
+        scratch: &scratch(),
+        python: "/usr/bin/python3",
+        node: "/usr/bin/node",
+        rustc: "/usr/bin/rustc",
+    };
+    let on = |reproducer: &str| Finding {
+        title: "double is wrong for 3".into(),
+        file: "pkg/core.py".into(),
+        line: 4,
+        explanation: "double(3) is 7".into(),
+        reproducer: reproducer.into(),
+        language: Language::Python,
+    };
+    // the defect's code path never touches the withheld module: confirmed, with the stand-in in the sample
+    let honest = run_reproducer(
+        &on("from pkg.core import double\nif double(2) == 4:\n    print('CONTROL_OK')\nprint('REPRODUCED' if double(3) != 6 else 'NOT REPRODUCED')\n"),
+        &idx,
+        &env,
+    );
+    assert_eq!(honest.status, CheckStatus::Reproduced, "{honest:?}");
+    assert!(honest.sample_paths.contains(&"pkg/secret.py".to_string()));
+    assert!(!honest.stdout.contains("not-for-the-model"));
+    // a script whose code reaches the withheld value, and that turns the stand-in's error into its verdict: never confirmed
+    let hostile = run_reproducer(
+        &on("from pkg.core import double, signed\nif double(2) == 4:\n    print('CONTROL_OK')\ntry:\n    signed(1)\n    print('NOT REPRODUCED')\nexcept Exception:\n    print('REPRODUCED')\n"),
+        &idx,
+        &env,
+    );
+    assert!(
+        matches!(&hostile.status, CheckStatus::Unavailable(m) if m.starts_with(kk_review::check::msg::WITHHELD_FILE)),
+        "{hostile:?}"
+    );
+    // code that only tests whether the withheld value is there (no use the stand-in can see): the second stand-in turns
+    // the answer around, so the result is not confirmed
+    let flips = run_reproducer(
+        &on("from pkg.core import double, mode\nif double(2) == 4:\n    print('CONTROL_OK')\nprint('REPRODUCED' if mode() == 'open' else 'NOT REPRODUCED')\n"),
+        &idx,
+        &env,
+    );
+    assert!(
+        matches!(&flips.status, CheckStatus::Unavailable(m) if m.contains("changes with what the withheld file holds")),
+        "{flips:?}"
+    );
 }

@@ -187,6 +187,39 @@ pub enum ClosureError {
     Unavailable(&'static str),
 }
 
+/// What a withheld Python module is replaced by in a check's sample: a module with nothing in it. Importing a name from it
+/// succeeds, so the files around it load; using that name in any way (calling it, testing it, comparing it, reading from
+/// it) raises, so a check whose code path needs the withheld file fails instead of running on a guess. Its text is fixed
+/// and the same everywhere: nothing of the withheld file is in it.
+pub const STAND_IN: &str = "# Kakurega: this file is withheld (it holds a key or is marked private). An empty stand-in takes its place so that\n# the files importing it can load; nothing of the real file is here. Any use of a name from it stops the check.\nclass _Withheld:\n    def __init__(self, name):\n        object.__setattr__(self, '_name', name)\n    def _refuse(self, *args, **kwargs):\n        import os\n        for fd in (1, 2):\n            os.write(fd, b'\\nKAKUREGA_WITHHELD_USED\\n')\n        raise RuntimeError('this needs ' + object.__getattribute__(self, '_name') + ', which is in a withheld file')\n    __call__ = __getattr__ = __setattr__ = __delattr__ = __bool__ = __eq__ = __ne__ = __lt__ = __le__ = __gt__ = __ge__ = __iter__ = __next__ = __len__ = __getitem__ = __setitem__ = __delitem__ = __contains__ = __reversed__ = __str__ = __bytes__ = __format__ = __int__ = __float__ = __complex__ = __index__ = __round__ = __trunc__ = __floor__ = __ceil__ = __neg__ = __pos__ = __abs__ = __invert__ = __enter__ = __exit__ = __await__ = __aiter__ = __anext__ = __fspath__ = __hash__ = __copy__ = __deepcopy__ = __reduce__ = __reduce_ex__ = __add__ = __radd__ = __iadd__ = __sub__ = __rsub__ = __isub__ = __mul__ = __rmul__ = __imul__ = __matmul__ = __rmatmul__ = __imatmul__ = __truediv__ = __rtruediv__ = __itruediv__ = __floordiv__ = __rfloordiv__ = __ifloordiv__ = __mod__ = __rmod__ = __imod__ = __divmod__ = __rdivmod__ = __idivmod__ = __pow__ = __rpow__ = __ipow__ = __lshift__ = __rlshift__ = __ilshift__ = __rshift__ = __rrshift__ = __irshift__ = __and__ = __rand__ = __iand__ = __xor__ = __rxor__ = __ixor__ = __or__ = __ror__ = __ior__ = _refuse\ndef __getattr__(name):\n    return _Withheld(name)\n";
+
+/// The line a stand-in writes when the code under check uses it.
+const WITHHELD_USED: &str = "KAKUREGA_WITHHELD_USED";
+
+/// Whether a script catches errors: Python's `except`, or JavaScript's `catch`.
+fn catches_errors(script: &str) -> bool {
+    script.lines().any(|l| {
+        let t = l.trim_start();
+        t.starts_with("except")
+            || t.contains("} catch")
+            || t.starts_with("catch")
+            || t.contains(".catch(")
+            || t.contains("suppress(")
+    })
+}
+
+/// The second stand-in: every name in the withheld module is None.
+const STAND_IN_NONE: &str = "# Kakurega: this file is withheld. A second empty stand-in, in which every name is None, checks that the result\n# does not depend on what the real file holds.\ndef __getattr__(name):\n    return None\n";
+
+/// The bytes a sample holds for a project file: the file itself, or the stand-in for a withheld one.
+pub fn sample_bytes(f: &ImportedFile) -> &[u8] {
+    if f.label.level >= Level::Restricted {
+        STAND_IN.as_bytes()
+    } else {
+        &f.bytes
+    }
+}
+
 /// Where a project keeps its importable code: at its top, or in a `src` folder (the src layout).
 const PYTHON_ROOTS: [&str; 2] = ["", "src/"];
 
@@ -291,7 +324,14 @@ pub fn python_closure(
         }
         let f = files[&path];
         if f.label.level >= Level::Restricted {
-            return Err(ClosureError::NeedsRestrictedFile(path));
+            // The file the finding cites, or one the script names, cannot be replaced: the check would not be about it.
+            // A withheld module that another file merely imports (a package's __init__ that imports every backend) is
+            // stood in for by an empty module (see STAND_IN): if the code that runs needs it, the check fails; nothing
+            // of the withheld file is copied, read or released.
+            if path == entry {
+                return Err(ClosureError::NeedsRestrictedFile(path));
+            }
+            continue;
         }
         let source = String::from_utf8_lossy(&f.bytes).to_string();
         let mut wanted: Vec<String> = Vec::new();
@@ -683,7 +723,7 @@ pub fn run_reproducer(
                 };
             }
         }
-        if fs::write(&dest, &files[p].bytes).is_err() {
+        if fs::write(&dest, sample_bytes(files[p])).is_err() {
             return CheckResult {
                 status: CheckStatus::Failed("could not prepare the sample".into()),
                 stdout: String::new(),
@@ -734,9 +774,40 @@ pub fn run_reproducer(
     // Round 2 is the negative control: the cited file is emptied. A script whose verdict does not depend on that
     // code cannot be evidence about it.
     let mut control_stdout = String::new();
-    for round in 0..3 {
+    // A withheld module stood in for gets one more run, with a second stand-in whose every name is None (so `is None`
+    // tests turn the other way and every use breaks differently). A result that depends on what the withheld file holds
+    // changes between the two; only one that comes out the same can be confirmed.
+    let stand_ins: Vec<&String> = sample_paths
+        .iter()
+        .filter(|p| files[p.as_str()].label.level >= Level::Restricted)
+        .collect();
+    // a script that catches errors could turn a stand-in's refusal into its verdict: with a stand-in in the sample, such a
+    // script is not run at all
+    if !stand_ins.is_empty() && catches_errors(&finding.reproducer) {
+        let _ = fs::remove_dir_all(&dir);
+        return CheckResult {
+            status: CheckStatus::Unavailable(format!(
+                "{} (the script catches errors, and a withheld file had to be stood in for, so its verdict could come from the stand-in)",
+                msg::WITHHELD_FILE
+            )),
+            stdout: String::new(),
+            sample_paths,
+        };
+    }
+    let rounds = if stand_ins.is_empty() { 3 } else { 4 };
+    let mut variant: Option<(Exit, String)> = None;
+    for round in 0..rounds {
         if round == 2 {
             let _ = fs::write(sample.join(&finding.file), b"");
+        }
+        if round == 3 {
+            let _ = fs::write(
+                sample.join(&finding.file),
+                sample_bytes(files[finding.file.as_str()]),
+            );
+            for p in &stand_ins {
+                let _ = fs::write(sample.join(p.as_str()), STAND_IN_NONE);
+            }
         }
         let mut spec = SandboxSpec::new(if finding.language == Language::Rust {
             "/usr/bin/sh"
@@ -800,7 +871,32 @@ pub fn run_reproducer(
                 ..Limits::default()
             }
         };
-        match run_with(&spec, env.transport) {
+        let run = run_with(&spec, env.transport);
+        // A run that touched a withheld file's stand-in ran on a guess, whatever it printed after (a script can catch the
+        // error). The stand-in says so on both output channels before it raises, and such a check is never confirmed.
+        if let Ok(o) = &run {
+            if [&o.stdout, &o.stderr]
+                .iter()
+                .any(|b| String::from_utf8_lossy(b).contains(WITHHELD_USED))
+            {
+                let _ = fs::remove_dir_all(&dir);
+                return CheckResult {
+                    status: CheckStatus::Unavailable(format!(
+                        "{} (the script reached it while running, through the stand-in that took its place)",
+                        msg::WITHHELD_FILE
+                    )),
+                    stdout: String::new(),
+                    sample_paths,
+                };
+            }
+        }
+        match run {
+            Ok(o) if round == 3 => {
+                variant = Some((
+                    o.exit.clone(),
+                    String::from_utf8_lossy(&o.stdout).into_owned(),
+                ));
+            }
             Ok(o) if round == 2 => {
                 if o.exit == Exit::Code(0) {
                     control_stdout = String::from_utf8_lossy(&o.stdout).into_owned();
@@ -918,6 +1014,15 @@ pub fn run_reproducer(
         CheckStatus::Failed(msg::INDEPENDENT.into())
     } else if marker(&control_stdout, "CONTROL_OK") {
         CheckStatus::Failed(msg::CONTROL_INDEPENDENT.into())
+    } else if !stand_ins.is_empty()
+        && variant
+            .as_ref()
+            .is_none_or(|(exit, out)| *exit != Exit::Code(0) || *out != stdout)
+    {
+        CheckStatus::Unavailable(format!(
+            "{} (the result changes with what the withheld file holds, tried with two different stand-ins)",
+            msg::WITHHELD_FILE
+        ))
     } else {
         CheckStatus::Reproduced
     };
@@ -2098,5 +2203,27 @@ mod python_import_tests {
             .iter()
             .all(|m| !m.contains('x')));
         assert!(module_paths("moneyed").contains(&"src/moneyed/__init__.py".to_string()));
+    }
+
+    #[test]
+    fn ck_use03_a_script_that_catches_errors_is_recognised_and_the_stand_in_holds_nothing_real() {
+        for script in [
+            "try:\n    f()\nexcept Exception:\n    print('REPRODUCED')\n",
+            "try { f() } catch (e) { console.log('REPRODUCED') }\n",
+            "p.catch(() => 0)\n",
+            "with suppress(ValueError):\n    f()\n",
+        ] {
+            assert!(catches_errors(script), "{script}");
+        }
+        assert!(!catches_errors(
+            "print('REPRODUCED' if f() else 'NOT REPRODUCED')\n"
+        ));
+        // the stand-ins are fixed text: no project name, no value, the same for every file
+        assert!(
+            STAND_IN.contains("def __getattr__(name):")
+                && STAND_IN.contains(WITHHELD_USED)
+                && STAND_IN.contains("__radd__")
+        );
+        assert!(STAND_IN_NONE.contains("return None"));
     }
 }

@@ -327,7 +327,15 @@ pub fn assemble_with(
         let bound: String = check
             .sample_paths
             .iter()
-            .map(|p| format!("  {}  sha256 {}\n", p, project_files[p].sha256))
+            .map(|p| {
+                let f = &project_files[p];
+                // a withheld file is not in the sample: an empty stand-in is, and the real file's digest is not given
+                if f.label.level >= kk_types::label::Level::Restricted {
+                    format!("  {p}  (withheld: an empty stand-in took its place, so the files that import it could load)\n")
+                } else {
+                    format!("  {}  sha256 {}\n", p, f.sha256)
+                }
+            })
             .collect();
         let text = format!(
             "Finding {n}: {}\nLocation: {}:{}\n\n{}\n\nHow to check: {how}\n\nWhat this establishes: the script printed CONTROL_OK (its own check of the normal case passed), then REPRODUCED, twice with identical output, and printed neither when the cited file was emptied. It was checked on exactly these files and nothing else:\n{}It does not establish that what the script shows is a defect and not intended behaviour (that is the reviewer's claim: read the script), or that it exists in any other version of the code.\n",
@@ -344,7 +352,10 @@ pub fn assemble_with(
                 .map(|p| {
                     (
                         p.clone(),
-                        Value::Str(String::from_utf8_lossy(&project_files[p].bytes).into_owned()),
+                        Value::Str(
+                            String::from_utf8_lossy(crate::check::sample_bytes(project_files[p]))
+                                .into_owned(),
+                        ),
                     )
                 })
                 .collect(),
