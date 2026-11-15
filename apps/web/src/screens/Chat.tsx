@@ -840,8 +840,8 @@ export function Chat() {
     try {
       const answer = await api.searchRun(p.id, p.digest);
       setHits(answer.results);
-      setSearchNote(answer.results.length === 0 ? { why: answer.empty_because ?? "", engines: answer.engines_failed } : null);
-      setPartial(answer.results.length > 0 ? answer.engines_failed : []);
+      setSearchNote(answer.results.length === 0 ? { why: answer.empty_because ?? "", engines: answer.engines_failed ?? [] } : null);
+      setPartial(answer.results.length > 0 ? answer.engines_failed ?? [] : []);
       setSearchProposal(null);
     } catch (err) {
       setWebError(err instanceof ApiError ? err.message : t("web.error"));
