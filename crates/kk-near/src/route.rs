@@ -417,7 +417,7 @@ impl Route for NearRoute {
 /// The request settings that keep a model from thinking before it answers, by the names NEAR AI Cloud documents per model
 /// family (docs.near.ai/cloud/reasoning-models): `chat_template_kwargs.enable_thinking` for Qwen and GLM-5.1,
 /// `chat_template_kwargs.thinking` for Kimi, and a low `reasoning_effort` where thinking cannot be switched off (GLM-5.3
-/// Flash, gpt-oss). Nothing for a model with no documented setting: such a model may still think, and an answer it leaves
+/// Flash, gpt-oss); for DeepSeek, `chat_template_kwargs.thinking` as measured (see below). Nothing for a model with no known setting: such a model may still think, and an answer it leaves
 /// empty is reported as such.
 pub fn thinking_off(model: &str) -> Vec<(&'static str, Value)> {
     let m = model.to_ascii_lowercase();
@@ -427,6 +427,11 @@ pub fn thinking_off(model: &str) -> Vec<(&'static str, Value)> {
         vec![("reasoning_effort", json!("low"))]
     } else if m.starts_with("qwen/") || m.starts_with("zai-org/glm") {
         vec![("chat_template_kwargs", json!({"enable_thinking": false}))]
+    } else if m.starts_with("deepseek-ai/") {
+        // not in NEAR's reasoning page: found by asking the model with each documented setting. `thinking: false` (the
+        // DeepSeek template's own name) took its reasoning tokens from 18 to 0 on DeepSeek-V4.1-Flash-1017, and the answer
+        // was unchanged; `reasoning_effort` changed nothing
+        vec![("chat_template_kwargs", json!({"thinking": false}))]
     } else {
         Vec::new()
     }
@@ -476,6 +481,10 @@ mod thinking_tests {
             thinking_off("openai/gpt-oss-120b"),
             vec![("reasoning_effort", json!("low"))]
         );
-        assert!(thinking_off("deepseek-ai/DeepSeek-V4.1-Flash-1017").is_empty());
+        assert_eq!(
+            thinking_off("deepseek-ai/DeepSeek-V4.1-Flash-1017"),
+            vec![("chat_template_kwargs", json!({"thinking": false}))]
+        );
+        assert!(thinking_off("some-lab/unknown-model").is_empty());
     }
 }
