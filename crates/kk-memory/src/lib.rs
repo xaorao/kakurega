@@ -454,29 +454,30 @@ pub struct SimilarNotes {
 const NEAR_DUPLICATE: f64 = 0.8;
 
 /// Two close wordings can still disagree: a different number, or a flipped yes/no, is a changed fact and must be shown.
-fn same_claim(a: &str, b: &str) -> bool {
-    fn marks(s: &str) -> (std::collections::BTreeSet<String>, bool) {
-        let lower = s.to_lowercase();
-        let mut numbers = std::collections::BTreeSet::new();
-        let mut run = String::new();
-        for c in lower.chars().chain(std::iter::once(' ')) {
-            if c.is_ascii_digit() {
-                run.push(c);
-            } else if !run.is_empty() {
-                numbers.insert(std::mem::take(&mut run));
-            }
+fn same_claim_marks(s: &str) -> (std::collections::BTreeSet<String>, bool) {
+    let lower = s.to_lowercase();
+    let mut numbers = std::collections::BTreeSet::new();
+    let mut run = String::new();
+    for c in lower.chars().chain(std::iter::once(' ')) {
+        if c.is_ascii_digit() {
+            run.push(c);
+        } else if !run.is_empty() {
+            numbers.insert(std::mem::take(&mut run));
         }
-        let negated = lower
-            .split(|c: char| !c.is_alphanumeric() && c != '\'')
-            .any(|w| {
-                matches!(
-                    w,
-                    "not" | "no" | "never" | "without" | "cannot" | "disabled" | "off"
-                ) || w.ends_with("n't")
-            });
-        (numbers, negated)
     }
-    marks(a) == marks(b) && same_order(a, b)
+    let negated = lower
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .any(|w| {
+            matches!(
+                w,
+                "not" | "no" | "never" | "without" | "cannot" | "disabled" | "off"
+            ) || w.ends_with("n't")
+        });
+    (numbers, negated)
+}
+
+fn same_claim(a: &str, b: &str) -> bool {
+    same_claim_marks(a) == same_claim_marks(b) && same_order(a, b, false)
 }
 
 /// The words of a text, lowercased, in order.
@@ -492,7 +493,17 @@ fn word_sequence(s: &str) -> Vec<String> {
 /// is a small word or a near-identical spelling of a word left over on the other side (a plural, a typo). A word that merely
 /// moved is never "near identical": the same word turning up in a different place is a changed meaning. When unsure the
 /// owner is shown the suggestion: a duplicate asked twice costs a click, a changed fact that was hidden costs a wrong note.
-fn same_order(a: &str, b: &str) -> bool {
+/// The looser reading the owner's look-alike list uses: as `same_claim`, and in a note of six words or more one word may
+/// stand on one side only. That list only shows notes side by side; nothing is merged or skipped because of it.
+fn looks_alike(a: &str, b: &str) -> bool {
+    same_claim(a, b) || (same_numbers_and_negation(a, b) && same_order(a, b, true))
+}
+
+fn same_numbers_and_negation(a: &str, b: &str) -> bool {
+    same_claim_marks(a) == same_claim_marks(b)
+}
+
+fn same_order(a: &str, b: &str, one_extra: bool) -> bool {
     let (x, y) = (word_sequence(a), word_sequence(b));
     let (n, m) = (x.len(), y.len());
     // longest common subsequence of words, kept whole so the words left over can be named
@@ -533,21 +544,59 @@ fn same_order(a: &str, b: &str) -> bool {
         .filter(|(w, k)| !**k && !small(w))
         .map(|(w, _)| w)
         .collect();
-    if left_x.len() != left_y.len() {
-        return false;
-    }
+    // each word left over on one side must be the same word spelled differently on the other ("every" and "evry", "data"
+    // and "dat"); in a longer note one word may stand on one side only ("runs every single night")
     let mut taken = vec![false; left_y.len()];
-    for w in left_x {
+    let mut unmatched = 0usize;
+    for w in &left_x {
         let tw = fuse::trigrams(w);
         let partner = left_y.iter().enumerate().find(|(k, v)| {
-            !taken[*k] && ***v != *w && fuse::jaccard(&tw, &fuse::trigrams(v)) >= NEAR_SPELLING
+            !taken[*k]
+                && **v != *w
+                && (fuse::jaccard(&tw, &fuse::trigrams(v)) >= NEAR_SPELLING || one_slip(w, v))
         });
         match partner {
             Some((k, _)) => taken[k] = true,
-            None => return false,
+            None => unmatched += 1,
         }
     }
-    true
+    unmatched += taken.iter().filter(|t| !**t).count();
+    let allowed = usize::from(one_extra && n.min(m) >= 6);
+    unmatched <= allowed
+}
+
+/// Whether two words are one slip of the fingers apart (a letter missing, added, wrong, or two swapped), or two apart in a
+/// word of eight letters or more. Short words are left alone: "cat" and "car" are different words.
+fn one_slip(a: &str, b: &str) -> bool {
+    let (x, y): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let shorter = x.len().min(y.len());
+    if shorter < 3 {
+        return false;
+    }
+    let mut d = vec![vec![0usize; y.len() + 1]; x.len() + 1];
+    for (i, row) in d.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, cell) in d[0].iter_mut().enumerate() {
+        *cell = j;
+    }
+    for i in 1..=x.len() {
+        for j in 1..=y.len() {
+            let cost = usize::from(x[i - 1] != y[j - 1]);
+            d[i][j] = (d[i - 1][j] + 1)
+                .min(d[i][j - 1] + 1)
+                .min(d[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && x[i - 1] == y[j - 2] && x[i - 2] == y[j - 1] {
+                d[i][j] = d[i][j].min(d[i - 2][j - 2] + 1);
+            }
+        }
+    }
+    let reach = if shorter >= 8 { 2 } else { 1 };
+    // a three-letter word may only grow by a letter ("dat" and "data"), never change one ("cat" and "car")
+    if shorter == 3 && x.len() == y.len() {
+        return false;
+    }
+    d[x.len()][y.len()] <= reach
 }
 
 /// How alike two single words must be, by their letter trigrams, to count as the same word spelled differently.
@@ -2421,7 +2470,7 @@ impl Memories {
                 let first = &notes[a.first].memory;
                 first.project == n.memory.project
                     && fuse::jaccard(&a.grams, &grams) >= NEAR_DUPLICATE
-                    && same_claim(&first.text, &n.memory.text)
+                    && looks_alike(&first.text, &n.memory.text)
             });
             match home {
                 Some(g) => members[g].push(i),

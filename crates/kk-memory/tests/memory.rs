@@ -4572,3 +4572,66 @@ fn me_sg02_a_note_suggested_in_a_conversation_says_so_once_and_never_calls_it_a_
         got[0].why
     );
 }
+
+/// Found by using it: notes with a one-letter slip ("evry", "dat") or one inserted word were not shown as look-alikes.
+/// The look-alike list now shows them; a changed number, a flipped "not" or a different word still keeps notes apart, and
+/// the stricter rule that skips a repeated suggestion is unchanged (me29d).
+#[test]
+fn me_use02_look_alikes_include_one_letter_slips_and_one_inserted_word() {
+    let m = mem(&dir());
+    for (t, text) in [
+        (
+            1,
+            "The backup of the customer database runs every night at the office",
+        ),
+        (
+            2,
+            "The backup of the customer database runs evry night at the office",
+        ),
+        (
+            3,
+            "The backup of the customer database runs every single night at the office",
+        ),
+        (
+            4,
+            "The backup of the customer database runs every night at the warehouse",
+        ),
+        (
+            5,
+            "The backup of the customer database does not run every night at the office",
+        ),
+        (
+            6,
+            "Invoices with customer dat are archived after seven years",
+        ),
+        (
+            7,
+            "Invoices with customer data are archived after seven years",
+        ),
+    ] {
+        m.remember(t, nm(text, internal())).unwrap();
+    }
+    let found = m.similar_notes(&internal(), 100, Scope::All).unwrap();
+    let groups: Vec<Vec<String>> = found.groups.iter().map(|g| texts(g)).collect();
+    let backup = groups
+        .iter()
+        .find(|g| g.iter().any(|t| t.contains("backup")))
+        .expect("a backup group");
+    assert!(
+        backup.iter().any(|t| t.contains("evry")) && backup.iter().any(|t| t.contains("single")),
+        "{groups:?}"
+    );
+    assert!(
+        backup
+            .iter()
+            .all(|t| !t.contains("warehouse") && !t.contains("not run")),
+        "{groups:?}"
+    );
+    assert!(
+        groups
+            .iter()
+            .any(|g| g.iter().any(|t| t.contains("dat are"))
+                && g.iter().any(|t| t.contains("data are"))),
+        "{groups:?}"
+    );
+}
