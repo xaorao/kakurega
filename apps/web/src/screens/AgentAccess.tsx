@@ -54,7 +54,7 @@ export function AgentAccess() {
   };
   const [copied, setCopied] = createSignal(false);
   return (
-    <section class="stack wide" aria-labelledby="h-agent">
+    <section class="stack" aria-labelledby="h-agent">
       <h1 id="h-agent">{t("agent.title")}</h1>
       <Lead text={t("agent.lead")} />
       <div class="card stack">

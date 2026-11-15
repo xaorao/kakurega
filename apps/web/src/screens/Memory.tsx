@@ -766,7 +766,7 @@ export function Memory() {
     setNote(msg ?? "");
   };
   return (
-    <section class="stack wide" aria-labelledby="h-mem">
+    <section class="stack" aria-labelledby="h-mem">
       <h1 id="h-mem">{t("mem.title")}</h1>
       <Lead text={t("mem.lead")} />
       <Show when={left()}>{(l) => <LeftBehindCard left={l()} onDone={() => setLeft(null)} />}</Show>

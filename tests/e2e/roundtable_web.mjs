@@ -70,7 +70,7 @@ check(/Security reviewer/.test(first) && first.length > 40, "the first card is t
 const res = await page.locator(".rt-resolution").innerText();
 check(model ? res.length > 60 : /did not use the four parts/.test(res) && /\[test model\]/.test(res), model ? "the lead wrote a resolution" : "a lead that does not use the four parts is shown as written, and said to be");
 check(/advice, not as a check/.test(res), "the resolution says it is advice from the same model");
-check(/not saved/.test(await page.locator("form").innerText()), "the page says a roundtable asked here is not saved");
+check(/not saved/.test(await page.locator(".rt-actions").innerText()), "the page says a roundtable asked here is not saved");
 await shot(page, "2-answered");
 await page.reload();
 await page.getByLabel("Security reviewer").waitFor();
@@ -114,7 +114,9 @@ let script = lines([
   { resolution: { structured: true, agreed: "Keep the key out of the code.", disputed: "The architect wants a service; the reviewer a vault.", decision: "Use the vault now.", open_questions: "The tester did not answer.", text: "…" }, answered: ["security-reviewer", "software-architect"], missing: ["sceptical-tester"] },
   { done: true, reply: "Roundtable" },
 ]);
-await page.route("**/api/chat/roundtable", (route) => route.fulfill({ status: 200, contentType: "application/x-ndjson", body: script }));
+// `hold` keeps the stream from starting, so the page can be looked at while the experts are still being asked
+let hold = null;
+await page.route("**/api/chat/roundtable", async (route) => { if (hold) await hold; await route.fulfill({ status: 200, contentType: "application/x-ndjson", body: script }); });
 await page.getByLabel("Your question").fill("Where should the key live?");
 await page.getByRole("button", { name: "Ask the roundtable" }).click();
 await page.getByText("Use the vault now.").waitFor();
@@ -125,6 +127,27 @@ check(/the lead read its beginning and its end/.test(all), "a long answer says t
 check((await page.evaluate(() => window.pwned)) === undefined && (await page.locator('a[href^="javascript:"]').count()) === 0, "an expert's answer cannot run script or carry a script link");
 check((await page.locator(".rt-resolution strong, li.card strong").count()) >= 4, "answers are formatted (bold, lists), not shown as raw marks");
 await shot(page, "3-four-parts");
+{
+  // while experts answer, the bar with Stop stays at the foot of the window wherever the page is scrolled
+  let release;
+  hold = new Promise((r) => (release = r));
+  await page.getByRole("button", { name: "Ask the roundtable" }).click();
+  await page.getByRole("button", { name: "Stop", exact: true }).waitFor();
+  const inView = () => page.locator(".rt-actions").evaluate((el) => { const r = el.getBoundingClientRect(); return r.height > 0 && r.top >= 0 && r.bottom <= window.innerHeight + 1; });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const atTop = await inView();
+  await page.locator("main ul.plain > li.card").last().scrollIntoViewIfNeeded();
+  const atAnswers = await inView();
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  const atEnd = await inView();
+  const barText = await page.locator(".rt-actions").innerText();
+  check(atTop && atAnswers && atEnd && /Answers in: 0 of 3/.test(barText), `while experts answer, the bar with Stop stays at the foot of the window wherever the page is scrolled, and counts the answers in (${atTop} ${atAnswers} ${atEnd}: ${barText.replace(/\n/g, " ")})`);
+  await shot(page, "3b-answering");
+  release();
+  hold = null;
+  await page.getByText("Use the vault now.").waitFor();
+  check(/not saved/.test(await page.locator(".rt-actions").innerText()), "once they have answered, the bar says again that nothing is saved");
+}
 
 script = lines([
   { expert: "security-reviewer", name: "Security reviewer", state: "asking" },

@@ -171,7 +171,7 @@ export function NewReview(props: { config: Config; onStarted: (id: string) => vo
   const [recent] = createResource(() => api.jobs().then((r) => [...r.jobs].sort((a, b) => b.created - a.created).slice(0, 3)).catch(() => []));
 
   return (
-    <section class="stack wide" aria-labelledby="h-new">
+    <section class="stack" aria-labelledby="h-new">
       <div class="start">
         <span class="brand-mark hero" aria-hidden="true"><Glyph /></span>
         <h1 id="h-new" class="start-hello">{greeting()}</h1>

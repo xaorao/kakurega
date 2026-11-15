@@ -92,7 +92,7 @@ export function CodeTask() {
   };
   const running = () => current() !== null && !done((current() as Task).state);
   return (
-    <section class="stack wide" aria-labelledby="h-code">
+    <section class="stack" aria-labelledby="h-code">
       <h1 id="h-code">{t("code.title")}</h1>
       <McpPending />
       <Lead text={t("code.lead")} tail={1} />

@@ -102,7 +102,7 @@ export function Documents() {
   };
   const list = (xs: string[]) => xs.join(", ");
   return (
-    <section class="stack wide" aria-labelledby="h-docs">
+    <section class="stack" aria-labelledby="h-docs">
       <h1 id="h-docs">{t("docs.title")}</h1>
       <Lead text={t("docs.lead")} />
       <div class="card stack">

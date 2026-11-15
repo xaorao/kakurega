@@ -31,7 +31,7 @@ if (shots.includes("pair")) { const fresh = await (await browser.newContext({ vi
 await page.goto(link);
 if (shots.includes("welcome")) { await page.waitForTimeout(2500); await page.screenshot({ path: join(out, `${theme}-${width}-welcome.png`) }); console.log("welcome"); }
 await page.getByRole("button", { name: "Skip the rest" }).click({ timeout: 6000 }).catch(() => {});
-if (shots.includes("palette")) { await page.waitForTimeout(1200); await page.getByRole("button", { name: "Commands" }).click(); await page.waitForTimeout(600); await page.keyboard.type("re"); await page.waitForTimeout(400); await page.screenshot({ path: join(out, `${theme}-${width}-palette.png`) }); await page.keyboard.press("Escape"); console.log("palette"); }
+if (shots.includes("palette")) { await page.waitForTimeout(1200); await page.getByRole("button", { name: "Search", exact: true }).click(); await page.waitForTimeout(600); await page.keyboard.type("re"); await page.waitForTimeout(400); await page.screenshot({ path: join(out, `${theme}-${width}-palette.png`) }); await page.keyboard.press("Escape"); console.log("palette"); }
 for (const shot of shots.filter((x) => !["pair", "welcome", "palette"].includes(x))) {
   const [route, tab] = shot.split("@");
   await page.goto(origin + (route === "job" ? "/#/job/job-1" : route === "start" ? "/#/" : "/#/" + route));
@@ -39,7 +39,7 @@ for (const shot of shots.filter((x) => !["pair", "welcome", "palette"].includes(
   if (tab) { await page.getByRole("tab", { name: tab }).click(); await page.waitForTimeout(1200); }
   if (process.env.AT) { const [x, y] = process.env.AT.split(",").map(Number); console.log(await page.evaluate(([x, y]) => document.elementsFromPoint(x, y).slice(0, 5).map((e) => `${e.tagName}.${e.className} ${getComputedStyle(e).borderLeft} / ${getComputedStyle(e).borderRight}`).join("\n"), [x, y])); }
   const name = `${theme}-${width}-${route}${tab ? "-" + tab : ""}.png`;
-  await page.screenshot({ path: join(out, name) });
+  await page.screenshot({ path: join(out, name), fullPage: !!process.env.FULL });
   console.log(name);
 }
 await browser.close(); server.kill(); process.exit(0);

@@ -86,7 +86,7 @@ export function Verify() {
   };
 
   return (
-    <main class="verify stack wide">
+    <main class="verify stack">
       {/* opened from the workspace's menu: a way back; a recipient who only has this page sees none */}
       <Show when={fromWorkspace}><p><a href="/">{t("ver.back")}</a></p></Show>
       <h1>{t("ver.title")}</h1>

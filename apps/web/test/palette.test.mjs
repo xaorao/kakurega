@@ -88,3 +88,24 @@ test("pm10 while searching there are no sections, so the section keys do nothing
   assert.equal(moveSection(grouped, "a", 2, 1), 2);
   assert.equal(moveSection([], "", 0, 1), 0);
 });
+
+test("pm11 the muted detail and the hidden keywords find a row by a whole word, never by scattered letters", () => {
+  const rows = [
+    { id: "s", label: "Memory", group: "Go to" },
+    { id: "r", label: "payments-service", group: "Reviews", detail: "ready for approval · for Acme audit", keywords: "job-7 /work/payments-service" },
+    { id: "c", label: "Quarterly plan", group: "Chats", detail: "4 messages" },
+  ];
+  const found = (q) => matchItems(rows, q).map((i) => i.id);
+  assert.deepEqual(found("acme"), ["r"], "a review is found by its recipient");
+  assert.deepEqual(found("job-7"), ["r"], "and by its id, which the row does not show");
+  assert.deepEqual(found("approval acme"), ["r"]);
+  assert.deepEqual(found("pymnts"), ["r"], "the name still takes an abbreviation");
+  assert.deepEqual(found("rfa"), [], "letters scattered through a detail do not match");
+  assert.deepEqual(found("payments").slice(0, 1), ["r"]);
+  // a name match still outranks a detail match
+  const both = [
+    { id: "d", label: "Audit notes", group: "Chats" },
+    { id: "e", label: "billing", group: "Reviews", detail: "ready · for audit team" },
+  ];
+  assert.deepEqual(matchItems(both, "audit").map((i) => i.id), ["d", "e"]);
+});

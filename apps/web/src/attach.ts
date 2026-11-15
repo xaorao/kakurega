@@ -17,10 +17,19 @@ export const MAX_FILES = 5;
 /** The most bytes one file may have, the same figure as the service. A larger one is refused here, before it is sent. */
 export const MAX_BYTES = 8 * 1024 * 1024;
 
+/** A size as people read one: whole bytes under a kilobyte, otherwise KB, MB or GB with one decimal ("4.0 KB", "1.2 MB").
+ *  The unit is chosen after rounding, so a size just under a megabyte reads "1.0 MB", never "1024.0 KB". */
 export function sizeText(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 102.4) / 10} KB`;
-  return `${Math.round(bytes / 104857.6) / 10} MB`;
+  const b = Number.isFinite(bytes) && bytes > 0 ? Math.round(bytes) : 0;
+  if (b < 1024) return `${b} B`;
+  const units = ["KB", "MB", "GB"];
+  let v = b / 1024;
+  let i = 0;
+  while (v >= 1023.95 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(1)} ${units[i]}`;
 }
 
 /** What to say after an answer about the files that went with the question, as language keys with a number. Nothing when none went. */

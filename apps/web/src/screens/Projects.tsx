@@ -40,7 +40,7 @@ export function Projects() {
   const chat = (p: ProjectRow) => { leave("kk-chat-project", p.name); location.hash = "#/chat"; };
   const explore = (p: ProjectRow) => { leave("kk-explore-folder", p.folder ?? ""); location.hash = "#/explore"; };
   return (
-    <section class="stack wide" aria-labelledby="h-proj">
+    <section class="stack" aria-labelledby="h-proj">
       <h1 id="h-proj">{t("proj.title")}</h1>
       <Lead text={t("proj.lead")} />
       <Show when={list()} fallback={<p class="muted" role={list.error ? "alert" : "status"}>{list.error ? t("proj.error") : t("review.loading")}</p>}>

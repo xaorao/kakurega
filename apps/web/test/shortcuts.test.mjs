@@ -42,10 +42,10 @@ test("kb03 page-wide shortcuts are found through the table, and a bare key typed
 
 test("kb04 near misses are not shortcuts", () => {
   const body = { tagName: "BODY" };
-  for (const e of [ev("k"), ev("k", { ctrlKey: true, shiftKey: true }), ev("k", { ctrlKey: true, altKey: true }), ev("p", { ctrlKey: true }), ev("P", { shiftKey: true }), ev("/", { shiftKey: true }), ev("?", { ctrlKey: true }), ev("a", { metaKey: true })]) {
+  for (const e of [ev("k"), ev("k", { ctrlKey: true, shiftKey: true }), ev("k", { ctrlKey: true, altKey: true }), ev("p", { ctrlKey: true }), ev("P", { shiftKey: true }), ev("P", { ctrlKey: true, shiftKey: true, altKey: true }), ev("/", { shiftKey: true }), ev("?", { ctrlKey: true }), ev("a", { metaKey: true })]) {
     assert.equal(appShortcut(e, body), null, JSON.stringify(e));
   }
-  assert.equal(appShortcut(ev("K", { metaKey: true }), body)?.id, "search", "the Command key and capital letters count");
+  assert.equal(appShortcut(ev("K", { metaKey: true }), body)?.id, "palette", "the Command key and capital letters count");
   const send = SHORTCUTS.find((s) => s.id === "send");
   assert.equal(send.matches(ev("Enter", { isComposing: true })), false, "Enter that confirms an input method is not a send");
   assert.equal(send.matches(ev("Enter", { shiftKey: true })), false);
@@ -53,8 +53,8 @@ test("kb04 near misses are not shortcuts", () => {
 
 test("kb05 keys are written for the computer they are shown on", () => {
   const p = SHORTCUTS.find((s) => s.id === "palette");
-  assert.equal(keysFor(p, true), "⌘⇧P");
-  assert.equal(keysFor(p, false), "Ctrl+Shift+P");
+  assert.equal(keysFor(p, true), "⌘K, ⇧⌘P");
+  assert.equal(keysFor(p, false), "Ctrl+K, Ctrl+Shift+P");
 });
 
 const full = (e) => ({ isComposing: false, ...e });
@@ -85,7 +85,7 @@ test("kb10 a single printable key can be switched off and the same command with 
   assert.equal(appShortcut(ev("?", { shiftKey: true }), body, true)?.id, "help");
   assert.equal(appShortcut(ev("?", { shiftKey: true }), body, false), null, "switched off: ? does nothing");
   assert.equal(appShortcut(ev("/", { ctrlKey: true }), body, false)?.id, "help-anywhere", "Ctrl+/ still opens the same list");
-  assert.equal(appShortcut(ev("k", { ctrlKey: true }), body, false)?.id, "search");
+  assert.equal(appShortcut(ev("k", { ctrlKey: true }), body, false)?.id, "palette");
   assert.equal(appShortcut(ev("P", { ctrlKey: true, shiftKey: true }), body, false)?.id, "palette");
 });
 
@@ -102,4 +102,18 @@ test("kb11 a checkbox, radio or button is not a place where text is typed, but e
   const help = appShortcut(ev("?", { shiftKey: true }), { tagName: "INPUT", type: "checkbox" });
   assert.equal(help?.id, "help", "? works while a checkbox has the focus");
   assert.equal(appShortcut(ev("?", { shiftKey: true }), { tagName: "INPUT", type: "text" }), null, "and still not inside a text box");
+});
+
+test("kb12 one palette: Cmd or Ctrl with K opens it, Cmd or Ctrl with Shift and P is a second way in, and no other entry answers to either", () => {
+  const body = { tagName: "BODY" };
+  const box = { tagName: "TEXTAREA" };
+  for (const e of [ev("k", { metaKey: true }), ev("k", { ctrlKey: true }), ev("K", { metaKey: true }), ev("P", { metaKey: true, shiftKey: true }), ev("p", { ctrlKey: true, shiftKey: true })]) {
+    assert.equal(appShortcut(e, body)?.id, "palette", JSON.stringify(e));
+    assert.equal(appShortcut(e, box)?.id, "palette", `${JSON.stringify(e)} also while typing`);
+    assert.deepEqual(SHORTCUTS.filter((s) => s.matches(e)).map((s) => s.id), ["palette"], JSON.stringify(e));
+  }
+  assert.equal(SHORTCUTS.some((s) => s.id === "search"), false, "the side list's filter has no shortcut of its own: Cmd+K is the palette's");
+  const p = SHORTCUTS.find((s) => s.id === "palette");
+  for (const keys of ["⌘K", "⇧⌘P"]) assert.ok(keysFor(p, true).includes(keys), `the help list names ${keys}`);
+  for (const keys of ["Ctrl+K", "Ctrl+Shift+P"]) assert.ok(keysFor(p, false).includes(keys), `the help list names ${keys}`);
 });

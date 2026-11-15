@@ -91,9 +91,9 @@ try {
   await shot("3-protection");
   await view("protection");
   await page.getByRole("tab", { name: "Release" }).click();
-  const digestLine = page.locator("p", { hasText: "Digest" }).first();
+  const digestLine = page.locator(".digest-line code");
   await digestLine.waitFor({ timeout: 20000 });
-  const digest = /[0-9a-f]{64}/.exec(await digestLine.innerText())?.[0] ?? "";
+  const digest = /^[0-9a-f]{64}$/.exec((await digestLine.getAttribute("title")) ?? "")?.[0] ?? "";
   check("the release shows its digest before anything is asked", digest.length === 64);
   await shot("4-release");
   await view("release");

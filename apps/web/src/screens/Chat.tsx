@@ -688,6 +688,20 @@ export function Chat() {
       setError(err instanceof ApiError ? err.message : t("chat.error"));
     }
   };
+  // A conversation chosen in the palette is handed over here once, whether this screen opens for it or is already open.
+  const takeAsked = () => {
+    let id: string | null = null;
+    try {
+      id = sessionStorage.getItem("kk-chat-open");
+      if (id !== null) sessionStorage.removeItem("kk-chat-open");
+    } catch {
+      id = null;
+    }
+    if (id && session() !== id) void openKept(id);
+  };
+  onMount(takeAsked);
+  window.addEventListener("kk:chat-open", takeAsked);
+  onCleanup(() => window.removeEventListener("kk:chat-open", takeAsked));
   // Branch the open kept conversation at a message. The original stays as it is; the branch is opened, and the message goes
   // back into the box (edit) or is sent again (answer again).
   const branchAt = async (p: BranchPoint | null, again: boolean) => {
@@ -996,7 +1010,7 @@ export function Chat() {
   };
 
   return (
-    <section class="stack wide chat-page" aria-labelledby="h-chat">
+    <section class="stack chat-page" aria-labelledby="h-chat">
       <h1 id="h-chat">{t("chat.title")}</h1>
       <Show when={tabs().length > 0}>
         {/* a row of buttons, not a tab list: each has a close button beside it, which a tab list may not hold */}

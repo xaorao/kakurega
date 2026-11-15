@@ -2,7 +2,7 @@ import { modelDown, setModelDown } from "./modelState";
 import { Opening } from "./components/Opening";
 import { Glyph } from "./components/Glyph";
 import { createEffect, createMemo, createSignal, ErrorBoundary, For, lazy, onCleanup, onMount, Show, Suspense } from "solid-js";
-import { api, ApiError, setCsrf, type Config, type Job, stateOf } from "./api";
+import { api, ApiError, setCsrf, type Config, type Job, type KeptChat, stateOf } from "./api";
 void ApiError;
 import { NewReview } from "./screens/NewReview";
 import { ReviewView } from "./screens/ReviewView";
@@ -226,7 +226,6 @@ export function App() {
     window.addEventListener("kk:help", open);
     onCleanup(() => window.removeEventListener("kk:help", open));
   }
-  let searchBox: HTMLInputElement | undefined;
   // on a narrow screen the menu is closed until asked for; choosing a page closes it again
   const [menuOpen, setMenuOpen] = createSignal(false);
   // null: open exactly when one of its screens is shown; true or false once the owner has opened or closed it by hand
@@ -257,10 +256,6 @@ export function App() {
     e.preventDefault();
     if (found.id === "palette") {
       if (paired()) setPaletteOpen(!paletteOpen());
-    } else if (found.id === "search") {
-      setMenuOpen(true);
-      searchBox?.focus();
-      searchBox?.select();
     } else if (found.id === "help" || found.id === "help-anywhere") {
       if (paired() && !paletteOpen()) setHelpOpen(!helpOpen());
     }
@@ -400,50 +395,100 @@ export function App() {
     live?.stop();
   });
 
-  const paletteItems = createMemo<PaletteItem[]>(() => {
-    const go = (hash: string) => () => {
-      location.hash = hash;
-    };
-    const screens: PaletteItem[] = [
-      { id: "new", label: t("nav.new"), group: t("palette.screens"), run: go("#/") },
-      { id: "inbox", label: t("nav.inbox"), group: t("palette.screens"), run: go("#/inbox") },
-      { id: "docs", label: t("nav.docs"), group: t("palette.screens"), run: go("#/docs") },
-      { id: "meeting", label: t("nav.meeting"), group: t("palette.screens"), run: go("#/meeting") },
-      { id: "break", label: t("break.title"), group: t("palette.screens"), run: go("#/break") },
-      { id: "skills", label: t("nav.skills"), group: t("palette.screens"), run: go("#/skills") },
-      { id: "projects", label: t("nav.projects"), group: t("palette.screens"), run: go("#/projects") },
-      { id: "handoff", label: t("nav.handoff"), group: t("palette.screens"), run: go("#/handoff") },
-      { id: "code", label: t("nav.code"), group: t("palette.screens"), run: go("#/code") },
-      { id: "explore", label: t("nav.explore"), group: t("palette.screens"), run: go("#/explore") },
-      { id: "chat", label: t("nav.chat"), group: t("palette.screens"), run: go("#/chat") },
-      { id: "roundtable", label: t("nav.roundtable"), group: t("palette.screens"), run: go("#/roundtable") },
-      { id: "team", label: t("nav.team"), group: t("palette.screens"), run: go("#/team") },
-      { id: "memory", label: t("nav.memory"), group: t("palette.screens"), run: go("#/memory") },
-      { id: "instructions", label: t("nav.instructions"), group: t("palette.screens"), run: go("#/instructions") },
-      { id: "settings", label: t("nav.settings"), group: t("palette.screens"), run: go("#/settings") },
-      { id: "privacy", label: t("nav.privacy"), group: t("palette.screens"), run: go("#/privacy") },
-      { id: "agent", label: t("nav.agent"), group: t("palette.screens"), run: go("#/agent") },
-      { id: "activity", label: t("nav.activity"), group: t("palette.screens"), run: go("#/activity") },
-      { id: "verify", label: t("nav.verify"), group: t("palette.screens"), run: () => { location.href = "/verify?from=workspace"; } },
-      { id: "shortcuts", label: t("kb.title"), group: t("palette.screens"), run: () => setHelpOpen(true) },
-    ];
-    const reviews: PaletteItem[] = jobs().map((j) => ({ id: `job-${j.id}`, label: `${j.repo.split("/").pop()} · ` + t("nav.sub", { state: t(`state.${stateOf(j)}` as never), recipient: j.recipient }) + ` · ${j.id}`, group: t("palette.reviews"), run: go(`#/job/${j.id}`) }));
-    const settings: PaletteItem[] = [
-      { id: "theme-light", label: t("theme.light"), group: t("palette.theme"), run: () => chooseTheme("light") },
-      { id: "theme-dark", label: t("theme.dark"), group: t("palette.theme"), run: () => chooseTheme("dark") },
-      { id: "theme-system", label: t("theme.system"), group: t("palette.theme"), run: () => chooseTheme("system") },
-      { id: "signout", label: t("top.signout"), group: t("palette.account"), run: () => void api.logout().then(() => setPaired(false)) },
-    ];
-    return [...screens, ...reviews, ...settings];
+  // the kept conversations, read each time the palette opens so a chat kept a moment ago can be found
+  const [chats, setChats] = createSignal<KeptChat[]>([]);
+  createEffect(() => {
+    if (paletteOpen()) void api.keptChats().then((r) => setChats(r.sessions)).catch(() => setChats([]));
   });
+  /** Opens a kept conversation in the chat: handed over the way the other screens hand the chat an attachment. */
+  const openChat = (id: string) => {
+    try { sessionStorage.setItem("kk-chat-open", id); } catch { /* the chat then opens on a new conversation */ }
+    if (location.hash === "#/chat") window.dispatchEvent(new Event("kk:chat-open"));
+    else location.hash = "#/chat";
+  };
+  const go = (hash: string) => () => {
+    location.hash = hash;
+  };
+  // each kind of row is made in its own memo, so a list arriving (the kept conversations, read when the palette opens) makes
+  // only its own rows again and the row under the cursor is not redrawn under it
+  const screenRows = createMemo<PaletteItem[]>(() => {
+    const screen = (id: string, label: string, run: () => void): PaletteItem => ({ id, label, group: t("palette.screens"), kind: t("palette.kind.screen"), run });
+    // in the order of the menu at the side: its main places, then those under More, then the two at its foot
+    const screens: PaletteItem[] = [
+      screen("new", t("nav.new"), go("#/")),
+      screen("inbox", t("nav.inbox"), go("#/inbox")),
+      screen("chat", t("nav.chat"), go("#/chat")),
+      screen("docs", t("nav.docs"), go("#/docs")),
+      screen("projects", t("nav.projects"), go("#/projects")),
+      screen("team", t("nav.team"), go("#/team")),
+      screen("memory", t("nav.memory"), go("#/memory")),
+      screen("meeting", t("nav.meeting"), go("#/meeting")),
+      screen("explore", t("nav.explore"), go("#/explore")),
+      screen("code", t("nav.code"), go("#/code")),
+      screen("roundtable", t("nav.roundtable"), go("#/roundtable")),
+      screen("handoff", t("nav.handoff"), go("#/handoff")),
+      screen("instructions", t("nav.instructions"), go("#/instructions")),
+      screen("skills", t("nav.skills"), go("#/skills")),
+      screen("break", t("break.title"), go("#/break")),
+      screen("agent", t("nav.agent"), go("#/agent")),
+      screen("activity", t("nav.activity"), go("#/activity")),
+      screen("verify", t("nav.verify"), () => { location.href = "/verify?from=workspace"; }),
+      screen("privacy", t("nav.privacy"), go("#/privacy")),
+      screen("settings", t("nav.settings"), go("#/settings")),
+      { id: "shortcuts", label: t("kb.title"), group: t("palette.screens"), kind: t("palette.kind.action"), run: () => setHelpOpen(true) },
+    ];
+    return screens;
+  });
+  const reviewRows = createMemo<PaletteItem[]>(() =>
+    jobs().map((j) => ({
+      id: `job-${j.id}`,
+      label: j.repo.split("/").pop() ?? j.repo,
+      detail: t("nav.sub", { state: t(`state.${stateOf(j)}` as never), recipient: j.recipient }),
+      keywords: `${j.id} ${j.repo}`,
+      group: t("palette.reviews"),
+      kind: t("palette.kind.review"),
+      run: go(`#/job/${j.id}`),
+    })),
+  );
+  const chatRows = createMemo<PaletteItem[]>(() =>
+    chats().map((c) => ({
+      id: `chat-${c.id}`,
+      label: c.title || t("chat.untitled"),
+      detail: t("chat.turns", { n: c.turns }),
+      group: t("palette.chats"),
+      kind: t("palette.kind.chat"),
+      run: () => openChat(c.id),
+    })),
+  );
+  const settingRows = createMemo<PaletteItem[]>(() => [
+      { id: "theme-light", label: t("theme.light"), group: t("palette.theme"), kind: t("palette.kind.setting"), run: () => chooseTheme("light") },
+      { id: "theme-dark", label: t("theme.dark"), group: t("palette.theme"), kind: t("palette.kind.setting"), run: () => chooseTheme("dark") },
+      { id: "theme-system", label: t("theme.system"), group: t("palette.theme"), kind: t("palette.kind.setting"), run: () => chooseTheme("system") },
+      { id: "signout", label: t("top.signout"), group: t("palette.account"), kind: t("palette.kind.action"), run: () => void api.logout().then(() => setPaired(false)) },
+  ]);
+  const paletteItems = createMemo<PaletteItem[]>(() => [...screenRows(), ...reviewRows(), ...chatRows(), ...settingRows()]);
+  /** Conversations found by what was said in them, for words that are not in their names. */
+  const searchSaid = async (q: string): Promise<PaletteItem[]> =>
+    (await api.searchChats(q)).results.slice(0, 8).map((h) => ({
+      // the same id as the conversation's row found by its name, so a conversation found both ways is listed once
+      id: `chat-${h.id}`,
+      label: h.title || t("chat.untitled"),
+      detail: (h.snippets[0]?.text ?? "").replace(/\s+/g, " ").trim(),
+      group: t("palette.chats"),
+      kind: t("palette.kind.chat"),
+      run: () => openChat(h.id),
+    }));
 
   const jobId = () => /^#\/job\/([\w-]+)/.exec(hash())?.[1] ?? null;
+  // screens of records (a review, the activity log, memory) take the wider measure of the one page grid; every other
+  // screen is read or filled in, and keeps to the narrower one
+  const pageKind = () => (jobId() !== null || hash() === "#/activity" || hash() === "#/memory" ? "data" : "read");
 
   return (
     <Show when={paired() !== null} fallback={<main class="center"><p class="muted">{t("app.connecting")}</p></main>}>
       <Show when={paired()} fallback={<Show when={unreachable()} fallback={<Pair onDone={() => { setPaired(null); }} />}><main class="center"><p role="alert" class="bad">{t("app.unreachable")}</p><button onClick={() => { setUnreachable(false); setPaired(null); }}>{t("app.retry")}</button></main></Show>}>
         <Opening />
-        <Palette open={paletteOpen()} items={paletteItems()} onClose={() => setPaletteOpen(false)} />
+        <Palette open={paletteOpen()} items={paletteItems()} search={searchSaid} onClose={() => setPaletteOpen(false)} />
         <ShortcutHelp open={helpOpen()} onClose={() => setHelpOpen(false)} />
         <div class="shell" inert={paletteOpen() || helpOpen()}>
           {/* the first stop of the Tab key: past the sidebar and its list of reviews, straight to the page */}
@@ -451,7 +496,7 @@ export function App() {
           <header class="top">
             <a class="brand" href="#/" aria-label="Kakurega"><span class="brand-mark" aria-hidden="true"><Glyph /></span><span class="brand-word">Kakurega</span></a>
             <Show when={config()}>{(c) => <Badge config={c()} modelDown={modelDown()} />}</Show>
-            <button class="link commands" data-keys={/Mac|iPhone|iPad/.test(navigator.platform) ? "⇧⌘P" : "Ctrl ⇧ P"} onClick={() => setPaletteOpen(true)} aria-keyshortcuts="Control+Shift+P Meta+Shift+P">{t("palette.open")}</button>
+            <button class="link commands" data-keys={/Mac|iPhone|iPad/.test(navigator.platform) ? "⌘K" : "Ctrl K"} onClick={() => setPaletteOpen(true)} aria-keyshortcuts="Meta+K Control+K Meta+Shift+P Control+Shift+P">{t("palette.open")}</button>
             <button class="link" onClick={async () => { await api.logout(); setPaired(false); }}>{t("top.signout")}</button>
           </header>
           <Show when={failures() >= 3}>
@@ -493,7 +538,6 @@ export function App() {
                 id="search"
                 type="search"
                 placeholder={t("nav.search.placeholder")}
-                ref={searchBox}
                 value={query()}
                 onInput={(e) => setQuery(e.currentTarget.value)}
                 onKeyDown={(e) => { if (e.key === "Escape") { setQuery(""); e.currentTarget.blur(); } }}
@@ -519,7 +563,7 @@ export function App() {
                 <div class="side-prefs"><LanguagePicker /><ThemePicker /></div>
               </div>
             </nav>
-            <main class="main" id="main-content" tabindex="-1">
+            <main class="main" id="main-content" tabindex="-1" data-page={pageKind()}>
               <Show when={welcome()}>
                 <Welcome onDone={() => setWelcome(false)} />
               </Show>

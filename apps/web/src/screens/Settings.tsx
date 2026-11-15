@@ -339,7 +339,7 @@ export function Settings() {
   const [q, setQ] = createSignal("");
   const found = createMemo(() => searchSettings(SETTINGS, q(), (k) => t(k as Key)));
   return (
-    <section class="stack wide settings-page" aria-labelledby="h-set">
+    <section class="stack settings-page" aria-labelledby="h-set">
       <h1 id="h-set">{t("set.title")}</h1>
       <Lead text={t("set.lead")} />
       <nav class="set-sections" aria-label={t("set.sections")}>
