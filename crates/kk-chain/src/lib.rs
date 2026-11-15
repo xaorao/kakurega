@@ -12,7 +12,7 @@ pub use near_api::NearToken;
 pub use registry::{Chain, ChainError, ModelQuote, Network, Payer, Sent};
 
 /// The registry this build knows on NEAR testnet.
-pub const TESTNET_REGISTRY: &str = "kakurega-registry-c68af3.testnet";
+pub const TESTNET_REGISTRY: &str = "kakurega-registry-1ba6b2.testnet";
 /// Kakurega's fee on a paid order, in hundredths of a percent of the reviewer's amount: what this build's registries are
 /// created with. A client reads the registry's own `fee_terms` when it can.
 pub const DEFAULT_FEE_BPS: u16 = 200;

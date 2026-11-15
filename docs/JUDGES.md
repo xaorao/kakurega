@@ -19,19 +19,19 @@ A model key that NEAR's own TDX verifier contract vouched for, read from a publi
 
 ```sh
 ARGS=$(printf '{"signer":"89154a43a47684742c3d1753252bb6f49f61da9d8c84fc9b1def2df130cb2d93"}' | base64 | tr -d '\n')
-curl -s https://rpc.testnet.fastnear.com -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"query","params":{"request_type":"call_function","finality":"final","account_id":"kakurega-registry-c68af3.testnet","method_name":"hardware","args_base64":"'"$ARGS"'"}}' | python3 -c "import json,sys; print(bytes(json.load(sys.stdin)['result']['result']).decode())"
+curl -s https://rpc.testnet.fastnear.com -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"query","params":{"request_type":"call_function","finality":"final","account_id":"kakurega-registry-1ba6b2.testnet","method_name":"hardware","args_base64":"'"$ARGS"'"}}' | python3 -c "import json,sys; print(bytes(json.load(sys.stdin)['result']['result']).decode())"
 ```
 
-Expected: JSON that starts `{"signer":"89154a43…","tcb_status":"UpToDate","advisory_ids":[],"mr_td":"df4d77c8…`. The transaction that wrote it: [`EqCuP7TZ…`](https://testnet.nearblocks.io/txns/EqCuP7TZmqsgotmj1go7oFg2mzN2qnzRKgmNeXzfhmY). In it our contract passed a fresh NEAR AI Cloud quote for `Qwen/Qwen3.8-27B` to `tee-verifier-2026-07-22.testnet`, and recorded the key only after that contract accepted it.
+Expected: JSON that starts `{"signer":"89154a43…","tcb_status":"UpToDate","advisory_ids":[],"mr_td":"df4d77c8…`. The transaction that wrote it: [`6fEy6Cq2…`](https://testnet.nearblocks.io/txns/6fEy6Cq2KfPyjdsD4AgiVwEaUuCePB8d5Zt6cKATUzm2). In it our contract passed a fresh NEAR AI Cloud quote for `Qwen/Qwen3.8-27B` to `tee-verifier-2026-07-22.testnet`, and recorded the key only after that contract accepted it.
 
 Then the capsule of a real review that ran on that model, registered for a paid order that required this hardware record:
 
 ```sh
-ARGS=$(printf '{"capsule_sha256":"2d2f9450a88fab653909a09c3c1a992929e308a0120feb5380a13ea381b99f8b","capsule_signer":"d48949fd672796dd58880341608d6a2fc26e28ade3f323a24792226a324a43ee"}' | base64 | tr -d '\n')
-curl -s https://rpc.testnet.fastnear.com -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"query","params":{"request_type":"call_function","finality":"final","account_id":"kakurega-registry-c68af3.testnet","method_name":"get","args_base64":"'"$ARGS"'"}}' | python3 -c "import json,sys; print(bytes(json.load(sys.stdin)['result']['result']).decode())"
+ARGS=$(printf '{"capsule_sha256":"71cb95bf7ca3ad984ff889c403bca5a83217533718aa95d747f0c4d604520aee","capsule_signer":"f3e907329c0dafea7ee8f7fbf009ae16e410159f95466e2b7fd2a20786e36039"}' | base64 | tr -d '\n')
+curl -s https://rpc.testnet.fastnear.com -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"query","params":{"request_type":"call_function","finality":"final","account_id":"kakurega-registry-1ba6b2.testnet","method_name":"get","args_base64":"'"$ARGS"'"}}' | python3 -c "import json,sys; print(bytes(json.load(sys.stdin)['result']['result']).decode())"
 ```
 
-Expected: `"receipt_count":20`, one signer `89154a43…` for `Qwen/Qwen3.8-27B` with `"receipts":20`, and `"order":"1"`: the contract verified all 20 model signatures in the registration ([`HvDR4pNU…`](https://testnet.nearblocks.io/txns/HvDR4pNUarYwdALySuJR5zNjzxNE7zmxh5KwfXTreSpT)). The capsule itself is `fixtures/near-live/review.kkg`; its SHA-256 is the `capsule_sha256` above.
+Expected: `"receipt_count":20`, one signer `89154a43…` for `Qwen/Qwen3.8-27B` with `"receipts":20`, and `"order":"0"`: the contract verified all 20 model signatures in the registration ([`6GxywTdo…`](https://testnet.nearblocks.io/txns/6GxywTdoWX74fiQmxhh293ux8UiWFEXnH8WWBmM4qJCd)). The capsule itself is the site's sample, `fixtures/near-live/sample.kkg`; its SHA-256 is the `capsule_sha256` above.
 
 What this does not show: which software ran (the measurements are recorded, none is approved by the contract), nothing about the GPU, and nothing about whether the review's findings are right.
 
@@ -47,21 +47,22 @@ scripts/judge-replay
 ```
 
 Expected, in order:
-- `Recorded at kakurega-registry-c68af3.testnet on NEAR testnet:` then the key, `NEAR's verifier checked its Intel TDX quote against Intel's collateral on 2026-11-13 04:46:56 UTC`, `Intel patch level then: UpToDate`, and a list headed `This does not establish:`.
+- `Recorded at kakurega-registry-1ba6b2.testnet on NEAR testnet:` then the key, `NEAR's verifier checked its Intel TDX quote against Intel's collateral on 2026-11-15 00:18:38 UTC`, `Intel patch level then: UpToDate`, and a list headed `This does not establish:`.
 - `Signature: checks against the pinned key.` then `known shapes: 126 cases. … leaked 0.` and `beyond the detector: 42 cases. … leaked 10.` with each leak named. The leaks are real and listed on purpose: they are passwords and PINs written with no word saying what they are.
 - An example capsule the script makes on the spot, with made-up keys and made-up model answers, for the route `example`: accepted, with a list headed `Not established:` whose first line says it is an example. Then the same capsule with one receipt altered: `INVALID: receipt_signature`, then `Both results are as expected.` It prints the path of a one-file page to open from disk; drop either capsule on it. A capsule from a real review is made by `kaku` and checked the same way.
 
-The real NEAR review's capsule is checked offline by `cargo test -p kk-evidence --test near_live`: valid, 20 answers each signed by the key above, and the digest of its receipts equal to the one the registry holds. (It is checked as of a minute after it was made: that capsule was made to expire a day after it was made, and after that `kaku verify` on the file reports it expired. The sample on the site, `fixtures/near-live/sample.kkg`, is a later review made to stay valid for a year.)
+The real NEAR review's capsule is checked offline by `cargo test -p kk-evidence --test near_live`: valid, 20 answers each signed by the key above, and the digest of its receipts equal to the one the registry holds. (The earlier review in `fixtures/near-live/review.kkg`, registered on the first registry, which was built on the developer's computer, is checked the same way as of a minute after it was made, since it expired a day later. The sample on the site, `fixtures/near-live/sample.kkg`, stays valid for two years and is checked against the values the reproducibly built registry holds.)
 
 ## 5 minutes: is the contract on NEAR the code in this repository?
 
-Needs `cargo near`.
+Open the latest [contract-reproducible](https://github.com/xaorao/kakurega/actions/workflows/contract-reproducible.yml) run: it builds the contract twice inside the pinned build image and fails unless the two results are the same bytes; its summary gives the SHA-256 (`991ce451…30255` for commit `1ba6b29`). Then ask NEAR what runs at the registry, and what the contract says it was built from:
 
 ```sh
-scripts/check-deployed
+near contract call-function as-read-only kakurega-registry-1ba6b2.testnet contract_source_metadata json-args '{}' network-config testnet now
+scripts/check-deployed --no-build --expect 991ce451eb453e4745644e6e24d9b1847cc88bb9f3519d1566ac976737730255
 ```
 
-Expected: two equal lines `built here : bfeeba19…c3c5` and `on testnet: bfeeba19…c3c5  (kakurega-registry-c68af3.testnet)`, then `MATCH: the account runs exactly this build`. The account has no access keys left, so nobody can replace that code or its fee: `kaku chain fees` shows the fee, 2% on top of the reviewer's amount, sent only to `kakurega-fees-d5de2a.testnet`. The build is not the reproducible Docker one, and the script says so: another machine may produce different bytes from the same source.
+Expected: the metadata names commit `1ba6b29…` and the image `sourcescan/cargo-near:0.22.0-rust-1.99.1@sha256:c9655eaf…`; the script prints `on testnet: 991ce451…30255  (kakurega-registry-1ba6b2.testnet)` and `MATCH`. On an x86-64 computer with Docker, `scripts/check-deployed` alone builds it here the same way and compares. The account has no access keys left, so nobody can replace that code or its fee: `kaku chain fees` shows the fee, 2% on top of the reviewer's amount, sent only to `kakurega-fees-d5de2a.testnet`.
 
 ## 30 minutes: use it
 

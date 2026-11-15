@@ -1,7 +1,8 @@
 //! A capsule from a real review that ran on NEAR AI Cloud's confidential hardware (`Qwen/Qwen3.8-27B`), kept as a fixture so
 //! the live run can be checked again with no account and no network. The same capsule is registered on NEAR testnet at
 //! `kakurega-registry-c68af3.testnet` for order 1, which required a hardware record made after the order opened; the
-//! values below were read from that registry.
+//! values below were read from that registry. That registry was built on the developer's computer; the reproducibly built
+//! one is `kakurega-registry-1ba6b2.testnet`, where the public sample below is registered for paid order 0.
 
 use kk_evidence::capsule::{sha256_hex, verify, VerifyOptions};
 use kk_evidence::registry::receipts_digest;
@@ -65,4 +66,53 @@ fn nl02_one_changed_byte_in_a_model_answer_digest_breaks_it() {
         },
     );
     assert!(!r.valid);
+}
+
+/// The public sample on the site: a later real review, made to stay valid for two years, in the capsule form whose release
+/// names its claims. It is registered on the reproducibly built registry `kakurega-registry-1ba6b2.testnet` for order 0,
+/// which required a hardware record made after it opened; the values below were read from that registry.
+const SAMPLE: &[u8] = include_bytes!("../../../fixtures/near-live/sample.kkg");
+/// Created at 1_794_695_293 (Unix time) and valid for two years; checked a minute after it was made, so the test does not
+/// depend on the day it runs.
+const SAMPLE_CHECKED_AT: i64 = 1_794_695_353;
+
+#[test]
+fn nl03_the_public_sample_verifies_offline_names_its_claims_and_matches_what_the_reproducible_registry_holds(
+) {
+    let r = verify(
+        SAMPLE,
+        &VerifyOptions {
+            pinned_keys: None,
+            now: SAMPLE_CHECKED_AT,
+            expected_recipient: None,
+        },
+    );
+    assert!(r.valid, "{:?}", r.reason);
+    assert_eq!(r.route.as_deref(), Some("verified_tee"));
+    assert_eq!(r.receipts.len(), 20);
+    assert!(r
+        .receipts
+        .iter()
+        .all(|rc| rc.signer == NEAR_MODEL_KEY && rc.model == "Qwen/Qwen3.8-27B"));
+    assert!(
+        r.established
+            .iter()
+            .any(|e| e.contains("exactly those are here")),
+        "the release names its claims, so a claim taken out would be seen"
+    );
+    assert_eq!(r.claims.len(), 2);
+    assert_eq!(
+        sha256_hex(SAMPLE),
+        "71cb95bf7ca3ad984ff889c403bca5a83217533718aa95d747f0c4d604520aee"
+    );
+    assert_eq!(
+        r.signer_public
+            .map(|k| k.iter().map(|b| format!("{b:02x}")).collect::<String>()),
+        Some("f3e907329c0dafea7ee8f7fbf009ae16e410159f95466e2b7fd2a20786e36039".into())
+    );
+    assert_eq!(
+        receipts_digest(&r.receipts),
+        "1c880d21a6311c452e75b252ca205e81295ffd340803f3608f13428c10c6093b",
+        "every one of the 20 receipts is the one the contract verified"
+    );
 }

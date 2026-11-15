@@ -35,6 +35,9 @@ The receipt check follows the approach of SealedBounty's `tee.rs` (MIT); see `NO
 (`[package.metadata.near.reproducible_build]`) and fails unless the two results are the same bytes. The result for commit
 `1ba6b29c0ce6b355a85f05a1e8d751fbcf9b2d79` has SHA-256 `991ce451eb453e4745644e6e24d9b1847cc88bb9f3519d1566ac976737730255`
 and is deployed on NEAR testnet at `kakurega-registry-1ba6b2.testnet` (deploy transaction
-`537xgnKqFUv2YiJhMREMLG8KFj3AUMQ3jw8XzVGfHY8j`). To check it: ask NEAR for the account's code hash, and ask the contract
-for `contract_source_metadata`, which names that commit and the build image. On an Apple-silicon Mac the image runs under
+`537xgnKqFUv2YiJhMREMLG8KFj3AUMQ3jw8XzVGfHY8j`). It is the registry the product and the site use: the site's sample review
+is registered there for paid order 0 (opened `DbMMdEj7D3vwdYM9XdeFxm8jSuAM5b1VrhiwSuCFjE2T`, hardware recorded after it
+`6fEy6Cq2KfPyjdsD4AgiVwEaUuCePB8d5Zt6cKATUzm2`, registered and paid `6GxywTdoWX74fiQmxhh293ux8UiWFEXnH8WWBmM4qJCd`), and its only
+key was deleted (`9XXFzd5hBhnTCgDnXz9X17Gc4UgUqQHfa2ZWzgFa3Pqe`), so its code and fee cannot be changed. To check it: `scripts/check-deployed --no-build --expect 991ce451eb453e4745644e6e24d9b1847cc88bb9f3519d1566ac976737730255` asks NEAR for the account's code hash; ask the
+contract for `contract_source_metadata`, which names that commit and the build image. On an Apple-silicon Mac the image runs under
 emulation and the build did not finish (it stopped making progress twice), so the build is run in CI on an x86-64 machine.

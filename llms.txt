@@ -15,7 +15,7 @@ Run `scripts/judge` (needs Rust; the first build takes several minutes; two of i
 | A real review's capsule from NEAR AI Cloud verifies offline | `target/debug/kaku verify fixtures/near-live/sample.kkg` | first line `VALID`, exit 0 |
 | An altered capsule is refused | change one byte of that file, run the same command | `INVALID: digest_mismatch`, exit 1 |
 | Known secret shapes do not reach a model | `target/debug/kaku bench verify benchmarks/leak/results.signed.json --pin "$(cat benchmarks/leak/signer.pub)"` | `known shapes: 126 cases ... leaked 0.` and `beyond the detector: 42 cases ... leaked 10.` with each leak named |
-| NEAR's verifier vouched for the model key | `target/debug/kaku chain hardware 89154a43a47684742c3d1753252bb6f49f61da9d8c84fc9b1def2df130cb2d93` | `Recorded at kakurega-registry-c68af3.testnet on NEAR testnet:` and `Intel patch level then: UpToDate` |
+| NEAR's verifier vouched for the model key | `target/debug/kaku chain hardware 89154a43a47684742c3d1753252bb6f49f61da9d8c84fc9b1def2df130cb2d93` | `Recorded at kakurega-registry-1ba6b2.testnet on NEAR testnet:` and `Intel patch level then: UpToDate` |
 | The registry holds a real review's capsule with 20 verified model signatures | the second `curl` command under "Ask NEAR yourself" in README.md | `"receipt_count":20`, `"order":"1"` |
 | That registered capsule re-checks offline | `cargo test -p kk-evidence --test near_live` | exit 0 |
 | The review agent has no network and sees no excluded file | `scripts/test-linux` (Linux, needs bubblewrap) | exit 0 |

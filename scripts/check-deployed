@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Is the registry on NEAR running exactly the contract built from this repository?
 
-Builds the contract here, hashes the result, and compares it with the code hash NEAR reports for the account. Reads only.
+Builds the contract here in the pinned build image (the reproducible build, as CI does), hashes the result, and compares it
+with the code hash NEAR reports for the account. Reads only.
 
-  scripts/check-deployed [ACCOUNT] [--network testnet|mainnet] [--no-build]
+  scripts/check-deployed [ACCOUNT] [--network testnet|mainnet]          build in the pinned image (Docker, x86-64), compare
+  scripts/check-deployed [ACCOUNT] --no-build --expect SHA256          compare with a hash you have (the CI run's summary)
+  scripts/check-deployed ACCOUNT --local                               build without the image (only the machine that made a
+                                                                       non-reproducible build gets the same bytes)
 
-Exit 0 when they match, 1 when they differ, 2 when it could not be checked. The build is not the reproducible (Docker) one, so
-a match shows that this source, built on this machine with this toolchain, is what runs there; another machine may produce
-different bytes from the same source.
+Exit 0 when they match, 1 when they differ, 2 when it could not be checked. The registry the product uses was built in the
+pinned image: .github/workflows/contract-reproducible.yml builds it twice and checks the two are the same bytes.
 """
 import hashlib, json, subprocess, sys, urllib.request
 from pathlib import Path
@@ -15,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CONTRACT = ROOT / "contracts/kakurega-registry"
 WASM = CONTRACT / "target/near/kakurega_registry.wasm"
-DEFAULT = {"testnet": "kakurega-registry-c68af3.testnet"}
+DEFAULT = {"testnet": "kakurega-registry-1ba6b2.testnet"}
 RPC = {"testnet": "https://rpc.testnet.fastnear.com", "mainnet": "https://rpc.mainnet.fastnear.com"}
 ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
@@ -43,15 +46,30 @@ def main(argv):
     if not account:
         print(f"no registry is known on {network}; name the account")
         return 2
-    if "--no-build" not in argv:
-        b = subprocess.run(["cargo", "near", "build", "non-reproducible-wasm"], cwd=CONTRACT, capture_output=True, text=True)
+    expect = None
+    if "--expect" in argv:
+        i = argv.index("--expect")
+        expect = argv[i + 1].lower() if i + 1 < len(argv) else ""
+        args = [a for a in args if a != expect and a != argv[i + 1 if i + 1 < len(argv) else i]]
+        account = args[0] if args else DEFAULT.get(network)
+        if len(expect) != 64 or any(c not in "0123456789abcdef" for c in expect):
+            print("--expect needs the SHA-256 of the contract as 64 hex digits")
+            return 2
+    if "--no-build" not in argv and expect is None:
+        kind = "non-reproducible-wasm" if "--local" in argv else "reproducible-wasm"
+        b = subprocess.run(["cargo", "near", "build", kind], cwd=CONTRACT, capture_output=True, text=True)
         if b.returncode != 0:
             print("the contract did not build:\n" + (b.stderr or b.stdout)[-600:])
+            if kind == "reproducible-wasm":
+                print("The reproducible build needs Docker on an x86-64 computer. Without it, compare with the hash in the CI run's summary: --no-build --expect SHA256")
             return 2
-    if not WASM.exists():
+    if expect is not None:
+        built = expect
+    elif not WASM.exists():
         print(f"no built contract at {WASM.relative_to(ROOT)}")
         return 2
-    built = hashlib.sha256(WASM.read_bytes()).hexdigest()
+    else:
+        built = hashlib.sha256(WASM.read_bytes()).hexdigest()
     req = {"jsonrpc": "2.0", "id": 1, "method": "query", "params": {"request_type": "view_account", "finality": "final", "account_id": account}}
     try:
         with urllib.request.urlopen(urllib.request.Request(RPC[network], data=json.dumps(req).encode(), headers={"content-type": "application/json"}), timeout=30) as r:
@@ -66,7 +84,7 @@ def main(argv):
     if deployed == "00" * 32:
         print(f"{account} on NEAR {network} holds no contract")
         return 1
-    print(f"built here : {built}")
+    print(f"{'expected  ' if expect else 'built here'} : {built}")
     print(f"on {network}: {deployed}  ({account})")
     if built == deployed:
         print("MATCH: the account runs exactly this build")

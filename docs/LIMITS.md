@@ -38,7 +38,7 @@ This file is the plain list. `docs/TESTING.md` says which test checks what and w
 - Mainnet: the registry contract and every transaction named in this repository are on NEAR testnet. Nothing was deployed or signed on mainnet.
 - Paying across chains: NEAR Intents is used for dry price quotes only (`kaku chain quote`); no swap or payment is sent.
 - A phone app, and sync between devices: everything lives on the one computer that runs `kaku`.
-- The registry that holds the recorded orders (`kakurega-registry-c68af3.testnet`) was built on the developer's computer, not in the reproducible build image. A reproducible build of a later commit is deployed beside it at `kakurega-registry-1ba6b2.testnet` (built twice in CI, same bytes, same code hash on NEAR); the orders were not moved to it.
+- The first registry (`kakurega-registry-c68af3.testnet`, order 1 and the review in `fixtures/near-live/review.kkg`) was built on the developer's computer, not in the reproducible build image. It stays on testnet as it was; the registry the product, the site and this repository now use is the reproducibly built `kakurega-registry-1ba6b2.testnet`.
 - Hosted mode, Windows, an SDK package, collaboration, a plugin store, voice, computer use. (A Linux `.deb` and a registry contract on NEAR testnet are built; see the README.)
 
 ## Process limits
