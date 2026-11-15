@@ -3,6 +3,7 @@ import { LoadState } from "../components/LoadState";
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { api, ApiError } from "../api";
 import { t, type Key } from "../i18n";
+import { setupCommand } from "../setup";
 
 const toolLabel = (tool: string) => {
   const key = `agent.tool.${tool}` as Key;
@@ -11,9 +12,10 @@ const toolLabel = (tool: string) => {
 };
 
 /** What sets an agent up: it prints the exact line for the client, with kaku's full path and checksum, and leases in force. */
-const SETUP = "kaku mcp install --client claude-code --print --leased";
 
-export function AgentAccess() {
+
+export function AgentAccess(props: { config?: { profile?: string | null; data_dir?: string | null } | null }) {
+  const command = () => setupCommand(props.config);
   const [access, { refetch }] = createResource(() => api.agentAccess().catch(() => null));
   const [tool, setTool] = createSignal("start_review");
   const [uses, setUses] = createSignal("3");
@@ -59,7 +61,7 @@ export function AgentAccess() {
       <Lead text={t("agent.lead")} />
       <div class="card stack">
         <p>{t("agent.how")}</p>
-        <p class="cmd-row"><code>{SETUP}</code> <button type="button" class="link" onClick={async () => { try { await navigator.clipboard.writeText(SETUP); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* the command is still selectable */ } }}>{copied() ? t("md.copied") : t("md.copy")}</button></p>
+        <p class="cmd-row"><code>{command()}</code> <button type="button" class="link" onClick={async () => { try { await navigator.clipboard.writeText(command()); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* the command is still selectable */ } }}>{copied() ? t("md.copied") : t("md.copy")}</button></p>
         <p class="muted">{t("agent.limits")}</p>
       </div>
       <div class="card stack" role="region" aria-label={t("agent.active")}>
