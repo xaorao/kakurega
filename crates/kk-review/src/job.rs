@@ -477,7 +477,9 @@ pub fn run_job(
         return report;
     }
 
-    if report.error.is_none() && report.findings.is_empty() && report.unparsed_findings == 0 {
+    // what the agent reported is what it wrote as findings; they are read and checked further down
+    let reported_any = broker.written.iter().any(|w| w.kind == "finding");
+    if report.error.is_none() && !reported_any {
         if let Some(why) = stopped_unfinished(&report.audit, report.worker_exit.as_ref()) {
             report.error = Some(why);
             return report;

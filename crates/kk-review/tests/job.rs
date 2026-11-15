@@ -2180,3 +2180,41 @@ fn j_use01_a_review_that_stopped_before_it_reported_anything_is_never_called_cle
         )
     };
 }
+
+/// Found on real projects: an agent that reported a finding and then ran into its turn limit still has its finding checked;
+/// the review is never called stopped-before-it-reported for it (the first version of that check looked before the
+/// findings were read).
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn j_use02_a_finding_reported_before_the_turn_limit_is_kept_and_checked() {
+    let mut cfg = config("j-use02");
+    cfg.max_turns = 4;
+    let finding = json!({"title": "Token still valid after logout", "file": "payments/auth/session.py", "line": 15, "explanation": "logout() only pops a local dict.", "reproducer": REPRO});
+    let (routes, ev) = scripted(vec![
+        calls(vec![("report_finding", finding)]),
+        calls(vec![(
+            "read_file",
+            json!({"path": "payments/auth/session.py"}),
+        )]),
+        calls(vec![(
+            "read_file",
+            json!({"path": "payments/auth/tokens.py"}),
+        )]),
+        calls(vec![("read_file", json!({"path": "payments/config.py"}))]),
+        calls(vec![(
+            "read_file",
+            json!({"path": "payments/api/handlers.py"}),
+        )]),
+    ]);
+    let report = run_job(&cfg, routes, ev, &|_, _| {});
+    assert_eq!(
+        report.error, None,
+        "a review that reported something is not called stopped"
+    );
+    assert_ne!(
+        report.worker_exit,
+        Some(Exit::Code(0)),
+        "the agent did hit its limit"
+    );
+    assert_eq!(report.findings.len(), 1, "and its finding is checked");
+}
