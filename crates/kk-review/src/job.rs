@@ -207,6 +207,35 @@ pub struct ProposedFix {
 
 pub const MAX_FIXES: usize = 10;
 
+/// Why a review that reported nothing did not finish, when it did not: the model budget ran out, or the agent ended with an
+/// error after it began. Such a review has not reviewed the project, so it is never shown as "nothing found, the safe
+/// result". `None` when the agent finished.
+pub fn stopped_unfinished(audit: &[AuditEvent], worker_exit: Option<&Exit>) -> Option<String> {
+    let budget_out = audit
+        .iter()
+        .any(|e| e.op == "model.complete" && e.detail.contains("model token budget used up"));
+    let ended_badly = worker_exit.is_some_and(|e| *e != Exit::Code(0));
+    if !budget_out && !ended_badly {
+        return None;
+    }
+    let calls = audit
+        .iter()
+        .filter(|e| e.op == "model.complete" && e.outcome == "ok")
+        .count();
+    let read = audit
+        .iter()
+        .filter(|e| e.op == "tool.call" && e.asked.starts_with("read_file"))
+        .count();
+    Some(format!(
+        "the review stopped before it finished: {} after {calls} model calls and {read} files read, before the agent reported anything. That says nothing about the project. Run it again on a smaller folder, or review a change against its base",
+        if budget_out { "the model budget for one review ran out" } else { "the agent ended with an error" }
+    ))
+}
+
+/// The model tokens one review may use, prompts and answers together, over all its calls: room for the agent's full turn
+/// limit at a large context.
+pub const REVIEW_MODEL_TOKENS: u64 = 2_000_000;
+
 pub struct JobReport {
     pub fixes: Vec<ProposedFix>,
     pub memory_suggestions: Vec<MemorySuggestion>,
@@ -341,7 +370,13 @@ pub fn run_job(
             clearance,
             allowed_tools: broker.tool_specs().iter().map(|t| t.name.clone()).collect(),
         },
-        BrokerConfig::default(),
+        // A review resends the whole conversation with every call, so its total grows with each file read. The general
+        // limit stopped real projects after ten to seventeen calls, before the agent reported anything; a review gets room
+        // for its full turn limit at a large context, and is still bounded.
+        BrokerConfig {
+            max_model_tokens: REVIEW_MODEL_TOKENS,
+            ..BrokerConfig::default()
+        },
     );
     let known: BTreeSet<String> = files
         .iter()
@@ -440,6 +475,13 @@ pub fn run_job(
             if first.is_empty() { format!("{:?}", report.worker_exit.as_ref().expect("checked")) } else { first }
         ));
         return report;
+    }
+
+    if report.error.is_none() && report.findings.is_empty() && report.unparsed_findings == 0 {
+        if let Some(why) = stopped_unfinished(&report.audit, report.worker_exit.as_ref()) {
+            report.error = Some(why);
+            return report;
+        }
     }
 
     let index: BTreeMap<String, &crate::import::ImportedFile> =

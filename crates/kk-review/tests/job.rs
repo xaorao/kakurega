@@ -2135,3 +2135,48 @@ fn j_not_run_a_review_whose_agent_never_started_fails_and_says_why() {
     );
     assert!(report.findings.is_empty());
 }
+
+/// Found on real public repositories: a review the model budget cut off before the agent reported anything was shown as
+/// "nothing confirmed, the safe result", which an owner reads as a clean project.
+#[test]
+fn j_use01_a_review_that_stopped_before_it_reported_anything_is_never_called_clean() {
+    use kk_broker::broker::{AuditEvent, SessionId};
+    use kk_review::job::stopped_unfinished;
+    let ev = |op: &str, asked: &str, outcome: &str, detail: &str| AuditEvent {
+        session: SessionId(1),
+        request_id: 1,
+        op: op.into(),
+        asked: asked.into(),
+        outcome: outcome.into(),
+        detail: detail.into(),
+    };
+    let ran = vec![
+        ev("model.complete", "2 messages", "ok", ""),
+        ev("tool.call", "read_file README.md", "ok", ""),
+        ev("tool.call", "read_file app.py", "ok", ""),
+        ev("model.complete", "6 messages", "ok", ""),
+    ];
+    let mut cut = ran.clone();
+    cut.push(ev(
+        "model.complete",
+        "8 messages",
+        "BudgetExceeded",
+        "model token budget used up",
+    ));
+    let why = stopped_unfinished(&cut, Some(&Exit::Code(3))).expect("cut off");
+    assert!(why.starts_with("the review stopped before it finished: the model budget for one review ran out after 2 model calls and 2 files read"), "{why}");
+    assert!(!why.contains("safe"), "{why}");
+    let why = stopped_unfinished(&ran, Some(&Exit::Code(1))).expect("ended badly");
+    assert!(why.contains("the agent ended with an error"), "{why}");
+    assert_eq!(
+        stopped_unfinished(&ran, Some(&Exit::Code(0))),
+        None,
+        "a finished review that found nothing is not this"
+    );
+    const {
+        assert!(
+            kk_review::job::REVIEW_MODEL_TOKENS >= 1_000_000,
+            "a review has room for a real project"
+        )
+    };
+}

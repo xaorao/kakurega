@@ -187,9 +187,65 @@ pub enum ClosureError {
     Unavailable(&'static str),
 }
 
+/// Where a project keeps its importable code: at its top, or in a `src` folder (the src layout).
+const PYTHON_ROOTS: [&str; 2] = ["", "src/"];
+
 fn module_paths(module: &str) -> Vec<String> {
     let base = module.replace('.', "/");
-    vec![format!("{base}.py"), format!("{base}/__init__.py")]
+    PYTHON_ROOTS
+        .iter()
+        .flat_map(|r| [format!("{r}{base}.py"), format!("{r}{base}/__init__.py")])
+        .collect()
+}
+
+/// The modules a project file imports, with its relative imports (`from .x import y`, `from .. import z`) resolved
+/// against the package the file is in, so the sample holds the sibling modules a package needs to load.
+fn imports_in(source: &str, path: &str) -> Vec<String> {
+    let mut out = imports_of(source);
+    let inside = PYTHON_ROOTS
+        .iter()
+        .filter(|r| !r.is_empty())
+        .find_map(|r| path.strip_prefix(r))
+        .unwrap_or(path);
+    // the package a file is in: its folder, as a dotted name
+    let package: Vec<&str> = inside
+        .rsplit_once('/')
+        .map_or(Vec::new(), |(d, _)| d.split('/').collect());
+    for line in source.lines() {
+        let Some(rest) = line.trim().strip_prefix("from ") else {
+            continue;
+        };
+        let mut it = rest.split_whitespace();
+        let module = it.next().unwrap_or("");
+        if !module.starts_with('.') || it.next() != Some("import") {
+            continue;
+        }
+        let dots = module.chars().take_while(|c| *c == '.').count();
+        if dots > package.len() + 1 || dots == 0 {
+            continue;
+        }
+        let mut base: Vec<String> = package[..package.len() + 1 - dots]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let tail = &module[dots..];
+        if !tail.is_empty() {
+            base.extend(tail.split('.').map(str::to_string));
+        }
+        if !base.is_empty() {
+            out.push(base.join("."));
+        }
+        // `from . import x` names a module x of that package
+        for name in it {
+            let n = name.trim_matches(|c| c == ',' || c == '(' || c == ')');
+            if !n.is_empty() && n != "*" && n != "as" {
+                let mut m = base.clone();
+                m.push(n.to_string());
+                out.push(m.join("."));
+            }
+        }
+    }
+    out
 }
 
 fn imports_of(source: &str) -> Vec<String> {
@@ -239,7 +295,7 @@ pub fn python_closure(
         }
         let source = String::from_utf8_lossy(&f.bytes).to_string();
         let mut wanted: Vec<String> = Vec::new();
-        for m in imports_of(&source) {
+        for m in imports_in(&source, &path) {
             let parts: Vec<&str> = m.split('.').collect();
             for n in 1..=parts.len() {
                 wanted.extend(module_paths(&parts[..n].join(".")));
@@ -709,7 +765,8 @@ pub fn run_reproducer(
             }
             Language::Python => {
                 spec.args = vec!["-B".into(), "/repro/repro.py".into()];
-                spec.env = vec![("PYTHONPATH".into(), "/sample".into())];
+                // a project in the src layout imports its package from src/
+                spec.env = vec![("PYTHONPATH".into(), "/sample:/sample/src".into())];
             }
             Language::JavaScript => {
                 spec.args = vec!["/repro/repro.mjs".into()];
@@ -787,7 +844,9 @@ pub fn run_reproducer(
                     }
                     if let Some(pkg) = missing_package(finding.language, &stderr) {
                         let in_project = files.keys().any(|p| {
-                            p == &format!("{pkg}.py") || p.starts_with(&format!("{pkg}/"))
+                            PYTHON_ROOTS.iter().any(|r| {
+                                p == &format!("{r}{pkg}.py") || p.starts_with(&format!("{r}{pkg}/"))
+                            })
                         });
                         if !in_project {
                             return CheckResult {
@@ -2010,5 +2069,34 @@ mod control_tests {
         ] {
             assert!(!control_untested(script), "{script}");
         }
+    }
+}
+
+#[cfg(test)]
+mod python_import_tests {
+    use super::*;
+
+    #[test]
+    fn ck_use02_relative_imports_and_the_src_layout_are_followed() {
+        let src = "from .money import Money\nfrom ..util import helpers\nfrom . import locale\nimport os\n";
+        let got = imports_in(src, "src/moneyed/core/classes.py");
+        for want in [
+            "moneyed.core.money",
+            "moneyed.core.money.Money",
+            "moneyed.util",
+            "moneyed.util.helpers",
+            "moneyed.core.locale",
+            "os",
+        ] {
+            assert!(got.iter().any(|m| m == want), "{want} in {got:?}");
+        }
+        // a file at the top of a package
+        let got = imports_in("from .x import y\n", "pkg/__init__.py");
+        assert!(got.iter().any(|m| m == "pkg.x"), "{got:?}");
+        // too many dots for where the file is: nothing invented
+        assert!(imports_in("from ...x import y\n", "pkg/a.py")
+            .iter()
+            .all(|m| !m.contains('x')));
+        assert!(module_paths("moneyed").contains(&"src/moneyed/__init__.py".to_string()));
     }
 }
