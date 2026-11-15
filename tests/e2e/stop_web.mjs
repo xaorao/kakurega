@@ -61,6 +61,16 @@ check(true, "a running review shows a Stop, and pressing it ends the review as s
 check((await page.getByRole("button", { name: "Stop", exact: true }).count()) === 0, "a review that has ended offers no Stop");
 check(!/Approve|Ask for approval/.test(await page.locator("main").innerText()), "and nothing is offered for approval");
 await shot("2-stopped");
+// a stopped review must never read as a finished, clean one on any tab (wait for each tab's own sentence, never the clock)
+const says = (text) => page.getByText(text).first().waitFor({ timeout: 10000 }).then(() => true, () => false);
+await page.getByRole("tab", { name: "Findings" }).click();
+const findingsSay = await says("stopped before it finished, so there are no findings");
+check(findingsSay && !/no defects|nothing was found|0 findings/i.test(await page.locator("main").innerText()), "the Findings tab says the review was stopped, not that the project is clean");
+await page.getByRole("tab", { name: "Release" }).click();
+check((await says("Stopped before there was anything to release")) && (await page.getByRole("button", { name: "Request approval" }).count()) === 0, "the Release tab says there is nothing to release because it was stopped");
+await page.getByRole("tab", { name: "Protection" }).click();
+check(await says("Nothing leaves: the review was stopped before it finished."), "the Protection tab says nothing leaves because it was stopped");
+await shot("2b-stopped-tabs");
 
 // ---- from the Activity list ----
 const id2 = await startReview("second-audit");
