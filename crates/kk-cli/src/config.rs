@@ -124,7 +124,7 @@ pub fn clean(s: &str) -> String {
         .collect()
 }
 
-fn edit_distance(a: &str, b: &str) -> usize {
+pub fn edit_distance(a: &str, b: &str) -> usize {
     let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
     let mut row: Vec<usize> = (0..=b.len()).collect();
     for (i, ca) in a.iter().enumerate() {

@@ -161,6 +161,13 @@ fn main() -> ExitCode {
     }
     // An option that takes a value and was given none is a mistake to say, not to ignore: `follow job-1 --timeout --json`
     // would otherwise wait for ever, and `log export --out` would print to the screen.
+    if let Some((name, nearest)) = unknown_option(&args) {
+        match nearest {
+            Some(k) => eprintln!("{name} is not an option Kakurega knows. Did you mean {k}? Run kaku --help for the form of each command."),
+            None => eprintln!("{name} is not an option Kakurega knows. Run kaku --help for the form of each command."),
+        }
+        return ExitCode::from(2);
+    }
     if let Some(name) = option_without_value(&args) {
         eprintln!("{name} needs a value after it. Run kaku --help for the form of each command.");
         return ExitCode::from(2);
@@ -353,6 +360,160 @@ const VALUE_OPTIONS: &[&str] = &[
     "--worker-bin",
 ];
 
+/// Every option name any command reads. A test keeps it in step with the source, so a new option is never refused.
+const KNOWN_OPTIONS: &[&str] = &[
+    "--accept",
+    "--account",
+    "--add-dir",
+    "--allow",
+    "--anchor",
+    "--api-base",
+    "--approval",
+    "--approvals-per-hour",
+    "--blob",
+    "--calls-per-minute",
+    "--catalog",
+    "--change",
+    "--channel",
+    "--clear-webhook",
+    "--client",
+    "--confirm",
+    "--context",
+    "--continue",
+    "--current",
+    "--dangerously-skip-permissions",
+    "--data-dir",
+    "--days",
+    "--deposit",
+    "--depth",
+    "--digest",
+    "--dir",
+    "--enclave",
+    "--experts",
+    "--file",
+    "--fix",
+    "--folder",
+    "--for",
+    "--fork",
+    "--format",
+    "--help",
+    "--hours",
+    "--json",
+    "--keep",
+    "--key",
+    "--key-file",
+    "--kind",
+    "--label",
+    "--launcher",
+    "--leased",
+    "--linear",
+    "--list",
+    "--manifest",
+    "--mcp-config",
+    "--minutes",
+    "--model",
+    "--name",
+    "--near",
+    "--near-key-file",
+    "--near-model",
+    "--near-url",
+    "--network",
+    "--new-key",
+    "--no-session-persistence",
+    "--ocr",
+    "--ollama",
+    "--order",
+    "--out",
+    "--output-format",
+    "--outside-model",
+    "--outside-url",
+    "--pack",
+    "--pages",
+    "--pay-with",
+    "--pin",
+    "--platform",
+    "--presence",
+    "--print",
+    "--print-catalog-digest",
+    "--profile",
+    "--project",
+    "--quiet",
+    "--read-only",
+    "--refund-to",
+    "--registry",
+    "--release-days",
+    "--require-approver",
+    "--require-hardware",
+    "--resume",
+    "--reviewer",
+    "--reviewer-key",
+    "--root",
+    "--route",
+    "--scope",
+    "--scripted",
+    "--session",
+    "--setting-sources",
+    "--shell-secret-stdin",
+    "--skip",
+    "--source",
+    "--starts-per-hour",
+    "--strict-mcp-config",
+    "--timeout",
+    "--title",
+    "--token",
+    "--token-file",
+    "--tools",
+    "--transport",
+    "--trusted",
+    "--ui-dir",
+    "--usdc",
+    "--uses",
+    "--verbose",
+    "--version",
+    "--vm",
+    "--wait",
+    "--withdraw",
+    "--worker-bin",
+    "--yes",
+];
+
+/// Commands whose words are the person's own text or another program's arguments: their options are not checked here.
+const FREE_WORDS: &[&str] = &[
+    "parse-attachment",
+    "crash-probe",
+    "ask",
+    "code",
+    "notes",
+    "mcp",
+    "chat",
+    "roundtable",
+    "team",
+    "explore",
+];
+
+/// The first option no command knows (a typo such as `--jsno`), with the nearest known one when it is close. Ignoring it
+/// would run the command without what was asked for.
+fn unknown_option(args: &[String]) -> Option<(String, Option<&'static str>)> {
+    if args
+        .first()
+        .is_some_and(|c| FREE_WORDS.contains(&c.as_str()))
+    {
+        return None;
+    }
+    let given = args
+        .iter()
+        .take_while(|a| a.as_str() != "--")
+        .map(|a| a.split('=').next().unwrap_or(a))
+        .find(|a| a.starts_with("--") && a.len() > 2 && !KNOWN_OPTIONS.contains(a))?;
+    let nearest = KNOWN_OPTIONS
+        .iter()
+        .map(|k| (crate::config::edit_distance(given, k), *k))
+        .filter(|(d, _)| *d <= 2)
+        .min()
+        .map(|(_, k)| k);
+    Some((given.to_string(), nearest))
+}
+
 /// The first option that needs a value and has none: it is followed by another option, or by nothing. After a command
 /// whose words are the person's own text (a question, a message), only "followed by another option" counts, since the
 /// last word of a sentence may happen to be an option's name.
@@ -475,10 +636,59 @@ mod usage_tests {
 
 #[cfg(test)]
 mod option_tests {
-    use super::option_without_value;
+    use super::{option_without_value, unknown_option, KNOWN_OPTIONS};
 
     fn a(words: &[&str]) -> Vec<String> {
         words.iter().map(|w| w.to_string()).collect()
+    }
+
+    #[test]
+    fn mn_use02_an_option_no_command_knows_is_refused_with_the_nearest_one() {
+        assert_eq!(
+            unknown_option(&a(&["review", ".", "--jsno"])),
+            Some(("--jsno".into(), Some("--json")))
+        );
+        assert_eq!(
+            unknown_option(&a(&["verify", "x.kkg", "--frobnicate"])),
+            Some(("--frobnicate".into(), None))
+        );
+        assert_eq!(
+            unknown_option(&a(&["log", "export", "--out=report.json"])),
+            None
+        );
+        assert_eq!(
+            unknown_option(&a(&["review", ".", "--json", "--recipient-of-nothing"])).map(|x| x.0),
+            Some("--recipient-of-nothing".into())
+        );
+        // the person's own words and another program's arguments are left alone
+        assert_eq!(
+            unknown_option(&a(&["ask", "what", "does", "--foo", "do"])),
+            None
+        );
+        assert_eq!(unknown_option(&a(&["code", "--", "--whatever"])), None);
+        assert_eq!(unknown_option(&a(&["serve", "--", "--whatever"])), None);
+    }
+
+    #[test]
+    fn mn_use03_every_option_the_source_reads_is_known() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let all = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+            // the tests name options that do not exist on purpose
+            let text = all.split("#[cfg(test)]").next().unwrap_or(&all);
+            for (i, _) in text.match_indices("\"--") {
+                let name: String = text[i + 1..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+                    .collect();
+                if name.len() > 2 && name.as_bytes()[2].is_ascii_lowercase() {
+                    assert!(
+                        KNOWN_OPTIONS.contains(&name.as_str()),
+                        "{name} is read by a command but missing from KNOWN_OPTIONS"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
