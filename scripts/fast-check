@@ -42,6 +42,7 @@ if printf '%s\n' "$files" | grep -qE '^(packages/|apps/verifier-page/|apps/site/
   node tests/e2e/verifier_page.mjs > target/fast-check-verifier-page.log 2>&1 || { tail -5 target/fast-check-verifier-page.log; echo "FAST CHECK FAILED: tests/e2e/verifier_page.mjs"; exit 1; }
   node tests/e2e/site_relay.mjs > target/fast-check-relay.log 2>&1 || { grep -E "^FAIL" target/fast-check-relay.log | head -5; echo "FAST CHECK FAILED: tests/e2e/site_relay.mjs"; exit 1; }
   node tests/e2e/site.mjs > target/fast-check-site.log 2>&1 || { grep -E "^FAIL" target/fast-check-site.log | head -5; echo "FAST CHECK FAILED: tests/e2e/site.mjs"; exit 1; }
+  SITE_REBUILD=0 node tests/e2e/site_break.mjs > target/fast-check-break.log 2>&1 || { grep -E "^FAIL" target/fast-check-break.log | head -5; echo "FAST CHECK FAILED: tests/e2e/site_break.mjs"; exit 1; }
   SITE_REBUILD=0 node tests/e2e/site_withhold.mjs > target/fast-check-withhold.log 2>&1 || { grep -E "^FAIL" target/fast-check-withhold.log | head -5; echo "FAST CHECK FAILED: tests/e2e/site_withhold.mjs"; exit 1; }
 fi
 echo "== guards"

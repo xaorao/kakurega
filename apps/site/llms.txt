@@ -10,6 +10,7 @@ A private AI workspace. A security layer outside the model decides what may leav
 - The same claims as data: /proof.json (each claim with the exact RPC request to POST and the answer to expect).
 - Open /verify/ and drop /sample/review.kkg on it. Expect "Valid", {{ANSWERS}} answers each signed by {{MODEL}}'s own key, the signed claims, and what the check does not establish. Nothing is uploaded.
 - Open /#see : a replay of the real review that produced that capsule; the last step verifies it in the browser, then refuses it after one byte is changed.
+- Open /break/ : the same secret detector runs in the browser on text you write with a made-up secret in it, and says whether the secret would get past it. Expect "Held." for "A key in a settings file" and "Got through." for "A password in plain words" (a stated limit). A secret that gets through can be reported as a public GitHub issue (label break-it); the page shows the signed leak benchmark's numbers ({{BENCH_KNOWN_LEAKED}} of {{BENCH_KNOWN}} known shapes and {{BENCH_BEYOND_LEAKED}} of {{BENCH_BEYOND}} other secrets reached the model) and the live count of reports, which counts a report as got through only once the maintainer labels it so. Nothing typed is sent.
 - Open /try/ : a secret detector (WebAssembly) and NEAR AI Cloud's client run in the browser. It withholds lines that hold keys, checks the model's hardware proof, sends the rest encrypted and checks the model's signature. Needs free tries to be on, or the visitor's own NEAR AI key.
 
 ## What NEAR does here

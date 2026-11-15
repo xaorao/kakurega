@@ -1,0 +1,45 @@
+name: A secret got past the gate
+description: Text in which a made-up secret got past Kakurega's secret detector, from the break-it page.
+title: "Got through: "
+labels: ["break-it"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This issue is public. The secret in it must be made up:** never a real key, password, code or recovery phrase, yours or anyone's.
+
+        The break-it page (https://kakurega-eight.vercel.app/break/) fills in this form when a secret gets through. The maintainer runs each report against the detector and labels it `got-through` when the secret really does get past it, or `held` when it does not. Until then it is counted as not checked yet.
+  - type: textarea
+    id: text
+    attributes:
+      label: The text that got through
+      description: What the page would have sent to a model, with the lines it withheld shown as it withheld them. Every secret in it must be made up.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: secret
+    attributes:
+      label: The made-up secret in it
+      description: The part of the text that is the secret, so the maintainer can run the same check. Made up, never real.
+    validations:
+      required: true
+  - type: input
+    id: kind
+    attributes:
+      label: What kind of secret it is
+      placeholder: a password, a code or PIN, a key or token, a private key, a recovery phrase
+    validations:
+      required: true
+  - type: input
+    id: detector
+    attributes:
+      label: Detector generation
+      description: Filled in by the page. Leave it as it is.
+  - type: checkboxes
+    id: made-up
+    attributes:
+      label: Made up
+      options:
+        - label: The secret in this report is made up. It is not a real key, password, code or phrase of mine or anyone's.
+          required: true
