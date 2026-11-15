@@ -6824,7 +6824,11 @@ impl App {
                 );
                 self.mode = Mode::Confirm(ConfirmView {
                     prompt: if search {
-                        "Send exactly these words to that site? [y/N]".into()
+                        if body["local"].as_bool() == Some(true) {
+                            "Send exactly these words? [y/N]".into()
+                        } else {
+                            "Send exactly these words to that site? [y/N]".into()
+                        }
                     } else {
                         "Request exactly these addresses? [y/N]".into()
                     },

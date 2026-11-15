@@ -7559,7 +7559,11 @@ async fn search_propose(axum::Extension(svc): Svc, Json(b): Json<SearchPropose>)
     svc.log_event("search.proposed", &id, &[("provider", host.clone().into())]);
     Json(json!({
         "id": id, "digest": digest, "query": query, "recency": b.recency, "will_send_to": host, "local": kk_fetch::loopback_provider(&provider).is_some(),
-        "stays_here": "Only these search words go to this one site. Your notes, files and the conversation are not sent. Nothing has been sent yet.",
+        "stays_here": if kk_fetch::loopback_provider(&provider).is_some() {
+            "Only these search words leave, through your search server. Your notes, files and the conversation are not sent. Nothing has been sent yet."
+        } else {
+            "Only these search words go to this one site. Your notes, files and the conversation are not sent. Nothing has been sent yet."
+        },
         "expires_in_seconds": RESEARCH_TTL
     }))
     .into_response()
