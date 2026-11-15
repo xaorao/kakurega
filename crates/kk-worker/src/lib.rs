@@ -369,6 +369,28 @@ pub fn run_local_tool(link: &mut dyn Link, call: &ToolCall) -> Result<Value, Wor
 const EARLY_FINISH_NOTICE: &str = "You stopped after reading only ";
 /// The message that asks a model to look further, or nothing: it applies once, only when the model reported no finding or fix
 /// and made fewer than `min_looks` tool calls, and never again once it was sent (also across a restart from a saved state).
+/// How a note telling the agent its turns are nearly used begins: it is said once.
+const TURNS_LEFT_NOTICE: &str = "Only a few turns are left in this review: ";
+
+/// A note for an agent that is close to its turn limit: stop reading and report what it has. Without it an agent that is
+/// still reading when the limit comes reports nothing at all (seen on real projects: twenty turns, thirty-five files read,
+/// no finding). Said once, when three turns remain.
+fn turns_left_nudge(messages: &[ChatMessage], turn: u32, max_turns: u32) -> Option<String> {
+    const LEFT: u32 = 3;
+    if max_turns <= LEFT || turn != max_turns - LEFT {
+        return None;
+    }
+    if messages
+        .iter()
+        .any(|m| m.role == "user" && m.content.starts_with(TURNS_LEFT_NOTICE))
+    {
+        return None;
+    }
+    Some(format!(
+        "{TURNS_LEFT_NOTICE}{LEFT}. Read no more files. Report now, with report_finding, every defect you have found so far, each with its reproducer; then answer with a short summary. If you found none, say so."
+    ))
+}
+
 fn early_finish_nudge(messages: &[ChatMessage], min_looks: usize) -> Option<String> {
     if messages
         .iter()
@@ -745,6 +767,10 @@ pub fn run(
         if state.turn >= config.max_turns {
             save(link, &state)?;
             return Ok(Outcome::TurnLimit);
+        }
+        if let Some(notice) = turns_left_nudge(&state.messages, state.turn, config.max_turns) {
+            state.messages.push(ChatMessage::new("user", &notice));
+            save(link, &state)?;
         }
         match stuck::check(&state.messages) {
             stuck::Verdict::Fine => {}

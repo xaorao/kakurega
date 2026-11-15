@@ -161,3 +161,30 @@ fn ef05_with_the_policy_off_a_short_run_ends_as_it_always_did() {
     assert_eq!(r, Outcome::Finished("None.".into()));
     assert_eq!(link.seen.len(), 1);
 }
+
+/// Found on real projects: an agent still reading when its turn limit came reported nothing at all. Three turns before
+/// the limit it is told, once, to stop reading and report what it has.
+#[test]
+fn ef_use01_three_turns_before_the_limit_the_agent_is_told_once_to_report_what_it_has() {
+    let mut cfg = config();
+    cfg.max_turns = 6;
+    let mut link = Script {
+        replies: (0..6)
+            .map(|i| call(&i.to_string(), "read_file", json!({"path": "a.py"})))
+            .collect(),
+        seen: vec![],
+    };
+    let r = run(&mut link, AgentState::new("sys", "review"), &cfg, &|| false).unwrap();
+    assert_eq!(r, Outcome::TurnLimit);
+    let told = |m: &Vec<ChatMessage>| {
+        m.iter()
+            .filter(|x| x.role == "user" && x.content.starts_with("Only a few turns are left"))
+            .count()
+    };
+    assert_eq!(told(&link.seen[2]), 0, "not before");
+    assert_eq!(told(&link.seen[3]), 1, "at three turns left");
+    assert_eq!(told(link.seen.last().unwrap()), 1, "and only once");
+    assert!(link.seen[3]
+        .iter()
+        .any(|x| x.content.contains("report_finding") && x.content.contains("Read no more files")));
+}
