@@ -135,6 +135,13 @@ finally:
 left = subprocess.run(["pgrep", "-fl", f"kaku serve --data-dir {data}"], capture_output=True, text=True)
 check("no service process is left behind", left.returncode != 0, left.stdout.strip()[:200])
 (work / "output.txt").write_bytes(out)
+# found in real use: piped lines all arrive at once, and a question followed by the end of the input must still get its
+# answer printed before the program leaves
+piped = subprocess.run([str(kaku), "tui", "--linear", "--data-dir", str(work / "data-eof"), "--root", str(work / "root"), "--scripted", str(repo / "tests/e2e/script.json")], input="/where\n", capture_output=True, text=True, timeout=120)
+check("a question piped in, then the end of the input: its answer is printed before Goodbye", "Releases: nothing leaves without your approval" in piped.stdout and piped.stdout.rstrip().endswith("Goodbye."), piped.stdout[-400:])
+piped = subprocess.run([str(kaku), "tui", "--linear", "--data-dir", str(work / "data-eof"), "--root", str(work / "root"), "--scripted", str(repo / "tests/e2e/script.json")], input="/where\n/quit\n", capture_output=True, text=True, timeout=120)
+check("and the same with /quit right after it", "Releases: nothing leaves without your approval" in piped.stdout, piped.stdout[-400:])
+subprocess.run(["pkill", "-f", f"serve --data-dir {work / 'data-eof'}"], capture_output=True)
 bad = results.count(False)
 print(f"\n{'all ' + str(len(results)) + ' plain-line checks passed' if not bad else str(bad) + ' FAILED'}")
 if bad:

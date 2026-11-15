@@ -869,6 +869,43 @@ app.whenReady().then(() => { clearOldPreviews(); return app.isQuitting ? undefin
 });
 // the Dock icon of a running app whose window was closed brings the window back
 app.on("activate", () => showWindow());
+
+// A capsule (.kkg) or a share (.kks) opened from Finder, or dropped on the Dock icon, is checked here with the bundled kaku,
+// offline, and the result is shown in a window of its own. Files opened before the app is ready wait until it is.
+const opened = [];
+let readyForFiles = false;
+async function checkOpened(path) {
+  if (!/\.(kkg|kks)$/i.test(path)) return;
+  if (kakuFromBundle && checkPart(manifest, "kaku", kakuBin)) return;
+  const result = await new Promise((resolve) => {
+    if (!kakuBin) return resolve(null);
+    execFile(kakuBin, ["verify", path], { timeout: 60000, maxBuffer: 1 << 20 }, (err, out) => resolve({ valid: !err && String(out).startsWith("VALID"), text: String(out) }));
+  });
+  if (!result) return;
+  const lines = result.text.split("\n").filter((l) => !/^  \S+ answer [0-9a-f]{32}:/.test(l));
+  const options = {
+    type: result.valid ? "info" : "warning",
+    message: t(result.valid ? "open.valid" : "open.invalid", { name: path.split("/").pop() }),
+    detail: lines.slice(0, 60).join("\n"),
+    buttons: [t("open.close")],
+    noLink: true,
+  };
+  if (window && !window.isDestroyed()) {
+    showWindow();
+    await dialog.showMessageBox(window, options);
+  } else {
+    await dialog.showMessageBox(options);
+  }
+}
+app.on("open-file", (event, path) => {
+  event.preventDefault();
+  if (readyForFiles) void checkOpened(path);
+  else opened.push(path);
+});
+app.whenReady().then(() => {
+  readyForFiles = true;
+  for (const p of opened.splice(0)) void checkOpened(p);
+});
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
 });

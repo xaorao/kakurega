@@ -72,34 +72,14 @@ pub fn restore(args: &[String]) -> u8 {
         }
     } else {
         // the key opens everything in the backup: it is not shown as it is typed, and not left in the terminal's scrollback
-        let hidden = std::io::IsTerminal::is_terminal(&std::io::stdin())
-            && std::process::Command::new("stty")
-                .arg("-echo")
-                .stdin(std::process::Stdio::inherit())
-                .status()
-                .is_ok_and(|s| s.success());
-        eprint!(
-            "Recovery key (KKRK-...){}: ",
-            if hidden {
-                ", not shown as you type"
-            } else {
-                ""
+        match read_hidden("Recovery key (KKRK-...)") {
+            Hidden::Line(l) => l,
+            Hidden::Cancelled => {
+                eprintln!("Cancelled. Nothing was restored.");
+                return 1;
             }
-        );
-        let _ = std::io::stderr().flush();
-        let mut line = String::new();
-        let read = std::io::stdin().lock().read_line(&mut line);
-        if hidden {
-            let _ = std::process::Command::new("stty")
-                .arg("echo")
-                .stdin(std::process::Stdio::inherit())
-                .status();
-            eprintln!();
+            Hidden::Failed => return 2,
         }
-        if read.is_err() {
-            return 2;
-        }
-        line
     };
     let data = crate::data_dir(args);
     match kk_service::backup::restore(&bytes, &key, &data) {
@@ -135,4 +115,79 @@ fn ago_words(at: i64) -> String {
         7200..=172_799 => format!("{} hours ago", secs / 3600),
         _ => format!("{} days ago", secs / 86_400),
     }
+}
+
+/// What came of asking for a line that is not shown as it is typed.
+enum Hidden {
+    Line(String),
+    Cancelled,
+    Failed,
+}
+
+/// Asks for a line without showing what is typed. In a terminal the keys are read one at a time with echo and the
+/// interrupt key turned off, so Ctrl-C ends the question here, as a cancel, and the terminal is always put back as it was
+/// (a Ctrl-C that killed the program while echo was off would leave the terminal showing nothing typed). Away from a
+/// terminal the line is read as it comes.
+fn read_hidden(prompt: &str) -> Hidden {
+    use std::io::{Read, Write};
+    let stty = |args: &[&str]| {
+        std::process::Command::new("stty")
+            .args(args)
+            .stdin(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    let saved = if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        stty(&["-g"])
+            .filter(|_| stty(&["-echo", "-icanon", "-isig", "min", "1", "time", "0"]).is_some())
+    } else {
+        None
+    };
+    eprint!(
+        "{prompt}{}: ",
+        if saved.is_some() {
+            ", not shown as you type"
+        } else {
+            ""
+        }
+    );
+    let _ = std::io::stderr().flush();
+    let Some(saved) = saved else {
+        let mut line = String::new();
+        return match std::io::stdin().lock().read_line(&mut line) {
+            Ok(_) => Hidden::Line(line),
+            Err(_) => Hidden::Failed,
+        };
+    };
+    let mut typed: Vec<u8> = Vec::new();
+    let mut stdin = std::io::stdin().lock();
+    let mut byte = [0u8; 1];
+    let outcome = loop {
+        match stdin.read(&mut byte) {
+            Ok(0) | Err(_) => {
+                break if typed.is_empty() {
+                    Hidden::Cancelled
+                } else {
+                    Hidden::Line(String::from_utf8_lossy(&typed).into_owned())
+                }
+            }
+            Ok(_) => match byte[0] {
+                b'\r' | b'\n' => break Hidden::Line(String::from_utf8_lossy(&typed).into_owned()),
+                // Ctrl-C, Ctrl-D on an empty line, or Esc: the owner changed their mind
+                0x03 | 0x1b => break Hidden::Cancelled,
+                0x04 if typed.is_empty() => break Hidden::Cancelled,
+                0x7f | 0x08 => {
+                    typed.pop();
+                }
+                0x15 => typed.clear(),
+                b => typed.push(b),
+            },
+        }
+    };
+    let _ = stty(&[saved.as_str()]);
+    eprintln!();
+    outcome
 }

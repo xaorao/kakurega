@@ -350,6 +350,12 @@ pub fn run_with(
     send(app.drain_background());
     // the message line as last said, so what a command puts there is read out once
     let mut said_input = String::new();
+    // Lines piped in all arrive at once: a question followed by the end of the input (or by /quit) must still get its
+    // answer printed. When no person is typing, leaving waits for the answers already asked for (a model's answer can take
+    // minutes), up to a limit.
+    let piped = !std::io::IsTerminal::is_terminal(&std::io::stdin());
+    let mut leave_by: Option<std::time::Instant> = None;
+    let mut input_over = false;
     loop {
         let msg = rx.recv_timeout(Duration::from_millis(100));
         let mut ended = false;
@@ -377,7 +383,19 @@ pub fn run_with(
                 let _ = out.flush();
             }
         }
-        if app.quit || ended {
+        input_over |= ended;
+        if (app.quit || input_over) && piped && app.awaiting_answers() > 0 {
+            let by = *leave_by
+                .get_or_insert_with(|| std::time::Instant::now() + Duration::from_secs(900));
+            if std::time::Instant::now() < by {
+                continue;
+            }
+            let _ = writeln!(
+                out,
+                "Stopped waiting: an answer that was asked for did not come within 15 minutes."
+            );
+        }
+        if app.quit || input_over {
             // say the list of stopped reviews was seen, and give the answer a moment
             let last = app.leaving();
             let id = last.id;

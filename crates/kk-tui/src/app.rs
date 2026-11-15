@@ -4441,6 +4441,25 @@ impl App {
         self.scroll_back = 0;
     }
 
+    /// How many answers asked for by the person are still on their way: the lookups the workspace makes on its own timer
+    /// (a review being followed, an approval being watched) are not counted.
+    pub fn awaiting_answers(&self) -> usize {
+        self.pending
+            .values()
+            .filter(|i| {
+                !matches!(
+                    i,
+                    Intent::Poll(_)
+                        | Intent::ApprovalWatch(_)
+                        | Intent::TeamPoll
+                        | Intent::ExplorePoll(_)
+                        | Intent::CodePoll(_)
+                        | Intent::HistorySave
+                )
+            })
+            .count()
+    }
+
     fn on_resp(&mut self, r: Resp) -> Vec<Req> {
         let Some(intent) = self.pending.remove(&r.id) else {
             return Vec::new();

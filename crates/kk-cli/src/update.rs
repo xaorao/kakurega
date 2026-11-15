@@ -42,8 +42,12 @@ fn root_path(args: &[String]) -> std::path::PathBuf {
 /// keys from `--trusted` and `update-publisher.pub`.
 fn load_root(args: &[String]) -> Result<Root, String> {
     if let Ok(bytes) = std::fs::read(root_path(args)) {
-        return root::load_initial(&bytes)
-            .map_err(|e| format!("the saved root in update-root.json is not valid: {e:?}"));
+        return root::load_initial(&bytes).map_err(|e| {
+            format!(
+                "the saved root in update-root.json is not valid: {}",
+                refusal_words(&format!("{e:?}"))
+            )
+        });
     }
     let mut sources = crate::flags(args, "--trusted");
     if let Ok(text) = std::fs::read_to_string(crate::data_dir(args).join("update-publisher.pub")) {
@@ -289,7 +293,8 @@ fn root_init(args: &[String]) -> Result<(), String> {
     if root_path(args).exists() {
         return Err("a root is already installed. Replace it with `kaku update root-rotate FILE...`, which checks that the old keys agree".into());
     }
-    let new = root::load_initial(&bytes).map_err(|e| format!("refused: {e:?}"))?;
+    let new = root::load_initial(&bytes)
+        .map_err(|e| format!("refused: {}", refusal_words(&format!("{e:?}"))))?;
     println!("{}", describe(&new));
     if !args.iter().any(|a| a == "--accept") {
         println!("Only these keys may announce updates if you accept. Check the key ids with the publisher, then run again with --accept.");
@@ -319,15 +324,20 @@ fn root_rotate(args: &[String]) -> Result<(), String> {
     let current = std::fs::read(root_path(args))
         .map_err(|_| "no root is installed yet: use root-init first".to_string())
         .and_then(|b| {
-            root::load_initial(&b).map_err(|e| format!("the saved root is not valid: {e:?}"))
+            root::load_initial(&b).map_err(|e| {
+                format!(
+                    "the saved root is not valid: {}",
+                    refusal_words(&format!("{e:?}"))
+                )
+            })
         })?;
     let mut chain = Vec::new();
     for f in &files {
         chain.push(std::fs::read(f).map_err(|e| format!("cannot read {f}: {e}"))?);
     }
     let last = chain.last().cloned().unwrap_or_default();
-    let next =
-        root::follow(current.clone(), &chain, now()).map_err(|e| format!("refused: {e:?}"))?;
+    let next = root::follow(current.clone(), &chain, now())
+        .map_err(|e| format!("refused: {}", refusal_words(&format!("{e:?}"))))?;
     let tmp = root_path(args).with_extension("json.new");
     let _ = std::fs::remove_file(&tmp);
     write_new(&tmp.to_string_lossy(), &last)?;
@@ -392,6 +402,13 @@ fn download(args: &[String]) -> Result<(), String> {
 /// A refusal of the update check, in words, with the check's own name for it after, for anyone who searches for it.
 fn refusal_words(reason: &str) -> String {
     let known = [
+        // the trusted-key list's own refusals first: their names begin like the announcement's
+        ("NotSignedByCurrentKeys", "the new list of trusted keys is not signed by enough of the keys trusted now, so it may be someone taking over"),
+        ("NotSignedByNewKeys", "the new list of trusted keys is not signed by enough of its own keys"),
+        ("TooManyRotations", "the chain of trusted-key lists is longer than this program follows in one step"),
+        ("WrongVersion", "the trusted-key list does not follow on from the one this program holds"),
+        ("BadThreshold", "the trusted-key list asks for an impossible number of signatures"),
+        ("BadKeys", "the trusted-key list holds a key that cannot be used"),
         ("NoArtifactForThisComputer", "the announcement lists no file for this kind of computer"),
         ("NotSigned", "it is not signed by enough of the keys this program trusts, or it was altered"),
         ("BadArtifact", "the file does not match what the signed announcement says it must be"),
@@ -401,8 +418,17 @@ fn refusal_words(reason: &str) -> String {
         ("WrongChannel", "it was made for another release channel"),
         ("Malformed", "it is not a well-formed announcement"),
     ];
-    match known.iter().find(|(k, _)| reason.contains(k)) {
-        Some((name, words)) => format!("{words} ({name})"),
-        None => reason.to_string(),
+    // the check's own sentence about this case, when it gave one (`BadArtifact("the size differs ...")`): a wrong size and
+    // a wrong checksum are different problems and are said as such
+    let detail = reason
+        .split_once("(\"")
+        .and_then(|(_, rest)| rest.rsplit_once("\")"))
+        .map(|(d, _)| d.to_string())
+        .filter(|d| !d.is_empty());
+    match (known.iter().find(|(k, _)| reason.contains(k)), detail) {
+        (Some((name, words)), Some(d)) => format!("{words}: {d} ({name})"),
+        (Some((name, words)), None) => format!("{words} ({name})"),
+        (None, Some(d)) => d,
+        (None, None) => reason.to_string(),
     }
 }

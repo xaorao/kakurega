@@ -72,6 +72,8 @@ export function brand(appPath, version) {
   const macos = join(appPath, "Contents/MacOS");
   renameSync(join(macos, "Electron"), join(macos, APP_NAME));
   common(plistOf(appPath), APP_NAME, APP_NAME, APP_ID, APP_NAME);
+  // capsules and shares open in Kakurega from Finder, where they are checked offline
+  execFileSync("/usr/bin/plutil", ["-replace", "CFBundleDocumentTypes", "-json", JSON.stringify([{ CFBundleTypeName: "Kakurega capsule", CFBundleTypeRole: "Viewer", LSHandlerRank: "Owner", CFBundleTypeExtensions: ["kkg", "kks"] }]), plistOf(appPath)], { stdio: "pipe" });
   // Electron's stock texts for devices this app never asks for ("This app needs access to the camera"). The app refuses
   // those permissions outright, so it must not carry a sentence that says it needs them.
   for (const key of ["NSCameraUsageDescription", "NSMicrophoneUsageDescription", "NSBluetoothAlwaysUsageDescription", "NSBluetoothPeripheralUsageDescription", "NSAudioCaptureUsageDescription"]) {

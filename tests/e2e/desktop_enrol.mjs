@@ -4,7 +4,7 @@
 import "./quiet_crash.mjs";
 import { _electron as electron } from "playwright-core";
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -104,6 +104,19 @@ try {
   await page.getByRole("button", { name: "Sign and deliver the capsule" }).waitFor({ timeout: 20000 });
   check("and the signed approval is accepted by a service that takes signed approvals only", true);
   check("no error box was shown along the way", !(await shown()).some((x) => x.kind === "error"), JSON.stringify((await shown()).filter((x) => x.kind === "error")));
+
+  // a capsule opened from Finder (or dropped on the Dock icon) is checked offline and the result shown in a window
+  const sample = join(repo, "fixtures/near-live/sample.kkg");
+  const changed = join(work, "changed.kkg");
+  const bytes = readFileSync(sample);
+  bytes[Math.floor(bytes.length / 2)] ^= 1;
+  writeFileSync(changed, bytes);
+  await app.evaluate(({ app }, p) => app.emit("open-file", { preventDefault() {} }, p), sample);
+  const good = await until(async () => (await shown()).find((x) => /is valid/.test(x.message ?? "")));
+  check("a capsule opened from Finder is checked offline and said to be valid", !!good && /sample\.kkg is valid/.test(good.message) && /VALID/.test(good.detail ?? ""), good?.message);
+  await app.evaluate(({ app }, p) => app.emit("open-file", { preventDefault() {} }, p), changed);
+  const bad = await until(async () => (await shown()).find((x) => /is not valid/.test(x.message ?? "")));
+  check("a changed capsule opened the same way is said not to be valid, with the reason", !!bad && /INVALID/.test(bad.detail ?? ""), bad?.message);
 
   // Sign out in the window: the app pairs its own window again
   await page.getByRole("button", { name: "Sign out" }).click();

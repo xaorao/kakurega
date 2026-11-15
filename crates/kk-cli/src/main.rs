@@ -251,6 +251,10 @@ fn main() -> ExitCode {
             | "--profile",
         ) => tui::run(&args),
         None if std::env::var("KAKU_LINEAR").is_ok_and(|v| v == "1") => tui::run(&args),
+        Some("--version") | Some("-V") | Some("version") => {
+            println!("kaku {}", env!("CARGO_PKG_VERSION"));
+            0
+        }
         Some("--help") | Some("-h") | None => {
             match args
                 .first()
